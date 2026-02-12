@@ -1,3 +1,7 @@
+mod other;
+
+// use en
+
 fn main() {
-    println!("Hello, world!");
+    engine::render::render();
 }

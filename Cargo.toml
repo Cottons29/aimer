@@ -1,7 +1,26 @@
 [workspace]
 workspace.resolver = "3"
-members = ["example", "engine"]
+members = [
+  "example", 
+  "engine", 
+  "crates/widget",
+  "macros/constructor"
+]
 
 
 [workspace.dependencies]
+constructor = {path = "./macros/constructor"}
+engine = {path = "./engine"}
 
+
+#########################################################################
+
+
+winit = "0.30.12"
+skia-safe = {version = "0.91.1", features = ["metal"]}
+glutin = "0.32.3"
+rayon = {version = "1.11.0", features = ["web_spin_lock"]}  
+pixels = "0.15.0"
+syn = "2.0.115"
+proc-macro2 = {version = "1.0.106"}
+quote = "1.0.44"

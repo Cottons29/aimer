@@ -2,5 +2,17 @@
 name = "engine"
 version = "0.1.0"
 edition = "2024"
+resolver = "3"
+
+[lib]
+name = "engine"
+crate-type = ["rlib", "staticlib"]
+
 
 [dependencies]
+winit.workspace = true
+skia-safe.workspace = true
+glutin.workspace = true
+rayon.workspace = true  
+pixels.workspace = true
+
