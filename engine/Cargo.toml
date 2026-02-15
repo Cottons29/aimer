@@ -10,9 +10,23 @@ crate-type = ["rlib", "staticlib"]
 
 
 [dependencies]
+constructor.workspace  = true
+widget.workspace = true
+uuid.workspace = true
+color.workspace = true
+
+
+
+
+#################
 winit.workspace = true
 skia-safe.workspace = true
 glutin.workspace = true
 rayon.workspace = true  
 pixels.workspace = true
+chrono.workspace = true
+
+
+
+
 

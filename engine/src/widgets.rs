@@ -1,55 +1,66 @@
-use skia_safe::{Canvas, Paint, Color, Rect, Point};
-
-pub trait Widget {
-    fn draw(&self, canvas: &Canvas);
+use color::prelude::{Color, ColorMixer};
+use constructor::Constructor;
+use skia_safe::{Font, Paint, Point, Rect, TextBlob};
+use widget::{
+    Widget,
+    base::{BuildContext, ButtonTemplate, IntoButton, Size, Vec2d},
+};
+#[derive(Constructor)]
+pub struct DemoButton {
+    label: String,
+    size: Size,
+    background: Color,
+    on_click: Box<dyn Fn() + Send + Sync>,
 }
 
-pub struct Square {
-    pub x: f32,
-    pub y: f32,
-    pub size: f32,
-    pub color: u32,
-}
-
-impl Widget for Square {
-    fn draw(&self, canvas: &Canvas) {
-        let mut paint = Paint::default();
-        paint.set_color(Color::from(self.color));
-        let rect = Rect::from_xywh(self.x, self.y, self.size, self.size);
-        canvas.draw_rect(rect, &paint);
+impl IntoButton for DemoButton {
+    fn to_button(self) -> widget::base::ButtonTemplate {
+        widget::ButtonTemplate!(
+             pos : Vec2d {x : 300.0, y : 500.0},
+             size: self.size,
+             label: self.label,
+             background: self.background,
+             on_click: self.on_click,
+        )
     }
 }
 
-pub struct Circle {
-    pub cx: f32,
-    pub cy: f32,
-    pub radius: f32,
-    pub color: u32,
-}
-
-impl Widget for Circle {
-    fn draw(&self, canvas: &Canvas) {
+impl Widget for DemoButton {
+    fn draw(&self, ctx: &BuildContext) {
         let mut paint = Paint::default();
-        paint.set_color(Color::from(self.color));
-        canvas.draw_circle(Point::new(self.cx, self.cy), self.radius, &paint);
+        paint.set_color(skia_safe::Color::from(self.background.to_u32()));
+
+        let pos = self.pos().unwrap_or(Vec2d { x: 0.0, y: 0.0 });
+
+        let rect = Rect::from_xywh(pos.x, pos.y, self.size.width as f32, self.size.height as f32);
+        ctx.canvas.draw_rect(rect, &paint);
+
+        let mut font = Font::default();
+        font.set_size(20.0);
+
+        if let Some(blob) = TextBlob::from_str(&self.label, &font) {
+            let mut paint = Paint::default();
+            paint.set_color(skia_safe::Color::WHITE);
+            ctx.canvas.draw_text_blob(
+                &blob,
+                Point::new(
+                    self.pos().unwrap_or(Vec2d { x: 300.0, y: 500.0 }).x * 0.5,
+                    self.pos().unwrap_or(Vec2d { x: 300.0, y: 500.0 }).y * 0.5,
+                ),
+                &paint,
+            );
+        }
     }
-}
 
-pub struct Triangle {
-    pub p1: (f32, f32),
-    pub p2: (f32, f32),
-    pub p3: (f32, f32),
-    pub color: u32,
-}
+    fn pos(&self) -> Option<Vec2d> {
+        Some(Vec2d { x: 300.0, y: 500.0 })
+    }
 
-impl Widget for Triangle {
-    fn draw(&self, canvas: &Canvas) {
-        let mut paint = Paint::default();
-        paint.set_color(Color::from(self.color));
-        
-        // Draw 3 lines
-        canvas.draw_line(Point::new(self.p1.0, self.p1.1), Point::new(self.p2.0, self.p2.1), &paint);
-        canvas.draw_line(Point::new(self.p2.0, self.p2.1), Point::new(self.p3.0, self.p3.1), &paint);
-        canvas.draw_line(Point::new(self.p3.0, self.p3.1), Point::new(self.p1.0, self.p1.1), &paint);
+    fn size(&self) -> Option<Size> {
+        Some(self.size)
+    }
+
+    fn on_click(&self) -> Option<&(dyn Fn() + Send + Sync)> {
+        Some(&self.on_click)
     }
 }

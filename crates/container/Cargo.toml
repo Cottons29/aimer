@@ -1,22 +1,23 @@
 [package]
-name = "widget"
+name = "container"
 version = "0.1.0"
 edition = "2024"
-resolver = "3"
-
 
 
 [dependencies]
-color.workspace = true
+constructor.workspace  = true
+widget.workspace = true
 
 
 
 
 
-#####################
+#################
 winit.workspace = true
 skia-safe.workspace = true
 glutin.workspace = true
 rayon.workspace = true  
 pixels.workspace = true
-constructor.workspace = true
+chrono.workspace = true
+
+

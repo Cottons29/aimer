@@ -1,11 +1,11 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Data, DataStruct, DeriveInput, Field, Fields, Ident, Meta, Type, TypePath,
+    Data, DataStruct, DeriveInput, Field, Fields, Ident, Meta,
     parse_macro_input,
 };
 
-#[proc_macro_derive(Constructor, attributes(constructor))]
+#[proc_macro_derive(Constructor)]
 pub fn constructor_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
@@ -18,7 +18,6 @@ pub fn constructor_derive(input: TokenStream) -> TokenStream {
 fn create_constructor(ast: DeriveInput) -> Result<TokenStream, String> {
     let name = &ast.ident;
     let vis = &ast.vis;
-    let (impl_generics, ty_generics, where_clause) = ast.generics.split_for_impl();
 
     // Extract struct fields
     let fields = match &ast.data {
@@ -64,7 +63,7 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, String> {
             .iter()
             .map(|field| {
                 let field_name = &field.ident;
-                quote! { #field_name: <#name #ty_generics as #trait_name #ty_generics>::#field_name() }
+                quote! { #field_name: <#name as #trait_name>::#field_name() }
             })
             .collect::<Vec<_>>()
     } else {
@@ -73,7 +72,7 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, String> {
 
     // Generate constructor function
     let constructor_fn = quote! {
-        impl #impl_generics #name #ty_generics #where_clause {
+        impl #name {
             pub fn __do__not__call__this__new(#(#public_params),*) -> Self {
                 Self {
                     #(#public_field_names,)*
@@ -95,7 +94,7 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, String> {
         });
 
         quote! {
-            #vis trait #trait_name #impl_generics #where_clause {
+            #vis trait #trait_name {
                 #(#trait_methods)*
             }
         }
@@ -119,11 +118,7 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, String> {
         let state_update_fields = public_fields.iter().map(|f| {
             let f_name = f.ident.as_ref().expect("Named fields have idents");
             if f_name == target_ident {
-                if is_box(&target_field.ty) {
-                    quote! { #f_name : (Box::new($val)) }
-                } else {
-                    quote! { #f_name : ($val) }
-                }
+                quote! { #f_name : ($val) }
             } else {
                  let var_name = Ident::new(&format!("{}_old", f_name), f_name.span());
                  quote! { #f_name : $#var_name }
@@ -156,8 +151,6 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, String> {
     // 3. Missing Field Rules
     let missing_field_rules = public_fields.iter().map(|target_field| {
         let target_ident = target_field.ident.as_ref().expect("Named fields have idents");
-        let is_opt = is_option(&target_field.ty);
-
         let state_matcher = public_fields.iter().map(|f| {
             let f_name = f.ident.as_ref().expect("Named fields have idents");
             if f_name == target_ident {
@@ -166,34 +159,13 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, String> {
                 quote! { #f_name : $#f_name:tt } 
             }
         });
-        
-        if is_opt {
-             let state_update = public_fields.iter().map(|f| {
-                let f_name = f.ident.as_ref().expect("Named fields have idents");
-                if f_name == target_ident {
-                    quote! { #f_name : (None) }
-                } else {
-                    quote! { #f_name : $#f_name } 
-                }
-            });
-            quote! {
-                (
-                    @munch { #(#state_matcher),* }
-                ) => {
-                    #macro_name!(
-                        @munch { #(#state_update),* }
-                    )
-                };
-            }
-        } else {
-            let err_msg = format!("Missing field '{}'", target_ident);
-            quote! {
-                (
-                    @munch { #(#state_matcher),* }
-                ) => {
-                    compile_error!(#err_msg)
-                };
-            }
+        let err_msg = format!("Missing field '{}'", target_ident);
+        quote! {
+            (
+                @munch { #(#state_matcher),* }
+            ) => {
+                compile_error!(#err_msg)
+            };
         }
     });
 
@@ -266,28 +238,6 @@ fn is_private_field(field: &Field) -> bool {
                 if tokens.contains("visibility") && tokens.contains("private") {
                     return true;
                 }
-            }
-        }
-    }
-    false
-}
-
-fn is_option(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            if segment.ident == "Option" {
-                 return true;
-            }
-        }
-    }
-    false
-}
-
-fn is_box(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            if segment.ident == "Box" {
-                 return true;
             }
         }
     }

@@ -9,3 +9,12 @@ resolver = "3"
 [dependencies]
 constructor.workspace = true
 engine.workspace = true
+widget.workspace = true
+color.workspace = true
+
+
+
+
+
+
+
