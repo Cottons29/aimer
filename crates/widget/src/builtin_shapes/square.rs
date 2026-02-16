@@ -1,5 +1,5 @@
 use skia_safe::{Canvas, Paint, Color, Rect};
-use crate::{StatelessWidget, context::BuildContext};
+use crate::{StatelessWidget, components::context::BuildContext};
 pub struct Square {
     pub x: f32,
     pub y: f32,
