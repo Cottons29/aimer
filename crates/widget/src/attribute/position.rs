@@ -1,4 +1,4 @@
-use crate::size::Size;
+use crate::attribute::size::Size;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Vec2d {

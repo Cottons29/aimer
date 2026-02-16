@@ -2,7 +2,7 @@ use constructor::Constructor;
 use skia_safe::{Color, Font, FontMgr, FontStyle, Paint, Rect, TextBlob};
 use std::slice;
 use std::sync::{Arc, RwLock};
-use widget::{StatefulWidget, Widget};
+use widget::{StatefulWidget, StatelessWidget, Widget};
 #[derive(Constructor)]
 
 
@@ -11,7 +11,7 @@ pub struct MyStatefulWidget {
     child: Box<dyn Widget>,
 }
 
-impl StatefulWidget for MyStatefulWidget {
+impl StatelessWidget for MyStatefulWidget {
     fn draw(&self, ctx: &widget::base::BuildContext) {
         let size = &ctx.size;
         let center_x = size.width as f32 / 2.0;
@@ -48,7 +48,7 @@ impl StatefulWidget for MyStatefulWidget {
 
 impl Widget for MyStatefulWidget {
     fn draw(&self, ctx: &widget::base::BuildContext) {
-        StatefulWidget::draw(self, ctx);
+        StatelessWidget::draw(self, ctx);
     }
 
     fn child(&self) -> &[Box<dyn Widget>] {

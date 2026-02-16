@@ -2,8 +2,6 @@
 extern crate widget;
 
 #[macro_use]
-pub mod widgets;
-#[macro_use]
 mod oxidize;
 mod event;
 pub mod render;

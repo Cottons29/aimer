@@ -7,14 +7,14 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
-pub struct App {
+pub struct App<T: Widget> {
     pub window: Option<&'static Window>,
     pub pixels: Option<Pixels<'static>>,
-    pub widget_root: Box<dyn Widget>,
+    pub widget_root: T,
     pub cursor_pos: Vec2d,
 }
 
-impl ApplicationHandler for App {
+impl<T: Widget> ApplicationHandler for App<T> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attributes = Window::default_attributes().with_title("Oxidize Render");
         let window = event_loop.create_window(window_attributes).unwrap();
@@ -49,10 +49,11 @@ impl ApplicationHandler for App {
                     return;
                 }
 
-                println!("Mouse Clicked : {:?}", self.cursor_pos);
+                // println!("Mouse Clicked : {:?}", self.cursor_pos);
 
                 let c = self.cursor_pos;
-                if let Some(widget) = Self::is_on_click(self.widget_root.as_ref(), c) {
+                #[allow(clippy::collapsible_if)]
+                if let Some(widget) = Self::is_on_click(&self.widget_root, c) {
                     if let Some(on_click) = widget.on_click() {
                         on_click();
                         if let Some(window) = &self.window {
@@ -77,8 +78,8 @@ impl ApplicationHandler for App {
     }
 }
 
-impl App {
-    fn is_on_click<'a>(widget: &'a dyn Widget, c: Vec2d) -> Option<&'a dyn Widget> {
+impl<T: Widget> App<T> {
+    fn is_on_click(widget: & dyn Widget, c: Vec2d) -> Option<&dyn Widget> {
         let bounds = widget.pos_start_end();
 
         if let Some((start, end)) = bounds {
@@ -131,7 +132,7 @@ impl App {
                         BuildContext { size: Size { width, height }, canvas: surface.canvas() };
                     ctx.canvas.clear(skia_safe::Color::WHITE);
 
-                    Self::render_widget_tree(self.widget_root.as_ref(), &ctx);
+                    Self::render_widget_tree(&self.widget_root, &ctx);
                 }
             }
 
@@ -179,7 +180,7 @@ mod tests {
         let wrapper = MockWidget { pos: None, size: None, children: vec![Box::new(btn)] };
 
         // Click at 15, 15 (inside button)
-        let hit = App::is_on_click(&wrapper, Vec2d { x: 15.0, y: 15.0 });
+        let hit = App::<MockWidget>::is_on_click(&wrapper, Vec2d { x: 15.0, y: 15.0 });
         assert!(hit.is_some());
 
         // Verify we get a hit even if the wrapper has no bounds.
@@ -197,7 +198,7 @@ mod tests {
         let wrapper = MockWidget { pos: None, size: None, children: vec![Box::new(btn)] };
 
         // Click at 50, 50 (outside button)
-        let hit = App::is_on_click(&wrapper, Vec2d { x: 50.0, y: 50.0 });
+        let hit = App::<MockWidget>::is_on_click(&wrapper, Vec2d { x: 50.0, y: 50.0 });
         assert!(hit.is_none());
     }
 }

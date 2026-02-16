@@ -1,8 +1,7 @@
 
-use skia_safe::{Canvas, canvas};
-use winit::window::Window;
+use skia_safe::{Canvas};
 
-use crate::size::Size;
+use crate::attribute::size::Size;
 
 
 pub struct BuildContext<'a> {

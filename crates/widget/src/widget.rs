@@ -2,6 +2,7 @@ pub mod stateful;
 pub mod stateless;
 use crate::{StatefulWidget, base::*};
 use crate::{StatelessWidget, base::BuildContext};
+
 #[allow(dead_code)]
 pub trait Widget: Send + Sync {
     fn draw(&self, ctx: &BuildContext);
@@ -25,11 +26,33 @@ pub trait Widget: Send + Sync {
     fn child(&self) -> &[Box<dyn Widget>] {
         &[]
     }
+
+    fn get_size_from_child(&self) -> Option<Size> {
+        if let Some(s) = self.size() {
+            return Some(s);
+        }
+
+        let mut max_w = 0;
+        let mut max_h = 0;
+        let mut found = false;
+
+        for item in self.child() {
+            if let Some(child_size) = item.size().or_else(|| item.get_size_from_child()) {
+                max_w = max_w.max(child_size.width);
+                max_h = max_h.max(child_size.height);
+                found = true;
+            }
+        }
+
+        if found { Some(Size { width: max_w, height: max_h }) } else { None }
+    }
+
+    // fn apply_layout(&self,  /)
 }
 
 impl<T: Widget + 'static> From<T> for Box<dyn Widget> {
     fn from(value: T) -> Self {
-        Box::new(value) 
+        Box::new(value)
     }
 }
 struct _Stateless<T: StatelessWidget>(T);

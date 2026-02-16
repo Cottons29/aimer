@@ -324,6 +324,9 @@ dependencies = [
 [[package]]
 name = "color"
 version = "0.1.0"
+dependencies = [
+ "skia-safe",
+]
 
 [[package]]
 name = "com"
@@ -570,6 +573,7 @@ version = "0.1.0"
 dependencies = [
  "color",
  "constructor",
+ "container",
  "engine",
  "widget",
 ]

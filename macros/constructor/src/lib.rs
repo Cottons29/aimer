@@ -119,7 +119,9 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, String> {
         let state_update_fields = public_fields.iter().map(|f| {
             let f_name = f.ident.as_ref().expect("Named fields have idents");
             if f_name == target_ident {
-                if is_box(&target_field.ty) {
+                if is_option(&target_field.ty) {
+                    quote! { #f_name : (Some($val)) }
+                } else if is_box(&target_field.ty) {
                     quote! { #f_name : (Box::new($val)) }
                 } else {
                     quote! { #f_name : ($val) }

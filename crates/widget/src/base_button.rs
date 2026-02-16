@@ -1,5 +1,5 @@
 use crate::base::BuildContext;
-use crate::size::Size;
+use crate::attribute::size::Size;
 use crate::{StatelessWidget, base::Vec2d};
 use color::prelude::ColorMixer;
 use constructor::Constructor;

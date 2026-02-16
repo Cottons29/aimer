@@ -3,6 +3,8 @@ pub mod color_impl;
 pub mod basic_color;
 
 use basic_color::BasicColor;
+
+use crate::prelude::ColorMixer;
 #[derive(Clone, Copy)]
 pub enum Color {
     /// Red, Green, Blue, Alpha (0-255)
@@ -37,4 +39,8 @@ pub enum Color {
 }
 
 
-
+impl From<Color> for skia_safe::Color {
+    fn from(value: Color) -> Self {
+        skia_safe::Color::new(value.to_u32())
+    }
+}

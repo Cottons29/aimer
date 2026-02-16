@@ -6,7 +6,9 @@ impl ColorMixer for Color {
             Color::Rgba(r, g, b, a) => {
                 ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
             }
-            Color::Rgb(r, g, b) => ((0xFF as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32),
+            Color::Rgb(r, g, b) => {
+                ((0xFF as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+            }
             Color::Hex(rgb) => 0xFF000000 | (rgb & 0xFFFFFF),
             Color::HexA(rgba) => {
                 let r = (rgba >> 24) & 0xFF;
@@ -16,11 +18,11 @@ impl ColorMixer for Color {
                 (a << 24) | (r << 16) | (g << 8) | b
             }
             Color::Gray(v, a) => ((a as u32) << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32),
-            Color::Gray8(v) => ((0xFF as u32) << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32),
+            Color::Gray8(v) => (0xFF << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32),
             Color::Basic(named) => named.to_u32(),
             Color::Hsl(h, s, l) => {
                 let (r, g, b) = hsl_to_rgb(h, s, l);
-                ((0xFF as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+                (0xFF << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
             }
             Color::Hsla(h, s, l, a) => {
                 let (r, g, b) = hsl_to_rgb(h, s, l);

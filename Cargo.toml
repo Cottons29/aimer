@@ -14,6 +14,9 @@ members = [
 ]
 
 [workspace.dependencies]
+
+
+container = {path ="./crates/container"}
 constructor = {path = "./macros/constructor"}
 engine = {path = "./engine"}
 widget= {path = "crates/widget"}

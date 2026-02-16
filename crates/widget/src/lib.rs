@@ -1,20 +1,18 @@
-use std::any::Any;
 mod base_button;
-use crate::{base::Vec2d, context::BuildContext, size::Size};
 mod widget; 
 mod builtin_shapes;
-mod context;
-mod position;
-mod size;
-
-
-
+mod attribute;
+pub mod components;
 pub mod base {
-    pub use crate::context::BuildContext;
-    pub use crate::position::Vec2d;
-    pub use crate::size::Size;
+    pub use crate::components::context::BuildContext;
+    pub use crate::attribute::position::Vec2d;
+    pub use crate::attribute::size::Size;
     pub use crate::base_button::{ButtonTemplate, IntoButton};
+    pub use color::prelude::*;
 }
+
+
+
 
 pub mod buildin {
     pub use crate::builtin_shapes::*;

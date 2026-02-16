@@ -6,7 +6,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 pub struct OxidizeApp;
 
 impl OxidizeApp {
-    pub fn start(widget : Box<dyn Widget>) {
+    pub fn start(widget : impl Widget) {
         let event_loop = EventLoop::new().unwrap();
         event_loop.set_control_flow(ControlFlow::Wait);
         let mut app = App {
