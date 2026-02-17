@@ -1,22 +1,26 @@
 use pixels::{Pixels, SurfaceTexture};
 use skia_safe::{AlphaType, ColorType};
-use widget::Widget;
+use widget::{Element, Widget};
 use widget::base::{BuildContext, Size, Vec2d};
 use winit::application::ApplicationHandler;
+use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
-pub struct App<T: Widget> {
+pub struct App {
     pub window: Option<&'static Window>,
     pub pixels: Option<Pixels<'static>>,
-    pub widget_root: T,
+    pub widget_root: Option<Box<dyn Element>>,
+    pub pending_widget: Option<Box<dyn Widget>>,
     pub cursor_pos: Vec2d,
 }
 
-impl<T: Widget> ApplicationHandler for App<T> {
+impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window_attributes = Window::default_attributes().with_title("Oxidize Render");
+        let window_attributes = Window::default_attributes()
+            .with_title("Oxidize Render")
+            .with_min_inner_size(PhysicalSize::new(2000, 500));
         let window = event_loop.create_window(window_attributes).unwrap();
         let window: &'static Window = Box::leak(Box::new(window)); // Leak to static ref
 
@@ -51,16 +55,16 @@ impl<T: Widget> ApplicationHandler for App<T> {
 
                 // println!("Mouse Clicked : {:?}", self.cursor_pos);
 
-                let c = self.cursor_pos;
-                #[allow(clippy::collapsible_if)]
-                if let Some(widget) = Self::is_on_click(&self.widget_root, c) {
-                    if let Some(on_click) = widget.on_click() {
-                        on_click();
-                        if let Some(window) = &self.window {
-                            window.request_redraw();
-                        }
-                    }
-                }
+                // let c = self.cursor_pos;
+                // #[allow(clippy::collapsible_if)]
+                // if let Some(widget) = Self::is_on_click(&self.widget_root, c) {
+                //     if let Some(on_click) = widget.on_click() {
+                //         on_click();
+                //         if let Some(window) = &self.window {
+                //             window.request_redraw();
+                //         }
+                //     }
+                // }
             }
 
             WindowEvent::RedrawRequested => self.render(event_loop),
@@ -78,8 +82,8 @@ impl<T: Widget> ApplicationHandler for App<T> {
     }
 }
 
-impl<T: Widget> App<T> {
-    fn is_on_click(widget: & dyn Widget, c: Vec2d) -> Option<&dyn Widget> {
+impl App {
+    fn is_on_click(widget: & dyn Element, c: Vec2d) -> Option<&dyn Element> {
         let bounds = widget.pos_start_end();
 
         if let Some((start, end)) = bounds {
@@ -89,9 +93,25 @@ impl<T: Widget> App<T> {
             }
         }
 
-        for child in widget.child().iter().rev() {
-            if let Some(hit) = Self::is_on_click(child.as_ref(), c) {
-                return Some(hit);
+        let mut hit = None;
+        widget.visit_children(&mut |child| {
+            if hit.is_some() { return; } // already found
+            if let Some(h) = Self::is_on_click(child, c) {
+                hit = Some(h);
+            }
+        });
+        // Wait, visitor doesn't allow early exit easily unless we use a flag.
+        // Also we need REVERSE order for hit testing (top-most first).
+        // visit_children usually visits in paint order (back to front).
+        // So we need to visit in reverse paint order.
+        
+        // Let's collect children first.
+        let mut children = Vec::new();
+        widget.visit_children(&mut |child| children.push(child));
+        
+        for child in children.into_iter().rev() {
+             if let Some(h) = Self::is_on_click(child, c) {
+                return Some(h);
             }
         }
 
@@ -102,11 +122,11 @@ impl<T: Widget> App<T> {
         None
     }
 
-    fn render_widget_tree(widget: &dyn Widget, ctx: &BuildContext) {
+    fn render_widget_tree(widget: &dyn Element, ctx: &BuildContext) {
         widget.draw(ctx);
-        for item in widget.child() {
-            Self::render_widget_tree(item.as_ref(), ctx);
-        }
+        widget.visit_children(&mut |child| {
+            Self::render_widget_tree(child, ctx);
+        });
     }
 
     fn render(&mut self, event_loop: &ActiveEventLoop) {
@@ -131,8 +151,16 @@ impl<T: Widget> App<T> {
                     let ctx: BuildContext =
                         BuildContext { size: Size { width, height }, canvas: surface.canvas() };
                     ctx.canvas.clear(skia_safe::Color::WHITE);
+                    #[allow(clippy::collapsible_if)]
+                    if self.widget_root.is_none() {
+                        if let Some(w) = self.pending_widget.take() {
+                            self.widget_root = Some(w.to_element(&ctx));
+                        }
+                    }
 
-                    Self::render_widget_tree(&self.widget_root, &ctx);
+                    if let Some(root) = &self.widget_root {
+                        Self::render_widget_tree(root.as_ref(), &ctx);
+                    }
                 }
             }
 
@@ -147,16 +175,16 @@ impl<T: Widget> App<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use widget::Widget;
+    use widget::Element;
     use widget::base::{BuildContext, Size, Vec2d};
 
     struct MockWidget {
         pos: Option<Vec2d>,
         size: Option<Size>,
-        children: Vec<Box<dyn Widget>>,
+        children: Vec<Box<dyn Element>>,
     }
 
-    impl Widget for MockWidget {
+    impl Element for MockWidget {
         fn draw(&self, _ctx: &BuildContext) {}
         fn pos(&self) -> Option<Vec2d> {
             self.pos
@@ -164,8 +192,10 @@ mod tests {
         fn size(&self) -> Option<Size> {
             self.size
         }
-        fn child(&self) -> &[Box<dyn Widget>] {
-            &self.children
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for child in &self.children {
+                visitor(child.as_ref());
+            }
         }
     }
 
@@ -180,7 +210,7 @@ mod tests {
         let wrapper = MockWidget { pos: None, size: None, children: vec![Box::new(btn)] };
 
         // Click at 15, 15 (inside button)
-        let hit = App::<MockWidget>::is_on_click(&wrapper, Vec2d { x: 15.0, y: 15.0 });
+        let hit = App::is_on_click(&wrapper, Vec2d { x: 15.0, y: 15.0 });
         assert!(hit.is_some());
 
         // Verify we get a hit even if the wrapper has no bounds.
@@ -198,7 +228,7 @@ mod tests {
         let wrapper = MockWidget { pos: None, size: None, children: vec![Box::new(btn)] };
 
         // Click at 50, 50 (outside button)
-        let hit = App::<MockWidget>::is_on_click(&wrapper, Vec2d { x: 50.0, y: 50.0 });
+        let hit = App::is_on_click(&wrapper, Vec2d { x: 50.0, y: 50.0 });
         assert!(hit.is_none());
     }
 }

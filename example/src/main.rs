@@ -1,19 +1,20 @@
 use color::prelude::{BasicColor, Color};
-use container::Container;
-use engine::{DemoButton, OxidizeApp, widgets::DemoButton};
+use container::{Container, ZeroSizedBox};
+use engine::OxidizeApp;
 use widget::{Widget, base::*};
+use other::MyWidget;
 mod other;
 
 fn get_widget() -> impl Widget {
     Container!(
-            size: Size {width: 200, height: 300},
-            color: Color::Basic(BasicColor::Yellow),
-            child: DemoButton!(
-        label: "Click me!".to_string(),
-        size: Size {width: 320, height: 200},
-        background: Color::Hex(0x000000),
-        on_click: ||{println!("Clicked on me!")},
-    ))
+        size: Size {width: 200, height: 300},
+        color: Color::Basic(BasicColor::Blue),
+        child: Container!(
+            size : Size{width: 100, height: 150},
+            color: Color::Basic(BasicColor::Green),
+            child: ZeroSizedBox,
+        )
+    )
 }
 
 fn main() {
@@ -34,6 +35,6 @@ fn main() {
     //     on_click: on_click,
     // )));
     //
-    let my_widget = get_widget();    
-    OxidizeApp::start(my_widget);
+    let my_widget = get_widget();
+    OxidizeApp::start(MyWidget!(num: 100));
 }

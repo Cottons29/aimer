@@ -5,7 +5,5 @@ extern crate widget;
 mod oxidize;
 mod event;
 pub mod render;
-pub mod container;
-pub use container::MyStatefulWidget;
 pub use oxidize::OxidizeApp;
 

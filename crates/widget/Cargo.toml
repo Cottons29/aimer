@@ -8,7 +8,7 @@ resolver = "3"
 
 [dependencies]
 color.workspace = true
-
+widget_attr.workspace = true
 
 
 

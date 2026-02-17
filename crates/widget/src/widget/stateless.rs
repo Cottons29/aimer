@@ -1,32 +1,33 @@
-use crate::{StatefulWidget, base::*};
-use std::any::Any;
-use crate::Widget;
-pub trait StatelessWidget: Send + Sync {
-    fn draw(&self, ctx: &BuildContext);
+use crate::{base::*, Element, Widget};
+
+// StatelessWidget is effectively just a Widget. 
+// We rely on direct Widget implementation to avoid blanket implementation conflicts.
+// The trait is kept for backward compatibility if needed, but generally users should implement Widget directly.
+
+pub trait StatelessWidget : Send + Sync {
+    fn build(&self) -> impl Widget;
+}
+
+pub struct StatelessElement {
+    pub child: Box<dyn Element>,
+}
+
+impl Element for StatelessElement {
+    fn draw(&self, _ctx: &BuildContext) {
+        // Stateless element doesn't draw itself
+    }
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
     fn pos(&self) -> Option<Vec2d> {
-        None
+        self.child.pos()
     }
     fn size(&self) -> Option<Size> {
-        None
-    }
-    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        if self.size().is_none() || self.pos().is_none() {
-            return None;
-        }
-        let start = self.pos().unwrap();
-        let end = start.get_end(self.size().unwrap());
-        Some((start, end))
-    }
-    fn on_click(&self) -> Option<&Box<dyn Fn() + Send + Sync>> {
-        None
+        self.child.size()
     }
 }
 
-impl<T: StatelessWidget + 'static> From<T> for Box<dyn StatelessWidget> {
-    fn from(value: T) -> Self {
-        Box::new(value)
-    }
-}
+
 
 
 

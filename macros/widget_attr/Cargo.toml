@@ -1,7 +1,8 @@
 [package]
-name = "stateful_widget"
+name = "widget_attr"
 version = "0.1.0"
 edition = "2024"
+
 
 resolver = "3"
 
@@ -9,6 +10,11 @@ resolver = "3"
 proc-macro = true
 
 [dependencies]
+widget_codegen.workspace = true
 syn.workspace = true
 proc-macro2.workspace = true
 quote.workspace = true
+
+
+
+

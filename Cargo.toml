@@ -1,27 +1,26 @@
 [workspace]
-workspace.resolver = "3"
+resolver = "3"
 members = [
   ".",
   "example", 
   "engine", 
   "crates/widget",
   "macros/constructor",
-  "macros/stateful_widget",
-  "macros/stateless_widget", 
   "macros/widget_codegen", 
   "crates/container", 
   "crates/color"
-]
+, "macros/widget_attr"]
 
 [workspace.dependencies]
 
-
+widget_codegen= {path ="macros/widget_codegen"}
 container = {path ="./crates/container"}
 constructor = {path = "./macros/constructor"}
 engine = {path = "./engine"}
 widget= {path = "crates/widget"}
 stateless_widget = {path = "macros/stateless_widget"}
 stateful_widget = {path = "macros/stateful_widget"}
+widget_attr = { path = "macros/widget_attr" }
 color ={path = "crates/color"}
 #########################################################################
 uuid = {version = "1.20.0", features = ["v4", "js"]}
@@ -33,7 +32,7 @@ skia-safe = {version = "0.93.0", features = ["metal"]}
 glutin = "0.32.3"
 rayon = {version = "1.11.0", features = ["web_spin_lock"]}  
 pixels = "0.15.0"
-syn = "2.0.115"
+syn = {version = "2.0.115", features= ["full"]}
 proc-macro2 = {version = "1.0.106"}
 quote = "1.0.44"
 chrono = "0.4.43"

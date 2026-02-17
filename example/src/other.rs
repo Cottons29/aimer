@@ -1,28 +1,22 @@
-use constructor::Constructor;
+use widget::{StatefulWidget, StatelessWidget, Widget};
+use widget::widget_attr::widget;
+use container::{Container, ZeroSizedBox};
+use widget::base::*;
 
-#[derive(Constructor, Debug)]
-pub struct TestStruct {
-    name : String,
-    score : f64
+
+#[widget(StatelessWidget)]
+pub struct MyWidget {
+    num: u32,
 }
 
-#[derive(Constructor, Debug)]
-pub struct OtherStruct {
-    name: String,
-    test: TestStruct
-}
 
-#[cfg(test)]
-mod tests {
-    use super::TestStruct;
-
-    #[test]
-    fn constructs_with_macro() {
-        let value = TestStruct! { name: "my_name".to_string(), score: 12.2 };
-
-        assert_eq!(value.name, "my_name");
-        assert_eq!(value.score, 12.2);
+impl StatelessWidget for MyWidget {
+    fn build(&self) -> impl Widget {
+        Container!(
+            size: Size {width: 100, height: 50},
+            color: Color::Basic(BasicColor::Green),
+            child: ZeroSizedBox
+        )
     }
 }
-
 
