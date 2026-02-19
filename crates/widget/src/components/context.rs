@@ -1,28 +1,21 @@
 
 use skia_safe::{Canvas};
 
-use crate::attribute::size::Size;
+use crate::{attribute::size::Size, base::Vec2d};
 
 
 pub struct BuildContext<'a> {
-    pub size : Size,
-    pub canvas: &'a Canvas 
-}
-
-impl<'a> From<&'a Canvas> for BuildContext<'a> {
-    fn from(canvas: &'a Canvas) -> Self {
-        BuildContext{
-            canvas,
-            size: Size::default()
-        }
-    }
+    pub parent_size : Size,
+    pub canvas: &'a Canvas,
+    pub scale: f32,
+    pub parent_pos: Vec2d
 }
 
 
 impl<'a> BuildContext<'a> {
-    pub fn new(canvas: &'a Canvas, size: Size) -> Self {
+    pub fn new(canvas: &'a Canvas, size: Size, scale: f32, parent_pos: Vec2d) -> Self {
         Self {
-            canvas, size
+            canvas, parent_size: size, scale, parent_pos
         }
     }
 }

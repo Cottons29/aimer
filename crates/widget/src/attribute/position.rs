@@ -1,6 +1,6 @@
 use crate::attribute::size::Size;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Vec2d {
     #[cfg(not(target_arch = "wasm32"))]
     pub x: f32,

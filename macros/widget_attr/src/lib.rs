@@ -30,20 +30,39 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
         }
     });
 
+    let constructor_code = if !has_constructor {
+        // Generate constructor code manually using original struct
+        let struct_ts = quote! { #item_struct };
+        widget_codegen::ConstructorCodegen::generate(struct_ts)
+    } else {
+        proc_macro2::TokenStream::new()
+    };
+
     if !has_constructor {
-        // Add #[derive(Constructor)]
-        let constructor_attr: Attribute = parse_quote!(#[derive(widget::Constructor)]);
-        item_struct.attrs.push(constructor_attr);
+        // Remove constructor attributes from the struct to avoid compilation errors
+        // since we are not adding #[derive(Constructor)] which would handle them
+        item_struct.attrs.retain(|attr| !attr.path().is_ident("constructor"));
+        
+        if let syn::Fields::Named(fields) = &mut item_struct.fields {
+            for field in &mut fields.named {
+                field.attrs.retain(|attr| !attr.path().is_ident("constructor"));
+            }
+        }
     }
     
     // Convert back to TokenStream for codegen
     let input_ts = quote! { #item_struct };
 
-    let output = if is_stateful {
+    let widget_code = if is_stateful {
         widget_codegen::StatefulWidgetCodegen::generate(input_ts)
     } else {
         widget_codegen::StatelessWidgetCodegen::generate(input_ts)
     };
     
-    proc_macro::TokenStream::from(output)
+    let final_output = quote! {
+        #widget_code
+        #constructor_code
+    };
+    
+    proc_macro::TokenStream::from(final_output)
 }

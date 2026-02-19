@@ -21,6 +21,14 @@ pub trait Element: Send + Sync {
         // default no children
     }
 
+    fn computed_size(&self, ctx: &BuildContext) -> Size {
+        self.size().unwrap_or(ctx.parent_size)
+    }
+
+    fn content_size(&self, ctx: &BuildContext) -> Size {
+        self.computed_size(ctx)
+    }
+
     fn get_size_from_child(&self) -> Option<Size> {
         if let Some(s) = self.size() {
             return Some(s);
@@ -54,6 +62,12 @@ impl Element for Box<dyn Element> {
     }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().visit_children(visitor)
+    }
+    fn computed_size(&self, ctx: &BuildContext) -> Size {
+        self.as_ref().computed_size(ctx)
+    }
+    fn content_size(&self, ctx: &BuildContext) -> Size {
+        self.as_ref().content_size(ctx)
     }
     fn get_size_from_child(&self) -> Option<Size> {
         self.as_ref().get_size_from_child()

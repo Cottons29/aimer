@@ -6,7 +6,7 @@ impl Element for ZeroSizedBox {
 }
 
 impl Widget for ZeroSizedBox {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, _ : &BuildContext) -> Box<dyn Element> {
         Box::new(ZeroSizedBox)
     }
 }

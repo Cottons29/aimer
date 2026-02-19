@@ -23,6 +23,7 @@ struct FieldInfo<'a> {
     skip: bool,
     default: Option<TokenStream>,
     into: bool,
+    first: bool,
     docs: Vec<String>,
 }
 
@@ -34,9 +35,11 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
     let mut skip = false;
     let mut default = None;
     let mut into = false;
+    let mut first = false;
     let mut docs = Vec::new();
 
     for attr in &field.attrs {
+        #[allow(clippy::collapsible_if)]
         if attr.path().is_ident("doc") {
             if let Meta::NameValue(meta) = &attr.meta {
                 if let Expr::Lit(expr_lit) = &meta.value {
@@ -63,6 +66,9 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
                 } else if meta.path.is_ident("into") {
                     into = true;
                     Ok(())
+                } else if meta.path.is_ident("first") {
+                    first = true;
+                    Ok(())
                 } else if meta.path.is_ident("visibility") {
                     let value: syn::LitStr = meta.value()?.parse()?;
                     if value.value() == "private" {
@@ -86,12 +92,37 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
         skip,
         default,
         into,
+        first,
         docs,
     })
 }
 
 fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
     let name = &ast.ident;
+    
+    let mut crate_path: Option<TokenStream> = None;
+    for attr in &ast.attrs {
+        if attr.path().is_ident("constructor") {
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("crate") {
+                    let value: syn::LitStr = meta.value()?.parse()?;
+                    let path_str = value.value();
+                    let path: syn::Path = syn::parse_str(&path_str)?;
+                    crate_path = Some(quote!{ #path });
+                    Ok(())
+                } else {
+                     Ok(())
+                }
+            })?;
+        }
+    }
+
+    let struct_path = if let Some(p) = crate_path {
+        quote! { #p :: #name }
+    } else {
+        quote! { #name }
+    };
+
     let vis = &ast.vis;
     let (impl_generics, ty_generics, where_clause) = ast.generics.split_for_impl();
 
@@ -144,7 +175,7 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
     let constructor_fn = quote! {
         impl #impl_generics #name #ty_generics #where_clause {
             #[doc(hidden)]
-            pub fn __do__not__call__this__new(#(#public_params),*) -> Self {
+            pub fn create_new(#(#public_params),*) -> Self {
                 Self {
                     #(#public_assigns,)*
                     #(#skipped_assigns,)*
@@ -282,6 +313,13 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         }
     });
 
+    // Logic for 'first' field
+    let first_fields: Vec<&FieldInfo> = public_fields.iter().copied().filter(|f| f.first).collect();
+    if first_fields.len() > 1 {
+         return Err(Error::new(first_fields[1].ident.span(), "Only one field can be marked as 'first'"));
+    }
+    let first_field = first_fields.first().copied();
+
     // Macro Rule: Initial State
     // Initializes all fields to ()
     let init_state_fields = public_fields.iter().map(|f| {
@@ -289,17 +327,66 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         quote! { #ident : () }
     });
 
+    // Prepare entry points for 'first' field
+    let first_field_rules = if let Some(f) = first_field {
+         let f_ident = f.ident;
+         // Logic to wrap value
+         let val_wrapper = if f.into {
+            quote! { ((($val).into())) }
+         } else if is_option(f.ty) {
+            quote! { (Some($val)) }
+         } else if is_box(f.ty) {
+            quote! { (Box::new($val)) }
+         } else {
+            quote! { ($val) }
+         };
+         
+         let init_state_with_first = public_fields.iter().map(|field| {
+             let ident = field.ident;
+             if ident == f_ident {
+                 quote! { #ident : #val_wrapper }
+             } else {
+                 quote! { #ident : () }
+             }
+         });
+         
+         // Collect into a Vec to iterate multiple times
+         let init_state_with_first: Vec<_> = init_state_with_first.collect();
+         
+         quote! {
+            ( $val:expr, $($rest:tt)* ) => {
+                #macro_name!(@munch { #(#init_state_with_first),* } $($rest)*)
+            };
+            ( $val:expr ) => {
+                #macro_name!(@munch { #(#init_state_with_first),* })
+            };
+         }
+    } else {
+        quote! {}
+    };
+
     // Documentation Generation
     let mut doc_msg = format!("Constructor for [`{}`].\n\nFields:\n", name);
     for field in &public_fields {
         let f_name = field.ident;
         let f_ty = field.ty;
         let f_ty_str = quote!(#f_ty).to_string();
-        doc_msg.push_str(&format!("- `{}`: `{}`", f_name, f_ty_str));
         
-        if field.default.is_some() {
-            doc_msg.push_str(" (Optional)");
+        let mut extras = Vec::new();
+        if field.first {
+             extras.push("Positional");
         }
+        if field.default.is_some() {
+            extras.push("Optional");
+        }
+        
+        let extras_str = if !extras.is_empty() {
+             format!(" ({})", extras.join(", "))
+        } else {
+             String::new()
+        };
+
+        doc_msg.push_str(&format!("- `{}`: `{}`{}", f_name, f_ty_str, extras_str));
         
         if !field.docs.is_empty() {
              doc_msg.push_str("\n  - ");
@@ -317,7 +404,7 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
             (
                 @munch { #(#success_matcher_fields),* }
             ) => {
-                #name::__do__not__call__this__new(#(#call_args),*)
+                #struct_path::create_new(#(#call_args),*)
             };
             
             #(#missing_field_rules)*
@@ -335,6 +422,8 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
             ) => {
                 compile_error!(concat!("Stuck on: ", stringify!($($rest)*)))
             };
+
+            #first_field_rules
 
             ( $($args:tt)* ) => {
                 #macro_name!(@munch { #(#init_state_fields),* } $($args)*)

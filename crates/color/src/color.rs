@@ -2,7 +2,8 @@ pub mod color_trait;
 pub mod color_impl;
 pub mod basic_color;
 
-use basic_color::BasicColor;
+
+use basic_color::Colors;
 
 use crate::prelude::ColorMixer;
 #[derive(Clone, Copy)]
@@ -32,10 +33,22 @@ pub enum Color {
     Hsla(f32, f32, f32, f32),
 
     /// Named colors (nice for theming)
-    Basic(BasicColor),
+    Basic(Colors),
 
     /// Fully transparent
     Transparent,
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Self::Basic(Colors::default())
+    }
+}
+
+impl From<Colors> for Color {
+    fn from(value: Colors) -> Self {
+        Self::Basic(value)
+    }
 }
 
 

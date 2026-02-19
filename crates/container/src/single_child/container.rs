@@ -1,0 +1,189 @@
+use constructor::Constructor;
+use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
+use widget::{Element, LayoutSpacing, Spacing, Widget, base::*};
+
+
+
+#[derive(Constructor)]
+pub struct Container<T: Widget>{
+    #[constructor(into, default)]
+    width: Dimension ,
+    #[constructor(into, default)]
+    height: Dimension,
+    #[constructor(into, default)]
+    color: Color,
+    #[constructor(default)]
+    pub padding: Option<LayoutSpacing>,
+    #[constructor(default)]
+    pub margin: Option<LayoutSpacing>,
+    child: T,
+}
+
+impl<W: Widget> Widget for Container<W> {
+    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+        let child = self.child.to_element(ctx);
+        Box::new(RawContainer { width: self.width, height: self.height, color: self.color, child, padding: self.padding, margin: self.margin })
+    }
+}
+
+pub struct RawContainer<T> {
+    pub padding: Option<LayoutSpacing>,
+    pub margin: Option<LayoutSpacing>,
+    pub width: Dimension ,
+    pub height: Dimension,
+    pub color: Color,
+    pub child: T,
+}
+
+impl<T: Element> Element for RawContainer<T> {
+    fn draw(&self, ctx: &BuildContext) {
+        let parent_width = ctx.parent_size.width as f32;
+        let parent_height = ctx.parent_size.height as f32;
+        let scale = ctx.scale;
+
+        let m_left = self.margin.map(|m| m.left.value(parent_width, scale)).unwrap_or(0.0);
+        let m_top = self.margin.map(|m| m.top.value(parent_height, scale)).unwrap_or(0.0);
+        let m_right = self.margin.map(|m| m.right.value(parent_width, scale)).unwrap_or(0.0);
+        // let m_bottom = self.margin.map(|m| m.bottom.value(parent_height, scale)).unwrap_or(0.0);
+
+        ctx.canvas.translate((m_left, m_top));
+
+        let box_width = match self.width {
+             Dimension::Px(w) => w * scale,
+             Dimension::Percent(p) => parent_width * (p / 100.0) - (m_left + m_right),
+             Dimension::Auto => parent_width - (m_left + m_right),
+        };
+        
+        let box_height = match self.height {
+             Dimension::Px(h) => h * scale,
+             Dimension::Percent(p) => parent_height * (p / 100.0) - (m_top + self.margin.map(|m| m.bottom.value(parent_height, scale)).unwrap_or(0.0)),
+             Dimension::Auto => parent_height - (m_top + self.margin.map(|m| m.bottom.value(parent_height, scale)).unwrap_or(0.0)),
+        };
+        
+        let box_width = box_width.max(0.0);
+        let box_height = box_height.max(0.0);
+
+        let mut paint = Paint::default();
+            paint.set_color(SkColor::from(self.color));
+            paint.set_style(Style::Fill);
+
+            let rect = Rect::from_xywh(0.0, 0.0, box_width, box_height);
+            ctx.canvas.draw_rect(rect, &paint);
+            
+        let p_left = self.padding.map(|p| p.left.value(box_width, scale)).unwrap_or(0.0);
+        let p_top = self.padding.map(|p| p.top.value(box_height, scale)).unwrap_or(0.0);
+        
+        ctx.canvas.translate((p_left, p_top));
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> Size {
+        let scale = ctx.scale;
+        let p_w = ctx.parent_size.width as f32;
+        let p_h = ctx.parent_size.height as f32;
+        
+        let m_left = self.margin.map(|m| m.left.value(p_w, scale)).unwrap_or(0.0);
+        let m_right = self.margin.map(|m| m.right.value(p_w, scale)).unwrap_or(0.0);
+        let m_top = self.margin.map(|m| m.top.value(p_h, scale)).unwrap_or(0.0);
+        let m_bottom = self.margin.map(|m| m.bottom.value(p_h, scale)).unwrap_or(0.0);
+
+        let box_width = match self.width {
+             Dimension::Px(w) => w * scale,
+             Dimension::Percent(p) => p_w * (p / 100.0) - (m_left + m_right),
+             Dimension::Auto => p_w - (m_left + m_right),
+        };
+        
+        let box_height = match self.height {
+             Dimension::Px(h) => h * scale,
+             Dimension::Percent(p) => p_h * (p / 100.0) - (m_top + m_bottom),
+             Dimension::Auto => p_h - (m_top + m_bottom),
+        };
+
+        Size { 
+            width: (box_width + m_left + m_right).max(0.0) as u32, 
+            height: (box_height + m_top + m_bottom).max(0.0) as u32 
+        }
+    }
+    
+    fn content_size(&self, ctx: &BuildContext) -> Size {
+        let scale = ctx.scale;
+        let p_w = ctx.parent_size.width as f32;
+        let p_h = ctx.parent_size.height as f32;
+        
+        let m_left = self.margin.map(|m| m.left.value(p_w, scale)).unwrap_or(0.0);
+        let m_right = self.margin.map(|m| m.right.value(p_w, scale)).unwrap_or(0.0);
+        let m_top = self.margin.map(|m| m.top.value(p_h, scale)).unwrap_or(0.0);
+        let m_bottom = self.margin.map(|m| m.bottom.value(p_h, scale)).unwrap_or(0.0);
+        
+        let box_width = match self.width {
+             Dimension::Px(w) => w * scale,
+             Dimension::Percent(p) => p_w * (p / 100.0) - (m_left + m_right),
+             Dimension::Auto => p_w - (m_left + m_right),
+        };
+        let box_height = match self.height {
+             Dimension::Px(h) => h * scale,
+             Dimension::Percent(p) => p_h * (p / 100.0) - (m_top + m_bottom),
+             Dimension::Auto => p_h - (m_top + m_bottom),
+        };
+        
+        let b_w = box_width.max(0.0);
+        let b_h = box_height.max(0.0);
+        
+        let p_left = self.padding.map(|p| p.left.value(b_w, scale)).unwrap_or(0.0);
+        let p_right = self.padding.map(|p| p.right.value(b_w, scale)).unwrap_or(0.0);
+        let p_top = self.padding.map(|p| p.top.value(b_h, scale)).unwrap_or(0.0);
+        let p_bottom = self.padding.map(|p| p.bottom.value(b_h, scale)).unwrap_or(0.0);
+
+        Size { 
+            width: (b_w - p_left - p_right).max(0.0) as u32, 
+            height: (b_h - p_top - p_bottom).max(0.0) as u32 
+        }
+    }
+
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(&self.child);
+    }
+
+    fn size(&self) -> Option<Size> {
+        match (self.width, self.height) {
+            (Dimension::Px(w), Dimension::Px(h)) => Some(Size { width: w as u32, height: h as u32 }),
+            _ => None,
+        }
+    }
+
+    fn get_size_from_child(&self) -> Option<Size> {
+        let mut size = self.child.get_size_from_child().unwrap_or_default();
+        
+        let mut m_w = 0;
+        let mut m_h = 0;
+        let mut p_w = 0;
+        let mut p_h = 0;
+        
+        if let Some(m) = self.margin {
+            if let Spacing::Px(v) = m.left { m_w += v; }
+            if let Spacing::Px(v) = m.right { m_w += v; }
+            if let Spacing::Px(v) = m.top { m_h += v; }
+            if let Spacing::Px(v) = m.bottom { m_h += v; }
+        }
+        if let Some(p) = self.padding {
+             if let Spacing::Px(v) = p.left { p_w += v; }
+             if let Spacing::Px(v) = p.right { p_w += v; }
+             if let Spacing::Px(v) = p.top { p_h += v; }
+             if let Spacing::Px(v) = p.bottom { p_h += v; }
+        }
+
+        if let Dimension::Px(w) = self.width {
+             size.width = w as u32 + m_w;
+        } else {
+             size.width += m_w + p_w;
+        }
+
+        if let Dimension::Px(h) = self.height {
+             size.height = h as u32 + m_h;
+        } else {
+             size.height += m_h + p_h;
+        }
+        
+        Some(size)
+    }
+}
+

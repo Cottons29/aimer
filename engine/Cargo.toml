@@ -21,11 +21,12 @@ color.workspace = true
 #################
 winit.workspace = true
 skia-safe.workspace = true
-glutin.workspace = true
+# glutin.workspace = true
 rayon.workspace = true  
 pixels.workspace = true
 chrono.workspace = true
-
+objc.workspace = true
+core-foundation.workspace = true
 
 
 

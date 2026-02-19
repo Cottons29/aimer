@@ -1,5 +1,5 @@
-mod normal;
+mod single_child;
 
-
-pub use normal::container::Container;
-pub use normal::zero_size_box::*;
+pub use single_child::sized_box::SizedBox;
+pub use single_child::container::Container;
+pub use single_child::zero_size_box::ZeroSizedBox;
