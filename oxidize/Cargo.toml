@@ -1,0 +1,17 @@
+[package]
+name = "oxidize"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+
+
+
+[dependencies]
+constructor.workspace  = true
+widget.workspace = true
+uuid.workspace = true
+color.workspace = true
+container.workspace = true
+engine.workspace = true
+
+
