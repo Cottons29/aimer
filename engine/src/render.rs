@@ -138,10 +138,6 @@ impl App {
                 hit = Some(h);
             }
         });
-        // Wait, visitor doesn't allow early exit easily unless we use a flag.
-        // Also we need REVERSE order for hit testing (top-most first).
-        // visit_children usually visits in paint order (back to front).
-        // So we need to visit in reverse paint order.
 
         // Let's collect children first.
         let mut children = Vec::new();
@@ -164,7 +160,7 @@ impl App {
         ctx.canvas.save();
         widget.draw(ctx);
         let child_ctx =
-            BuildContext { parent_size: widget.content_size(ctx), canvas: ctx.canvas, scale: ctx.scale, parent_pos: Default::default() };
+            BuildContext { parent_size: widget.content_size(ctx), canvas: ctx.canvas, scale: ctx.scale, parent_pos: Default::default(), box_constraint: None};
         widget.visit_children(&mut |child| {
             Self::render_widget_tree(child, &child_ctx);
         });
@@ -214,7 +210,8 @@ impl App {
                         parent_size: Size { width, height },
                         canvas: surface.canvas(),
                         scale: self.window_scale as f32,
-                        parent_pos: Default::default()
+                        parent_pos: Default::default(),
+                        box_constraint: None
                     };
                     ctx.canvas.clear(skia_safe::Color::WHITE);
                     #[allow(clippy::collapsible_if)]

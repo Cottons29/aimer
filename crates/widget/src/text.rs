@@ -1,5 +1,4 @@
-pub use crate::style::text_style::*;
-
+pub use crate::style::text_style::{TextAlign, TextStyle, FontWeight, FontStyle};
 use constructor::Constructor;
 use crate::{Widget, Element};
 use crate::base::BuildContext;

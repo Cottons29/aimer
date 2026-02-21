@@ -39,6 +39,7 @@ impl Element for RawSizedBox {
         let height = size.height as f32;
 
         let mut paint = Paint::default();
+        paint.set_anti_alias(true);
         paint.set_color(SkColor::from(self.color));
         paint.set_style(Style::Fill);
 
