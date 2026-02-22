@@ -1,15 +1,18 @@
+#[allow(unused)]
+use crate::render;
 use pixels::{Pixels, SurfaceTexture};
 use skia_safe::{AlphaType, ColorType};
 use widget::base::{BuildContext, Size, Vec2d};
 use widget::{Element, Widget};
 use winit::application::ApplicationHandler;
+#[allow(unused)]
 use winit::dpi::{LogicalSize, PhysicalSize, Position};
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
+#[allow(unused)]
 use winit::monitor::MonitorHandle;
+#[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
-
-use crate::render;
 
 pub struct App {
     pub window: Option<&'static Window>,
@@ -57,6 +60,7 @@ impl ApplicationHandler for App {
 
         println!("Window Size : {size:?}");
         let surface_texture = SurfaceTexture::new(size.width, size.height, window);
+
         let pixels = Pixels::new(size.width, size.height, surface_texture).unwrap();
         self.window = Some(window);
         self.pixels = Some(pixels);
@@ -84,9 +88,9 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
-                if !state.is_pressed() || button != winit::event::MouseButton::Left {
-                    return;
-                }
+                // if !state.is_pressed() || button != winit::event::MouseButton::Left {
+                //     return;
+                // }
 
                 // println!("Mouse Clicked : {:?}", self.cursor_pos);
 
@@ -104,12 +108,13 @@ impl ApplicationHandler for App {
 
             WindowEvent::RedrawRequested => self.render(event_loop),
             WindowEvent::Resized(size) => {
+                
                 if let Some(pixels) = &mut self.pixels {
                     let _ = pixels.resize_surface(size.width, size.height);
                     let _ = pixels.resize_buffer(size.width, size.height);
                 }
                 if let Some(window) = &self.window {
-                    window.request_redraw();
+                    self.render(event_loop);
                 }
             }
             _ => (),
@@ -280,8 +285,6 @@ mod tests {
         let hit = App::is_on_click(&wrapper, Vec2d { x: 15.0, y: 15.0 });
         assert!(hit.is_some());
 
-        // Verify we get a hit even if the wrapper has no bounds.
-        // With the old logic, this would fail (return None).
     }
 
     #[test]
