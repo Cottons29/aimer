@@ -13,12 +13,14 @@ impl OxidizeApp {
         if APP_STARTED.swap(true, Ordering::SeqCst) {
             eprintln!("OxidizeApp::start called multiple times. Ignoring subsequent calls.");
             return;
+
         }
 
         println!("Initializing EventLoop...");
         let event_loop = EventLoop::new().expect("Failed to create EventLoop");
         event_loop.set_control_flow(ControlFlow::Wait);
-        
+       
+
         println!("Creating App instance...");
         let mut app = App {
             window: None,

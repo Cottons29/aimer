@@ -9,8 +9,11 @@ use widget::{
 
 #[derive(Constructor)]
 pub struct SizedBox {
+    #[constructor(default, into)]
     width: Dimension,
+    #[constructor(default, into)]
     height: Dimension,
+    #[constructor(default,into)]
     color: Color,
     child: Option<Box<dyn Widget>>,
 }
@@ -38,6 +41,8 @@ impl Element for RawSizedBox {
         let width = size.width as f32;
         let height = size.height as f32;
 
+        println!("SizedBox color: {:?}", self.color);
+
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
         paint.set_color(SkColor::from(self.color));
@@ -51,14 +56,14 @@ impl Element for RawSizedBox {
         let scale = ctx.scale;
         let width = match self.width {
             Dimension::Px(w) => w * ctx.scale,
-            Dimension::Percent(p) => ctx.parent_size.width as f32 * (p / 100.0),
-            Dimension::Auto => ctx.parent_size.width as f32,
+            Dimension::Percent(p) => ctx.box_constraint.max_width as f32 * (p / 100.0),
+            Dimension::Auto => self.child.computed_size(ctx).width as f32,
         };
 
         let height = match self.height {
             Dimension::Px(h) => h * scale,
-            Dimension::Percent(p) => ctx.parent_size.height as f32 * (p / 100.0),
-            Dimension::Auto => ctx.parent_size.height as f32,
+            Dimension::Percent(p) => ctx.box_constraint.max_height as f32 * (p / 100.0),
+            Dimension::Auto => self.child.computed_size(ctx).height as f32,
         };
 
         Size { width: width as u32, height: height as u32 }

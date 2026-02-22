@@ -61,3 +61,35 @@ fn test_widgets_compile_and_construct() {
         initial_val: 42
     );
 }
+
+#[derive(Constructor)]
+struct CollectionWidget {
+    children: Vec<Box<dyn Widget>>,
+}
+
+#[derive(Constructor)]
+struct DynIterWidget {
+    #[constructor(dyn_iter)]
+    children: Vec<Box<dyn Widget>>,
+}
+
+#[test]
+fn test_collection_support() {
+    let widget = CollectionWidget!(
+        children: [DummyWidget, DummyWidget]
+    );
+    assert_eq!(widget.children.len(), 2);
+
+    let widget2 = DynIterWidget!(
+        children: [DummyWidget, DummyWidget, DummyWidget]
+    );
+    assert_eq!(widget2.children.len(), 3);
+
+    let multi_type = CollectionWidget!(
+        children: [
+            DummyWidget,
+            MyStatelessWidget!(size: Size { width: 10, height: 10 }),
+        ]
+    );
+    assert_eq!(multi_type.children.len(), 2);
+}

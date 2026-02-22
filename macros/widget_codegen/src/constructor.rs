@@ -24,6 +24,7 @@ struct FieldInfo<'a> {
     default: Option<TokenStream>,
     into: bool,
     first: bool,
+    dyn_iter: bool,
     docs: Vec<String>,
 }
 
@@ -36,6 +37,7 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
     let mut default = None;
     let mut into = false;
     let mut first = false;
+    let mut dyn_iter = false;
     let mut docs = Vec::new();
 
     for attr in &field.attrs {
@@ -69,6 +71,9 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
                 } else if meta.path.is_ident("first") {
                     first = true;
                     Ok(())
+                } else if meta.path.is_ident("dyn_iter") {
+                    dyn_iter = true;
+                    Ok(())
                 } else if meta.path.is_ident("visibility") {
                     let value: syn::LitStr = meta.value()?.parse()?;
                     if value.value() == "private" {
@@ -93,6 +98,7 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
         default,
         into,
         first,
+        dyn_iter,
         docs,
     })
 }
@@ -212,11 +218,11 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         let target_ident = target.ident;
 
         // Pattern matcher for current state
-        let state_matcher = public_fields.iter().map(|f| {
+        let state_matcher: Vec<_> = public_fields.iter().map(|f| {
             let f_ident = f.ident;
             let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());
             quote! { #f_ident : $#var_name:tt }
-        });
+        }).collect();
 
         // State update logic
         let state_update = public_fields.iter().map(|f| {
@@ -225,6 +231,17 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
                 // If this is the target field, wrap the value
                 if target.into {
                     quote! { #f_ident : ((($val).into())) }
+                } else if target.dyn_iter || is_collection_of_box(target.ty) {
+                    // let size = ;
+                    quote! {
+                        #f_ident : ({
+                            let mut temp_vec = Vec::new();
+                            for item in $val {
+                                temp_vec.push(Box::new(item) as _);
+                            }
+                            temp_vec
+                        })
+                    }
                 } else if is_option(target.ty) {
                     quote! { #f_ident : (Some($val)) }
                 } else if is_box(target.ty) {
@@ -239,7 +256,44 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
             }
         });
 
+        let array_rule = if target.dyn_iter || is_collection_of_box(target.ty) {
+            let state_update_array = public_fields.iter().map(|f| {
+                let f_ident = f.ident;
+                if f_ident == target_ident {
+                    quote! {
+                        #f_ident : ({
+                            vec![$(Box::new($item),)*]
+                            // let mut temp_vec = Vec::new();
+                            // $(
+                            //     temp_vec.push(Box::new($item) as _);
+                            // )*
+                            // temp_vec
+                        })
+                    }
+                } else {
+                    let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());
+                    quote! { #f_ident : $#var_name }
+                }
+            });
+
+            quote! {
+                (
+                    @munch { #(#state_matcher),* }
+                    #target_ident : [ $($item:expr),* $(,)? ] $(, $($rest:tt)*)?
+                ) => {
+                    #macro_name!(
+                        @munch { #(#state_update_array),* }
+                        $($($rest)*)?
+                    )
+                };
+            }
+        } else {
+            quote! {}
+        };
+
         quote! {
+            #array_rule
+
             (
                 @munch { #(#state_matcher),* }
                 #target_ident : $val:expr $(, $($rest:tt)*)?
@@ -333,6 +387,16 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
          // Logic to wrap value
          let val_wrapper = if f.into {
             quote! { ((($val).into())) }
+         } else if f.dyn_iter || is_collection_of_box(f.ty) {
+            quote! {
+                ({
+                    let mut temp_vec = Vec::new();
+                    for item in $val {
+                        temp_vec.push(Box::new(item) as _);
+                    }
+                    temp_vec
+                })
+            }
          } else if is_option(f.ty) {
             quote! { (Some($val)) }
          } else if is_box(f.ty) {
@@ -353,7 +417,42 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
          // Collect into a Vec to iterate multiple times
          let init_state_with_first: Vec<_> = init_state_with_first.collect();
          
+         let array_rules = if f.dyn_iter || is_collection_of_box(f.ty) {
+             let val_wrapper_array = quote! {
+                 ({
+                     let mut temp_vec = Vec::new();
+                     $(
+                         temp_vec.push(Box::new($item) as _);
+                     )*
+                     temp_vec
+                 })
+             };
+             
+             let init_state_with_first_array = public_fields.iter().map(|field| {
+                 let ident = field.ident;
+                 if ident == f_ident {
+                     quote! { #ident : #val_wrapper_array }
+                 } else {
+                     quote! { #ident : () }
+                 }
+             });
+             let init_state_with_first_array: Vec<_> = init_state_with_first_array.collect();
+
+             quote! {
+                ( [ $($item:expr),* $(,)? ], $($rest:tt)* ) => {
+                    #macro_name!(@munch { #(#init_state_with_first_array),* } $($rest)*)
+                };
+                ( [ $($item:expr),* $(,)? ] ) => {
+                    #macro_name!(@munch { #(#init_state_with_first_array),* })
+                };
+             }
+         } else {
+             quote! {}
+         };
+
          quote! {
+            #array_rules
+
             ( $val:expr, $($rest:tt)* ) => {
                 #macro_name!(@munch { #(#init_state_with_first),* } $($rest)*)
             };
@@ -454,6 +553,21 @@ fn is_box(ty: &Type) -> bool {
         if let Some(segment) = path.segments.last() {
             if segment.ident == "Box" {
                  return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_collection_of_box(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        if let Some(segment) = path.segments.last() {
+            if segment.ident == "Vec" || segment.ident == "Array" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                        return is_box(inner_ty);
+                    }
+                }
             }
         }
     }

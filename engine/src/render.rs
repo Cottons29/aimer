@@ -18,18 +18,19 @@ pub struct App {
     pub pending_widget: Option<Box<dyn Widget>>,
     pub cursor_pos: Vec2d,
     pub window_scale: f64,
-    pub native_window_size: Option<Size>
+    pub native_window_size: Option<Size>,
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "ios")]
         {
-            match crate::utils::get_screen_resolution_pixels(){
-                Some((width, height)) => self.native_window_size = Some(Size{width: width as u32, height: height as u32}),
-                None => ()
+            match crate::utils::get_screen_resolution_pixels() {
+                Some((width, height)) => {
+                    self.native_window_size = Some(Size { width: width as u32, height: height as u32 })
+                }
+                None => (),
             };
-            
         }
 
         let window_attributes = {
@@ -49,7 +50,6 @@ impl ApplicationHandler for App {
             }
         };
 
-        
         let window = event_loop.create_window(window_attributes).unwrap();
         let window: &'static Window = Box::leak(Box::new(window)); // Leak to static ref
 
@@ -114,7 +114,6 @@ impl ApplicationHandler for App {
             }
             _ => (),
         }
-        
     }
 }
 
@@ -159,8 +158,13 @@ impl App {
     fn render_widget_tree(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
         widget.draw(ctx);
-        let child_ctx =
-            BuildContext { parent_size: widget.content_size(ctx), canvas: ctx.canvas, scale: ctx.scale, parent_pos: Default::default(), box_constraint: None};
+        let child_ctx = BuildContext {
+            parent_size: widget.content_size(ctx),
+            canvas: ctx.canvas,
+            scale: ctx.scale,
+            parent_pos: Default::default(),
+            box_constraint: Default::default(),
+        };
         widget.visit_children(&mut |child| {
             Self::render_widget_tree(child, &child_ctx);
         });
@@ -170,7 +174,7 @@ impl App {
     fn render(&mut self, event_loop: &ActiveEventLoop) {
         if let (Some(pixels), Some(window)) = (&mut self.pixels, &self.window) {
             let (width, height) = {
-                #[cfg(not(target_os = "ios"))] 
+                #[cfg(not(target_os = "ios"))]
                 {
                     let width = window.inner_size().width;
                     let height = window.inner_size().height;
@@ -182,15 +186,15 @@ impl App {
                         Some(item) => (item.width as u32, item.height as u32),
                         None => {
                             let width = window.inner_size().width;
-                    let height = window.inner_size().height;
-                    (width, height)
+                            let height = window.inner_size().height;
+                            (width, height)
                         }
                     }
                 }
-            };        
-            
+            };
+
             // println!("Width {width}, height: {height}");
-            
+
             let frame = pixels.frame_mut();
 
             let info = skia_safe::ImageInfo::new(
@@ -211,7 +215,7 @@ impl App {
                         canvas: surface.canvas(),
                         scale: self.window_scale as f32,
                         parent_pos: Default::default(),
-                        box_constraint: None
+                        box_constraint: Default::default(),
                     };
                     ctx.canvas.clear(skia_safe::Color::WHITE);
                     #[allow(clippy::collapsible_if)]

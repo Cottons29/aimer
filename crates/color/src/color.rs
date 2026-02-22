@@ -6,7 +6,7 @@ pub mod basic_color;
 use basic_color::Colors;
 
 use crate::prelude::ColorMixer;
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Color {
     /// Red, Green, Blue, Alpha (0-255)
     Rgba(u8, u8, u8, u8),
