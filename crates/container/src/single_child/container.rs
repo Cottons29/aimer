@@ -93,6 +93,7 @@ impl<T: Element> Element for RawContainer<T> {
                             .unwrap_or(0.0))
             }
             Dimension::Auto => {
+                 
                 let c_h = self.child.computed_size(ctx).height as f32;
                 let mut p_h = 0.0;
                 if let Some(p) = self.padding {
@@ -156,16 +157,41 @@ impl<T: Element> Element for RawContainer<T> {
             .map(|m| m.bottom.value(p_h, scale))
             .unwrap_or(0.0);
 
+        let mut child_ctx = BuildContext {
+            parent_size: ctx.parent_size,
+            canvas: ctx.canvas,
+            scale: ctx.scale,
+            parent_pos: ctx.parent_pos,
+            box_constraint: ctx.box_constraint,
+        };
+
+        let mut p_w_pad = 0.0;
+        let mut p_h_pad = 0.0;
+        if let Some(p) = self.padding {
+            if let Spacing::Px(v) = p.left { p_w_pad += v as f32 * scale; }
+            if let Spacing::Px(v) = p.right { p_w_pad += v as f32 * scale; }
+            if let Spacing::Px(v) = p.top { p_h_pad += v as f32 * scale; }
+            if let Spacing::Px(v) = p.bottom { p_h_pad += v as f32 * scale; }
+        }
+
+        let w_val = match self.width {
+            Dimension::Px(w) => w * scale,
+            Dimension::Percent(p) => p_w * (p / 100.0) - (m_left + m_right),
+            Dimension::Auto => p_w - (m_left + m_right) - p_w_pad,
+        };
+        let h_val = match self.height {
+            Dimension::Px(h) => h * scale,
+            Dimension::Percent(p) => p_h * (p / 100.0) - (m_top + m_bottom),
+            Dimension::Auto => p_h - (m_top + m_bottom) - p_h_pad,
+        };
+        child_ctx.box_constraint.max_width = w_val.max(0.0) as u32;
+        child_ctx.box_constraint.max_height = h_val.max(0.0) as u32;
+
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
             Dimension::Percent(p) => p_w * (p / 100.0) - (m_left + m_right),
             Dimension::Auto => {
-                let c_w = self.child.computed_size(ctx).width as f32;
-                let mut p_w_pad = 0.0;
-                if let Some(p) = self.padding {
-                    if let Spacing::Px(v) = p.left { p_w_pad += v as f32 * scale; }
-                    if let Spacing::Px(v) = p.right { p_w_pad += v as f32 * scale; }
-                }
+                let c_w = self.child.computed_size(&child_ctx).width as f32;
                 c_w + p_w_pad
             }
         };
@@ -174,12 +200,7 @@ impl<T: Element> Element for RawContainer<T> {
             Dimension::Px(h) => h * scale,
             Dimension::Percent(p) => p_h * (p / 100.0) - (m_top + m_bottom),
             Dimension::Auto => {
-                let c_h = self.child.computed_size(ctx).height as f32;
-                let mut p_h_pad = 0.0;
-                if let Some(p) = self.padding {
-                    if let Spacing::Px(v) = p.top { p_h_pad += v as f32 * scale; }
-                    if let Spacing::Px(v) = p.bottom { p_h_pad += v as f32 * scale; }
-                }
+                let c_h = self.child.computed_size(&child_ctx).height as f32;
                 c_h + p_h_pad
             }
         };
@@ -206,16 +227,41 @@ impl<T: Element> Element for RawContainer<T> {
             .map(|m| m.bottom.value(p_h, scale))
             .unwrap_or(0.0);
 
+        let mut child_ctx = BuildContext {
+            parent_size: ctx.parent_size,
+            canvas: ctx.canvas,
+            scale: ctx.scale,
+            parent_pos: ctx.parent_pos,
+            box_constraint: ctx.box_constraint,
+        };
+
+        let mut p_w_pad = 0.0;
+        let mut p_h_pad = 0.0;
+        if let Some(p) = self.padding {
+            if let Spacing::Px(v) = p.left { p_w_pad += v as f32 * scale; }
+            if let Spacing::Px(v) = p.right { p_w_pad += v as f32 * scale; }
+            if let Spacing::Px(v) = p.top { p_h_pad += v as f32 * scale; }
+            if let Spacing::Px(v) = p.bottom { p_h_pad += v as f32 * scale; }
+        }
+
+        let w_val = match self.width {
+            Dimension::Px(w) => w * scale,
+            Dimension::Percent(p) => p_w * (p / 100.0) - (m_left + m_right),
+            Dimension::Auto => p_w - (m_left + m_right) - p_w_pad,
+        };
+        let h_val = match self.height {
+            Dimension::Px(h) => h * scale,
+            Dimension::Percent(p) => p_h * (p / 100.0) - (m_top + m_bottom),
+            Dimension::Auto => p_h - (m_top + m_bottom) - p_h_pad,
+        };
+        child_ctx.box_constraint.max_width = w_val.max(0.0) as u32;
+        child_ctx.box_constraint.max_height = h_val.max(0.0) as u32;
+
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
             Dimension::Percent(p) => p_w * (p / 100.0) - (m_left + m_right),
             Dimension::Auto => {
-                let c_w = self.child.computed_size(ctx).width as f32;
-                let mut p_w_pad = 0.0;
-                if let Some(p) = self.padding {
-                    if let Spacing::Px(v) = p.left { p_w_pad += v as f32 * scale; }
-                    if let Spacing::Px(v) = p.right { p_w_pad += v as f32 * scale; }
-                }
+                let c_w = self.child.computed_size(&child_ctx).width as f32;
                 c_w + p_w_pad
             }
         };
@@ -223,12 +269,7 @@ impl<T: Element> Element for RawContainer<T> {
             Dimension::Px(h) => h * scale,
             Dimension::Percent(p) => p_h * (p / 100.0) - (m_top + m_bottom),
             Dimension::Auto => {
-                let c_h = self.child.computed_size(ctx).height as f32;
-                let mut p_h_pad = 0.0;
-                if let Some(p) = self.padding {
-                    if let Spacing::Px(v) = p.top { p_h_pad += v as f32 * scale; }
-                    if let Spacing::Px(v) = p.bottom { p_h_pad += v as f32 * scale; }
-                }
+                let c_h = self.child.computed_size(&child_ctx).height as f32;
                 c_h + p_h_pad
             }
         };

@@ -25,6 +25,15 @@ impl Element for StatelessElement {
     fn size(&self) -> Option<Size> {
         self.child.size()
     }
+    fn computed_size(&self, ctx: &BuildContext) -> Size {
+        self.child.computed_size(ctx)
+    }
+    fn content_size(&self, ctx: &BuildContext) -> Size {
+        self.child.content_size(ctx)
+    }
+    fn get_size_from_child(&self) -> Option<Size> {
+        self.child.get_size_from_child()
+    }
 }
 
 

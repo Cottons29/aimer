@@ -114,16 +114,24 @@ impl Element for RawFlex {
             box_constraint: ctx.box_constraint,
         };
 
-        println!("Child Count : {}", self.children.len());
+        // println!("Child Count : {}", self.children.len());
+
+        let mut used_w = 0.0;
+        let mut used_h = 0.0;
+        let mut child_count = 0;
 
         for child in &self.children {
             match self.direction {
                 FlexDirection::Row | FlexDirection::Inherit => {
-                    child_ctx.box_constraint.max_width = u32::MAX;
+                    let mut used = used_w;
+                    if child_count > 0 { used += gap_x; }
+                    child_ctx.box_constraint.max_width = (ctx.box_constraint.max_width as f32 - used).max(0.0) as u32;
                     child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
                 }
                 FlexDirection::Column => {
-                    child_ctx.box_constraint.max_height = u32::MAX;
+                    let mut used = used_h;
+                    if child_count > 0 { used += gap_y; }
+                    child_ctx.box_constraint.max_height = (ctx.box_constraint.max_height as f32 - used).max(0.0) as u32;
                     child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
                 }
             }
@@ -175,11 +183,16 @@ impl Element for RawFlex {
             match self.direction {
                 FlexDirection::Row | FlexDirection::Inherit => {
                     current_x += c_w + gap_x;
+                    if child_count > 0 { used_w += gap_x; }
+                    used_w += c_w;
                 }
                 FlexDirection::Column => {
                     current_y += c_h + gap_y;
+                    if child_count > 0 { used_h += gap_y; }
+                    used_h += c_h;
                 }
             }
+            child_count += 1;
         }
 
         ctx.canvas.restore();
@@ -219,38 +232,33 @@ impl Element for RawFlex {
             // In Flutter flex algorithm, inflexible children are laid out with unbounded main axis.
             match self.direction {
                 FlexDirection::Row | FlexDirection::Inherit => {
-                    child_ctx.box_constraint.max_width = u32::MAX;
+                    let mut used = width;
+                    if child_count > 0 { used += gap_x; }
+                    child_ctx.box_constraint.max_width = (ctx.box_constraint.max_width as f32 - used).max(0.0) as u32;
                     child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
                 }
                 FlexDirection::Column => {
-                    child_ctx.box_constraint.max_height = u32::MAX;
+                    let mut used = height;
+                    if child_count > 0 { used += gap_y; }
+                    child_ctx.box_constraint.max_height = (ctx.box_constraint.max_height as f32 - used).max(0.0) as u32;
                     child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
                 }
             }
 
             let s = child.computed_size(&child_ctx);
-            child_count += 1;
             match self.direction {
                 FlexDirection::Row | FlexDirection::Inherit => {
+                    if child_count > 0 { width += gap_x; }
                     width += s.width as f32;
                     height = height.max(s.height as f32);
                 }
                 FlexDirection::Column => {
+                    if child_count > 0 { height += gap_y; }
                     height += s.height as f32;
                     width = width.max(s.width as f32);
                 }
             }
-        }
-
-        if child_count > 1 {
-            match self.direction {
-                FlexDirection::Row | FlexDirection::Inherit => {
-                    width += gap_x * (child_count - 1) as f32;
-                }
-                FlexDirection::Column => {
-                    height += gap_y * (child_count - 1) as f32;
-                }
-            }
+            child_count += 1;
         }
 
         widget::base::Size { width: width as u32, height: height as u32 }

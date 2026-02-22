@@ -41,7 +41,7 @@ impl Element for RawSizedBox {
         let width = size.width as f32;
         let height = size.height as f32;
 
-        println!("SizedBox color: {:?}", self.color);
+        // println!("SizedBox color: {:?}", self.color);
 
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
@@ -54,16 +54,36 @@ impl Element for RawSizedBox {
 
     fn computed_size(&self, ctx: &BuildContext) -> Size {
         let scale = ctx.scale;
+        
+        let mut child_ctx = BuildContext {
+            parent_size: ctx.parent_size,
+            canvas: ctx.canvas,
+            scale: ctx.scale,
+            parent_pos: ctx.parent_pos,
+            box_constraint: ctx.box_constraint,
+        };
+
+        child_ctx.box_constraint.max_width = match self.width {
+            Dimension::Px(w) => (w * scale) as u32,
+            Dimension::Percent(p) => (ctx.box_constraint.max_width as f32 * (p / 100.0)) as u32,
+            Dimension::Auto => ctx.box_constraint.max_width,
+        };
+        child_ctx.box_constraint.max_height = match self.height {
+            Dimension::Px(h) => (h * scale) as u32,
+            Dimension::Percent(p) => (ctx.box_constraint.max_height as f32 * (p / 100.0)) as u32,
+            Dimension::Auto => ctx.box_constraint.max_height,
+        };
+
         let width = match self.width {
-            Dimension::Px(w) => w * ctx.scale,
+            Dimension::Px(w) => w * scale,
             Dimension::Percent(p) => ctx.box_constraint.max_width as f32 * (p / 100.0),
-            Dimension::Auto => self.child.computed_size(ctx).width as f32,
+            Dimension::Auto => self.child.computed_size(&child_ctx).width as f32,
         };
 
         let height = match self.height {
             Dimension::Px(h) => h * scale,
             Dimension::Percent(p) => ctx.box_constraint.max_height as f32 * (p / 100.0),
-            Dimension::Auto => self.child.computed_size(ctx).height as f32,
+            Dimension::Auto => self.child.computed_size(&child_ctx).height as f32,
         };
 
         Size { width: width as u32, height: height as u32 }
