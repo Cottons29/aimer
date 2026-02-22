@@ -1,7 +1,10 @@
-use widget::{Constructor, Element, LayoutCache, LayoutSpacing, Widget};
+use widget::{
+    Constructor, Element, LayoutCache, LayoutSpacing, Widget,
+    base::{BuildContext, Size},
+};
 
-use crate::flex::{BoxAlignment, FlexDirection};
-
+use crate::flex::{BoxAlignment, FlexDirection, OverflowBehavior};
+#[allow(dead_code)]
 #[derive(Constructor)]
 pub struct Flex {
     #[constructor(default)]
@@ -13,16 +16,9 @@ pub struct Flex {
     #[constructor(default)]
     gaps: LayoutSpacing,
     #[constructor(default)]
+    overflow: OverflowBehavior,
+    #[constructor(default)]
     children: Vec<Box<dyn Widget>>,
-}
-
-pub struct RawFlex {
-    direction: FlexDirection,
-    vertical_alignment: BoxAlignment,
-    horizontal_alignment: BoxAlignment,
-    gaps: LayoutSpacing,
-    children: Vec<Box<dyn Element>>,
-    cache: LayoutCache,
 }
 
 impl Widget for Flex {
@@ -35,8 +31,20 @@ impl Widget for Flex {
             gaps: self.gaps,
             children: elements,
             cache: LayoutCache::new(),
+            overflow_behavior: self.overflow,
         })
     }
+}
+
+#[allow(dead_code)]
+pub struct RawFlex {
+    direction: FlexDirection,
+    vertical_alignment: BoxAlignment,
+    horizontal_alignment: BoxAlignment,
+    gaps: LayoutSpacing,
+    children: Vec<Box<dyn Element>>,
+    cache: LayoutCache,
+    overflow_behavior: OverflowBehavior,
 }
 
 impl RawFlex {
@@ -63,9 +71,8 @@ impl RawFlex {
     }
 }
 
-impl Element for RawFlex {
-    fn draw(&self, ctx: &widget::base::BuildContext) {
-        let size = self.computed_size(ctx);
+impl RawFlex {
+    fn resole_gaps(&self, ctx: &BuildContext) -> (f32, f32) {
         let gap_x = self
             .gaps
             .left
@@ -83,6 +90,14 @@ impl Element for RawFlex {
                 .bottom
                 .value(ctx.box_constraint.max_height, ctx.scale);
 
+        (gap_x, gap_y)
+    }
+}
+
+impl Element for RawFlex {
+    fn draw(&self, ctx: &widget::base::BuildContext) {
+        let size = self.computed_size(ctx);
+        let (gap_x, gap_y) = self.resole_gaps(ctx);
         let max_w = ctx.box_constraint.max_width;
         let max_h = ctx.box_constraint.max_height;
 
@@ -114,6 +129,9 @@ impl Element for RawFlex {
 
         ctx.canvas.save();
 
+        // Apply clipping for overflow hidden
+        self.overflow_behavior.apply_overflow_behave(ctx);
+
         let mut child_ctx = widget::base::BuildContext {
             parent_size: ctx.parent_size,
             canvas: ctx.canvas,
@@ -140,12 +158,14 @@ impl Element for RawFlex {
         for child in &self.children {
             let has_explicit_main = match self.direction {
                 FlexDirection::Row | FlexDirection::Inherit => {
-                    child.size().map_or(false, |s| !s.is_auto_width())
-                        || child.get_size_from_child().map_or(false, |s| !s.is_auto_width())
+                    let has_width = |s: Size| !s.is_auto_width();
+
+                    child.size().is_some_and(has_width) || child.get_size_from_child().is_some_and(has_width)
                 }
                 FlexDirection::Column => {
-                    child.size().map_or(false, |s| !s.is_auto_height())
-                        || child.get_size_from_child().map_or(false, |s| !s.is_auto_height())
+                    let has_height = |s: Size| !s.is_auto_height();
+
+                    child.size().is_some_and(has_height) || child.get_size_from_child().is_some_and(has_height)
                 }
             };
             child_has_size.push(has_explicit_main);
@@ -311,14 +331,19 @@ impl Element for RawFlex {
         };
 
         for child in &self.children {
+            #[allow(clippy::unnecessary_map_or)]
             let has_explicit_main = match self.direction {
                 FlexDirection::Row | FlexDirection::Inherit => {
                     child.size().map_or(false, |s| !s.is_auto_width())
-                        || child.get_size_from_child().map_or(false, |s| !s.is_auto_width())
+                        || child
+                            .get_size_from_child()
+                            .map_or(false, |s| !s.is_auto_width())
                 }
                 FlexDirection::Column => {
                     child.size().map_or(false, |s| !s.is_auto_height())
-                        || child.get_size_from_child().map_or(false, |s| !s.is_auto_height())
+                        || child
+                            .get_size_from_child()
+                            .map_or(false, |s| !s.is_auto_height())
                 }
             };
             if has_explicit_main {
@@ -388,7 +413,8 @@ impl Element for RawFlex {
         }
 
         let result = widget::base::ResolvedSize { width, height };
-        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
+        self.cache
+            .set_computed(ctx.box_constraint, scale_bits, result);
         result
     }
 

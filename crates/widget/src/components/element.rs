@@ -1,14 +1,26 @@
 use crate::base::*;
 
 #[allow(dead_code)]
+/// ## A Lower Level Trait For Build THe Element From Nothing :))
 pub trait Element: Send + Sync {
+
+    /// For drawing the element to the canvas
     fn draw(&self, ctx: &BuildContext);
+
+
+    /// get the position of the element
     fn pos(&self) -> Option<Vec2d> {
         None
     }
+
+    /// size of the element 
     fn size(&self) -> Option<Size> {
         None
     }
+
+
+
+    /// coord of the element from start to end (also thinking as boundary box)
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         if self.size().is_none() || self.pos().is_none() {
             return None;
@@ -28,27 +40,39 @@ pub trait Element: Send + Sync {
         let end = start.get_end(resolved);
         Some((start, end))
     }
+
+    /// for the container visit child | children
     fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
         // default no children
     }
+    
 
+    /// apply layout for the flexible container such as flex, column...
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
         self.computed_size(ctx)
     }
-
+    
+    /// calculate the size after apply layout
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.size()
-            .map(|s| s.resolve(&ResolvedSize {
-                width: ctx.box_constraint.max_width,
-                height: ctx.box_constraint.max_height,
-            }, ctx.scale))
+            .map(|s| {
+                s.resolve(
+                    &ResolvedSize {
+                        width: ctx.box_constraint.max_width,
+                        height: ctx.box_constraint.max_height,
+                    },
+                    ctx.scale,
+                )
+            })
             .unwrap_or(ctx.parent_size)
     }
-
+    
+    /// i don't know why this appear here :) just for the shorter ?
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.computed_size(ctx)
     }
-
+    
+    /// get the size from the child when parent has no size explicit
     fn get_size_from_child(&self) -> Option<Size> {
         if let Some(s) = self.size() {
             return Some(s);
@@ -116,4 +140,3 @@ impl Element for Box<dyn Element> {
         self.as_ref().invalidate_layout()
     }
 }
-

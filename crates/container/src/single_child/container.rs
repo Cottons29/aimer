@@ -121,6 +121,33 @@ impl<T: Element> Element for RawContainer<T> {
             border.draw(ctx.canvas, box_width, box_height, scale);
         }
 
+        // Clip children to inside the border
+        if let Some(border) = self.border {
+            let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
+                match dim {
+                    Dimension::Px(w) => w * scale,
+                    Dimension::Percent(p) => parent_val * (p / 100.0),
+                    Dimension::Auto => 0.0,
+                }
+            };
+            let stroke = get_stroke(border.left.stroke, box_width).max(0.0);
+            let half = stroke / 2.0;
+            let inset_rect = skia_safe::Rect::from_xywh(half, half, (box_width - stroke).max(0.0), (box_height - stroke).max(0.0));
+            if let Some(radius) = border.get_uniform_radius(box_width, box_height, scale) {
+                let inner_radius = (radius - half).max(0.0);
+                let rrect = skia_safe::RRect::new_rect_xy(inset_rect, inner_radius, inner_radius);
+                ctx.canvas.clip_rrect(rrect, skia_safe::ClipOp::Intersect, true);
+            } else {
+                ctx.canvas.clip_rect(inset_rect, skia_safe::ClipOp::Intersect, true);
+            }
+        } else {
+            ctx.canvas.clip_rect(
+                skia_safe::Rect::from_xywh(0.0, 0.0, box_width, box_height),
+                skia_safe::ClipOp::Intersect,
+                true,
+            );
+        }
+
         let p_left = self
             .padding
             .map(|p| p.left.value(box_width, scale))
