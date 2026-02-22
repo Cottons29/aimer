@@ -35,3 +35,13 @@ impl From<u32> for Dimension {
         Self::Px(v as f32)
     }
 }
+
+impl Dimension {
+    pub fn resolve(&self, parent_value: f32, scale: f32) -> f32 {
+        match self {
+            Dimension::Px(v) => v * scale,
+            Dimension::Percent(p) => parent_value * (p / 100.0),
+            Dimension::Auto => parent_value,
+        }
+    }
+}

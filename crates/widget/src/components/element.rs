@@ -14,18 +14,38 @@ pub trait Element: Send + Sync {
             return None;
         }
         let start = self.pos().unwrap();
-        let end = start.get_end(self.size().unwrap());
+        let size = self.size().unwrap();
+        let resolved = ResolvedSize {
+            width: match size.width {
+                Dimension::Px(v) => v,
+                _ => 0.0,
+            },
+            height: match size.height {
+                Dimension::Px(v) => v,
+                _ => 0.0,
+            },
+        };
+        let end = start.get_end(resolved);
         Some((start, end))
     }
     fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
         // default no children
     }
 
-    fn computed_size(&self, ctx: &BuildContext) -> Size {
-        self.size().unwrap_or(ctx.parent_size)
+    fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.computed_size(ctx)
     }
 
-    fn content_size(&self, ctx: &BuildContext) -> Size {
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.size()
+            .map(|s| s.resolve(&ResolvedSize {
+                width: ctx.box_constraint.max_width,
+                height: ctx.box_constraint.max_height,
+            }, ctx.scale))
+            .unwrap_or(ctx.parent_size)
+    }
+
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.computed_size(ctx)
     }
 
@@ -34,19 +54,36 @@ pub trait Element: Send + Sync {
             return Some(s);
         }
 
-        let mut max_w = 0;
-        let mut max_h = 0;
+        let mut result_w = Dimension::Auto;
+        let mut result_h = Dimension::Auto;
         let mut found = false;
 
         self.visit_children(&mut |item| {
             if let Some(child_size) = item.size().or_else(|| item.get_size_from_child()) {
-                max_w = max_w.max(child_size.width);
-                max_h = max_h.max(child_size.height);
+                // For Px values, take the max; otherwise keep what we have
+                result_w = match (result_w, child_size.width) {
+                    (Dimension::Px(a), Dimension::Px(b)) => Dimension::Px(a.max(b)),
+                    (Dimension::Auto, w) => w,
+                    (w, _) => w,
+                };
+                result_h = match (result_h, child_size.height) {
+                    (Dimension::Px(a), Dimension::Px(b)) => Dimension::Px(a.max(b)),
+                    (Dimension::Auto, h) => h,
+                    (h, _) => h,
+                };
                 found = true;
             }
         });
 
-        if found { Some(Size { width: max_w, height: max_h }) } else { None }
+        if found { Some(Size { width: result_w, height: result_h }) } else { None }
+    }
+
+    /// Invalidate cached layout data for this element and all children.
+    /// Called at the start of each frame to ensure fresh layout.
+    fn invalidate_layout(&self) {
+        self.visit_children(&mut |child| {
+            child.invalidate_layout();
+        });
     }
 }
 
@@ -63,14 +100,20 @@ impl Element for Box<dyn Element> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().visit_children(visitor)
     }
-    fn computed_size(&self, ctx: &BuildContext) -> Size {
+    fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.as_ref().layout(ctx)
+    }
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.as_ref().computed_size(ctx)
     }
-    fn content_size(&self, ctx: &BuildContext) -> Size {
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.as_ref().content_size(ctx)
     }
     fn get_size_from_child(&self) -> Option<Size> {
         self.as_ref().get_size_from_child()
+    }
+    fn invalidate_layout(&self) {
+        self.as_ref().invalidate_layout()
     }
 }
 

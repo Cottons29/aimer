@@ -1,13 +1,13 @@
 use crate::base::Dimension;
 
-#[derive(constructor::Constructor, Default, Clone, Copy)]
+#[derive(constructor::Constructor, Default, Clone, Copy, PartialEq)]
 pub struct BoxConstraint{
     #[constructor(default, into)]
-    pub min_width: u32,
+    pub min_width: f32,
     #[constructor(default, into)]
-    pub min_height: u32,
+    pub min_height: f32,
     #[constructor(default, into)]
-    pub max_width: u32,
+    pub max_width: f32,
     #[constructor(default, into)]
-    pub max_height: u32,
+    pub max_height: f32,
 }

@@ -3,7 +3,7 @@ use skia_safe::Paint;
 use skia_safe::{Color as SkColor, Rect, paint::Style};
 use widget::base::*;
 use widget::{
-    Constructor, Element, Widget,
+    Constructor, Element, LayoutCache, Widget,
     base::{Color, Dimension},
 };
 
@@ -24,7 +24,7 @@ impl Widget for SizedBox {
             Some(item) => item.to_element(ctx),
             None => ZeroSizedBox.to_element(ctx),
         };
-        Box::new(RawSizedBox { width: self.width, height: self.height, child, color: self.color })
+        Box::new(RawSizedBox { width: self.width, height: self.height, child, color: self.color, cache: LayoutCache::new() })
     }
 }
 
@@ -33,15 +33,14 @@ pub struct RawSizedBox {
     height: Dimension,
     color: Color,
     child: Box<dyn Element>,
+    cache: LayoutCache,
 }
 
 impl Element for RawSizedBox {
     fn draw(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
-        let width = size.width as f32;
-        let height = size.height as f32;
-
-        // println!("SizedBox color: {:?}", self.color);
+        let width = size.width;
+        let height = size.height;
 
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
@@ -52,7 +51,12 @@ impl Element for RawSizedBox {
         ctx.canvas.draw_rect(rect, &paint);
     }
 
-    fn computed_size(&self, ctx: &BuildContext) -> Size {
+    fn computed_size(&self, ctx: &BuildContext) -> widget::base::ResolvedSize {
+        let scale_bits = ctx.scale.to_bits();
+        if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
+            return cached;
+        }
+
         let scale = ctx.scale;
         
         let mut child_ctx = BuildContext {
@@ -63,30 +67,29 @@ impl Element for RawSizedBox {
             box_constraint: ctx.box_constraint,
         };
 
-        child_ctx.box_constraint.max_width = match self.width {
-            Dimension::Px(w) => (w * scale) as u32,
-            Dimension::Percent(p) => (ctx.box_constraint.max_width as f32 * (p / 100.0)) as u32,
-            Dimension::Auto => ctx.box_constraint.max_width,
-        };
-        child_ctx.box_constraint.max_height = match self.height {
-            Dimension::Px(h) => (h * scale) as u32,
-            Dimension::Percent(p) => (ctx.box_constraint.max_height as f32 * (p / 100.0)) as u32,
-            Dimension::Auto => ctx.box_constraint.max_height,
-        };
+        child_ctx.box_constraint.max_width = self.width.resolve(ctx.box_constraint.max_width, scale);
+        child_ctx.box_constraint.max_height = self.height.resolve(ctx.box_constraint.max_height, scale);
 
         let width = match self.width {
             Dimension::Px(w) => w * scale,
-            Dimension::Percent(p) => ctx.box_constraint.max_width as f32 * (p / 100.0),
-            Dimension::Auto => self.child.computed_size(&child_ctx).width as f32,
+            Dimension::Percent(p) => ctx.box_constraint.max_width * (p / 100.0),
+            Dimension::Auto => self.child.computed_size(&child_ctx).width,
         };
 
         let height = match self.height {
             Dimension::Px(h) => h * scale,
-            Dimension::Percent(p) => ctx.box_constraint.max_height as f32 * (p / 100.0),
-            Dimension::Auto => self.child.computed_size(&child_ctx).height as f32,
+            Dimension::Percent(p) => ctx.box_constraint.max_height * (p / 100.0),
+            Dimension::Auto => self.child.computed_size(&child_ctx).height,
         };
 
-        Size { width: width as u32, height: height as u32 }
+        let result = widget::base::ResolvedSize { width, height };
+        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
+        result
+    }
+
+    fn invalidate_layout(&self) {
+        self.cache.invalidate();
+        self.child.invalidate_layout();
     }
 
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -95,18 +98,18 @@ impl Element for RawSizedBox {
 
     fn size(&self) -> Option<Size> {
         match (self.width, self.height) {
-            (Dimension::Px(w), Dimension::Px(h)) => Some(Size { width: w as u32, height: h as u32 }),
+            (Dimension::Px(w), Dimension::Px(h)) => Some(Size { width: Dimension::Px(w), height: Dimension::Px(h) }),
             _ => None,
         }
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
         let mut size = self.child.get_size_from_child().unwrap_or_default();
-        if let Dimension::Px(w) = self.width {
-            size.width = w as u32;
+        if let Dimension::Px(_) = self.width {
+            size.width = self.width;
         }
-        if let Dimension::Px(h) = self.height {
-            size.height = h as u32;
+        if let Dimension::Px(_) = self.height {
+            size.height = self.height;
         }
         Some(size)
     }

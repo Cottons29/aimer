@@ -1,0 +1,62 @@
+use std::sync::Mutex;
+use crate::attribute::size::ResolvedSize;
+use crate::style::constraints::BoxConstraint;
+
+/// Caches the result of `computed_size` and `content_size` for a single frame.
+/// The cache is keyed by `(BoxConstraint, scale)` so that if the same element
+/// is queried multiple times with the same inputs, the result is returned instantly.
+pub struct LayoutCache {
+    computed: Mutex<Option<(BoxConstraint, u32, ResolvedSize)>>,
+    content: Mutex<Option<(BoxConstraint, u32, ResolvedSize)>>,
+}
+
+impl LayoutCache {
+    pub fn new() -> Self {
+        Self {
+            computed: Mutex::new(None),
+            content: Mutex::new(None),
+        }
+    }
+
+    /// Returns cached computed_size if constraint and scale match, otherwise None.
+    pub fn get_computed(&self, constraint: BoxConstraint, scale_bits: u32) -> Option<ResolvedSize> {
+        let guard = self.computed.lock().unwrap();
+        match *guard {
+            Some((c, s, size)) if c == constraint && s == scale_bits => Some(size),
+            _ => None,
+        }
+    }
+
+    /// Stores computed_size result.
+    pub fn set_computed(&self, constraint: BoxConstraint, scale_bits: u32, size: ResolvedSize) {
+        let mut guard = self.computed.lock().unwrap();
+        *guard = Some((constraint, scale_bits, size));
+    }
+
+    /// Returns cached content_size if constraint and scale match, otherwise None.
+    pub fn get_content(&self, constraint: BoxConstraint, scale_bits: u32) -> Option<ResolvedSize> {
+        let guard = self.content.lock().unwrap();
+        match *guard {
+            Some((c, s, size)) if c == constraint && s == scale_bits => Some(size),
+            _ => None,
+        }
+    }
+
+    /// Stores content_size result.
+    pub fn set_content(&self, constraint: BoxConstraint, scale_bits: u32, size: ResolvedSize) {
+        let mut guard = self.content.lock().unwrap();
+        *guard = Some((constraint, scale_bits, size));
+    }
+
+    /// Clears all cached values (call at the start of each frame).
+    pub fn invalidate(&self) {
+        *self.computed.lock().unwrap() = None;
+        *self.content.lock().unwrap() = None;
+    }
+}
+
+impl Default for LayoutCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}

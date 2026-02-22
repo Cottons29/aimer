@@ -2,7 +2,7 @@
 use crate::render;
 use pixels::{Pixels, SurfaceTexture};
 use skia_safe::{AlphaType, ColorType};
-use widget::base::{BuildContext, Size, Vec2d};
+use widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use widget::{Element, Widget};
 use winit::application::ApplicationHandler;
 #[allow(unused)]
@@ -21,7 +21,8 @@ pub struct App {
     pub pending_widget: Option<Box<dyn Widget>>,
     pub cursor_pos: Vec2d,
     pub window_scale: f64,
-    pub native_window_size: Option<Size>,
+    pub native_window_size: Option<ResolvedSize>,
+    pub pending_resize: Option<PhysicalSize<u32>>,
 }
 
 impl ApplicationHandler for App {
@@ -30,7 +31,7 @@ impl ApplicationHandler for App {
         {
             match crate::utils::get_screen_resolution_pixels() {
                 Some((width, height)) => {
-                    self.native_window_size = Some(Size { width: width as u32, height: height as u32 })
+                    self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 })
                 }
                 None => (),
             };
@@ -108,13 +109,9 @@ impl ApplicationHandler for App {
 
             WindowEvent::RedrawRequested => self.render(event_loop),
             WindowEvent::Resized(size) => {
-                
-                if let Some(pixels) = &mut self.pixels {
-                    let _ = pixels.resize_surface(size.width, size.height);
-                    let _ = pixels.resize_buffer(size.width, size.height);
-                }
+                self.pending_resize = Some(size);
                 if let Some(window) = &self.window {
-                    self.render(event_loop);
+                    window.request_redraw();
                 }
             }
             _ => (),
@@ -163,12 +160,18 @@ impl App {
     fn render_widget_tree(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
         widget.draw(ctx);
+        let content = widget.content_size(ctx);
         let child_ctx = BuildContext {
-            parent_size: widget.content_size(ctx),
+            parent_size: content,
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: Default::default(),
-            box_constraint: Default::default(),
+            box_constraint: widget::style::BoxConstraint {
+                min_width: 0.0,
+                min_height: 0.0,
+                max_width: content.width,
+                max_height: content.height,
+            },
         };
         widget.visit_children(&mut |child| {
             Self::render_widget_tree(child, &child_ctx);
@@ -177,6 +180,13 @@ impl App {
     }
 
     fn render(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(size) = self.pending_resize.take() {
+            if let Some(pixels) = &mut self.pixels {
+                let _ = pixels.resize_surface(size.width, size.height);
+                let _ = pixels.resize_buffer(size.width, size.height);
+            }
+        }
+
         if let (Some(pixels), Some(window)) = (&mut self.pixels, &self.window) {
             let (width, height) = {
                 #[cfg(not(target_os = "ios"))]
@@ -188,7 +198,7 @@ impl App {
                 #[cfg(target_os = "ios")]
                 {
                     match self.native_window_size {
-                        Some(item) => (item.width as u32, item.height as u32),
+                        Some(item) => (item.width as u32, item.height as u32),  // ResolvedSize f32 -> u32 for pixel buffer
                         None => {
                             let width = window.inner_size().width;
                             let height = window.inner_size().height;
@@ -216,11 +226,16 @@ impl App {
                     skia_safe::surfaces::wrap_pixels(&info, frame, Some(row_bytes), None)
                 {
                     let ctx: BuildContext = BuildContext {
-                        parent_size: Size { width, height },
+                        parent_size: ResolvedSize { width: width as f32, height: height as f32 },
                         canvas: surface.canvas(),
                         scale: self.window_scale as f32,
                         parent_pos: Default::default(),
-                        box_constraint: Default::default(),
+                        box_constraint: widget::style::BoxConstraint {
+                            min_width: 0.0,
+                            min_height: 0.0,
+                            max_width: width as f32,
+                            max_height: height as f32,
+                        },
                     };
                     ctx.canvas.clear(skia_safe::Color::WHITE);
                     #[allow(clippy::collapsible_if)]
@@ -231,6 +246,7 @@ impl App {
                     }
 
                     if let Some(root) = &self.widget_root {
+                        root.invalidate_layout();
                         Self::render_widget_tree(root.as_ref(), &ctx);
                     }
                 }
@@ -248,7 +264,7 @@ impl App {
 mod tests {
     use super::*;
     use widget::Element;
-    use widget::base::{BuildContext, Size, Vec2d};
+    use widget::base::{BuildContext, Dimension, Size, Vec2d};
 
     struct MockWidget {
         pos: Option<Vec2d>,
@@ -275,7 +291,7 @@ mod tests {
     fn test_is_on_click_wrapper() {
         let btn = MockWidget {
             pos: Some(Vec2d { x: 10.0, y: 10.0 }),
-            size: Some(Size { width: 20, height: 20 }), // 10,10 to 30,30
+            size: Some(Size { width: Dimension::Px(20.0), height: Dimension::Px(20.0) }), // 10,10 to 30,30
             children: vec![],
         };
 
@@ -291,7 +307,7 @@ mod tests {
     fn test_is_on_click_outside() {
         let btn = MockWidget {
             pos: Some(Vec2d { x: 10.0, y: 10.0 }),
-            size: Some(Size { width: 20, height: 20 }), // 10,10 to 30,30
+            size: Some(Size { width: Dimension::Px(20.0), height: Dimension::Px(20.0) }), // 10,10 to 30,30
             children: vec![],
         };
 

@@ -3,7 +3,7 @@ use widget::Constructor;
 use widget::Widget;
 use widget::base::BuildContext;
 use widget::Element;
-use widget::base::Size;
+use widget::base::{Dimension, Size};
 use widget::base::Vec2d;
 
 // Dummy implementation for testing
@@ -54,7 +54,7 @@ impl widget::State<MyStatefulWidget> for MyState {
 #[test]
 fn test_widgets_compile_and_construct() {
     let _ = MyStatelessWidget!(
-        size: Size { width: 10, height: 10 }
+        size: Size { width: Dimension::Px(10.0), height: Dimension::Px(10.0) }
     );
     
     let _ = MyStatefulWidget!(
@@ -88,7 +88,7 @@ fn test_collection_support() {
     let multi_type = CollectionWidget!(
         children: [
             DummyWidget,
-            MyStatelessWidget!(size: Size { width: 10, height: 10 }),
+            MyStatelessWidget!(size: Size { width: Dimension::Px(10.0), height: Dimension::Px(10.0) }),
         ]
     );
     assert_eq!(multi_type.children.len(), 2);

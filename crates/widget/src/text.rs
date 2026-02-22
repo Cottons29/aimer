@@ -1,8 +1,9 @@
 pub use crate::style::text_style::{TextAlign, TextStyle, FontWeight, FontStyle};
 use constructor::Constructor;
-use crate::{Widget, Element};
+use crate::{Widget, Element, LayoutCache};
 use crate::base::BuildContext;
-use skia_safe::{Color, Font, FontStyle as SkFontStyle, Paint, TextBlob, FontMgr};
+use skia_safe::{Color, Font, FontStyle as SkFontStyle, Paint, TextBlob, FontMgr, Typeface};
+use std::sync::Mutex;
 
 /// this is a widget for creating the text 
 #[allow(dead_code)]
@@ -25,6 +26,8 @@ impl Widget for Text {
             text: self.text.clone(),
             text_style,
             text_align,
+            cache: LayoutCache::new(),
+            typeface: Mutex::new(None),
         })
     }
 }
@@ -35,12 +38,19 @@ struct RawTextWidget {
     text: String,
     text_style: TextStyle,
     text_align: TextAlign,
+    cache: LayoutCache,
+    typeface: Mutex<Option<Typeface>>,
 }
 
-impl Element for RawTextWidget {
-    fn computed_size(&self, ctx: &BuildContext) -> crate::base::Size {
+impl RawTextWidget {
+    fn get_typeface(&self) -> Typeface {
+        let mut guard = self.typeface.lock().unwrap();
+        if let Some(ref tf) = *guard {
+            return tf.clone();
+        }
+
         let weight = match self.text_style.font_weight {
-            FontWeight::VeryThin => skia_safe::font_style::Weight::EXTRA_LIGHT, 
+            FontWeight::VeryThin => skia_safe::font_style::Weight::EXTRA_LIGHT,
             FontWeight::Thin => skia_safe::font_style::Weight::THIN,
             FontWeight::Normal => skia_safe::font_style::Weight::NORMAL,
             FontWeight::Bold => skia_safe::font_style::Weight::BOLD,
@@ -54,63 +64,60 @@ impl Element for RawTextWidget {
             FontStyle::Oblique => skia_safe::font_style::Slant::Oblique,
             FontStyle::ObliqueDeg(_) => skia_safe::font_style::Slant::Oblique,
         };
-        let scale = ctx.scale;
+
         let sk_font_style = SkFontStyle::new(weight, skia_safe::font_style::Width::NORMAL, slant);
-        
         let font_mgr = FontMgr::new();
         let typeface = font_mgr.match_family_style("Arial", sk_font_style)
-             .or_else(|| font_mgr.match_family_style("Helvetica", sk_font_style))
-             .or_else(|| font_mgr.match_family_style("", sk_font_style))
-             .expect("Unable to load any typeface");
-        let font_size = if self.text_style.font_size == 0 { 14.0 } else { self.text_style.font_size as f32};
+            .or_else(|| font_mgr.match_family_style("Helvetica", sk_font_style))
+            .or_else(|| font_mgr.match_family_style("", sk_font_style))
+            .expect("Unable to load any typeface");
+
+        *guard = Some(typeface.clone());
+        typeface
+    }
+
+    fn make_font(&self, scale: f32) -> Font {
+        let typeface = self.get_typeface();
+        let font_size = if self.text_style.font_size == 0 { 14.0 } else { self.text_style.font_size as f32 };
         let scaled_font_size = font_size * scale;
-        let font = Font::new(typeface, scaled_font_size);
+        Font::new(typeface, scaled_font_size)
+    }
+}
+
+impl Element for RawTextWidget {
+    fn computed_size(&self, ctx: &BuildContext) -> crate::base::ResolvedSize {
+        let scale_bits = ctx.scale.to_bits();
+        if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
+            return cached;
+        }
+
+        let font = self.make_font(ctx.scale);
 
         let (text_width, _) = font.measure_text(&self.text, None);
         let (_, metrics) = font.metrics();
         
-        crate::base::Size {
-            width: text_width.ceil() as u32,
-            height: (metrics.bottom - metrics.top).ceil() as u32, // metrics.bottom - metrics.top gives the full line height
-        }
+        let result = crate::base::ResolvedSize {
+            width: text_width.ceil(),
+            height: (metrics.bottom - metrics.top).ceil(),
+        };
+        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
+        result
+    }
+
+    fn invalidate_layout(&self) {
+        self.cache.invalidate();
     }
 
     fn draw(&self, ctx: &BuildContext) {
-        let weight = match self.text_style.font_weight {
-            FontWeight::VeryThin => skia_safe::font_style::Weight::EXTRA_LIGHT, 
-            FontWeight::Thin => skia_safe::font_style::Weight::THIN,
-            FontWeight::Normal => skia_safe::font_style::Weight::NORMAL,
-            FontWeight::Bold => skia_safe::font_style::Weight::BOLD,
-            FontWeight::Bolder => skia_safe::font_style::Weight::EXTRA_BOLD,
-            FontWeight::Value(v) => skia_safe::font_style::Weight::from(v as i32),
-        };
-
-        let slant = match self.text_style.font_style {
-            FontStyle::Normal => skia_safe::font_style::Slant::Upright,
-            FontStyle::Italic => skia_safe::font_style::Slant::Italic,
-            FontStyle::Oblique => skia_safe::font_style::Slant::Oblique,
-            FontStyle::ObliqueDeg(_) => skia_safe::font_style::Slant::Oblique,
-        };
-        let scale = ctx.scale;
-        let sk_font_style = SkFontStyle::new(weight, skia_safe::font_style::Width::NORMAL, slant);
-        
-        // Use system default font or fallback
-        let font_mgr = FontMgr::new();
-        let typeface = font_mgr.match_family_style("Arial", sk_font_style)
-             .or_else(|| font_mgr.match_family_style("Helvetica", sk_font_style))
-             .or_else(|| font_mgr.match_family_style("", sk_font_style))
-             .expect("Unable to load any typeface");
-        let font_size = if self.text_style.font_size == 0 { 14.0 } else { self.text_style.font_size as f32};
-        let scaled_font_size = font_size * scale;
-        let font = Font::new(typeface, scaled_font_size);
+        let font = self.make_font(ctx.scale);
 
         if let Some(blob) = TextBlob::new(&self.text, &font) {
             // Use typographic metrics for true centering
             let (text_width, _) = font.measure_text(&self.text, None);
             let (_, metrics) = font.metrics();
 
-            let width = ctx.parent_size.width as f32;
-            let height = ctx.parent_size.height as f32;
+            let width = ctx.parent_size.width;
+            let height = ctx.parent_size.height;
              
             let x = match self.text_align {
                 TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,

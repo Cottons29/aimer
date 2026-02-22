@@ -1,6 +1,6 @@
 pub mod text_style;
 pub mod border;
-mod constraints;
+pub mod constraints;
 mod alignment;
 pub mod layout_spacing;
 pub mod text {

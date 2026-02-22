@@ -29,8 +29,9 @@ impl OxidizeApp {
             pending_widget: Some(Box::new(widget)),
             cursor_pos: Vec2d { x: 0.0, y: 0.0 },
             window_scale: 1.0,
-            native_window_size: None
-        }; 
+            native_window_size: None,
+            pending_resize: None,
+        };
 
         println!("Running App...");
         // On iOS, this function never returns.
