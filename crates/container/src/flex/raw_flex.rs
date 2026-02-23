@@ -63,6 +63,7 @@ impl RawFlex {
                 max_width: content.width,
                 max_height: content.height,
             },
+            window: ctx.window,
         };
         widget.visit_children(&mut |child| {
             Self::render_child(child, &child_ctx);
@@ -72,6 +73,7 @@ impl RawFlex {
 }
 
 impl RawFlex {
+    
     fn resole_gaps(&self, ctx: &BuildContext) -> (f32, f32) {
         let gap_x = self
             .gaps
@@ -138,6 +140,7 @@ impl Element for RawFlex {
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             box_constraint: ctx.box_constraint,
+            window: ctx.window,
         };
 
         // Pass 1: measure sized children to find remaining space for unsized ones
@@ -256,6 +259,7 @@ impl Element for RawFlex {
                     max_width: c_w,
                     max_height: c_h,
                 },
+                window: ctx.window,
             };
 
             draw_ctx.canvas.save();
@@ -328,6 +332,7 @@ impl Element for RawFlex {
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             box_constraint: ctx.box_constraint,
+            window: ctx.window,
         };
 
         for child in &self.children {
@@ -433,4 +438,10 @@ impl Element for RawFlex {
     // If we did, the engine's `render_widget_tree` would visit the children and draw them
     // again at the top-left (0,0) of the Flex container.
     // Instead, we manually traverse and render the children in `draw()` with the correct translations.
+
+    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        for child in &self.children {
+            visitor(child.as_ref());
+        }
+    }
 }

@@ -72,9 +72,7 @@ impl<T: Element> Element for RawContainer<T> {
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
             Dimension::Percent(p) => parent_width * (p / 100.0) - (m_left + m_right),
-            Dimension::Auto => {
-                parent_width - m_left - m_right
-            }
+            Dimension::Auto => parent_width - m_left - m_right,
         };
 
         let box_height = match self.height {
@@ -88,7 +86,8 @@ impl<T: Element> Element for RawContainer<T> {
                             .unwrap_or(0.0))
             }
             Dimension::Auto => {
-                parent_height - m_top
+                parent_height
+                    - m_top
                     - self
                         .margin
                         .map(|m| m.bottom.value(parent_height, scale))
@@ -132,13 +131,16 @@ impl<T: Element> Element for RawContainer<T> {
             };
             let stroke = get_stroke(border.left.stroke, box_width).max(0.0);
             let half = stroke / 2.0;
-            let inset_rect = skia_safe::Rect::from_xywh(half, half, (box_width - stroke).max(0.0), (box_height - stroke).max(0.0));
+            let inset_rect =
+                Rect::from_xywh(half, half, (box_width - stroke).max(0.0), (box_height - stroke).max(0.0));
             if let Some(radius) = border.get_uniform_radius(box_width, box_height, scale) {
                 let inner_radius = (radius - half).max(0.0);
                 let rrect = skia_safe::RRect::new_rect_xy(inset_rect, inner_radius, inner_radius);
-                ctx.canvas.clip_rrect(rrect, skia_safe::ClipOp::Intersect, true);
+                ctx.canvas
+                    .clip_rrect(rrect, skia_safe::ClipOp::Intersect, true);
             } else {
-                ctx.canvas.clip_rect(inset_rect, skia_safe::ClipOp::Intersect, true);
+                ctx.canvas
+                    .clip_rect(inset_rect, skia_safe::ClipOp::Intersect, true);
             }
         } else {
             ctx.canvas.clip_rect(
@@ -158,6 +160,14 @@ impl<T: Element> Element for RawContainer<T> {
             .unwrap_or(0.0);
 
         ctx.canvas.translate((p_left, p_top));
+    }
+
+    fn size(&self) -> Option<Size> {
+        Some(Size { width: self.width, height: self.height })
+    }
+
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(&self.child);
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> widget::base::ResolvedSize {
@@ -197,7 +207,8 @@ impl<T: Element> Element for RawContainer<T> {
             width: (box_width + m_left + m_right).max(0.0),
             height: (box_height + m_top + m_bottom).max(0.0),
         };
-        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
+        self.cache
+            .set_computed(ctx.box_constraint, scale_bits, result);
         result
     }
 
@@ -254,21 +265,9 @@ impl<T: Element> Element for RawContainer<T> {
             width: (b_w - p_left - p_right).max(0.0),
             height: (b_h - p_top - p_bottom).max(0.0),
         };
-        self.cache.set_content(ctx.box_constraint, scale_bits, result);
+        self.cache
+            .set_content(ctx.box_constraint, scale_bits, result);
         result
-    }
-
-    fn invalidate_layout(&self) {
-        self.cache.invalidate();
-        self.child.invalidate_layout();
-    }
-
-    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(&self.child);
-    }
-
-    fn size(&self) -> Option<Size> {
-        Some(Size { width: self.width, height: self.height })
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
@@ -280,16 +279,32 @@ impl<T: Element> Element for RawContainer<T> {
         let mut p_h: f32 = 0.0;
 
         if let Some(m) = self.margin {
-            if let Spacing::Px(v) = m.left { m_w += v as f32; }
-            if let Spacing::Px(v) = m.right { m_w += v as f32; }
-            if let Spacing::Px(v) = m.top { m_h += v as f32; }
-            if let Spacing::Px(v) = m.bottom { m_h += v as f32; }
+            if let Spacing::Px(v) = m.left {
+                m_w += v as f32;
+            }
+            if let Spacing::Px(v) = m.right {
+                m_w += v as f32;
+            }
+            if let Spacing::Px(v) = m.top {
+                m_h += v as f32;
+            }
+            if let Spacing::Px(v) = m.bottom {
+                m_h += v as f32;
+            }
         }
         if let Some(p) = self.padding {
-            if let Spacing::Px(v) = p.left { p_w += v as f32; }
-            if let Spacing::Px(v) = p.right { p_w += v as f32; }
-            if let Spacing::Px(v) = p.top { p_h += v as f32; }
-            if let Spacing::Px(v) = p.bottom { p_h += v as f32; }
+            if let Spacing::Px(v) = p.left {
+                p_w += v as f32;
+            }
+            if let Spacing::Px(v) = p.right {
+                p_w += v as f32;
+            }
+            if let Spacing::Px(v) = p.top {
+                p_h += v as f32;
+            }
+            if let Spacing::Px(v) = p.bottom {
+                p_h += v as f32;
+            }
         }
 
         if let Dimension::Px(w) = self.width {
@@ -311,5 +326,10 @@ impl<T: Element> Element for RawContainer<T> {
         }
 
         Some(size)
+    }
+
+    fn invalidate_layout(&self) {
+        self.cache.invalidate();
+        self.child.invalidate_layout();
     }
 }

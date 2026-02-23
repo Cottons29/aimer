@@ -6,7 +6,6 @@ use widget::{
     Constructor, Element, LayoutCache, Widget,
     base::{Color, Dimension},
 };
-
 #[derive(Constructor)]
 pub struct SizedBox {
     #[constructor(default, into)]
@@ -51,6 +50,17 @@ impl Element for RawSizedBox {
         ctx.canvas.draw_rect(rect, &paint);
     }
 
+    fn size(&self) -> Option<Size> {
+        match (self.width, self.height) {
+            (Dimension::Px(w), Dimension::Px(h)) => Some(Size { width: Dimension::Px(w), height: Dimension::Px(h) }),
+            _ => None,
+        }
+    }
+
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(&self.child);
+    }
+
     fn computed_size(&self, ctx: &BuildContext) -> widget::base::ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
@@ -58,13 +68,14 @@ impl Element for RawSizedBox {
         }
 
         let scale = ctx.scale;
-        
+
         let mut child_ctx = BuildContext {
             parent_size: ctx.parent_size,
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             box_constraint: ctx.box_constraint,
+            window: ctx.window,
         };
 
         child_ctx.box_constraint.max_width = self.width.resolve(ctx.box_constraint.max_width, scale);
@@ -87,22 +98,6 @@ impl Element for RawSizedBox {
         result
     }
 
-    fn invalidate_layout(&self) {
-        self.cache.invalidate();
-        self.child.invalidate_layout();
-    }
-
-    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(&self.child);
-    }
-
-    fn size(&self) -> Option<Size> {
-        match (self.width, self.height) {
-            (Dimension::Px(w), Dimension::Px(h)) => Some(Size { width: Dimension::Px(w), height: Dimension::Px(h) }),
-            _ => None,
-        }
-    }
-
     fn get_size_from_child(&self) -> Option<Size> {
         let mut size = self.child.get_size_from_child().unwrap_or_default();
         if let Dimension::Px(_) = self.width {
@@ -112,5 +107,10 @@ impl Element for RawSizedBox {
             size.height = self.height;
         }
         Some(size)
+    }
+
+    fn invalidate_layout(&self) {
+        self.cache.invalidate();
+        self.child.invalidate_layout();
     }
 }

@@ -190,6 +190,7 @@ impl App {
                 max_width: content.width,
                 max_height: content.height,
             },
+            window: ctx.window,
         };
         widget.visit_children(&mut |child| {
             Self::render_widget_tree(child, &child_ctx);
@@ -254,6 +255,7 @@ impl App {
                             max_width: width as f32,
                             max_height: height as f32,
                         },
+                        window: self.window,
                     };
                     ctx.canvas.clear(skia_safe::Color::WHITE);
                     #[allow(clippy::collapsible_if)]
