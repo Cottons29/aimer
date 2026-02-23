@@ -5,6 +5,7 @@ use crate::style::constraints::BoxConstraint;
 /// Caches the result of `computed_size` and `content_size` for a single frame.
 /// The cache is keyed by `(BoxConstraint, scale)` so that if the same element
 /// is queried multiple times with the same inputs, the result is returned instantly.
+/// yeah it save the CPU and GPU and reduce power consuming :))
 pub struct LayoutCache {
     computed: Mutex<Option<(BoxConstraint, u32, ResolvedSize)>>,
     content: Mutex<Option<(BoxConstraint, u32, ResolvedSize)>>,

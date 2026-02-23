@@ -1,0 +1,17 @@
+[package]
+name = "control"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+
+[dependencies]
+color.workspace = true
+widget_attr.workspace = true
+widget.workspace = true
+#####################
+winit.workspace = true
+skia-safe.workspace = true
+# glutin.workspace = true
+rayon.workspace = true  
+pixels.workspace = true
+constructor.workspace = true
