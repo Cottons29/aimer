@@ -3,7 +3,7 @@ use crate::render;
 use pixels::{Pixels, SurfaceTexture};
 use skia_safe::{AlphaType, ColorType};
 use widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
-use widget::{Element, Widget};
+use widget::{Element, ElementEvent, Widget, dispatch_event};
 use winit::application::ApplicationHandler;
 #[allow(unused)]
 use winit::dpi::{LogicalSize, PhysicalSize, Position};
@@ -68,12 +68,6 @@ impl ApplicationHandler for App {
         self.window_scale = window.scale_factor();
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // if let Some(window) = &self.window {
-        //     window.request_redraw();
-        // }
-    }
-
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
@@ -81,7 +75,23 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::Touch(item) => {
-                println!("Touched on : {item:?}");
+                let pos = Vec2d { x: item.location.x as f32, y: item.location.y as f32 };
+                let event = match item.phase {
+                    winit::event::TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
+                    winit::event::TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
+                    winit::event::TouchPhase::Ended => Some(ElementEvent::PointerUp(pos)),
+                    winit::event::TouchPhase::Cancelled => None,
+                };
+
+                if let Some(event) = event {
+                    if let Some(root) = &self.widget_root {
+                        if dispatch_event(root.as_ref(), pos, &event) {
+                            if let Some(window) = &self.window {
+                                window.request_redraw();
+                            }
+                        }
+                    }
+                }
             }
             // WindowEvent::Focused
             WindowEvent::CursorMoved { position, .. } => {
@@ -89,22 +99,24 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
-                // if !state.is_pressed() || button != winit::event::MouseButton::Left {
-                //     return;
-                // }
+                if button != winit::event::MouseButton::Left {
+                    return;
+                }
 
-                // println!("Mouse Clicked : {:?}", self.cursor_pos);
+                let c = self.cursor_pos;
+                let event = if state.is_pressed() {
+                    ElementEvent::PointerDown(c)
+                } else {
+                    ElementEvent::PointerUp(c)
+                };
 
-                // let c = self.cursor_pos;
-                // #[allow(clippy::collapsible_if)]
-                // if let Some(widget) = Self::is_on_click(&self.widget_root, c) {
-                //     if let Some(on_click) = widget.on_click() {
-                //         on_click();
-                //         if let Some(window) = &self.window {
-                //             window.request_redraw();
-                //         }
-                //     }
-                // }
+                if let Some(root) = &self.widget_root {
+                    if dispatch_event(root.as_ref(), c, &event) {
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
             }
 
             WindowEvent::RedrawRequested => self.render(event_loop),
@@ -117,8 +129,14 @@ impl ApplicationHandler for App {
             _ => (),
         }
     }
-}
 
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // if let Some(window) = &self.window {
+        //     window.request_redraw();
+        // }
+    }
+}
+#[allow(dead_code)]
 impl App {
     fn is_on_click(widget: &dyn Element, c: Vec2d) -> Option<&dyn Element> {
         let bounds = widget.pos_start_end();
