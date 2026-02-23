@@ -242,10 +242,16 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
                             temp_vec
                         })
                     }
+                } else if is_option_of_box(target.ty) {
+                    quote! { #f_ident : (Some(Box::new($val))) }
+                } else if is_option_of_arc(target.ty) {
+                    quote! { #f_ident : (Some(std::sync::Arc::new($val))) }
                 } else if is_option(target.ty) {
                     quote! { #f_ident : (Some($val)) }
                 } else if is_box(target.ty) {
                     quote! { #f_ident : (Box::new($val)) }
+                } else if is_arc(target.ty) {
+                    quote! { #f_ident : (std::sync::Arc::new($val)) }
                 } else {
                     quote! { #f_ident : ($val) }
                 }
@@ -401,6 +407,8 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
             quote! { (Some($val)) }
          } else if is_box(f.ty) {
             quote! { (Box::new($val)) }
+         } else if is_arc(f.ty) {
+            quote! { (std::sync::Arc::new($val)) }
          } else {
             quote! { ($val) }
          };
@@ -553,6 +561,47 @@ fn is_box(ty: &Type) -> bool {
         if let Some(segment) = path.segments.last() {
             if segment.ident == "Box" {
                  return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_option_of_box(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        if let Some(segment) = path.segments.last() {
+            if segment.ident == "Option" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                        return is_box(inner_ty);
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+fn is_arc(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        if let Some(segment) = path.segments.last() {
+            if segment.ident == "Arc" {
+                 return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_option_of_arc(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        if let Some(segment) = path.segments.last() {
+            if segment.ident == "Option" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                        return is_arc(inner_ty);
+                    }
+                }
             }
         }
     }
