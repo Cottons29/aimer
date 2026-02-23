@@ -2,7 +2,6 @@ pub mod color_trait;
 pub mod color_impl;
 pub mod basic_color;
 
-
 use basic_color::Colors;
 
 use crate::prelude::ColorMixer;
@@ -41,7 +40,7 @@ pub enum Color {
 
 impl Default for Color {
     fn default() -> Self {
-        Self::Basic(Colors::default())
+        Self::Transparent
     }
 }
 
