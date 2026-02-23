@@ -15,6 +15,7 @@ pub mod base {
 pub use crate::widget::Widget;
 pub use crate::components::element::Element;
 pub use crate::widget::stateful::{StatefulElement, StatefulWidget, State};
+pub use crate::widget::stateful::{StatefulElement, StatefulWidget, State, StateUpdater};
 pub use crate::widget::stateless::{StatelessElement, StatelessWidget};
 pub use crate::text::Text;
 pub use crate::style::text_style::TextStyle;
