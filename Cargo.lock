@@ -393,6 +393,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "control"
+version = "0.1.0"
+dependencies = [
+ "color",
+ "constructor",
+ "pixels",
+ "rayon",
+ "skia-safe",
+ "widget",
+ "widget_attr",
+ "winit",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1469,6 +1483,7 @@ dependencies = [
  "color",
  "constructor",
  "container",
+ "control",
  "engine",
  "uuid",
  "widget",

@@ -10,10 +10,16 @@ members = [
   "crates/color", 
   "macros/widget_attr",
   "oxidize"
-]
+, "crates/control"]
 
 [workspace.dependencies]
 
+
+
+
+
+
+control  = {path ="./crates/control"}
 widget_codegen= {path ="macros/widget_codegen"}
 container = {path ="./crates/container"}
 constructor = {path = "./macros/constructor"}
