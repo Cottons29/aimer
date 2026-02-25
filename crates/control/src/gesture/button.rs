@@ -1,13 +1,13 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::cell::{RefCell, UnsafeCell};
+use std::rc::Rc;
+use std::sync::{Arc};
 
 use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
 use widget::{Constructor, Element, ElementEvent, LayoutCache, Widget, base::*, style::BoxConstraint};
+use winit::window::Window;
 
 use crate::event::{PointerEvent, PointerPosition};
-use crate::gesture::GestureDetector;
-
-
+use crate::gesture::{CallbackHolder, GestureActions};
 
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy, Constructor)]
@@ -20,15 +20,13 @@ pub struct ButtonStyle {
     pub width: Dimension,
 }
 
-
-
 #[allow(dead_code)]
 #[derive(Constructor)]
 pub struct Button {
-    #[constructor(default)]
-    pub on_press: Option<Arc<dyn Fn() + Send + Sync>>,
-    #[constructor(default)]
-    pub on_long_press: Option<Arc<dyn Fn() + Send + Sync>>,
+    #[constructor(default, into)]
+    pub on_press: CallbackHolder,
+    #[constructor(default, into)]
+    pub on_long_press: CallbackHolder,
     #[constructor(default)]
     pub style: ButtonStyle,
     #[constructor(default)]
@@ -39,47 +37,47 @@ pub struct Button {
 }
 
 impl Widget for Button {
+    #[inline]
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let child = self.child.to_element(ctx);
 
-        let mut gesture = GestureDetector::new();
-        if let Some(cb) = &self.on_press {
-            let cb = cb.clone();
-            gesture.on_tap = Some(Box::new(move || cb()));
-        }
-        if let Some(cb) = &self.on_long_press {
-            let cb = cb.clone();
-            gesture.on_long_press = Some(Box::new(move || cb()));
-        }
+        let mut gesture = GestureActions::new();
+        gesture.on_tap = self.on_press.clone();
+        gesture.on_long_press = self.on_long_press.clone();
+        gesture.runtime_handle = Some(ctx.async_handle.clone());
 
-        Box::new(ButtonElement {
+        Box::new(GestureDetectorElement {
             style: self.style,
             hover_style: self.hover_style,
             is_disabled: self.is_disabled,
-            is_hovered: AtomicBool::new(false),
-            is_pressed: AtomicBool::new(false),
-            gesture: Mutex::new(gesture),
+            is_hovered: UnsafeCell::new(false),
+            is_pressed: UnsafeCell::new(false),
+            gesture: UnsafeCell::new(gesture),
+            is_mouse_down: UnsafeCell::new(false),
             child,
             cache: LayoutCache::new(),
-            cached_bounds: Mutex::new(None),
+            cached_bounds: UnsafeCell::new(None),
+            window: ctx.window,
         })
     }
 }
 #[allow(dead_code)]
-pub struct ButtonElement {
+pub struct GestureDetectorElement<'a> {
     style: ButtonStyle,
     hover_style: ButtonStyle,
     is_disabled: bool,
-    is_hovered: AtomicBool,
-    is_pressed: AtomicBool,
-    gesture: Mutex<GestureDetector>,
+    is_hovered: UnsafeCell<bool>,
+    is_pressed: UnsafeCell<bool>,
+    gesture: UnsafeCell<GestureActions>,
+    is_mouse_down: UnsafeCell<bool>,
     child: Box<dyn Element>,
     cache: LayoutCache,
     /// Cached absolute bounding rect, updated during draw.
-    cached_bounds: Mutex<Option<Rect>>,
+    cached_bounds: UnsafeCell<Option<Rect>>,
+    window: &'a Window,
 }
 
-impl ButtonElement {
+impl<'a> GestureDetectorElement<'a> {
     /// Recursively render a child element and its descendants.
     fn render_child(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
@@ -97,6 +95,7 @@ impl ButtonElement {
                 max_height: content.height,
             },
             window: ctx.window,
+            async_handle: ctx.async_handle.clone(),
         };
         widget.visit_children(&mut |child| {
             Self::render_child(child, &child_ctx);
@@ -112,38 +111,55 @@ impl ButtonElement {
 
         match event {
             PointerEvent::Down(_) => {
-                self.is_pressed.store(true, Ordering::Relaxed);
-            }
-            PointerEvent::Up(_) => {
-                self.is_pressed.store(false, Ordering::Relaxed);
-            }
-            PointerEvent::Move(_) => {
-                // Only set hovered if not currently pressed to avoid
-                // style glitches during press-and-drag.
-                if !self.is_pressed.load(Ordering::Relaxed) {
-                    self.is_hovered.store(true, Ordering::Relaxed);
+                unsafe {
+                    *self.is_pressed.get() = true;
+                    // self.window.request_redraw();
                 }
             }
+            PointerEvent::Up(_) => {
+                unsafe {
+                    if *self.is_pressed.get() {
+                        *self.is_pressed.get() = false;
+                        // self.window.request_redraw();
+                    }
+                }
+            }
+
+            PointerEvent::Move(_) => {}
             PointerEvent::Cancel => {
-                self.is_pressed.store(false, Ordering::Relaxed);
-                self.is_hovered.store(false, Ordering::Relaxed);
+                unsafe {
+                    *self.is_pressed.get() = false;
+                    *self.is_hovered.get() = false;
+                }
             }
         }
+        unsafe {
+            (&mut *self.gesture.get()).handle_pointer_event(event);
+        }
 
-        // Feed into gesture detector for tap/long-press recognition
-        self.gesture.lock().unwrap().handle_pointer_event(event);
+
+        // println!("{:?}", event);
+
+        // // Feed into gesture detector for tap/long-press recognition
+        // unsafe {
+        //     (&mut *self.gesture.get()).handle_pointer_event(event);
+        // }
     }
 
+    #[inline]
     fn active_style(&self) -> &ButtonStyle {
-        if self.is_hovered.load(Ordering::Relaxed) && !self.is_disabled {
-            &self.hover_style
-        } else {
-            &self.style
+        unsafe {
+            if *self.is_hovered.get() && !self.is_disabled {
+                &self.hover_style
+            } else {
+                &self.style
+            }
         }
     }
 }
 
-impl Element for ButtonElement {
+impl<'b> Element for GestureDetectorElement<'b> {
+
     fn draw(&self, ctx: &BuildContext) {
         let scale = ctx.scale;
         let constraint = ctx.box_constraint;
@@ -181,10 +197,12 @@ impl Element for ButtonElement {
         let matrix = ctx.canvas.local_to_device_as_3x3();
         let abs_x = matrix.translate_x();
         let abs_y = matrix.translate_y();
-        *self.cached_bounds.lock().unwrap() = Some(Rect::from_xywh(abs_x, abs_y, box_width, box_height));
+        unsafe {
+            *self.cached_bounds.get() = Some(Rect::from_xywh(abs_x, abs_y, box_width, box_height));
+        }
 
         // Draw pressed overlay for visual feedback
-        if self.is_pressed.load(Ordering::Relaxed) && !self.is_disabled {
+        if unsafe { *self.is_pressed.get() } && !self.is_disabled {
             let mut pressed_paint = Paint::default();
             pressed_paint.set_anti_alias(true);
             pressed_paint.set_color(SkColor::from_argb(40, 0, 0, 0));
@@ -201,10 +219,7 @@ impl Element for ButtonElement {
         ctx.canvas.translate((offset_x, offset_y));
 
         let child_ctx = BuildContext {
-            parent_size: ResolvedSize {
-                width: box_width,
-                height: box_height,
-            },
+            parent_size: ResolvedSize { width: box_width, height: box_height },
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: Vec2d::default(),
@@ -215,23 +230,59 @@ impl Element for ButtonElement {
                 max_height: box_height,
             },
             window: ctx.window,
+            async_handle: ctx.async_handle.clone(),
         };
         Self::render_child(self.child.as_ref(), &child_ctx);
 
         ctx.canvas.restore();
     }
-
+    #[inline]
     fn size(&self) -> Option<Size> {
         let style = self.active_style();
-        Some(Size {
-            width: style.width,
-            height: style.height,
-        })
+        Some(Size { width: style.width, height: style.height })
     }
 
-    // We don't implement visit_children here because ButtonElement handles
-    // its own child rendering in draw(). Exposing children via visit_children
-    // would cause the external render_widget_tree to draw them a second time.
+
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        if self.is_disabled {
+            return false;
+        }
+
+        // Hit-test against cached bounds
+        let pos = match event {
+            ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) => p,
+        };
+        #[allow(clippy::collapsible_if)]
+        unsafe {
+            if let Some(bounds) = *self.cached_bounds.get() {
+                if pos.x < bounds.left || pos.x > bounds.right || pos.y < bounds.top || pos.y > bounds.bottom {
+                    *self.is_hovered.get() = false;
+                    self.window.request_redraw();
+                    return false;
+                }
+            }
+        }
+
+        let pointer_event = match event {
+            ElementEvent::PointerDown(pos) => PointerEvent::Down(PointerPosition { x: pos.x, y: pos.y }),
+            ElementEvent::PointerUp(pos) => PointerEvent::Up(PointerPosition { x: pos.x, y: pos.y }),
+            ElementEvent::PointerMove(pos) => PointerEvent::Move(PointerPosition { x: pos.x, y: pos.y }),
+        };
+
+
+        unsafe {
+            let current_hovered = *self.is_hovered.get();
+            if !current_hovered {
+                *self.is_hovered.get() = true;
+                self.window.request_redraw();
+            }
+        }
+
+        self.handle_pointer_event(&pointer_event);
+
+        // PointerMove during a press should not trigger a redraw
+        !matches!(event, ElementEvent::PointerMove(_))
+    }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
@@ -254,36 +305,6 @@ impl Element for ButtonElement {
             Dimension::Auto => self.child.computed_size(ctx).height,
         };
 
-        ResolvedSize {
-            width: width.max(0.0),
-            height: height.max(0.0),
-        }
-    }
-
-    fn on_event(&self, event: &ElementEvent) -> bool {
-        if self.is_disabled {
-            return false;
-        }
-
-        // Hit-test against cached bounds
-        let pos = match event {
-            ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) => p,
-        };
-        if let Some(bounds) = *self.cached_bounds.lock().unwrap() {
-            if pos.x < bounds.left || pos.x > bounds.right || pos.y < bounds.top || pos.y > bounds.bottom {
-                return false;
-            }
-        }
-
-        let pointer_event = match event {
-            ElementEvent::PointerDown(pos) => PointerEvent::Down(PointerPosition { x: pos.x, y: pos.y }),
-            ElementEvent::PointerUp(pos) => PointerEvent::Up(PointerPosition { x: pos.x, y: pos.y }),
-            ElementEvent::PointerMove(pos) => PointerEvent::Move(PointerPosition { x: pos.x, y: pos.y }),
-        };
-
-        self.handle_pointer_event(&pointer_event);
-
-        // PointerMove during a press should not trigger a redraw
-        !matches!(event, ElementEvent::PointerMove(_))
+        ResolvedSize { width: width.max(0.0), height: height.max(0.0) }
     }
 }

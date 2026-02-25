@@ -1,16 +1,86 @@
+use std::cell::UnsafeCell;
+use std::future::Future;
+use std::pin::Pin;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 use crate::event::{PointerEvent, PointerPosition};
 
 
 pub mod button;
 
-
-pub type CallbackFunction = Box<dyn Fn() + Send + Sync>;
-
-/// Helper to box a closure into a `CallbackFunction`.
-pub fn callback(f: impl Fn() + Send + Sync + 'static) -> Option<CallbackFunction> {
-    Some(Box::new(f))
+/// A callback that can be either synchronous or asynchronous.
+pub enum Callback {
+    Sync(Box<dyn FnOnce()>),
+    Async(Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>),
 }
+
+impl std::fmt::Debug for Callback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Callback::Sync(_) => write!(f, "Callback::Sync(...)"),
+            Callback::Async(_) => write!(f, "Callback::Async(...)"),
+        }
+    }
+}
+
+impl<F: FnOnce() + 'static> From<F> for Callback {
+    fn from(f: F) -> Self {
+        Callback::Sync(Box::new(f))
+    }
+}
+
+/// Wrapper to convert an async closure into a `Callback::Async`.
+pub struct AsyncCallback<F>(pub F);
+
+impl<F, Fut> From<AsyncCallback<F>> for Callback
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    fn from(ac: AsyncCallback<F>) -> Self {
+        Callback::Async(Box::new(move || Box::pin(ac.0())))
+    }
+}
+
+/// A holder for a `Callback` that can be shared via `Rc`.
+/// Accepts both sync closures and `AsyncCallback`-wrapped async closures via `.into()`.
+#[derive(Debug)]
+pub struct CallbackHolder(Rc<UnsafeCell<Option<Callback>>>);
+
+impl CallbackHolder {
+    pub fn get(&self) -> *mut Option<Callback> {
+        self.0.get()
+    }
+}
+
+impl Default for CallbackHolder {
+    fn default() -> Self {
+        CallbackHolder(Rc::new(UnsafeCell::new(None)))
+    }
+}
+
+impl Clone for CallbackHolder {
+    fn clone(&self) -> Self {
+        CallbackHolder(self.0.clone())
+    }
+}
+
+impl<F: FnOnce() + 'static> From<F> for CallbackHolder {
+    fn from(f: F) -> Self {
+        CallbackHolder(Rc::new(UnsafeCell::new(Some(Callback::Sync(Box::new(f))))))
+    }
+}
+
+impl<F, Fut> From<AsyncCallback<F>> for CallbackHolder
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    fn from(ac: AsyncCallback<F>) -> Self {
+        CallbackHolder(Rc::new(UnsafeCell::new(Some(Callback::Async(Box::new(move || Box::pin(ac.0())))))))
+    }
+}
+
 
 const DOUBLE_TAP_TIMEOUT: Duration = Duration::from_millis(300);
 const LONG_PRESS_DURATION: Duration = Duration::from_millis(500);
@@ -24,16 +94,19 @@ pub enum GestureEvent {
 }
 
 
-#[derive(Default)]
-pub struct GestureDetector {
-    pub on_tap: Option<CallbackFunction>,
-    pub on_double_tap: Option<CallbackFunction>,
-    pub on_long_press: Option<CallbackFunction>,
+#[derive(Default, Debug)]
+pub struct GestureActions {
+    pub on_tap: CallbackHolder,
+    pub on_double_tap: CallbackHolder,
+    pub on_long_press: CallbackHolder,
+
+    pub runtime_handle: Option<tokio::runtime::Handle>,
 
     state: GestureState,
 }
 
 #[derive(Default)]
+#[derive(Debug)]
 struct GestureState {
     down_position: Option<PointerPosition>,
     down_time: Option<Instant>,
@@ -41,19 +114,36 @@ struct GestureState {
     last_tap_position: Option<PointerPosition>,
 }
 
-impl GestureDetector {
+impl GestureActions {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
-            on_tap: None,
-            on_double_tap: None,
-            on_long_press: None,
+            on_tap: CallbackHolder::default(),
+            on_double_tap: CallbackHolder::default(),
+            on_long_press: CallbackHolder::default(),
+            runtime_handle: None,
             state: GestureState::default(),
+        }
+    }
+
+    fn execute_callback(cb: &CallbackHolder, runtime_handle: &Option<tokio::runtime::Handle>) {
+        unsafe {
+            if let Some(callback) = (*cb.get()).take() {
+                match callback {
+                    Callback::Sync(f) => f(),
+                    Callback::Async(f) => {
+                        if let Some(handle) = runtime_handle {
+                            handle.spawn(f());
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// Feed a `PointerEvent` into the detector. Returns a recognized `GestureEvent` if any.
     pub fn handle_pointer_event(&mut self, event: &PointerEvent) -> Option<GestureEvent> {
+        // println!("Handling : {:?}", self);
         match event {
             PointerEvent::Down(pos) => {
                 self.state.down_position = Some(*pos);
@@ -76,12 +166,11 @@ impl GestureDetector {
 
                 // Long press
                 if elapsed >= LONG_PRESS_DURATION {
+
                     let gesture = GestureEvent::LongPress(*pos);
                     self.state.last_tap_time = None;
                     self.state.last_tap_position = None;
-                    if let Some(cb) = &self.on_long_press {
-                        cb();
-                    }
+                    Self::execute_callback(&self.on_long_press, &self.runtime_handle);
                     return Some(gesture);
                 }
 
@@ -96,9 +185,7 @@ impl GestureDetector {
                         self.state.last_tap_time = None;
                         self.state.last_tap_position = None;
                         let gesture = GestureEvent::DoubleTap(*pos);
-                        if let Some(cb) = &self.on_double_tap {
-                            cb();
-                        }
+                        Self::execute_callback(&self.on_double_tap, &self.runtime_handle);
                         return Some(gesture);
                     }
                 }
@@ -107,9 +194,7 @@ impl GestureDetector {
                 self.state.last_tap_time = Some(Instant::now());
                 self.state.last_tap_position = Some(*pos);
                 let gesture = GestureEvent::Tap(*pos);
-                if let Some(cb) = &self.on_tap {
-                    cb();
-                }
+                Self::execute_callback(&self.on_tap, &self.runtime_handle);
                 Some(gesture)
             }
 
@@ -128,4 +213,50 @@ fn distance(a: PointerPosition, b: PointerPosition) -> f32 {
     let dx = a.x - b.x;
     let dy = a.y - b.y;
     (dx * dx + dy * dy).sqrt()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::{PointerEvent, PointerPosition};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn test_tap_callback_called() {
+        let mut gesture = GestureActions::new();
+        let tap_called = Arc::new(AtomicBool::new(false));
+        let tap_called_clone = tap_called.clone();
+        
+        gesture.on_tap = CallbackHolder::from(move || {
+            tap_called_clone.store(true, Ordering::SeqCst);
+        });
+
+        let pos = PointerPosition { x: 10.0, y: 10.0 };
+        gesture.handle_pointer_event(&PointerEvent::Down(pos));
+        gesture.handle_pointer_event(&PointerEvent::Up(pos));
+
+        assert!(tap_called.load(Ordering::SeqCst), "Tap callback should have been called");
+    }
+
+    #[test]
+    fn test_long_press_callback_called() {
+        let mut gesture = GestureActions::new();
+        let long_press_called = Arc::new(AtomicBool::new(false));
+        let long_press_called_clone = long_press_called.clone();
+        
+        gesture.on_long_press = CallbackHolder::from(move || {
+            long_press_called_clone.store(true, Ordering::SeqCst);
+        });
+
+        let pos = PointerPosition { x: 10.0, y: 10.0 };
+        gesture.handle_pointer_event(&PointerEvent::Down(pos));
+        
+        // Wait for long press duration
+        std::thread::sleep(LONG_PRESS_DURATION + Duration::from_millis(50));
+        
+        gesture.handle_pointer_event(&PointerEvent::Up(pos));
+
+        assert!(long_press_called.load(Ordering::SeqCst), "Long press callback should have been called");
+    }
 }
