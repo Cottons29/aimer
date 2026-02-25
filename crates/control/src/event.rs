@@ -1,3 +1,6 @@
+mod event_types;
+mod convert;
+
 use winit::event::{ElementState, MouseButton, Touch, TouchPhase, WindowEvent};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
