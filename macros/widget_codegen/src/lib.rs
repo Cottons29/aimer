@@ -1,7 +1,7 @@
 mod stateful_widget;
 mod stateless_widget;
 mod constructor;
-
+mod auto_wrapper;
 
 use proc_macro2::TokenStream;
 

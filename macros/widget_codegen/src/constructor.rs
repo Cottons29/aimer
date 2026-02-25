@@ -1,9 +1,7 @@
+use crate::auto_wrapper::AutoWrapper;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{
-    spanned::Spanned, Data, DataStruct, DeriveInput, Error, Expr, Field, Fields, Ident, Meta, Type,
-    TypePath,
-};
+use syn::{Data, DataStruct, DeriveInput, Error, Expr, Field, Fields, Ident, Meta, Type, spanned::Spanned};
 
 pub fn constructor_derive(input: TokenStream) -> TokenStream {
     let input = match syn::parse2::<DeriveInput>(input) {
@@ -11,10 +9,7 @@ pub fn constructor_derive(input: TokenStream) -> TokenStream {
         Err(err) => return err.to_compile_error(),
     };
 
-    match create_constructor(input) {
-        Ok(tokens) => tokens,
-        Err(err) => err.to_compile_error(),
-    }
+    create_constructor(input).unwrap_or_else(|err| err.to_compile_error())
 }
 
 struct FieldInfo<'a> {
@@ -29,9 +24,10 @@ struct FieldInfo<'a> {
 }
 
 fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
-    let ident = field.ident.as_ref().ok_or_else(|| {
-        Error::new(field.span(), "Constructor can only be derived for structs with named fields")
-    })?;
+    let ident = field
+        .ident
+        .as_ref()
+        .ok_or_else(|| Error::new(field.span(), "Constructor can only be derived for structs with named fields"))?;
     let ty = &field.ty;
     let mut skip = false;
     let mut default = None;
@@ -87,25 +83,19 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
         }
     }
 
-    if default.is_none() && is_option(ty) {
-        default = Some(quote! { None });
+    #[allow(clippy::collapsible_if)]
+    if default.is_none() {
+        if AutoWrapper::new(ty).is_option() {
+            default = Some(quote! { None });
+        }
     }
 
-    Ok(FieldInfo {
-        ident,
-        ty,
-        skip,
-        default,
-        into,
-        first,
-        dyn_iter,
-        docs,
-    })
+    Ok(FieldInfo { ident, ty, skip, default, into, first, dyn_iter, docs })
 }
 
 fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
     let name = &ast.ident;
-    
+
     let mut crate_path: Option<TokenStream> = None;
     for attr in &ast.attrs {
         if attr.path().is_ident("constructor") {
@@ -114,10 +104,10 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
                     let value: syn::LitStr = meta.value()?.parse()?;
                     let path_str = value.value();
                     let path: syn::Path = syn::parse_str(&path_str)?;
-                    crate_path = Some(quote!{ #path });
+                    crate_path = Some(quote! { #path });
                     Ok(())
                 } else {
-                     Ok(())
+                    Ok(())
                 }
             })?;
         }
@@ -133,15 +123,9 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
     let (impl_generics, ty_generics, where_clause) = ast.generics.split_for_impl();
 
     let fields_named = match &ast.data {
-        Data::Struct(DataStruct {
-            fields: Fields::Named(fields),
-            ..
-        }) => &fields.named,
+        Data::Struct(DataStruct { fields: Fields::Named(fields), .. }) => &fields.named,
         _ => {
-            return Err(Error::new(
-                ast.span(),
-                "Constructor can only be derived for structs with named fields",
-            ));
+            return Err(Error::new(ast.span(), "Constructor can only be derived for structs with named fields"));
         }
     };
 
@@ -218,21 +202,24 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         let target_ident = target.ident;
 
         // Pattern matcher for current state
-        let state_matcher: Vec<_> = public_fields.iter().map(|f| {
-            let f_ident = f.ident;
-            let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());
-            quote! { #f_ident : $#var_name:tt }
-        }).collect();
+        let state_matcher: Vec<_> = public_fields
+            .iter()
+            .map(|f| {
+                let f_ident = f.ident;
+                let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());
+                quote! { #f_ident : $#var_name:tt }
+            })
+            .collect();
 
         // State update logic
         let state_update = public_fields.iter().map(|f| {
             let f_ident = f.ident;
             if f_ident == target_ident {
                 // If this is the target field, wrap the value
+                let wrapper = AutoWrapper::new(target.ty);
                 if target.into {
                     quote! { #f_ident : ((($val).into())) }
-                } else if target.dyn_iter || is_collection_of_box(target.ty) {
-                    // let size = ;
+                } else if target.dyn_iter {
                     quote! {
                         #f_ident : ({
                             let mut temp_vec = Vec::new();
@@ -242,18 +229,9 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
                             temp_vec
                         })
                     }
-                } else if is_option_of_box(target.ty) {
-                    quote! { #f_ident : (Some(Box::new($val))) }
-                } else if is_option_of_arc(target.ty) {
-                    quote! { #f_ident : (Some(std::sync::Arc::new($val))) }
-                } else if is_option(target.ty) {
-                    quote! { #f_ident : (Some($val)) }
-                } else if is_box(target.ty) {
-                    quote! { #f_ident : (Box::new($val)) }
-                } else if is_arc(target.ty) {
-                    quote! { #f_ident : (std::sync::Arc::new($val)) }
                 } else {
-                    quote! { #f_ident : ($val) }
+                    let wrapped_expr = wrapper.wrap_expr(quote! { $val });
+                    quote! { #f_ident : (#wrapped_expr) }
                 }
             } else {
                 // Otherwise keep old value
@@ -262,7 +240,7 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
             }
         });
 
-        let array_rule = if target.dyn_iter || is_collection_of_box(target.ty) {
+        let array_rule = if target.dyn_iter || matches!(AutoWrapper::new(target.ty), AutoWrapper::Vec(_)) {
             let state_update_array = public_fields.iter().map(|f| {
                 let f_ident = f.ident;
                 if f_ident == target_ident {
@@ -318,7 +296,7 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         let ident = f.ident;
         quote! { #ident : ($#ident:expr) }
     });
-    
+
     let call_args = public_fields.iter().map(|f| {
         let ident = f.ident;
         quote! { $#ident }
@@ -341,8 +319,8 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         });
 
         if let Some(default_tokens) = default_val {
-             // If field is missing but has default, apply default
-             let state_update = public_fields.iter().map(|f| {
+            // If field is missing but has default, apply default
+            let state_update = public_fields.iter().map(|f| {
                 let f_ident = f.ident;
                 if f_ident == target_ident {
                     quote! { #f_ident : (#default_tokens) }
@@ -376,7 +354,7 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
     // Logic for 'first' field
     let first_fields: Vec<&FieldInfo> = public_fields.iter().copied().filter(|f| f.first).collect();
     if first_fields.len() > 1 {
-         return Err(Error::new(first_fields[1].ident.span(), "Only one field can be marked as 'first'"));
+        return Err(Error::new(first_fields[1].ident.span(), "Only one field can be marked as 'first'"));
     }
     let first_field = first_fields.first().copied();
 
@@ -389,11 +367,12 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
 
     // Prepare entry points for 'first' field
     let first_field_rules = if let Some(f) = first_field {
-         let f_ident = f.ident;
-         // Logic to wrap value
-         let val_wrapper = if f.into {
+        let f_ident = f.ident;
+        // Logic to wrap value
+        let wrapper = AutoWrapper::new(f.ty);
+        let val_wrapper = if f.into {
             quote! { ((($val).into())) }
-         } else if f.dyn_iter || is_collection_of_box(f.ty) {
+        } else if f.dyn_iter {
             quote! {
                 ({
                     let mut temp_vec = Vec::new();
@@ -403,71 +382,65 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
                     temp_vec
                 })
             }
-         } else if is_option(f.ty) {
-            quote! { (Some($val)) }
-         } else if is_box(f.ty) {
-            quote! { (Box::new($val)) }
-         } else if is_arc(f.ty) {
-            quote! { (std::sync::Arc::new($val)) }
-         } else {
-            quote! { ($val) }
-         };
-         
-         let init_state_with_first = public_fields.iter().map(|field| {
-             let ident = field.ident;
-             if ident == f_ident {
-                 quote! { #ident : #val_wrapper }
-             } else {
-                 quote! { #ident : () }
-             }
-         });
-         
-         // Collect into a Vec to iterate multiple times
-         let init_state_with_first: Vec<_> = init_state_with_first.collect();
-         
-         let array_rules = if f.dyn_iter || is_collection_of_box(f.ty) {
-             let val_wrapper_array = quote! {
-                 ({
-                     let mut temp_vec = Vec::new();
-                     $(
-                         temp_vec.push(Box::new($item) as _);
-                     )*
-                     temp_vec
-                 })
-             };
-             
-             let init_state_with_first_array = public_fields.iter().map(|field| {
-                 let ident = field.ident;
-                 if ident == f_ident {
-                     quote! { #ident : #val_wrapper_array }
-                 } else {
-                     quote! { #ident : () }
-                 }
-             });
-             let init_state_with_first_array: Vec<_> = init_state_with_first_array.collect();
+        } else {
+            wrapper.wrap_expr(quote! { $val })
+        };
 
-             quote! {
-                ( [ $($item:expr),* $(,)? ], $($rest:tt)* ) => {
-                    #macro_name!(@munch { #(#init_state_with_first_array),* } $($rest)*)
-                };
-                ( [ $($item:expr),* $(,)? ] ) => {
-                    #macro_name!(@munch { #(#init_state_with_first_array),* })
-                };
-             }
-         } else {
-             quote! {}
-         };
+        let init_state_with_first = public_fields.iter().map(|field| {
+            let ident = field.ident;
+            if ident == f_ident {
+                quote! { #ident : #val_wrapper }
+            } else {
+                quote! { #ident : () }
+            }
+        });
 
-         quote! {
-            #array_rules
+        // Collect into a Vec to iterate multiple times
+        let init_state_with_first: Vec<_> = init_state_with_first.collect();
 
-            ( $val:expr, $($rest:tt)* ) => {
-                #macro_name!(@munch { #(#init_state_with_first),* } $($rest)*)
+        let array_rules = if f.dyn_iter || matches!(AutoWrapper::new(f.ty), AutoWrapper::Vec(_)) {
+            let val_wrapper_array = quote! {
+                ({
+                    let mut temp_vec = Vec::new();
+                    $(
+                        temp_vec.push(Box::new($item) as _);
+                    )*
+                    temp_vec
+                })
             };
-            ( $val:expr ) => {
-                #macro_name!(@munch { #(#init_state_with_first),* })
-            };
-         }
+
+            let init_state_with_first_array = public_fields.iter().map(|field| {
+                let ident = field.ident;
+                if ident == f_ident {
+                    quote! { #ident : #val_wrapper_array }
+                } else {
+                    quote! { #ident : () }
+                }
+            });
+            let init_state_with_first_array: Vec<_> = init_state_with_first_array.collect();
+
+            quote! {
+               ( [ $($item:expr),* $(,)? ], $($rest:tt)* ) => {
+                   #macro_name!(@munch { #(#init_state_with_first_array),* } $($rest)*)
+               };
+               ( [ $($item:expr),* $(,)? ] ) => {
+                   #macro_name!(@munch { #(#init_state_with_first_array),* })
+               };
+            }
+        } else {
+            quote! {}
+        };
+
+        quote! {
+           #array_rules
+
+           ( $val:expr, $($rest:tt)* ) => {
+               #macro_name!(@munch { #(#init_state_with_first),* } $($rest)*)
+           };
+           ( $val:expr ) => {
+               #macro_name!(@munch { #(#init_state_with_first),* })
+           };
+        }
     } else {
         quote! {}
     };
@@ -478,26 +451,22 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         let f_name = field.ident;
         let f_ty = field.ty;
         let f_ty_str = quote!(#f_ty).to_string();
-        
+
         let mut extras = Vec::new();
         if field.first {
-             extras.push("Positional");
+            extras.push("Positional");
         }
         if field.default.is_some() {
             extras.push("Optional");
         }
-        
-        let extras_str = if !extras.is_empty() {
-             format!(" ({})", extras.join(", "))
-        } else {
-             String::new()
-        };
+
+        let extras_str = if !extras.is_empty() { format!(" ({})", extras.join(", ")) } else { String::new() };
 
         doc_msg.push_str(&format!("- `{}`: `{}`{}", f_name, f_ty_str, extras_str));
-        
+
         if !field.docs.is_empty() {
-             doc_msg.push_str("\n  - ");
-             doc_msg.push_str(&field.docs.join("\n  - "));
+            doc_msg.push_str("\n  - ");
+            doc_msg.push_str(&field.docs.join("\n  - "));
         }
         doc_msg.push('\n');
     }
@@ -507,22 +476,22 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         #[macro_export]
         macro_rules! #macro_name {
             #(#field_rules)*
-            
+
             (
                 @munch { #(#success_matcher_fields),* }
             ) => {
                 #struct_path::create_new(#(#call_args),*)
             };
-            
+
             #(#missing_field_rules)*
-            
+
             (
                 @munch { $($state:tt)* }
                 $field:ident : $val:expr $(, $($rest:tt)*)?
             ) => {
                 compile_error!(concat!("Unknown field: ", stringify!($field)))
             };
-            
+
             (
                 @munch { $($state:tt)* }
                 $($rest:tt)*
@@ -543,82 +512,4 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         #trait_gen
         #constructor_macro
     })
-}
-
-fn is_option(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            if segment.ident == "Option" {
-                 return true;
-            }
-        }
-    }
-    false
-}
-
-fn is_box(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            if segment.ident == "Box" {
-                 return true;
-            }
-        }
-    }
-    false
-}
-
-fn is_option_of_box(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            if segment.ident == "Option" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                        return is_box(inner_ty);
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
-fn is_arc(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            if segment.ident == "Arc" {
-                 return true;
-            }
-        }
-    }
-    false
-}
-
-fn is_option_of_arc(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            if segment.ident == "Option" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                        return is_arc(inner_ty);
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
-fn is_collection_of_box(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            if segment.ident == "Vec" || segment.ident == "Array" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                        return is_box(inner_ty);
-                    }
-                }
-            }
-        }
-    }
-    false
 }
