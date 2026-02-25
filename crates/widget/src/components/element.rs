@@ -8,9 +8,14 @@ pub enum ElementEvent {
     PointerMove(Vec2d),
 }
 
+
+unsafe impl Send for ElementEvent {}
+unsafe impl Sync for ElementEvent {}
+
+
 #[allow(dead_code)]
 /// ## A Lower Level Trait For Build THe Element From Nothing :))
-pub trait Element: Send + Sync {
+pub trait Element{
     /// For drawing the element to the canvas
     fn draw(&self, ctx: &BuildContext);
 
@@ -128,6 +133,7 @@ pub trait Element: Send + Sync {
 /// Returns `true` if any element consumed the event.
 pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> bool {
     // Try children in reverse order (front-to-back)
+    // println!("Dispatch event: {:?}", event);
     let mut children = Vec::new();
     root.event_children(&mut |child| children.push(child));
 
@@ -165,6 +171,9 @@ impl Element for Box<dyn Element> {
     fn size(&self) -> Option<Size> {
         self.as_ref().size()
     }
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        self.as_ref().on_event(event)
+    }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().visit_children(visitor)
     }
@@ -182,9 +191,6 @@ impl Element for Box<dyn Element> {
     }
     fn get_size_from_child(&self) -> Option<Size> {
         self.as_ref().get_size_from_child()
-    }
-    fn on_event(&self, event: &ElementEvent) -> bool {
-        self.as_ref().on_event(event)
     }
     fn invalidate_layout(&self) {
         self.as_ref().invalidate_layout()

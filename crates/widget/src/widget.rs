@@ -4,7 +4,7 @@ use crate::Element;
 pub mod stateful;
 pub mod stateless;
 
-pub trait Widget: Send + Sync {
+pub trait Widget{
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element>;
 }
 

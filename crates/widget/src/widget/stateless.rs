@@ -4,7 +4,7 @@ use crate::{base::*, Element, Widget};
 // We rely on direct Widget implementation to avoid blanket implementation conflicts.
 // The trait is kept for backward compatibility if needed, but generally users should implement Widget directly.
 
-pub trait StatelessWidget : Send + Sync {
+pub trait StatelessWidget {
     fn build(&self) -> impl Widget;
 }
 
@@ -16,14 +16,14 @@ impl Element for StatelessElement {
     fn draw(&self, _ctx: &BuildContext) {
         // Stateless element doesn't draw itself
     }
-    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
-    }
     fn pos(&self) -> Option<Vec2d> {
         self.child.pos()
     }
     fn size(&self) -> Option<Size> {
         self.child.size()
+    }
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
     }
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.child.computed_size(ctx)
