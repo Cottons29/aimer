@@ -46,12 +46,11 @@ pub struct RawContainer<T> {
     pub cache: LayoutCache,
 }
 
-impl<T: Element> Element for RawContainer<T> {
-    fn draw(&self, ctx: &BuildContext) {
-        let constraint = ctx.box_constraint;
 
-        let parent_width = constraint.max_width;
-        let parent_height = constraint.max_height;
+impl<T: Element> RawContainer<T> {
+    fn margin(&self, ctx: &BuildContext) -> (f32,f32,f32,f32) {
+        let parent_width = ctx.box_constraint.max_width;
+        let parent_height = ctx.box_constraint.max_height;
         let scale = ctx.scale;
 
         let m_left = self
@@ -66,6 +65,25 @@ impl<T: Element> Element for RawContainer<T> {
             .margin
             .map(|m| m.right.value(parent_width, scale))
             .unwrap_or(0.0);
+        let m_bottom = self
+            .margin
+            .map(|m| m.bottom.value(parent_height, scale))
+            .unwrap_or(0.0);
+
+        (m_left, m_top, m_right, m_bottom)
+
+    }
+}
+
+impl<T: Element> Element for RawContainer<T> {
+    fn draw(&self, ctx: &BuildContext) {
+        let constraint = ctx.box_constraint;
+
+        let parent_width = constraint.max_width;
+        let parent_height = constraint.max_height;
+        let scale = ctx.scale;
+
+        let (m_left, m_top, m_right, m_bottom) = self.margin(ctx);
 
         ctx.canvas.translate((m_left, m_top));
 
@@ -77,22 +95,8 @@ impl<T: Element> Element for RawContainer<T> {
 
         let box_height = match self.height {
             Dimension::Px(h) => h * scale,
-            Dimension::Percent(p) => {
-                parent_height * (p / 100.0)
-                    - (m_top
-                        + self
-                            .margin
-                            .map(|m| m.bottom.value(parent_height, scale))
-                            .unwrap_or(0.0))
-            }
-            Dimension::Auto => {
-                parent_height
-                    - m_top
-                    - self
-                        .margin
-                        .map(|m| m.bottom.value(parent_height, scale))
-                        .unwrap_or(0.0)
-            }
+            Dimension::Percent(p) => parent_height * (p / 100.0) - (m_top + m_bottom),
+            Dimension::Auto => parent_height - m_top - m_bottom,
         };
 
         let box_width = box_width.max(0.0);
@@ -120,7 +124,14 @@ impl<T: Element> Element for RawContainer<T> {
             border.draw(ctx.canvas, box_width, box_height, scale);
         }
 
-        // Clip children to inside the border
+        let p_left = self.padding.map(|p| p.left.value(box_width, scale)).unwrap_or(0.0);
+        let p_top = self.padding.map(|p| p.top.value(box_height, scale)).unwrap_or(0.0);
+        let _p_right = self.padding.map(|p| p.right.value(box_width, scale)).unwrap_or(0.0);
+        let _p_bottom = self.padding.map(|p| p.bottom.value(box_height, scale)).unwrap_or(0.0);
+
+        let mut b_left = 0.0;
+        let mut b_top = 0.0;
+
         if let Some(border) = self.border {
             let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
                 match dim {
@@ -129,37 +140,34 @@ impl<T: Element> Element for RawContainer<T> {
                     Dimension::Auto => 0.0,
                 }
             };
-            let stroke = get_stroke(border.left.stroke, box_width).max(0.0);
-            let half = stroke / 2.0;
-            let inset_rect =
-                Rect::from_xywh(half, half, (box_width - stroke).max(0.0), (box_height - stroke).max(0.0));
+            b_left = get_stroke(border.left.stroke, box_width).max(0.0);
+            let b_right = get_stroke(border.right.stroke, box_width).max(0.0);
+            b_top = get_stroke(border.top.stroke, box_height).max(0.0);
+            let b_bottom = get_stroke(border.bottom.stroke, box_height).max(0.0);
+
+            let inset_rect = Rect::from_ltrb(
+                b_left / 2.0,
+                b_top / 2.0,
+                (box_width - b_right / 2.0).max(0.0),
+                (box_height - b_bottom / 2.0).max(0.0),
+            );
+
             if let Some(radius) = border.get_uniform_radius(box_width, box_height, scale) {
-                let inner_radius = (radius - half).max(0.0);
+                let inner_radius = (radius - (b_left / 2.0)).max(0.0);
                 let rrect = skia_safe::RRect::new_rect_xy(inset_rect, inner_radius, inner_radius);
-                ctx.canvas
-                    .clip_rrect(rrect, skia_safe::ClipOp::Intersect, true);
+                ctx.canvas.clip_rrect(rrect, skia_safe::ClipOp::Intersect, true);
             } else {
-                ctx.canvas
-                    .clip_rect(inset_rect, skia_safe::ClipOp::Intersect, true);
+                ctx.canvas.clip_rect(inset_rect, skia_safe::ClipOp::Intersect, true);
             }
         } else {
             ctx.canvas.clip_rect(
-                skia_safe::Rect::from_xywh(0.0, 0.0, box_width, box_height),
+                Rect::from_xywh(0.0, 0.0, box_width, box_height),
                 skia_safe::ClipOp::Intersect,
                 true,
             );
         }
 
-        let p_left = self
-            .padding
-            .map(|p| p.left.value(box_width, scale))
-            .unwrap_or(0.0);
-        let p_top = self
-            .padding
-            .map(|p| p.top.value(box_height, scale))
-            .unwrap_or(0.0);
-
-        ctx.canvas.translate((p_left, p_top));
+        ctx.canvas.translate((p_left + b_left, p_top + b_top));
     }
 
     fn size(&self) -> Option<Size> {
@@ -170,7 +178,7 @@ impl<T: Element> Element for RawContainer<T> {
         visitor(&self.child);
     }
 
-    fn computed_size(&self, ctx: &BuildContext) -> widget::base::ResolvedSize {
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
             return cached;
@@ -181,15 +189,9 @@ impl<T: Element> Element for RawContainer<T> {
         let p_h = ctx.box_constraint.max_height;
 
         let m_left = self.margin.map(|m| m.left.value(p_w, scale)).unwrap_or(0.0);
-        let m_right = self
-            .margin
-            .map(|m| m.right.value(p_w, scale))
-            .unwrap_or(0.0);
+        let m_right = self.margin.map(|m| m.right.value(p_w, scale)).unwrap_or(0.0);
         let m_top = self.margin.map(|m| m.top.value(p_h, scale)).unwrap_or(0.0);
-        let m_bottom = self
-            .margin
-            .map(|m| m.bottom.value(p_h, scale))
-            .unwrap_or(0.0);
+        let m_bottom = self.margin.map(|m| m.bottom.value(p_h, scale)).unwrap_or(0.0);
 
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
@@ -203,7 +205,7 @@ impl<T: Element> Element for RawContainer<T> {
             Dimension::Auto => p_h - (m_top + m_bottom),
         };
 
-        let result = widget::base::ResolvedSize {
+        let result = ResolvedSize {
             width: (box_width + m_left + m_right).max(0.0),
             height: (box_height + m_top + m_bottom).max(0.0),
         };
@@ -212,7 +214,7 @@ impl<T: Element> Element for RawContainer<T> {
         result
     }
 
-    fn content_size(&self, ctx: &BuildContext) -> widget::base::ResolvedSize {
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_content(ctx.box_constraint, scale_bits) {
             return cached;
@@ -223,15 +225,9 @@ impl<T: Element> Element for RawContainer<T> {
         let p_h = ctx.box_constraint.max_height;
 
         let m_left = self.margin.map(|m| m.left.value(p_w, scale)).unwrap_or(0.0);
-        let m_right = self
-            .margin
-            .map(|m| m.right.value(p_w, scale))
-            .unwrap_or(0.0);
+        let m_right = self.margin.map(|m| m.right.value(p_w, scale)).unwrap_or(0.0);
         let m_top = self.margin.map(|m| m.top.value(p_h, scale)).unwrap_or(0.0);
-        let m_bottom = self
-            .margin
-            .map(|m| m.bottom.value(p_h, scale))
-            .unwrap_or(0.0);
+        let m_bottom = self.margin.map(|m| m.bottom.value(p_h, scale)).unwrap_or(0.0);
 
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
@@ -247,23 +243,33 @@ impl<T: Element> Element for RawContainer<T> {
         let b_w = box_width.max(0.0);
         let b_h = box_height.max(0.0);
 
-        let p_left = self
-            .padding
-            .map(|p| p.left.value(b_w, scale))
-            .unwrap_or(0.0);
-        let p_right = self
-            .padding
-            .map(|p| p.right.value(b_w, scale))
-            .unwrap_or(0.0);
+        let p_left = self.padding.map(|p| p.left.value(b_w, scale)).unwrap_or(0.0);
+        let p_right = self.padding.map(|p| p.right.value(b_w, scale)).unwrap_or(0.0);
         let p_top = self.padding.map(|p| p.top.value(b_h, scale)).unwrap_or(0.0);
-        let p_bottom = self
-            .padding
-            .map(|p| p.bottom.value(b_h, scale))
-            .unwrap_or(0.0);
+        let p_bottom = self.padding.map(|p| p.bottom.value(b_h, scale)).unwrap_or(0.0);
 
-        let result = widget::base::ResolvedSize {
-            width: (b_w - p_left - p_right).max(0.0),
-            height: (b_h - p_top - p_bottom).max(0.0),
+        let mut b_left = 0.0;
+        let mut b_right = 0.0;
+        let mut b_top = 0.0;
+        let mut b_bottom = 0.0;
+
+        if let Some(border) = self.border {
+            let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
+                match dim {
+                    Dimension::Px(w) => w * scale,
+                    Dimension::Percent(p) => parent_val * (p / 100.0),
+                    Dimension::Auto => 0.0,
+                }
+            };
+            b_left = get_stroke(border.left.stroke, b_w).max(0.0);
+            b_right = get_stroke(border.right.stroke, b_w).max(0.0);
+            b_top = get_stroke(border.top.stroke, b_h).max(0.0);
+            b_bottom = get_stroke(border.bottom.stroke, b_h).max(0.0);
+        }
+
+        let result = ResolvedSize {
+            width: (b_w - p_left - p_right - b_left - b_right).max(0.0),
+            height: (b_h - p_top - p_bottom - b_top - b_bottom).max(0.0),
         };
         self.cache
             .set_content(ctx.box_constraint, scale_bits, result);
@@ -277,41 +283,36 @@ impl<T: Element> Element for RawContainer<T> {
         let mut m_h: f32 = 0.0;
         let mut p_w: f32 = 0.0;
         let mut p_h: f32 = 0.0;
+        let mut b_w: f32 = 0.0;
+        let mut b_h: f32 = 0.0;
 
+        // Note: For get_size_from_child, we don't have a parent size to resolve percentages,
+        // so we can only accurately add Px values. Percentages will be ignored or should be
+        // handled by the layout system during actual resolution.
         if let Some(m) = self.margin {
-            if let Spacing::Px(v) = m.left {
-                m_w += v as f32;
-            }
-            if let Spacing::Px(v) = m.right {
-                m_w += v as f32;
-            }
-            if let Spacing::Px(v) = m.top {
-                m_h += v as f32;
-            }
-            if let Spacing::Px(v) = m.bottom {
-                m_h += v as f32;
-            }
+            if let Spacing::Px(v) = m.left { m_w += v as f32; }
+            if let Spacing::Px(v) = m.right { m_w += v as f32; }
+            if let Spacing::Px(v) = m.top { m_h += v as f32; }
+            if let Spacing::Px(v) = m.bottom { m_h += v as f32; }
         }
         if let Some(p) = self.padding {
-            if let Spacing::Px(v) = p.left {
-                p_w += v as f32;
-            }
-            if let Spacing::Px(v) = p.right {
-                p_w += v as f32;
-            }
-            if let Spacing::Px(v) = p.top {
-                p_h += v as f32;
-            }
-            if let Spacing::Px(v) = p.bottom {
-                p_h += v as f32;
-            }
+            if let Spacing::Px(v) = p.left { p_w += v as f32; }
+            if let Spacing::Px(v) = p.right { p_w += v as f32; }
+            if let Spacing::Px(v) = p.top { p_h += v as f32; }
+            if let Spacing::Px(v) = p.bottom { p_h += v as f32; }
+        }
+        if let Some(border) = self.border {
+            if let Dimension::Px(v) = border.left.stroke { b_w += v; }
+            if let Dimension::Px(v) = border.right.stroke { b_w += v; }
+            if let Dimension::Px(v) = border.top.stroke { b_h += v; }
+            if let Dimension::Px(v) = border.bottom.stroke { b_h += v; }
         }
 
         if let Dimension::Px(w) = self.width {
             size.width = Dimension::Px(w + m_w);
         } else {
             size.width = match size.width {
-                Dimension::Px(v) => Dimension::Px(v + m_w + p_w),
+                Dimension::Px(v) => Dimension::Px(v + m_w + p_w + b_w),
                 other => other,
             };
         }
@@ -320,7 +321,7 @@ impl<T: Element> Element for RawContainer<T> {
             size.height = Dimension::Px(h + m_h);
         } else {
             size.height = match size.height {
-                Dimension::Px(v) => Dimension::Px(v + m_h + p_h),
+                Dimension::Px(v) => Dimension::Px(v + m_h + p_h + b_h),
                 other => other,
             };
         }

@@ -12,18 +12,24 @@ pub struct SizedBox {
     width: Dimension,
     #[constructor(default, into)]
     height: Dimension,
-    #[constructor(default,into)]
+    #[constructor(default, into)]
     color: Color,
     child: Option<Box<dyn Widget>>,
 }
 
 impl Widget for SizedBox {
-    fn to_element(&self, ctx: &widget::base::BuildContext) -> Box<dyn widget::Element> {
+    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let child = match self.child.as_ref() {
             Some(item) => item.to_element(ctx),
             None => ZeroSizedBox.to_element(ctx),
         };
-        Box::new(RawSizedBox { width: self.width, height: self.height, child, color: self.color, cache: LayoutCache::new() })
+        Box::new(RawSizedBox {
+            width: self.width,
+            height: self.height,
+            child,
+            color: self.color,
+            cache: LayoutCache::new(),
+        })
     }
 }
 
@@ -61,7 +67,7 @@ impl Element for RawSizedBox {
         visitor(&self.child);
     }
 
-    fn computed_size(&self, ctx: &BuildContext) -> widget::base::ResolvedSize {
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
             return cached;
@@ -76,6 +82,7 @@ impl Element for RawSizedBox {
             parent_pos: ctx.parent_pos,
             box_constraint: ctx.box_constraint,
             window: ctx.window,
+            async_handle: ctx.async_handle.clone(),
         };
 
         child_ctx.box_constraint.max_width = self.width.resolve(ctx.box_constraint.max_width, scale);
@@ -93,8 +100,9 @@ impl Element for RawSizedBox {
             Dimension::Auto => self.child.computed_size(&child_ctx).height,
         };
 
-        let result = widget::base::ResolvedSize { width, height };
-        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
+        let result = ResolvedSize { width, height };
+        self.cache
+            .set_computed(ctx.box_constraint, scale_bits, result);
         result
     }
 

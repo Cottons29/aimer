@@ -22,7 +22,7 @@ pub struct Flex {
 }
 
 impl Widget for Flex {
-    fn to_element(&self, ctx: &widget::base::BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let elements = self.children.iter().map(|c| c.to_element(ctx)).collect();
         Box::new(RawFlex {
             direction: self.direction,
@@ -48,11 +48,11 @@ pub struct RawFlex {
 }
 
 impl RawFlex {
-    fn render_child(widget: &dyn Element, ctx: &widget::base::BuildContext) {
+    fn render_child(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
         widget.draw(ctx);
         let content = widget.content_size(ctx);
-        let child_ctx = widget::base::BuildContext {
+        let child_ctx = BuildContext {
             parent_size: content,
             canvas: ctx.canvas,
             scale: ctx.scale,
@@ -64,6 +64,7 @@ impl RawFlex {
                 max_height: content.height,
             },
             window: ctx.window,
+            async_handle: ctx.async_handle.clone(),
         };
         widget.visit_children(&mut |child| {
             Self::render_child(child, &child_ctx);
@@ -97,7 +98,7 @@ impl RawFlex {
 }
 
 impl Element for RawFlex {
-    fn draw(&self, ctx: &widget::base::BuildContext) {
+    fn draw(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
         let (gap_x, gap_y) = self.resole_gaps(ctx);
         let max_w = ctx.box_constraint.max_width;
@@ -134,13 +135,14 @@ impl Element for RawFlex {
         // Apply clipping for overflow hidden
         self.overflow_behavior.apply_overflow_behave(ctx);
 
-        let mut child_ctx = widget::base::BuildContext {
+        let mut child_ctx = BuildContext {
             parent_size: ctx.parent_size,
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             box_constraint: ctx.box_constraint,
             window: ctx.window,
+            async_handle: ctx.async_handle.clone(),
         };
 
         // Pass 1: measure sized children to find remaining space for unsized ones
@@ -248,7 +250,7 @@ impl Element for RawFlex {
                 }
             }
 
-            let draw_ctx = widget::base::BuildContext {
+            let draw_ctx = BuildContext {
                 parent_size: child_size,
                 canvas: ctx.canvas,
                 scale: ctx.scale,
@@ -260,6 +262,7 @@ impl Element for RawFlex {
                     max_height: c_h,
                 },
                 window: ctx.window,
+                async_handle: ctx.async_handle.clone(),
             };
 
             draw_ctx.canvas.save();
@@ -280,7 +283,13 @@ impl Element for RawFlex {
         ctx.canvas.restore();
     }
 
-    fn computed_size(&self, ctx: &widget::base::BuildContext) -> widget::base::ResolvedSize {
+    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        for child in &self.children {
+            visitor(child.as_ref());
+        }
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> widget::base::ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
             return cached;
@@ -326,13 +335,14 @@ impl Element for RawFlex {
         let mut unsized_count: usize = 0;
         let mut child_sizes: Vec<Option<widget::base::ResolvedSize>> = Vec::with_capacity(child_count);
 
-        let mut child_ctx = widget::base::BuildContext {
+        let mut child_ctx = BuildContext {
             parent_size: ctx.parent_size,
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             box_constraint: ctx.box_constraint,
             window: ctx.window,
+            async_handle: ctx.async_handle.clone(),
         };
 
         for child in &self.children {
@@ -423,7 +433,7 @@ impl Element for RawFlex {
         result
     }
 
-    fn content_size(&self, ctx: &widget::base::BuildContext) -> widget::base::ResolvedSize {
+    fn content_size(&self, ctx: &BuildContext) -> widget::base::ResolvedSize {
         self.computed_size(ctx)
     }
 
@@ -431,17 +441,6 @@ impl Element for RawFlex {
         self.cache.invalidate();
         for child in &self.children {
             child.invalidate_layout();
-        }
-    }
-
-    // We don't implement visit_children here.
-    // If we did, the engine's `render_widget_tree` would visit the children and draw them
-    // again at the top-left (0,0) of the Flex container.
-    // Instead, we manually traverse and render the children in `draw()` with the correct translations.
-
-    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        for child in &self.children {
-            visitor(child.as_ref());
         }
     }
 }
