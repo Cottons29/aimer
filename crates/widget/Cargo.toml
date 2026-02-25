@@ -20,3 +20,4 @@ skia-safe.workspace = true
 rayon.workspace = true  
 pixels.workspace = true
 constructor.workspace = true
+tokio.workspace = true

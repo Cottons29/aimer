@@ -27,6 +27,7 @@ pixels.workspace = true
 chrono.workspace = true
 objc.workspace = true
 core-foundation.workspace = true
+tokio.workspace = true
 
 
 

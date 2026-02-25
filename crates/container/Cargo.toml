@@ -19,5 +19,6 @@ skia-safe.workspace = true
 rayon.workspace = true  
 pixels.workspace = true
 chrono.workspace = true
+tokio.workspace = true
 
 

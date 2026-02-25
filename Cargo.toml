@@ -25,10 +25,14 @@ container = {path ="./crates/container"}
 constructor = {path = "./macros/constructor"}
 engine = {path = "./engine"}
 widget= {path = "crates/widget"}
-stateless_widget = {path = "macros/stateless_widget"}
-stateful_widget = {path = "macros/stateful_widget"}
+#stateless_widget = {path = "macros/stateless_widget"}
+#stateful_widget = {path = "macros/stateful_widget"}
 widget_attr = { path = "macros/widget_attr" }
 color ={path = "crates/color"}
+
+
+
+
 #########################################################################
 uuid = {version = "1.20.0", features = ["v4", "js"]}
 web-sys= {version= "0.3.85", features= ["CanvasRenderingContext2d"]} 
@@ -44,7 +48,9 @@ chrono = "0.4.43"
 boltffi = "0.1"
 objc = {version= "0.2.7"}
 core-foundation = {version= "0.10.1"}
-
+ui-events = "0.3.0"
+fxhash = "0.2.1"
+tokio = {version = "1", features = ["rt-multi-thread", "macros"]}
 
 
 

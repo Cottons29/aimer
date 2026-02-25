@@ -2,7 +2,8 @@
 use crate::render;
 use pixels::{Pixels, SurfaceTexture};
 use skia_safe::{AlphaType, ColorType};
-use widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
+use tokio::runtime::Runtime;
+use widget::base::{BuildContext, ResolvedSize, Vec2d};
 use widget::{Element, ElementEvent, Widget, dispatch_event};
 use winit::application::ApplicationHandler;
 #[allow(unused)]
@@ -23,6 +24,7 @@ pub struct App {
     pub window_scale: f64,
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
+    pub async_runtime: Runtime,
 }
 
 impl ApplicationHandler for App {
@@ -82,20 +84,22 @@ impl ApplicationHandler for App {
                     winit::event::TouchPhase::Ended => Some(ElementEvent::PointerUp(pos)),
                     winit::event::TouchPhase::Cancelled => None,
                 };
-
+                #[allow(clippy::collapsible_if)]
                 if let Some(event) = event {
                     if let Some(root) = &self.widget_root {
-                        if dispatch_event(root.as_ref(), pos, &event) {
-                            if let Some(window) = &self.window {
-                                window.request_redraw();
-                            }
-                        }
+                        dispatch_event(root.as_ref(), pos, &event);
                     }
                 }
             }
             // WindowEvent::Focused
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_pos = Vec2d { x: position.x as f32, y: position.y as f32 };
+                // println!("Cursor: {:?}", self.cursor_pos);
+                if let Some(root) = &self.widget_root {
+                    let event = ElementEvent::PointerMove(self.cursor_pos);
+                    #[allow(clippy::collapsible_if)]
+                    dispatch_event(root.as_ref(), self.cursor_pos, &event);
+                }
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
@@ -109,13 +113,9 @@ impl ApplicationHandler for App {
                 } else {
                     ElementEvent::PointerUp(c)
                 };
-
+                #[allow(clippy::collapsible_if)]
                 if let Some(root) = &self.widget_root {
-                    if dispatch_event(root.as_ref(), c, &event) {
-                        if let Some(window) = &self.window {
-                            window.request_redraw();
-                        }
-                    }
+                    dispatch_event(root.as_ref(), c, &event);
                 }
             }
 
@@ -191,6 +191,7 @@ impl App {
                 max_height: content.height,
             },
             window: ctx.window,
+            async_handle: ctx.async_handle.clone(),
         };
         widget.visit_children(&mut |child| {
             Self::render_widget_tree(child, &child_ctx);
@@ -199,6 +200,7 @@ impl App {
     }
 
     fn render(&mut self, event_loop: &ActiveEventLoop) {
+        #[allow(clippy::collapsible_if)]
         if let Some(size) = self.pending_resize.take() {
             if let Some(pixels) = &mut self.pixels {
                 let _ = pixels.resize_surface(size.width, size.height);
@@ -244,6 +246,7 @@ impl App {
                 if let Some(mut surface) =
                     skia_safe::surfaces::wrap_pixels(&info, frame, Some(row_bytes), None)
                 {
+                    if self.window.is_none() {return;}
                     let ctx: BuildContext = BuildContext {
                         parent_size: ResolvedSize { width: width as f32, height: height as f32 },
                         canvas: surface.canvas(),
@@ -255,7 +258,8 @@ impl App {
                             max_width: width as f32,
                             max_height: height as f32,
                         },
-                        window: self.window,
+                        window: self.window.unwrap(),
+                        async_handle: self.async_runtime.handle().clone(),
                     };
                     ctx.canvas.clear(skia_safe::Color::WHITE);
                     #[allow(clippy::collapsible_if)]
