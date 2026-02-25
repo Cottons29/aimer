@@ -275,8 +275,71 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
             quote! {}
         };
 
+        // Generate async closure rules for fields with `into` attribute
+        let async_rules = if target.into {
+            let state_matcher_clone1: Vec<_> = public_fields
+                .iter()
+                .map(|f| {
+                    let f_ident = f.ident;
+                    let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());
+                    quote! { #f_ident : $#var_name:tt }
+                })
+                .collect();
+            let state_matcher_clone2 = state_matcher_clone1.clone();
+
+            // State update for async move || { body }
+            let state_update_async_move = public_fields.iter().map(|f| {
+                let f_ident = f.ident;
+                if f_ident == target_ident {
+                    quote! { #f_ident : ((AsyncCallback(move || async move { $($body)* })).into()) }
+                } else {
+                    let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());
+                    quote! { #f_ident : $#var_name }
+                }
+            });
+
+            // State update for async || { body }
+            let state_update_async = public_fields.iter().map(|f| {
+                let f_ident = f.ident;
+                if f_ident == target_ident {
+                    quote! { #f_ident : ((AsyncCallback(|| async { $($body)* })).into()) }
+                } else {
+                    let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());
+                    quote! { #f_ident : $#var_name }
+                }
+            });
+
+            quote! {
+                // async move || { body }
+                (
+                    @munch { #(#state_matcher_clone1),* }
+                    #target_ident : async move || { $($body:tt)* } $(, $($rest:tt)*)?
+                ) => {
+                    #macro_name!(
+                        @munch { #(#state_update_async_move),* }
+                        $($($rest)*)?
+                    )
+                };
+
+                // async || { body }
+                (
+                    @munch { #(#state_matcher_clone2),* }
+                    #target_ident : async || { $($body:tt)* } $(, $($rest:tt)*)?
+                ) => {
+                    #macro_name!(
+                        @munch { #(#state_update_async),* }
+                        $($($rest)*)?
+                    )
+                };
+            }
+        } else {
+            quote! {}
+        };
+
         quote! {
             #array_rule
+
+            #async_rules
 
             (
                 @munch { #(#state_matcher),* }
