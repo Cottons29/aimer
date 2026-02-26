@@ -1,7 +1,14 @@
+use attribute::dimension::Dimension;
+use attribute::size::{ResolvedSize, Size};
 use constructor::Constructor;
+#[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
 use widget::{Element, LayoutCache, LayoutSpacing, Spacing, Widget, base::*, style::border::BoxBorder};
 
+#[cfg(target_arch = "wasm32")]
+type FLOAT = f64;
+#[cfg(not(target_arch = "wasm32"))]
+type FLOAT = f32;
 #[derive(Constructor)]
 pub struct Container<T: Widget> {
     #[constructor(into, default)]
@@ -46,9 +53,8 @@ pub struct RawContainer<T> {
     pub cache: LayoutCache,
 }
 
-
 impl<T: Element> RawContainer<T> {
-    fn margin(&self, ctx: &BuildContext) -> (f32,f32,f32,f32) {
+    fn margin(&self, ctx: &BuildContext) -> (FLOAT, FLOAT, FLOAT, FLOAT) {
         let parent_width = ctx.box_constraint.max_width;
         let parent_height = ctx.box_constraint.max_height;
         let scale = ctx.scale;
@@ -71,7 +77,6 @@ impl<T: Element> RawContainer<T> {
             .unwrap_or(0.0);
 
         (m_left, m_top, m_right, m_bottom)
-
     }
 }
 
@@ -85,7 +90,15 @@ impl<T: Element> Element for RawContainer<T> {
 
         let (m_left, m_top, m_right, m_bottom) = self.margin(ctx);
 
+        #[cfg(not(target_arch = "wasm32"))]
         ctx.canvas.translate((m_left, m_top));
+        #[cfg(target_arch = "wasm32")]
+        match ctx.canvas.translate(m_left, m_top) {
+            Ok(_) => {}
+            Err(err) => {
+                log::error!("Failed to translate canvas: {:?}", err);
+            }
+        }
 
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
@@ -101,39 +114,70 @@ impl<T: Element> Element for RawContainer<T> {
 
         let box_width = box_width.max(0.0);
         let box_height = box_height.max(0.0);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            paint.set_color(SkColor::from(self.color));
+            paint.set_style(Style::Fill);
 
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        paint.set_color(SkColor::from(self.color));
-        paint.set_style(Style::Fill);
+            let rect = Rect::from_xywh(0.0, 0.0, box_width, box_height);
 
-        let rect = Rect::from_xywh(0.0, 0.0, box_width, box_height);
+            let has_radius = self
+                .border
+                .and_then(|b| b.get_uniform_radius(box_width, box_height, scale));
 
-        let has_radius = self
-            .border
-            .and_then(|b| b.get_uniform_radius(box_width, box_height, scale));
+            if let Some(radius) = has_radius {
+                let rrect = skia_safe::RRect::new_rect_xy(rect, radius, radius);
+                ctx.canvas.draw_rrect(rrect, &paint);
+            } else {
+                ctx.canvas.draw_rect(rect, &paint);
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let color_str = self.color.to_css_color();
+            ctx.canvas.set_fill_style_str(&color_str);
 
-        if let Some(radius) = has_radius {
-            let rrect = skia_safe::RRect::new_rect_xy(rect, radius, radius);
-            ctx.canvas.draw_rrect(rrect, &paint);
-        } else {
-            ctx.canvas.draw_rect(rect, &paint);
+            let has_radius = self
+                .border
+                .and_then(|b| b.get_uniform_radius(box_width, box_height, scale));
+
+            if let Some(radius) = has_radius {
+                ctx.canvas.begin_path();
+                let _ = ctx.canvas.round_rect_with_f64(0.0, 0.0, box_width, box_height, radius);
+                ctx.canvas.fill();
+            } else {
+                ctx.canvas.fill_rect(0.0, 0.0, box_width, box_height);
+            }
         }
 
         if let Some(border) = self.border {
             border.draw(ctx.canvas, box_width, box_height, scale);
         }
 
-        let p_left = self.padding.map(|p| p.left.value(box_width, scale)).unwrap_or(0.0);
-        let p_top = self.padding.map(|p| p.top.value(box_height, scale)).unwrap_or(0.0);
-        let _p_right = self.padding.map(|p| p.right.value(box_width, scale)).unwrap_or(0.0);
-        let _p_bottom = self.padding.map(|p| p.bottom.value(box_height, scale)).unwrap_or(0.0);
+        let p_left = self
+            .padding
+            .map(|p| p.left.value(box_width, scale))
+            .unwrap_or(0.0);
+        let p_top = self
+            .padding
+            .map(|p| p.top.value(box_height, scale))
+            .unwrap_or(0.0);
+        let _p_right = self
+            .padding
+            .map(|p| p.right.value(box_width, scale))
+            .unwrap_or(0.0);
+        let _p_bottom = self
+            .padding
+            .map(|p| p.bottom.value(box_height, scale))
+            .unwrap_or(0.0);
 
         let mut b_left = 0.0;
         let mut b_top = 0.0;
 
         if let Some(border) = self.border {
-            let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
+            let get_stroke = |dim: Dimension, parent_val: FLOAT| -> FLOAT {
                 match dim {
                     Dimension::Px(w) => w * scale,
                     Dimension::Percent(p) => parent_val * (p / 100.0),
@@ -145,6 +189,7 @@ impl<T: Element> Element for RawContainer<T> {
             b_top = get_stroke(border.top.stroke, box_height).max(0.0);
             let b_bottom = get_stroke(border.bottom.stroke, box_height).max(0.0);
 
+            #[cfg(not(target_arch = "wasm32"))]
             let inset_rect = Rect::from_ltrb(
                 b_left / 2.0,
                 b_top / 2.0,
@@ -154,20 +199,62 @@ impl<T: Element> Element for RawContainer<T> {
 
             if let Some(radius) = border.get_uniform_radius(box_width, box_height, scale) {
                 let inner_radius = (radius - (b_left / 2.0)).max(0.0);
-                let rrect = skia_safe::RRect::new_rect_xy(inset_rect, inner_radius, inner_radius);
-                ctx.canvas.clip_rrect(rrect, skia_safe::ClipOp::Intersect, true);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let rrect = skia_safe::RRect::new_rect_xy(inset_rect, inner_radius, inner_radius);
+                    ctx.canvas
+                        .clip_rrect(rrect, skia_safe::ClipOp::Intersect, true);
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    ctx.canvas.begin_path();
+                    let _ = ctx.canvas.round_rect_with_f64(
+                        b_left / 2.0,
+                        b_top / 2.0,
+                        (box_width - b_right / 2.0).max(0.0) - (b_left / 2.0),
+                        (box_height - b_bottom / 2.0).max(0.0) - (b_top / 2.0),
+                        inner_radius,
+                    );
+                    ctx.canvas.clip();
+                }
             } else {
-                ctx.canvas.clip_rect(inset_rect, skia_safe::ClipOp::Intersect, true);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    ctx.canvas
+                        .clip_rect(inset_rect, skia_safe::ClipOp::Intersect, true);
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    ctx.canvas.begin_path();
+                    ctx.canvas.rect(
+                        b_left / 2.0,
+                        b_top / 2.0,
+                        (box_width - b_right / 2.0).max(0.0) - (b_left / 2.0),
+                        (box_height - b_bottom / 2.0).max(0.0) - (b_top / 2.0),
+                    );
+                    ctx.canvas.clip();
+                }
             }
         } else {
-            ctx.canvas.clip_rect(
-                Rect::from_xywh(0.0, 0.0, box_width, box_height),
-                skia_safe::ClipOp::Intersect,
-                true,
-            );
+            #[cfg(not(target_arch = "wasm32"))]
+            ctx.canvas.clip_rect(Rect::from_xywh(0.0, 0.0, box_width, box_height), skia_safe::ClipOp::Intersect, true);
+            #[cfg(target_arch = "wasm32")]
+            {
+                ctx.canvas.begin_path();
+                ctx.canvas.rect(0.0, 0.0, box_width, box_height);
+                ctx.canvas.clip();
+            }
         }
-
+        #[cfg(not(target_arch = "wasm32"))]
         ctx.canvas.translate((p_left + b_left, p_top + b_top));
+
+        #[cfg(target_arch = "wasm32")]
+        match ctx.canvas.translate(p_left + b_left, p_top + b_top) {
+            Ok(_) => {}
+            Err(err) => {
+                log::error!("Failed to translate canvas: {:?}", err);
+            }
+        }
     }
 
     fn size(&self) -> Option<Size> {
@@ -189,9 +276,15 @@ impl<T: Element> Element for RawContainer<T> {
         let p_h = ctx.box_constraint.max_height;
 
         let m_left = self.margin.map(|m| m.left.value(p_w, scale)).unwrap_or(0.0);
-        let m_right = self.margin.map(|m| m.right.value(p_w, scale)).unwrap_or(0.0);
+        let m_right = self
+            .margin
+            .map(|m| m.right.value(p_w, scale))
+            .unwrap_or(0.0);
         let m_top = self.margin.map(|m| m.top.value(p_h, scale)).unwrap_or(0.0);
-        let m_bottom = self.margin.map(|m| m.bottom.value(p_h, scale)).unwrap_or(0.0);
+        let m_bottom = self
+            .margin
+            .map(|m| m.bottom.value(p_h, scale))
+            .unwrap_or(0.0);
 
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
@@ -225,9 +318,15 @@ impl<T: Element> Element for RawContainer<T> {
         let p_h = ctx.box_constraint.max_height;
 
         let m_left = self.margin.map(|m| m.left.value(p_w, scale)).unwrap_or(0.0);
-        let m_right = self.margin.map(|m| m.right.value(p_w, scale)).unwrap_or(0.0);
+        let m_right = self
+            .margin
+            .map(|m| m.right.value(p_w, scale))
+            .unwrap_or(0.0);
         let m_top = self.margin.map(|m| m.top.value(p_h, scale)).unwrap_or(0.0);
-        let m_bottom = self.margin.map(|m| m.bottom.value(p_h, scale)).unwrap_or(0.0);
+        let m_bottom = self
+            .margin
+            .map(|m| m.bottom.value(p_h, scale))
+            .unwrap_or(0.0);
 
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
@@ -243,10 +342,19 @@ impl<T: Element> Element for RawContainer<T> {
         let b_w = box_width.max(0.0);
         let b_h = box_height.max(0.0);
 
-        let p_left = self.padding.map(|p| p.left.value(b_w, scale)).unwrap_or(0.0);
-        let p_right = self.padding.map(|p| p.right.value(b_w, scale)).unwrap_or(0.0);
+        let p_left = self
+            .padding
+            .map(|p| p.left.value(b_w, scale))
+            .unwrap_or(0.0);
+        let p_right = self
+            .padding
+            .map(|p| p.right.value(b_w, scale))
+            .unwrap_or(0.0);
         let p_top = self.padding.map(|p| p.top.value(b_h, scale)).unwrap_or(0.0);
-        let p_bottom = self.padding.map(|p| p.bottom.value(b_h, scale)).unwrap_or(0.0);
+        let p_bottom = self
+            .padding
+            .map(|p| p.bottom.value(b_h, scale))
+            .unwrap_or(0.0);
 
         let mut b_left = 0.0;
         let mut b_right = 0.0;
@@ -254,7 +362,7 @@ impl<T: Element> Element for RawContainer<T> {
         let mut b_bottom = 0.0;
 
         if let Some(border) = self.border {
-            let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
+            let get_stroke = |dim: Dimension, parent_val: FLOAT| -> FLOAT {
                 match dim {
                     Dimension::Px(w) => w * scale,
                     Dimension::Percent(p) => parent_val * (p / 100.0),
@@ -279,33 +387,57 @@ impl<T: Element> Element for RawContainer<T> {
     fn get_size_from_child(&self) -> Option<Size> {
         let mut size = self.child.get_size_from_child().unwrap_or_default();
 
-        let mut m_w: f32 = 0.0;
-        let mut m_h: f32 = 0.0;
-        let mut p_w: f32 = 0.0;
-        let mut p_h: f32 = 0.0;
-        let mut b_w: f32 = 0.0;
-        let mut b_h: f32 = 0.0;
+        let mut m_w: FLOAT = 0.0;
+        let mut m_h: FLOAT = 0.0;
+        let mut p_w: FLOAT = 0.0;
+        let mut p_h: FLOAT = 0.0;
+        let mut b_w: FLOAT = 0.0;
+        let mut b_h: FLOAT = 0.0;
 
         // Note: For get_size_from_child, we don't have a parent size to resolve percentages,
         // so we can only accurately add Px values. Percentages will be ignored or should be
         // handled by the layout system during actual resolution.
         if let Some(m) = self.margin {
-            if let Spacing::Px(v) = m.left { m_w += v as f32; }
-            if let Spacing::Px(v) = m.right { m_w += v as f32; }
-            if let Spacing::Px(v) = m.top { m_h += v as f32; }
-            if let Spacing::Px(v) = m.bottom { m_h += v as f32; }
+            if let Spacing::Px(v) = m.left {
+                m_w += v as FLOAT;
+            }
+            if let Spacing::Px(v) = m.right {
+                m_w += v as FLOAT;
+            }
+            if let Spacing::Px(v) = m.top {
+                m_h += v as FLOAT;
+            }
+            if let Spacing::Px(v) = m.bottom {
+                m_h += v as FLOAT;
+            }
         }
         if let Some(p) = self.padding {
-            if let Spacing::Px(v) = p.left { p_w += v as f32; }
-            if let Spacing::Px(v) = p.right { p_w += v as f32; }
-            if let Spacing::Px(v) = p.top { p_h += v as f32; }
-            if let Spacing::Px(v) = p.bottom { p_h += v as f32; }
+            if let Spacing::Px(v) = p.left {
+                p_w += v as FLOAT;
+            }
+            if let Spacing::Px(v) = p.right {
+                p_w += v as FLOAT;
+            }
+            if let Spacing::Px(v) = p.top {
+                p_h += v as FLOAT;
+            }
+            if let Spacing::Px(v) = p.bottom {
+                p_h += v as FLOAT;
+            }
         }
         if let Some(border) = self.border {
-            if let Dimension::Px(v) = border.left.stroke { b_w += v; }
-            if let Dimension::Px(v) = border.right.stroke { b_w += v; }
-            if let Dimension::Px(v) = border.top.stroke { b_h += v; }
-            if let Dimension::Px(v) = border.bottom.stroke { b_h += v; }
+            if let Dimension::Px(v) = border.left.stroke {
+                b_w += v;
+            }
+            if let Dimension::Px(v) = border.right.stroke {
+                b_w += v;
+            }
+            if let Dimension::Px(v) = border.top.stroke {
+                b_h += v;
+            }
+            if let Dimension::Px(v) = border.bottom.stroke {
+                b_h += v;
+            }
         }
 
         if let Dimension::Px(w) = self.width {

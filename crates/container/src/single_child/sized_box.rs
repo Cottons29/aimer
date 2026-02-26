@@ -1,11 +1,19 @@
+use pixels::wgpu::web_sys::wasm_bindgen;
 use crate::ZeroSizedBox;
-use skia_safe::Paint;
-use skia_safe::{Color as SkColor, Rect, paint::Style};
+use attribute::dimension::Dimension;
+use attribute::size::{ResolvedSize, Size};
 use widget::base::*;
 use widget::{
-    Constructor, Element, LayoutCache, Widget,
-    base::{Color, Dimension},
+    base::Color, Constructor, Element, LayoutCache,
+    Widget,
 };
+
+#[cfg(target_arch = "wasm32")]
+type FLOAT = f64;
+#[cfg(not(target_arch = "wasm32"))]
+type FLOAT = f32;
+
+
 #[derive(Constructor)]
 pub struct SizedBox {
     #[constructor(default, into)]
@@ -42,7 +50,10 @@ pub struct RawSizedBox {
 }
 
 impl Element for RawSizedBox {
+    #[cfg(not(target_arch = "wasm32"))]
     fn draw(&self, ctx: &BuildContext) {
+        use skia_safe::Paint;
+        use skia_safe::{paint::Style, Color as SkColor, Rect};
         let size = self.computed_size(ctx);
         let width = size.width;
         let height = size.height;
@@ -51,9 +62,21 @@ impl Element for RawSizedBox {
         paint.set_anti_alias(true);
         paint.set_color(SkColor::from(self.color));
         paint.set_style(Style::Fill);
+        {
+            let rect = Rect::from_xywh(0.0, 0.0, width, height);
+            ctx.canvas.draw_rect(rect, &paint);
+        }
+    }
 
-        let rect = Rect::from_xywh(0.0, 0.0, width, height);
-        ctx.canvas.draw_rect(rect, &paint);
+    #[cfg(target_arch = "wasm32")]
+    fn draw(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let width = size.width;
+        let height = size.height;
+
+        let color_str = self.color.to_css_color();
+        ctx.canvas.set_fill_style_str(&color_str);
+        ctx.canvas.fill_rect(0.0, 0.0, width, height);
     }
 
     fn size(&self) -> Option<Size> {

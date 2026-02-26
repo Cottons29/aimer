@@ -1,7 +1,13 @@
+use attribute::size::{ResolvedSize, Size};
 use widget::{
-    Constructor, Element, LayoutCache, LayoutSpacing, Widget,
-    base::{BuildContext, Size},
+    base::BuildContext, Constructor, Element, LayoutCache, LayoutSpacing,
+    Widget,
 };
+
+#[cfg(target_arch = "wasm32")]
+type FLOAT = f64;
+#[cfg(not(target_arch = "wasm32"))]
+type FLOAT = f32;
 
 use crate::flex::{BoxAlignment, FlexDirection, OverflowBehavior};
 #[allow(dead_code)]
@@ -74,8 +80,8 @@ impl RawFlex {
 }
 
 impl RawFlex {
-    
-    fn resole_gaps(&self, ctx: &BuildContext) -> (f32, f32) {
+    #[inline]
+    fn resole_gaps(&self, ctx: &BuildContext) -> (FLOAT, FLOAT) {
         let gap_x = self
             .gaps
             .left
@@ -149,14 +155,14 @@ impl Element for RawFlex {
         let child_count = self.children.len();
         let total_gap = if child_count > 1 {
             match self.direction {
-                FlexDirection::Row | FlexDirection::Inherit => gap_x * (child_count - 1) as f32,
-                FlexDirection::Column => gap_y * (child_count - 1) as f32,
+                FlexDirection::Row | FlexDirection::Inherit => gap_x * (child_count - 1) as FLOAT,
+                FlexDirection::Column => gap_y * (child_count - 1) as FLOAT,
             }
         } else {
             0.0
         };
 
-        let mut sized_main: f32 = 0.0;
+        let mut sized_main: FLOAT = 0.0;
         let mut unsized_count: usize = 0;
         let mut child_has_size: Vec<bool> = Vec::with_capacity(child_count);
 
@@ -177,11 +183,11 @@ impl Element for RawFlex {
             if has_explicit_main {
                 match self.direction {
                     FlexDirection::Row | FlexDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = f32::MAX;
+                        child_ctx.box_constraint.max_width = FLOAT::MAX;
                         child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
                     }
                     FlexDirection::Column => {
-                        child_ctx.box_constraint.max_height = f32::MAX;
+                        child_ctx.box_constraint.max_height = FLOAT::MAX;
                         child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
                     }
                 }
@@ -199,17 +205,17 @@ impl Element for RawFlex {
             FlexDirection::Row | FlexDirection::Inherit => (max_w - sized_main - total_gap).max(0.0),
             FlexDirection::Column => (max_h - sized_main - total_gap).max(0.0),
         };
-        let per_unsized = if unsized_count > 0 { remaining_main / unsized_count as f32 } else { 0.0 };
+        let per_unsized = if unsized_count > 0 { remaining_main / unsized_count as FLOAT } else { 0.0 };
 
         for (i, child) in self.children.iter().enumerate() {
             if child_has_size[i] {
                 match self.direction {
                     FlexDirection::Row | FlexDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = f32::MAX;
+                        child_ctx.box_constraint.max_width = FLOAT::MAX;
                         child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
                     }
                     FlexDirection::Column => {
-                        child_ctx.box_constraint.max_height = f32::MAX;
+                        child_ctx.box_constraint.max_height = FLOAT::MAX;
                         child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
                     }
                 }
@@ -265,8 +271,17 @@ impl Element for RawFlex {
                 async_handle: ctx.async_handle.clone(),
             };
 
+            // non wasm
             draw_ctx.canvas.save();
+            #[cfg(not(target_arch = "wasm32"))]
             draw_ctx.canvas.translate((offset_x, offset_y));
+            #[cfg(target_arch = "wasm32")]
+            match draw_ctx.canvas.translate(offset_x, offset_y) {
+                Ok(_) => {}
+                Err(err) => {
+                    log::error!("Failed to translate canvas: {:?}", err);
+                }
+            }
             Self::render_child(child.as_ref(), &draw_ctx);
             draw_ctx.canvas.restore();
 
@@ -279,7 +294,7 @@ impl Element for RawFlex {
                 }
             }
         }
-
+        // non wasm
         ctx.canvas.restore();
     }
 
@@ -289,14 +304,14 @@ impl Element for RawFlex {
         }
     }
 
-    fn computed_size(&self, ctx: &BuildContext) -> widget::base::ResolvedSize {
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
             return cached;
         }
 
-        let mut width: f32 = 0.0;
-        let mut height: f32 = 0.0;
+        let mut width: FLOAT = 0.0;
+        let mut height: FLOAT = 0.0;
         let child_count = self.children.len();
 
         let gap_x = self
@@ -318,8 +333,8 @@ impl Element for RawFlex {
 
         let total_gap = if child_count > 1 {
             match self.direction {
-                FlexDirection::Row | FlexDirection::Inherit => gap_x * (child_count - 1) as f32,
-                FlexDirection::Column => gap_y * (child_count - 1) as f32,
+                FlexDirection::Row | FlexDirection::Inherit => gap_x * (child_count - 1) as FLOAT,
+                FlexDirection::Column => gap_y * (child_count - 1) as FLOAT,
             }
         } else {
             0.0
@@ -331,9 +346,9 @@ impl Element for RawFlex {
         };
 
         // Pass 1: measure sized children, count unsized
-        let mut sized_main: f32 = 0.0;
+        let mut sized_main: FLOAT = 0.0;
         let mut unsized_count: usize = 0;
-        let mut child_sizes: Vec<Option<widget::base::ResolvedSize>> = Vec::with_capacity(child_count);
+        let mut child_sizes: Vec<Option<ResolvedSize>> = Vec::with_capacity(child_count);
 
         let mut child_ctx = BuildContext {
             parent_size: ctx.parent_size,
@@ -364,11 +379,11 @@ impl Element for RawFlex {
             if has_explicit_main {
                 match self.direction {
                     FlexDirection::Row | FlexDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = f32::MAX;
+                        child_ctx.box_constraint.max_width = FLOAT::MAX;
                         child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
                     }
                     FlexDirection::Column => {
-                        child_ctx.box_constraint.max_height = f32::MAX;
+                        child_ctx.box_constraint.max_height = FLOAT::MAX;
                         child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
                     }
                 }
@@ -386,7 +401,7 @@ impl Element for RawFlex {
 
         // Pass 2: distribute remaining space to unsized children
         let remaining = (max_main - sized_main - total_gap).max(0.0);
-        let per_unsized = if unsized_count > 0 { remaining / unsized_count as f32 } else { 0.0 };
+        let per_unsized = if unsized_count > 0 { remaining / unsized_count as FLOAT } else { 0.0 };
 
         for (i, child) in self.children.iter().enumerate() {
             let s = if let Some(s) = child_sizes[i] {
@@ -419,21 +434,21 @@ impl Element for RawFlex {
         if child_count > 1 {
             match self.direction {
                 FlexDirection::Row | FlexDirection::Inherit => {
-                    width += gap_x * (child_count - 1) as f32;
+                    width += gap_x * (child_count - 1) as FLOAT;
                 }
                 FlexDirection::Column => {
-                    height += gap_y * (child_count - 1) as f32;
+                    height += gap_y * (child_count - 1) as FLOAT;
                 }
             }
         }
 
-        let result = widget::base::ResolvedSize { width, height };
+        let result = ResolvedSize { width, height };
         self.cache
             .set_computed(ctx.box_constraint, scale_bits, result);
         result
     }
 
-    fn content_size(&self, ctx: &BuildContext) -> widget::base::ResolvedSize {
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.computed_size(ctx)
     }
 

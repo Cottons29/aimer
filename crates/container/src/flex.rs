@@ -30,6 +30,7 @@ impl OverflowBehavior {
         #[allow(clippy::single_match)]
         match self {
             Self::Hidden => {
+                #[cfg(not(target_arch = "wasm32"))]
                 ctx.canvas.clip_rect(
                     skia_safe::Rect::from_xywh(0.0, 0.0, ctx.box_constraint.max_width, ctx.box_constraint.max_height),
                     skia_safe::ClipOp::Intersect,
