@@ -11,7 +11,7 @@ pub mod button;
 /// A callback that can be either synchronous or asynchronous.
 pub enum Callback {
     Sync(Box<dyn FnOnce()>),
-    Async(Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>>>),
+    Async(Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>),
 }
 
 impl std::fmt::Debug for Callback {
@@ -34,8 +34,8 @@ pub struct AsyncCallback<F>(pub F);
 
 impl<F, Fut> From<AsyncCallback<F>> for Callback
 where
-    F: FnOnce() -> Fut + 'static,
-    Fut: Future<Output = ()> + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
 {
     fn from(ac: AsyncCallback<F>) -> Self {
         Callback::Async(Box::new(move || Box::pin(ac.0())))
@@ -73,8 +73,8 @@ impl<F: FnOnce() + 'static> From<F> for CallbackHolder {
 
 impl<F, Fut> From<AsyncCallback<F>> for CallbackHolder
 where
-    F: FnOnce() -> Fut + 'static,
-    Fut: Future<Output = ()> + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
 {
     fn from(ac: AsyncCallback<F>) -> Self {
         CallbackHolder(Rc::new(UnsafeCell::new(Some(Callback::Async(Box::new(move || Box::pin(ac.0())))))))
@@ -133,7 +133,7 @@ impl GestureActions {
                     Callback::Sync(f) => f(),
                     Callback::Async(f) => {
                         if let Some(handle) = runtime_handle {
-                            handle.block_on(f());
+                            handle.spawn(f());
                         }
                     }
                 }

@@ -15,7 +15,6 @@ impl OxidizeApp {
         if APP_STARTED.swap(true, Ordering::SeqCst) {
             eprintln!("OxidizeApp::start called multiple times. Ignoring subsequent calls.");
             return;
-
         }
 
         println!("Initializing EventLoop...");
@@ -42,11 +41,15 @@ impl OxidizeApp {
             async_runtime,
         };
 
+
+
         println!("Running App...");
         // On iOS, this function never returns.
         match event_loop.run_app(&mut app) {
             Ok(_) => println!("EventLoop finished successfully (unexpected on iOS)."),
             Err(e) => eprintln!("EventLoop::run_app failed: {:?}", e),
         }
+
+        app.async_runtime.shutdown_background();
     }
 }
