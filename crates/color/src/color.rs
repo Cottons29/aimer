@@ -4,7 +4,6 @@ pub mod basic_color;
 
 use basic_color::Colors;
 
-use crate::prelude::ColorMixer;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Color {
     /// Red, Green, Blue, Alpha (0-255)
@@ -38,6 +37,7 @@ pub enum Color {
     Transparent,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for Color {
     fn default() -> Self {
         Self::Transparent
@@ -51,6 +51,7 @@ impl From<Colors> for Color {
 }
 
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<Color> for skia_safe::Color {
     fn from(value: Color) -> Self {
         skia_safe::Color::new(value.to_u32())

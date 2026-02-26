@@ -7,7 +7,7 @@ impl ColorMixer for Color {
                 ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
             }
             Color::Rgb(r, g, b) => {
-                ((0xFF as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+                ((0xFFu32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
             }
             Color::Hex(rgb) => 0xFF000000 | (rgb & 0xFFFFFF),
             Color::HexA(rgba) => {
