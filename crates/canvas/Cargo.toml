@@ -1,0 +1,17 @@
+[package]
+name = "canvas"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+attribute.workspace = true
+
+
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+skia-safe.workspace = true
+
+[target.wasm32-unknown-unknown.dependencies]
+web-sys.workspace = true
+wasm-bindgen.workspace = true
+log.workspace = true
