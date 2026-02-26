@@ -1,6 +1,7 @@
 use crate::{base::*, Element, Widget};
-
-// StatelessWidget is effectively just a Widget. 
+use attribute::position::Vec2d;
+use attribute::size::{ResolvedSize, Size};
+// StatelessWidget is effectively just a Widget.
 // We rely on direct Widget implementation to avoid blanket implementation conflicts.
 // The trait is kept for backward compatibility if needed, but generally users should implement Widget directly.
 
