@@ -1,5 +1,8 @@
-use crate::base::*;
 
+use crate::base::*;
+use attribute::position::Vec2d;
+use attribute::size::{ResolvedSize, Size};
+use attribute::dimension::Dimension;
 /// Pointer event types for hit-test dispatch.
 #[derive(Clone, Debug)]
 pub enum ElementEvent {

@@ -5,10 +5,9 @@ pub mod text;
 pub mod style;
 pub mod layout_cache;
 pub mod base {
-    pub use crate::attribute::position::Vec2d;
-    pub use crate::attribute::size::Size;
-    pub use crate::attribute::size::ResolvedSize;
-    pub use crate::attribute::dimension::Dimension;
+    pub use attribute::position::Vec2d;
+    pub use attribute::size::{ResolvedSize, Size};
+    pub use attribute::dimension::Dimension;
     pub use crate::components::context::BuildContext;
     pub use color::prelude::*;
 }
