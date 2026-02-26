@@ -7,11 +7,19 @@ use crate::event::{PointerEvent, PointerPosition};
 
 
 pub mod button;
+pub mod gesture_detector;
 
 /// A callback that can be either synchronous or asynchronous.
+#[cfg(not(target_arch = "wasm32"))]
 pub enum Callback {
     Sync(Box<dyn FnOnce()>),
     Async(Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>),
+}
+
+#[cfg(target_arch = "wasm32")]
+pub enum Callback {
+    Sync(Box<dyn FnOnce()>),
+    Async(Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>>>),
 }
 
 impl std::fmt::Debug for Callback {
@@ -32,10 +40,22 @@ impl<F: FnOnce() + 'static> From<F> for Callback {
 /// Wrapper to convert an async closure into a `Callback::Async`.
 pub struct AsyncCallback<F>(pub F);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<F, Fut> From<AsyncCallback<F>> for Callback
 where
     F: FnOnce() -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send + 'static,
+{
+    fn from(ac: AsyncCallback<F>) -> Self {
+        Callback::Async(Box::new(move || Box::pin(ac.0())))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<F, Fut> From<AsyncCallback<F>> for Callback
+where
+    F: FnOnce() -> Fut + 'static,
+    Fut: Future<Output = ()> + 'static,
 {
     fn from(ac: AsyncCallback<F>) -> Self {
         Callback::Async(Box::new(move || Box::pin(ac.0())))
@@ -71,6 +91,7 @@ impl<F: FnOnce() + 'static> From<F> for CallbackHolder {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<F, Fut> From<AsyncCallback<F>> for CallbackHolder
 where
     F: FnOnce() -> Fut + Send + 'static,
@@ -81,10 +102,27 @@ where
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+impl<F, Fut> From<AsyncCallback<F>> for CallbackHolder
+where
+    F: FnOnce() -> Fut + 'static,
+    Fut: Future<Output = ()> + 'static,
+{
+    fn from(ac: AsyncCallback<F>) -> Self {
+        CallbackHolder(Rc::new(UnsafeCell::new(Some(Callback::Async(Box::new(move || Box::pin(ac.0())))))))
+    }
+}
+
 
 const DOUBLE_TAP_TIMEOUT: Duration = Duration::from_millis(300);
 const LONG_PRESS_DURATION: Duration = Duration::from_millis(500);
-const TAP_SLOP: f32 = 18.0;
+
+#[cfg(not(target_arch = "wasm32"))]
+type FLOAT = f32;
+#[cfg(target_arch = "wasm32")]
+type FLOAT = f64;
+
+const TAP_SLOP: FLOAT = 18.0;
 
 #[derive(Clone, Debug)]
 pub enum GestureEvent {
@@ -132,8 +170,14 @@ impl GestureActions {
                 match callback {
                     Callback::Sync(f) => f(),
                     Callback::Async(f) => {
+                        #[cfg(not(target_arch = "wasm32"))]
                         if let Some(handle) = runtime_handle {
                             handle.spawn(f());
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            let _ = runtime_handle;
+                            tokio::task::spawn_local(f());
                         }
                     }
                 }
@@ -209,7 +253,7 @@ impl GestureActions {
     }
 }
 
-fn distance(a: PointerPosition, b: PointerPosition) -> f32 {
+fn distance(a: PointerPosition, b: PointerPosition) -> FLOAT {
     let dx = a.x - b.x;
     let dy = a.y - b.y;
     (dx * dx + dy * dy).sqrt()
