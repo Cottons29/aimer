@@ -1,59 +1,56 @@
 [workspace]
 resolver = "3"
 members = [
-  ".",
-  "engine", 
-  "crates/widget",
-  "macros/constructor",
-  "macros/widget_codegen", 
-  "crates/container", 
-  "crates/color", 
-  "macros/widget_attr",
-  "oxidize"
-, "crates/control"]
+    ".",
+    "engine",
+    "crates/widget",
+    "macros/constructor",
+    "macros/widget_codegen",
+    "crates/container",
+    "crates/color",
+    "macros/widget_attr",
+    "oxidize",
+    "crates/control",
+    "crates/canvas",
+    "crates/attribute"
+]
+
 
 [workspace.dependencies]
 
 
-
-
-
-
-control  = {path ="./crates/control"}
-widget_codegen= {path ="macros/widget_codegen"}
-container = {path ="./crates/container"}
-constructor = {path = "./macros/constructor"}
-engine = {path = "./engine"}
-widget= {path = "crates/widget"}
-#stateless_widget = {path = "macros/stateless_widget"}
-#stateful_widget = {path = "macros/stateful_widget"}
+control = { path = "crates/control" }
+widget_codegen = { path = "macros/widget_codegen" }
+container = { path = "crates/container" }
+constructor = { path = "./macros/constructor" }
+engine = { path = "./engine" }
+widget = { path = "crates/widget" }
 widget_attr = { path = "macros/widget_attr" }
-color ={path = "crates/color"}
+color = { path = "crates/color" }
+attribute = {path = "crates/attribute"}
 
 
 
 
 #########################################################################
-uuid = {version = "1.20.0", features = ["v4", "js"]}
-web-sys= {version= "0.3.85", features= ["CanvasRenderingContext2d"]} 
-wasm-bindgen ="0.2.108"
+uuid = { version = "1.20.0", features = ["v4", "js"] }
+web-sys = { version = "0.3.85", features = ["CanvasRenderingContext2d", "DomMatrix"] }
+wasm-bindgen = "0.2.108"
 winit = "0.30.12"
-skia-safe = {version = "0.93.0", features = ["metal"]}
-rayon = {version = "1.11.0", features = ["web_spin_lock"]}  
+skia-safe = { version = "0.93.0", features = ["metal"] }
+rayon = { version = "1.11.0", features = ["web_spin_lock"] }
 pixels = "0.15.0"
-syn = {version = "2.0.115", features= ["full"]}
-proc-macro2 = {version = "1.0.106"}
+syn = { version = "2.0.115", features = ["full"] }
+proc-macro2 = { version = "1.0.106" }
 quote = "1.0.44"
 chrono = "0.4.43"
 boltffi = "0.1"
-objc = {version= "0.2.7"}
-core-foundation = {version= "0.10.1"}
+objc = { version = "0.2.7" }
+core-foundation = { version = "0.10.1" }
 ui-events = "0.3.0"
 fxhash = "0.2.1"
-tokio = {version = "1", features = ["rt-multi-thread", "macros"]}
 parking_lot = "0.12.5"
 crossbeam = "0.8.4"
 colored = "3.1.1"
-
-
-
+log = {version = "0.4.29"}
+tokio = "1.49.0"
