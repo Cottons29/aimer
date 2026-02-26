@@ -1,10 +1,9 @@
-use widget::{Element, Widget};
 use crate::render::App;
-use widget::base::{Vec2d};
-use winit::event_loop::{ControlFlow, EventLoop};
+use attribute::position::Vec2d;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
+use widget::Widget;
+use winit::event_loop::{ControlFlow, EventLoop};
 
 static APP_STARTED: AtomicBool = AtomicBool::new(false);
 
@@ -26,12 +25,18 @@ impl OxidizeApp {
        
 
         println!("Creating async runtime...");
+        #[cfg(not(target_arch = "wasm32"))]
         let async_runtime = Runtime::new().expect("Failed to create async runtime");
+        #[cfg(target_arch = "wasm32")]
+        let async_runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("Failed to create async runtime");
 
         println!("Creating App instance...");
         let mut app = App {
             window: None,
+            #[cfg(not(target_arch = "wasm32"))]
             pixels: None,
+            #[cfg(target_arch = "wasm32")]
+            canvas_ctx: None,
             widget_root: None,
             pending_widget: Some(Box::new(widget)),
             cursor_pos: Vec2d { x: 0.0, y: 0.0 },
