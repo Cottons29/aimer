@@ -1,7 +1,5 @@
 use constructor::Constructor;
 
-use crate::base::Dimension;
-
 #[derive(Constructor, Default, Clone, Copy)]
 pub struct LayoutSpacing {
     #[constructor(default)]
@@ -45,10 +43,19 @@ pub enum Spacing {
 }
 
 impl Spacing {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn value(&self, total: f32, scale: f32) -> f32 {
         match self {
             Spacing::Px(px) => *px as f32 * scale,
             Spacing::Percent(p) => total * (*p as f32 / 100.0),
+            Spacing::None => 0.0,
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn value(&self, total: f64, scale: f64) -> f64 {
+        match self {
+            Spacing::Px(px) => *px as f64 * scale,
+            Spacing::Percent(p) => total * (*p as f64 / 100.0),
             Spacing::None => 0.0,
         }
     }
