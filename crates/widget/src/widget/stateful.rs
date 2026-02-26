@@ -46,21 +46,88 @@ impl<S: Send + 'static> StateUpdater<S> {
         Self { inner: Some(StateUpdaterInner { state, dirty, window }) }
     }
 
+    /// Create an empty `StateUpdater` that is not yet initialized.
+    /// Calling `set_state` or `read` on an empty updater will panic.
+    pub fn empty() -> Self {
+        Self { inner: None }
     }
 
     /// Mutate the state and mark the widget as dirty for rebuild.
     /// Similar to Flutter's `setState(() { ... })`.
+    #[track_caller]
     pub fn set_state(&self, f: impl FnOnce(&mut S)) {
-        let mut state = self.state.borrow_mut();
+        let inner = match self.inner.as_ref() {
+            Some(inner) => inner,
+            None => {
+                const BRACE: &str = "{";
+                let loc = Location::caller();
+                #[cfg(not(target_os = "ios"))]
+                self.beautiful_error(loc);
+                exit(1);
+            }
+        };
+        let mut state = inner.state.lock();
         f(&mut *state);
-        self.dirty.set(true);
-        self.window.request_redraw();
+        inner.dirty.store(true);
+        inner.window.request_redraw();
     }
 
     /// Read the current state without marking dirty.
+    #[track_caller]
     pub fn read<R>(&self, f: impl FnOnce(&S) -> R) -> R {
-        let state = self.state.borrow();
+        let inner = match  self
+            .inner
+            .as_ref() {
+            Some(inner) => inner,
+            None => {
+                let loc = Location::caller();
+                #[cfg(not(target_os = "ios"))]
+                self.beautiful_error(loc);
+                exit(1);
+            }
+        };
+        let state = inner.state.lock();
         f(&*state)
+    }
+    #[cfg(not(target_os = "ios"))]
+    fn beautiful_error(&self, loc:  &Location) {
+        const BRACE: &str = "{";
+        println!(
+            "{}: State is not initialized
+  {} {}:{}
+   {}
+   {} impl State<YourStatefulWidget> for YourWidgetState {BRACE}
+   {}
+   {}     fn init_state(&mut self, _updater: StateUpdater<Self>)
+   {}         where
+   {}             Self: Sized,
+   {}         {{
+   {}             self.updater = _updater;
+   {}             {} override this method to set the updater
+   {}         }}
+   {}
+   {}: call `self.updater = _updater` inside `init_state`
+",
+            "error".red().bold(),
+            "-->".blue().bold(),
+            loc.file(),
+            loc.line(),
+            "|".blue(),
+            "|".blue(),
+            "|".blue(),
+            "|".blue(),
+            "|".blue(),
+            "|".blue(),
+            "|".blue(),
+            "|".blue(),
+            "|".blue(),
+            "|".blue(),
+            "|".blue(),
+            "              ^^^^^^^^^^^^^^^^^^^^^^^^^".red().bold(),
+            // "|".blue(),
+            // "|".blue(),
+            "help".yellow().bold(),
+        );
     }
 }
 
@@ -190,3 +257,22 @@ impl Element for StatefulElement {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::panic::AssertUnwindSafe;
+
+    #[test]
+    fn test_state_updater_empty_panic() {
+        let updater: StateUpdater<i32> = StateUpdater::empty();
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            updater.set_state(|_s| {});
+        }));
+        assert!(result.is_err());
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            updater.read(|_s| {});
+        }));
+        assert!(result.is_err());
+    }
+}
