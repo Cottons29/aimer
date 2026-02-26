@@ -1,10 +1,12 @@
 #[allow(unused)]
 use crate::render;
+use attribute::position::Vec2d;
+use attribute::size::ResolvedSize;
+#[cfg(not(target_arch = "wasm32"))]
 use pixels::{Pixels, SurfaceTexture};
-use skia_safe::{AlphaType, ColorType};
 use tokio::runtime::Runtime;
-use widget::base::{BuildContext, ResolvedSize, Vec2d};
-use widget::{Element, ElementEvent, Widget, dispatch_event};
+use widget::base::BuildContext;
+use widget::{dispatch_event, Element, ElementEvent, Widget};
 use winit::application::ApplicationHandler;
 #[allow(unused)]
 use winit::dpi::{LogicalSize, PhysicalSize, Position};
@@ -15,9 +17,17 @@ use winit::monitor::MonitorHandle;
 #[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
 
+#[cfg(target_arch = "wasm32")]
+type FLOAT = f64;
+#[cfg(not(target_arch = "wasm32"))]
+type FLOAT = f32;
+
 pub struct App {
     pub window: Option<&'static Window>,
+    #[cfg(not(target_arch = "wasm32"))]
     pub pixels: Option<Pixels<'static>>,
+    #[cfg(target_arch = "wasm32")]
+    pub canvas_ctx: Option<web_sys::CanvasRenderingContext2d>,
     pub widget_root: Option<Box<dyn Element>>,
     pub pending_widget: Option<Box<dyn Widget>>,
     pub cursor_pos: Vec2d,
@@ -62,11 +72,37 @@ impl ApplicationHandler for App {
         let size = window.inner_size();
 
         println!("Window Size : {size:?}");
-        let surface_texture = SurfaceTexture::new(size.width, size.height, window);
+        
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let surface_texture = SurfaceTexture::new(size.width, size.height, window);
+            let pixels = Pixels::new(size.width, size.height, surface_texture).unwrap();
+            self.pixels = Some(pixels);
+        }
 
-        let pixels = Pixels::new(size.width, size.height, surface_texture).unwrap();
+        #[cfg(target_arch = "wasm32")]
+        {
+            use winit::platform::web::WindowExtWebSys;
+            use wasm_bindgen::JsCast;
+            let canvas = window.canvas().unwrap();
+            let web_window = web_sys::window().unwrap();
+            let document = web_window.document().unwrap();
+            let body = document.body().unwrap();
+            body.append_child(&canvas).unwrap();
+
+            canvas.set_width(size.width);
+            canvas.set_height(size.height);
+
+            let ctx = canvas
+                .get_context("2d")
+                .unwrap()
+                .unwrap()
+                .dyn_into::<web_sys::CanvasRenderingContext2d>()
+                .unwrap();
+            self.canvas_ctx = Some(ctx);
+        }
+
         self.window = Some(window);
-        self.pixels = Some(pixels);
         self.window_scale = window.scale_factor();
     }
 
@@ -77,7 +113,7 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::Touch(item) => {
-                let pos = Vec2d { x: item.location.x as f32, y: item.location.y as f32 };
+                let pos = Vec2d { x: item.location.x as FLOAT, y: item.location.y as FLOAT };
                 let event = match item.phase {
                     winit::event::TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
                     winit::event::TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
@@ -93,7 +129,7 @@ impl ApplicationHandler for App {
             }
             // WindowEvent::Focused
             WindowEvent::CursorMoved { position, .. } => {
-                self.cursor_pos = Vec2d { x: position.x as f32, y: position.y as f32 };
+                self.cursor_pos = Vec2d { x: position.x as FLOAT, y: position.y as FLOAT };
                 // println!("Cursor: {:?}", self.cursor_pos);
                 if let Some(root) = &self.widget_root {
                     let event = ElementEvent::PointerMove(self.cursor_pos);
@@ -202,12 +238,22 @@ impl App {
     fn render(&mut self, event_loop: &ActiveEventLoop) {
         #[allow(clippy::collapsible_if)]
         if let Some(size) = self.pending_resize.take() {
+            #[cfg(not(target_arch = "wasm32"))]
             if let Some(pixels) = &mut self.pixels {
                 let _ = pixels.resize_surface(size.width, size.height);
                 let _ = pixels.resize_buffer(size.width, size.height);
             }
+            #[cfg(target_arch = "wasm32")]
+            if let (Some(_ctx), Some(window)) = (&self.canvas_ctx, &self.window) {
+                use winit::platform::web::WindowExtWebSys;
+                if let Some(canvas) = window.canvas() {
+                    canvas.set_width(size.width);
+                    canvas.set_height(size.height);
+                }
+            }
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         if let (Some(pixels), Some(window)) = (&mut self.pixels, &self.window) {
             let (width, height) = {
                 #[cfg(not(target_os = "ios"))]
@@ -235,8 +281,8 @@ impl App {
 
             let info = skia_safe::ImageInfo::new(
                 (width as i32, height as i32),
-                ColorType::RGBA8888,
-                AlphaType::Premul,
+                skia_safe::ColorType::RGBA8888,
+                skia_safe::AlphaType::Premul,
                 None,
             );
 
@@ -248,15 +294,15 @@ impl App {
                 {
                     if self.window.is_none() {return;}
                     let ctx: BuildContext = BuildContext {
-                        parent_size: ResolvedSize { width: width as f32, height: height as f32 },
+                        parent_size: ResolvedSize { width: width as FLOAT, height: height as FLOAT },
                         canvas: surface.canvas(),
-                        scale: self.window_scale as f32,
+                        scale: self.window_scale as FLOAT,
                         parent_pos: Default::default(),
                         box_constraint: widget::style::BoxConstraint {
                             min_width: 0.0,
                             min_height: 0.0,
-                            max_width: width as f32,
-                            max_height: height as f32,
+                            max_width: width as FLOAT,
+                            max_height: height as FLOAT,
                         },
                         window: self.window.unwrap(),
                         async_handle: self.async_runtime.handle().clone(),
@@ -281,14 +327,52 @@ impl App {
                 event_loop.exit();
             }
         }
+        
+        #[cfg(target_arch = "wasm32")]
+        if let (Some(ctx), Some(window)) = (&self.canvas_ctx, &self.window) {
+            let width = window.inner_size().width;
+            let height = window.inner_size().height;
+
+            ctx.clear_rect(0.0, 0.0, width as f64, height as f64);
+
+            let build_ctx = BuildContext {
+                parent_size: ResolvedSize { width: width as f64, height: height as f64 },
+                canvas: ctx,
+                scale: self.window_scale,
+                parent_pos: Default::default(),
+                box_constraint: widget::style::BoxConstraint {
+                    min_width: 0.0,
+                    min_height: 0.0,
+                    max_width: width as f64,
+                    max_height: height as f64,
+                },
+                window,
+                async_handle: self.async_runtime.handle().clone(),
+            };
+
+            #[allow(clippy::collapsible_if)]
+            if self.widget_root.is_none() {
+                if let Some(w) = self.pending_widget.take() {
+                    self.widget_root = Some(w.to_element(&build_ctx));
+                }
+            }
+
+            if let Some(root) = &self.widget_root {
+                root.invalidate_layout();
+                Self::render_widget_tree(root.as_ref(), &build_ctx);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use attribute::dimension::Dimension;
+    use attribute::position::Vec2d;
+    use attribute::size::Size;
+    use widget::base::BuildContext;
     use widget::Element;
-    use widget::base::{BuildContext, Dimension, Size, Vec2d};
 
     struct MockWidget {
         pos: Option<Vec2d>,
