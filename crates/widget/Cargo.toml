@@ -21,3 +21,6 @@ rayon.workspace = true
 pixels.workspace = true
 constructor.workspace = true
 tokio.workspace = true
+parking_lot.workspace = true
+crossbeam.workspace = true
+colored.workspace = true
