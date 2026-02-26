@@ -1,13 +1,11 @@
-use std::cell::{Cell, RefCell, UnsafeCell};
-use std::marker::PhantomPinned;
-use std::ops::Deref;
-use std::pin::Pin;
-use std::rc::Rc;
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
-
+use crossbeam::atomic::AtomicCell;
+use parking_lot::Mutex;
+use std::cell::UnsafeCell;
+use std::panic::Location;
+use std::process::exit;
+use std::sync::Arc;
+#[cfg(not(target_os = "ios"))]
+use colored::Colorize;
 use winit::window::Window;
 
 use crate::{Element, Widget, base::*, components::element::ElementEvent};
@@ -21,21 +19,33 @@ unsafe impl Sync for SyncChild {}
 /// A handle that allows StatefulWidgets to trigger state mutations and rebuilds.
 /// This is the Rust equivalent of Flutter's `setState`.
 pub struct StateUpdater<S> {
-    state: Rc<RefCell<S>>,
-    dirty: Rc<Cell<bool>>,
+    inner: Option<StateUpdaterInner<S>>,
+}
+
+struct StateUpdaterInner<S> {
+    state: Arc<Mutex<S>>,
+    dirty: Arc<AtomicCell<bool>>,
     window: &'static Window,
 }
 
 impl<S> Clone for StateUpdater<S> {
     fn clone(&self) -> Self {
-        Self { state: self.state.clone(), dirty: self.dirty.clone(), window: self.window }
+        Self {
+            inner: self.inner.as_ref().map(|inner| StateUpdaterInner {
+                state: inner.state.clone(),
+                dirty: inner.dirty.clone(),
+                window: inner.window,
+            }),
+        }
     }
 }
 
-impl<S> StateUpdater<S> {
+impl<S: Send + 'static> StateUpdater<S> {
     /// Create a new `StateUpdater` from shared state and a dirty flag.
-    pub fn new(state: Rc<RefCell<S>>, dirty: Rc<Cell<bool>>, window: &'static Window) -> Self {
-        Self { state, dirty, window }
+    pub fn new(state: Arc<Mutex<S>>, dirty: Arc<AtomicCell<bool>>, window: &'static Window) -> Self {
+        Self { inner: Some(StateUpdaterInner { state, dirty, window }) }
+    }
+
     }
 
     /// Mutate the state and mark the widget as dirty for rebuild.
@@ -71,64 +81,63 @@ pub trait State<W: StatefulWidget> {
 
     fn build(&self) -> impl Widget;
 }
-pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element>;
+pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element> + Send + Sync;
 pub struct StatefulElement {
     child: SyncChild,
-    pub dirty: Rc<Cell<bool>>,
-    pub rebuild_fn: Rc<RebuildCallBack>,
+    pub dirty: Arc<AtomicCell<bool>>,
+    pub rebuild_fn: Arc<RebuildCallBack>,
 }
 
 impl StatefulElement {
     /// Create a new StatefulElement from a StatefulWidget.
     /// Returns the element and a StateUpdater that can be used in callbacks.
-    pub fn new<W: StatefulWidget + 'static>(widget: &W, ctx: &BuildContext) -> (Self, StateUpdater<W::State>) {
+    pub fn new<W: StatefulWidget + 'static>(widget: &W, ctx: &BuildContext) -> (Self, StateUpdater<W::State>)
+    where
+        W::State: Send + Sync + 'static,
+    {
         let state = widget.create_state();
-        let state = Rc::new(RefCell::new(state));
-
+        let state = Arc::new(Mutex::new(state));
+        let dirty = Arc::new(AtomicCell::new(false));
 
         // Create the updater and pass it into init_state.
-        let init_updater = StateUpdater::new(state, Rc::new(Cell::new(false)), ctx.window);
-        let dirty = Rc::clone(&init_updater.dirty);
-        let dirty_clone = Rc::clone(&init_updater.dirty);
-        let state = Rc::clone(&init_updater.state);
-        // unsafe{
-            state.borrow_mut().init_state(init_updater);
-        // }
+        let init_updater = StateUpdater::new(state.clone(), dirty.clone(), ctx.window);
+
+        {
+            let mut s = state.lock();
+            s.init_state(init_updater.clone());
+        }
 
         let state_for_build = state.clone();
-        let rebuild_fn: Rc<RebuildCallBack> = Rc::new(move |ctx| {
-            let s = state_for_build.borrow();
+        let rebuild_fn: Arc<RebuildCallBack> = Arc::new(move |ctx| {
+            let s = state_for_build.lock();
             let child_widget = s.build();
             Widget::to_element(&child_widget, ctx)
         });
 
-        let child = {
-            Widget::to_element(&state.borrow().build(), ctx)
-        };
+        let child = { Widget::to_element(&state.lock().build(), ctx) };
 
-        let updater = StateUpdater::new(state, dirty, ctx.window);
-        // updater.set_window(ctx.window);
+        let updater = StateUpdater::new(state, dirty.clone(), ctx.window);
 
-        let element = StatefulElement { child: SyncChild(UnsafeCell::new(child)), dirty: dirty_clone, rebuild_fn };
+        let element = StatefulElement { child: SyncChild(UnsafeCell::new(child)), dirty, rebuild_fn };
 
         (element, updater)
     }
 
     /// Check if this element needs a rebuild and perform it if so.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        if self.dirty.get() {
+        if self.dirty.load() {
             let new_child = (self.rebuild_fn)(ctx);
             // Safety: single-threaded rendering pipeline
             unsafe {
                 *self.child.0.get() = new_child;
             }
-            self.dirty.set(false);
+            self.dirty.store(false);
         }
     }
 
     /// Returns true if this element is marked dirty.
     pub fn is_dirty(&self) -> bool {
-        self.dirty.get()
+        self.dirty.load()
     }
 }
 
@@ -180,3 +189,4 @@ impl Element for StatefulElement {
         unsafe { &*self.child.0.get() }.invalidate_layout();
     }
 }
+
