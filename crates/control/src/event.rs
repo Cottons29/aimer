@@ -3,11 +3,16 @@ mod convert;
 
 use winit::event::{ElementState, MouseButton, Touch, TouchPhase, WindowEvent};
 
+#[cfg(not(target_arch = "wasm32"))]
+type FLOAT = f32;
+#[cfg(target_arch = "wasm32")]
+type FLOAT = f64;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PointerPosition {
-    pub x: f32,
-    pub y: f32,
+    pub x: FLOAT,
+    pub y: FLOAT,
 }
+
 
 #[derive(Clone, Debug)]
 pub enum PointerEvent {
@@ -39,8 +44,8 @@ impl Event {
 
             WindowEvent::CursorMoved { position, .. } => Some(Event::Pointer(PointerEvent::Move(
                 PointerPosition {
-                    x: position.x as f32,
-                    y: position.y as f32,
+                    x: position.x ,
+                    y: position.y,
                 },
             ))),
 
@@ -48,8 +53,8 @@ impl Event {
                 phase, location, ..
             }) => {
                 let pos = PointerPosition {
-                    x: location.x as f32,
-                    y: location.y as f32,
+                    x: location.x,
+                    y: location.y,
                 };
                 match phase {
                     TouchPhase::Started => Some(Event::Pointer(PointerEvent::Down(pos))),
