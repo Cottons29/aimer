@@ -1,4 +1,4 @@
-use crate::attribute::size::ResolvedSize;
+use crate::size::ResolvedSize;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Vec2d {
@@ -26,8 +26,8 @@ impl Vec2d {
 impl Vec2d {
     pub fn get_end(&self, size: ResolvedSize) -> Vec2d {
         Self {
-            x: self.x + size.width as f64,
-            y: self.y + size.height as f64,
+            x: self.x + size.width,
+            y: self.y + size.height,
         }
     }
 }
