@@ -1,16 +1,12 @@
 use attribute::dimension::Dimension;
-use attribute::position::Vec2d;
-use attribute::size::{ResolvedSize, Size};
 use std::cell::UnsafeCell;
 
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{paint::Style, Color as SkColor, Paint, Rect};
-use widget::{base::*, style::BoxConstraint, Constructor, Element, ElementEvent, LayoutCache, Widget};
-use winit::window::Window;
+use widget::{base::*, Constructor, Element, LayoutCache, Widget};
 
-use crate::event::{PointerEvent, PointerPosition};
-use crate::gesture::{CallbackHolder, GestureActions};
 use crate::gesture::gesture_detector::GestureDetectorElement;
+use crate::gesture::{CallbackHolder, GestureActions};
 
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy, Constructor)]

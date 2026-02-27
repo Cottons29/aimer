@@ -44,8 +44,8 @@ impl Event {
 
             WindowEvent::CursorMoved { position, .. } => Some(Event::Pointer(PointerEvent::Move(
                 PointerPosition {
-                    x: position.x ,
-                    y: position.y,
+                    x: position.x as FLOAT,
+                    y: position.y as FLOAT,
                 },
             ))),
 
@@ -53,8 +53,8 @@ impl Event {
                 phase, location, ..
             }) => {
                 let pos = PointerPosition {
-                    x: location.x,
-                    y: location.y,
+                    x: location.x as FLOAT,
+                    y: location.y as FLOAT,
                 };
                 match phase {
                     TouchPhase::Started => Some(Event::Pointer(PointerEvent::Down(pos))),

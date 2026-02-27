@@ -1,23 +1,22 @@
-use std::cell::UnsafeCell;
-#[cfg(not(target_arch = "wasm32"))]
-use skia_safe::{Paint, Rect};
-use winit::window::Window;
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
-use color::prelude::{Color, ColorMixer};
-use widget::{Element, ElementEvent, LayoutCache};
-use widget::base::BuildContext;
-use widget::style::BoxConstraint;
+#[cfg(not(target_arch = "wasm32"))]
+use skia_safe::{Paint, Rect};
+use std::cell::UnsafeCell;
+use winit::window::Window;
+// use color::prelude::{Color, ColorMixer};
 use crate::event::{PointerEvent, PointerPosition};
-use crate::gesture::button::ButtonStyle;
 use crate::gesture::GestureActions;
+use crate::gesture::button::ButtonStyle;
+use widget::base::{BuildContext, Color, ColorMixer};
+use widget::style::BoxConstraint;
+use widget::{Element, ElementEvent, LayoutCache};
 
 #[cfg(not(target_arch = "wasm32"))]
 type FLOAT = f32;
 #[cfg(target_arch = "wasm32")]
 type FLOAT = f64;
-
 
 #[allow(dead_code)]
 pub struct GestureDetectorElement<'a> {
@@ -71,56 +70,34 @@ impl<'a> GestureDetectorElement<'a> {
         }
 
         match event {
-            PointerEvent::Down(_) => {
-                unsafe {
-                    *self.is_pressed.get() = true;
-                    // self.window.request_redraw();
+            PointerEvent::Down(_) => unsafe {
+                *self.is_pressed.get() = true;
+            },
+            PointerEvent::Up(_) => unsafe {
+                if *self.is_pressed.get() {
+                    *self.is_pressed.get() = false;
                 }
-            }
-            PointerEvent::Up(_) => {
-                unsafe {
-                    if *self.is_pressed.get() {
-                        *self.is_pressed.get() = false;
-                        // self.window.request_redraw();
-                    }
-                }
-            }
+            },
 
             PointerEvent::Move(_) => {}
-            PointerEvent::Cancel => {
-                unsafe {
-                    *self.is_pressed.get() = false;
-                    *self.is_hovered.get() = false;
-                }
-            }
+            PointerEvent::Cancel => unsafe {
+                *self.is_pressed.get() = false;
+                *self.is_hovered.get() = false;
+            },
         }
         unsafe {
+            // utils::debug!("Current event : {event:?}");
             (&mut *self.gesture.get()).handle_pointer_event(event);
         }
-
-
-        // println!("{:?}", event);
-
-        // // Feed into gesture detector for tap/long-press recognition
-        // unsafe {
-        //     (&mut *self.gesture.get()).handle_pointer_event(event);
-        // }
     }
 
     #[inline]
     fn active_style(&self) -> &ButtonStyle {
-        unsafe {
-            if *self.is_hovered.get() && !self.is_disabled {
-                &self.hover_style
-            } else {
-                &self.style
-            }
-        }
+        unsafe { if *self.is_hovered.get() && !self.is_disabled { &self.hover_style } else { &self.style } }
     }
 }
 
 impl<'b> Element for GestureDetectorElement<'b> {
-
     fn draw(&self, ctx: &BuildContext) {
         let scale = ctx.scale;
         let constraint = ctx.box_constraint;
@@ -144,6 +121,8 @@ impl<'b> Element for GestureDetectorElement<'b> {
         // Draw background
         #[cfg(not(target_arch = "wasm32"))]
         {
+            use skia_safe::Color as SkColor;
+            use skia_safe::paint::Style;
             let mut paint = Paint::default();
             paint.set_anti_alias(true);
             paint.set_color(SkColor::from(Color::from(style.color)));
@@ -175,7 +154,7 @@ impl<'b> Element for GestureDetectorElement<'b> {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let mut color_str = style.color.to_css_color();
+            let color_str = style.color.to_css_color();
             if self.is_disabled {
                 // Approximate disabled state (maybe handle alpha better if needed)
                 ctx.canvas.set_global_alpha(0.5);
@@ -242,7 +221,6 @@ impl<'b> Element for GestureDetectorElement<'b> {
         Some(Size { width: style.width, height: style.height })
     }
 
-
     fn on_event(&self, event: &ElementEvent) -> bool {
         if self.is_disabled {
             return false;
@@ -269,8 +247,8 @@ impl<'b> Element for GestureDetectorElement<'b> {
             if let Some((x, y, w, h)) = *self.cached_bounds.get() {
                 let right = x + w;
                 let bottom = y + h;
-                let px = pos.x as f64;
-                let py = pos.y as f64;
+                let px = pos.x;
+                let py = pos.y;
                 if px < x || px > right || py < y || py > bottom {
                     *self.is_hovered.get() = false;
                     self.window.request_redraw();
@@ -284,7 +262,6 @@ impl<'b> Element for GestureDetectorElement<'b> {
             ElementEvent::PointerUp(pos) => PointerEvent::Up(PointerPosition { x: pos.x, y: pos.y }),
             ElementEvent::PointerMove(pos) => PointerEvent::Move(PointerPosition { x: pos.x, y: pos.y }),
         };
-
 
         unsafe {
             let current_hovered = *self.is_hovered.get();
