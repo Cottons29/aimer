@@ -83,4 +83,80 @@ impl Element for RawTextWidget {
         
         let _ = canvas.fill_text(&self.text, x as f64, y as f64);
     }
+
+    fn computed_size(&self, ctx: &BuildContext) -> attribute::size::ResolvedSize {
+        let scale_bits = ctx.scale.to_bits();
+        if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
+            return cached;
+        }
+
+        let canvas = ctx.canvas;
+        let font_str = self.get_css_font(ctx.scale);
+        canvas.set_font(&font_str);
+
+        let text_width = match canvas.measure_text(&self.text) {
+            Ok(metrics) => metrics.width(),
+            Err(_) => 0.0,
+        };
+
+        let font_size = if self.text_style.font_size == 0 { 14.0 } else { self.text_style.font_size as f64 };
+        let line_height = font_size * ctx.scale;
+
+        let result = match self.text_style.text_overflow {
+            TextOverflow::Wrap => {
+                let width = if ctx.box_constraint.max_width > 0.0 {
+                    ctx.box_constraint.max_width
+                } else {
+                    ctx.parent_size.width
+                };
+
+                let mut lines_count = 0;
+                let mut current_line = String::new();
+                let words = self.text.split_whitespace();
+
+                for word in words {
+                    let test_line = if current_line.is_empty() {
+                        word.to_string()
+                    } else {
+                        format!("{} {}", current_line, word)
+                    };
+
+                    let test_width = match canvas.measure_text(&test_line) {
+                        Ok(metrics) => metrics.width(),
+                        Err(_) => 0.0,
+                    };
+                    
+                    if test_width <= width {
+                        current_line = test_line;
+                    } else {
+                        if !current_line.is_empty() {
+                            lines_count += 1;
+                        }
+                        current_line = word.to_string();
+                    }
+                }
+                if !current_line.is_empty() {
+                    lines_count += 1;
+                }
+
+                attribute::size::ResolvedSize {
+                    width,
+                    height: (lines_count as f64 * line_height).ceil(),
+                }
+            }
+            _ => {
+                attribute::size::ResolvedSize {
+                    width: text_width.ceil(),
+                    height: line_height.ceil(),
+                }
+            }
+        };
+
+        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
+        result
+    }
+
+    fn invalidate_layout(&self) {
+        self.cache.invalidate();
+    }
 }
