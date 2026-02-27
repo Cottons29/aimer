@@ -1,10 +1,11 @@
 use std::sync::Mutex;
 use skia_safe::{Color, Font, FontMgr, Paint, TextBlob, Typeface};
 use attribute::size::ResolvedSize;
-use crate::text::{FontStyle, FontWeight, TextAlign};
+use crate::text::{ FontWeight, TextAlign, FontStyle};
 use crate::{Element, LayoutCache, TextOverflow};
 use crate::base::BuildContext;
 use crate::style::text_style::TextStyle;
+use skia_safe::font_style::FontStyle as SkFontStyle;
 
 /// this is low level TextWidget that covert to element
 #[allow(dead_code)]

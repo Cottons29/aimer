@@ -1,3 +1,4 @@
+#[cfg(target_arch = "wasm32")]
 use pixels::wgpu::web_sys::wasm_bindgen;
 use crate::ZeroSizedBox;
 use attribute::dimension::Dimension;
