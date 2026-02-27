@@ -63,15 +63,27 @@ impl BoxBorder {
         
         if left_stroke > 0.0 && self.left.style != BorderStyle::None {
             let color_str = self.left.color.to_css_color();
-            canvas.set_fill_style_str(&color_str);
+            canvas.set_stroke_style_str(&color_str);
             canvas.set_line_width(left_stroke);
             
-            canvas.stroke_rect(
-                left_stroke / 2.0,
-                left_stroke / 2.0,
-                box_width - left_stroke,
-                box_height - left_stroke
-            );
+            if let Some(radius) = self.get_uniform_radius(box_width, box_height, scale) {
+                canvas.begin_path();
+                let _ = canvas.round_rect_with_f64(
+                    left_stroke / 2.0,
+                    left_stroke / 2.0,
+                    box_width - left_stroke,
+                    box_height - left_stroke,
+                    radius,
+                );
+                canvas.stroke();
+            } else {
+                canvas.stroke_rect(
+                    left_stroke / 2.0,
+                    left_stroke / 2.0,
+                    box_width - left_stroke,
+                    box_height - left_stroke
+                );
+            }
         }
     }
 }
