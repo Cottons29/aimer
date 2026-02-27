@@ -1,9 +1,7 @@
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
-#[cfg(not(target_os = "ios"))]
-use colored::Colorize;
-use crossbeam::atomic::AtomicCell;
-use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::cell::UnsafeCell;
 use std::panic::Location;
 use std::process::exit;
@@ -26,7 +24,7 @@ pub struct StateUpdater<S> {
 
 struct StateUpdaterInner<S> {
     state: Arc<Mutex<S>>,
-    dirty: Arc<AtomicCell<bool>>,
+    dirty: Arc<AtomicBool>,
     window: &'static Window,
 }
 
@@ -44,7 +42,7 @@ impl<S> Clone for StateUpdater<S> {
 
 impl<S: Send + 'static> StateUpdater<S> {
     /// Create a new `StateUpdater` from shared state and a dirty flag.
-    pub fn new(state: Arc<Mutex<S>>, dirty: Arc<AtomicCell<bool>>, window: &'static Window) -> Self {
+    pub fn new(state: Arc<Mutex<S>>, dirty: Arc<AtomicBool>, window: &'static Window) -> Self {
         Self { inner: Some(StateUpdaterInner { state, dirty, window }) }
     }
 
@@ -68,9 +66,9 @@ impl<S: Send + 'static> StateUpdater<S> {
                 exit(1);
             }
         };
-        let mut state = inner.state.lock();
+        let mut state = inner.state.lock().unwrap();
         f(&mut *state);
-        inner.dirty.store(true);
+        inner.dirty.store(true, Ordering::Relaxed);
         inner.window.request_redraw();
     }
 
@@ -88,14 +86,18 @@ impl<S: Send + 'static> StateUpdater<S> {
                 exit(1);
             }
         };
-        let state = inner.state.lock();
+        let state = inner.state.lock().unwrap();
         f(&*state)
     }
-    #[cfg(not(target_os = "ios"))]
+
     fn beautiful_error(&self, loc:  &Location) {
-        const BRACE: &str = "{";
-        println!(
-            "{}: State is not initialized
+        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use colored::Colorize;
+            const BRACE: &str = "{";
+            println!(
+                "{}: State is not initialized
   {} {}:{}
    {}
    {} impl State<YourStatefulWidget> for YourWidgetState {BRACE}
@@ -110,26 +112,27 @@ impl<S: Send + 'static> StateUpdater<S> {
    {}
    {}: call `self.updater = _updater` inside `init_state`
 ",
-            "error".red().bold(),
-            "-->".blue().bold(),
-            loc.file(),
-            loc.line(),
-            "|".blue(),
-            "|".blue(),
-            "|".blue(),
-            "|".blue(),
-            "|".blue(),
-            "|".blue(),
-            "|".blue(),
-            "|".blue(),
-            "|".blue(),
-            "|".blue(),
-            "|".blue(),
-            "              ^^^^^^^^^^^^^^^^^^^^^^^^^".red().bold(),
-            // "|".blue(),
-            // "|".blue(),
-            "help".yellow().bold(),
-        );
+                "error".red().bold(),
+                "-->".blue().bold(),
+                loc.file(),
+                loc.line(),
+                "|".blue(),
+                "|".blue(),
+                "|".blue(),
+                "|".blue(),
+                "|".blue(),
+                "|".blue(),
+                "|".blue(),
+                "|".blue(),
+                "|".blue(),
+                "|".blue(),
+                "|".blue(),
+                "              ^^^^^^^^^^^^^^^^^^^^^^^^^".red().bold(),
+                // "|".blue(),
+                // "|".blue(),
+                "help".yellow().bold(),
+            );
+        }
     }
 }
 
@@ -153,7 +156,7 @@ pub trait State<W: StatefulWidget> {
 pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element> + Send + Sync;
 pub struct StatefulElement {
     child: SyncChild,
-    pub dirty: Arc<AtomicCell<bool>>,
+    pub dirty: Arc<AtomicBool>,
     pub rebuild_fn: Arc<RebuildCallBack>,
 }
 
@@ -166,24 +169,24 @@ impl StatefulElement {
     {
         let state = widget.create_state();
         let state = Arc::new(Mutex::new(state));
-        let dirty = Arc::new(AtomicCell::new(false));
+        let dirty = Arc::new(AtomicBool::new(false));
 
         // Create the updater and pass it into init_state.
         let init_updater = StateUpdater::new(state.clone(), dirty.clone(), ctx.window);
 
         {
-            let mut s = state.lock();
+            let mut s = state.lock().unwrap();
             s.init_state(init_updater.clone());
         }
 
         let state_for_build = state.clone();
         let rebuild_fn: Arc<RebuildCallBack> = Arc::new(move |ctx| {
-            let s = state_for_build.lock();
+            let s = state_for_build.lock().unwrap();
             let child_widget = s.build();
             Widget::to_element(&child_widget, ctx)
         });
 
-        let child = { Widget::to_element(&state.lock().build(), ctx) };
+        let child = { Widget::to_element(&state.lock().unwrap().build(), ctx) };
 
         let updater = StateUpdater::new(state, dirty.clone(), ctx.window);
 
@@ -194,28 +197,25 @@ impl StatefulElement {
 
     /// Check if this element needs a rebuild and perform it if so.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        if self.dirty.load() {
+        if self.dirty.load(Ordering::Relaxed) {
             let new_child = (self.rebuild_fn)(ctx);
             // Safety: single-threaded rendering pipeline
             unsafe {
                 *self.child.0.get() = new_child;
             }
-            self.dirty.store(false);
+            self.dirty.store(false, Ordering::Relaxed);
         }
     }
 
     /// Returns true if this element is marked dirty.
     pub fn is_dirty(&self) -> bool {
-        self.dirty.load()
+        self.dirty.load(Ordering::Relaxed)
     }
 }
 
 impl Element for StatefulElement {
     fn draw(&self, ctx: &BuildContext) {
         self.rebuild_if_dirty(ctx);
-        // Safety: single-threaded rendering pipeline
-        let child = unsafe { &*self.child.0.get() };
-        child.draw(ctx);
     }
     fn pos(&self) -> Option<Vec2d> {
         unsafe { &*self.child.0.get() }.pos()
