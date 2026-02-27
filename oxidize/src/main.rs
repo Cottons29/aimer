@@ -1,17 +1,16 @@
-use color::prelude::Colors;
-use engine::OxidizeApp;
-use widget::{Text, TextStyle};
-use widget::text::TextAlign;
+use std::path::Path;
+use crate::exec::run::RunCommand;
 
-fn main() {
-    OxidizeApp::start(
-        Text!(
-            "Hello World",
-            text_align: TextAlign::MidCenter,
-            text_style: TextStyle!(
-                font_size: 30,
-                color: Colors::Green,
-            )
-        )
-    );
+mod exec;
+
+
+
+fn main() -> std::io::Result<()> {
+    let args = std::env::args().collect::<Vec<String>>();
+    let playground_path = Path::new("playground");
+    if playground_path.exists() {
+        std::fs::create_dir(playground_path.join("hello"))?;
+    }
+    println!("{:?}", args);
+    RunCommand::run()
 }

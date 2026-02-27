@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 resolver = "3"
 
-
+[lib]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 constructor.workspace  = true
@@ -14,4 +15,9 @@ color.workspace = true
 container.workspace = true
 engine.workspace = true
 control.workspace= true
+wasm-bindgen = "0.2.113"
+utils.workspace = true
 
+###############
+reqwest = "0.13.2"
+crossterm.workspace = true
