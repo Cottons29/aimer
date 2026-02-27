@@ -88,17 +88,22 @@ impl ApplicationHandler for App {
             let web_window = web_sys::window().unwrap();
             let document = web_window.document().unwrap();
             let body = document.body().unwrap();
+            utils::info!("Creating canvas...");
             body.append_child(&canvas).unwrap();
+            utils::info!("Canvas created.");
 
-            canvas.set_width(size.width);
-            canvas.set_height(size.height);
+            canvas.set_attribute("id", "oxidize_app").unwrap();
+            // canvas.set_attribute("width", "100%").unwrap();
+            // canvas.set_attribute("height", "100%").unwrap();
 
+            utils::info!("Getting canvas context...");
             let ctx = canvas
                 .get_context("2d")
                 .unwrap()
                 .unwrap()
                 .dyn_into::<web_sys::CanvasRenderingContext2d>()
                 .unwrap();
+            utils::info!("Canvas context obtained.");
             self.canvas_ctx = Some(ctx);
         }
 
@@ -236,8 +241,11 @@ impl App {
     }
 
     fn render(&mut self, event_loop: &ActiveEventLoop) {
+        // utils::info!("Rendering widget tree...");
+        // utils::info!("Window scale: {0}", self.window_scale);
         #[allow(clippy::collapsible_if)]
         if let Some(size) = self.pending_resize.take() {
+            // utils::info!("Size changed: {size:?}, resizing...");
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(pixels) = &mut self.pixels {
                 let _ = pixels.resize_surface(size.width, size.height);
@@ -329,37 +337,43 @@ impl App {
         }
         
         #[cfg(target_arch = "wasm32")]
-        if let (Some(ctx), Some(window)) = (&self.canvas_ctx, &self.window) {
-            let width = window.inner_size().width;
-            let height = window.inner_size().height;
+        {
+            // utils::info!("Setting up canvas context...");
+            if let (Some(ctx), Some(window)) = (&self.canvas_ctx, &self.window) {
+                // utils::info!("Stating render loop...");
+                let width = window.inner_size().width;
+                let height = window.inner_size().height;
 
-            ctx.clear_rect(0.0, 0.0, width as f64, height as f64);
+                ctx.clear_rect(0.0, 0.0, width as f64, height as f64);
 
-            let build_ctx = BuildContext {
-                parent_size: ResolvedSize { width: width as f64, height: height as f64 },
-                canvas: ctx,
-                scale: self.window_scale,
-                parent_pos: Default::default(),
-                box_constraint: widget::style::BoxConstraint {
-                    min_width: 0.0,
-                    min_height: 0.0,
-                    max_width: width as f64,
-                    max_height: height as f64,
-                },
-                window,
-                async_handle: self.async_runtime.handle().clone(),
-            };
+                let build_ctx = BuildContext {
+                    parent_size: ResolvedSize { width: width as f64, height: height as f64 },
+                    canvas: ctx,
+                    scale: self.window_scale,
+                    parent_pos: Default::default(),
+                    box_constraint: widget::style::BoxConstraint {
+                        min_width: 0.0,
+                        min_height: 0.0,
+                        max_width: width as f64,
+                        max_height: height as f64,
+                    },
+                    window,
+                    async_handle: self.async_runtime.handle().clone(),
+                };
 
-            #[allow(clippy::collapsible_if)]
-            if self.widget_root.is_none() {
-                if let Some(w) = self.pending_widget.take() {
-                    self.widget_root = Some(w.to_element(&build_ctx));
+                #[allow(clippy::collapsible_if)]
+                if self.widget_root.is_none() {
+                    if let Some(w) = self.pending_widget.take() {
+                        self.widget_root = Some(w.to_element(&build_ctx));
+                    }
                 }
-            }
 
-            if let Some(root) = &self.widget_root {
-                root.invalidate_layout();
-                Self::render_widget_tree(root.as_ref(), &build_ctx);
+                if let Some(root) = &self.widget_root {
+                    root.invalidate_layout();
+                    Self::render_widget_tree(root.as_ref(), &build_ctx);
+                }
+            }else{
+                utils::info!("Canvas context is not ready yet.");
             }
         }
     }
