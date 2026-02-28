@@ -25,6 +25,7 @@ pub enum Status {
     Compiling(u8),
     Building(u8),
     Launching,
+    Running,
     Idling,
 }
 
@@ -240,7 +241,7 @@ fn spawn_runner(device: Device, pkg_name: String, tx: std::sync::mpsc::Sender<Ru
             }
         });
 
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+        let _ = tx.send(RunnerEvent::StatusChange(Status::Running));
         
         loop {
             let mut guard = current_child_clone.lock().unwrap();
@@ -254,6 +255,8 @@ fn spawn_runner(device: Device, pkg_name: String, tx: std::sync::mpsc::Sender<Ru
             drop(guard);
             thread::sleep(Duration::from_millis(100));
         }
+        
+        let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
     });
 
     current_child
@@ -273,7 +276,10 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
     let mut current_status = Status::Compiling(0);
     let mut current_pane = 1; // 0 for Build, 1 for App
     
-    let frames = ["▁","▂","▃","▄","▅","▆","▇","█","▇","▆","▅","▄","▃","▂"];
+    // let frames = ["▁","▂","▃","▄","▅","▆","▇","█","▇","▆","▅","▄","▃","▂"];
+    // let frames = ["⠁","⠂","⠄","⡀","⢀","⠠","⠐","⠈"];
+    let frames = ["⠋","⠙","⠚","⠞","⠖","⠦","⠴","⠲","⠳","⠓"];
+    let running_frame = ["▣","▤","▥","▦","▧","▨","▣","▤","▥","▦"];
     let mut frame_index = 0;
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
@@ -339,6 +345,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 Status::Compiling(p) => (frames[frame_index], format!("Compiling {}%", p)),
                 Status::Building(p) => (frames[frame_index], format!("Building {}%", p)),
                 Status::Launching => (frames[frame_index], "Launching...".to_string()),
+                Status::Running => (running_frame[frame_index], "Running".to_string()),
                 Status::Idling => ("✓", "Idling".to_string()),
             };
 
@@ -352,7 +359,8 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 Status::Compiling(_) => Color::Yellow,
                 Status::Building(_) => Color::Cyan,
                 Status::Launching => Color::Magenta,
-                Status::Idling => Color::Green,
+                Status::Running => Color::Green,
+                Status::Idling => Color::DarkGray,
             };
 
             let status_line = Line::from(vec![
