@@ -8,8 +8,8 @@ pub mod widget {
     pub use control::gesture::button::*;
     pub use control::gesture::{AsyncCallback, Callback, CallbackHolder};
 }
-
-
+pub use engine::OxidizeApp;
+pub use oxidize_main::main;
 
 
 pub mod color {
