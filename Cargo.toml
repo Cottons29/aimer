@@ -12,8 +12,11 @@ members = [
     "oxidize",
     "crates/control",
     "crates/canvas",
-    "crates/attribute"
-, "crates/utils"]
+    "crates/attribute",
+    "crates/utils",
+    "macros/oxidize_main",
+    "oxidize_cli"
+]
 
 
 [workspace.dependencies]
@@ -29,16 +32,16 @@ widget_attr = { path = "macros/widget_attr" }
 color = { path = "crates/color" }
 attribute = {path = "crates/attribute"}
 utils = {path = "crates/utils"}
-
+oxidize_main = {path = "macros/oxidize_main"}
+oxidize_cli = {path = "oxidize_cli"}
 
 
 #########################################################################
-uuid = { version = "1.21.0", features = ["v4", "js"] }
 web-sys = { version = "0.3.90", features = ["CanvasRenderingContext2d", "DomMatrix", "TextMetrics"] }
 wasm-bindgen = "0.2.113"
-winit = "0.30.12"
+winit = {version =  "0.30.12", features = ["android-native-activity"] }
 skia-safe = { version = "0.93.1"}
-pixels = "0.15.0"
+pixels = {version =  "0.15.0" }
 syn = { version = "2.0.117", features = ["full"] }
 proc-macro2 = { version = "1.0.106" }
 quote = "1.0.44"
@@ -52,5 +55,7 @@ crossbeam = "0.8.4"
 colored = "3.1.1"
 log = {version = "0.4.29"}
 tokio = "1.49.0"
+# Oxidize cli dependencies
 crossterm = "0.29.0"
-
+clap = { version = "4.5.60", features = ["derive"] }
+inquire = "0.9.4"

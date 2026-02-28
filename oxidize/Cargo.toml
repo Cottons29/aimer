@@ -3,21 +3,24 @@ name = "oxidize"
 version = "0.1.0"
 edition = "2024"
 resolver = "3"
+description = "The organized export of other oxidize project"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "test_create"
+path = "src/bin.rs"
+
 [dependencies]
 constructor.workspace  = true
 widget.workspace = true
-uuid.workspace = true
 color.workspace = true
 container.workspace = true
 engine.workspace = true
 control.workspace= true
-wasm-bindgen = "0.2.113"
-utils.workspace = true
-
+oxidize_main.workspace = true
 ###############
-reqwest = "0.13.2"
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 crossterm.workspace = true
+oxidize_cli.workspace = true
