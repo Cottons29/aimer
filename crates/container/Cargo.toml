@@ -12,8 +12,6 @@ constructor.workspace = true
 
 
 #################
-
-pixels.workspace = true
 log.workspace = true
 
 
@@ -21,6 +19,6 @@ log.workspace = true
 objc.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
 skia-safe.workspace = true
+pixels.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-tokio = {workspace = true, features = ["rt"]}

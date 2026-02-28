@@ -17,5 +17,4 @@ tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
 skia-safe.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-tokio = {workspace = true, features = ["rt"]}
 wasm-bindgen-futures = "0.4.50"
