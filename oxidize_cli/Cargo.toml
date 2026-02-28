@@ -1,0 +1,13 @@
+[package]
+name = "oxidize_cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap.workspace = true
+crossterm.workspace = true
+inquire.workspace = true
+ratatui = "0.30.0"
+regex = "1.12.3"
+
+
