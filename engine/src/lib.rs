@@ -1,3 +1,4 @@
+#[allow(unused)]
 #[macro_use]
 extern crate widget;
 
@@ -5,7 +6,8 @@ extern crate widget;
 mod oxidize;
 pub mod render;
 pub use oxidize::OxidizeApp;
-mod utils;
+#[cfg(target_os = "ios")]
+mod ios_screen;
 
 
 

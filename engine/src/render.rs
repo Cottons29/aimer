@@ -43,7 +43,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "ios")]
         {
-            match crate::utils::get_screen_resolution_pixels() {
+            match crate::ios_screen::get_screen_resolution_pixels() {
                 Some((width, height)) => {
                     self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 })
                 }
@@ -58,7 +58,7 @@ impl ApplicationHandler for App {
             }
             #[cfg(target_os = "ios")]
             {
-                match crate::utils::get_screen_resolution_pixels() {
+                match crate::ios_screen::get_screen_resolution_pixels() {
                     Some((w, h)) => {
                         let phy_size = PhysicalSize::new(w as u32, h as u32);
                         WindowAttributes::new().with_inner_size(phy_size)
