@@ -3,6 +3,7 @@ use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::Canvas;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Handle;
 use winit::window::Window;
 
@@ -21,6 +22,7 @@ pub struct BuildContext<'a> {
     pub parent_pos: Vec2d,
     pub box_constraint: BoxConstraint,
     pub window: &'static Window,
+    #[cfg(not(target_arch = "wasm32"))]
     pub async_handle: Handle,
 }
 
@@ -34,6 +36,7 @@ impl<'a> BuildContext<'a> {
         scale: FLOAT,
         parent_pos: Vec2d,
         window: &'static Window,
+        #[cfg(not(target_arch = "wasm32"))]
         async_handle: Handle,
     ) -> Self {
         Self {
@@ -43,6 +46,7 @@ impl<'a> BuildContext<'a> {
             parent_pos,
             box_constraint: BoxConstraint::default(),
             window,
+            #[cfg(not(target_arch = "wasm32"))]
             async_handle,
         }
     }

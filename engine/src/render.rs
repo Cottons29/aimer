@@ -4,6 +4,7 @@ use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 #[cfg(not(target_arch = "wasm32"))]
 use pixels::{Pixels, SurfaceTexture};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 use widget::base::BuildContext;
 use widget::{dispatch_event, Element, ElementEvent, Widget};
@@ -34,6 +35,7 @@ pub struct App {
     pub window_scale: f64,
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
+    #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
 }
 
@@ -232,6 +234,7 @@ impl App {
                 max_height: content.height,
             },
             window: ctx.window,
+            #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
         };
         widget.visit_children(&mut |child| {
@@ -358,6 +361,7 @@ impl App {
                         max_height: height as f64,
                     },
                     window,
+                    #[cfg(not(target_arch = "wasm32"))]
                     async_handle: self.async_runtime.handle().clone(),
                 };
 

@@ -55,6 +55,7 @@ impl<'a> GestureDetectorElement<'a> {
                 max_height: content.height,
             },
             window: ctx.window,
+            #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
         };
         widget.visit_children(&mut |child| {
@@ -209,6 +210,7 @@ impl<'b> Element for GestureDetectorElement<'b> {
                 max_height: box_height,
             },
             window: ctx.window,
+            #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
         };
         Self::render_child(self.child.as_ref(), &child_ctx);

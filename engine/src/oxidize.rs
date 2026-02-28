@@ -1,6 +1,7 @@
 use crate::render::App;
 use attribute::position::Vec2d;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 use widget::Widget;
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -26,8 +27,6 @@ impl OxidizeApp {
         utils::info!("Creating async runtime...");
         #[cfg(not(target_arch = "wasm32"))]
         let async_runtime = Runtime::new().expect("Failed to create async runtime");
-        #[cfg(target_arch = "wasm32")]
-        let async_runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("Failed to create async runtime");
 
         utils::info!("Creating App instance...");
         let mut app = App {
@@ -42,6 +41,7 @@ impl OxidizeApp {
             window_scale: 1.0,
             native_window_size: None,
             pending_resize: None,
+            #[cfg(not(target_arch = "wasm32"))]
             async_runtime,
         };
 
@@ -53,7 +53,7 @@ impl OxidizeApp {
             Ok(_) => utils::info!("EventLoop finished successfully (unexpected on iOS)."),
             Err(e) => utils::error!("EventLoop::run_app failed: {:?}", e),
         }
-
+        #[cfg(not(target_arch = "wasm32"))]
         app.async_runtime.shutdown_background();
     }
 }

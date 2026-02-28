@@ -134,6 +134,7 @@ pub struct GestureActions {
     pub on_tap: CallbackHolder,
     pub on_double_tap: CallbackHolder,
     pub on_long_press: CallbackHolder,
+    #[cfg(not(target_arch = "wasm32"))]
     pub runtime_handle: Option<tokio::runtime::Handle>,
     state: GestureState,
 }
@@ -153,12 +154,13 @@ impl GestureActions {
             on_tap: CallbackHolder::default(),
             on_double_tap: CallbackHolder::default(),
             on_long_press: CallbackHolder::default(),
+            #[cfg(not(target_arch = "wasm32"))]
             runtime_handle: None,
             state: GestureState::default(),
         }
     }
 
-    fn execute_callback(cb: &CallbackHolder, runtime_handle: &Option<tokio::runtime::Handle>) {
+    fn execute_callback(cb: &CallbackHolder, #[cfg(not(target_arch = "wasm32"))] runtime_handle: &Option<tokio::runtime::Handle>) {
         unsafe {
             if let Some(callback) = (*cb.get()).take() {
                 match callback {
@@ -170,7 +172,6 @@ impl GestureActions {
                         }
                         #[cfg(target_arch = "wasm32")]
                         {
-                            let _ = runtime_handle;
                             wasm_bindgen_futures::spawn_local(f());
                         }
                     }
@@ -210,7 +211,7 @@ impl GestureActions {
                     self.state.last_tap_time = None;
                     self.state.last_tap_position = None;
                     utils::debug!("on_tab is called ");
-                    Self::execute_callback(&self.on_long_press, &self.runtime_handle);
+                    Self::execute_callback(&self.on_long_press,#[cfg(not(target_arch = "wasm32"))] &self.runtime_handle);
                     return Some(gesture);
                 }
 
@@ -222,7 +223,7 @@ impl GestureActions {
                         self.state.last_tap_position = None;
                         let gesture = GestureEvent::DoubleTap(*pos);
                         utils::debug!("on_double_tap is called ");
-                        Self::execute_callback(&self.on_double_tap, &self.runtime_handle);
+                        Self::execute_callback(&self.on_double_tap,#[cfg(not(target_arch = "wasm32"))] &self.runtime_handle);
                         return Some(gesture);
                     }
                 }
@@ -233,7 +234,7 @@ impl GestureActions {
                 self.state.last_tap_position = Some(*pos);
                 let gesture = GestureEvent::Tap(*pos);
                 utils::debug!("on_tab is called ");
-                Self::execute_callback(&self.on_tap, &self.runtime_handle);
+                Self::execute_callback(&self.on_tap, #[cfg(not(target_arch = "wasm32"))] &self.runtime_handle);
                 Some(gesture)
             }
 

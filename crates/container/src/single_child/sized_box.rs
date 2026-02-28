@@ -1,5 +1,3 @@
-#[cfg(target_arch = "wasm32")]
-use pixels::wgpu::web_sys::wasm_bindgen;
 use crate::ZeroSizedBox;
 use attribute::dimension::Dimension;
 use attribute::size::{ResolvedSize, Size};
@@ -106,6 +104,7 @@ impl Element for RawSizedBox {
             parent_pos: ctx.parent_pos,
             box_constraint: ctx.box_constraint,
             window: ctx.window,
+            #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
         };
 

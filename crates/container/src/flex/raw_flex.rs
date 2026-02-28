@@ -70,6 +70,7 @@ impl RawFlex {
                 max_height: content.height,
             },
             window: ctx.window,
+            #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
         };
         widget.visit_children(&mut |child| {
@@ -148,6 +149,7 @@ impl Element for RawFlex {
             parent_pos: ctx.parent_pos,
             box_constraint: ctx.box_constraint,
             window: ctx.window,
+            #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
         };
 
@@ -268,6 +270,7 @@ impl Element for RawFlex {
                     max_height: c_h,
                 },
                 window: ctx.window,
+                #[cfg(not(target_arch = "wasm32"))]
                 async_handle: ctx.async_handle.clone(),
             };
 
@@ -365,6 +368,7 @@ impl Element for RawFlex {
             parent_pos: ctx.parent_pos,
             box_constraint: ctx.box_constraint,
             window: ctx.window,
+            #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
         };
 
