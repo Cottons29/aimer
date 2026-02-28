@@ -2,8 +2,8 @@ use attribute::dimension::Dimension;
 use std::cell::UnsafeCell;
 
 #[cfg(not(target_arch = "wasm32"))]
-use skia_safe::{paint::Style, Color as SkColor, Paint, Rect};
-use widget::{base::*, Constructor, Element, LayoutCache, Widget};
+use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
+use widget::{Constructor, Element, LayoutCache, Widget, base::*};
 
 use crate::gesture::gesture_detector::GestureDetectorElement;
 use crate::gesture::{CallbackHolder, GestureActions};
@@ -43,7 +43,10 @@ impl Widget for Button {
         let mut gesture = GestureActions::new();
         gesture.on_tap = self.on_press.clone();
         gesture.on_long_press = self.on_long_press.clone();
-        gesture.runtime_handle = Some(ctx.async_handle.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            gesture.runtime_handle = Some(ctx.async_handle.clone());
+        }
 
         Box::new(GestureDetectorElement {
             style: self.style,
@@ -60,4 +63,3 @@ impl Widget for Button {
         })
     }
 }
-
