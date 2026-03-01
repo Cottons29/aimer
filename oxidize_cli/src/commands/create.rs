@@ -1,10 +1,11 @@
 pub mod android;
 pub mod ios;
-pub mod macos;
-pub mod window;
 pub mod linux;
+pub mod macos;
+pub mod web;
+pub mod window;
 
-use inquire::{Confirm, MultiSelect, Text};
+use inquire::{ui::{Color, RenderConfig, Styled}, Confirm, MultiSelect, Text};
 use std::fs;
 use std::path::PathBuf;
 
@@ -37,13 +38,21 @@ macro_rules! prompt_abortable {
 }
 
 pub fn execute(project_name: &str) {
+    let mut config = RenderConfig::default();
+    config.prompt_prefix = Styled::new("◆").with_fg(Color::LightCyan);
+    config.highlighted_option_prefix = Styled::new("│  ❯").with_fg(Color::LightCyan);
+    config.unhighlighted_option_prefix = Styled::new("│   ").with_fg(Color::DarkGrey);
+    config.selected_checkbox = Styled::new("●").with_fg(Color::LightGreen);
+    config.unselected_checkbox = Styled::new("○").with_fg(Color::DarkGrey);
+    inquire::set_global_render_config(config);
+
     println!("current_dir : {}", std::env::current_dir().unwrap().display());
     println!("Creating project '{}'", project_name);
 
     let description = prompt_abortable!(Text::new("Description:"));
     let version = prompt_abortable!(Text::new("Version:").with_default("0.1.0"));
     let author = prompt_abortable!(Text::new("Author:"));
-    let targets = prompt_abortable!(MultiSelect::new("Targets:", vec!["macos", "windows", "linux", "android", "ios"]));
+    let targets = prompt_abortable!(MultiSelect::new("Targets:", vec!["macos", "windows", "linux", "android", "ios", "web"]));
 
     println!(
         "\nProject config:\n- Name: {}\n- Version: {}\n- Description: {}\n- Author: {}\n- Targets: {:?}",
@@ -82,19 +91,22 @@ pub fn execute(project_name: &str) {
     if targets.contains(&"linux") {
         linux::create(&dir);
     }
+    if targets.contains(&"web") {
+        web::create(&dir);
+    }
 
     // Oxidize.toml
     fs::write(
         dir.join("Oxidize.toml"),
         format!(
             r#"[package]
-name = "{}"
+name = "{project_name}"
 group = "com.example.app"
 
 [build]
 dir = "."
 "#,
-            project_name
+
         ),
     )
     .unwrap();
