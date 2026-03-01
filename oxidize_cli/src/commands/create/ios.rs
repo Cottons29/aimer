@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 pub fn create(dir: &PathBuf) {
     let project_name = dir.file_name().unwrap().to_str().unwrap();
+    let project_name_lib = project_name.replace("-", "_");
     let ios_dir = dir.join("builds/ios");
     fs::create_dir_all(&ios_dir).unwrap();
     fs::create_dir_all(ios_dir.join(format!("{}.xcodeproj", project_name))).unwrap();
@@ -160,6 +161,29 @@ pub fn create(dir: &PathBuf) {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "{project_name}/Info.plist";
+				OTHER_LDFLAGS = (
+					"-L$(SRCROOT)/../staticlib/ios",
+					"-l{project_name_lib}",
+					"-lc++",
+					"-framework",
+					UIKit,
+					"-framework",
+					Metal,
+					"-framework",
+					CoreVideo,
+					"-framework",
+					Foundation,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					Security,
+					"-framework",
+					CoreGraphics,
+					"-framework",
+					CoreText,
+					"-framework",
+					CoreFoundation,
+				);
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -288,6 +312,29 @@ pub fn create(dir: &PathBuf) {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "{project_name}/Info.plist";
+				OTHER_LDFLAGS = (
+					"-L$(SRCROOT)/../staticlib/ios",
+					"-l{project_name_lib}",
+					"-lc++",
+					"-framework",
+					UIKit,
+					"-framework",
+					Metal,
+					"-framework",
+					CoreVideo,
+					"-framework",
+					Foundation,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					Security,
+					"-framework",
+					CoreGraphics,
+					"-framework",
+					CoreText,
+					"-framework",
+					CoreFoundation,
+				);
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -321,7 +368,8 @@ pub fn create(dir: &PathBuf) {
 	rootObject = F745F1A60BF1B4F8EBEABC66 /* Project object */;
 }}
 "#,
-            project_name = project_name
+            project_name = project_name,
+            project_name_lib = project_name_lib
         ),
     )
     .unwrap();
@@ -351,10 +399,18 @@ pub fn create(dir: &PathBuf) {
     <string>1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>10.11</string>
-    <key>NSHighResolutionCapable</key>
+    <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>UILaunchScreen</key>
+    <dict/>
+    <key>UIRequiresFullScreen</key>
+    <true/>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
 </dict>
 </plist>"#,
     ).unwrap();
