@@ -9,8 +9,13 @@ pub mod widget {
     pub use control::gesture::{AsyncCallback, Callback, CallbackHolder};
 }
 pub use engine::OxidizeApp;
+pub use engine;
 pub use oxidize_main::main;
 
+
+pub mod wasm_bindgen {
+    pub use wasm_bindgen::*;
+}
 
 pub mod color {
     pub use color::prelude::*;
