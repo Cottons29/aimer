@@ -48,6 +48,7 @@ impl<S: Send + 'static> StateUpdater<S> {
 
     /// Create an empty `StateUpdater` that is not yet initialized.
     /// Calling `set_state` or `read` on an empty updater will panic.
+    #[inline]
     pub fn empty() -> Self {
         Self { inner: None }
     }
@@ -59,15 +60,16 @@ impl<S: Send + 'static> StateUpdater<S> {
         let inner = match self.inner.as_ref() {
             Some(inner) => inner,
             None => {
-                const BRACE: &str = "{";
                 let loc = Location::caller();
                 #[cfg(not(target_os = "ios"))]
                 self.beautiful_error(loc);
                 exit(1);
             }
         };
-        let mut state = inner.state.lock().unwrap();
-        f(&mut *state);
+        {
+            let mut state = inner.state.lock().unwrap();
+            f(&mut *state);
+        }
         inner.dirty.store(true, Ordering::Relaxed);
         inner.window.request_redraw();
     }
@@ -90,6 +92,7 @@ impl<S: Send + 'static> StateUpdater<S> {
         f(&*state)
     }
 
+    #[inline]
     fn beautiful_error(&self, loc:  &Location) {
         #[cfg(not(target_os = "ios"))]
         #[cfg(not(target_arch = "wasm32"))]
