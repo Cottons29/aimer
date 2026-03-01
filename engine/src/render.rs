@@ -17,6 +17,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
 #[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
+use utils::info;
 
 #[cfg(target_arch = "wasm32")]
 type FLOAT = f64;
@@ -45,6 +46,7 @@ impl ApplicationHandler for App {
         {
             match crate::ios_screen::get_screen_resolution_pixels() {
                 Some((width, height)) => {
+                    println!("IOS TARGET NATIVE Window Size : {width}x{height}");
                     self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 })
                 }
                 None => (),
@@ -60,8 +62,9 @@ impl ApplicationHandler for App {
             {
                 match crate::ios_screen::get_screen_resolution_pixels() {
                     Some((w, h)) => {
+                        println!("IOS TARGET Window Size : {w}x{h}");
                         let phy_size = PhysicalSize::new(w as u32, h as u32);
-                        WindowAttributes::new().with_inner_size(phy_size)
+                        WindowAttributes::default().with_inner_size(phy_size)
                     }
                     None => WindowAttributes::default(),
                 }
@@ -121,6 +124,7 @@ impl ApplicationHandler for App {
 
             WindowEvent::Touch(item) => {
                 let pos = Vec2d { x: item.location.x as FLOAT, y: item.location.y as FLOAT };
+                info!("Touch: {:?}", pos);
                 let event = match item.phase {
                     winit::event::TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
                     winit::event::TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
@@ -244,11 +248,9 @@ impl App {
     }
 
     fn render(&mut self, event_loop: &ActiveEventLoop) {
-        // utils::info!("Rendering widget tree...");
-        // utils::info!("Window scale: {0}", self.window_scale);
+
         #[allow(clippy::collapsible_if)]
         if let Some(size) = self.pending_resize.take() {
-            // utils::info!("Size changed: {size:?}, resizing...");
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(pixels) = &mut self.pixels {
                 let _ = pixels.resize_surface(size.width, size.height);
@@ -276,10 +278,15 @@ impl App {
                 #[cfg(target_os = "ios")]
                 {
                     match self.native_window_size {
-                        Some(item) => (item.width as u32, item.height as u32),  // ResolvedSize f32 -> u32 for pixel buffer
+                        Some(item) => {
+                            utils::info!("IOS TARGET NATIVE Window Size : {}x{}", item.width, item.height);
+                            (item.width as u32, item.height as u32)
+                        },  // ResolvedSize f32 -> u32 for pixel buffer
                         None => {
+
                             let width = window.inner_size().width;
                             let height = window.inner_size().height;
+                            utils::info!("Not found the native window size : {width}x{height}");
                             (width, height)
                         }
                     }
