@@ -1,23 +1,32 @@
 pub mod console;
+pub mod ios;
+pub mod ios_sim;
+pub mod macos;
+pub mod web;
+pub mod android;
+pub mod android_sim;
 
-use std::process::Command;
-use std::fmt;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+use crate::targets::Targets;
+use crate::targets::Targets::Terminated;
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
-    style::{Color, Print, ResetColor, SetForegroundColor},
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
+    style::{Color, ResetColor, SetForegroundColor},
+    terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode},
 };
-use std::io::{stdout, Write};
+
+use std::fmt;
+use std::io::{BufRead, Write, stdout};
+use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub struct Device {
     pub name: String,
-    pub target: String,
+    pub target: Targets,
     pub id: String,
 }
 
@@ -29,16 +38,8 @@ impl fmt::Display for Device {
 
 fn fetch_devices() -> Vec<Device> {
     let mut devices = vec![
-        Device {
-            name: "macOS Desktop".to_string(),
-            target: "macos".to_string(),
-            id: "local".to_string(),
-        },
-        Device {
-            name: "Web Browser".to_string(),
-            target: "web".to_string(),
-            id: "web".to_string(),
-        },
+        Device { name: "macOS Desktop".to_string(), target: Targets::Macos, id: "local".to_string() },
+        Device { name: "Web Browser".to_string(), target: Targets::Web, id: "web".to_string() },
     ];
 
     // Android Devices
@@ -55,16 +56,30 @@ fn fetch_devices() -> Vec<Device> {
                                 name = part.trim_start_matches("model:").replace('_', " ");
                             }
                         }
-                        let connection_type = if id.contains('.') && id.contains(':') {
-                            "Wireless"
-                        } else {
-                            "Wired"
-                        };
-                        devices.push(Device {
-                            name: format!("{} ({})", name, connection_type),
-                            target: "android".to_string(),
-                            id: id.to_string(),
-                        });
+                        let connection_type = if id.contains('.') && id.contains(':') { "Wireless" } else { "Wired" };
+
+                        let pretty_name_cmd = Command::new("adb")
+                            .args(["-s", id, "emu", "avd", "name"])
+                            .output();
+
+                        if let Ok(output) = pretty_name_cmd {
+
+                            let output = String::from_utf8_lossy(&output.stdout);
+                            let name = output.split_whitespace().collect::<Vec<&str>>()[0];
+
+                            // println!("text: {}", name);
+
+                            devices.push(Device {
+                                name: format!("{} ({})", name, connection_type),
+                                target: Targets::Android,
+                                id: id.to_string(),
+                            });
+
+
+                        }
+
+
+
                     }
                 }
             }
@@ -72,7 +87,10 @@ fn fetch_devices() -> Vec<Device> {
     }
 
     // iOS Simulators (Booted) and physical devices via xcrun xctrace
-    if let Ok(output) = Command::new("xcrun").args(["simctl", "list", "devices"]).output() {
+    if let Ok(output) = Command::new("xcrun")
+        .args(["simctl", "list", "devices"])
+        .output()
+    {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
@@ -82,15 +100,11 @@ fn fetch_devices() -> Vec<Device> {
                         let rest = &line[start..];
                         let mut id = "".to_string();
                         if let Some(udid_start) = rest.find('(') {
-                            if let Some(udid_end) = rest[udid_start+1..].find(')') {
-                                id = rest[udid_start+1..udid_start+1+udid_end].to_string();
+                            if let Some(udid_end) = rest[udid_start + 1..].find(')') {
+                                id = rest[udid_start + 1..udid_start + 1 + udid_end].to_string();
                             }
                         }
-                        devices.push(Device {
-                            name,
-                            target: "ios".to_string(),
-                            id,
-                        });
+                        devices.push(Device { name, target: Targets::IosSimulator, id });
                     }
                 }
             }
@@ -98,7 +112,10 @@ fn fetch_devices() -> Vec<Device> {
     }
 
     // iOS Physical devices via devicectl (iOS 17+)
-    if let Ok(output) = Command::new("xcrun").args(["devicectl", "list", "devices"]).output() {
+    if let Ok(output) = Command::new("xcrun")
+        .args(["devicectl", "list", "devices"])
+        .output()
+    {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let lines: Vec<&str> = stdout.lines().collect();
@@ -115,16 +132,15 @@ fn fetch_devices() -> Vec<Device> {
                         let identifier = parts[2].trim().to_string();
                         let state = parts[3].trim();
                         if state.to_lowercase() == "available" {
-                            let connection_type = if parts[1].trim().ends_with(".coredevice.local") {
-                                "Wireless/Wired"
-                            } else {
-                                "Wired"
-                            };
-                            devices.push(Device {
-                                name: format!("{} ({})", name, connection_type),
-                                target: "ios".to_string(),
-                                id: identifier,
-                            });
+                            let connection_type =
+                                if parts[1].trim().ends_with(".coredevice.local") { "Wireless/Wired" } else { "Wired" };
+                            if devices.iter().any(|d| d.id != identifier) {
+                                devices.push(Device {
+                                    name: format!("{} ({})", name, connection_type),
+                                    target: Targets::Ios,
+                                    id: identifier,
+                                });
+                            }
                         }
                     }
                 }
@@ -133,7 +149,10 @@ fn fetch_devices() -> Vec<Device> {
     }
 
     // iOS Physical devices via xctrace fallback
-    if let Ok(output) = Command::new("xcrun").args(["xctrace", "list", "devices"]).output() {
+    if let Ok(output) = Command::new("xcrun")
+        .args(["xctrace", "list", "devices"])
+        .output()
+    {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut is_offline = false;
@@ -150,13 +169,9 @@ fn fetch_devices() -> Vec<Device> {
                     if let Some(start) = line.rfind('(') {
                         if let Some(end) = line.rfind(')') {
                             let name = line[..start].trim().to_string();
-                            let id = line[start+1..end].to_string();
+                            let id = line[start + 1..end].to_string();
                             if !id.contains("-") || id.len() == 40 || id.len() == 25 {
-                                devices.push(Device {
-                                    name: format!("{} (Wired)", name),
-                                    target: "ios".to_string(),
-                                    id,
-                                });
+                                devices.push(Device { name: format!("{} (Wired)", name), target: Targets::Ios, id });
                             }
                         }
                     }
@@ -174,11 +189,7 @@ fn fetch_devices() -> Vec<Device> {
         }
     }
 
-    unique_devices.push(Device {
-        name: "Quit".to_string(),
-        target: "exit".to_string(),
-        id: "q".to_string(),
-    });
+    unique_devices.push(Device { name: "Quit".to_string(), target: Terminated, id: "q".to_string() });
 
     unique_devices
 }
@@ -215,23 +226,34 @@ pub fn execute() {
         // Render menu
         execute!(stdout, cursor::MoveToColumn(0)).unwrap();
         // Clear previous lines
-        for _ in 0..last_devices_len + 1 { // +1 for the prompt text
+        for _ in 0..last_devices_len + 1 {
+            // +1 for the prompt text
             execute!(stdout, Clear(ClearType::CurrentLine), cursor::MoveUp(1)).unwrap();
         }
         execute!(stdout, Clear(ClearType::CurrentLine)).unwrap();
 
-        writeln!(stdout, "Select a device to launch (or 'q' to quit): ").unwrap();
+        writeln!(stdout, "\x1b[36m◆\x1b[0m  \x1b[1mSelect a device to launch (Press 'q' to quit):\x1b[0m\r").unwrap();
         for (i, device) in devices.iter().enumerate() {
             execute!(stdout, cursor::MoveToColumn(0)).unwrap();
             if i == selected_index {
+                execute!(stdout, SetForegroundColor(Color::DarkGrey)).unwrap();
+                write!(stdout, "│  ").unwrap();
                 execute!(stdout, SetForegroundColor(Color::Green)).unwrap();
-                writeln!(stdout, "> {}", device).unwrap();
+                writeln!(stdout, "● {}\r", device).unwrap();
                 execute!(stdout, ResetColor).unwrap();
             } else {
-                writeln!(stdout, "  {}", device).unwrap();
+                execute!(stdout, SetForegroundColor(Color::DarkGrey)).unwrap();
+                write!(stdout, "│  ").unwrap();
+                execute!(stdout, SetForegroundColor(Color::DarkGrey)).unwrap();
+                writeln!(stdout, "○ {}\r", device).unwrap();
+                execute!(stdout, ResetColor).unwrap();
             }
         }
-        last_devices_len = devices.len();
+        execute!(stdout, SetForegroundColor(Color::DarkGrey)).unwrap();
+        writeln!(stdout, "└\r").unwrap();
+        execute!(stdout, ResetColor).unwrap();
+        
+        last_devices_len = devices.len() + 1;
 
         if event::poll(Duration::from_millis(100)).unwrap() {
             if let Event::Key(key_event) = event::read().unwrap() {
@@ -254,11 +276,7 @@ pub fn execute() {
                         break devices[selected_index].clone();
                     }
                     KeyCode::Char('q') => {
-                        break Device {
-                            name: "Quit".to_string(),
-                            target: "exit".to_string(),
-                            id: "q".to_string(),
-                        };
+                        break Device { name: "Quit".to_string(), target: Targets::Terminated, id: "q".to_string() };
                     }
                     KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                         disable_raw_mode().unwrap();
@@ -273,19 +291,18 @@ pub fn execute() {
 
     disable_raw_mode().unwrap();
     execute!(stdout, cursor::Show).unwrap();
-    
+
     // Clear the menu for clean exit
     for _ in 0..last_devices_len + 1 {
         execute!(stdout, cursor::MoveUp(1), Clear(ClearType::CurrentLine)).unwrap();
     }
-
 
     if selected_device.id == "q" {
         println!("Exiting.");
         std::process::exit(0);
     }
 
-    println!("Launching on: {}", selected_device);
+    // println!("Launching on: {}", selected_device);
 
     let pkg_name = std::fs::read_to_string("Cargo.toml")
         .ok()
@@ -298,4 +315,3 @@ pub fn execute() {
 
     console::start(selected_device, pkg_name).unwrap();
 }
-
