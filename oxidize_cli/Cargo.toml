@@ -4,10 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ansi-to-tui = "8.0.1"
 clap.workspace = true
 crossterm.workspace = true
 inquire.workspace = true
-ratatui = "0.30.0"
-regex = "1.12.3"
-
-
+ratatui.workspace = true
+fancy-regex.workspace = true
+once_cell.workspace = true
+arboard.workspace = true

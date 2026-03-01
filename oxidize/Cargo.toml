@@ -20,7 +20,14 @@ container.workspace = true
 engine.workspace = true
 control.workspace= true
 oxidize_main.workspace = true
+wasm-bindgen.workspace = true
+winit = { workspace = true, features = ["android-native-activity"] }
 ###############
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-crossterm.workspace = true
+[target.'cfg(target_os = "windows")'.dependencies]
+oxidize_cli.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+oxidize_cli.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
 oxidize_cli.workspace = true

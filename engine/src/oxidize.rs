@@ -7,6 +7,9 @@ use widget::Widget;
 use winit::event_loop::{ControlFlow, EventLoop};
 use utils::log;
 
+#[cfg(target_os = "android")]
+pub static ANDROID_APP: std::sync::OnceLock<winit::platform::android::activity::AndroidApp> = std::sync::OnceLock::new();
+
 static APP_STARTED: AtomicBool = AtomicBool::new(false);
 
 pub struct OxidizeApp;
@@ -19,7 +22,15 @@ impl OxidizeApp {
         }
 
         utils::info!("Initializing EventLoop...");
+        #[cfg(not(target_os = "android"))]
         let event_loop = EventLoop::new().expect("Failed to create EventLoop");
+        
+        #[cfg(target_os = "android")]
+        let event_loop = {
+            use winit::platform::android::EventLoopBuilderExtAndroid;
+            let app = crate::oxidize::ANDROID_APP.get().expect("ANDROID_APP not set").clone();
+            winit::event_loop::EventLoop::builder().with_android_app(app).build().expect("Failed to create EventLoop")
+        };
 
         event_loop.set_control_flow(ControlFlow::Wait);
 
