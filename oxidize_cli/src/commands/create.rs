@@ -121,7 +121,7 @@ version = "{}"
 edition = "2024"
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["cdylib", "rlib", "staticlib"]
 
 [dependencies]
 oxidize = {{path = "/Users/cottons/Documents/oxidize-fw/oxidize/oxidize"}}
@@ -134,27 +134,7 @@ oxidize = {{path = "/Users/cottons/Documents/oxidize-fw/oxidize/oxidize"}}
     // src/lib.rs
     fs::write(
         dir.join("src/lib.rs"),
-        r#"
-use oxidize::color::Colors;
-use oxidize::OxidizeApp;
-use oxidize::widget::{Text, TextStyle};
-use oxidize::widget::text::{FontWeight, TextAlign};
-
-#[oxidize::main]
-pub fn my_app() {
-    OxidizeApp::start(
-        Text!(
-            "Hello, world!",
-            text_align: TextAlign::MidCenter,
-            text_style: TextStyle!(
-                color: Colors::Black,
-                font_size: 30,
-                font_weight: FontWeight::Bold,
-            )
-        )
-    )
-}
-"#,
+        include_str!("../../templates/sample.txt"),
     )
     .unwrap();
 
