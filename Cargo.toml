@@ -59,3 +59,8 @@ tokio = "1.49.0"
 crossterm = "0.29.0"
 clap = { version = "4.5.60", features = ["derive"] }
 inquire = "0.9.4"
+ratatui = "0.30.0"
+fancy-regex = "0.17.0"
+once_cell = "1.21.3"
+ansi-to-tui = "8.0.1"
+arboard = "3.6.1"
