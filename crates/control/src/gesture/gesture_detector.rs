@@ -5,18 +5,17 @@ use attribute::size::{ResolvedSize, Size};
 use skia_safe::{Paint, Rect};
 use std::cell::UnsafeCell;
 use winit::window::Window;
-// use color::prelude::{Color, ColorMixer};
 use crate::event::{PointerEvent, PointerPosition};
 use crate::gesture::GestureActions;
 use crate::gesture::button::ButtonStyle;
-use widget::base::{BuildContext, Color, ColorMixer};
+use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
 use widget::{Element, ElementEvent, LayoutCache};
 
-#[cfg(not(target_arch = "wasm32"))]
-type FLOAT = f32;
-#[cfg(target_arch = "wasm32")]
-type FLOAT = f64;
+// #[cfg(not(target_arch = "wasm32"))]
+// type FLOAT = f32;
+// #[cfg(target_arch = "wasm32")]
+// type FLOAT = f64;
 
 #[allow(dead_code)]
 pub struct GestureDetectorElement<'a> {
