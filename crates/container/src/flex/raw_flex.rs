@@ -8,8 +8,9 @@ use widget::{
 type Float = f64;
 #[cfg(not(target_arch = "wasm32"))]
 type Float = f32;
-
 use crate::flex::{BoxAlignment, FlexDirection, OverflowBehavior};
+
+/// a flexible layout container
 #[allow(dead_code)]
 #[derive(Constructor)]
 pub struct Flex {
@@ -41,7 +42,13 @@ impl Widget for Flex {
         })
     }
 }
-
+/// #### lower level flex container also the base of the flex layout such as
+///
+/// - Flex: layout that aligns children in horizontal and vertical
+///
+/// - Column: layout that always aligns children in a vertical direction
+///
+/// - Row: layout that always aligns children in a horizontal direction
 #[allow(dead_code)]
 pub struct RawFlex {
     pub(crate) direction: FlexDirection,
@@ -308,7 +315,7 @@ impl Element for RawFlex {
             match draw_ctx.canvas.translate(offset_x, offset_y) {
                 Ok(_) => {}
                 Err(err) => {
-                    log::error!("Failed to translate canvas: {:?}", err);
+                    utils::error!("Failed to translate canvas: {:?}", err);
                 }
             }
             Self::render_child(child, &draw_ctx);
