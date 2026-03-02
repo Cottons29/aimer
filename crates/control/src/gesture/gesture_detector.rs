@@ -83,13 +83,14 @@ impl<'a> GestureDetectorElement<'a> {
             PointerEvent::Move(_) => {}
             PointerEvent::Cancel => unsafe {
                 *self.is_pressed.get() = false;
-                *self.is_hovered.get() = false;
+                // *self.is_hovered.get() = false;
             },
         }
         unsafe {
             // utils::debug!("Current event : {event:?}");
             (&mut *self.gesture.get()).handle_pointer_event(event);
         }
+        self.window.request_redraw();
     }
 
     #[inline]
@@ -228,9 +229,18 @@ impl<'b> Element for GestureDetectorElement<'b> {
             return false;
         }
 
+        if matches!(event, ElementEvent::Cancel) {
+            self.handle_pointer_event(&PointerEvent::Cancel);
+            unsafe {
+                *self.is_hovered.get() = false;
+            }
+            return true;
+        }
+
         // Hit-test against cached bounds
         let pos = match event {
             ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) => p,
+            _ => return false,
         };
         #[allow(clippy::collapsible_if)]
         #[cfg(not(target_arch = "wasm32"))]
@@ -263,15 +273,8 @@ impl<'b> Element for GestureDetectorElement<'b> {
             ElementEvent::PointerDown(pos) => PointerEvent::Down(PointerPosition { x: pos.x, y: pos.y }),
             ElementEvent::PointerUp(pos) => PointerEvent::Up(PointerPosition { x: pos.x, y: pos.y }),
             ElementEvent::PointerMove(pos) => PointerEvent::Move(PointerPosition { x: pos.x, y: pos.y }),
+            ElementEvent::Cancel => PointerEvent::Cancel,
         };
-
-        unsafe {
-            let current_hovered = *self.is_hovered.get();
-            if !current_hovered {
-                *self.is_hovered.get() = true;
-                self.window.request_redraw();
-            }
-        }
 
         self.handle_pointer_event(&pointer_event);
 
