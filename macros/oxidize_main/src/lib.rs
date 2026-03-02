@@ -6,7 +6,6 @@ use syn::{parse_macro_input, ItemFn};
 pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_fn = parse_macro_input!(item as ItemFn);
     let fn_name = &input_fn.sig.ident;
-    let block = &input_fn.block;
 
     let expanded = quote! {
 
