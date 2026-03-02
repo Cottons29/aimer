@@ -129,7 +129,7 @@ impl ApplicationHandler for App {
                     winit::event::TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
                     winit::event::TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
                     winit::event::TouchPhase::Ended => Some(ElementEvent::PointerUp(pos)),
-                    winit::event::TouchPhase::Cancelled => None,
+                    winit::event::TouchPhase::Cancelled => Some(ElementEvent::Cancel),
                 };
                 #[allow(clippy::collapsible_if)]
                 if let Some(event) = event {
