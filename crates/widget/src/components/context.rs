@@ -20,6 +20,7 @@ pub struct BuildContext<'a> {
     pub canvas: &'a web_sys::CanvasRenderingContext2d,
     pub scale: FLOAT,
     pub parent_pos: Vec2d,
+    pub cursor_pos: Vec2d,
     pub box_constraint: BoxConstraint,
     pub window: &'static Window,
     #[cfg(not(target_arch = "wasm32"))]
@@ -35,6 +36,7 @@ impl<'a> BuildContext<'a> {
         size: ResolvedSize,
         scale: FLOAT,
         parent_pos: Vec2d,
+        cursor_pos: Vec2d,
         window: &'static Window,
         #[cfg(not(target_arch = "wasm32"))]
         async_handle: Handle,
@@ -44,6 +46,7 @@ impl<'a> BuildContext<'a> {
             parent_size: size,
             scale,
             parent_pos,
+            cursor_pos,
             box_constraint: BoxConstraint::default(),
             window,
             #[cfg(not(target_arch = "wasm32"))]
