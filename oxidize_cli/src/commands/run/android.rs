@@ -32,10 +32,17 @@ pub fn spawn_android_runner(
     tx: std::sync::mpsc::Sender<RunnerEvent>,
     current_child_clone: Arc<Mutex<Option<Child>>>,
 ) {
-    let abi_output = Command::new("adb")
+    let abi_output = match Command::new("adb")
         .args(["-s", &device.id, "shell", "getprop", "ro.product.cpu.abi"])
-        .output()
-        .expect("Failed to get device ABI");
+        .output(){
+        Ok(output) => output,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to get ABI: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
+    
     let abi = String::from_utf8_lossy(&abi_output.stdout).trim().to_string();
     
     let (rust_target, jni_dir_name) = match abi.as_str() {
@@ -48,7 +55,7 @@ pub fn spawn_android_runner(
     let _ = tx.send(RunnerEvent::StatusChange(Status::Compiling(0)));
     let _ = tx.send(RunnerEvent::BuildLog(format!("Compiling shared library for {}...", rust_target)));
 
-    let mut cargo_build = Command::new("cargo")
+    let mut cargo_build = match Command::new("cargo")
         .arg("ndk")
         .arg("-t")
         .arg(rust_target)
@@ -56,8 +63,14 @@ pub fn spawn_android_runner(
         .arg("--lib")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to start cargo build");
+        .spawn(){
+        Ok(status) => status,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run cargo: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let stdout = cargo_build.stdout.take().unwrap();
     let stderr = cargo_build.stderr.take().unwrap();
@@ -130,7 +143,7 @@ pub fn spawn_android_runner(
         let _ = tx.send(RunnerEvent::BuildLog(format!("Copied library to {}", dest_lib)));
     }
 
-    let _ = tx.send(RunnerEvent::BuildLog(format!("Building Android project via Gradle...")));
+    let _ = tx.send(RunnerEvent::BuildLog("Building Android project via Gradle...".to_string()));
 
     let gradlew = if cfg!(windows) { "gradlew.bat" } else { "gradlew" };
     let gradlew_path = current_dir.join(gradlew);
@@ -211,12 +224,18 @@ pub fn spawn_android_runner(
     let _ = tx.send(RunnerEvent::BuildLog(format!("Installing app on {} ...", device_name)));
     let apk_path = "builds/android/app/build/outputs/apk/debug/app-debug.apk";
 
-    let install_status = Command::new("adb")
+    let install_status = match Command::new("adb")
         .args(["-s", &device.id, "install", "-r", apk_path])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .status()
-        .expect("Failed to install APK on device");
+        .status() {
+        Ok(status) => status,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to install: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     if !install_status.success() {
         let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to install on {}", device_name)));
@@ -239,7 +258,7 @@ pub fn spawn_android_runner(
         }
     }
 
-    let mut app_run = Command::new("adb")
+    let mut app_run = match Command::new("adb")
         .args([
             "-s",
             &device.id,
@@ -251,8 +270,14 @@ pub fn spawn_android_runner(
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to launch Android app");
+        .spawn() {
+        Ok(status) => status,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run app: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let stdout = app_run.stdout.take().unwrap();
     let stderr = app_run.stderr.take().unwrap();
@@ -327,11 +352,17 @@ pub fn spawn_android_runner(
         logcat_cmd.args(["--pid", &pid]);
     }
 
-    let mut logcat = logcat_cmd
+    let mut logcat = match logcat_cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to start adb logcat");
+        .spawn() {
+        Ok(status) => status,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run logcat: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let logcat_stdout = logcat.stdout.take().unwrap();
     let logcat_stderr = logcat.stderr.take().unwrap();
