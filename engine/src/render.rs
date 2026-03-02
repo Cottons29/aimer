@@ -231,6 +231,7 @@ impl App {
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: Default::default(),
+            cursor_pos: ctx.cursor_pos,
             box_constraint: widget::style::BoxConstraint {
                 min_width: 0.0,
                 min_height: 0.0,
@@ -316,6 +317,7 @@ impl App {
                         canvas: surface.canvas(),
                         scale: self.window_scale as FLOAT,
                         parent_pos: Default::default(),
+                        cursor_pos: self.cursor_pos,
                         box_constraint: widget::style::BoxConstraint {
                             min_width: 0.0,
                             min_height: 0.0,
@@ -361,6 +363,7 @@ impl App {
                     canvas: ctx,
                     scale: self.window_scale,
                     parent_pos: Default::default(),
+                    cursor_pos: self.cursor_pos,
                     box_constraint: widget::style::BoxConstraint {
                         min_width: 0.0,
                         min_height: 0.0,
