@@ -17,7 +17,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
 #[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
-use utils::info;
+use utils::{debug, info};
 
 #[cfg(target_arch = "wasm32")]
 type FLOAT = f64;
@@ -177,11 +177,6 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // if let Some(window) = &self.window {
-        //     window.request_redraw();
-        // }
-    }
 }
 #[allow(dead_code)]
 impl App {
@@ -249,6 +244,8 @@ impl App {
     }
 
     fn render(&mut self, event_loop: &ActiveEventLoop) {
+
+        debug!("Rendering is starting...");
 
         #[allow(clippy::collapsible_if)]
         if let Some(size) = self.pending_resize.take() {
@@ -336,7 +333,6 @@ impl App {
                     }
 
                     if let Some(root) = &self.widget_root {
-                        root.invalidate_layout();
                         Self::render_widget_tree(root.as_ref(), &ctx);
                     }
                 }
@@ -383,7 +379,6 @@ impl App {
                 }
 
                 if let Some(root) = &self.widget_root {
-                    root.invalidate_layout();
                     Self::render_widget_tree(root.as_ref(), &build_ctx);
                 }
             }else{
