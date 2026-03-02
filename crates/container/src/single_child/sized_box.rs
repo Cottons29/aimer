@@ -102,6 +102,7 @@ impl Element for RawSizedBox {
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
+            cursor_pos: ctx.cursor_pos,
             box_constraint: ctx.box_constraint,
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
