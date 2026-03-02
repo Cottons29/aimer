@@ -211,6 +211,8 @@ impl Element for RawFlex {
         };
         let per_unsized = if unsized_count > 0 { remaining_main / unsized_count as Float } else { 0.0 };
 
+        let mut draw_commands = Vec::with_capacity(self.children.len());
+
         for (i, child) in self.children.iter().enumerate() {
             if child_has_size[i] {
                 match self.direction {
@@ -277,6 +279,23 @@ impl Element for RawFlex {
                 async_handle: ctx.async_handle.clone(),
             };
 
+            draw_commands.push((child.layer(), offset_x, offset_y, draw_ctx, child.as_ref()));
+
+            match self.direction {
+                FlexDirection::Row | FlexDirection::Inherit => {
+                    current_x += c_w + gap_x;
+                }
+                FlexDirection::Column => {
+                    current_y += c_h + gap_y;
+                }
+            }
+        }
+        
+        draw_commands.sort_by_key(|cmd| cmd.0);
+        
+        for cmd in draw_commands {
+            let (_, offset_x, offset_y, draw_ctx, child) = cmd;
+            
             // non wasm
             #[cfg(not(target_arch = "wasm32"))]
             draw_ctx.canvas.save();
@@ -292,22 +311,14 @@ impl Element for RawFlex {
                     log::error!("Failed to translate canvas: {:?}", err);
                 }
             }
-            Self::render_child(child.as_ref(), &draw_ctx);
+            Self::render_child(child, &draw_ctx);
             
             #[cfg(not(target_arch = "wasm32"))]
             draw_ctx.canvas.restore();
             #[cfg(target_arch = "wasm32")]
             draw_ctx.canvas.restore();
-
-            match self.direction {
-                FlexDirection::Row | FlexDirection::Inherit => {
-                    current_x += c_w + gap_x;
-                }
-                FlexDirection::Column => {
-                    current_y += c_h + gap_y;
-                }
-            }
         }
+
         // non wasm
         ctx.canvas.restore();
     }
