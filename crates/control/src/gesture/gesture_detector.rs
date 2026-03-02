@@ -26,6 +26,7 @@ pub struct GestureDetectorElement<'a> {
     pub(crate) is_pressed: UnsafeCell<bool>,
     pub(crate) gesture: UnsafeCell<GestureActions>,
     pub(crate) is_mouse_down: UnsafeCell<bool>,
+    pub(crate) is_dirty: UnsafeCell<bool>,
     pub(crate) child: Box<dyn Element>,
     pub(crate) cache: LayoutCache,
     /// Cached absolute bounding rect, updated during draw.
@@ -70,27 +71,39 @@ impl<'a> GestureDetectorElement<'a> {
             return;
         }
 
+        let mut changed = false;
         match event {
             PointerEvent::Down(_) => unsafe {
-                *self.is_pressed.get() = true;
+                if !*self.is_pressed.get() {
+                    *self.is_pressed.get() = true;
+                    changed = true;
+                }
             },
             PointerEvent::Up(_) => unsafe {
                 if *self.is_pressed.get() {
                     *self.is_pressed.get() = false;
+                    changed = true;
                 }
             },
 
             PointerEvent::Move(_) => {}
             PointerEvent::Cancel => unsafe {
-                *self.is_pressed.get() = false;
-                // *self.is_hovered.get() = false;
+                if *self.is_pressed.get() {
+                    *self.is_pressed.get() = false;
+                    changed = true;
+                }
             },
         }
         unsafe {
-            // utils::debug!("Current event : {event:?}");
             (&mut *self.gesture.get()).handle_pointer_event(event);
         }
-        self.window.request_redraw();
+
+        if changed {
+            unsafe {
+                *self.is_dirty.get() = true;
+            }
+            self.window.request_redraw();
+        }
     }
 
     #[inline]
@@ -101,6 +114,9 @@ impl<'a> GestureDetectorElement<'a> {
 
 impl<'b> Element for GestureDetectorElement<'b> {
     fn draw(&self, ctx: &BuildContext) {
+        unsafe {
+            *self.is_dirty.get() = false;
+        }
         let scale = ctx.scale;
         let constraint = ctx.box_constraint;
         let style = self.active_style();
@@ -180,25 +196,6 @@ impl<'b> Element for GestureDetectorElement<'b> {
             if unsafe { *self.is_pressed.get() } && !self.is_disabled {
                 ctx.canvas.set_fill_style_str("rgba(0, 0, 0, 0.15)");
                 ctx.canvas.fill_rect(0.0, 0.0, box_width, box_height);
-            }
-        }
-
-        // Update hover based on current cursor position
-        unsafe {
-            let mut is_inside = false;
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(bounds) = *self.cached_bounds.get() {
-                let c = ctx.cursor_pos;
-                is_inside = c.x >= bounds.left && c.x <= bounds.right && c.y >= bounds.top && c.y <= bounds.bottom;
-            }
-            #[cfg(target_arch = "wasm32")]
-            if let Some((x, y, w, h)) = *self.cached_bounds.get() {
-                let c = ctx.cursor_pos;
-                is_inside = c.x >= x && c.x <= x + w && c.y >= y && c.y <= y + h;
-            }
-            if *self.is_hovered.get() != is_inside {
-                *self.is_hovered.get() = is_inside;
-                self.window.request_redraw();
             }
         }
 
@@ -283,10 +280,16 @@ impl<'b> Element for GestureDetectorElement<'b> {
             unsafe {
                 if *self.is_hovered.get() {
                     *self.is_hovered.get() = false;
+                    *self.is_dirty.get() = true;
                     self.window.request_redraw();
                 }
             }
             return false;
+        }
+
+        // PointerMove during a press should not trigger a redraw (if it doesn't change hover)
+        if matches!(event, ElementEvent::PointerMove(_)) && is_inside == unsafe { *self.is_hovered.get() } {
+            return true;
         }
 
         // Update hover status
@@ -294,6 +297,7 @@ impl<'b> Element for GestureDetectorElement<'b> {
             let current_hovered = *self.is_hovered.get();
             if current_hovered != is_inside {
                 *self.is_hovered.get() = is_inside;
+                *self.is_dirty.get() = true;
                 self.window.request_redraw();
             }
         }
@@ -307,8 +311,7 @@ impl<'b> Element for GestureDetectorElement<'b> {
 
         self.handle_pointer_event(&pointer_event);
 
-        // PointerMove during a press should not trigger a redraw
-        !matches!(event, ElementEvent::PointerMove(_))
+        true
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
