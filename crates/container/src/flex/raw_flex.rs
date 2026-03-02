@@ -14,17 +14,17 @@ use crate::flex::{BoxAlignment, FlexDirection, OverflowBehavior};
 #[derive(Constructor)]
 pub struct Flex {
     #[constructor(default)]
-    direction: FlexDirection,
+    pub(crate) direction: FlexDirection,
     #[constructor(default)]
-    vertical_alignment: BoxAlignment,
+    pub(crate) vertical_alignment: BoxAlignment,
     #[constructor(default)]
-    horizontal_alignment: BoxAlignment,
+    pub(crate) horizontal_alignment: BoxAlignment,
     #[constructor(default)]
-    gaps: LayoutSpacing,
+    pub(crate) gaps: LayoutSpacing,
     #[constructor(default)]
-    overflow: OverflowBehavior,
+    pub(crate) overflow: OverflowBehavior,
     #[constructor(default)]
-    children: Vec<Box<dyn Widget>>,
+    pub(crate) children: Vec<Box<dyn Widget>>,
 }
 
 impl Widget for Flex {
@@ -44,13 +44,13 @@ impl Widget for Flex {
 
 #[allow(dead_code)]
 pub struct RawFlex {
-    direction: FlexDirection,
-    vertical_alignment: BoxAlignment,
-    horizontal_alignment: BoxAlignment,
-    gaps: LayoutSpacing,
-    children: Vec<Box<dyn Element>>,
-    cache: LayoutCache,
-    overflow_behavior: OverflowBehavior,
+    pub(crate) direction: FlexDirection,
+    pub(crate) vertical_alignment: BoxAlignment,
+    pub(crate) horizontal_alignment: BoxAlignment,
+    pub(crate) gaps: LayoutSpacing,
+    pub(crate) children: Vec<Box<dyn Element>>,
+    pub(crate) cache: LayoutCache,
+    pub(crate) overflow_behavior: OverflowBehavior,
 }
 
 impl RawFlex {
