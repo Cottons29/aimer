@@ -63,6 +63,7 @@ impl RawFlex {
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: Default::default(),
+            cursor_pos: ctx.cursor_pos,
             box_constraint: widget::style::BoxConstraint {
                 min_width: 0.0,
                 min_height: 0.0,
@@ -147,6 +148,7 @@ impl Element for RawFlex {
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
+            cursor_pos: ctx.cursor_pos,
             box_constraint: ctx.box_constraint,
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
@@ -263,6 +265,7 @@ impl Element for RawFlex {
                 canvas: ctx.canvas,
                 scale: ctx.scale,
                 parent_pos: ctx.parent_pos,
+                cursor_pos: ctx.cursor_pos,
                 box_constraint: widget::style::BoxConstraint {
                     min_width: 0.0,
                     min_height: 0.0,
@@ -366,6 +369,7 @@ impl Element for RawFlex {
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
+            cursor_pos: ctx.cursor_pos,
             box_constraint: ctx.box_constraint,
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
