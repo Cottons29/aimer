@@ -1,4 +1,9 @@
 mod raw_flex;
+pub mod row_column;
+
+// pub use raw_flex::RawFlex;
+pub use row_column::Column;
+pub use row_column::Row;
 
 pub use raw_flex::Flex;
 use widget::base::BuildContext;
@@ -17,6 +22,7 @@ pub enum BoxAlignment {
     Center,
     End,
 }
+
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum OverflowBehavior {
     #[default]
