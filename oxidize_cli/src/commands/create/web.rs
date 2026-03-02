@@ -84,13 +84,13 @@ export default defineConfig({
         web_dir.join("main.ts"),
         format!(
             r#"import init, {{ __oxidize_generated_entrance_point }} from './pkg/{}.js';
-
+// @ts-ignore
 async function main() {{
   await init();
   __oxidize_generated_entrance_point();
 }}
 
-main().catch(console.error);
+main().catch((err) => {{}});
 "#,
             project_name.replace("-", "_")
         ),
