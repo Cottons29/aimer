@@ -61,7 +61,7 @@ impl OxidizeApp {
         utils::info!("Running App...");
         // On iOS, this function never returns.
         match event_loop.run_app(&mut app) {
-            Ok(_) => utils::info!("EventLoop finished successfully (unexpected on iOS)."),
+            Ok(_) => utils::info!("EventLoop finished successfully"),
             Err(e) => utils::error!("EventLoop::run_app failed: {:?}", e),
         }
         #[cfg(not(target_arch = "wasm32"))]
