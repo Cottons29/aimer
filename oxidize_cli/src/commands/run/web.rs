@@ -7,15 +7,15 @@ use crate::commands::run::console::{RunnerEvent, Status};
 use crate::commands::run::Device;
 
 pub fn spawn_web_runner(
-    device: Device,
-    pkg_name: String,
+    _: Device,
+    _: String,
     tx: std::sync::mpsc::Sender<RunnerEvent>,
     current_child_clone:Arc<Mutex<Option<Child>>>,
 )  {
     let _ = tx.send(RunnerEvent::StatusChange(Status::Compiling(0)));
     let _ = tx.send(RunnerEvent::BuildLog("Running wasm-pack build...".to_string()));
 
-    let mut wasm_build = Command::new("wasm-pack")
+    let mut wasm_build = match Command::new("wasm-pack")
         .arg("build")
         .arg("--target")
         .arg("web")
@@ -23,8 +23,14 @@ pub fn spawn_web_runner(
         .arg("builds/web/pkg")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to start wasm-pack");
+        .spawn(){
+        Ok(build) => build,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run wasm-pack build: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let stdout = wasm_build.stdout.take().unwrap();
     let stderr = wasm_build.stderr.take().unwrap();
@@ -80,13 +86,19 @@ pub fn spawn_web_runner(
     let _ = tx.send(RunnerEvent::StatusChange(Status::Building(0)));
     let _ = tx.send(RunnerEvent::BuildLog("Running npm install...".to_string()));
 
-    let mut npm_install = Command::new("npm")
+    let mut npm_install = match Command::new("npm")
         .arg("install")
         .current_dir("builds/web")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to start npm install");
+        .spawn() {
+        Ok(install) => install,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run npm install: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let stdout = npm_install.stdout.take().unwrap();
     let stderr = npm_install.stderr.take().unwrap();
@@ -135,14 +147,20 @@ pub fn spawn_web_runner(
     let _ = tx.send(RunnerEvent::StatusChange(Status::Launching));
     let _ = tx.send(RunnerEvent::BuildLog("Starting vite server...".to_string()));
 
-    let mut npm_run = Command::new("npm")
+    let mut npm_run = match Command::new("npm")
         .arg("run")
         .arg("dev")
         .current_dir("builds/web")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to start vite server");
+        .spawn(){
+        Ok(run) => run,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run npm run dev: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let stdout = npm_run.stdout.take().unwrap();
     let stderr = npm_run.stderr.take().unwrap();
