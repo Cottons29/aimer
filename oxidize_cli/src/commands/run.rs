@@ -16,8 +16,8 @@ use crossterm::{
     terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode},
 };
 
-use std::fmt;
-use std::io::{BufRead, Write, stdout};
+use std::{fmt, process};
+use std::io::{ Write, stdout};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -50,12 +50,6 @@ fn fetch_devices() -> Vec<Device> {
                 if line.contains(" device ") || line.contains(" emulator ") {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if let Some(id) = parts.first() {
-                        let mut name = id.to_string();
-                        for part in parts.iter().skip(1) {
-                            if part.starts_with("model:") {
-                                name = part.trim_start_matches("model:").replace('_', " ");
-                            }
-                        }
                         let connection_type = if id.contains('.') && id.contains(':') { "Wireless" } else { "Wired" };
 
                         let pretty_name_cmd = Command::new("adb")
@@ -276,12 +270,12 @@ pub fn execute() {
                         break devices[selected_index].clone();
                     }
                     KeyCode::Char('q') => {
-                        break Device { name: "Quit".to_string(), target: Targets::Terminated, id: "q".to_string() };
+                        break Device { name: "Quit".to_string(), target: Terminated, id: "q".to_string() };
                     }
                     KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                         disable_raw_mode().unwrap();
                         execute!(stdout, cursor::Show).unwrap();
-                        std::process::exit(1);
+                        process::exit(1);
                     }
                     _ => {}
                 }
@@ -299,7 +293,7 @@ pub fn execute() {
 
     if selected_device.id == "q" {
         println!("Exiting.");
-        std::process::exit(0);
+        process::exit(0);
     }
 
     // println!("Launching on: {}", selected_device);
