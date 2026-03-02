@@ -8,7 +8,7 @@ use winit::window::Window;
 use crate::event::{PointerEvent, PointerPosition};
 use crate::gesture::GestureActions;
 use crate::gesture::button::ButtonStyle;
-use widget::base::{BuildContext, Color};
+use widget::base::{BuildContext, Color, ColorMixer};
 use widget::style::BoxConstraint;
 use widget::{Element, ElementEvent, LayoutCache};
 
