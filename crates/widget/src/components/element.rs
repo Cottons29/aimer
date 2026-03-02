@@ -9,6 +9,7 @@ pub enum ElementEvent {
     PointerDown(Vec2d),
     PointerUp(Vec2d),
     PointerMove(Vec2d),
+    Cancel,
 }
 
 
@@ -137,6 +138,15 @@ pub trait Element{
 pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> bool {
     // Try children in reverse order (front-to-back)
     // println!("Dispatch event: {:?}", event);
+    if matches!(event, ElementEvent::Cancel) {
+        let mut children = Vec::new();
+        root.event_children(&mut |child| children.push(child));
+        for child in children.into_iter().rev() {
+            dispatch_event(child, pos, event);
+        }
+        return root.on_event(event);
+    }
+
     let mut children = Vec::new();
     root.event_children(&mut |child| children.push(child));
 
