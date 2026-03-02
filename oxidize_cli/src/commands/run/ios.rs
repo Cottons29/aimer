@@ -24,15 +24,21 @@ pub fn spawn_ios_runner(
     let _ = tx.send(RunnerEvent::StatusChange(Status::Compiling(0)));
     let _ = tx.send(RunnerEvent::BuildLog(format!("Compiling static library for {}...", rust_target)));
 
-    let mut cargo_build = Command::new("cargo")
+    let mut cargo_build = match Command::new("cargo")
         .arg("build")
         .arg("--lib")
         .arg("--target")
         .arg(rust_target)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to start cargo build");
+        .spawn(){
+        Ok(build) => build,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to build static library: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let stdout = cargo_build.stdout.take().unwrap();
     let stderr = cargo_build.stderr.take().unwrap();
@@ -105,7 +111,7 @@ pub fn spawn_ios_runner(
 
     let _ = tx.send(RunnerEvent::BuildLog(format!("Building Xcode project for iOS...")));
 
-    let mut xcode_build = Command::new("xcodebuild")
+    let mut xcode_build = match Command::new("xcodebuild")
         .arg("-project")
         .arg(format!("{}.xcodeproj", pkg_name))
         .arg("-target")
@@ -120,8 +126,14 @@ pub fn spawn_ios_runner(
         .current_dir("builds/ios")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to start xcodebuild");
+        .spawn(){
+        Ok(build) => build,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to build Xcode project: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let stdout = xcode_build.stdout.take().unwrap();
     let stderr = xcode_build.stderr.take().unwrap();
@@ -179,13 +191,20 @@ pub fn spawn_ios_runner(
     let _ = tx.send(RunnerEvent::BuildLog(format!("Installing app on {} ...", device_name)));
     let app_path = format!("builds/ios/build/Debug-iphoneos/{}.app", pkg_name);
 
-    let install_status = Command::new("xcrun")
+    let install_status = match Command::new("xcrun")
         .args(["devicectl", "device", "install", "app", "--device", &device.id, &app_path])
         .env("TERM", "dumb")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .status()
-        .expect("Failed to install app on device");
+    {
+        Ok(status) => status,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to install on {}: {}", device_name, e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     if !install_status.success() {
         let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to install on {}", device_name)));
@@ -196,19 +215,25 @@ pub fn spawn_ios_runner(
     let _ = tx.send(RunnerEvent::BuildLog("Launching app on iOS Device...".to_string()));
 
     let plist_path = format!("{}/Info.plist", app_path);
-    let bundle_id_output = Command::new("plutil")
+    let bundle_id_output = match Command::new("plutil")
         .arg("-extract")
         .arg("CFBundleIdentifier")
         .arg("raw")
         .arg(&plist_path)
-        .output()
-        .expect("Failed to read CFBundleIdentifier from Info.plist");
+        .output(){
+        Ok(output) => output,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to get bundle id: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let bundle_id = String::from_utf8_lossy(&bundle_id_output.stdout)
         .trim()
         .to_string();
 
-    let mut app_run = Command::new("xcrun")
+    let mut app_run = match Command::new("xcrun")
         .args([
             "devicectl",
             "device",
@@ -223,8 +248,14 @@ pub fn spawn_ios_runner(
         .env("TERM", "dumb")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to launch iOS app");
+        .spawn(){
+        Ok(run) => run,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to launch app: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let stdout = app_run.stdout.take().unwrap();
     let stderr = app_run.stderr.take().unwrap();
