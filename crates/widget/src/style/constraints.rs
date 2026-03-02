@@ -1,5 +1,5 @@
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(constructor::Constructor, Default, Clone, Copy, PartialEq)]
+#[derive(constructor::Constructor, Default, Clone, Copy, PartialEq, Debug)]
 pub struct BoxConstraint{
     #[constructor(default, into)]
     pub min_width: f32,
@@ -12,7 +12,7 @@ pub struct BoxConstraint{
 }
 
 #[cfg(target_arch = "wasm32")]
-#[derive(constructor::Constructor, Default, Clone, Copy, PartialEq)]
+#[derive(constructor::Constructor, Default, Clone, Copy, PartialEq,Debug)]
 pub struct BoxConstraint{
     #[constructor(default, into)]
     pub min_width: f64,
