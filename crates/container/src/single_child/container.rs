@@ -3,6 +3,7 @@ use attribute::size::{ResolvedSize, Size};
 use constructor::Constructor;
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
+use utils::debug;
 use widget::{Element, LayoutCache, LayoutSpacing, Spacing, Widget, base::*, style::border::BoxBorder};
 
 #[cfg(target_arch = "wasm32")]
@@ -41,7 +42,11 @@ impl<W: Widget> Widget for Container<W> {
         })
     }
 }
-
+/// #### Low level container element.
+///
+/// - **Container**: safe wrapper for RawContainer
+///
+/// - **SizedBox**: fixed size container or place holder
 pub struct RawContainer<T> {
     pub padding: Option<LayoutSpacing>,
     pub margin: Option<LayoutSpacing>,
@@ -82,6 +87,7 @@ impl<T: Element> RawContainer<T> {
 
 impl<T: Element> Element for RawContainer<T> {
     fn draw(&self, ctx: &BuildContext) {
+        // debug!("RawContainer::draw");
         let constraint = ctx.box_constraint;
 
         let parent_width = constraint.max_width;
@@ -96,7 +102,7 @@ impl<T: Element> Element for RawContainer<T> {
         match ctx.canvas.translate(m_left, m_top) {
             Ok(_) => {}
             Err(err) => {
-                log::error!("Failed to translate canvas: {:?}", err);
+                utils::error!("Failed to translate canvas: {:?}", err);
             }
         }
 
@@ -252,9 +258,10 @@ impl<T: Element> Element for RawContainer<T> {
         match ctx.canvas.translate(p_left + b_left, p_top + b_top) {
             Ok(_) => {}
             Err(err) => {
-                log::error!("Failed to translate canvas: {:?}", err);
+                utils::error!("Failed to translate canvas: {:?}", err);
             }
         }
+        self.child.draw(ctx);
     }
 
     fn size(&self) -> Option<Size> {
