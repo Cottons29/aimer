@@ -11,7 +11,7 @@ color.workspace = true
 widget_attr.workspace = true
 attribute.workspace = true
 constructor.workspace = true
-
+utils.workspace = true
 
 #####################
 winit.workspace = true

@@ -621,11 +621,11 @@ version = "0.1.0"
 dependencies = [
  "attribute",
  "constructor",
- "log",
  "objc",
  "pixels",
  "skia-safe",
  "tokio",
+ "utils",
  "widget",
 ]
 
@@ -4013,6 +4013,7 @@ dependencies = [
  "objc",
  "skia-safe",
  "tokio",
+ "utils",
  "wasm-bindgen",
  "web-sys",
  "widget_attr",
