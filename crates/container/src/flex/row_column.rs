@@ -1,11 +1,11 @@
-use constructor::Constructor;
-use widget::{Element, LayoutSpacing, Widget};
-use widget::base::BuildContext;
-use crate::flex::{BoxAlignment, Flex, FlexDirection, OverflowBehavior};
 use crate::flex::raw_flex::RawFlex;
+use crate::flex::{BoxAlignment, Flex, FlexDirection, OverflowBehavior};
+use constructor::Constructor;
+use widget::base::BuildContext;
+use widget::{Element, LayoutSpacing, Widget};
 
 #[derive(Constructor)]
-/// A flex container that arranges its children in a vertical directions
+/// A flex container that arranges its children in a vertical direction
 pub struct Column {
     #[constructor(default)]
     vertical_alignment: BoxAlignment,
@@ -35,7 +35,7 @@ impl Widget for Column {
 }
 
 #[derive(Constructor)]
-/// A flex container that arranges its children in a vertical directions
+/// A flex container that arranges its children in a horizontal direction
 pub struct Row {
     #[constructor(default)]
     vertical_alignment: BoxAlignment,
