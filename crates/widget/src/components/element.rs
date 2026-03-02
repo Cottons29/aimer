@@ -94,6 +94,11 @@ pub trait Element{
         self.computed_size(ctx)
     }
 
+    /// get the layer of the element (used for z-index ordering)
+    fn layer(&self) -> u32 {
+        0
+    }
+
     /// get the size from the child when parent has no size explicit
     fn get_size_from_child(&self) -> Option<Size> {
         if let Some(s) = self.size() {
@@ -201,6 +206,9 @@ impl Element for Box<dyn Element> {
     }
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.as_ref().content_size(ctx)
+    }
+    fn layer(&self) -> u32 {
+        self.as_ref().layer()
     }
     fn get_size_from_child(&self) -> Option<Size> {
         self.as_ref().get_size_from_child()
