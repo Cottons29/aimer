@@ -56,6 +56,7 @@ impl Widget for Button {
             is_pressed: UnsafeCell::new(false),
             gesture: UnsafeCell::new(gesture),
             is_mouse_down: UnsafeCell::new(false),
+            is_dirty: UnsafeCell::new(true),
             child,
             cache: LayoutCache::new(),
             cached_bounds: UnsafeCell::new(None),
