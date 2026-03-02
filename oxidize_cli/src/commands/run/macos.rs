@@ -12,13 +12,19 @@ pub fn spawn_macos_runner(device: Device, pkg_name: String, tx: std::sync::mpsc:
     let _ = tx.send(RunnerEvent::StatusChange(Status::Compiling(0)));
     let _ = tx.send(RunnerEvent::BuildLog("Compiling static library...".to_string()));
 
-    let mut cargo_build = Command::new("cargo")
+    let mut cargo_build = match Command::new("cargo")
         .arg("build")
         .arg("--lib")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to start cargo build");
+        .spawn(){
+        Ok(build) => build,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to build static library: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let stdout = cargo_build.stdout.take().unwrap();
     let stderr = cargo_build.stderr.take().unwrap();
@@ -97,7 +103,7 @@ pub fn spawn_macos_runner(device: Device, pkg_name: String, tx: std::sync::mpsc:
 
     let _ = tx.send(RunnerEvent::BuildLog(format!("Building Xcode project for {}...", arch)));
 
-    let mut xcode_build = Command::new("xcodebuild")
+    let mut xcode_build = match Command::new("xcodebuild")
         .arg("-project")
         .arg(format!("{}.xcodeproj", pkg_name))
         .arg("-target")
@@ -110,8 +116,14 @@ pub fn spawn_macos_runner(device: Device, pkg_name: String, tx: std::sync::mpsc:
         .current_dir("builds/macos")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to start xcodebuild");
+        .spawn(){
+        Ok(build) => build,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to build Xcode project: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let stdout = xcode_build.stdout.take().unwrap();
     let stderr = xcode_build.stderr.take().unwrap();
@@ -169,11 +181,17 @@ pub fn spawn_macos_runner(device: Device, pkg_name: String, tx: std::sync::mpsc:
 
     let app_exec_path = format!("builds/macos/build/Debug/{}.app/Contents/MacOS/{}", pkg_name, pkg_name);
 
-    let mut app_run = Command::new(&app_exec_path)
+    let mut app_run = match Command::new(&app_exec_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to launch macOS app");
+        .spawn(){
+        Ok(run) => run,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to launch macOS app: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
 
     let stdout = app_run.stdout.take().unwrap();
     let stderr = app_run.stderr.take().unwrap();
