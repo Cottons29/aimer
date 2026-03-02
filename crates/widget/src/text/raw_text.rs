@@ -6,6 +6,7 @@ use crate::{Element, LayoutCache, TextOverflow};
 use crate::base::BuildContext;
 use crate::style::text_style::TextStyle;
 use skia_safe::font_style::FontStyle as SkFontStyle;
+use utils::debug;
 
 /// this is low level TextWidget that covert to element
 #[allow(dead_code)]
@@ -19,6 +20,7 @@ pub struct RawTextWidget {
 
 impl RawTextWidget {
     fn get_typeface(&self) -> Typeface {
+        // debug!("RawTextWidget::get_typeface");
         let mut guard = self.typeface.lock().unwrap();
         if let Some(ref tf) = *guard {
             return tf.clone();
