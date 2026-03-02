@@ -60,22 +60,6 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
     )
 }
 
-impl ColorMixer for Colors {
-    fn to_u32(&self) -> u32 {
-        match self {
-            Colors::Red => 0xFFFF0000,
-            Colors::Green => 0xFF00FF00,
-            Colors::Blue => 0xFF0000FF,
-            Colors::White => 0xFFFFFFFF,
-            Colors::Black => 0xFF000000,
-            Colors::Yellow => 0xFFFFFF00,
-            Colors::Cyan => 0xFF00FFFF,
-            Colors::Magenta => 0xFFFF00FF,
-            Colors::Gray => 0xFF808080,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
