@@ -48,6 +48,7 @@ impl<'a> GestureDetectorElement<'a> {
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: Vec2d::default(),
+            cursor_pos: ctx.cursor_pos,
             box_constraint: BoxConstraint {
                 min_width: 0.0,
                 min_height: 0.0,
@@ -183,6 +184,25 @@ impl<'b> Element for GestureDetectorElement<'b> {
             }
         }
 
+        // Update hover based on current cursor position
+        unsafe {
+            let mut is_inside = false;
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(bounds) = *self.cached_bounds.get() {
+                let c = ctx.cursor_pos;
+                is_inside = c.x >= bounds.left && c.x <= bounds.right && c.y >= bounds.top && c.y <= bounds.bottom;
+            }
+            #[cfg(target_arch = "wasm32")]
+            if let Some((x, y, w, h)) = *self.cached_bounds.get() {
+                let c = ctx.cursor_pos;
+                is_inside = c.x >= x && c.x <= x + w && c.y >= y && c.y <= y + h;
+            }
+            if *self.is_hovered.get() != is_inside {
+                *self.is_hovered.get() = is_inside;
+                self.window.request_redraw();
+            }
+        }
+
         // Draw child centered within the button bounds
         let child_size = self.child.computed_size(ctx);
         let offset_x = (box_width - child_size.width).max(0.0) / 2.0;
@@ -204,6 +224,7 @@ impl<'b> Element for GestureDetectorElement<'b> {
             canvas: ctx.canvas,
             scale: ctx.scale,
             parent_pos: Vec2d::default(),
+            cursor_pos: ctx.cursor_pos,
             box_constraint: BoxConstraint {
                 min_width: 0.0,
                 min_height: 0.0,
@@ -242,30 +263,39 @@ impl<'b> Element for GestureDetectorElement<'b> {
             ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) => p,
             _ => return false,
         };
-        #[allow(clippy::collapsible_if)]
+
+        let mut is_inside = false;
         #[cfg(not(target_arch = "wasm32"))]
         unsafe {
             if let Some(bounds) = *self.cached_bounds.get() {
-                if pos.x < bounds.left || pos.x > bounds.right || pos.y < bounds.top || pos.y > bounds.bottom {
-                    *self.is_hovered.get() = false;
-                    self.window.request_redraw();
-                    return false;
-                }
+                is_inside = pos.x >= bounds.left && pos.x <= bounds.right && pos.y >= bounds.top && pos.y <= bounds.bottom;
             }
         }
-        #[allow(clippy::collapsible_if)]
         #[cfg(target_arch = "wasm32")]
         unsafe {
             if let Some((x, y, w, h)) = *self.cached_bounds.get() {
-                let right = x + w;
-                let bottom = y + h;
-                let px = pos.x;
-                let py = pos.y;
-                if px < x || px > right || py < y || py > bottom {
+                is_inside = pos.x >= x && pos.x <= x + w && pos.y >= y && pos.y <= y + h;
+            }
+        }
+
+        let is_pressed = unsafe { *self.is_pressed.get() };
+
+        if !is_inside && !is_pressed {
+            unsafe {
+                if *self.is_hovered.get() {
                     *self.is_hovered.get() = false;
                     self.window.request_redraw();
-                    return false;
                 }
+            }
+            return false;
+        }
+
+        // Update hover status
+        unsafe {
+            let current_hovered = *self.is_hovered.get();
+            if current_hovered != is_inside {
+                *self.is_hovered.get() = is_inside;
+                self.window.request_redraw();
             }
         }
 
