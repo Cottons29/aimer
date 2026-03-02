@@ -23,7 +23,8 @@ pub fn create(dir: &PathBuf) {
     "vite": "^5.0.0",
     "typescript": "^5.0.0"
   }}
-}}"#, project_name
+}}"#,
+            project_name
         ),
     )
     .unwrap();
@@ -53,12 +54,27 @@ export default defineConfig({
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{}</title>
   </head>
+  <style>
+
+    html, body {{
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+    }}
+    #oxidize_app {{
+      width: 100%;
+      height: 100%;
+      outline: none;
+    }}
+    </style>
   <body>
     <div id="app"></div>
     <script type="module" src="/main.ts"></script>
   </body>
 </html>
-"#, project_name
+"#,
+            project_name
         ),
     )
     .unwrap();
@@ -75,7 +91,8 @@ async function main() {{
 }}
 
 main().catch(console.error);
-"#, project_name.replace("-", "_")
+"#,
+            project_name.replace("-", "_")
         ),
     )
     .unwrap();
