@@ -13,7 +13,7 @@ pub struct RawTextWidget {
     pub cache: LayoutCache,
     pub typeface: Mutex<Option<()>>,
 }
-
+/// this is low level TextWidget that covert to element
 impl RawTextWidget {
     fn get_css_font(&self, scale: f64) -> String {
         let font_size = if self.text_style.font_size == 0 { 14.0 } else { self.text_style.font_size as f64 };
@@ -25,7 +25,7 @@ impl RawTextWidget {
             FontWeight::Normal => "normal",
             FontWeight::Bold => "bold",
             FontWeight::Bolder => "900",
-            FontWeight::Value(_v) => "normal",
+            FontWeight::Value(v) => v.to_string(),
         };
         
         let style = match self.text_style.font_style {
