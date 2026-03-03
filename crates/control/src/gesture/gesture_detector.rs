@@ -117,17 +117,22 @@ impl<'b> Element for GestureDetectorElement<'b> {
         unsafe {
             *self.is_dirty.get() = false;
         }
+
         let scale = ctx.scale;
         let constraint = ctx.box_constraint;
-        let style = self.active_style();
 
-        let box_width = match style.width {
+        // Compute box dimensions using the non-hover style first (dimensions
+        // should be the same for both styles, but we need them to calculate
+        // bounds before deciding on hover).
+        let base_style = &self.style;
+
+        let box_width = match base_style.width {
             Dimension::Px(w) => w * scale,
             Dimension::Percent(p) => constraint.max_width * (p / 100.0),
             Dimension::Auto => constraint.max_width,
         };
 
-        let box_height = match style.height {
+        let box_height = match base_style.height {
             Dimension::Px(h) => h * scale,
             Dimension::Percent(p) => constraint.max_height * (p / 100.0),
             Dimension::Auto => constraint.max_height,
@@ -135,6 +140,52 @@ impl<'b> Element for GestureDetectorElement<'b> {
 
         let box_width = box_width.max(0.0);
         let box_height = box_height.max(0.0);
+
+        // Compute and cache absolute bounds, then reconcile hover state from
+        // the current cursor position. This ensures that a freshly-rebuilt
+        // element (whose is_hovered starts as false) picks up the correct
+        // hover status without requiring a new PointerMove event.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let matrix = ctx.canvas.local_to_device_as_3x3();
+            let abs_x = matrix.translate_x();
+            let abs_y = matrix.translate_y();
+            let bounds = Rect::from_xywh(abs_x, abs_y, box_width, box_height);
+            unsafe {
+                *self.cached_bounds.get() = Some(bounds);
+            }
+            if !self.is_disabled {
+                let cursor_inside = ctx.cursor_pos.x >= bounds.left
+                    && ctx.cursor_pos.x <= bounds.right
+                    && ctx.cursor_pos.y >= bounds.top
+                    && ctx.cursor_pos.y <= bounds.bottom;
+                unsafe {
+                    *self.is_hovered.get() = cursor_inside;
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Ok(transform) = ctx.canvas.get_transform() {
+                let abs_x = transform.e();
+                let abs_y = transform.f();
+                unsafe {
+                    *self.cached_bounds.get() = Some((abs_x, abs_y, box_width, box_height));
+                }
+                if !self.is_disabled {
+                    let cursor_inside = ctx.cursor_pos.x >= abs_x
+                        && ctx.cursor_pos.x <= abs_x + box_width
+                        && ctx.cursor_pos.y >= abs_y
+                        && ctx.cursor_pos.y <= abs_y + box_height;
+                    unsafe {
+                        *self.is_hovered.get() = cursor_inside;
+                    }
+                }
+            }
+        }
+
+        // Now pick the correct style based on reconciled hover state
+        let style = self.active_style();
 
         // Draw background
         #[cfg(not(target_arch = "wasm32"))]
@@ -153,14 +204,6 @@ impl<'b> Element for GestureDetectorElement<'b> {
             let rect = Rect::from_xywh(0.0, 0.0, box_width, box_height);
             ctx.canvas.draw_rect(rect, &paint);
 
-            // Cache the absolute bounding rect using the current canvas transform
-            let matrix = ctx.canvas.local_to_device_as_3x3();
-            let abs_x = matrix.translate_x();
-            let abs_y = matrix.translate_y();
-            unsafe {
-                *self.cached_bounds.get() = Some(Rect::from_xywh(abs_x, abs_y, box_width, box_height));
-            }
-
             // Draw pressed overlay for visual feedback
             if unsafe { *self.is_pressed.get() } && !self.is_disabled {
                 let mut pressed_paint = Paint::default();
@@ -174,7 +217,6 @@ impl<'b> Element for GestureDetectorElement<'b> {
         {
             let color_str = style.color.to_css_color();
             if self.is_disabled {
-                // Approximate disabled state (maybe handle alpha better if needed)
                 ctx.canvas.set_global_alpha(0.5);
             }
 
@@ -183,14 +225,6 @@ impl<'b> Element for GestureDetectorElement<'b> {
 
             if self.is_disabled {
                 ctx.canvas.set_global_alpha(1.0);
-            }
-
-            if let Ok(transform) = ctx.canvas.get_transform() {
-                let abs_x = transform.e();
-                let abs_y = transform.f();
-                unsafe {
-                    *self.cached_bounds.get() = Some((abs_x, abs_y, box_width, box_height));
-                }
             }
 
             if unsafe { *self.is_pressed.get() } && !self.is_disabled {
@@ -242,6 +276,7 @@ impl<'b> Element for GestureDetectorElement<'b> {
     }
 
     fn on_event(&self, event: &ElementEvent) -> bool {
+        
         if self.is_disabled {
             return false;
         }
@@ -254,7 +289,6 @@ impl<'b> Element for GestureDetectorElement<'b> {
             return true;
         }
 
-        // Hit-test against cached bounds
         let pos = match event {
             ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) => p,
             _ => return false,
@@ -287,12 +321,10 @@ impl<'b> Element for GestureDetectorElement<'b> {
             return false;
         }
 
-        // PointerMove during a press should not trigger a redraw (if it doesn't change hover)
         if matches!(event, ElementEvent::PointerMove(_)) && is_inside == unsafe { *self.is_hovered.get() } {
             return true;
         }
 
-        // Update hover status
         unsafe {
             let current_hovered = *self.is_hovered.get();
             if current_hovered != is_inside {
