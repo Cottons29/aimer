@@ -20,22 +20,21 @@ pub struct Text {
     #[constructor(into, first)]
     text: String, 
     #[constructor(default)]
-    text_align: Option<TextAlign>,
+    text_align: TextAlign,
     #[constructor(default)]
-    text_style: Option<TextStyle>,
+    text_style: TextStyle,
 }
 
 impl Widget for Text {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-        let text_style = self.text_style.clone().unwrap_or_default();
-        let text_align = self.text_align.unwrap_or(TextAlign::TopLeft);
         
         Box::new(RawTextWidget {
             text: self.text.clone(),
-            text_style,
-            text_align,
+            text_style: self.text_style.clone(),
+            text_align: self.text_align,
             cache: LayoutCache::new(),
             typeface: Mutex::new(None),
+            text_runs: Mutex::new(None),
         })
     }
 }
