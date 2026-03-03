@@ -4011,6 +4011,7 @@ dependencies = [
  "colored",
  "constructor",
  "objc",
+ "once_cell",
  "skia-safe",
  "tokio",
  "utils",

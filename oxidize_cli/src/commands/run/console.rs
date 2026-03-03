@@ -347,6 +347,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                                     thread::spawn(move || {
                                         let reader = BufReader::new(stderr);
                                         let mut compile_count = 0;
+                                        let mut all_compile = 0;
                                         for line in reader.lines() {
                                             if let Ok(l) = line {
                                                 if l.contains("Compiling") {
@@ -369,7 +370,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                                     let _ = tx_clone.send(RunnerEvent::StatusChange(Status::Running));
                                 });
                             } else {
-                                // Kill child
+                                // Kill child process if running
                                 if let Some(mut child) = current_child.lock().unwrap().take() {
                                     let _ = child.kill();
                                 }

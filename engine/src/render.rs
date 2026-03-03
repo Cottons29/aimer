@@ -245,7 +245,7 @@ impl App {
 
     fn render(&mut self, event_loop: &ActiveEventLoop) {
 
-        debug!("Rendering is starting...");
+        // debug!("Rendering is starting...");
 
         #[allow(clippy::collapsible_if)]
         if let Some(size) = self.pending_resize.take() {

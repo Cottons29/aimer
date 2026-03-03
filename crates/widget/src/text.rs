@@ -1,7 +1,8 @@
-#[cfg(not(target_arch = "wasm32"))]
-mod raw_text;
+
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_raw_text;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod raw_text;
 
 use crate::base::BuildContext;
 pub use crate::style::text_style::{FontStyle, FontWeight, TextAlign, TextOverflow, TextStyle};
