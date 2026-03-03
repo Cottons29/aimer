@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use skia_safe::{Color, Font, FontMgr, Paint, TextBlob, Typeface};
+use skia_safe::{Canvas, Color, Font, FontMgr, Paint, TextBlob, Typeface};
 use attribute::size::ResolvedSize;
 use crate::text::{ FontWeight, TextAlign, FontStyle};
 use crate::{Element, LayoutCache, TextOverflow};
@@ -8,19 +8,139 @@ use crate::style::text_style::TextStyle;
 use skia_safe::font_style::FontStyle as SkFontStyle;
 use utils::debug;
 
-/// this is low level TextWidget that covert to element
-#[allow(dead_code)]
+thread_local! {
+    static FONT_MGR: FontMgr = FontMgr::new();
+}
+
+/// A contiguous run of text that shares the same font.
+#[derive(Clone)]
+pub struct TextRun {
+    text: String,
+    font: Font,
+}
+
+/// Segment `text` into runs where each run uses either the primary font or a
+/// fallback font obtained via `FontMgr::match_family_style_character`.
+fn build_text_runs(text: &str, primary_font: &Font) -> Vec<TextRun> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+
+    let primary_tf = primary_font.typeface();
+    let font_size = primary_font.size();
+    let style = primary_tf.font_style();
+
+    let mut runs: Vec<TextRun> = Vec::new();
+    let mut current_text = String::new();
+    let mut current_is_primary = true;
+    let mut current_fallback_tf: Option<Typeface> = None;
+
+    for ch in text.chars() {
+        let glyph = primary_tf.unichar_to_glyph(ch as i32);
+        let has_glyph = glyph != 0;
+
+        if has_glyph {
+            if current_is_primary {
+                current_text.push(ch);
+            } else {
+                if !current_text.is_empty() {
+                    let font = if let Some(ref tf) = current_fallback_tf {
+                        Font::new(tf.clone(), font_size)
+                    } else {
+                        primary_font.clone()
+                    };
+                    runs.push(TextRun { text: current_text, font });
+                    current_text = String::new();
+                }
+                current_is_primary = true;
+                current_fallback_tf = None;
+                current_text.push(ch);
+            }
+        } else {
+            let fallback = FONT_MGR.with(|mgr| {
+                mgr.match_family_style_character("", style, &[""], ch as i32)
+            });
+
+            if current_is_primary {
+                if !current_text.is_empty() {
+                    runs.push(TextRun { text: current_text, font: primary_font.clone() });
+                    current_text = String::new();
+                }
+                current_is_primary = false;
+                current_fallback_tf = fallback;
+                current_text.push(ch);
+            } else {
+                let same_fallback = match (&current_fallback_tf, &fallback) {
+                    (Some(a), Some(b)) => Typeface::equal(a, b),
+                    (None, None) => true,
+                    _ => false,
+                };
+                if same_fallback {
+                    current_text.push(ch);
+                } else {
+                    if !current_text.is_empty() {
+                        let font = if let Some(ref tf) = current_fallback_tf {
+                            Font::new(tf.clone(), font_size)
+                        } else {
+                            primary_font.clone()
+                        };
+                        runs.push(TextRun { text: current_text, font });
+                        current_text = String::new();
+                    }
+                    current_fallback_tf = fallback;
+                    current_text.push(ch);
+                }
+            }
+        }
+    }
+
+    if !current_text.is_empty() {
+        let font = if current_is_primary {
+            primary_font.clone()
+        } else if let Some(ref tf) = current_fallback_tf {
+            Font::new(tf.clone(), font_size)
+        } else {
+            primary_font.clone()
+        };
+        runs.push(TextRun { text: current_text, font });
+    }
+
+    runs
+}
+
+fn measure_text_with_fallback(text: &str, primary_font: &Font) -> f32 {
+    let runs = build_text_runs(text, primary_font);
+    let mut total_width: f32 = 0.0;
+    for run in &runs {
+        let (w, _) = run.font.measure_text(&run.text, None);
+        total_width += w;
+    }
+    total_width
+}
+
+fn draw_text_with_fallback(canvas: &Canvas, text: &str, primary_font: &Font, x: f32, y: f32, paint: &Paint) {
+    let runs = build_text_runs(text, primary_font);
+    let mut cursor_x = x;
+    for run in &runs {
+        if let Some(blob) = TextBlob::new(&run.text, &run.font) {
+            canvas.draw_text_blob(&blob, (cursor_x, y), paint);
+        }
+        let (w, _) = run.font.measure_text(&run.text, None);
+        cursor_x += w;
+    }
+}
+
 pub struct RawTextWidget {
     pub text: String,
     pub text_style: TextStyle,
     pub text_align: TextAlign,
     pub cache: LayoutCache,
     pub typeface: Mutex<Option<Typeface>>,
+    pub text_runs: Mutex<Option<(f32, Vec<TextRun>)>>,
 }
 
 impl RawTextWidget {
     fn get_typeface(&self) -> Typeface {
-        // debug!("RawTextWidget::get_typeface");
         let mut guard = self.typeface.lock().unwrap();
         if let Some(ref tf) = *guard {
             return tf.clone();
@@ -43,11 +163,12 @@ impl RawTextWidget {
         };
 
         let sk_font_style = SkFontStyle::new(weight, skia_safe::font_style::Width::NORMAL, slant);
-        let font_mgr = FontMgr::new();
-        let typeface = font_mgr.match_family_style("Arial", sk_font_style)
-            .or_else(|| font_mgr.match_family_style("Helvetica", sk_font_style))
-            .or_else(|| font_mgr.match_family_style("", sk_font_style))
-            .expect("Unable to load any typeface");
+        let typeface = FONT_MGR.with(|mgr| {
+            mgr.match_family_style("Arial", sk_font_style)
+                .or_else(|| mgr.match_family_style("Helvetica", sk_font_style))
+                .or_else(|| mgr.match_family_style("", sk_font_style))
+                .expect("Unable to load any typeface")
+        });
 
         *guard = Some(typeface.clone());
         typeface
@@ -59,42 +180,72 @@ impl RawTextWidget {
         let scaled_font_size = font_size * scale;
         Font::new(typeface, scaled_font_size)
     }
+
+    fn get_text_runs(&self, font: &Font) -> (f32, Vec<TextRun>) {
+        let mut guard = self.text_runs.lock().unwrap();
+        if let Some((cached_size, ref runs)) = *guard {
+            if (cached_size - font.size()).abs() < 0.001 {
+                return (cached_size, runs.clone());
+            }
+        }
+
+        let runs = build_text_runs(&self.text, font);
+        // let mut total_width: f32 = 0.0;
+        // for run in &runs {
+        //     let (w, _) = run.font.measure_text(&run.text, None);
+        //     total_width += w;
+        // }
+        *guard = Some((font.size(), runs.clone()));
+        (font.size(), runs)
+    }
+
+    fn measure_runs(runs: &[TextRun]) -> f32 {
+        let mut total_width: f32 = 0.0;
+        for run in runs {
+            let (w, _) = run.font.measure_text(&run.text, None);
+            total_width += w;
+        }
+        total_width
+    }
+
+    fn draw_runs(&self, canvas: &Canvas, runs: &[TextRun], x: f32, y: f32, paint: &Paint) {
+        let mut cursor_x = x;
+        for run in runs {
+            if let Some(blob) = TextBlob::new(&run.text, &run.font) {
+                canvas.draw_text_blob(&blob, (cursor_x, y), paint);
+            }
+            let (w, _) = run.font.measure_text(&run.text, None);
+            cursor_x += w;
+        }
+    }
 }
 
 impl Element for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
         let font = self.make_font(ctx.scale);
+        let (_, runs) = self.get_text_runs(&font);
+        let text_width = Self::measure_runs(&runs);
+        let (_, metrics) = font.metrics();
 
-        if TextBlob::new(&self.text, &font).is_some() {
-            // Use typographic metrics for true centering
-            let (text_width, _) = font.measure_text(&self.text, None);
-            let (_, metrics) = font.metrics();
+        let width = ctx.parent_size.width;
+        let height = ctx.parent_size.height;
 
-            let width = ctx.parent_size.width;
-            let height = ctx.parent_size.height;
+        let x = match self.text_align {
+            TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
+            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => (width - text_width) / 2.0,
+            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => width - text_width,
+        };
 
-            let x = match self.text_align {
-                TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
-                TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => (width - text_width) / 2.0,
-                TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => width - text_width,
-            };
+        let y = match self.text_align {
+            TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => -metrics.ascent,
+            TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => height / 2.0 - (metrics.ascent + metrics.descent) / 2.0,
+            TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => height - metrics.descent,
+        };
 
-            let y = match self.text_align {
-                // Align top of the font (ascent) to the top of container
-                TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => -metrics.ascent,
-
-                // Align center of the font height (ascent + descent) to center of container
-                TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => height / 2.0 - (metrics.ascent + metrics.descent) / 2.0,
-
-                // Align bottom of the font (descent) to bottom of container
-                TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => height - metrics.descent,
-            };
-
-            let color = self.text_style.color;
-
-            let mut paint = Paint::default();
-            paint.set_anti_alias(true);
-            paint.set_color(Color::from(color));
+        let color = self.text_style.color;
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(Color::from(color));
 
             let mut display_text = self.text.clone();
             let mut display_x = x;
@@ -244,11 +395,9 @@ impl Element for RawTextWidget {
                 }
             }
             _ => {
-                let (text_width, _) = font.measure_text(&self.text, None);
-                ResolvedSize {
-                    width: text_width.ceil(),
-                    height: line_height.ceil(),
-                }
+                let (_, runs) = self.get_text_runs(&font);
+                let text_width = Self::measure_runs(&runs);
+                ResolvedSize { width: text_width.ceil(), height: line_height.ceil() }
             }
         };
 
@@ -260,4 +409,3 @@ impl Element for RawTextWidget {
         self.cache.invalidate();
     }
 }
-
