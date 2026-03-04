@@ -25,7 +25,7 @@ impl RawTextWidget {
             FontWeight::Normal => "normal",
             FontWeight::Bold => "bold",
             FontWeight::Bolder => "900",
-            FontWeight::Value(v) => v.to_string(),
+            FontWeight::Value(v) => "",
         };
         
         let style = match self.text_style.font_style {
