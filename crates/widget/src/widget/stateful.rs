@@ -219,6 +219,9 @@ impl StatefulElement {
 impl Drawable for StatefulElement {
     fn draw(&self, ctx: &BuildContext) {
         self.rebuild_if_dirty(ctx);
+        // Safety: single-threaded rendering pipeline
+        let child = unsafe { &*self.child.0.get() };
+        child.draw(ctx);
     }
 }
 
