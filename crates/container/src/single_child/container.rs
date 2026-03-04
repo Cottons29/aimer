@@ -4,7 +4,7 @@ use constructor::Constructor;
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
 use utils::debug;
-use widget::{Element, LayoutCache, LayoutSpacing, Spacing, Widget, base::*, style::border::BoxBorder};
+use widget::{Element, LayoutCache, LayoutSpacing, Spacing, Widget, base::*, style::border::BoxBorder, Drawable};
 
 #[cfg(target_arch = "wasm32")]
 type FLOAT = f64;
@@ -85,7 +85,7 @@ impl<T: Element> RawContainer<T> {
     }
 }
 
-impl<T: Element> Element for RawContainer<T> {
+impl<T: Element> Drawable for RawContainer<T> {
     fn draw(&self, ctx: &BuildContext) {
         // debug!("RawContainer::draw");
         let constraint = ctx.box_constraint;
@@ -263,6 +263,10 @@ impl<T: Element> Element for RawContainer<T> {
         }
         self.child.draw(ctx);
     }
+}
+
+impl<T: Element> Element for RawContainer<T> {
+
 
     fn size(&self) -> Option<Size> {
         Some(Size { width: self.width, height: self.height })
