@@ -87,6 +87,11 @@ impl<T: Element> RawContainer<T> {
 impl<T: Element> Drawable for RawContainer<T> {
     fn draw(&self, ctx: &BuildContext) {
         // debug!("RawContainer::draw");
+        #[cfg(not(target_arch = "wasm32"))]
+        ctx.canvas.save();
+        #[cfg(target_arch = "wasm32")]
+        ctx.canvas.save();
+
         let constraint = ctx.box_constraint;
 
         let parent_width = constraint.max_width;
@@ -261,6 +266,10 @@ impl<T: Element> Drawable for RawContainer<T> {
             }
         }
         self.child.draw(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        ctx.canvas.restore();
+        #[cfg(target_arch = "wasm32")]
+        ctx.canvas.restore();
     }
 }
 
@@ -271,7 +280,12 @@ impl<T: Element> Element for RawContainer<T> {
         Some(Size { width: self.width, height: self.height })
     }
 
-    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+    fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
+        // Container handles its own child rendering in draw() with proper offset,
+        // so we don't expose children here to avoid double-rendering.
+    }
+
+    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(&self.child);
     }
 
