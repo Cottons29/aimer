@@ -10,7 +10,6 @@ use widget::components::element::ElementEvent;
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{Color as SkColor, Paint, Rect, paint::Style, RRect};
 use winit::window::Window;
-use utils::debug;
 use crate::scrollable::scroll_bar::ScrollBar;
 use crate::scrollable::{ScrollAxis, ScrollBehavior};
 
