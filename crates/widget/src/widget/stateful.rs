@@ -8,7 +8,7 @@ use std::process::exit;
 use std::sync::Arc;
 use winit::window::Window;
 
-use crate::{base::*, components::element::ElementEvent, Element, Widget};
+use crate::{base::*, components::element::ElementEvent, Drawable, Element, Widget};
 
 /// A `Send + Sync` wrapper around `UnsafeCell<Box<dyn Element>>`.
 /// Safety: the rendering pipeline is single-threaded, so concurrent access does not occur.
@@ -216,10 +216,14 @@ impl StatefulElement {
     }
 }
 
-impl Element for StatefulElement {
+impl Drawable for StatefulElement {
     fn draw(&self, ctx: &BuildContext) {
         self.rebuild_if_dirty(ctx);
     }
+}
+
+impl Element for StatefulElement {
+
     fn pos(&self) -> Option<Vec2d> {
         unsafe { &*self.child.0.get() }.pos()
     }
