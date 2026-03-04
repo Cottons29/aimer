@@ -208,10 +208,27 @@ pub fn spawn_ios_simulator_runner(
     }
 
     let _ = tx.send(RunnerEvent::BuildLog("Launching app on iOS Simulator...".to_string()));
-    let bundle_id = "com.example.app"; // Matches the create script
+    let plist_path = format!("{}/Info.plist", app_path);
+    let bundle_id_output = match Command::new("plutil")
+        .arg("-extract")
+        .arg("CFBundleIdentifier")
+        .arg("raw")
+        .arg(&plist_path)
+        .output(){
+        Ok(output) => output,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to get bundle id: {}", e)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
+        }
+    };
+
+    let bundle_id = String::from_utf8_lossy(&bundle_id_output.stdout)
+        .trim()
+        .to_string();
 
     let mut app_run = match Command::new("xcrun")
-        .args(["simctl", "launch", "--console-pty", &device.id, bundle_id])
+        .args(["simctl", "launch", "--console-pty", &device.id, &bundle_id])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn(){
