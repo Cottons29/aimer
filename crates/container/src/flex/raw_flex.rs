@@ -1,8 +1,5 @@
 use attribute::size::{ResolvedSize, Size};
-use widget::{
-    base::BuildContext, Constructor, Element, LayoutCache, LayoutSpacing,
-    Widget,
-};
+use widget::{Constructor, Drawable, Element, LayoutCache, LayoutSpacing, Widget, base::BuildContext};
 
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
@@ -10,6 +7,8 @@ type Float = f64;
 type Float = f32;
 use crate::flex::{BoxAlignment, FlexDirection, OverflowBehavior};
 
+
+type DrawCmd<'a> = (u32, Float, Float, BuildContext<'a>, &'a dyn Element);
 /// a flexible layout container
 #[allow(dead_code)]
 #[derive(Constructor)]
@@ -110,10 +109,8 @@ impl RawFlex {
 
         (gap_x, gap_y)
     }
-}
 
-impl Element for RawFlex {
-    fn draw(&self, ctx: &BuildContext) {
+    fn build_draw_cmd<'a>(&self, ctx: &BuildContext<'a>) -> Vec<(u32, Float, Float, BuildContext<'a>, &dyn Element)> {
         let size = self.computed_size(ctx);
         let (gap_x, gap_y) = self.resole_gaps(ctx);
         let max_w = ctx.box_constraint.max_width;
@@ -297,39 +294,34 @@ impl Element for RawFlex {
                 }
             }
         }
-        
+
         draw_commands.sort_by_key(|cmd| cmd.0);
-        
-        for cmd in draw_commands {
+        draw_commands
+    }
+}
+
+impl Drawable for RawFlex {
+    fn draw(&self, ctx: &BuildContext) {
+        for cmd in self.build_draw_cmd(ctx) {
             let (_, offset_x, offset_y, draw_ctx, child) = cmd;
-            
             // non wasm
             #[cfg(not(target_arch = "wasm32"))]
             draw_ctx.canvas.save();
             #[cfg(target_arch = "wasm32")]
             draw_ctx.canvas.save();
-            
             #[cfg(not(target_arch = "wasm32"))]
             draw_ctx.canvas.translate((offset_x, offset_y));
             #[cfg(target_arch = "wasm32")]
-            match draw_ctx.canvas.translate(offset_x, offset_y) {
-                Ok(_) => {}
-                Err(err) => {
-                    utils::error!("Failed to translate canvas: {:?}", err);
-                }
-            }
+            let _ =  draw_ctx.canvas.translate(offset_x, offset_y);
             Self::render_child(child, &draw_ctx);
-            
             #[cfg(not(target_arch = "wasm32"))]
             draw_ctx.canvas.restore();
-            #[cfg(target_arch = "wasm32")]
-            draw_ctx.canvas.restore();
         }
-
-        // non wasm
         ctx.canvas.restore();
     }
+}
 
+impl Element for RawFlex {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for child in &self.children {
             visitor(child.as_ref());
