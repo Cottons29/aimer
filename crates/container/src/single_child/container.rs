@@ -3,7 +3,6 @@ use attribute::size::{ResolvedSize, Size};
 use constructor::Constructor;
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
-use utils::debug;
 use widget::{Element, LayoutCache, LayoutSpacing, Spacing, Widget, base::*, style::border::BoxBorder, Drawable};
 
 #[cfg(target_arch = "wasm32")]
