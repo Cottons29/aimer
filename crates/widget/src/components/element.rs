@@ -3,12 +3,15 @@ use crate::base::*;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use attribute::dimension::Dimension;
+use crate::Drawable;
+
 /// Pointer event types for hit-test dispatch.
 #[derive(Clone, Debug)]
 pub enum ElementEvent {
     PointerDown(Vec2d),
     PointerUp(Vec2d),
     PointerMove(Vec2d),
+    Scroll(Vec2d),
     Cancel,
 }
 
