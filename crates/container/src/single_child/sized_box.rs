@@ -104,6 +104,7 @@ impl Element for RawSizedBox {
             parent_pos: ctx.parent_pos,
             cursor_pos: ctx.cursor_pos,
             box_constraint: ctx.box_constraint,
+            visible_rect: ctx.visible_rect,
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
