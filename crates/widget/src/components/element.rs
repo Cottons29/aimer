@@ -3,7 +3,7 @@ use crate::base::*;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use attribute::dimension::Dimension;
-use crate::Drawable;
+use crate::{ Drawable};
 
 /// Pointer event types for hit-test dispatch.
 #[derive(Clone, Debug)]
@@ -22,10 +22,7 @@ unsafe impl Sync for ElementEvent {}
 
 #[allow(dead_code)]
 /// ## A Lower Level Trait For Build THe Element From Nothing :))
-pub trait Element{
-    /// For drawing the element to the canvas
-    fn draw(&self, ctx: &BuildContext);
-
+pub trait Element : Drawable{
     /// get the position of the element
     fn pos(&self) -> Option<Vec2d> {
         None
@@ -183,9 +180,6 @@ pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> b
 }
 
 impl Element for Box<dyn Element> {
-    fn draw(&self, ctx: &BuildContext) {
-        self.as_ref().draw(ctx);
-    }
     fn pos(&self) -> Option<Vec2d> {
         self.as_ref().pos()
     }
@@ -218,5 +212,11 @@ impl Element for Box<dyn Element> {
     }
     fn invalidate_layout(&self) {
         self.as_ref().invalidate_layout()
+    }
+}
+
+impl Drawable for Box<dyn Element> {
+    fn draw(&self, ctx: &BuildContext) {
+        self.as_ref().draw(ctx)
     }
 }
