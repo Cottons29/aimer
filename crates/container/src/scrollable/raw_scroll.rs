@@ -450,11 +450,10 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             let dt = self.last_frame_time.get()
                 .map(|t| (now - t).num_microseconds().unwrap_or(0) as f64 / 1_000_000.0)
                 .map(|dt| dt as FLOAT)
-                .unwrap_or(1.0 / 60.0)
+                .unwrap_or(1.0 / 120.0)
                 .min(0.05); // cap at 50ms to avoid huge jumps after stalls
             self.last_frame_time.set(Some(now));
 
-            // Normalize to 16.67ms reference frame (60fps)
             let frame_ratio = dt / (1.0 / 120.0);
 
             if velocity.x.abs() > 0.01 || velocity.y.abs() > 0.01 {
@@ -564,6 +563,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = FLOAT::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = FLOAT::MAX,
         }
+        child_ctx.visible_rect = Some(( -offset_x as FLOAT, -offset_y as FLOAT, viewport_w, viewport_h ));
 
         // Draw child content
         self.child.draw(&child_ctx);
