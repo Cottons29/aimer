@@ -1,4 +1,4 @@
-use crate::{base::*, Element, Widget};
+use crate::{base::*, Drawable, Element, Widget};
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 // StatelessWidget is effectively just a Widget.
@@ -13,10 +13,14 @@ pub struct StatelessElement {
     pub child: Box<dyn Element>,
 }
 
-impl Element for StatelessElement {
+impl Drawable for StatelessElement {
     fn draw(&self, _ctx: &BuildContext) {
         // Stateless element doesn't draw itself
     }
+}
+
+impl Element for StatelessElement {
+
     fn pos(&self) -> Option<Vec2d> {
         self.child.pos()
     }
