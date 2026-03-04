@@ -12,7 +12,7 @@ type FLOAT = f64;
 #[cfg(not(target_arch = "wasm32"))]
 type FLOAT = f32;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BuildContext<'a> {
     pub parent_size: ResolvedSize,
     #[cfg(not(target_arch = "wasm32"))]
