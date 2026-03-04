@@ -76,6 +76,7 @@ impl RawFlex {
                 max_width: content.width,
                 max_height: content.height,
             },
+            visible_rect: ctx.visible_rect,
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
@@ -158,6 +159,7 @@ impl Drawable for RawFlex {
             parent_pos: ctx.parent_pos,
             cursor_pos: ctx.cursor_pos,
             box_constraint: ctx.box_constraint,
+            visible_rect: ctx.visible_rect,
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
@@ -270,24 +272,37 @@ impl Drawable for RawFlex {
                 }
             }
 
-            let draw_ctx = BuildContext {
-                parent_size: child_size,
-                canvas: ctx.canvas,
-                scale: ctx.scale,
-                parent_pos: ctx.parent_pos,
-                cursor_pos: ctx.cursor_pos,
-                box_constraint: widget::style::BoxConstraint {
-                    min_width: 0.0,
-                    min_height: 0.0,
-                    max_width: c_w,
-                    max_height: c_h,
-                },
-                window: ctx.window,
-                #[cfg(not(target_arch = "wasm32"))]
-                async_handle: ctx.async_handle.clone(),
-            };
+            let mut is_visible = true;
+            if let Some((vx, vy, vw, vh)) = ctx.visible_rect {
+                if (offset_x as Float) + (c_w as Float) < vx 
+                    || (offset_x as Float) > vx + vw 
+                    || (offset_y as Float) + (c_h as Float) < vy 
+                    || (offset_y as Float) > vy + vh {
+                    is_visible = false;
+                }
+            }
 
-            draw_commands.push((child.layer(), offset_x, offset_y, draw_ctx, child.as_ref()));
+            if is_visible {
+                let draw_ctx = BuildContext {
+                    parent_size: child_size,
+                    canvas: ctx.canvas,
+                    scale: ctx.scale,
+                    parent_pos: ctx.parent_pos,
+                    cursor_pos: ctx.cursor_pos,
+                    box_constraint: widget::style::BoxConstraint {
+                        min_width: 0.0,
+                        min_height: 0.0,
+                        max_width: c_w,
+                        max_height: c_h,
+                    },
+                    visible_rect: ctx.visible_rect.map(|(vx, vy, vw, vh)| (vx - offset_x as Float, vy - offset_y as Float, vw, vh)),
+                    window: ctx.window,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    async_handle: ctx.async_handle.clone(),
+                };
+
+                draw_commands.push((child.layer(), offset_x, offset_y, draw_ctx, child.as_ref()));
+            }
 
             match self.direction {
                 FlexDirection::Row | FlexDirection::Inherit => {
@@ -392,6 +407,7 @@ impl Element for RawFlex {
             parent_pos: ctx.parent_pos,
             cursor_pos: ctx.cursor_pos,
             box_constraint: ctx.box_constraint,
+            visible_rect: ctx.visible_rect,
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
