@@ -18,7 +18,7 @@ type Float = f32;
 type Float = f64;
 
 #[allow(dead_code)]
-pub struct GestureDetectorElement<'a> {
+pub struct GestureDetectorElement<'a, E: Element> {
     pub(crate) style: ButtonStyle,
     pub(crate) hover_style: ButtonStyle,
     pub(crate) is_disabled: bool,
@@ -27,7 +27,7 @@ pub struct GestureDetectorElement<'a> {
     pub(crate) gesture: UnsafeCell<GestureActions>,
     pub(crate) is_mouse_down: UnsafeCell<bool>,
     pub(crate) is_dirty: UnsafeCell<bool>,
-    pub(crate) child: Box<dyn Element>,
+    pub(crate) child: E,
     pub(crate) cache: LayoutCache,
     /// Cached absolute bounding rect, updated during draw.
     #[cfg(not(target_arch = "wasm32"))]
@@ -37,7 +37,7 @@ pub struct GestureDetectorElement<'a> {
     pub(crate) window: &'a Window,
 }
 
-impl<'a> GestureDetectorElement<'a> {
+impl<'a,E: Element> GestureDetectorElement<'a, E> {
     /// Recursively render a child element and its descendants.
     fn render_child(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
@@ -132,163 +132,7 @@ impl<'a> GestureDetectorElement<'a> {
     }
 }
 
-impl<'b> Element for GestureDetectorElement<'b> {
-    fn draw(&self, ctx: &BuildContext) {
-        unsafe {
-            *self.is_dirty.get() = false;
-        }
-
-        let scale = ctx.scale;
-        let constraint = ctx.box_constraint;
-
-        // Compute box dimensions using the non-hover style first (dimensions
-        // should be the same for both styles, but we need them to calculate
-        // bounds before deciding on hover).
-        let base_style = &self.style;
-
-        let box_width = match base_style.width {
-            Dimension::Px(w) => w * scale,
-            Dimension::Percent(p) => constraint.max_width * (p / 100.0),
-            Dimension::Auto => constraint.max_width,
-        };
-
-        let box_height = match base_style.height {
-            Dimension::Px(h) => h * scale,
-            Dimension::Percent(p) => constraint.max_height * (p / 100.0),
-            Dimension::Auto => constraint.max_height,
-        };
-
-        let box_width = box_width.max(0.0);
-        let box_height = box_height.max(0.0);
-
-        // Compute and cache absolute bounds, then reconcile hover state from
-        // the current cursor position. This ensures that a freshly-rebuilt
-        // element (whose is_hovered starts as false) picks up the correct
-        // hover status without requiring a new PointerMove event.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let matrix = ctx.canvas.local_to_device_as_3x3();
-            let abs_x = matrix.translate_x();
-            let abs_y = matrix.translate_y();
-            let bounds = Rect::from_xywh(abs_x, abs_y, box_width, box_height);
-            unsafe {
-                *self.cached_bounds.get() = Some(bounds);
-            }
-            if !self.is_disabled {
-                let cursor_inside = ctx.cursor_pos.x >= bounds.left
-                    && ctx.cursor_pos.x <= bounds.right
-                    && ctx.cursor_pos.y >= bounds.top
-                    && ctx.cursor_pos.y <= bounds.bottom;
-                unsafe {
-                    *self.is_hovered.get() = cursor_inside;
-                }
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            if let Ok(transform) = ctx.canvas.get_transform() {
-                let abs_x = transform.e();
-                let abs_y = transform.f();
-                unsafe {
-                    *self.cached_bounds.get() = Some((abs_x, abs_y, box_width, box_height));
-                }
-                if !self.is_disabled {
-                    let cursor_inside = ctx.cursor_pos.x >= abs_x
-                        && ctx.cursor_pos.x <= abs_x + box_width
-                        && ctx.cursor_pos.y >= abs_y
-                        && ctx.cursor_pos.y <= abs_y + box_height;
-                    unsafe {
-                        *self.is_hovered.get() = cursor_inside;
-                    }
-                }
-            }
-        }
-
-        // Now pick the correct style based on reconciled hover state
-        let style = self.active_style();
-
-        // Draw background
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            use skia_safe::Color as SkColor;
-            use skia_safe::paint::Style;
-            let mut paint = Paint::default();
-            paint.set_anti_alias(true);
-            paint.set_color(SkColor::from(Color::from(style.color)));
-            paint.set_style(Style::Fill);
-
-            if self.is_disabled {
-                paint.set_alpha(128);
-            }
-
-            let rect = Rect::from_xywh(0.0, 0.0, box_width, box_height);
-            ctx.canvas.draw_rect(rect, &paint);
-
-            // Draw pressed overlay for visual feedback
-            if unsafe { *self.is_pressed.get() } && !self.is_disabled {
-                let mut pressed_paint = Paint::default();
-                pressed_paint.set_anti_alias(true);
-                pressed_paint.set_color(SkColor::from_argb(40, 0, 0, 0));
-                pressed_paint.set_style(Style::Fill);
-                ctx.canvas.draw_rect(rect, &pressed_paint);
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let color_str = style.color.to_css_color();
-            if self.is_disabled {
-                ctx.canvas.set_global_alpha(0.5);
-            }
-
-            ctx.canvas.set_fill_style_str(&color_str);
-            ctx.canvas.fill_rect(0.0, 0.0, box_width, box_height);
-
-            if self.is_disabled {
-                ctx.canvas.set_global_alpha(1.0);
-            }
-
-            if unsafe { *self.is_pressed.get() } && !self.is_disabled {
-                ctx.canvas.set_fill_style_str("rgba(0, 0, 0, 0.15)");
-                ctx.canvas.fill_rect(0.0, 0.0, box_width, box_height);
-            }
-        }
-
-        // Draw child centered within the button bounds
-        let child_size = self.child.computed_size(ctx);
-        let offset_x = (box_width - child_size.width).max(0.0) / 2.0;
-        let offset_y = (box_height - child_size.height).max(0.0) / 2.0;
-
-        ctx.canvas.save();
-        #[cfg(not(target_arch = "wasm32"))]
-        ctx.canvas.translate((offset_x, offset_y));
-        #[cfg(target_arch = "wasm32")]
-        match ctx.canvas.translate(offset_x, offset_y) {
-            Ok(_) => (),
-            Err(e) => {
-                println!("{:?}", e);
-            }
-        }
-
-        let child_ctx = BuildContext {
-            parent_size: ResolvedSize { width: box_width, height: box_height },
-            canvas: ctx.canvas,
-            scale: ctx.scale,
-            parent_pos: Vec2d::default(),
-            cursor_pos: ctx.cursor_pos,
-            box_constraint: BoxConstraint {
-                min_width: 0.0,
-                min_height: 0.0,
-                max_width: box_width,
-                max_height: box_height,
-            },
-            window: ctx.window,
-            #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx.async_handle.clone(),
-        };
-        Self::render_child(self.child.as_ref(), &child_ctx);
-
-        ctx.canvas.restore();
-    }
+impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
     #[inline]
     fn size(&self) -> Option<Size> {
         let style = self.active_style();
@@ -368,7 +212,7 @@ impl<'b> Element for GestureDetectorElement<'b> {
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(&self.child);
     }
 
     /// Compute box dimensions using the non-hover style first (dimensions
@@ -395,7 +239,7 @@ impl<'b> Element for GestureDetectorElement<'b> {
     }
 }
 
-impl<'w> Drawable for GestureDetectorElement<'w> {
+impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
     #[cfg(not(target_arch = "wasm32"))]
     fn draw(&self, ctx: &BuildContext<'_>) {
         unsafe {
@@ -469,7 +313,7 @@ impl<'w> Drawable for GestureDetectorElement<'w> {
             window: ctx.window,
             async_handle: ctx.async_handle.clone(),
         };
-        Self::render_child(self.child.as_ref(), &child_ctx);
+        Self::render_child(&self.child, &child_ctx);
 
         ctx.canvas.restore();
     }
@@ -482,10 +326,6 @@ impl<'w> Drawable for GestureDetectorElement<'w> {
 
         let (box_width, box_height) = self.compute_dimensions(ctx);
 
-        // Compute and cache absolute bounds, then reconcile hover state from
-        // the current cursor position. This ensures that a freshly-rebuilt
-        // element (whose is_hovered starts as false) picks up the correct
-        // hover status without requiring a new PointerMove event.
         if let Ok(transform) = ctx.canvas.get_transform() {
             let abs_x = transform.e();
             let abs_y = transform.f();
@@ -552,7 +392,7 @@ impl<'w> Drawable for GestureDetectorElement<'w> {
             },
             window: ctx.window,
         };
-        Self::render_child(self.child.as_ref(), &child_ctx);
+        Self::render_child(&self.child, &child_ctx);
 
         ctx.canvas.restore();
     }
