@@ -15,7 +15,7 @@ pub struct Column {
     gaps: LayoutSpacing,
     #[constructor(default)]
     overflow: OverflowBehavior,
-    #[constructor(default)]
+    #[constructor(default, into)]
     children: Vec<Box<dyn Widget>>,
 }
 
