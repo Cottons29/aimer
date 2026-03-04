@@ -1,7 +1,7 @@
 use utils::debug;
-use widget::base::BuildContext;
-use widget::{Element, Widget};
 use widget::Constructor;
+use widget::base::BuildContext;
+use widget::{Drawable, Element, Widget};
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum StackDirection {
@@ -20,10 +20,7 @@ pub struct Stack {
 impl Widget for Stack {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
-        Box::new(RawStackElement {
-            children,
-            direction: self.direction,
-        })
+        Box::new(RawStackElement { children, direction: self.direction })
     }
 }
 
@@ -32,9 +29,8 @@ pub struct RawStackElement {
     pub direction: StackDirection,
 }
 
-impl Element for RawStackElement {
+impl Drawable for RawStackElement {
     fn draw(&self, ctx: &BuildContext) {
-        // debug!("RawStackElement::draw");
         let content_size = self.content_size(ctx);
         let child_ctx = BuildContext {
             parent_size: content_size,
@@ -54,16 +50,22 @@ impl Element for RawStackElement {
         };
 
         let mut sorted_children: Vec<_> = self.children.iter().collect();
-        // if self.direction == StackDirection::Reverse {
-        //     sorted_children.reverse();
-        // }
+
         sorted_children.sort_by_key(|child| child.layer());
-        
-        for child in sorted_children {
-            child.draw(&child_ctx);
+
+        if self.direction == StackDirection::Reverse {
+            for child in sorted_children.iter().rev() {
+                child.draw(&child_ctx);
+            }
+        } else {
+            for child in sorted_children {
+                child.draw(&child_ctx);
+            }
         }
     }
+}
 
+impl Element for RawStackElement {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for child in &self.children {
             visitor(child.as_ref());
