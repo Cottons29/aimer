@@ -20,7 +20,7 @@ pub fn get_screen_resolution_pixels() -> Option<(f64, f64)> {
 
     let native_bounds: CGRect = unsafe { msg_send![main_screen, nativeBounds] };
 
-    info!("nativeBounds: {:?}", native_bounds);
+    // info!("nativeBounds: {:?}", native_bounds);
 
     Some((native_bounds.size.width, native_bounds.size.height))
 }
