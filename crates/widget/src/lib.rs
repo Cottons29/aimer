@@ -4,6 +4,8 @@ mod widget;
 pub mod text;
 pub mod style;
 pub mod layout_cache;
+
+
 pub mod base {
     pub use attribute::position::Vec2d;
     pub use attribute::size::{ResolvedSize, Size};
@@ -22,4 +24,4 @@ pub use crate::style::layout_spacing::{LayoutSpacing, Spacing};
 pub use widget_attr;
 pub use constructor::Constructor;
 pub use crate::layout_cache::LayoutCache;
-
+pub use components::drawable::Drawable;
