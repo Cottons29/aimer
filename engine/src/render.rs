@@ -360,6 +360,7 @@ impl App {
                             max_width: width as FLOAT,
                             max_height: height as FLOAT,
                         },
+                        visible_rect: None,
                         window: self.window.unwrap(),
                         async_handle: self.async_runtime.handle().clone(),
                     };
@@ -406,6 +407,7 @@ impl App {
                         max_height: height as f64,
                     },
                     window,
+                    visible_rect: None,
                     #[cfg(not(target_arch = "wasm32"))]
                     async_handle: self.async_runtime.handle().clone(),
                 };
