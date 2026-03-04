@@ -44,7 +44,7 @@ pub enum TextAlign {
     MidLeft,
     MidRight,
     BotLeft,
-    BotCenter,
+    BotCenter,      
     BotRight
 }
 
