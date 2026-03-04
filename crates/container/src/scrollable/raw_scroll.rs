@@ -18,8 +18,8 @@ type FLOAT = f32;
 #[cfg(target_arch = "wasm32")]
 type FLOAT = f64;
 
-pub struct RawScrollableContainer {
-    pub(crate) child: Box<dyn Element>,
+pub struct RawScrollableContainer<E: Element> {
+    pub(crate) child: E,
     pub(crate) scroll_behavior: ScrollBehavior,
     pub(crate) axis: ScrollAxis,
     pub(crate) vertical_scroll_bar: Option<ScrollBar>,
@@ -39,7 +39,7 @@ pub struct RawScrollableContainer {
     pub(crate) window: &'static Window
 }
 
-impl RawScrollableContainer {
+impl<E: Element> RawScrollableContainer<E> {
     /// Compute the viewport size from the build context constraints.
     fn viewport_size(&self, ctx: &BuildContext) -> (FLOAT, FLOAT) {
         (ctx.box_constraint.max_width, ctx.box_constraint.max_height)
@@ -414,7 +414,7 @@ impl RawScrollableContainer {
     }
 }
 
-impl Drawable for RawScrollableContainer {
+impl<E: Element> Drawable for RawScrollableContainer<E> {
     fn draw(&self, ctx: &BuildContext) {
         let (viewport_w, viewport_h) = self.viewport_size(ctx);
         let content_size = self.content_size(ctx);
@@ -508,7 +508,18 @@ impl Drawable for RawScrollableContainer {
             }
 
             if needs_redraw {
-                self.window.request_redraw();
+                #[cfg(target_os = "ios")]
+                {
+                    let window = self.window;
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        window.request_redraw();
+                    });
+                }
+                #[cfg(not(target_os = "ios"))]
+                {
+                    self.window.request_redraw();
+                }
             }
         }
 
@@ -605,7 +616,7 @@ impl Drawable for RawScrollableContainer {
     }
 }
 
-impl Element for RawScrollableContainer {
+impl<E: Element> Element for RawScrollableContainer<E> {
 
 
     fn on_event(&self, event: &ElementEvent) -> bool {
@@ -619,10 +630,10 @@ impl Element for RawScrollableContainer {
 
         // Forward events to child manually if we haven't stolen the drag yet
         if mode_before == 0 || mode_before == 4 {
-            child_consumed = widget::dispatch_event(self.child.as_ref(), pos, event);
+            child_consumed = widget::dispatch_event(&self.child, pos, event);
         } else if matches!(event, ElementEvent::PointerUp(_) | ElementEvent::Cancel) {
             // Ensure child gets cancel if we are active
-            let _ = widget::dispatch_event(self.child.as_ref(), pos, &ElementEvent::Cancel);
+            let _ = widget::dispatch_event(&self.child, pos, &ElementEvent::Cancel);
         }
 
         let we_consumed = match event {
@@ -687,7 +698,7 @@ impl Element for RawScrollableContainer {
                             self.last_pointer_pos.set(Some(*p));
                             
                             // Steal gesture: Send cancel to child so it releases pressed states
-                            let _ = widget::dispatch_event(self.child.as_ref(), *p, &ElementEvent::Cancel);
+                            let _ = widget::dispatch_event(&self.child, *p, &ElementEvent::Cancel);
                         } else {
                             // Still within touch slop or moving in wrong axis, don't scroll yet
                             return child_consumed; 
@@ -721,41 +732,35 @@ impl Element for RawScrollableContainer {
                         let frame_ref = 1.0 / 120.0;
                         new_velocity.x = (new_velocity.x / dt) * frame_ref;
                         new_velocity.y = (new_velocity.y / dt) * frame_ref;
-                        
+
                         // Smooth acceleration: blend with previous velocity (lighter smoothing for responsive touch)
                         let old_velocity = self.pointer_velocity.get();
-                        #[cfg(target_os = "ios")]
-                        let (blend_old, blend_new) = (0.15 as FLOAT, 0.85 as FLOAT);
-                        #[cfg(not(target_os = "ios"))]
+                        // #[cfg(target_os = "ios")]
+                        // let (blend_old, blend_new) = (0.85 as FLOAT, 0.15 as FLOAT); // Smooth iOS acceleration
+                        // #[cfg(not(target_os = "ios"))]
                         let (blend_old, blend_new) = (0.3 as FLOAT, 0.7 as FLOAT);
                         new_velocity.x = old_velocity.x * blend_old + new_velocity.x * blend_new;
                         new_velocity.y = old_velocity.y * blend_old + new_velocity.y * blend_new;
-                        
+
                         self.pointer_velocity.set(new_velocity);
-                        
+
                         let mut offset = self.scroll_offset.get();
                         let clamped = self.clamp_offset(offset);
-                        
+
                         match mode {
                             1 => {
                                 match self.axis {
                                     ScrollAxis::Vertical => {
                                         let mut actual_dy = dy;
                                         if offset.y != clamped.y {
-                                            #[cfg(target_os = "ios")]
-                                            { actual_dy *= 0.25; }
-                                            #[cfg(not(target_os = "ios"))]
-                                            { actual_dy *= 0.3; }
+                                            actual_dy *= 0.3;
                                         }
                                         offset.y += actual_dy;
                                     }
                                     ScrollAxis::Horizontal => {
                                         let mut actual_dx = dx;
                                         if offset.x != clamped.x {
-                                            #[cfg(target_os = "ios")]
-                                            { actual_dx *= 0.25; }
-                                            #[cfg(not(target_os = "ios"))]
-                                            { actual_dx *= 0.3; }
+                                            actual_dx *= 0.3;
                                         }
                                         offset.x += actual_dx;
                                     }
@@ -771,7 +776,7 @@ impl Element for RawScrollableContainer {
                             }
                             _ => {}
                         }
-                        
+
                         if !self.scroll_behavior.bouncy {
                             offset = self.clamp_offset(offset);
                         }
@@ -784,20 +789,6 @@ impl Element for RawScrollableContainer {
                 false
             }
             ElementEvent::PointerUp(_) | ElementEvent::Cancel => {
-                // On iOS, apply final velocity smoothing to filter out erratic
-                // last-touch spikes that cause jarring flings
-                #[cfg(target_os = "ios")]
-                {
-                    let mut v = self.pointer_velocity.get();
-                    // Clamp maximum fling velocity (pixels per frame at 60fps)
-                    let max_fling: FLOAT = 40.0;
-                    v.x = v.x.clamp(-max_fling, max_fling);
-                    v.y = v.y.clamp(-max_fling, max_fling);
-                    // Dampen small residual velocities to avoid micro-drifts
-                    if v.x.abs() < 0.5 { v.x = 0.0; }
-                    if v.y.abs() < 0.5 { v.y = 0.0; }
-                    self.pointer_velocity.set(v);
-                }
                 self.drag_mode.set(0);
                 self.last_pointer_pos.set(None);
                 self.window.request_redraw();
