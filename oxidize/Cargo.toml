@@ -9,10 +9,12 @@ description = "The organized export of other oxidize project"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "test_create"
+name = "oxidize"
 path = "src/bin.rs"
 
+
 [dependencies]
+attribute.workspace = true
 constructor.workspace  = true
 widget.workspace = true
 color.workspace = true
