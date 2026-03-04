@@ -263,7 +263,7 @@ impl App {
         ctx.canvas.restore();
     }
 
-    fn render(&mut self, _: &ActiveEventLoop) {
+    fn render(&mut self, event_loop: &ActiveEventLoop) {
         // debug!("Rendering is starting...");
 
         #[allow(clippy::collapsible_if)]
@@ -433,7 +433,7 @@ mod tests {
     use attribute::dimension::Dimension;
     use attribute::position::Vec2d;
     use attribute::size::Size;
-    use widget::Element;
+    use widget::{Drawable, Element};
     use widget::base::BuildContext;
 
     struct MockWidget {
@@ -442,8 +442,12 @@ mod tests {
         children: Vec<Box<dyn Element>>,
     }
 
-    impl Element for MockWidget {
+    impl Drawable for MockWidget {
         fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Element for MockWidget {
+
         fn pos(&self) -> Option<Vec2d> {
             self.pos
         }
