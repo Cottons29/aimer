@@ -13,8 +13,8 @@ type Float = f32;
 
 #[allow(dead_code)]
 #[derive(Constructor)]
-pub struct Positioned {
-    pub child: Box<dyn Widget>,
+pub struct Positioned<W: Widget> {
+    pub child: W,
     #[constructor(default)]
     pub position: Position,
     #[constructor(default, into)]
@@ -31,7 +31,7 @@ pub struct Positioned {
     pub layer: u32,
 }
 
-impl Widget for Positioned {
+impl<W: Widget> Widget for Positioned<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let child = self.child.to_element(ctx);
         Box::new(RawPositionedElement {
@@ -73,8 +73,8 @@ pub enum Position {
 
 #[allow(dead_code)]
 #[derive(Constructor)]
-pub struct RawPositionedElement {
-    pub(crate) child: Box<dyn Element>,
+pub struct RawPositionedElement<E: Element> {
+    pub(crate) child: E,
     pub(crate) position: Position,
     pub(crate) left: Dimension,
     pub(crate) top: Dimension,
@@ -84,7 +84,7 @@ pub struct RawPositionedElement {
     pub(crate) layer: u32,
 }
 
-impl Drawable for RawPositionedElement {
+impl<E: Element> Drawable for RawPositionedElement<E> {
     fn draw(&self, ctx: &BuildContext) {
         // debug!("Positioned::draw");
         let is_auto = self.top == Dimension::Auto
@@ -209,7 +209,7 @@ impl Drawable for RawPositionedElement {
     }
 }
 
-impl Element for RawPositionedElement {
+impl<E: Element> Element for RawPositionedElement<E> {
 
 
     fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -218,7 +218,7 @@ impl Element for RawPositionedElement {
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(&self.child);
     }
 
     fn layer(&self) -> u32 {
