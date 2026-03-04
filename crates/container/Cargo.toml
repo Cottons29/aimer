@@ -9,8 +9,8 @@ widget.workspace = true
 attribute.workspace = true
 constructor.workspace = true
 utils.workspace = true
-
-
+winit.workspace = true
+chrono.workspace = true
 #################
 
 
