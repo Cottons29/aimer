@@ -55,6 +55,7 @@ impl<'a,E: Element> GestureDetectorElement<'a, E> {
                 max_width: content.width,
                 max_height: content.height,
             },
+            visible_rect: ctx.visible_rect,
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
@@ -310,6 +311,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
                 max_width: box_width,
                 max_height: box_height,
             },
+            visible_rect: ctx.visible_rect,
             window: ctx.window,
             async_handle: ctx.async_handle.clone(),
         };
@@ -390,6 +392,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
                 max_width: box_width,
                 max_height: box_height,
             },
+            visible_rect: ctx.visible_rect,
             window: ctx.window,
         };
         Self::render_child(&self.child, &child_ctx);
