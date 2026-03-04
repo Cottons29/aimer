@@ -44,6 +44,7 @@ impl Drawable for RawStackElement {
                 max_width: content_size.width,
                 max_height: content_size.height,
             },
+            visible_rect: ctx.visible_rect,
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
