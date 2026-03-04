@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use skia_safe::{Canvas, Color, Font, FontMgr, Paint, TextBlob, Typeface};
 use attribute::size::ResolvedSize;
 use crate::text::{ FontWeight, TextAlign, FontStyle};
-use crate::{Element, LayoutCache, TextOverflow};
+use crate::{Drawable, Element, LayoutCache, TextOverflow};
 use crate::base::BuildContext;
 use crate::style::text_style::TextStyle;
 use skia_safe::font_style::FontStyle as SkFontStyle;
@@ -220,7 +220,7 @@ impl RawTextWidget {
     }
 }
 
-impl Element for RawTextWidget {
+impl Drawable for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
         let font = self.make_font(ctx.scale);
         let (_, runs) = self.get_text_runs(&font);
@@ -280,9 +280,9 @@ impl Element for RawTextWidget {
                         }
 
                         if done || !new_runs.is_empty() {
-                           new_runs.push(TextRun { text: ellipsis.to_string(), font: font.clone() });
+                            new_runs.push(TextRun { text: ellipsis.to_string(), font: font.clone() });
                         }
-                        
+
                         let current_total_width = Self::measure_runs(&new_runs);
                         let display_x = match self.text_align {
                             TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
@@ -321,7 +321,7 @@ impl Element for RawTextWidget {
                     current_line.extend(word_runs);
                     current_line_width += word_width;
                 }
-                
+
                 if !current_line.is_empty() {
                     lines.push(current_line);
                 }
@@ -343,6 +343,10 @@ impl Element for RawTextWidget {
             }
         }
     }
+}
+
+impl Element for RawTextWidget {
+
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
