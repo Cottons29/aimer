@@ -1,6 +1,7 @@
 pub mod raw_scroll;
 pub mod scroll_bar;
 
+use std::cell::Cell;
 use attribute::position::Vec2d;
 use constructor::Constructor;
 use widget::base::BuildContext;
@@ -38,21 +39,21 @@ impl<W: Widget> Widget for Scrollable<W> {
         let child = self.child.to_element(&child_ctx);
         Box::new(RawScrollableContainer {
             child,
-            scroll_offset: std::cell::Cell::new(attribute::position::Vec2d {
+            scroll_offset: Cell::new(Vec2d {
                 x: self.scroll_behavior.scroll_offset.x * ctx.scale,
                 y: self.scroll_behavior.scroll_offset.y * ctx.scale,
             }),
-            last_pointer_pos: std::cell::Cell::new(None),
-            drag_mode: std::cell::Cell::new(0),
-            cached_max_scroll: std::cell::Cell::new(attribute::position::Vec2d { x: 0.0, y: 0.0 }),
-            cached_min_scroll: std::cell::Cell::new(attribute::position::Vec2d { x: 0.0, y: 0.0 }),
-            pointer_velocity: std::cell::Cell::new(attribute::position::Vec2d { x: 0.0, y: 0.0 }),
-            last_event_time: std::cell::Cell::new(None),
-            last_frame_time: std::cell::Cell::new(None),
-            v_thumb_rect: std::cell::Cell::new(None),
-            h_thumb_rect: std::cell::Cell::new(None),
-            v_scroll_multiplier: std::cell::Cell::new(0.0),
-            h_scroll_multiplier: std::cell::Cell::new(0.0),
+            last_pointer_pos: Cell::new(None),
+            drag_mode: Cell::new(0),
+            cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            cached_min_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            pointer_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            last_event_time: Cell::new(None),
+            last_frame_time: Cell::new(None),
+            v_thumb_rect: Cell::new(None),
+            h_thumb_rect: Cell::new(None),
+            v_scroll_multiplier: Cell::new(0.0),
+            h_scroll_multiplier: Cell::new(0.0),
             scroll_behavior: ScrollBehavior {
                 max_scroll: self.scroll_behavior.max_scroll,
                 min_scroll: self.scroll_behavior.min_scroll,
@@ -94,7 +95,7 @@ pub struct ScrollBehavior {
 impl Default for ScrollBehavior {
     fn default() -> Self {
         #[cfg(target_os = "ios")]
-        let defaults = (0.55, 0.12, 0.98);
+        let defaults = (0.55, 0.12, 0.97);
         #[cfg(not(target_os = "ios"))]
         let defaults = (0.6, 0.15, 0.95);
 
