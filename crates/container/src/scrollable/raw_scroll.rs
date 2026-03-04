@@ -4,7 +4,7 @@ use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 use widget::base::*;
-use widget::Element;
+use widget::{Drawable, Element};
 use widget::components::element::ElementEvent;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -415,13 +415,13 @@ impl RawScrollableContainer {
     }
 }
 
-impl Element for RawScrollableContainer {
+impl Drawable for RawScrollableContainer {
     fn draw(&self, ctx: &BuildContext) {
         let (viewport_w, viewport_h) = self.viewport_size(ctx);
         let content_size = self.content_size(ctx);
         let max_x = (content_size.width - viewport_w).max(0.0);
         let max_y = (content_size.height - viewport_h).max(0.0);
-        
+
         let mut final_max = Vec2d { x: max_x, y: max_y };
         let user_max = self.scroll_behavior.max_scroll;
         if user_max.x != FLOAT::MAX {
@@ -430,17 +430,17 @@ impl Element for RawScrollableContainer {
         if user_max.y != FLOAT::MAX {
             final_max.y = final_max.y.max(user_max.y * ctx.scale);
         }
-        
+
         self.cached_max_scroll.set(final_max);
-        
+
         let user_min = self.scroll_behavior.min_scroll;
         self.cached_min_scroll.set(Vec2d {
             x: user_min.x * ctx.scale,
             y: user_min.y * ctx.scale,
         });
-        
+
         let mut offset = self.scroll_offset.get();
-        
+
         if self.drag_mode.get() == 0 {
             let clamped = self.clamp_offset(offset);
             let mut velocity = self.pointer_velocity.get();
@@ -454,10 +454,10 @@ impl Element for RawScrollableContainer {
                 .unwrap_or(1.0 / 60.0)
                 .min(0.05); // cap at 50ms to avoid huge jumps after stalls
             self.last_frame_time.set(Some(now));
-            
+
             // Normalize to 16.67ms reference frame (60fps)
             let frame_ratio = dt / (1.0 / 120.0);
-            
+
             if velocity.x.abs() > 0.01 || velocity.y.abs() > 0.01 {
                 // Gradually reduce velocity when out of bounds (smooth deceleration)
                 #[cfg(target_os = "ios")]
@@ -472,7 +472,7 @@ impl Element for RawScrollableContainer {
                     let damping = oob_damping_base.powf(frame_ratio);
                     velocity.y *= damping;
                 }
-                
+
                 offset.x += velocity.x * frame_ratio;
                 offset.y += velocity.y * frame_ratio;
                 let friction_factor = (self.scroll_behavior.friction as FLOAT).powf(frame_ratio);
@@ -489,7 +489,7 @@ impl Element for RawScrollableContainer {
                 let spring_factor = 1.0 - (1.0 - self.scroll_behavior.bouncy_recovery as FLOAT).powf(frame_ratio);
                 offset.x += (clamped.x - offset.x) * spring_factor;
                 offset.y += (clamped.y - offset.y) * spring_factor;
-                
+
                 // Snap if close enough (sub-pixel threshold)
                 if (offset.x - clamped.x).abs() < 0.25 {
                     offset.x = clamped.x;
@@ -512,7 +512,7 @@ impl Element for RawScrollableContainer {
                 self.window.request_redraw();
             }
         }
-        
+
         self.scroll_offset.set(offset);
         let offset = self.visual_offset(offset);
 
@@ -604,6 +604,10 @@ impl Element for RawScrollableContainer {
             ctx.canvas.restore();
         }
     }
+}
+
+impl Element for RawScrollableContainer {
+
 
     fn on_event(&self, event: &ElementEvent) -> bool {
         let pos = match event {
