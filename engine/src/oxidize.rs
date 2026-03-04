@@ -33,6 +33,7 @@ impl OxidizeApp {
         };
 
         event_loop.set_control_flow(ControlFlow::Wait);
+        // event_loop.set_control_flow(ControlFlow::Poll);
 
 
         utils::info!("Creating async runtime...");
