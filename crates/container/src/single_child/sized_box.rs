@@ -2,10 +2,7 @@ use crate::ZeroSizedBox;
 use attribute::dimension::Dimension;
 use attribute::size::{ResolvedSize, Size};
 use widget::base::*;
-use widget::{
-    base::Color, Constructor, Element, LayoutCache,
-    Widget,
-};
+use widget::{base::Color, Constructor, Drawable, Element, LayoutCache, Widget};
 
 #[cfg(target_arch = "wasm32")]
 type FLOAT = f64;
@@ -48,7 +45,7 @@ pub struct RawSizedBox {
     cache: LayoutCache,
 }
 
-impl Element for RawSizedBox {
+impl Drawable for RawSizedBox {
     #[cfg(not(target_arch = "wasm32"))]
     fn draw(&self, ctx: &BuildContext) {
         use skia_safe::Paint;
@@ -77,6 +74,9 @@ impl Element for RawSizedBox {
         ctx.canvas.set_fill_style_str(&color_str);
         ctx.canvas.fill_rect(0.0, 0.0, width, height);
     }
+}
+
+impl Element for RawSizedBox {
 
     fn size(&self) -> Option<Size> {
         match (self.width, self.height) {
