@@ -620,6 +620,7 @@ name = "container"
 version = "0.1.0"
 dependencies = [
  "attribute",
+ "chrono",
  "constructor",
  "objc",
  "pixels",
@@ -627,6 +628,7 @@ dependencies = [
  "tokio",
  "utils",
  "widget",
+ "winit",
 ]
 
 [[package]]
@@ -2256,6 +2258,7 @@ dependencies = [
 name = "oxidize"
 version = "0.1.0"
 dependencies = [
+ "attribute",
  "color",
  "constructor",
  "container",
