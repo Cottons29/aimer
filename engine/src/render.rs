@@ -6,8 +6,9 @@ use attribute::size::ResolvedSize;
 use pixels::{Pixels, SurfaceTexture};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
+use utils::{debug, info};
 use widget::base::BuildContext;
-use widget::{dispatch_event, Element, ElementEvent, Widget};
+use widget::{Element, ElementEvent, Widget, dispatch_event};
 use winit::application::ApplicationHandler;
 #[allow(unused)]
 use winit::dpi::{LogicalSize, PhysicalSize, Position};
@@ -17,7 +18,6 @@ use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
 #[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
-use utils::{debug, info};
 
 #[cfg(target_arch = "wasm32")]
 type FLOAT = f64;
@@ -46,7 +46,7 @@ impl ApplicationHandler for App {
         {
             match crate::ios_screen::get_screen_resolution_pixels() {
                 Some((width, height)) => {
-                    println!("IOS TARGET NATIVE Window Size : {width}x{height}");
+                    // println!("IOS TARGET NATIVE Window Size : {width}x{height}");
                     self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 })
                 }
                 None => (),
@@ -62,7 +62,7 @@ impl ApplicationHandler for App {
             {
                 match crate::ios_screen::get_screen_resolution_pixels() {
                     Some((w, h)) => {
-                        println!("IOS TARGET Window Size : {w}x{h}");
+                        // println!("IOS TARGET Window Size : {w}x{h}");
                         let phy_size = PhysicalSize::new(w as u32, h as u32);
                         WindowAttributes::default().with_inner_size(phy_size)
                     }
@@ -77,7 +77,7 @@ impl ApplicationHandler for App {
         let size = window.inner_size();
 
         println!("Window Size : {size:?}");
-        
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             let surface_texture = SurfaceTexture::new(size.width, size.height, window);
@@ -87,8 +87,8 @@ impl ApplicationHandler for App {
 
         #[cfg(target_arch = "wasm32")]
         {
-            use winit::platform::web::WindowExtWebSys;
             use wasm_bindgen::JsCast;
+            use winit::platform::web::WindowExtWebSys;
             let canvas = window.canvas().unwrap();
             let web_window = web_sys::window().unwrap();
             let document = web_window.document().unwrap();
@@ -124,7 +124,7 @@ impl ApplicationHandler for App {
 
             WindowEvent::Touch(item) => {
                 let pos = Vec2d { x: item.location.x as FLOAT, y: item.location.y as FLOAT };
-                info!("Touch: {:?}", pos);
+                // info!("Touch: {:?}", pos);
                 let event = match item.phase {
                     winit::event::TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
                     winit::event::TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
@@ -134,7 +134,11 @@ impl ApplicationHandler for App {
                 #[allow(clippy::collapsible_if)]
                 if let Some(event) = event {
                     if let Some(root) = &self.widget_root {
-                        dispatch_event(root.as_ref(), pos, &event);
+                        if dispatch_event(root.as_ref(), pos, &event) {
+                            if let Some(window) = &self.window {
+                                window.request_redraw();
+                            }
+                        }
                     }
                 }
             }
@@ -155,19 +159,56 @@ impl ApplicationHandler for App {
                 }
 
                 let c = self.cursor_pos;
-                let event = if state.is_pressed() {
-                    ElementEvent::PointerDown(c)
-                } else {
-                    ElementEvent::PointerUp(c)
-                };
+                let event = if state.is_pressed() { ElementEvent::PointerDown(c) } else { ElementEvent::PointerUp(c) };
                 #[allow(clippy::collapsible_if)]
                 if let Some(root) = &self.widget_root {
                     dispatch_event(root.as_ref(), c, &event);
                 }
             }
 
+            WindowEvent::MouseWheel { delta, .. } => {
+                let scroll_delta = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(x, y) => {
+                        Vec2d { x: x as FLOAT * 30.0, y: y as FLOAT * 30.0 }
+                    }
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => Vec2d { x: pos.x as FLOAT, y: pos.y as FLOAT },
+                };
+                let event = ElementEvent::Scroll(scroll_delta);
+                if let Some(root) = &self.widget_root {
+                    if dispatch_event(root.as_ref(), self.cursor_pos, &event) {
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+            }
+
             WindowEvent::RedrawRequested => self.render(event_loop),
             WindowEvent::Resized(size) => {
+                let is_portrait = size.width < size.height;
+                debug!("Window resized to  Raw Value : {:?}", size);
+                #[cfg(target_os = "ios")]
+                let size = {
+                    match crate::ios_screen::get_screen_resolution_pixels() {
+                        Some((width, height)) => {
+                            self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 });
+                            if is_portrait {
+                                PhysicalSize::new(width as u32, height as u32)
+                            }else{
+                                PhysicalSize::new(height as u32, width as u32)
+                            }
+
+                        }
+                        None => {
+                            if self.window.is_none() {
+                                return;
+                            }
+                            self.window.unwrap().inner_size()
+                        }
+                    }
+                };
+                debug!("Window resized to {:?}", size);
+
                 self.pending_resize = Some(size);
                 if let Some(window) = &self.window {
                     window.request_redraw();
@@ -176,7 +217,6 @@ impl ApplicationHandler for App {
             _ => (),
         }
     }
-
 }
 #[allow(dead_code)]
 impl App {
@@ -220,31 +260,10 @@ impl App {
     fn render_widget_tree(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
         widget.draw(ctx);
-        let content = widget.content_size(ctx);
-        let child_ctx = BuildContext {
-            parent_size: content,
-            canvas: ctx.canvas,
-            scale: ctx.scale,
-            parent_pos: Default::default(),
-            cursor_pos: ctx.cursor_pos,
-            box_constraint: widget::style::BoxConstraint {
-                min_width: 0.0,
-                min_height: 0.0,
-                max_width: content.width,
-                max_height: content.height,
-            },
-            window: ctx.window,
-            #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx.async_handle.clone(),
-        };
-        widget.visit_children(&mut |child| {
-            Self::render_widget_tree(child, &child_ctx);
-        });
         ctx.canvas.restore();
     }
 
-    fn render(&mut self, event_loop: &ActiveEventLoop) {
-
+    fn render(&mut self, _: &ActiveEventLoop) {
         // debug!("Rendering is starting...");
 
         #[allow(clippy::collapsible_if)]
@@ -275,19 +294,39 @@ impl App {
                 }
                 #[cfg(target_os = "ios")]
                 {
-                    match self.native_window_size {
-                        Some(item) => {
-                            utils::info!("IOS TARGET NATIVE Window Size : {}x{}", item.width, item.height);
-                            (item.width as u32, item.height as u32)
-                        },  // ResolvedSize f32 -> u32 for pixel buffer
+                    match crate::ios_screen::get_screen_resolution_pixels() {
+                        Some((width, height)) => {
+                            let r_width = window.inner_size().width;
+                            let r_height = window.inner_size().height;
+                            let is_portrait = r_width < r_height;
+                            // println!("IOS TARGET NATIVE Window Size : {width}x{height}");
+                            self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 });
+                            if is_portrait {
+                                (width as u32, height as u32)
+                            }else{
+                                (height as u32, width as u32)
+                            }
+                        }
                         None => {
-
                             let width = window.inner_size().width;
                             let height = window.inner_size().height;
                             utils::info!("Not found the native window size : {width}x{height}");
                             (width, height)
                         }
                     }
+                    // match self.native_window_size {
+                    //     Some(item) => {
+                    //         // utils::info!("IOS TARGET NATIVE Window Size : {}x{}", item.width, item.height);
+                    //         (item.width as u32, item.height as u32)
+                    //     },  // ResolvedSize f32 -> u32 for pixel buffer
+                    //     None => {
+                    //
+                    //         let width = window.inner_size().width;
+                    //         let height = window.inner_size().height;
+                    //         utils::info!("Not found the native window size : {width}x{height}");
+                    //         (width, height)
+                    //     }
+                    // }
                 }
             };
 
@@ -305,10 +344,10 @@ impl App {
             let row_bytes = width as usize * 4;
 
             {
-                if let Some(mut surface) =
-                    skia_safe::surfaces::wrap_pixels(&info, frame, Some(row_bytes), None)
-                {
-                    if self.window.is_none() {return;}
+                if let Some(mut surface) = skia_safe::surfaces::wrap_pixels(&info, frame, Some(row_bytes), None) {
+                    if self.window.is_none() {
+                        return;
+                    }
                     let ctx: BuildContext = BuildContext {
                         parent_size: ResolvedSize { width: width as FLOAT, height: height as FLOAT },
                         canvas: surface.canvas(),
@@ -343,7 +382,7 @@ impl App {
                 event_loop.exit();
             }
         }
-        
+
         #[cfg(target_arch = "wasm32")]
         {
             // utils::info!("Setting up canvas context...");
@@ -381,7 +420,7 @@ impl App {
                 if let Some(root) = &self.widget_root {
                     Self::render_widget_tree(root.as_ref(), &build_ctx);
                 }
-            }else{
+            } else {
                 utils::info!("Canvas context is not ready yet.");
             }
         }
@@ -394,8 +433,8 @@ mod tests {
     use attribute::dimension::Dimension;
     use attribute::position::Vec2d;
     use attribute::size::Size;
-    use widget::base::BuildContext;
     use widget::Element;
+    use widget::base::BuildContext;
 
     struct MockWidget {
         pos: Option<Vec2d>,
@@ -431,7 +470,6 @@ mod tests {
         // Click at 15, 15 (inside button)
         let hit = App::is_on_click(&wrapper, Vec2d { x: 15.0, y: 15.0 });
         assert!(hit.is_some());
-
     }
 
     #[test]
