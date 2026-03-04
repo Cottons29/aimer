@@ -23,6 +23,7 @@ pub struct BuildContext<'a> {
     pub parent_pos: Vec2d,
     pub cursor_pos: Vec2d,
     pub box_constraint: BoxConstraint,
+    pub visible_rect: Option<(FLOAT, FLOAT, FLOAT, FLOAT)>, // (x, y, width, height)
     pub window: &'static Window,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_handle: Handle,
@@ -49,6 +50,7 @@ impl<'a> BuildContext<'a> {
             parent_pos,
             cursor_pos,
             box_constraint: BoxConstraint::default(),
+            visible_rect: None,
             window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle,
