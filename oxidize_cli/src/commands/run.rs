@@ -188,7 +188,22 @@ fn fetch_devices() -> Vec<Device> {
     unique_devices
 }
 
+
+// fn check_project() -> Result<(), Box<dyn std::error::Error>> {
+//
+//     let current_dir = std::env::current_dir()?;
+//
+//
+//     Ok(())
+// }
+
 pub fn execute() {
+
+
+
+
+
+
     println!("Finding available devices...\n");
 
     let devices_arc = Arc::new(Mutex::new(fetch_devices()));
