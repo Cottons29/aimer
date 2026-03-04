@@ -110,7 +110,11 @@ impl RawFlex {
         (gap_x, gap_y)
     }
 
-    fn build_draw_cmd<'a>(&self, ctx: &BuildContext<'a>) -> Vec<(u32, Float, Float, BuildContext<'a>, &dyn Element)> {
+
+}
+
+impl Drawable for RawFlex {
+    fn draw(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
         let (gap_x, gap_y) = self.resole_gaps(ctx);
         let max_w = ctx.box_constraint.max_width;
@@ -296,27 +300,34 @@ impl RawFlex {
         }
 
         draw_commands.sort_by_key(|cmd| cmd.0);
-        draw_commands
-    }
-}
 
-impl Drawable for RawFlex {
-    fn draw(&self, ctx: &BuildContext) {
-        for cmd in self.build_draw_cmd(ctx) {
+        for cmd in draw_commands {
             let (_, offset_x, offset_y, draw_ctx, child) = cmd;
+
             // non wasm
             #[cfg(not(target_arch = "wasm32"))]
             draw_ctx.canvas.save();
             #[cfg(target_arch = "wasm32")]
             draw_ctx.canvas.save();
+
             #[cfg(not(target_arch = "wasm32"))]
             draw_ctx.canvas.translate((offset_x, offset_y));
             #[cfg(target_arch = "wasm32")]
-            let _ =  draw_ctx.canvas.translate(offset_x, offset_y);
+            match draw_ctx.canvas.translate(offset_x, offset_y) {
+                Ok(_) => {}
+                Err(err) => {
+                    utils::error!("Failed to translate canvas: {:?}", err);
+                }
+            }
             Self::render_child(child, &draw_ctx);
+
             #[cfg(not(target_arch = "wasm32"))]
             draw_ctx.canvas.restore();
+            #[cfg(target_arch = "wasm32")]
+            draw_ctx.canvas.restore();
         }
+
+        // non wasm
         ctx.canvas.restore();
     }
 }
