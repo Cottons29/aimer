@@ -4,7 +4,7 @@ use constructor::Constructor;
 use utils::debug;
 use widget::base::BuildContext;
 use widget::style::BoxConstraint;
-use widget::{BoxConstraint, Element, Widget};
+use widget::{BoxConstraint, Drawable, Element, Widget};
 
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
@@ -84,7 +84,7 @@ pub struct RawPositionedElement {
     pub(crate) layer: u32,
 }
 
-impl Element for RawPositionedElement {
+impl Drawable for RawPositionedElement {
     fn draw(&self, ctx: &BuildContext) {
         // debug!("Positioned::draw");
         let is_auto = self.top == Dimension::Auto
@@ -207,6 +207,10 @@ impl Element for RawPositionedElement {
         }
         ctx.canvas.restore();
     }
+}
+
+impl Element for RawPositionedElement {
+
 
     fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
         // Positioned handles its own child rendering in draw() with proper offset,
