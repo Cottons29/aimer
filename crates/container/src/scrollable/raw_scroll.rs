@@ -511,7 +511,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 {
                     let window = self.window;
                     std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        std::thread::sleep(std::time::Duration::from_millis(1));
                         window.request_redraw();
                     });
                 }
@@ -735,9 +735,6 @@ impl<E: Element> Element for RawScrollableContainer<E> {
 
                         // Smooth acceleration: blend with previous velocity (lighter smoothing for responsive touch)
                         let old_velocity = self.pointer_velocity.get();
-                        // #[cfg(target_os = "ios")]
-                        // let (blend_old, blend_new) = (0.85 as FLOAT, 0.15 as FLOAT); // Smooth iOS acceleration
-                        // #[cfg(not(target_os = "ios"))]
                         let (blend_old, blend_new) = (0.3 as FLOAT, 0.7 as FLOAT);
                         new_velocity.x = old_velocity.x * blend_old + new_velocity.x * blend_new;
                         new_velocity.y = old_velocity.y * blend_old + new_velocity.y * blend_new;
