@@ -9,7 +9,7 @@ pub use raw_flex::Flex;
 use widget::base::BuildContext;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub enum FlexDirection {
+pub enum LayoutDirection {
     Row,
     Column,
     #[default]
