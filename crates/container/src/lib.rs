@@ -2,6 +2,7 @@ mod single_child;
 pub mod flex;
 pub mod space;
 pub mod scrollable;
+pub mod grid;
 
 pub use single_child::sized_box::SizedBox;
 pub use single_child::container::Container;
