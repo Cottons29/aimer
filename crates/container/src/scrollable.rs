@@ -96,7 +96,7 @@ pub struct ScrollBehavior {
 impl Default for ScrollBehavior {
     fn default() -> Self {
         #[cfg(target_os = "ios")]
-        let defaults = (0.55, 0.13, 0.99);
+        let defaults = (0.55, 0.13, 0.991);
         #[cfg(not(target_os = "ios"))]
         let defaults = (0.6, 0.15, 0.95);
 
