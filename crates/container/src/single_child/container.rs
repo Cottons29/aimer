@@ -288,8 +288,11 @@ impl<T: Element> Drawable for RawContainer<T> {
         }
 
         let mut child_ctx = ctx.clone();
-        child_ctx.box_constraint.max_width = (box_width - p_left - b_left - _p_right - b_right).max(0.0);
-        child_ctx.box_constraint.max_height = (box_height - p_top - b_top - _p_bottom - b_bottom).max(0.0);
+        let content_w = (box_width - p_left - b_left - _p_right - b_right).max(0.0);
+        let content_h = (box_height - p_top - b_top - _p_bottom - b_bottom).max(0.0);
+        child_ctx.box_constraint.max_width = content_w;
+        child_ctx.box_constraint.max_height = content_h;
+        child_ctx.parent_size = ResolvedSize { width: content_w, height: content_h };
 
         self.child.draw(&child_ctx);
         #[cfg(not(target_arch = "wasm32"))]
