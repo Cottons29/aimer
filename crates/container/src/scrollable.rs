@@ -10,7 +10,6 @@ use widget::{Element, Widget};
 use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
 
-
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
 #[cfg(not(target_arch = "wasm32"))]
@@ -32,6 +31,8 @@ pub struct Scrollable<W: Widget> {
 impl<W: Widget> Widget for Scrollable<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let mut child_ctx = ctx.clone();
+        child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
+        child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
         match self.axis {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = Float::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = Float::MAX,
