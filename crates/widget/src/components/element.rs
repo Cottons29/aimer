@@ -136,15 +136,26 @@ pub trait Element : Drawable{
             child.invalidate_layout();
         });
     }
+
+    /// Rebuild this element (and its subtree) if it is marked dirty.
+    /// The default implementation propagates to children so that nested
+    /// `StatefulElement`s can rebuild independently without the parent
+    /// having to reconstruct the whole tree.
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.visit_children(&mut |child| {
+            child.rebuild_if_dirty(ctx);
+        });
+    }
 }
 
 /// Perform a hit-test on the element tree and dispatch the event to the deepest hit element.
 /// Returns `true` if any element consumed the event.
 pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> bool {
+    use smallvec::SmallVec;
     // Try children in reverse order (front-to-back)
     // println!("Dispatch event: {:?}", event);
     if matches!(event, ElementEvent::Cancel) {
-        let mut children = Vec::new();
+        let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
         root.event_children(&mut |child| children.push(child));
         for child in children.into_iter().rev() {
             dispatch_event(child, pos, event);
@@ -152,7 +163,7 @@ pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> b
         return root.on_event(event);
     }
 
-    let mut children = Vec::new();
+    let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
     root.event_children(&mut |child| children.push(child));
 
     for child in children.into_iter().rev() {
@@ -212,6 +223,9 @@ impl Element for Box<dyn Element> {
     }
     fn invalidate_layout(&self) {
         self.as_ref().invalidate_layout()
+    }
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.as_ref().rebuild_if_dirty(ctx)
     }
 }
 
