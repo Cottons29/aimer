@@ -1,4 +1,4 @@
-use crate::render::App;
+use crate::render::OxidizeAppConfiguration;
 use attribute::position::Vec2d;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
@@ -41,10 +41,22 @@ impl OxidizeApp {
         let async_runtime = Runtime::new().expect("Failed to create async runtime");
 
         utils::info!("Creating App instance...");
-        let mut app = App {
+        let mut app = OxidizeAppConfiguration {
             window: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            pixels: None,
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            metal_layer: None,
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            command_queue: None,
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            skia_context: None,
+            #[cfg(target_os = "android")]
+            egl_display: None,
+            #[cfg(target_os = "android")]
+            egl_surface: None,
+            #[cfg(target_os = "android")]
+            egl_context: None,
+            #[cfg(target_os = "android")]
+            skia_gl_context: None,
             #[cfg(target_arch = "wasm32")]
             canvas_ctx: None,
             widget_root: None,
