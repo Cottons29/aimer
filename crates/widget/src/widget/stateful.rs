@@ -1,6 +1,6 @@
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::cell::UnsafeCell;
 use std::panic::Location;
@@ -56,6 +56,10 @@ impl<S: Send + 'static> StateUpdater<S> {
 
     /// Mutate the state and mark the widget as dirty for rebuild.
     /// Similar to Flutter's `setState(() { ... })`.
+    ///
+    /// Multiple calls between frames are coalesced: the dirty flag is set once
+    /// and the generation counter is bumped, but only a single rebuild happens
+    /// during the next `draw`.
     #[track_caller]
     pub fn set_state(&self, f: impl FnOnce(&mut S)) {
         let inner = match self.inner.as_ref() {
@@ -71,8 +75,11 @@ impl<S: Send + 'static> StateUpdater<S> {
             let mut state = inner.state.lock().unwrap();
             f(&mut *state);
         }
-        inner.dirty.store(true, Ordering::Relaxed);
-        inner.window.request_redraw();
+        // Only request a redraw if this is the first set_state since the last rebuild.
+        // This coalesces multiple set_state calls into a single redraw request.
+        if !inner.dirty.swap(true, Ordering::Release) {
+            inner.window.request_redraw();
+        }
     }
 
     /// Read the current state without marking dirty.
@@ -157,11 +164,16 @@ pub trait State<W: StatefulWidget> {
 
     fn build(&self) -> impl Widget;
 }
-pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element> + Send + Sync;
+pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element>;
 pub struct StatefulElement {
     child: SyncChild,
     pub dirty: Arc<AtomicBool>,
     pub rebuild_fn: Arc<RebuildCallBack>,
+    /// Monotonically increasing generation counter. Incremented on each rebuild
+    /// so that multiple `set_state` calls between frames only trigger one rebuild.
+    rebuild_generation: AtomicU64,
+    /// The generation at which the last rebuild was performed.
+    last_rebuilt_generation: AtomicU64,
 }
 
 impl StatefulElement {
@@ -194,21 +206,57 @@ impl StatefulElement {
 
         let updater = StateUpdater::new(state, dirty.clone(), ctx.window);
 
-        let element = StatefulElement { child: SyncChild(UnsafeCell::new(child)), dirty, rebuild_fn };
+        let element = StatefulElement {
+            child: SyncChild(UnsafeCell::new(child)),
+            dirty,
+            rebuild_fn,
+            rebuild_generation: AtomicU64::new(0),
+            last_rebuilt_generation: AtomicU64::new(0),
+        };
 
         (element, updater)
     }
 
     /// Check if this element needs a rebuild and perform it if so.
+    ///
+    /// Before rebuilding itself, this method first walks the existing child tree
+    /// to let any nested `StatefulElement`s rebuild independently. This avoids
+    /// destroying and recreating the entire subtree when only a deeply-nested
+    /// element's state has changed.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        if self.dirty.load(Ordering::Relaxed) {
-            let new_child = (self.rebuild_fn)(ctx);
-            // Safety: single-threaded rendering pipeline
-            unsafe {
-                *self.child.0.get() = new_child;
-            }
-            self.dirty.store(false, Ordering::Relaxed);
+        if !self.dirty.load(Ordering::Acquire) {
+            // Self is clean — but a nested StatefulElement might be dirty.
+            // Propagate rebuild through the existing child tree.
+            let child = unsafe { &*self.child.0.get() };
+            Self::propagate_rebuild(child.as_ref(), ctx);
+            return;
         }
+
+        // Coalesce: only rebuild once per generation bump.
+        let current_gen = self.rebuild_generation.load(Ordering::Relaxed);
+        let last = self.last_rebuilt_generation.load(Ordering::Relaxed);
+        if current_gen == last && !self.dirty.load(Ordering::Acquire) {
+            return;
+        }
+
+        let new_child = (self.rebuild_fn)(ctx);
+        // Safety: single-threaded rendering pipeline
+        unsafe {
+            *self.child.0.get() = new_child;
+        }
+        self.dirty.store(false, Ordering::Release);
+        self.rebuild_generation.fetch_add(1, Ordering::Relaxed);
+        self.last_rebuilt_generation.store(
+            self.rebuild_generation.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+    }
+
+    /// Walk the element tree and rebuild any nested dirty `StatefulElement`s.
+    /// This is called on the *existing* child tree so that inner stateful widgets
+    /// can update in-place without the parent having to reconstruct the whole subtree.
+    fn propagate_rebuild(element: &dyn Element, ctx: &BuildContext) {
+        element.rebuild_if_dirty(ctx);
     }
 
     /// Returns true if this element is marked dirty.
@@ -269,6 +317,9 @@ impl Element for StatefulElement {
     }
     fn invalidate_layout(&self) {
         unsafe { &*self.child.0.get() }.invalidate_layout();
+    }
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        StatefulElement::rebuild_if_dirty(self, ctx);
     }
 }
 
