@@ -9,6 +9,7 @@ pub use oxidize::OxidizeApp;
 #[cfg(target_os = "ios")]
 mod ios_screen;
 pub mod window_attr;
+pub mod window_event;
 
 pub use winit;
 
