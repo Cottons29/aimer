@@ -14,20 +14,10 @@ pub fn generate_stateful_widget_impl(input: TokenStream) -> TokenStream {
     let output = quote! {
         #item_struct
 
-        impl #impl_generics widget::Widget for #struct_name #ty_generics #where_clause {
-            fn to_element(&self, ctx: &widget::base::BuildContext) -> Box<dyn widget::Element> {
-                use widget::{StatefulWidget, State};
-                
-                let state = self.create_state();
-                let child_element = {
-                    let child_widget = state.build();
-                    widget::Widget::to_element(&child_widget, ctx)
-                };
-                
-                Box::new(widget::StatefulElement {
-                    child: child_element,
-                    state: Box::new(state)
-                })
+        impl #impl_generics oxidize::widget::Widget for #struct_name #ty_generics #where_clause {
+            fn to_element(&self, ctx: &oxidize::widget::base::BuildContext) -> Box<dyn widget::Element> {
+                let (element, _updater) = oxidize::widget::StatefulElement::new(self, ctx);
+                Box::new(element)
             }
         }
     };

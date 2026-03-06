@@ -5,19 +5,19 @@ edition = "2024"
 
 
 [dependencies]
-constructor.workspace  = true
 widget.workspace = true
-
-
-
-
-
-#################
+attribute.workspace = true
+constructor.workspace = true
+utils.workspace = true
 winit.workspace = true
-skia-safe.workspace = true
-# glutin.workspace = true
-rayon.workspace = true  
-pixels.workspace = true
 chrono.workspace = true
+#################
 
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+objc.workspace = true
+tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
+skia-safe.workspace = true
+
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]

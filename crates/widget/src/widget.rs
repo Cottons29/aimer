@@ -1,10 +1,10 @@
 use crate::base::BuildContext;
-use crate::Element;
+use crate::{Element, StatefulWidget, StatelessWidget};
 
 pub mod stateful;
 pub mod stateless;
 
-pub trait Widget: Send + Sync {
+pub trait Widget{
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element>;
 }
 
@@ -13,4 +13,6 @@ impl Widget for Box<dyn Widget> {
         self.as_ref().to_element(ctx)
     }
 }
+
+
 

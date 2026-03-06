@@ -1,7 +1,5 @@
 use constructor::Constructor;
 
-use crate::base::Dimension;
-
 #[derive(Constructor, Default, Clone, Copy)]
 pub struct LayoutSpacing {
     #[constructor(default)]
@@ -14,27 +12,26 @@ pub struct LayoutSpacing {
     pub right: Spacing,
 }
 
+#[cfg(target_arch = "wasm32")]
+type Float = f64;
+#[cfg(not(target_arch = "wasm32"))]
+type Float = f32;
+
 impl LayoutSpacing {
     /// For Top and Bottom
-    pub fn vertical(space: Spacing) -> Self {
-        Self { top: space, bottom: space, ..Default::default() }
+    pub const fn vertical(space: Spacing) -> Self {
+        Self { top: space, bottom: space, left: Spacing::DEFAULT_VALUE, right: Spacing::DEFAULT_VALUE }
     }
 
     /// For Left and right
-    pub fn horizontal(space: Spacing) -> Self {
-        Self { left: space, right: space, ..Default::default() }
+    pub const fn horizontal(space: Spacing) -> Self {
+        Self { left: space, right: space, top: Spacing::DEFAULT_VALUE, bottom: Spacing::DEFAULT_VALUE }
     }
 
-    pub fn all(space: Spacing) -> Self {
-        Self {
-            left: space,
-            right: space,
-            top: space,
-            bottom:space
-        }
+    pub const fn all(space: Spacing) -> Self {
+        Self { left: space, right: space, top: space, bottom: space }
     }
 }
-
 
 #[derive(Default, Clone, Copy)]
 pub enum Spacing {
@@ -45,10 +42,12 @@ pub enum Spacing {
 }
 
 impl Spacing {
-    pub fn value(&self, total: f32, scale: f32) -> f32 {
+    pub const DEFAULT_VALUE: Spacing = Spacing::None;
+
+    pub fn value(&self, total: Float, scale: Float) -> Float {
         match self {
-            Spacing::Px(px) => *px as f32 * scale,
-            Spacing::Percent(p) => total * (*p as f32 / 100.0),
+            Spacing::Px(px) => *px as Float * scale,
+            Spacing::Percent(p) => total * (*p as Float / 100.0),
             Spacing::None => 0.0,
         }
     }

@@ -1,0 +1,20 @@
+[package]
+name = "control"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+
+[dependencies]
+widget.workspace = true
+attribute.workspace =  true
+#####################
+winit.workspace = true
+utils.workspace = true
+chrono.workspace = true
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+objc.workspace = true
+tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
+skia-safe.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4.50"

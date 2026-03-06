@@ -7,7 +7,7 @@ impl ColorMixer for Color {
                 ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
             }
             Color::Rgb(r, g, b) => {
-                ((0xFF as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+                ((0xFFu32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
             }
             Color::Hex(rgb) => 0xFF000000 | (rgb & 0xFFFFFF),
             Color::HexA(rgba) => {
@@ -58,22 +58,6 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
         ((g_prime + m) * 255.0).round() as u8,
         ((b_prime + m) * 255.0).round() as u8,
     )
-}
-
-impl ColorMixer for Colors {
-    fn to_u32(&self) -> u32 {
-        match self {
-            Colors::Red => 0xFFFF0000,
-            Colors::Green => 0xFF00FF00,
-            Colors::Blue => 0xFF0000FF,
-            Colors::White => 0xFFFFFFFF,
-            Colors::Black => 0xFF000000,
-            Colors::Yellow => 0xFFFFFF00,
-            Colors::Cyan => 0xFF00FFFF,
-            Colors::Magenta => 0xFFFF00FF,
-            Colors::Gray => 0xFF808080,
-        }
-    }
 }
 
 #[cfg(test)]
