@@ -42,6 +42,7 @@ impl<S> Clone for StateUpdater<S> {
 
 impl<S: Send + 'static> StateUpdater<S> {
     /// Create a new `StateUpdater` from shared state and a dirty flag.
+    #[inline]
     pub fn new(state: Arc<Mutex<S>>, dirty: Arc<AtomicBool>, window: &'static Window) -> Self {
         Self { inner: Some(StateUpdaterInner { state, dirty, window }) }
     }
