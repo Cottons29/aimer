@@ -1,5 +1,5 @@
-use color::prelude::Color;
 
+use color::prelude::Color;
 
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy)]
@@ -31,6 +31,8 @@ pub enum LineHeight {
     Huge,
     Value(f32)
 }
+
+
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy)]
 pub enum TextAlign {
@@ -42,7 +44,7 @@ pub enum TextAlign {
     MidLeft,
     MidRight,
     BotLeft,
-    BotCenter,
+    BotCenter,      
     BotRight
 }
 
@@ -56,5 +58,17 @@ pub struct TextStyle  {
     #[constructor(default)]
     pub font_weight: FontWeight,
     #[constructor(default, into)]
-    pub color: Color
+    pub color: Color,
+    #[constructor(default)]
+    pub text_overflow: TextOverflow,
+}
+
+#[allow(dead_code)]
+#[derive( Default, Clone)]
+pub enum TextOverflow {
+    #[default]
+    Clip,
+    Ellipsis,
+    Wrap,
+    Value(u32)
 }

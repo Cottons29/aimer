@@ -1,76 +1,236 @@
+
 use crate::base::*;
+use attribute::position::Vec2d;
+use attribute::size::{ResolvedSize, Size};
+use attribute::dimension::Dimension;
+use crate::{ Drawable};
+
+/// Pointer event types for hit-test dispatch.
+#[derive(Clone, Debug)]
+pub enum ElementEvent {
+    PointerDown(Vec2d),
+    PointerUp(Vec2d),
+    PointerMove(Vec2d),
+    Scroll(Vec2d),
+    Cancel,
+}
+
+
+unsafe impl Send for ElementEvent {}
+unsafe impl Sync for ElementEvent {}
+
 
 #[allow(dead_code)]
-pub trait Element: Send + Sync {
-    fn draw(&self, ctx: &BuildContext);
+/// ## A Lower Level Trait For Build THe Element From Nothing :))
+pub trait Element : Drawable{
+    /// get the position of the element
     fn pos(&self) -> Option<Vec2d> {
         None
     }
+
+    /// size of the element
     fn size(&self) -> Option<Size> {
         None
     }
+
+    /// Called when a pointer event hits this element.
+    /// Return `true` if the event was consumed.
+    fn on_event(&self, _event: &ElementEvent) -> bool {
+        false
+    }
+
+    /// coord of the element from start to end (also thinking as boundary box)
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         if self.size().is_none() || self.pos().is_none() {
             return None;
         }
         let start = self.pos().unwrap();
-        let end = start.get_end(self.size().unwrap());
+        let size = self.size().unwrap();
+        let resolved = ResolvedSize {
+            width: match size.width {
+                Dimension::Px(v) => v,
+                _ => 0.0,
+            },
+            height: match size.height {
+                Dimension::Px(v) => v,
+                _ => 0.0,
+            },
+        };
+        let end = start.get_end(resolved);
         Some((start, end))
     }
+
+    /// for the container visit child | children
     fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
         // default no children
     }
 
-    fn computed_size(&self, ctx: &BuildContext) -> Size {
-        self.size().unwrap_or(ctx.parent_size)
+    /// Visit children for event dispatch. By default delegates to `visit_children`.
+    /// Override this when `visit_children` is not implemented (e.g. because the element
+    /// handles its own child rendering) but events still need to reach the children.
+    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.visit_children(visitor);
     }
 
-    fn content_size(&self, ctx: &BuildContext) -> Size {
+    /// apply layout for the flexible container such as flex, column...
+    fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
         self.computed_size(ctx)
     }
 
+    /// calculate the size after apply layout
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.size()
+            .map(|s| {
+                s.resolve(
+                    &ResolvedSize { width: ctx.box_constraint.max_width, height: ctx.box_constraint.max_height },
+                    ctx.scale,
+                )
+            })
+            .unwrap_or(ctx.parent_size)
+    }
+
+    /// i don't know why this appear here :) just for the shorter ?
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.computed_size(ctx)
+    }
+
+    /// get the layer of the element (used for z-index ordering)
+    fn layer(&self) -> u32 {
+        0
+    }
+
+    /// get the size from the child when parent has no size explicit
     fn get_size_from_child(&self) -> Option<Size> {
         if let Some(s) = self.size() {
             return Some(s);
         }
 
-        let mut max_w = 0;
-        let mut max_h = 0;
+        let mut result_w = Dimension::Auto;
+        let mut result_h = Dimension::Auto;
         let mut found = false;
 
         self.visit_children(&mut |item| {
             if let Some(child_size) = item.size().or_else(|| item.get_size_from_child()) {
-                max_w = max_w.max(child_size.width);
-                max_h = max_h.max(child_size.height);
+                // For Px values, take the max; otherwise keep what we have
+                result_w = match (result_w, child_size.width) {
+                    (Dimension::Px(a), Dimension::Px(b)) => Dimension::Px(a.max(b)),
+                    (Dimension::Auto, w) => w,
+                    (w, _) => w,
+                };
+                result_h = match (result_h, child_size.height) {
+                    (Dimension::Px(a), Dimension::Px(b)) => Dimension::Px(a.max(b)),
+                    (Dimension::Auto, h) => h,
+                    (h, _) => h,
+                };
                 found = true;
             }
         });
 
-        if found { Some(Size { width: max_w, height: max_h }) } else { None }
+        if found { Some(Size { width: result_w, height: result_h }) } else { None }
+    }
+
+    /// Invalidate cached layout data for this element and all children.
+    /// Called at the start of each frame to ensure fresh layout.
+    fn invalidate_layout(&self) {
+        self.visit_children(&mut |child| {
+            child.invalidate_layout();
+        });
+    }
+
+    /// Rebuild this element (and its subtree) if it is marked dirty.
+    /// The default implementation propagates to children so that nested
+    /// `StatefulElement`s can rebuild independently without the parent
+    /// having to reconstruct the whole tree.
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.visit_children(&mut |child| {
+            child.rebuild_if_dirty(ctx);
+        });
     }
 }
 
-impl Element for Box<dyn Element> {
-    fn draw(&self, ctx: &BuildContext) {
-        self.as_ref().draw(ctx);
+/// Perform a hit-test on the element tree and dispatch the event to the deepest hit element.
+/// Returns `true` if any element consumed the event.
+pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> bool {
+    use smallvec::SmallVec;
+    // Try children in reverse order (front-to-back)
+    // println!("Dispatch event: {:?}", event);
+    if matches!(event, ElementEvent::Cancel) {
+        let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
+        root.event_children(&mut |child| children.push(child));
+        for child in children.into_iter().rev() {
+            dispatch_event(child, pos, event);
+        }
+        return root.on_event(event);
     }
+
+    let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
+    root.event_children(&mut |child| children.push(child));
+
+    for child in children.into_iter().rev() {
+        if dispatch_event(child, pos, event) {
+            return true;
+        }
+    }
+
+    // Check if pos is inside this element's bounds
+    if let Some((start, end)) = root.pos_start_end() {
+        let inside = pos.x >= start.x && pos.x <= end.x && pos.y >= start.y && pos.y <= end.y;
+        if inside {
+            return root.on_event(event);
+        }
+    }
+
+    // If the element has no position info, still try to dispatch the event.
+    // This allows elements like Button (which don't track absolute position)
+    // to receive events when reached through the tree traversal.
+    if root.pos_start_end().is_none() {
+        return root.on_event(event);
+    }
+
+    false
+}
+
+impl Element for Box<dyn Element> {
     fn pos(&self) -> Option<Vec2d> {
         self.as_ref().pos()
     }
     fn size(&self) -> Option<Size> {
         self.as_ref().size()
     }
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        self.as_ref().on_event(event)
+    }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().visit_children(visitor)
     }
-    fn computed_size(&self, ctx: &BuildContext) -> Size {
+    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref().event_children(visitor)
+    }
+    fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.as_ref().layout(ctx)
+    }
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.as_ref().computed_size(ctx)
     }
-    fn content_size(&self, ctx: &BuildContext) -> Size {
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.as_ref().content_size(ctx)
+    }
+    fn layer(&self) -> u32 {
+        self.as_ref().layer()
     }
     fn get_size_from_child(&self) -> Option<Size> {
         self.as_ref().get_size_from_child()
     }
+    fn invalidate_layout(&self) {
+        self.as_ref().invalidate_layout()
+    }
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.as_ref().rebuild_if_dirty(ctx)
+    }
 }
 
+impl Drawable for Box<dyn Element> {
+    fn draw(&self, ctx: &BuildContext) {
+        self.as_ref().draw(ctx)
+    }
+}

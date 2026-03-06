@@ -9,14 +9,22 @@ resolver = "3"
 [dependencies]
 color.workspace = true
 widget_attr.workspace = true
-
-
-
+attribute.workspace = true
+constructor.workspace = true
+utils.workspace = true
+once_cell.workspace = true
+smallvec.workspace = true
 
 #####################
 winit.workspace = true
+
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+objc.workspace = true
+tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
 skia-safe.workspace = true
-# glutin.workspace = true
-rayon.workspace = true  
-pixels.workspace = true
-constructor.workspace = true
+colored.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys.workspace = true
+wasm-bindgen.workspace = true

@@ -2,10 +2,10 @@ pub mod color_trait;
 pub mod color_impl;
 pub mod basic_color;
 
-
+use std::ops::Index;
 use basic_color::Colors;
-
 use crate::prelude::ColorMixer;
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Color {
     /// Red, Green, Blue, Alpha (0-255)
@@ -39,9 +39,26 @@ pub enum Color {
     Transparent,
 }
 
+impl Color {
+    fn to_css_color(&self) -> String {
+        let c = self.to_u32();
+        let a = ((c >> 24) & 0xFF) as f64 / 255.0;
+        let r = (c >> 16) & 0xFF;
+        let g = (c >> 8) & 0xFF;
+        let b = c & 0xFF;
+
+        format!("rgba({}, {}, {}, {})", r, g, b, a)
+    }
+}
+
+// impl Index<u8> for Color {
+//     type Output = u8;
+// }
+
+#[allow(clippy::derivable_impls)]
 impl Default for Color {
     fn default() -> Self {
-        Self::Basic(Colors::default())
+        Self::Transparent
     }
 }
 
@@ -52,6 +69,7 @@ impl From<Colors> for Color {
 }
 
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<Color> for skia_safe::Color {
     fn from(value: Color) -> Self {
         skia_safe::Color::new(value.to_u32())

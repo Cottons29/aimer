@@ -1,4 +1,4 @@
-use crate::attribute::size::Size;
+use crate::size::ResolvedSize;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Vec2d {
@@ -14,20 +14,20 @@ pub struct Vec2d {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Vec2d {
-    pub fn get_end(&self, size: Size) -> Vec2d {
+    pub fn get_end(&self, size: ResolvedSize) -> Vec2d {
         Self {
-            x: self.x + size.width as f32,
-            y: self.y + size.height as f32,
+            x: self.x + size.width,
+            y: self.y + size.height,
         }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl Vec2d {
-    pub fn get_end(&self, size: Size) -> Vec2d {
+    pub fn get_end(&self, size: ResolvedSize) -> Vec2d {
         Self {
-            x: self.x + size.width as f64,
-            y: self.y + size.height as f64,
+            x: self.x + size.width,
+            y: self.y + size.height,
         }
     }
 }

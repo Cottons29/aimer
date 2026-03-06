@@ -3,15 +3,33 @@ name = "oxidize"
 version = "0.1.0"
 edition = "2024"
 resolver = "3"
+description = "The organized export of other oxidize project"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "oxidize"
+path = "src/bin.rs"
 
 
 [dependencies]
+attribute.workspace = true
 constructor.workspace  = true
 widget.workspace = true
-uuid.workspace = true
 color.workspace = true
 container.workspace = true
 engine.workspace = true
+control.workspace= true
+oxidize_main.workspace = true
+wasm-bindgen.workspace = true
+winit = { workspace = true, features = ["android-native-activity"] }
+###############
+[target.'cfg(target_os = "windows")'.dependencies]
+oxidize_cli.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+oxidize_cli.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+oxidize_cli.workspace = true
