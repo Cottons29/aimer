@@ -15,6 +15,7 @@ widget.workspace = true
 color.workspace = true
 attribute.workspace = true
 utils.workspace = true
+smallvec.workspace = true
 
 
 #################
@@ -22,8 +23,30 @@ winit.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 objc.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
-pixels.workspace = true
-skia-safe.workspace = true
+raw-window-handle.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+skia-safe = { workspace = true, features = ["metal"] }
+objc2.workspace = true
+objc2-core-foundation.workspace = true
+objc2-metal.workspace = true
+objc2-quartz-core.workspace = true
+objc2-app-kit.workspace = true
+
+[target.'cfg(target_os = "ios")'.dependencies]
+skia-safe = { workspace = true, features = ["metal"] }
+objc2.workspace = true
+objc2-core-foundation.workspace = true
+objc2-metal.workspace = true
+objc2-quartz-core.workspace = true
+objc2-ui-kit.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+skia-safe = { workspace = true, features = ["gl"] }
+khronos-egl.workspace = true
+ndk.workspace = true
+raw-window-handle.workspace = true
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
 web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "Node", "HtmlCanvasElement", "CanvasRenderingContext2d"] }

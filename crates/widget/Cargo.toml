@@ -13,6 +13,7 @@ attribute.workspace = true
 constructor.workspace = true
 utils.workspace = true
 once_cell.workspace = true
+smallvec.workspace = true
 
 #####################
 winit.workspace = true
