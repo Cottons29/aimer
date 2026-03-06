@@ -11,14 +11,14 @@ pub mod gesture_detector;
 /// A callback that can be either synchronous or asynchronous.
 #[cfg(not(target_arch = "wasm32"))]
 pub enum Callback {
-    Sync(Box<dyn FnOnce()>),
-    Async(Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>),
+    Sync(Box<dyn Fn()>),
+    Async(Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>),
 }
 
 #[cfg(target_arch = "wasm32")]
 pub enum Callback {
-    Sync(Box<dyn FnOnce()>),
-    Async(Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>>>),
+    Sync(Box<dyn Fn()>),
+    Async(Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()>>>>),
 }
 
 impl std::fmt::Debug for Callback {
@@ -30,7 +30,7 @@ impl std::fmt::Debug for Callback {
     }
 }
 
-impl<F: FnOnce() + 'static> From<F> for Callback {
+impl<F: Fn() + 'static> From<F> for Callback {
     fn from(f: F) -> Self {
         Callback::Sync(Box::new(f))
     }
@@ -42,7 +42,7 @@ pub struct AsyncCallback<F>(pub F);
 #[cfg(not(target_arch = "wasm32"))]
 impl<F, Fut> From<AsyncCallback<F>> for Callback
 where
-    F: FnOnce() -> Fut + Send + 'static,
+    F: Fn() -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
     fn from(ac: AsyncCallback<F>) -> Self {
@@ -53,7 +53,7 @@ where
 #[cfg(target_arch = "wasm32")]
 impl<F, Fut> From<AsyncCallback<F>> for Callback
 where
-    F: FnOnce() -> Fut + 'static,
+    F: Fn() -> Fut + 'static,
     Fut: Future<Output = ()> + 'static,
 {
     fn from(ac: AsyncCallback<F>) -> Self {
@@ -84,7 +84,7 @@ impl Clone for CallbackHolder {
     }
 }
 
-impl<F: FnOnce() + 'static> From<F> for CallbackHolder {
+impl<F: Fn() + 'static> From<F> for CallbackHolder {
     fn from(f: F) -> Self {
         CallbackHolder(Rc::new(UnsafeCell::new(Some(Callback::Sync(Box::new(f))))))
     }
@@ -93,7 +93,7 @@ impl<F: FnOnce() + 'static> From<F> for CallbackHolder {
 #[cfg(not(target_arch = "wasm32"))]
 impl<F, Fut> From<AsyncCallback<F>> for CallbackHolder
 where
-    F: FnOnce() -> Fut + Send + 'static,
+    F: Fn() -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
     fn from(ac: AsyncCallback<F>) -> Self {
@@ -104,7 +104,7 @@ where
 #[cfg(target_arch = "wasm32")]
 impl<F, Fut> From<AsyncCallback<F>> for CallbackHolder
 where
-    F: FnOnce() -> Fut + 'static,
+    F: Fn() -> Fut + 'static,
     Fut: Future<Output = ()> + 'static,
 {
     fn from(ac: AsyncCallback<F>) -> Self {
@@ -162,7 +162,7 @@ impl GestureActions {
 
     fn execute_callback(cb: &CallbackHolder, #[cfg(not(target_arch = "wasm32"))] runtime_handle: &Option<tokio::runtime::Handle>) {
         unsafe {
-            if let Some(callback) = (*cb.get()).take() {
+            if let Some(callback) = (*cb.get()).as_ref() {
                 match callback {
                     Callback::Sync(f) => f(),
                     Callback::Async(f) => {
@@ -277,6 +277,29 @@ mod tests {
         gesture.handle_pointer_event(&PointerEvent::Up(pos));
 
         assert!(tap_called.load(Ordering::SeqCst), "Tap callback should have been called");
+    }
+
+    #[test]
+    fn test_tap_callback_multiple_times() {
+        let mut gesture = GestureActions::new();
+        let tap_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let tap_count_clone = tap_count.clone();
+
+        gesture.on_tap = CallbackHolder::from(move || {
+            tap_count_clone.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let pos = PointerPosition { x: 10.0, y: 10.0 };
+        
+        // First tap
+        gesture.handle_pointer_event(&PointerEvent::Down(pos));
+        gesture.handle_pointer_event(&PointerEvent::Up(pos));
+        
+        // Second tap
+        gesture.handle_pointer_event(&PointerEvent::Down(pos));
+        gesture.handle_pointer_event(&PointerEvent::Up(pos));
+
+        assert_eq!(tap_count.load(Ordering::SeqCst), 2, "Tap callback should have been called twice");
     }
 
     #[test]
