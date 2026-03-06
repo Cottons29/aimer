@@ -27,6 +27,7 @@ pub enum Event {
     Pointer(PointerEvent),
 }
 
+
 impl Event {
     /// Convert a `winit::event::WindowEvent` into a high-level `Event`.
     /// Returns `None` for events that are not pointer-related.
@@ -67,4 +68,16 @@ impl Event {
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyAction {
+    Pressed,
+    Released,
+    Repeat,
+}
+
+
+pub enum InputEvent {
+    Key()
 }
