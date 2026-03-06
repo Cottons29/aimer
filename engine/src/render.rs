@@ -3,8 +3,6 @@ use crate::render;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 #[cfg(not(target_arch = "wasm32"))]
-use pixels::{Pixels, SurfaceTexture};
-#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 use utils::{debug, info};
 use widget::base::BuildContext;
@@ -19,15 +17,57 @@ use winit::monitor::MonitorHandle;
 #[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
 
-#[cfg(target_arch = "wasm32")]
-type FLOAT = f64;
-#[cfg(not(target_arch = "wasm32"))]
-type FLOAT = f32;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use objc2::rc::Retained;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use objc2::runtime::ProtocolObject;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use objc2_core_foundation::CGSize;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use objc2_metal::{MTLCommandBuffer, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use skia_safe::ColorType;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use skia_safe::gpu::{self, DirectContext, SurfaceOrigin, backend_render_targets, mtl};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use winit::raw_window_handle::HasWindowHandle;
 
-pub struct App {
+#[cfg(target_os = "android")]
+use khronos_egl as egl;
+#[cfg(target_os = "android")]
+use skia_safe::ColorType as AndroidColorType;
+#[cfg(target_os = "android")]
+use skia_safe::gpu::{
+    self as gpu_android, DirectContext as AndroidDirectContext, SurfaceOrigin as AndroidSurfaceOrigin,
+    backend_render_targets as android_backend_render_targets, gl as skia_gl,
+};
+#[cfg(target_os = "android")]
+use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+use crate::window_event::handle_window_event;
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) type Float = f64;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type Float = f32;
+
+pub struct OxidizeAppConfiguration {
     pub window: Option<&'static Window>,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub pixels: Option<Pixels<'static>>,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub metal_layer: Option<Retained<CAMetalLayer>>,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub command_queue: Option<Retained<ProtocolObject<dyn MTLCommandQueue>>>,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub skia_context: Option<DirectContext>,
+    #[cfg(target_os = "android")]
+    pub egl_display: Option<egl::Display>,
+    #[cfg(target_os = "android")]
+    pub egl_surface: Option<egl::Surface>,
+    #[cfg(target_os = "android")]
+    pub egl_context: Option<egl::Context>,
+    #[cfg(target_os = "android")]
+    pub skia_gl_context: Option<gpu_android::DirectContext>,
     #[cfg(target_arch = "wasm32")]
     pub canvas_ctx: Option<web_sys::CanvasRenderingContext2d>,
     pub widget_root: Option<Box<dyn Element>>,
@@ -40,13 +80,12 @@ pub struct App {
     pub async_runtime: Runtime,
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler for OxidizeAppConfiguration {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "ios")]
         {
             match crate::ios_screen::get_screen_resolution_pixels() {
                 Some((width, height)) => {
-                    // println!("IOS TARGET NATIVE Window Size : {width}x{height}");
                     self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 })
                 }
                 None => (),
@@ -71,18 +110,140 @@ impl ApplicationHandler for App {
             }
         };
 
-        let window = event_loop.create_window(window_attributes).unwrap();
-        let window: &'static Window = Box::leak(Box::new(window)); // Leak to static ref
+        if self.window.is_none() {
+            let window = event_loop.create_window(window_attributes).unwrap();
+            let window: &'static Window = Box::leak(Box::new(window)); // Leak to static ref
+            self.window = Some(window);
+        }
 
+        let window = self.window.unwrap();
         let size = window.inner_size();
 
         println!("Window Size : {size:?}");
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let surface_texture = SurfaceTexture::new(size.width, size.height, window);
-            let pixels = Pixels::new(size.width, size.height, surface_texture).unwrap();
-            self.pixels = Some(pixels);
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        if self.metal_layer.is_none() {
+            let device = MTLCreateSystemDefaultDevice().expect("no Metal device found");
+
+            let metal_layer = {
+                let layer = CAMetalLayer::new();
+                layer.setDevice(Some(&device));
+                layer.setPixelFormat(objc2_metal::MTLPixelFormat::BGRA8Unorm);
+                layer.setPresentsWithTransaction(false);
+                layer.setFramebufferOnly(false);
+                layer.setDrawableSize(CGSize::new(size.width as f64, size.height as f64));
+
+                let view_ptr = match window.window_handle().unwrap().as_raw() {
+                    #[cfg(target_os = "macos")]
+                    raw_window_handle::RawWindowHandle::AppKit(appkit) => {
+                        appkit.ns_view.as_ptr() as *mut objc2_app_kit::NSView
+                    }
+                    #[cfg(target_os = "ios")]
+                    raw_window_handle::RawWindowHandle::UiKit(uikit) => {
+                        uikit.ui_view.as_ptr() as *mut objc2_ui_kit::UIView
+                    }
+                    _ => panic!("Unsupported window handle type"),
+                };
+                let view = unsafe { view_ptr.as_ref().unwrap() };
+
+                #[cfg(target_os = "macos")]
+                {
+                    use objc2_app_kit::NSView;
+                    view.setWantsLayer(true);
+                    view.setLayer(Some(&layer.clone().into_super()));
+                }
+
+                #[cfg(target_os = "ios")]
+                {
+                    layer.setFrame(view.layer().frame());
+                    view.layer().addSublayer(&layer);
+                }
+
+                layer
+            };
+
+            let command_queue = device
+                .newCommandQueue()
+                .expect("unable to get command queue");
+
+            let backend = unsafe {
+                mtl::BackendContext::new(
+                    Retained::as_ptr(&device) as mtl::Handle,
+                    Retained::as_ptr(&command_queue) as mtl::Handle,
+                )
+            };
+
+            let skia_context = gpu::direct_contexts::make_metal(&backend, None).unwrap();
+
+            self.metal_layer = Some(metal_layer);
+            self.command_queue = Some(command_queue);
+            self.skia_context = Some(skia_context);
+        }
+
+        #[cfg(target_os = "android")]
+        if self.egl_display.is_none() {
+            use winit::raw_window_handle::HasWindowHandle;
+
+            let egl_lib = unsafe { egl::DynamicInstance::<egl::EGL1_4>::load_required() }.expect("failed to load EGL");
+
+            let display = unsafe { egl_lib.get_display(egl::DEFAULT_DISPLAY) }.expect("failed to get EGL display");
+
+            egl_lib
+                .initialize(display)
+                .expect("failed to initialize EGL");
+
+            let config_attribs = [
+                egl::RED_SIZE,
+                8,
+                egl::GREEN_SIZE,
+                8,
+                egl::BLUE_SIZE,
+                8,
+                egl::ALPHA_SIZE,
+                8,
+                egl::DEPTH_SIZE,
+                0,
+                egl::STENCIL_SIZE,
+                8,
+                egl::RENDERABLE_TYPE,
+                egl::OPENGL_ES2_BIT,
+                egl::SURFACE_TYPE,
+                egl::WINDOW_BIT,
+                egl::NONE,
+            ];
+
+            let config = egl_lib
+                .choose_first_config(display, &config_attribs)
+                .expect("failed to choose EGL config")
+                .expect("no matching EGL config");
+
+            let context_attribs = [egl::CONTEXT_CLIENT_VERSION, 2, egl::NONE];
+            let egl_context = egl_lib
+                .create_context(display, config, None, &context_attribs)
+                .expect("failed to create EGL context");
+
+            let native_window = match window.window_handle().unwrap().as_raw() {
+                raw_window_handle::RawWindowHandle::AndroidNdk(handle) => handle.a_native_window.as_ptr(),
+                _ => panic!("Expected AndroidNdk window handle"),
+            };
+
+            let surface_attribs = [egl::NONE];
+            let egl_surface =
+                unsafe { egl_lib.create_window_surface(display, config, native_window, Some(&surface_attribs)) }
+                    .expect("failed to create EGL window surface");
+
+            egl_lib
+                .make_current(display, Some(egl_surface), Some(egl_surface), Some(egl_context))
+                .expect("failed to make EGL context current");
+
+            let interface = skia_gl::Interface::new_native().expect("failed to create Skia GL interface");
+            let skia_context =
+                gpu_android::direct_contexts::make_gl(interface, None).expect("failed to create Skia GL DirectContext");
+
+            self.egl_display = Some(display);
+            self.egl_surface = Some(egl_surface);
+            self.egl_context = Some(egl_context);
+            self.skia_gl_context = Some(skia_context);
         }
 
         #[cfg(target_arch = "wasm32")]
@@ -98,8 +259,6 @@ impl ApplicationHandler for App {
             utils::info!("Canvas created.");
 
             canvas.set_attribute("id", "oxidize_app").unwrap();
-            // canvas.set_attribute("width", "100%").unwrap();
-            // canvas.set_attribute("height", "100%").unwrap();
 
             utils::info!("Getting canvas context...");
             let ctx = canvas
@@ -112,114 +271,15 @@ impl ApplicationHandler for App {
             self.canvas_ctx = Some(ctx);
         }
 
-        self.window = Some(window);
         self.window_scale = window.scale_factor();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        match event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
-            }
-
-            WindowEvent::Touch(item) => {
-                let pos = Vec2d { x: item.location.x as FLOAT, y: item.location.y as FLOAT };
-                // info!("Touch: {:?}", pos);
-                let event = match item.phase {
-                    winit::event::TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
-                    winit::event::TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
-                    winit::event::TouchPhase::Ended => Some(ElementEvent::PointerUp(pos)),
-                    winit::event::TouchPhase::Cancelled => Some(ElementEvent::Cancel),
-                };
-                #[allow(clippy::collapsible_if)]
-                if let Some(event) = event {
-                    if let Some(root) = &self.widget_root {
-                        if dispatch_event(root.as_ref(), pos, &event) {
-                            if let Some(window) = &self.window {
-                                window.request_redraw();
-                            }
-                        }
-                    }
-                }
-            }
-            // WindowEvent::Focused
-            WindowEvent::CursorMoved { position, .. } => {
-                self.cursor_pos = Vec2d { x: position.x as FLOAT, y: position.y as FLOAT };
-                // println!("Cursor: {:?}", self.cursor_pos);
-                if let Some(root) = &self.widget_root {
-                    let event = ElementEvent::PointerMove(self.cursor_pos);
-                    #[allow(clippy::collapsible_if)]
-                    dispatch_event(root.as_ref(), self.cursor_pos, &event);
-                }
-            }
-
-            WindowEvent::MouseInput { state, button, .. } => {
-                if button != winit::event::MouseButton::Left {
-                    return;
-                }
-
-                let c = self.cursor_pos;
-                let event = if state.is_pressed() { ElementEvent::PointerDown(c) } else { ElementEvent::PointerUp(c) };
-                #[allow(clippy::collapsible_if)]
-                if let Some(root) = &self.widget_root {
-                    dispatch_event(root.as_ref(), c, &event);
-                }
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                let scroll_delta = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(x, y) => {
-                        Vec2d { x: x as FLOAT * 30.0, y: y as FLOAT * 30.0 }
-                    }
-                    winit::event::MouseScrollDelta::PixelDelta(pos) => Vec2d { x: pos.x as FLOAT, y: pos.y as FLOAT },
-                };
-                let event = ElementEvent::Scroll(scroll_delta);
-                if let Some(root) = &self.widget_root {
-                    if dispatch_event(root.as_ref(), self.cursor_pos, &event) {
-                        if let Some(window) = &self.window {
-                            window.request_redraw();
-                        }
-                    }
-                }
-            }
-
-            WindowEvent::RedrawRequested => self.render(event_loop),
-            WindowEvent::Resized(size) => {
-                let is_portrait = size.width < size.height;
-                debug!("Window resized to  Raw Value : {:?}", size);
-                #[cfg(target_os = "ios")]
-                let size = {
-                    match crate::ios_screen::get_screen_resolution_pixels() {
-                        Some((width, height)) => {
-                            self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 });
-                            if is_portrait {
-                                PhysicalSize::new(width as u32, height as u32)
-                            }else{
-                                PhysicalSize::new(height as u32, width as u32)
-                            }
-
-                        }
-                        None => {
-                            if self.window.is_none() {
-                                return;
-                            }
-                            self.window.unwrap().inner_size()
-                        }
-                    }
-                };
-                debug!("Window resized to {:?}", size);
-
-                self.pending_resize = Some(size);
-                if let Some(window) = &self.window {
-                    window.request_redraw();
-                }
-            }
-            _ => (),
-        }
+        handle_window_event(self, event_loop, _id, event);
     }
 }
 #[allow(dead_code)]
-impl App {
+impl OxidizeAppConfiguration {
     fn is_on_click(widget: &dyn Element, c: Vec2d) -> Option<&dyn Element> {
         let bounds = widget.pos_start_end();
 
@@ -230,18 +290,8 @@ impl App {
             }
         }
 
-        let mut hit = None;
-        widget.visit_children(&mut |child| {
-            if hit.is_some() {
-                return;
-            } // already found
-            if let Some(h) = Self::is_on_click(child, c) {
-                hit = Some(h);
-            }
-        });
-
-        // Let's collect children first.
-        let mut children = Vec::new();
+        // Collect children once and iterate in reverse (front-to-back).
+        let mut children: smallvec::SmallVec<[&dyn Element; 8]> = smallvec::SmallVec::new();
         widget.visit_children(&mut |child| children.push(child));
 
         for child in children.into_iter().rev() {
@@ -263,15 +313,15 @@ impl App {
         ctx.canvas.restore();
     }
 
-    fn render(&mut self, event_loop: &ActiveEventLoop) {
+    #[allow(unused)]
+    pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
         // debug!("Rendering is starting...");
 
         #[allow(clippy::collapsible_if)]
         if let Some(size) = self.pending_resize.take() {
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(pixels) = &mut self.pixels {
-                let _ = pixels.resize_surface(size.width, size.height);
-                let _ = pixels.resize_buffer(size.width, size.height);
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            if let Some(metal_layer) = &self.metal_layer {
+                metal_layer.setDrawableSize(CGSize::new(size.width as f64, size.height as f64));
             }
             #[cfg(target_arch = "wasm32")]
             if let (Some(_ctx), Some(window)) = (&self.canvas_ctx, &self.window) {
@@ -283,105 +333,135 @@ impl App {
             }
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        if let (Some(pixels), Some(window)) = (&mut self.pixels, &self.window) {
-            let (width, height) = {
-                #[cfg(not(target_os = "ios"))]
-                {
-                    let width = window.inner_size().width;
-                    let height = window.inner_size().height;
-                    (width, height)
-                }
-                #[cfg(target_os = "ios")]
-                {
-                    match crate::ios_screen::get_screen_resolution_pixels() {
-                        Some((width, height)) => {
-                            let r_width = window.inner_size().width;
-                            let r_height = window.inner_size().height;
-                            let is_portrait = r_width < r_height;
-                            // println!("IOS TARGET NATIVE Window Size : {width}x{height}");
-                            self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 });
-                            if is_portrait {
-                                (width as u32, height as u32)
-                            }else{
-                                (height as u32, width as u32)
-                            }
-                        }
-                        None => {
-                            let width = window.inner_size().width;
-                            let height = window.inner_size().height;
-                            utils::info!("Not found the native window size : {width}x{height}");
-                            (width, height)
-                        }
-                    }
-                    // match self.native_window_size {
-                    //     Some(item) => {
-                    //         // utils::info!("IOS TARGET NATIVE Window Size : {}x{}", item.width, item.height);
-                    //         (item.width as u32, item.height as u32)
-                    //     },  // ResolvedSize f32 -> u32 for pixel buffer
-                    //     None => {
-                    //
-                    //         let width = window.inner_size().width;
-                    //         let height = window.inner_size().height;
-                    //         utils::info!("Not found the native window size : {width}x{height}");
-                    //         (width, height)
-                    //     }
-                    // }
-                }
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        if let (Some(metal_layer), Some(command_queue), Some(skia_context), Some(window)) =
+            (&self.metal_layer, &self.command_queue, &mut self.skia_context, &self.window)
+        {
+            let drawable = match metal_layer.nextDrawable() {
+                Some(d) => d,
+                None => return,
             };
 
-            // println!("Width {width}, height: {height}");
+            let (width, height) = {
+                let size = metal_layer.drawableSize();
+                (size.width as u32, size.height as u32)
+            };
 
-            let frame = pixels.frame_mut();
+            let texture_info = unsafe { mtl::TextureInfo::new(Retained::as_ptr(&drawable.texture()) as mtl::Handle) };
 
-            let info = skia_safe::ImageInfo::new(
-                (width as i32, height as i32),
-                skia_safe::ColorType::RGBA8888,
-                skia_safe::AlphaType::Premul,
+            let backend_render_target = backend_render_targets::make_mtl((width as i32, height as i32), &texture_info);
+
+            let mut surface = gpu::surfaces::wrap_backend_render_target(
+                skia_context,
+                &backend_render_target,
+                SurfaceOrigin::TopLeft,
+                ColorType::BGRA8888,
+                None,
                 None,
             );
 
-            let row_bytes = width as usize * 4;
+            if let Some(ref mut surface) = surface {
+                let ctx: BuildContext = BuildContext {
+                    parent_size: ResolvedSize { width: width as Float, height: height as Float },
+                    canvas: surface.canvas(),
+                    scale: self.window_scale as Float,
+                    parent_pos: Default::default(),
+                    cursor_pos: self.cursor_pos,
+                    box_constraint: widget::style::BoxConstraint {
+                        min_width: 0.0,
+                        min_height: 0.0,
+                        max_width: width as Float,
+                        max_height: height as Float,
+                    },
+                    visible_rect: None,
+                    window,
+                    async_handle: self.async_runtime.handle().clone(),
+                };
+                ctx.canvas.clear(skia_safe::Color::WHITE);
+                #[allow(clippy::collapsible_if)]
+                if self.widget_root.is_none() {
+                    if let Some(w) = self.pending_widget.take() {
+                        self.widget_root = Some(w.to_element(&ctx));
+                    }
+                }
 
-            {
-                if let Some(mut surface) = skia_safe::surfaces::wrap_pixels(&info, frame, Some(row_bytes), None) {
-                    if self.window.is_none() {
-                        return;
-                    }
-                    let ctx: BuildContext = BuildContext {
-                        parent_size: ResolvedSize { width: width as FLOAT, height: height as FLOAT },
-                        canvas: surface.canvas(),
-                        scale: self.window_scale as FLOAT,
-                        parent_pos: Default::default(),
-                        cursor_pos: self.cursor_pos,
-                        box_constraint: widget::style::BoxConstraint {
-                            min_width: 0.0,
-                            min_height: 0.0,
-                            max_width: width as FLOAT,
-                            max_height: height as FLOAT,
-                        },
-                        visible_rect: None,
-                        window: self.window.unwrap(),
-                        async_handle: self.async_runtime.handle().clone(),
-                    };
-                    ctx.canvas.clear(skia_safe::Color::WHITE);
-                    #[allow(clippy::collapsible_if)]
-                    if self.widget_root.is_none() {
-                        if let Some(w) = self.pending_widget.take() {
-                            self.widget_root = Some(w.to_element(&ctx));
-                        }
-                    }
-
-                    if let Some(root) = &self.widget_root {
-                        Self::render_widget_tree(root.as_ref(), &ctx);
-                    }
+                if let Some(root) = &self.widget_root {
+                    Self::render_widget_tree(root.as_ref(), &ctx);
                 }
             }
 
-            if let Err(err) = pixels.render() {
-                eprintln!("pixels.render() failed: {err}");
-                event_loop.exit();
+            skia_context.flush_and_submit();
+            drop(surface);
+
+            let cmd_buffer = command_queue
+                .commandBuffer()
+                .expect("unable to get command buffer");
+
+            let drawable_ref: Retained<ProtocolObject<dyn objc2_metal::MTLDrawable>> = (&drawable).into();
+            cmd_buffer.presentDrawable(&drawable_ref);
+            cmd_buffer.commit();
+        }
+
+        #[cfg(target_os = "android")]
+        if let (Some(skia_context), Some(egl_surface), Some(egl_display), Some(window)) =
+            (&mut self.skia_gl_context, &self.egl_surface, &self.egl_display, &self.window)
+        {
+            let size = window.inner_size();
+            let width = size.width;
+            let height = size.height;
+
+            let fb_info =
+                skia_gl::FramebufferInfo { fboid: 0, format: skia_gl::Format::RGBA8.into(), ..Default::default() };
+
+            let backend_render_target =
+                android_backend_render_targets::make_gl((width as i32, height as i32), Some(0), 8, fb_info);
+
+            let mut surface = gpu_android::surfaces::wrap_backend_render_target(
+                skia_context,
+                &backend_render_target,
+                AndroidSurfaceOrigin::BottomLeft,
+                AndroidColorType::RGBA8888,
+                None,
+                None,
+            );
+
+            if let Some(ref mut surface) = surface {
+                let ctx: BuildContext = BuildContext {
+                    parent_size: ResolvedSize { width: width as Float, height: height as Float },
+                    canvas: surface.canvas(),
+                    scale: self.window_scale as Float,
+                    parent_pos: Default::default(),
+                    cursor_pos: self.cursor_pos,
+                    box_constraint: widget::style::BoxConstraint {
+                        min_width: 0.0,
+                        min_height: 0.0,
+                        max_width: width as Float,
+                        max_height: height as Float,
+                    },
+                    visible_rect: None,
+                    window,
+                    async_handle: self.async_runtime.handle().clone(),
+                };
+                ctx.canvas.clear(skia_safe::Color::WHITE);
+                #[allow(clippy::collapsible_if)]
+                if self.widget_root.is_none() {
+                    if let Some(w) = self.pending_widget.take() {
+                        self.widget_root = Some(w.to_element(&ctx));
+                    }
+                }
+
+                if let Some(root) = &self.widget_root {
+                    Self::render_widget_tree(root.as_ref(), &ctx);
+                }
             }
+
+            skia_context.flush_and_submit();
+            drop(surface);
+
+            let egl_lib = unsafe { egl::DynamicInstance::<egl::EGL1_4>::load_required() }.expect("failed to load EGL");
+            egl_lib
+                .swap_buffers(*egl_display, *egl_surface)
+                .expect("failed to swap EGL buffers");
         }
 
         #[cfg(target_arch = "wasm32")]
@@ -435,8 +515,8 @@ mod tests {
     use attribute::dimension::Dimension;
     use attribute::position::Vec2d;
     use attribute::size::Size;
-    use widget::{Drawable, Element};
     use widget::base::BuildContext;
+    use widget::{Drawable, Element};
 
     struct MockWidget {
         pos: Option<Vec2d>,
@@ -449,7 +529,6 @@ mod tests {
     }
 
     impl Element for MockWidget {
-
         fn pos(&self) -> Option<Vec2d> {
             self.pos
         }
@@ -474,7 +553,7 @@ mod tests {
         let wrapper = MockWidget { pos: None, size: None, children: vec![Box::new(btn)] };
 
         // Click at 15, 15 (inside button)
-        let hit = App::is_on_click(&wrapper, Vec2d { x: 15.0, y: 15.0 });
+        let hit = OxidizeAppConfiguration::is_on_click(&wrapper, Vec2d { x: 15.0, y: 15.0 });
         assert!(hit.is_some());
     }
 
@@ -489,7 +568,7 @@ mod tests {
         let wrapper = MockWidget { pos: None, size: None, children: vec![Box::new(btn)] };
 
         // Click at 50, 50 (outside button)
-        let hit = App::is_on_click(&wrapper, Vec2d { x: 50.0, y: 50.0 });
+        let hit = OxidizeAppConfiguration::is_on_click(&wrapper, Vec2d { x: 50.0, y: 50.0 });
         assert!(hit.is_none());
     }
 }
