@@ -156,17 +156,17 @@ edition = "2024"
     .unwrap();
 
     // builds/build_src/src/main.rs
-    fs::write(
-        dir.join("builds/build_src/src/main.rs"),
-        format!(
-            r#"fn main() {{
-    {}::__oxidize_generated_entrance_point()
-}}
-"#,
-            project_name
-        ),
-    )
-    .unwrap();
+//     fs::write(
+//         dir.join("builds/build_src/src/main.rs"),
+//         format!(
+//             r#"fn main() {{
+//     {}::__oxidize_generated_entrance_point()
+// }}
+// "#,
+//             project_name
+//         ),
+//     )
+//     .unwrap();
 
     fs::write(dir.join("README.md"), format!("# {}\n\n{}", project_name, description)).unwrap();
 
