@@ -247,11 +247,6 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
                     quote! {
                         #f_ident : ({
                             vec![$(Box::new($item),)*]
-                            // let mut temp_vec = Vec::new();
-                            // $(
-                            //     temp_vec.push(Box::new($item) as _);
-                            // )*
-                            // temp_vec
                         })
                     }
                 } else {
