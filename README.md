@@ -2,6 +2,20 @@
 
 A cross-platform UI framework built with Rust, inspired by Flutter's widget model. Oxidize lets you build native user interfaces from a single codebase using a declarative, composable widget tree.
 
+```
+OxidizeApp::start(
+    Container!(
+        child: Text!(
+            "Hello World!",
+            text_align: text::TextAlign::MidCenter,
+            text_style: TextStyle!(
+                color: Colors::Black,
+            )
+        )
+    )
+);
+```
+
 ## Supported Platforms
 
 | Platform   | Rendering Backend    | Status            |
