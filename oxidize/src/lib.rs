@@ -11,7 +11,7 @@ pub mod widget {
 pub use engine::OxidizeApp;
 pub use engine;
 pub use oxidize_main::main;
-
+pub use animation::*;
 
 pub mod wasm_bindgen {
     pub use wasm_bindgen::*;

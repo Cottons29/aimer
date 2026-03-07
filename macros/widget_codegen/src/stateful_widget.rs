@@ -15,7 +15,7 @@ pub fn generate_stateful_widget_impl(input: TokenStream) -> TokenStream {
         #item_struct
 
         impl #impl_generics oxidize::widget::Widget for #struct_name #ty_generics #where_clause {
-            fn to_element(&self, ctx: &oxidize::widget::base::BuildContext) -> Box<dyn widget::Element> {
+            fn to_element(&self, ctx: &oxidize::widget::base::BuildContext) -> Box<dyn oxidize::widget::Element> {
                 let (element, _updater) = oxidize::widget::StatefulElement::new(self, ctx);
                 Box::new(element)
             }

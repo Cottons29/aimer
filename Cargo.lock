@@ -89,6 +89,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "animation"
+version = "0.1.0"
+dependencies = [
+ "attribute",
+ "chrono",
+ "constructor",
+ "skia-safe",
+ "utils",
+ "web-sys",
+ "widget",
+ "winit",
+]
+
+[[package]]
 name = "ansi-to-tui"
 version = "8.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2044,6 +2058,7 @@ dependencies = [
 name = "oxidize"
 version = "0.1.0"
 dependencies = [
+ "animation",
  "attribute",
  "color",
  "constructor",
@@ -2054,7 +2069,6 @@ dependencies = [
  "oxidize_main",
  "wasm-bindgen",
  "widget",
- "winit",
 ]
 
 [[package]]
