@@ -4,9 +4,8 @@ use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
-use utils::{debug, info};
 use widget::base::BuildContext;
-use widget::{Element, ElementEvent, Widget, dispatch_event};
+use widget::{Element, Widget};
 use winit::application::ApplicationHandler;
 #[allow(unused)]
 use winit::dpi::{LogicalSize, PhysicalSize, Position};
@@ -28,24 +27,24 @@ use objc2_metal::{MTLCommandBuffer, MTLCommandQueue, MTLCreateSystemDefaultDevic
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-use skia_safe::ColorType;
+use skia_safe::gpu::{self, backend_render_targets, mtl, DirectContext, SurfaceOrigin};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-use skia_safe::gpu::{self, DirectContext, SurfaceOrigin, backend_render_targets, mtl};
+use skia_safe::ColorType;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use winit::raw_window_handle::HasWindowHandle;
 
 #[cfg(target_os = "android")]
 use khronos_egl as egl;
+use crate::window_event::handle_window_event;
+#[cfg(target_os = "android")]
+use skia_safe::gpu::{
+    self as gpu_android, backend_render_targets as android_backend_render_targets, gl as skia_gl,
+    DirectContext as AndroidDirectContext, SurfaceOrigin as AndroidSurfaceOrigin,
+};
 #[cfg(target_os = "android")]
 use skia_safe::ColorType as AndroidColorType;
 #[cfg(target_os = "android")]
-use skia_safe::gpu::{
-    self as gpu_android, DirectContext as AndroidDirectContext, SurfaceOrigin as AndroidSurfaceOrigin,
-    backend_render_targets as android_backend_render_targets, gl as skia_gl,
-};
-#[cfg(target_os = "android")]
 use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
-use crate::window_event::handle_window_event;
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) type Float = f64;
@@ -148,7 +147,6 @@ impl ApplicationHandler for OxidizeAppConfiguration {
 
                 #[cfg(target_os = "macos")]
                 {
-                    use objc2_app_kit::NSView;
                     view.setWantsLayer(true);
                     view.setLayer(Some(&layer.clone().into_super()));
                 }
@@ -315,7 +313,8 @@ impl OxidizeAppConfiguration {
 
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
-        // debug!("Rendering is starting...");
+
+
 
         #[allow(clippy::collapsible_if)]
         if let Some(size) = self.pending_resize.take() {
