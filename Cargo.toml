@@ -38,22 +38,24 @@ oxidize_main = {path = "macros/oxidize_main"}
 oxidize_cli = {path = "oxidize_cli"}
 
 
-#########################################################################
-web-sys = { version = "0.3.90", features = ["CanvasRenderingContext2d", "DomMatrix", "TextMetrics"] }
-wasm-bindgen = "0.2.113"
+######################################################################
+
+
+web-sys = { version = "0.3.91", features = ["CanvasRenderingContext2d", "DomMatrix", "TextMetrics"] }
+wasm-bindgen = "0.2.114"
 winit = {version =  "0.30.12", features = ["android-native-activity"] }
 skia-safe = { version = "0.93.1"}
-raw-window-handle = "0.6.0"
-objc2 = { version = "0.6.3", default-features = false }
+raw-window-handle = "0.6.2"
+objc2 = { version = "0.6.4", default-features = false }
 objc2-core-foundation = { version = "0.3.2", default-features = false }
 objc2-metal = { version = "0.3.2", default-features = false, features = ["MTLCommandBuffer", "MTLCommandQueue", "MTLDrawable", "MTLPixelFormat"] }
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["objc2-core-foundation", "objc2-metal", "CAMetalLayer"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["objc2-quartz-core", "NSView", "NSResponder"] }
 objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["objc2-quartz-core", "UIResponder", "UIView"] }
-softbuffer = "0.4"
+softbuffer = "0.4.8"
 syn = { version = "2.0.117", features = ["full"] }
 proc-macro2 = { version = "1.0.106" }
-quote = "1.0.44"
+quote = "1.0.45"
 chrono = "0.4.44"
 boltffi = "0.1.1"
 objc = { version = "0.2.7" }
@@ -63,16 +65,20 @@ parking_lot = "0.12.5"
 crossbeam = "0.8.4"
 colored = "3.1.1"
 log = {version = "0.4.29"}
-tokio = "1.49.0"
+tokio = "1.45.0"
+crossbeam-channel = "0.5.15"
+fancy-regex = "0.17.0"
+once_cell = "1.21.3"
+smallvec = "1.13.2"
+
+
+
 # Oxidize cli dependencies
 crossterm = "0.29.0"
 clap = { version = "4.5.60", features = ["derive"] }
 inquire = "0.9.4"
 ratatui = "0.30.0"
-fancy-regex = "0.17.0"
-once_cell = "1.21.3"
-smallvec = "1.13.2"
-khronos-egl = { version = "6.0", features = ["dynamic"] }
-ndk = "0.9"
+khronos-egl = { version = "6.0.0", features = ["dynamic"] }
+ndk = "0.9.0"
 ansi-to-tui = "8.0.1"
 arboard = "3.6.1"
