@@ -76,15 +76,14 @@ pub(crate) fn handle_window_event(
             use winit::event::ElementState;
             use winit::keyboard::{Key, NamedKey as WinitNamedKey};
 
-            let action = match event.state {
-                ElementState::Pressed => widget::KeyAction::Pressed,
-                ElementState::Released => widget::KeyAction::Released,
+            let action = if event.repeat {
+                widget::KeyAction::Repeat
+            } else {
+                match event.state {
+                    ElementState::Pressed => widget::KeyAction::Pressed,
+                    ElementState::Released => widget::KeyAction::Released,
+                }
             };
-
-            // Only process on press (not release) to avoid double input
-            if action == widget::KeyAction::Released {
-                return;
-            }
 
             // Handle text input from the key event.
             // Use `logical_key` (Key::Character) as the single source of
@@ -94,7 +93,7 @@ pub(crate) fn handle_window_event(
             // both, doubling every character.
             if let Key::Character(ref ch) = event.logical_key {
                 if !ch.is_empty() && ch.chars().all(|c| !c.is_control()) {
-                    let ev = ElementEvent::CharInput(ch.parse().unwrap());
+                    let ev = ElementEvent::CharInput { ch: ch.parse().unwrap(), action: action.clone() };
                     if let Some(root) = &app.widget_root {
                         if dispatch_event(root.as_ref(), app.cursor_pos, &ev) {
                             if let Some(window) = &app.window {
