@@ -1,16 +1,17 @@
-use crate::event::{PointerEvent, PointerPosition};
 use crate::gesture::button::ButtonStyle;
 use crate::gesture::GestureActions;
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
+use events::pointer::{PointerEvent, PointerPosition};
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{Paint, Rect};
 use std::cell::UnsafeCell;
-use widget::base::{BuildContext, Color, ColorMixer};
+use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
-use widget::{Drawable, Element, ElementEvent, LayoutCache};
+use widget::{Drawable, Element, LayoutCache};
 use winit::window::Window;
+use events::element::ElementEvent;
 
 #[cfg(not(target_arch = "wasm32"))]
 type Float = f32;
