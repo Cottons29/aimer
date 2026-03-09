@@ -278,32 +278,6 @@ impl ApplicationHandler for OxidizeAppConfiguration {
 }
 #[allow(dead_code)]
 impl OxidizeAppConfiguration {
-    fn is_on_click(widget: &dyn Element, c: Vec2d) -> Option<&dyn Element> {
-        let bounds = widget.pos_start_end();
-
-        if let Some((start, end)) = bounds {
-            let is_inside = c.x >= start.x && c.x <= end.x && c.y >= start.y && c.y <= end.y;
-            if !is_inside {
-                return None;
-            }
-        }
-
-        // Collect children once and iterate in reverse (front-to-back).
-        let mut children: smallvec::SmallVec<[&dyn Element; 8]> = smallvec::SmallVec::new();
-        widget.visit_children(&mut |child| children.push(child));
-
-        for child in children.into_iter().rev() {
-            if let Some(h) = Self::is_on_click(child, c) {
-                return Some(h);
-            }
-        }
-
-        if bounds.is_some() {
-            return Some(widget);
-        }
-
-        None
-    }
 
     fn render_widget_tree(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
@@ -539,35 +513,5 @@ mod tests {
                 visitor(child.as_ref());
             }
         }
-    }
-
-    #[test]
-    fn test_is_on_click_wrapper() {
-        let btn = MockWidget {
-            pos: Some(Vec2d { x: 10.0, y: 10.0 }),
-            size: Some(Size { width: Dimension::Px(20.0), height: Dimension::Px(20.0) }), // 10,10 to 30,30
-            children: vec![],
-        };
-
-        let wrapper = MockWidget { pos: None, size: None, children: vec![Box::new(btn)] };
-
-        // Click at 15, 15 (inside button)
-        let hit = OxidizeAppConfiguration::is_on_click(&wrapper, Vec2d { x: 15.0, y: 15.0 });
-        assert!(hit.is_some());
-    }
-
-    #[test]
-    fn test_is_on_click_outside() {
-        let btn = MockWidget {
-            pos: Some(Vec2d { x: 10.0, y: 10.0 }),
-            size: Some(Size { width: Dimension::Px(20.0), height: Dimension::Px(20.0) }), // 10,10 to 30,30
-            children: vec![],
-        };
-
-        let wrapper = MockWidget { pos: None, size: None, children: vec![Box::new(btn)] };
-
-        // Click at 50, 50 (outside button)
-        let hit = OxidizeAppConfiguration::is_on_click(&wrapper, Vec2d { x: 50.0, y: 50.0 });
-        assert!(hit.is_none());
     }
 }
