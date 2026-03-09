@@ -1,5 +1,6 @@
 use attribute::dimension::Dimension;
 use std::cell::UnsafeCell;
+use winit::window::CursorIcon::Default;
 use widget::base::{BuildContext, Colors};
 use widget::text::TextAlign;
 use widget::{Constructor, Element, TextStyle, Widget};
@@ -46,17 +47,19 @@ pub struct TextField {
     #[constructor(default)]
     pub style: TextFieldStyle,
     #[constructor(default)]
+    pub hover_style: Option<TextFieldStyle>,
+    #[constructor(default)]
+    pub focus_style: Option<TextFieldStyle>,
+    #[constructor(default)]
+    pub disabled_style: Option<TextFieldStyle>,
+    #[constructor(default)]
     pub cursor_color: Colors,
 }
 
 impl Widget for TextField {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawTextField {
-            input_type: match &self.input_type {
-                InputType::Text => InputType::Text,
-                InputType::Number => InputType::Number,
-                InputType::Obscure => InputType::Obscure,
-            },
+            input_type:  self.input_type,
             controller: TextFieldController::new(self.text.clone()),
             prompt: self.prompt.clone(),
             hint: self.hint.clone(),
@@ -69,22 +72,21 @@ impl Widget for TextField {
             min_lines: self.min_lines,
             max_length: self.max_length,
             enable: self.enable,
-            expand: match &self.expand {
-                ExpandDirection::Horizontal => ExpandDirection::Horizontal,
-                ExpandDirection::Vertical => ExpandDirection::Vertical,
-                ExpandDirection::Both => ExpandDirection::Both,
-                ExpandDirection::None => ExpandDirection::None,
-            },
+            expand: self.expand,
             box_height: self.box_height,
             box_width: self.box_width,
-            box_constraint: widget::style::BoxConstraint::default(),
             cursor: Cursor::new(self.cursor_color),
             style: TextFieldStyle {
                 background_color: self.style.background_color,
-                border: self.style.border.clone(),
+                border: self.style.border,
                 padding: self.style.padding,
+                outline: self.style.outline,
             },
+            hover_style: self.hover_style.clone(),
+            focus_style: self.focus_style.clone(),
+            disabled_style: self.disabled_style.clone(),
             focused: UnsafeCell::new(self.auto_focus),
+            hovered: UnsafeCell::new(false),
             cached_bounds: UnsafeCell::new(None),
         })
     }
