@@ -1,11 +1,11 @@
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
 use std::cell::UnsafeCell;
 use std::panic::Location;
 use std::process::exit;
 use std::sync::Arc;
+use crossbeam_channel::{Sender, Receiver, unbounded};
 use winit::window::Window;
 
 use crate::{base::*, components::element::ElementEvent, Drawable, Element, Widget};
@@ -16,14 +16,32 @@ struct SyncChild(UnsafeCell<Box<dyn Element>>);
 unsafe impl Send for SyncChild {}
 unsafe impl Sync for SyncChild {}
 
+/// A `Send + Sync` wrapper around `UnsafeCell<S>` for state storage.
+/// Safety: the rendering pipeline is single-threaded. Mutations are applied
+/// exclusively during `rebuild_if_dirty` on the render thread, and reads
+/// happen only on the render thread (event handlers, build).
+struct SyncState<S>(UnsafeCell<S>);
+unsafe impl<S: Send> Send for SyncState<S> {}
+unsafe impl<S: Send> Sync for SyncState<S> {}
+
+/// Type-erased mutation closure sent through the channel.
+type StateMutation<S> = Box<dyn FnOnce(&mut S) + Send>;
+
 /// A handle that allows StatefulWidgets to trigger state mutations and rebuilds.
 /// This is the Rust equivalent of Flutter's `setState`.
+///
+/// Instead of locking a `Mutex`, mutations are sent as closures through a
+/// `crossbeam_channel` and applied on the render thread during the next
+/// rebuild. This eliminates the possibility of deadlocks.
 pub struct StateUpdater<S> {
     inner: Option<StateUpdaterInner<S>>,
 }
 
 struct StateUpdaterInner<S> {
-    state: Arc<Mutex<S>>,
+    /// Channel sender for queueing state mutations.
+    tx: Sender<StateMutation<S>>,
+    /// Shared state for synchronous reads on the render thread.
+    state: Arc<SyncState<S>>,
     dirty: Arc<AtomicBool>,
     window: &'static Window,
 }
@@ -32,6 +50,7 @@ impl<S> Clone for StateUpdater<S> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.as_ref().map(|inner| StateUpdaterInner {
+                tx: inner.tx.clone(),
                 state: inner.state.clone(),
                 dirty: inner.dirty.clone(),
                 window: inner.window,
@@ -41,10 +60,15 @@ impl<S> Clone for StateUpdater<S> {
 }
 
 impl<S: Send + 'static> StateUpdater<S> {
-    /// Create a new `StateUpdater` from shared state and a dirty flag.
+    /// Create a new `StateUpdater` from a channel sender, shared state, and a dirty flag.
     #[inline]
-    pub fn new(state: Arc<Mutex<S>>, dirty: Arc<AtomicBool>, window: &'static Window) -> Self {
-        Self { inner: Some(StateUpdaterInner { state, dirty, window }) }
+    fn new(
+        tx: Sender<StateMutation<S>>,
+        state: Arc<SyncState<S>>,
+        dirty: Arc<AtomicBool>,
+        window: &'static Window,
+    ) -> Self {
+        Self { inner: Some(StateUpdaterInner { tx, state, dirty, window }) }
     }
 
     /// Create an empty `StateUpdater` that is not yet initialized.
@@ -54,14 +78,53 @@ impl<S: Send + 'static> StateUpdater<S> {
         Self { inner: None }
     }
 
-    /// Mutate the state and mark the widget as dirty for rebuild.
-    /// Similar to Flutter's `setState(() { ... })`.
+    /// Mutate the state using a value that is cloned once and moved into the
+    /// mutation closure. This avoids the double-clone that would otherwise be
+    /// needed when calling `set_state` from inside an `Fn` closure:
     ///
-    /// Multiple calls between frames are coalesced: the dirty flag is set once
-    /// and the generation counter is bumped, but only a single rebuild happens
-    /// during the next `draw`.
+    /// ```ignore
+    /// // Before (two clones):
+    /// let id = item.id.clone();          // clone 1 – for the Fn capture
+    /// move || {
+    ///     let id = id.clone();           // clone 2 – for the 'static FnOnce
+    ///     updater.set_state(move |s| { /* use id */ });
+    /// }
+    ///
+    /// // After (one clone):
+    /// let id = item.id.clone();          // clone 1 – for the Fn capture
+    /// move || {
+    ///     updater.set_state_with(id.clone(), |s, id| { /* use id */ });
+    /// }
+    /// ```
+    ///
+    /// Wait — that's still `id.clone()`. The real win is that `set_state_with`
+    /// accepts a *reference* and clones internally, so from an `Fn` closure you
+    /// can write:
+    ///
+    /// ```ignore
+    /// let id = item.id.clone();          // clone 1 – captured by the Fn
+    /// move || {
+    ///     updater.set_state_with(&id, |s, id| { /* use owned id */ });
+    /// }
+    /// ```
     #[track_caller]
-    pub fn set_state(&self, f: impl FnOnce(&mut S)) {
+    pub fn set_state_with<V: Clone + Send + 'static>(
+        &self,
+        value: &V,
+        f: impl FnOnce(&mut S, V) + Send + 'static,
+    ) {
+        let owned = value.clone();
+        self.set_state(move |s| f(s, owned));
+    }
+
+    /// Mutate the state by sending a closure through the channel.
+    /// The mutation will be applied on the render thread during the next rebuild.
+    /// This is deadlock-free: it never acquires a lock.
+    ///
+    /// Multiple calls between frames are coalesced: the dirty flag is set once,
+    /// and only a single rebuild happens during the next `draw`.
+    #[track_caller]
+    pub fn set_state(&self, f: impl FnOnce(&mut S) + Send + 'static) {
         let inner = match self.inner.as_ref() {
             Some(inner) => inner,
             None => {
@@ -71,10 +134,8 @@ impl<S: Send + 'static> StateUpdater<S> {
                 exit(1);
             }
         };
-        {
-            let mut state = inner.state.lock().unwrap();
-            f(&mut *state);
-        }
+        // Send the mutation through the channel — never blocks, never deadlocks.
+        let _ = inner.tx.send(Box::new(f));
         // Only request a redraw if this is the first set_state since the last rebuild.
         // This coalesces multiple set_state calls into a single redraw request.
         if !inner.dirty.swap(true, Ordering::Release) {
@@ -83,6 +144,11 @@ impl<S: Send + 'static> StateUpdater<S> {
     }
 
     /// Read the current state without marking dirty.
+    ///
+    /// Safety: this reads from the `UnsafeCell` directly. It is safe because
+    /// reads only happen on the render thread (event handlers, build methods),
+    /// and mutations are also applied exclusively on the render thread during
+    /// `rebuild_if_dirty`.
     #[track_caller]
     pub fn read<R>(&self, f: impl FnOnce(&S) -> R) -> R {
         let inner = match  self
@@ -96,8 +162,9 @@ impl<S: Send + 'static> StateUpdater<S> {
                 exit(1);
             }
         };
-        let state = inner.state.lock().unwrap();
-        f(&*state)
+        // Safety: single-threaded rendering pipeline — no concurrent mutation.
+        let state = unsafe { &*inner.state.0.get() };
+        f(state)
     }
 
     #[inline]
@@ -184,27 +251,41 @@ impl StatefulElement {
         W::State: Send + Sync + 'static,
     {
         let state = widget.create_state();
-        let state = Arc::new(Mutex::new(state));
         let dirty = Arc::new(AtomicBool::new(false));
 
+        // Create the channel for state mutations.
+        let (tx, rx): (Sender<StateMutation<W::State>>, Receiver<StateMutation<W::State>>) = unbounded();
+
+        let state_cell = Arc::new(SyncState(UnsafeCell::new(state)));
+
         // Create the updater and pass it into init_state.
-        let init_updater = StateUpdater::new(state.clone(), dirty.clone(), ctx.window);
+        let init_updater = StateUpdater::new(tx.clone(), state_cell.clone(), dirty.clone(), ctx.window);
 
         {
-            let mut s = state.lock().unwrap();
+            // Safety: single-threaded — we are the only accessor during construction.
+            let s = unsafe { &mut *state_cell.0.get() };
             s.init_state(init_updater.clone());
         }
 
-        let state_for_build = state.clone();
+        let state_for_build = state_cell.clone();
+        let rx_for_rebuild = rx;
         let rebuild_fn: Arc<RebuildCallBack> = Arc::new(move |ctx| {
-            let s = state_for_build.lock().unwrap();
+            // Drain all pending mutations from the channel before rebuilding.
+            let s = unsafe { &mut *state_for_build.0.get() };
+            while let Ok(mutation) = rx_for_rebuild.try_recv() {
+                mutation(s);
+            }
             let child_widget = s.build();
             Widget::to_element(&child_widget, ctx)
         });
 
-        let child = { Widget::to_element(&state.lock().unwrap().build(), ctx) };
+        let child = {
+            // Safety: single-threaded — initial build during construction.
+            let s = unsafe { &*state_cell.0.get() };
+            Widget::to_element(&s.build(), ctx)
+        };
 
-        let updater = StateUpdater::new(state, dirty.clone(), ctx.window);
+        let updater = StateUpdater::new(tx, state_cell, dirty.clone(), ctx.window);
 
         let element = StatefulElement {
             child: SyncChild(UnsafeCell::new(child)),
@@ -291,7 +372,12 @@ impl Element for StatefulElement {
                 ElementEvent::PointerUp(p) => *p,
                 ElementEvent::PointerMove(p) => *p,
                 ElementEvent::Scroll(_) => Vec2d::default(),
+                ElementEvent::CharInput(_) => Vec2d::default(),
+                ElementEvent::KeyInput { .. } => Vec2d::default(),
                 ElementEvent::Cancel => Vec2d::default(),
+
+                // todo!()
+                _ => Vec2d::default(),
             },
             event,
         )
