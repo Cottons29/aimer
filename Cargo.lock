@@ -95,6 +95,7 @@ dependencies = [
  "attribute",
  "chrono",
  "constructor",
+ "events",
  "skia-safe",
  "utils",
  "web-sys",
@@ -574,6 +575,7 @@ dependencies = [
  "attribute",
  "chrono",
  "constructor",
+ "events",
  "objc",
  "skia-safe",
  "tokio",
@@ -590,6 +592,7 @@ dependencies = [
  "attribute",
  "chrono",
  "color",
+ "events",
  "objc",
  "skia-safe",
  "tokio",
@@ -887,6 +890,7 @@ dependencies = [
  "attribute",
  "color",
  "constructor",
+ "events",
  "khronos-egl",
  "ndk",
  "objc",
@@ -936,6 +940,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df61bf483e837f88d5c2291dcf55c67be7e676b3a51acc48db3a7b163b91ed63"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "events"
+version = "0.1.0"
+dependencies = [
+ "attribute",
+ "winit",
 ]
 
 [[package]]
@@ -3596,6 +3608,7 @@ dependencies = [
  "colored",
  "constructor",
  "crossbeam-channel",
+ "events",
  "objc",
  "once_cell",
  "skia-safe",
