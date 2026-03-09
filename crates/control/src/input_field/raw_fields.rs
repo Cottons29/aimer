@@ -6,12 +6,13 @@ use widget::base::{BuildContext, Color, Colors};
 use widget::style::BoxConstraint;
 use widget::style::border::{BoxBorder, BoxOutline};
 use widget::text::{FontWeight, TextAlign};
-use widget::{Constructor, Drawable, Element, ElementEvent, KeyAction, LayoutSpacing, NamedKey, Spacing, TextStyle};
+use widget::{Constructor, Drawable, Element, LayoutSpacing, Spacing, TextStyle};
 
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{
     Color as SkColor, Font, FontMgr, Paint, Rect, TextBlob, font_style::FontStyle as SkFontStyle, paint::Style,
 };
+use events::element::{ElementEvent, KeyAction, NamedKey};
 use utils::debug;
 
 #[cfg(not(target_arch = "wasm32"))]
