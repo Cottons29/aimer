@@ -15,10 +15,13 @@ widget.workspace = true
 color.workspace = true
 attribute.workspace = true
 utils.workspace = true
-smallvec.workspace = true
+events.workspace = true
 
 
 #################
+
+
+smallvec.workspace = true
 winit.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 objc.workspace = true
