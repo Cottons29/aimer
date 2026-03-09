@@ -7,8 +7,8 @@ use std::process::exit;
 use std::sync::Arc;
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use winit::window::Window;
-
-use crate::{base::*, components::element::ElementEvent, Drawable, Element, Widget};
+use events::element::ElementEvent;
+use crate::{base::*, Drawable, Element, Widget};
 
 /// A `Send + Sync` wrapper around `UnsafeCell<Box<dyn Element>>`.
 /// Safety: the rendering pipeline is single-threaded, so concurrent access does not occur.
@@ -375,9 +375,6 @@ impl Element for StatefulElement {
                 ElementEvent::CharInput { .. } => Vec2d::default(),
                 ElementEvent::KeyInput { .. } => Vec2d::default(),
                 ElementEvent::Cancel => Vec2d::default(),
-
-                // todo!()
-                _ => Vec2d::default(),
             },
             event,
         )
