@@ -87,8 +87,8 @@ cargo run -p my_oxidize
 - [x] Oxidize CLI 
   - [x] `new project_name` to create a new project
   - [x] `run` to run the project
-  - [ ] `build` to build the project `❌ Not Implement Yet`
-  - [ ] `test` to run tests `❌ Not Implement Yet`
+  - [ ] `build` to build the project
+  - [ ] `test` to run tests
 - [x] Oxidize Tooling
   - [x] project scaffolding (`oxidize new`)
   - [x] auto restart app
@@ -101,13 +101,13 @@ cargo run -p my_oxidize
 - [x] Layout engine
   - [x] `Row` and `Column` (flexbox-inspired)
   - [x] `Container` with padding, margin, and decoration
-  - [x]  `Scrollable` with scroll bar support `⚠️ Unstable`
+  - [x] `Scrollable` with scroll bar support `⚠️ Unstable`
   - [x] `Spacing` and `LayoutSpacing` attributes
   - [x] `BoxAlignment` (start, center, end, stretch)
 - [x] Basic controls
   - [x] `Button` with press handler and hover/style variants
   - [x] `GestureDetector` `⚠️ Unstable`
-  - [ ] `InputField` (text field) `⚠️ Unstable`
+  - [x] `InputField` (text field) `⛔️ Very Unstable`
   - [ ] `Checkbox`
   - [ ] `Switch` / `Toggle`
   - [ ] `Slider`
@@ -122,17 +122,18 @@ cargo run -p my_oxidize
   - [x] Named color palettes (`Colors::Blue`, `Colors::Gray`, etc.)
   - [x] Shade indexing (`Colors::Blue[100]`)
 - [x] 🧪 Animation framework
-  - [x] `AnimationController` (forward, reverse, repeat, auto-reverse) `⚠️ Unstable`
-  - [x] Curves (`EaseIn`, `EaseOut`, `EaseInOut`, `Bounce`, `Linear`, etc.) `⚠️ Unstable`
-  - [x] `Animated` widget with effects (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`)  `⚠️ Unstable`
-  - [x] 🧪 Enter and exit (delete) transitions `⚠️ Unstable`
+  - [x] `AnimationController` (forward, reverse, repeat, auto-reverse) `⛔️ Very Unstable`
+  - [x] Curves (`EaseIn`, `EaseOut`, `EaseInOut`, `Bounce`, `Linear`, etc.) `⛔️ Very Unstable`
+  - [x] `Animated` widget with effects (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`)  `⛔️ Very Unstable`
+  - [x] 🧪 Enter and exit (delete) transitions `⛔️ Very Unstable`
 - [x] Cross-platform support
   - [x] macOS (Skia + Metal)
   - [x] iOS (Skia + Metal)
-  - [x] Android (Skia + OpenGL) `⚠️ Unstable`
-  - [x] Windows (Skia) `❌ Not Implement Yet`
-  - [x] Linux (Skia) `❌ Not Implement Yet`
+  - [x] Android (Skia + OpenGL)
   - [x] 🧪 Web / WASM (Canvas 2D) `⚠️ Unstable`
+  - [ ] Windows (Skia)
+  - [ ] Linux (Skia)
+  
 - [ ] Gesture system
   - [x] Tap, double-tap `⚠️ Unstable`
   - [ ] Drag and pan
@@ -146,14 +147,11 @@ cargo run -p my_oxidize
   - [ ] Theme data (colors, typography, spacing)
   - [ ] Dark / light mode switching
   - [ ] Custom theme support
-- [ ] Accessibility (a11y)
-  - [ ] Semantic labels
-  - [ ] Screen reader support
-  - [ ] Focus management
-- [ ] Hot reload
 
 
 > ⚠️ Unstable — feature is implemented but may have breaking changes or incomplete edge cases.
 >
+> ⛔️ Very Unstable – feature is implemented, but the functionality is not stable and has some critical bug that can break the app.
+> 
 > ❌ Not Implement Yet — feature is not implemented but may implement in the future.
 >
