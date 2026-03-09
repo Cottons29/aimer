@@ -17,7 +17,7 @@ members = [
     "crates/animation",
     "macros/oxidize_main",
     "oxidize_cli"
-]
+, "crates/events"]
 
 
 [workspace.dependencies]
@@ -36,7 +36,7 @@ attribute = {path = "crates/attribute"}
 utils = {path = "crates/utils"}
 oxidize_main = {path = "macros/oxidize_main"}
 oxidize_cli = {path = "oxidize_cli"}
-
+events = {path = "crates/events"}
 
 ######################################################################
 
