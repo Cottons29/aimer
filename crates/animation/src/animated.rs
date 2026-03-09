@@ -5,6 +5,7 @@ use crate::time::AnimInstant;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use constructor::Constructor;
+use events::element::ElementEvent;
 use widget::base::*;
 use widget::{Drawable, Element, Widget};
 
@@ -256,7 +257,7 @@ impl Element for AnimatedElement {
         self.child.size()
     }
 
-    fn on_event(&self, event: &widget::ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> bool {
         self.child.on_event(event)
     }
 
