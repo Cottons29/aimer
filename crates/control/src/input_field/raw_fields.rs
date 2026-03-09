@@ -4,9 +4,9 @@ use attribute::size::{ResolvedSize, Size};
 use std::cell::UnsafeCell;
 use widget::base::{BuildContext, Color, Colors};
 use widget::style::BoxConstraint;
-use widget::style::border::BoxBorder;
+use widget::style::border::{BoxBorder, BoxOutline};
 use widget::text::{FontWeight, TextAlign};
-use widget::{Drawable, Element, ElementEvent, KeyAction, NamedKey, TextStyle};
+use widget::{Constructor, Drawable, Element, ElementEvent, KeyAction, LayoutSpacing, NamedKey, Spacing, TextStyle};
 
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{
@@ -67,6 +67,7 @@ impl TextFieldController {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputType {
     Text,
     Number,
@@ -141,6 +142,7 @@ impl Cursor {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpandDirection {
     Horizontal,
     Vertical,
@@ -154,15 +156,23 @@ impl Default for ExpandDirection {
     }
 }
 
+
+
+#[derive(Clone, Constructor)]
 pub struct TextFieldStyle {
+    #[constructor(default)]
     pub background_color: Colors,
+    #[constructor(default)]
     pub border: BoxBorder,
-    pub padding: Dimension,
+    #[constructor(default)]
+    pub outline: BoxOutline,
+    #[constructor(default)]
+    pub padding: LayoutSpacing
 }
 
 impl Default for TextFieldStyle {
     fn default() -> Self {
-        Self { background_color: Colors::White, border: BoxBorder::default(), padding: Dimension::Px(4.0) }
+        Self { background_color: Colors::White, border: BoxBorder::default(), padding: LayoutSpacing::all(Spacing::Px(4)), outline: BoxOutline::default() }
     }
 }
 
@@ -183,10 +193,13 @@ pub(crate) struct RawTextField {
     pub expand: ExpandDirection,
     pub box_height: Dimension,
     pub box_width: Dimension,
-    pub box_constraint: BoxConstraint,
     pub cursor: Cursor,
     pub style: TextFieldStyle,
+    pub hover_style: Option<TextFieldStyle>,
+    pub focus_style: Option<TextFieldStyle>,
+    pub disabled_style: Option<TextFieldStyle>,
     pub focused: UnsafeCell<bool>,
+    pub hovered: UnsafeCell<bool>,
     #[cfg(not(target_arch = "wasm32"))]
     pub cached_bounds: UnsafeCell<Option<Rect>>,
     #[cfg(target_arch = "wasm32")]
@@ -237,6 +250,29 @@ impl RawTextField {
         }
     }
 
+    fn is_hovered(&self) -> bool {
+        unsafe { *self.hovered.get() }
+    }
+
+    fn set_hovered(&self, hovered: bool) {
+        unsafe {
+            *self.hovered.get() = hovered;
+        }
+    }
+
+    fn active_style(&self) -> &TextFieldStyle {
+        if !self.enable {
+            if let Some(ref s) = self.disabled_style { return s; }
+        }
+        if self.is_focused() {
+            if let Some(ref s) = self.focus_style { return s; }
+        }
+        if self.is_hovered() {
+            if let Some(ref s) = self.hover_style { return s; }
+        }
+        &self.style
+    }
+
     fn compute_dimensions(&self, ctx: &BuildContext) -> (Float, Float) {
         let scale = ctx.scale;
         let constraint = ctx.box_constraint;
@@ -257,6 +293,10 @@ impl RawTextField {
         };
 
         (width.max(0.0), height.max(0.0))
+    }
+
+    fn outline_strokes(&self, box_width: Float, box_height: Float, scale: Float) -> (Float, Float, Float, Float) {
+        self.active_style().outline.strokes(box_width, box_height, scale)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -289,6 +329,10 @@ impl Drawable for RawTextField {
         let (box_width, box_height) = self.compute_dimensions(ctx);
         let scale = ctx.scale;
 
+        // Translate inward by outline strokes so the outline has room to draw
+        let (ol, ot, _or, _ob) = self.outline_strokes(box_width, box_height, scale);
+        ctx.canvas.translate((ol, ot));
+
         // Cache absolute bounds for hit-testing
         let matrix = ctx.canvas.local_to_device_as_3x3();
         let abs_x = matrix.translate_x();
@@ -297,36 +341,43 @@ impl Drawable for RawTextField {
             *self.cached_bounds.get() = Some(Rect::from_xywh(abs_x, abs_y, box_width, box_height));
         }
 
+        // --- Resolve active style ---
+        let style = self.active_style();
+
         // --- Draw background ---
         let mut bg_paint = Paint::default();
         bg_paint.set_anti_alias(true);
-        bg_paint.set_color(SkColor::from(Color::from(self.style.background_color)));
+        bg_paint.set_color(SkColor::from(Color::from(style.background_color)));
         bg_paint.set_style(Style::Fill);
 
         let rect = Rect::from_xywh(0.0, 0.0, box_width, box_height);
-        ctx.canvas.draw_rect(rect, &bg_paint);
+        if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, scale) {
+            use skia_safe::RRect;
+            let rrect = RRect::new_rect_xy(rect, radius, radius);
+            ctx.canvas.draw_rrect(rrect, &bg_paint);
+        } else {
+            ctx.canvas.draw_rect(rect, &bg_paint);
+        }
 
         // --- Draw border ---
-        self.style
-            .border
-            .draw(ctx.canvas, box_width, box_height, scale);
+        style.border.draw(ctx);
+        style.outline.draw(ctx);
 
         // --- Padding ---
-        let padding = match self.style.padding {
-            Dimension::Px(p) => p * scale,
-            Dimension::Percent(p) => box_width * (p / 100.0),
-            Dimension::Auto => 4.0 * scale,
-        };
+        let pad_top = style.padding.top.value(box_height, scale);
+        let pad_bottom = style.padding.bottom.value(box_height, scale);
+        let pad_left = style.padding.left.value(box_width, scale);
+        let pad_right = style.padding.right.value(box_width, scale);
 
         ctx.canvas.save();
         ctx.canvas.clip_rect(
-            Rect::from_xywh(padding, 0.0, (box_width - padding * 2.0).max(0.0), box_height),
+            Rect::from_xywh(pad_left, pad_top, (box_width - pad_left - pad_right).max(0.0), (box_height - pad_top - pad_bottom).max(0.0)),
             None,
             false,
         );
-        ctx.canvas.translate((padding, 0.0));
+        ctx.canvas.translate((pad_left, pad_top));
 
-        let content_height = box_height;
+        let content_height = (box_height - pad_top - pad_bottom).max(0.0);
 
         let text = self.controller.text();
         let is_empty = text.is_empty();
@@ -431,6 +482,10 @@ impl Drawable for RawTextField {
         let (box_width, box_height) = self.compute_dimensions(ctx);
         let scale = ctx.scale;
 
+        // Translate inward by outline strokes so the outline has room to draw
+        let (ol, ot, _or, _ob) = self.outline_strokes(box_width, box_height, scale);
+        let _ = canvas.translate(ol, ot);
+
         // Cache absolute bounds for hit-testing
         // On WASM the canvas transform gives us the absolute position
         let transform = canvas.get_transform().unwrap_or_else(|_| web_sys::DomMatrix::new().unwrap());
@@ -440,28 +495,37 @@ impl Drawable for RawTextField {
             *self.cached_bounds.get() = Some((abs_x, abs_y, abs_x + box_width, abs_y + box_height));
         }
 
+        // --- Resolve active style ---
+        let style = self.active_style();
+
         // --- Draw background ---
-        let bg_color: Color = self.style.background_color.into();
+        let bg_color: Color = style.background_color.into();
         canvas.set_fill_style_str(&bg_color.to_css_color());
-        canvas.fill_rect(0.0, 0.0, box_width, box_height);
+        if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, scale) {
+            canvas.begin_path();
+            let _ = canvas.round_rect_with_f64(0.0, 0.0, box_width, box_height, radius);
+            canvas.fill();
+        } else {
+            canvas.fill_rect(0.0, 0.0, box_width, box_height);
+        }
 
         // --- Draw border ---
-        self.style.border.draw(canvas, box_width, box_height, scale);
+        style.border.draw(ctx);
+        style.outline.draw(ctx);
 
         // --- Padding ---
-        let padding = match self.style.padding {
-            Dimension::Px(p) => p * scale,
-            Dimension::Percent(p) => box_width * (p / 100.0),
-            Dimension::Auto => 4.0 * scale,
-        };
+        let pad_top = style.padding.top.value(box_height, scale);
+        let pad_bottom = style.padding.bottom.value(box_height, scale);
+        let pad_left = style.padding.left.value(box_width, scale);
+        let pad_right = style.padding.right.value(box_width, scale);
 
         canvas.save();
         canvas.begin_path();
-        canvas.rect(padding, 0.0, (box_width - padding * 2.0).max(0.0), box_height);
+        canvas.rect(pad_left, pad_top, (box_width - pad_left - pad_right).max(0.0), (box_height - pad_top - pad_bottom).max(0.0));
         canvas.clip();
-        let _ = canvas.translate(padding, 0.0);
+        let _ = canvas.translate(pad_left, pad_top);
 
-        let content_height = box_height;
+        let content_height = (box_height - pad_top - pad_bottom).max(0.0);
 
         let text = self.controller.text();
         let is_empty = text.is_empty();
@@ -580,12 +644,28 @@ impl Drawable for RawTextField {
 
 impl Element for RawTextField {
     fn size(&self) -> Option<Size> {
-        Some(Size { width: self.box_width, height: self.box_height })
+        // Only report explicit (non-Auto) dimensions so the layout system
+        // falls back to computed_size() for Auto dimensions instead of
+        // resolving Auto to the full parent size.
+        let w = self.box_width;
+        let h = self.box_height;
+        match (w, h) {
+            (Dimension::Auto, Dimension::Auto) => None,
+            _ => {
+                let font_size = if self.text_style.font_size == 0 { 14 } else { self.text_style.font_size };
+                let intrinsic_height = font_size as Float + 8.0;
+                Some(Size {
+                    width: w,
+                    height: match h {
+                        Dimension::Auto => Dimension::Px(intrinsic_height),
+                        other => other,
+                    },
+                })
+            }
+        }
     }
 
     fn on_event(&self, event: &ElementEvent) -> bool {
-
-        // debug!("RawTextField::on_event: {:?}", event);
 
         if !self.enable {
             return false;
@@ -713,6 +793,40 @@ impl Element for RawTextField {
                 }
                 result
             }
+            ElementEvent::PointerMove(pos) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let is_inside = unsafe {
+                        if let Some(bounds) = *self.cached_bounds.get() {
+                            pos.x >= bounds.left
+                                && pos.x <= bounds.right
+                                && pos.y >= bounds.top
+                                && pos.y <= bounds.bottom
+                        } else {
+                            false
+                        }
+                    };
+                    let was_hovered = self.is_hovered();
+                    self.set_hovered(is_inside);
+                    was_hovered != is_inside
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let is_inside = unsafe {
+                        if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
+                            pos.x >= left
+                                && pos.x <= right
+                                && pos.y >= top
+                                && pos.y <= bottom
+                        } else {
+                            false
+                        }
+                    };
+                    let was_hovered = self.is_hovered();
+                    self.set_hovered(is_inside);
+                    was_hovered != is_inside
+                }
+            }
             ElementEvent::Cancel => {
                 self.set_focused(false);
                 true
@@ -723,6 +837,7 @@ impl Element for RawTextField {
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let (w, h) = self.compute_dimensions(ctx);
-        ResolvedSize { width: w, height: h }
+        let (ol, ot, or_, ob) = self.outline_strokes(w, h, ctx.scale);
+        ResolvedSize { width: w + ol + or_, height: h + ot + ob }
     }
 }
