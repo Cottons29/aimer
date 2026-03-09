@@ -584,6 +584,9 @@ impl Element for RawTextField {
     }
 
     fn on_event(&self, event: &ElementEvent) -> bool {
+
+        // debug!("RawTextField::on_event: {:?}", event);
+
         if !self.enable {
             return false;
         }
@@ -637,8 +640,12 @@ impl Element for RawTextField {
                     }
                 }
             }
-            ElementEvent::CharInput(ch) => {
+            ElementEvent::CharInput { ch, action } => {
                 if !self.is_focused() {
+                    return false;
+                }
+                debug!("Pressed: {}, action: {:?}", ch, action);
+                if *action == KeyAction::Released {
                     return false;
                 }
 
@@ -647,12 +654,14 @@ impl Element for RawTextField {
                 self.cursor.set_offset(offset + 1);
                 self.cursor.reset_blink();
                 true
+
+
             }
             ElementEvent::KeyInput { key, action } => {
                 if !self.is_focused() {
                     return false;
                 }
-                if *action != KeyAction::Pressed {
+                if *action == KeyAction::Released {
                     return false;
                 }
                 let result = match key {
