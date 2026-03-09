@@ -1,3 +1,4 @@
+
 use std::time::Duration;
 use crate::time::AnimInstant;
 use constructor::Constructor;
@@ -22,7 +23,7 @@ pub enum AnimationStatus {
 /// according to the specified `curve`. Call [`tick`] each frame to advance.
 #[derive(Debug, Clone, Constructor)]
 pub struct AnimationController {
-    #[constructor(default = "Duration::from_millis(300)")]
+    #[constructor(default = "Duration::from_millis(300 as u64)")]
     pub duration: Duration,
     #[constructor(default)]
     pub curve: Curve,
@@ -56,7 +57,7 @@ impl AnimationController {
 
     /// Create a controller with a duration in milliseconds.
     pub fn with_millis(millis: u64, curve: Curve) -> Self {
-        Self::new(Duration::from_millis(millis), curve)
+        Self::new(Duration::from_millis(millis as i64 as u64), curve)
     }
 
     /// Start playing the animation forward from the current value.
@@ -110,7 +111,7 @@ impl AnimationController {
         let linear_t = if self.duration.as_nanos() == 0 {
             1.0
         } else {
-            elapsed.as_secs_f64() / self.duration.as_secs_f64()
+            elapsed.as_millis() as f64 / self.duration.as_millis() as f64
         };
 
         match self.status {
@@ -173,7 +174,7 @@ mod tests {
 
         let start = AnimInstant::now();
         // Simulate past the duration
-        let end = start + Duration::from_millis(150);
+        let end = start + Duration::from_millis(150 as u64);
         ctrl.tick(end);
 
         assert_eq!(ctrl.status, AnimationStatus::Completed);
@@ -188,7 +189,7 @@ mod tests {
         ctrl.reverse();
 
         let start = AnimInstant::now();
-        let end = start + Duration::from_millis(150);
+        let end = start + Duration::from_millis(150 as u64);
         ctrl.tick(end);
 
         assert_eq!(ctrl.status, AnimationStatus::Dismissed);
@@ -214,7 +215,7 @@ mod tests {
         ctrl.forward();
 
         let start = AnimInstant::now();
-        let end = start + Duration::from_millis(150);
+        let end = start + Duration::from_millis(150 as u64);
         ctrl.tick(end);
 
         // Should still be animating (restarted)
@@ -230,7 +231,7 @@ mod tests {
         ctrl.forward();
 
         let start = AnimInstant::now();
-        let end = start + Duration::from_millis(150);
+        let end = start + Duration::from_millis(150 as u64);
         ctrl.tick(end);
 
         // Should have switched to reverse
