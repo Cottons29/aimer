@@ -7,10 +7,12 @@ resolver = "3"
 [dependencies]
 widget.workspace = true
 attribute.workspace =  true
+color.workspace = true
 #####################
 winit.workspace = true
 utils.workspace = true
 chrono.workspace = true
+animation.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 objc.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
@@ -18,3 +20,4 @@ skia-safe.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"
+web-sys.workspace = true

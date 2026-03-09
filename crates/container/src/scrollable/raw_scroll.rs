@@ -622,7 +622,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
         let pos = match event {
             ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) | ElementEvent::Scroll(p) => *p,
-            ElementEvent::Cancel => Vec2d::default(),
+            ElementEvent::Cancel | ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } => Vec2d::default(),
         };
 
         let mode_before = self.drag_mode.get();
@@ -784,6 +784,9 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                     return true;
                 }
                 false
+            }
+            ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } => {
+                child_consumed
             }
             ElementEvent::PointerUp(_) | ElementEvent::Cancel => {
                 self.drag_mode.set(0);

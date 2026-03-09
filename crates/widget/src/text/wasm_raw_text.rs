@@ -25,7 +25,7 @@ impl RawTextWidget {
             FontWeight::Normal => "normal",
             FontWeight::Bold => "bold",
             FontWeight::Bolder => "900",
-            FontWeight::Value(v) => "",
+            FontWeight::Value(_v) => "",
         };
         
         let style = match self.text_style.font_style {
@@ -81,7 +81,7 @@ impl Drawable for RawTextWidget {
             TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => height,
         };
 
-        let _ = canvas.fill_text(&self.text, x as f64, y as f64);
+        let _ = canvas.fill_text(&self.text, x, y);
     }
 }
 

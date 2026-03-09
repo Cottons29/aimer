@@ -72,9 +72,62 @@ pub(crate) fn handle_window_event(
             }
         }
 
-        WindowEvent::KeyboardInput { device_id, event, is_synthetic } => {
-            debug!("KeyboardInput: {:?}", event);
-            debug!("KeyboardInput: {:?}", is_synthetic);
+        WindowEvent::KeyboardInput { event, .. } => {
+            use winit::event::ElementState;
+            use winit::keyboard::{Key, NamedKey as WinitNamedKey};
+
+            let action = if event.repeat {
+                widget::KeyAction::Repeat
+            } else {
+                match event.state {
+                    ElementState::Pressed => widget::KeyAction::Pressed,
+                    ElementState::Released => widget::KeyAction::Released,
+                }
+            };
+
+            // Handle text input from the key event.
+            // Use `logical_key` (Key::Character) as the single source of
+            // printable text to avoid duplicate input.  Winit ≥0.30.6 may
+            // fire two Pressed KeyboardInput events per keystroke on some
+            // platforms (including WASM); using `event.text` would process
+            // both, doubling every character.
+            if let Key::Character(ref ch) = event.logical_key {
+                if !ch.is_empty() && ch.chars().all(|c| !c.is_control()) {
+                    let ev = ElementEvent::CharInput { ch: ch.parse().unwrap(), action: action.clone() };
+                    if let Some(root) = &app.widget_root {
+                        if dispatch_event(root.as_ref(), app.cursor_pos, &ev) {
+                            if let Some(window) = &app.window {
+                                window.request_redraw();
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // Handle named keys
+            if let Key::Named(named) = &event.logical_key {
+                let key = match named {
+                    WinitNamedKey::Backspace => widget::NamedKey::Backspace,
+                    WinitNamedKey::Delete => widget::NamedKey::Delete,
+                    WinitNamedKey::ArrowLeft => widget::NamedKey::ArrowLeft,
+                    WinitNamedKey::ArrowRight => widget::NamedKey::ArrowRight,
+                    WinitNamedKey::Home => widget::NamedKey::Home,
+                    WinitNamedKey::End => widget::NamedKey::End,
+                    WinitNamedKey::Enter => widget::NamedKey::Enter,
+                    WinitNamedKey::Escape => widget::NamedKey::Escape,
+                    WinitNamedKey::Tab => widget::NamedKey::Tab,
+                    other => widget::NamedKey::Other(format!("{:?}", other)),
+                };
+                let ev = ElementEvent::KeyInput { key, action };
+                if let Some(root) = &app.widget_root {
+                    if dispatch_event(root.as_ref(), app.cursor_pos, &ev) {
+                        if let Some(window) = &app.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+            }
         }
 
         WindowEvent::MouseWheel { delta, .. } => {

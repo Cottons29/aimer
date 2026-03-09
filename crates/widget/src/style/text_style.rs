@@ -1,5 +1,5 @@
 
-use color::prelude::Color;
+use color::prelude::{Color, Colors};
 
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy)]
@@ -49,7 +49,7 @@ pub enum TextAlign {
 }
 
 #[allow(dead_code)]
-#[derive(constructor::Constructor, Default, Clone)]
+#[derive(constructor::Constructor, Clone)]
 pub struct TextStyle  {
     #[constructor(default)]
     pub font_size: u32,
@@ -61,6 +61,19 @@ pub struct TextStyle  {
     pub color: Color,
     #[constructor(default)]
     pub text_overflow: TextOverflow,
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        Self {
+            font_size: 13,
+            font_style: FontStyle::Normal,
+            font_weight: FontWeight::Normal,
+            color: Colors::Black.into(),
+            text_overflow: TextOverflow::Clip,
+        }
+    }
+
 }
 
 #[allow(dead_code)]

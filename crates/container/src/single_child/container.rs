@@ -196,7 +196,7 @@ impl<T: Element> Drawable for RawContainer<T> {
             }
         }
 
-        self.border.draw(ctx.canvas, box_width, box_height, scale);
+        self.border.draw(ctx);
 
         let p_left = self.padding.left.value(box_width, scale);
         let p_top = self.padding.top.value(box_height, scale);
