@@ -11,6 +11,7 @@ use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
 use widget::{Drawable, Element, LayoutCache};
 use winit::window::Window;
+use color::prelude::ColorMixer;
 use events::element::ElementEvent;
 
 #[cfg(not(target_arch = "wasm32"))]
