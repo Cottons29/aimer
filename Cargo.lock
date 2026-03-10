@@ -2091,6 +2091,7 @@ dependencies = [
  "engine",
  "oxidize_cli",
  "oxidize_main",
+ "utils",
  "wasm-bindgen",
  "widget",
 ]
