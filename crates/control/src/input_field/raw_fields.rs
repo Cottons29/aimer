@@ -445,8 +445,9 @@ impl Element for RawTextField {
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let (w, h) = self.compute_dimensions(ctx);
-        let (ol, ot, or_, ob) = self.outline_strokes(w, h, ctx.scale);
-        ResolvedSize { width: w + ol + or_, height: h + ot + ob }
+        let scale = ctx.scale;
+        let (ol, ot, or, ob) = self.outline_strokes(w, h, scale);
+        ResolvedSize { width: w + ol + or, height: h + ot + ob }
     }
 }
 
