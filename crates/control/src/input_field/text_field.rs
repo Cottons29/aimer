@@ -4,18 +4,18 @@ use winit::window::CursorIcon::Default;
 use widget::base::{BuildContext, Colors};
 use widget::text::TextAlign;
 use widget::{Constructor, Element, TextStyle, Widget};
-
+use crate::input_field::controller::TextFieldController;
 use crate::input_field::raw_fields::{
-    Cursor, ExpandDirection, InputType, RawTextField, TextFieldController, TextFieldStyle,
+    Cursor, ExpandDirection, InputType, RawTextField, TextFieldStyle,
 };
 
 #[allow(dead_code)]
 #[derive(Constructor)]
 pub struct TextField {
     #[constructor(default)]
+    controller: TextFieldController,
+    #[constructor(default)]
     pub input_type: InputType,
-    #[constructor(default, into)]
-    pub text: String,
     #[constructor(default, into)]
     pub prompt: String,
     #[constructor(default, into)]
@@ -40,10 +40,6 @@ pub struct TextField {
     pub enable: bool,
     #[constructor(default)]
     pub expand: ExpandDirection,
-    #[constructor(default, into)]
-    pub box_height: Dimension,
-    #[constructor(default, into)]
-    pub box_width: Dimension,
     #[constructor(default)]
     pub style: TextFieldStyle,
     #[constructor(default)]
@@ -60,7 +56,7 @@ impl Widget for TextField {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawTextField {
             input_type:  self.input_type,
-            controller: TextFieldController::new(self.text.clone()),
+            controller: self.controller.clone(),
             prompt: self.prompt.clone(),
             hint: self.hint.clone(),
             hint_style: self.hint_style.clone(),
@@ -73,8 +69,8 @@ impl Widget for TextField {
             max_length: self.max_length,
             enable: self.enable,
             expand: self.expand,
-            box_height: self.box_height,
-            box_width: self.box_width,
+            // box_height: self.box_height,
+            // box_width: self.box_width,
             cursor: Cursor::new(self.cursor_color),
             style: TextFieldStyle {
                 background_color: self.style.background_color,
