@@ -66,7 +66,6 @@ export default defineConfig({
     }}
     </style>
   <body>
-    <div id="app"></div>
     <script type="module" src="/main.ts"></script>
   </body>
 </html>
