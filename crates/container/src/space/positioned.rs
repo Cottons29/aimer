@@ -202,6 +202,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
                 window: ctx.window,
                 #[cfg(not(target_arch = "wasm32"))]
                 async_handle: ctx.async_handle.clone(),
+                inherited_states: ctx.inherited_states.clone(),
             };
 
             self.child.draw(&child_ctx);

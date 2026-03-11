@@ -2,6 +2,7 @@ mod stateful_widget;
 mod stateless_widget;
 mod constructor;
 mod auto_wrapper;
+pub mod router;
 
 use proc_macro2::TokenStream;
 

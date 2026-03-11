@@ -8,6 +8,9 @@ resolver = "3"
 widget.workspace = true
 attribute.workspace =  true
 color.workspace = true
+events.workspace = true
+
+
 #####################
 winit.workspace = true
 utils.workspace = true

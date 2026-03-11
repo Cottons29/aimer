@@ -1,18 +1,19 @@
 use animation::AnimInstant;
-use attribute::dimension::Dimension;
-use attribute::size::{ResolvedSize, Size};
+use attribute::size::ResolvedSize;
 use std::cell::UnsafeCell;
+use std::sync::Arc;
 use widget::base::{BuildContext, Color, Colors};
-use widget::style::BoxConstraint;
 use widget::style::border::{BoxBorder, BoxOutline};
 use widget::text::{FontWeight, TextAlign};
-use widget::{Constructor, Drawable, Element, ElementEvent, KeyAction, LayoutSpacing, NamedKey, Spacing, TextStyle};
+use widget::{Constructor, Drawable, Element, LayoutSpacing, Spacing, TextStyle};
 
+use crate::input_field::controller::TextFieldController;
+use events::element::{ElementEvent, KeyAction, NamedKey};
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{
     Color as SkColor, Font, FontMgr, Paint, Rect, TextBlob, font_style::FontStyle as SkFontStyle, paint::Style,
 };
-use utils::debug;
+// use skia_safe::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
 thread_local! {
@@ -23,49 +24,6 @@ thread_local! {
 type Float = f32;
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
-
-pub struct TextFieldController {
-    text: UnsafeCell<String>,
-}
-
-impl TextFieldController {
-    pub fn new(text: String) -> Self {
-        Self { text: UnsafeCell::new(text) }
-    }
-
-    pub fn text(&self) -> &str {
-        unsafe { &*self.text.get() }
-    }
-
-    fn text_mut(&self) -> &mut String {
-        unsafe { &mut *self.text.get() }
-    }
-
-    pub fn set_text(&self, text: String) {
-        *self.text_mut() = text;
-    }
-
-    pub fn insert_char(&self, ch: char, offset: usize) {
-        let s = self.text_mut();
-        let byte_offset = s
-            .char_indices()
-            .nth(offset)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
-        s.insert(byte_offset, ch);
-    }
-
-    pub fn delete_char(&self, offset: usize) {
-        let s = self.text_mut();
-        if let Some((byte_offset, _ch)) = s.char_indices().nth(offset) {
-            s.remove(byte_offset);
-        }
-    }
-
-    pub fn char_count(&self) -> usize {
-        self.text().chars().count()
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputType {
@@ -118,7 +76,9 @@ impl Cursor {
     }
 
     fn set_visible(&self, v: bool) {
-        unsafe { *self.visible.get() = v; }
+        unsafe {
+            *self.visible.get() = v;
+        }
     }
 
     /// Toggle visibility if enough time has elapsed. Returns true if toggled.
@@ -126,7 +86,9 @@ impl Cursor {
         let now = AnimInstant::now();
         let last = unsafe { *self.last_blink.get() };
         if now.duration_since(last).as_millis() as u64 >= self.blink_rate_ms {
-            unsafe { *self.last_blink.get() = now; }
+            unsafe {
+                *self.last_blink.get() = now;
+            }
             let vis = self.is_visible();
             self.set_visible(!vis);
             true
@@ -138,7 +100,9 @@ impl Cursor {
     /// Reset cursor to visible and restart blink timer.
     fn reset_blink(&self) {
         self.set_visible(true);
-        unsafe { *self.last_blink.get() = AnimInstant::now(); }
+        unsafe {
+            *self.last_blink.get() = AnimInstant::now();
+        }
     }
 }
 
@@ -156,8 +120,6 @@ impl Default for ExpandDirection {
     }
 }
 
-
-
 #[derive(Clone, Constructor)]
 pub struct TextFieldStyle {
     #[constructor(default)]
@@ -167,12 +129,17 @@ pub struct TextFieldStyle {
     #[constructor(default)]
     pub outline: BoxOutline,
     #[constructor(default)]
-    pub padding: LayoutSpacing
+    pub padding: LayoutSpacing,
 }
 
 impl Default for TextFieldStyle {
     fn default() -> Self {
-        Self { background_color: Colors::White, border: BoxBorder::default(), padding: LayoutSpacing::all(Spacing::Px(4)), outline: BoxOutline::default() }
+        Self {
+            background_color: Colors::White,
+            border: BoxBorder::default(),
+            padding: LayoutSpacing::all(Spacing::Px(4)),
+            outline: BoxOutline::default(),
+        }
     }
 }
 
@@ -191,8 +158,6 @@ pub(crate) struct RawTextField {
     pub max_length: Option<usize>,
     pub enable: bool,
     pub expand: ExpandDirection,
-    pub box_height: Dimension,
-    pub box_width: Dimension,
     pub cursor: Cursor,
     pub style: TextFieldStyle,
     pub hover_style: Option<TextFieldStyle>,
@@ -262,13 +227,19 @@ impl RawTextField {
 
     fn active_style(&self) -> &TextFieldStyle {
         if !self.enable {
-            if let Some(ref s) = self.disabled_style { return s; }
+            if let Some(ref s) = self.disabled_style {
+                return s;
+            }
         }
         if self.is_focused() {
-            if let Some(ref s) = self.focus_style { return s; }
+            if let Some(ref s) = self.focus_style {
+                return s;
+            }
         }
         if self.is_hovered() {
-            if let Some(ref s) = self.hover_style { return s; }
+            if let Some(ref s) = self.hover_style {
+                return s;
+            }
         }
         &self.style
     }
@@ -277,26 +248,13 @@ impl RawTextField {
         let scale = ctx.scale;
         let constraint = ctx.box_constraint;
 
-        let width = match self.box_width {
-            Dimension::Px(w) => w * scale,
-            Dimension::Percent(p) => constraint.max_width * (p / 100.0),
-            Dimension::Auto => constraint.max_width,
-        };
-
-        let height = match self.box_height {
-            Dimension::Px(h) => h * scale,
-            Dimension::Percent(p) => constraint.max_height * (p / 100.0),
-            Dimension::Auto => {
-                let font_size = if self.text_style.font_size == 0 { 14 } else { self.text_style.font_size };
-                (font_size as Float + 8.0) * scale
-            }
-        };
-
-        (width.max(0.0), height.max(0.0))
+        (constraint.max_width, constraint.max_height)
     }
 
     fn outline_strokes(&self, box_width: Float, box_height: Float, scale: Float) -> (Float, Float, Float, Float) {
-        self.active_style().outline.strokes(box_width, box_height, scale)
+        self.active_style()
+            .outline
+            .strokes(box_width, box_height, scale)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -318,6 +276,178 @@ impl RawTextField {
             Ok(metrics) => metrics.width(),
             Err(_) => 0.0,
         }
+    }
+}
+
+impl Element for RawTextField {
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        if !self.enable {
+            return false;
+        }
+
+        match event {
+            ElementEvent::PointerDown(pos) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let is_inside = unsafe {
+                        if let Some(bounds) = *self.cached_bounds.get() {
+                            pos.x >= bounds.left
+                                && pos.x <= bounds.right
+                                && pos.y >= bounds.top
+                                && pos.y <= bounds.bottom
+                        } else {
+                            false
+                        }
+                    };
+
+                    return if is_inside {
+                        self.set_focused(true);
+                        self.cursor.set_offset(self.controller.char_count());
+                        self.cursor.reset_blink();
+                        true
+                    } else {
+                        self.set_focused(false);
+                        false
+                    };
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let is_inside = unsafe {
+                        if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
+                            pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom
+                        } else {
+                            false
+                        }
+                    };
+
+                    if is_inside {
+                        self.set_focused(true);
+                        self.cursor.set_offset(self.controller.char_count());
+                        self.cursor.reset_blink();
+                        return true;
+                    } else {
+                        self.set_focused(false);
+                        return false;
+                    }
+                }
+            }
+            ElementEvent::CharInput { ch, action } => {
+                if !self.is_focused() {
+                    return false;
+                }
+                // debug!("Pressed: {}, action: {:?}", ch, action);
+                if *action == KeyAction::Released {
+                    return false;
+                }
+
+                let offset = self.cursor.offset();
+                unsafe {
+                    self.controller.insert_char(*ch, offset);
+                }
+                self.cursor.set_offset(offset + 1);
+                self.cursor.reset_blink();
+                true
+            }
+            ElementEvent::KeyInput { key, action } => {
+                if !self.is_focused() {
+                    return false;
+                }
+                if *action == KeyAction::Released {
+                    return false;
+                }
+                let result = match key {
+                    NamedKey::Backspace => {
+                        let offset = self.cursor.offset();
+                        if offset > 0 {
+                            self.controller.delete_char(offset - 1);
+                            self.cursor.set_offset(offset - 1);
+                        }
+                        true
+                    }
+                    NamedKey::Delete => {
+                        let offset = self.cursor.offset();
+                        if offset < self.controller.char_count() {
+                            self.controller.delete_char(offset);
+                        }
+                        true
+                    }
+                    NamedKey::ArrowLeft => {
+                        let offset = self.cursor.offset();
+                        if offset > 0 {
+                            self.cursor.set_offset(offset - 1);
+                        }
+                        true
+                    }
+                    NamedKey::ArrowRight => {
+                        let offset = self.cursor.offset();
+                        if offset < self.controller.char_count() {
+                            self.cursor.set_offset(offset + 1);
+                        }
+                        true
+                    }
+                    NamedKey::Home => {
+                        self.cursor.set_offset(0);
+                        true
+                    }
+                    NamedKey::End => {
+                        self.cursor.set_offset(self.controller.char_count());
+                        true
+                    }
+                    NamedKey::Escape => {
+                        self.set_focused(false);
+                        true
+                    }
+                    _ => false,
+                };
+                if result {
+                    self.cursor.reset_blink();
+                }
+                result
+            }
+            ElementEvent::PointerMove(pos) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let is_inside = unsafe {
+                        if let Some(bounds) = *self.cached_bounds.get() {
+                            pos.x >= bounds.left
+                                && pos.x <= bounds.right
+                                && pos.y >= bounds.top
+                                && pos.y <= bounds.bottom
+                        } else {
+                            false
+                        }
+                    };
+                    let was_hovered = self.is_hovered();
+                    self.set_hovered(is_inside);
+                    was_hovered != is_inside
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let is_inside = unsafe {
+                        if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
+                            pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom
+                        } else {
+                            false
+                        }
+                    };
+                    let was_hovered = self.is_hovered();
+                    self.set_hovered(is_inside);
+                    was_hovered != is_inside
+                }
+            }
+            ElementEvent::Cancel => {
+                self.set_focused(false);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        let (w, h) = self.compute_dimensions(ctx);
+        let scale = ctx.scale;
+        let (ol, ot, or, ob) = self.outline_strokes(w, h, scale);
+        ResolvedSize { width: w + ol + or, height: h + ot + ob }
     }
 }
 
@@ -351,7 +481,11 @@ impl Drawable for RawTextField {
         bg_paint.set_style(Style::Fill);
 
         let rect = Rect::from_xywh(0.0, 0.0, box_width, box_height);
-        if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, scale) {
+        // debug!("Width: {box_width}, Height: {box_height}");
+        if let Some(radius) = style
+            .border
+            .get_uniform_radius(box_width, box_height, scale)
+        {
             use skia_safe::RRect;
             let rrect = RRect::new_rect_xy(rect, radius, radius);
             ctx.canvas.draw_rrect(rrect, &bg_paint);
@@ -371,7 +505,12 @@ impl Drawable for RawTextField {
 
         ctx.canvas.save();
         ctx.canvas.clip_rect(
-            Rect::from_xywh(pad_left, pad_top, (box_width - pad_left - pad_right).max(0.0), (box_height - pad_top - pad_bottom).max(0.0)),
+            Rect::from_xywh(
+                pad_left,
+                pad_top,
+                (box_width - pad_left - pad_right).max(0.0),
+                (box_height - pad_top - pad_bottom).max(0.0),
+            ),
             None,
             false,
         );
@@ -488,7 +627,9 @@ impl Drawable for RawTextField {
 
         // Cache absolute bounds for hit-testing
         // On WASM the canvas transform gives us the absolute position
-        let transform = canvas.get_transform().unwrap_or_else(|_| web_sys::DomMatrix::new().unwrap());
+        let transform = canvas
+            .get_transform()
+            .unwrap_or_else(|_| web_sys::DomMatrix::new().unwrap());
         let abs_x = transform.e();
         let abs_y = transform.f();
         unsafe {
@@ -501,7 +642,10 @@ impl Drawable for RawTextField {
         // --- Draw background ---
         let bg_color: Color = style.background_color.into();
         canvas.set_fill_style_str(&bg_color.to_css_color());
-        if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, scale) {
+        if let Some(radius) = style
+            .border
+            .get_uniform_radius(box_width, box_height, scale)
+        {
             canvas.begin_path();
             let _ = canvas.round_rect_with_f64(0.0, 0.0, box_width, box_height, radius);
             canvas.fill();
@@ -521,7 +665,12 @@ impl Drawable for RawTextField {
 
         canvas.save();
         canvas.begin_path();
-        canvas.rect(pad_left, pad_top, (box_width - pad_left - pad_right).max(0.0), (box_height - pad_top - pad_bottom).max(0.0));
+        canvas.rect(
+            pad_left,
+            pad_top,
+            (box_width - pad_left - pad_right).max(0.0),
+            (box_height - pad_top - pad_bottom).max(0.0),
+        );
         canvas.clip();
         let _ = canvas.translate(pad_left, pad_top);
 
@@ -639,205 +788,5 @@ impl Drawable for RawTextField {
             self.cursor.update_blink();
             ctx.window.request_redraw();
         }
-    }
-}
-
-impl Element for RawTextField {
-    fn size(&self) -> Option<Size> {
-        // Only report explicit (non-Auto) dimensions so the layout system
-        // falls back to computed_size() for Auto dimensions instead of
-        // resolving Auto to the full parent size.
-        let w = self.box_width;
-        let h = self.box_height;
-        match (w, h) {
-            (Dimension::Auto, Dimension::Auto) => None,
-            _ => {
-                let font_size = if self.text_style.font_size == 0 { 14 } else { self.text_style.font_size };
-                let intrinsic_height = font_size as Float + 8.0;
-                Some(Size {
-                    width: w,
-                    height: match h {
-                        Dimension::Auto => Dimension::Px(intrinsic_height),
-                        other => other,
-                    },
-                })
-            }
-        }
-    }
-
-    fn on_event(&self, event: &ElementEvent) -> bool {
-
-        if !self.enable {
-            return false;
-        }
-
-        match event {
-            ElementEvent::PointerDown(pos) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let is_inside = unsafe {
-                        if let Some(bounds) = *self.cached_bounds.get() {
-                            pos.x >= bounds.left
-                                && pos.x <= bounds.right
-                                && pos.y >= bounds.top
-                                && pos.y <= bounds.bottom
-                        } else {
-                            false
-                        }
-                    };
-
-                    return if is_inside {
-                        self.set_focused(true);
-                        self.cursor.set_offset(self.controller.char_count());
-                        self.cursor.reset_blink();
-                        true
-                    } else {
-                        self.set_focused(false);
-                        false
-                    }
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let is_inside = unsafe {
-                        if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
-                            pos.x >= left
-                                && pos.x <= right
-                                && pos.y >= top
-                                && pos.y <= bottom
-                        } else {
-                            false
-                        }
-                    };
-
-                    if is_inside {
-                        self.set_focused(true);
-                        self.cursor.set_offset(self.controller.char_count());
-                        self.cursor.reset_blink();
-                        return true;
-                    } else {
-                        self.set_focused(false);
-                        return false;
-                    }
-                }
-            }
-            ElementEvent::CharInput { ch, action } => {
-                if !self.is_focused() {
-                    return false;
-                }
-                debug!("Pressed: {}, action: {:?}", ch, action);
-                if *action == KeyAction::Released {
-                    return false;
-                }
-
-                let offset = self.cursor.offset();
-                self.controller.insert_char(*ch, offset);
-                self.cursor.set_offset(offset + 1);
-                self.cursor.reset_blink();
-                true
-
-
-            }
-            ElementEvent::KeyInput { key, action } => {
-                if !self.is_focused() {
-                    return false;
-                }
-                if *action == KeyAction::Released {
-                    return false;
-                }
-                let result = match key {
-                    NamedKey::Backspace => {
-                        let offset = self.cursor.offset();
-                        if offset > 0 {
-                            self.controller.delete_char(offset - 1);
-                            self.cursor.set_offset(offset - 1);
-                        }
-                        true
-                    }
-                    NamedKey::Delete => {
-                        let offset = self.cursor.offset();
-                        if offset < self.controller.char_count() {
-                            self.controller.delete_char(offset);
-                        }
-                        true
-                    }
-                    NamedKey::ArrowLeft => {
-                        let offset = self.cursor.offset();
-                        if offset > 0 {
-                            self.cursor.set_offset(offset - 1);
-                        }
-                        true
-                    }
-                    NamedKey::ArrowRight => {
-                        let offset = self.cursor.offset();
-                        if offset < self.controller.char_count() {
-                            self.cursor.set_offset(offset + 1);
-                        }
-                        true
-                    }
-                    NamedKey::Home => {
-                        self.cursor.set_offset(0);
-                        true
-                    }
-                    NamedKey::End => {
-                        self.cursor.set_offset(self.controller.char_count());
-                        true
-                    }
-                    NamedKey::Escape => {
-                        self.set_focused(false);
-                        true
-                    }
-                    _ => false,
-                };
-                if result {
-                    self.cursor.reset_blink();
-                }
-                result
-            }
-            ElementEvent::PointerMove(pos) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let is_inside = unsafe {
-                        if let Some(bounds) = *self.cached_bounds.get() {
-                            pos.x >= bounds.left
-                                && pos.x <= bounds.right
-                                && pos.y >= bounds.top
-                                && pos.y <= bounds.bottom
-                        } else {
-                            false
-                        }
-                    };
-                    let was_hovered = self.is_hovered();
-                    self.set_hovered(is_inside);
-                    was_hovered != is_inside
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let is_inside = unsafe {
-                        if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
-                            pos.x >= left
-                                && pos.x <= right
-                                && pos.y >= top
-                                && pos.y <= bottom
-                        } else {
-                            false
-                        }
-                    };
-                    let was_hovered = self.is_hovered();
-                    self.set_hovered(is_inside);
-                    was_hovered != is_inside
-                }
-            }
-            ElementEvent::Cancel => {
-                self.set_focused(false);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let (w, h) = self.compute_dimensions(ctx);
-        let (ol, ot, or_, ob) = self.outline_strokes(w, h, ctx.scale);
-        ResolvedSize { width: w + ol + or_, height: h + ot + ob }
     }
 }
