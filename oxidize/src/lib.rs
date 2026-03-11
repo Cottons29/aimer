@@ -25,3 +25,4 @@ pub mod color {
     pub use color::prelude::*;
 }
 
+pub use router;
