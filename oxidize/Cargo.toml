@@ -25,6 +25,7 @@ oxidize_main.workspace = true
 wasm-bindgen.workspace = true
 animation.workspace = true
 utils.workspace = true
+router.workspace = true
 ###############
 [target.'cfg(target_os = "windows")'.dependencies]
 oxidize_cli.workspace = true
