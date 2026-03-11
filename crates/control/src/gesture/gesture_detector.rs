@@ -3,6 +3,7 @@ use crate::gesture::GestureActions;
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
+use events::element::ElementEvent;
 use events::pointer::{PointerEvent, PointerPosition};
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{Paint, Rect};
@@ -11,8 +12,6 @@ use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
 use widget::{Drawable, Element, LayoutCache};
 use winit::window::Window;
-use color::prelude::ColorMixer;
-use events::element::ElementEvent;
 
 #[cfg(not(target_arch = "wasm32"))]
 type Float = f32;
@@ -63,6 +62,7 @@ impl<'a,E: Element> GestureDetectorElement<'a, E> {
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
         widget.visit_children(&mut |child| {
             Self::render_child(child, &child_ctx);
@@ -321,6 +321,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
         style.border.draw(&border_ctx);
         style.outline.draw(&border_ctx);
@@ -362,7 +363,9 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             },
             visible_rect: ctx.visible_rect,
             window: ctx.window,
+            #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
         Self::render_child(&self.child, &child_ctx);
 
@@ -447,6 +450,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             box_constraint: ctx.box_constraint,
             visible_rect: ctx.visible_rect,
             window: ctx.window,
+            inherited_states: ctx.inherited_states.clone(),
         };
         style.border.draw(&border_ctx);
         style.outline.draw(&border_ctx);
@@ -479,6 +483,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             },
             visible_rect: ctx.visible_rect,
             window: ctx.window,
+            inherited_states: ctx.inherited_states.clone(),
         };
         Self::render_child(&self.child, &child_ctx);
 
