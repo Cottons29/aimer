@@ -1,12 +1,14 @@
+use events::element::KeyAction;
 use crate::render::OxidizeAppConfiguration;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 use utils::debug;
-use widget::{ElementEvent, dispatch_event};
+use widget::{ dispatch_event};
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
+use events::element::{ElementEvent, NamedKey};
 
 pub(crate) fn handle_window_event(
     app: &mut OxidizeAppConfiguration,
@@ -77,11 +79,11 @@ pub(crate) fn handle_window_event(
             use winit::keyboard::{Key, NamedKey as WinitNamedKey};
 
             let action = if event.repeat {
-                widget::KeyAction::Repeat
+                KeyAction::Repeat
             } else {
                 match event.state {
-                    ElementState::Pressed => widget::KeyAction::Pressed,
-                    ElementState::Released => widget::KeyAction::Released,
+                    ElementState::Pressed => KeyAction::Pressed,
+                    ElementState::Released => KeyAction::Released,
                 }
             };
 
@@ -108,16 +110,16 @@ pub(crate) fn handle_window_event(
             // Handle named keys
             if let Key::Named(named) = &event.logical_key {
                 let key = match named {
-                    WinitNamedKey::Backspace => widget::NamedKey::Backspace,
-                    WinitNamedKey::Delete => widget::NamedKey::Delete,
-                    WinitNamedKey::ArrowLeft => widget::NamedKey::ArrowLeft,
-                    WinitNamedKey::ArrowRight => widget::NamedKey::ArrowRight,
-                    WinitNamedKey::Home => widget::NamedKey::Home,
-                    WinitNamedKey::End => widget::NamedKey::End,
-                    WinitNamedKey::Enter => widget::NamedKey::Enter,
-                    WinitNamedKey::Escape => widget::NamedKey::Escape,
-                    WinitNamedKey::Tab => widget::NamedKey::Tab,
-                    other => widget::NamedKey::Other(format!("{:?}", other)),
+                    WinitNamedKey::Backspace => NamedKey::Backspace,
+                    WinitNamedKey::Delete => NamedKey::Delete,
+                    WinitNamedKey::ArrowLeft => NamedKey::ArrowLeft,
+                    WinitNamedKey::ArrowRight => NamedKey::ArrowRight,
+                    WinitNamedKey::Home => NamedKey::Home,
+                    WinitNamedKey::End => NamedKey::End,
+                    WinitNamedKey::Enter => NamedKey::Enter,
+                    WinitNamedKey::Escape => NamedKey::Escape,
+                    WinitNamedKey::Tab => NamedKey::Tab,
+                    other => NamedKey::Other(format!("{:?}", other)),
                 };
                 let ev = ElementEvent::KeyInput { key, action };
                 if let Some(root) = &app.widget_root {

@@ -79,6 +79,7 @@ impl RawFlex {
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
         widget.visit_children(&mut |child| {
             Self::render_child(child, &child_ctx);
@@ -160,6 +161,7 @@ impl Drawable for RawFlex {
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
 
         // Pass 1: measure sized children to find remaining space for unsized ones
@@ -299,6 +301,7 @@ impl Drawable for RawFlex {
                     window: ctx.window,
                     #[cfg(not(target_arch = "wasm32"))]
                     async_handle: ctx.async_handle.clone(),
+                    inherited_states: ctx.inherited_states.clone(),
                 };
 
                 draw_commands.push((child.layer(), offset_x, offset_y, draw_ctx, child.as_ref()));
@@ -409,6 +412,7 @@ impl Element for RawFlex {
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
 
         for child in &self.children {

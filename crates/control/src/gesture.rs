@@ -1,4 +1,4 @@
-use crate::event::{PointerEvent, PointerPosition};
+use events::pointer::{PointerEvent, PointerPosition};
 use chrono::{Duration, Local};
 use std::cell::UnsafeCell;
 use std::future::Future;
@@ -258,7 +258,7 @@ fn distance(a: PointerPosition, b: PointerPosition) -> Float {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::{PointerEvent, PointerPosition};
+    use events::pointer::{PointerEvent, PointerPosition};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 

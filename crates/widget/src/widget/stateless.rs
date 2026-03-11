@@ -6,7 +6,7 @@ use attribute::size::{ResolvedSize, Size};
 // The trait is kept for backward compatibility if needed, but generally users should implement Widget directly.
 
 pub trait StatelessWidget {
-    fn build(&self) -> impl Widget;
+    fn build(&self, ctx: &BuildContext) -> impl Widget;
 }
 
 pub struct StatelessElement {

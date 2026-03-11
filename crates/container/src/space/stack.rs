@@ -48,6 +48,7 @@ impl Drawable for RawStackElement {
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
 
         let mut sorted_children: Vec<_> = self.children.iter().collect();

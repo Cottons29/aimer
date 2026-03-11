@@ -1,15 +1,16 @@
-use crate::event::{PointerEvent, PointerPosition};
 use crate::gesture::button::ButtonStyle;
 use crate::gesture::GestureActions;
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
+use events::element::ElementEvent;
+use events::pointer::{PointerEvent, PointerPosition};
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{Paint, Rect};
 use std::cell::UnsafeCell;
-use widget::base::{BuildContext, Color, ColorMixer};
+use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
-use widget::{Drawable, Element, ElementEvent, LayoutCache};
+use widget::{Drawable, Element, LayoutCache};
 use winit::window::Window;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -21,6 +22,8 @@ type Float = f64;
 pub struct GestureDetectorElement<'a, E: Element> {
     pub(crate) style: ButtonStyle,
     pub(crate) hover_style: ButtonStyle,
+    pub(crate) pressed_style: ButtonStyle,
+    pub(crate) disabled_style: ButtonStyle,
     pub(crate) is_disabled: bool,
     pub(crate) is_hovered: UnsafeCell<bool>,
     pub(crate) is_pressed: UnsafeCell<bool>,
@@ -59,6 +62,7 @@ impl<'a,E: Element> GestureDetectorElement<'a, E> {
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
         widget.visit_children(&mut |child| {
             Self::render_child(child, &child_ctx);
@@ -109,7 +113,17 @@ impl<'a,E: Element> GestureDetectorElement<'a, E> {
 
     #[inline]
     fn active_style(&self) -> &ButtonStyle {
-        unsafe { if *self.is_hovered.get() && !self.is_disabled { &self.hover_style } else { &self.style } }
+        unsafe {
+            if self.is_disabled {
+                &self.disabled_style
+            } else if *self.is_pressed.get() {
+                &self.pressed_style
+            } else if *self.is_hovered.get() {
+                &self.hover_style
+            } else {
+                &self.style
+            }
+        }
     }
 
     fn compute_dimensions(&self, ctx: &BuildContext) -> (Float, Float) {
@@ -236,7 +250,11 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
             Dimension::Auto => self.child.computed_size(ctx).height,
         };
 
-        ResolvedSize { width: width.max(0.0), height: height.max(0.0) }
+        let width = width.max(0.0);
+        let height = height.max(0.0);
+        let (ol, ot, or, ob) = style.outline.strokes(width, height, scale);
+
+        ResolvedSize { width: width + ol + or, height: height + ot + ob }
     }
 }
 
@@ -247,6 +265,11 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             *self.is_dirty.get() = false;
         }
         let (box_width, box_height) = self.compute_dimensions(ctx);
+        let style = self.active_style();
+
+        ctx.canvas.save();
+        let (ol, ot, _or, _ob) = style.outline.strokes(box_width, box_height, ctx.scale);
+        ctx.canvas.translate((ol, ot));
 
         let matrix = ctx.canvas.local_to_device_as_3x3();
         let abs_x = matrix.translate_x();
@@ -264,8 +287,6 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
                 *self.is_hovered.get() = cursor_inside;
             }
         }
-        
-        let style = self.active_style();
 
         // Draw background
         use skia_safe::Color as SkColor;
@@ -280,7 +301,30 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         }
 
         let rect = Rect::from_xywh(0.0, 0.0, box_width, box_height);
-        ctx.canvas.draw_rect(rect, &paint);
+        if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, ctx.scale) {
+            use skia_safe::RRect;
+            let rrect = RRect::new_rect_xy(rect, radius, radius);
+            ctx.canvas.draw_rrect(rrect, &paint);
+        } else {
+            ctx.canvas.draw_rect(rect, &paint);
+        }
+
+        // Draw border and outline
+        let border_ctx = BuildContext {
+            parent_size: ResolvedSize { width: box_width, height: box_height },
+            canvas: ctx.canvas,
+            scale: ctx.scale,
+            parent_pos: ctx.parent_pos,
+            cursor_pos: ctx.cursor_pos,
+            box_constraint: ctx.box_constraint,
+            visible_rect: ctx.visible_rect,
+            window: ctx.window,
+            #[cfg(not(target_arch = "wasm32"))]
+            async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
+        };
+        style.border.draw(&border_ctx);
+        style.outline.draw(&border_ctx);
 
         // Draw pressed overlay for visual feedback
         if unsafe { *self.is_pressed.get() } && !self.is_disabled {
@@ -288,7 +332,13 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             pressed_paint.set_anti_alias(true);
             pressed_paint.set_color(SkColor::from_argb(40, 0, 0, 0));
             pressed_paint.set_style(Style::Fill);
-            ctx.canvas.draw_rect(rect, &pressed_paint);
+            if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, ctx.scale) {
+                use skia_safe::RRect;
+                let rrect = RRect::new_rect_xy(rect, radius, radius);
+                ctx.canvas.draw_rrect(rrect, &pressed_paint);
+            } else {
+                ctx.canvas.draw_rect(rect, &pressed_paint);
+            }
         }
 
         // Draw child centered within the button bounds
@@ -313,10 +363,13 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             },
             visible_rect: ctx.visible_rect,
             window: ctx.window,
+            #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
         Self::render_child(&self.child, &child_ctx);
 
+        ctx.canvas.restore();
         ctx.canvas.restore();
     }
 
@@ -327,6 +380,16 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         }
 
         let (box_width, box_height) = self.compute_dimensions(ctx);
+        let style = self.active_style();
+
+        let (ol, ot, _or, _ob) = style.outline.strokes(box_width, box_height, ctx.scale);
+        ctx.canvas.save();
+        match ctx.canvas.translate(ol, ot) {
+            Ok(_) => (),
+            Err(e) => {
+                println!("{:?}", e);
+            }
+        }
 
         if let Ok(transform) = ctx.canvas.get_transform() {
             let abs_x = transform.e();
@@ -346,7 +409,6 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         }
 
         // Now pick the correct style based on reconciled hover state
-        let style = self.active_style();
 
         // Draw background
         let color_str = style.color.to_css_color();
@@ -355,7 +417,13 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         }
 
         ctx.canvas.set_fill_style_str(&color_str);
-        ctx.canvas.fill_rect(0.0, 0.0, box_width, box_height);
+        if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, ctx.scale) {
+            ctx.canvas.begin_path();
+            let _ = ctx.canvas.round_rect_with_f64(0.0, 0.0, box_width, box_height, radius);
+            ctx.canvas.fill();
+        } else {
+            ctx.canvas.fill_rect(0.0, 0.0, box_width, box_height);
+        }
 
         if self.is_disabled {
             ctx.canvas.set_global_alpha(1.0);
@@ -363,8 +431,29 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
 
         if unsafe { *self.is_pressed.get() } && !self.is_disabled {
             ctx.canvas.set_fill_style_str("rgba(0, 0, 0, 0.15)");
-            ctx.canvas.fill_rect(0.0, 0.0, box_width, box_height);
+            if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, ctx.scale) {
+                ctx.canvas.begin_path();
+                let _ = ctx.canvas.round_rect_with_f64(0.0, 0.0, box_width, box_height, radius);
+                ctx.canvas.fill();
+            } else {
+                ctx.canvas.fill_rect(0.0, 0.0, box_width, box_height);
+            }
         }
+
+        // Draw border and outline
+        let border_ctx = BuildContext {
+            parent_size: ResolvedSize { width: box_width, height: box_height },
+            canvas: ctx.canvas,
+            scale: ctx.scale,
+            parent_pos: ctx.parent_pos,
+            cursor_pos: ctx.cursor_pos,
+            box_constraint: ctx.box_constraint,
+            visible_rect: ctx.visible_rect,
+            window: ctx.window,
+            inherited_states: ctx.inherited_states.clone(),
+        };
+        style.border.draw(&border_ctx);
+        style.outline.draw(&border_ctx);
 
         // Draw child centered within the button bounds
         let child_size = self.child.computed_size(ctx);
@@ -394,9 +483,11 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             },
             visible_rect: ctx.visible_rect,
             window: ctx.window,
+            inherited_states: ctx.inherited_states.clone(),
         };
         Self::render_child(&self.child, &child_ctx);
 
+        ctx.canvas.restore();
         ctx.canvas.restore();
     }
 }

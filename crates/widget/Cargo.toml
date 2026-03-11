@@ -12,7 +12,7 @@ widget_attr.workspace = true
 attribute.workspace = true
 constructor.workspace = true
 utils.workspace = true
-
+events.workspace = true
 #####################
 winit.workspace = true
 once_cell.workspace = true

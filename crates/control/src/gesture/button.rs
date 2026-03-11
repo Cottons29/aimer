@@ -4,7 +4,7 @@ use std::cell::UnsafeCell;
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
 use widget::{Constructor, Element, LayoutCache, Widget, base::*};
-
+use widget::style::border::{BorderStyle, BoxBorder, BoxOutline};
 use crate::gesture::gesture_detector::GestureDetectorElement;
 use crate::gesture::{CallbackHolder, GestureActions};
 
@@ -17,11 +17,15 @@ pub struct ButtonStyle {
     pub height: Dimension,
     #[constructor(default, into)]
     pub width: Dimension,
+    #[constructor(default)]
+    pub border: BoxBorder,
+    #[constructor(default)]
+    pub outline: BoxOutline
 }
 
 #[allow(dead_code)]
 #[derive(Constructor)]
-pub struct Button {
+pub struct Button<W: Widget> {
     #[constructor(default, into)]
     pub on_press: CallbackHolder,
     #[constructor(default, into)]
@@ -32,10 +36,14 @@ pub struct Button {
     pub hover_style: ButtonStyle,
     #[constructor(default)]
     pub is_disabled: bool,
-    child: Box<dyn Widget>,
+    #[constructor(default)]
+    pub pressed_style: ButtonStyle,
+    #[constructor(default)]
+    pub disabled_style: ButtonStyle,
+    child: W,
 }
 
-impl Widget for Button {
+impl<W: Widget> Widget for Button<W> {
     #[inline]
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let child = self.child.to_element(ctx);
@@ -51,6 +59,8 @@ impl Widget for Button {
         Box::new(GestureDetectorElement {
             style: self.style,
             hover_style: self.hover_style,
+            pressed_style: self.pressed_style,
+            disabled_style: self.disabled_style,
             is_disabled: self.is_disabled,
             is_hovered: UnsafeCell::new(false),
             is_pressed: UnsafeCell::new(false),

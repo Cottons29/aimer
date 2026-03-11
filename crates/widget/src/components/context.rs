@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::any::{Any, TypeId};
+use std::sync::Arc;
 use crate::style::BoxConstraint;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
@@ -8,35 +11,47 @@ use tokio::runtime::Handle;
 use winit::window::Window;
 
 #[cfg(target_arch = "wasm32")]
-type FLOAT = f64;
+type RenderingCanvas = web_sys::CanvasRenderingContext2d;
 #[cfg(not(target_arch = "wasm32"))]
-type FLOAT = f32;
+type RenderingCanvas = skia_safe::Canvas;
 
-#[derive(Debug, Clone)]
+#[cfg(target_arch = "wasm32")]
+type Float = f64;
+#[cfg(not(target_arch = "wasm32"))]
+type Float = f32;
+
+#[derive(Clone)]
 pub struct BuildContext<'a> {
     pub parent_size: ResolvedSize,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub canvas: &'a Canvas,
-    #[cfg(target_arch = "wasm32")]
-    pub canvas: &'a web_sys::CanvasRenderingContext2d,
-    pub scale: FLOAT,
+    pub canvas: &'a RenderingCanvas,
+    pub scale: Float,
     pub parent_pos: Vec2d,
     pub cursor_pos: Vec2d,
     pub box_constraint: BoxConstraint,
-    pub visible_rect: Option<(FLOAT, FLOAT, FLOAT, FLOAT)>, // (x, y, width, height)
+    pub visible_rect: Option<(Float, Float, Float, Float)>, // (x, y, width, height)
     pub window: &'static Window,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_handle: Handle,
+    pub inherited_states: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+}
+
+impl<'a> std::fmt::Debug for BuildContext<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuildContext")
+            .field("parent_size", &self.parent_size)
+            .field("scale", &self.scale)
+            .field("parent_pos", &self.parent_pos)
+            .field("cursor_pos", &self.cursor_pos)
+            .field("box_constraint", &self.box_constraint)
+            .finish()
+    }
 }
 
 impl<'a> BuildContext<'a> {
     pub fn new(
-        #[cfg(not(target_arch = "wasm32"))]
-        canvas: &'a Canvas,
-        #[cfg(target_arch = "wasm32")]
-        canvas: &'a web_sys::CanvasRenderingContext2d,
+        canvas: &'a RenderingCanvas,
         size: ResolvedSize,
-        scale: FLOAT,
+        scale: Float,
         parent_pos: Vec2d,
         cursor_pos: Vec2d,
         window: &'static Window,
@@ -54,6 +69,17 @@ impl<'a> BuildContext<'a> {
             window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle,
+            inherited_states: HashMap::new(),
         }
+    }
+
+    pub fn insert_state<T: Any + Send + Sync>(&mut self, state: T) {
+        self.inherited_states.insert(TypeId::of::<T>(), Arc::new(state));
+    }
+
+    pub fn get_state<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
+        self.inherited_states
+            .get(&TypeId::of::<T>())
+            .and_then(|arc| arc.clone().downcast::<T>().ok())
     }
 }

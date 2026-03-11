@@ -7,8 +7,8 @@ use std::process::exit;
 use std::sync::Arc;
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use winit::window::Window;
-
-use crate::{base::*, components::element::ElementEvent, Drawable, Element, Widget};
+use events::element::ElementEvent;
+use crate::{base::*, Drawable, Element, Widget};
 
 /// A `Send + Sync` wrapper around `UnsafeCell<Box<dyn Element>>`.
 /// Safety: the rendering pipeline is single-threaded, so concurrent access does not occur.
@@ -229,7 +229,7 @@ pub trait State<W: StatefulWidget> {
     {
     }
 
-    fn build(&self) -> impl Widget;
+    fn build(&self, ctx: &BuildContext) -> impl Widget;
 }
 pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element>;
 pub struct StatefulElement {
@@ -275,14 +275,14 @@ impl StatefulElement {
             while let Ok(mutation) = rx_for_rebuild.try_recv() {
                 mutation(s);
             }
-            let child_widget = s.build();
+            let child_widget = s.build(ctx);
             Widget::to_element(&child_widget, ctx)
         });
 
         let child = {
             // Safety: single-threaded — initial build during construction.
             let s = unsafe { &*state_cell.0.get() };
-            Widget::to_element(&s.build(), ctx)
+            Widget::to_element(&s.build(ctx), ctx)
         };
 
         let updater = StateUpdater::new(tx, state_cell, dirty.clone(), ctx.window);
@@ -375,9 +375,6 @@ impl Element for StatefulElement {
                 ElementEvent::CharInput { .. } => Vec2d::default(),
                 ElementEvent::KeyInput { .. } => Vec2d::default(),
                 ElementEvent::Cancel => Vec2d::default(),
-
-                // todo!()
-                _ => Vec2d::default(),
             },
             event,
         )

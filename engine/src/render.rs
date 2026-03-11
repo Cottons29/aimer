@@ -349,6 +349,7 @@ impl OxidizeAppConfiguration {
                     visible_rect: None,
                     window,
                     async_handle: self.async_runtime.handle().clone(),
+                    inherited_states: std::collections::HashMap::new(),
                 };
                 ctx.canvas.clear(skia_safe::Color::WHITE);
                 #[allow(clippy::collapsible_if)]
@@ -414,6 +415,7 @@ impl OxidizeAppConfiguration {
                     visible_rect: None,
                     window,
                     async_handle: self.async_runtime.handle().clone(),
+                    inherited_states: std::collections::HashMap::new(),
                 };
                 ctx.canvas.clear(skia_safe::Color::WHITE);
                 #[allow(clippy::collapsible_if)]

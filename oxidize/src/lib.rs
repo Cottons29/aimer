@@ -13,6 +13,10 @@ pub use engine;
 pub use oxidize_main::main;
 pub use animation::*;
 
+pub mod console {
+    pub use utils::*;
+}
+
 pub mod wasm_bindgen {
     pub use wasm_bindgen::*;
 }
@@ -21,3 +25,4 @@ pub mod color {
     pub use color::prelude::*;
 }
 
+pub use router;

@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+
 members = [
     ".",
     "engine",
@@ -17,7 +18,7 @@ members = [
     "crates/animation",
     "macros/oxidize_main",
     "oxidize_cli"
-]
+    , "crates/events", "crates/router"]
 
 
 [workspace.dependencies]
@@ -32,19 +33,20 @@ engine = { path = "./engine" }
 widget = { path = "crates/widget" }
 widget_attr = { path = "macros/widget_attr" }
 color = { path = "crates/color" }
-attribute = {path = "crates/attribute"}
-utils = {path = "crates/utils"}
-oxidize_main = {path = "macros/oxidize_main"}
-oxidize_cli = {path = "oxidize_cli"}
-
+attribute = { path = "crates/attribute" }
+utils = { path = "crates/utils" }
+oxidize_main = { path = "macros/oxidize_main" }
+oxidize_cli = { path = "oxidize_cli" }
+events = { path = "crates/events" }
+router = {path = "crates/router" }
 
 ######################################################################
 
 
 web-sys = { version = "0.3.91", features = ["CanvasRenderingContext2d", "DomMatrix", "TextMetrics"] }
 wasm-bindgen = "0.2.114"
-winit = {version =  "0.30.12", features = ["android-native-activity"] }
-skia-safe = { version = "0.93.1"}
+winit = { version = "0.30.12", features = ["android-native-activity"] }
+skia-safe = { version = "0.93.1" }
 raw-window-handle = "0.6.2"
 objc2 = { version = "0.6.4", default-features = false }
 objc2-core-foundation = { version = "0.3.2", default-features = false }
@@ -64,13 +66,13 @@ fxhash = "0.2.1"
 parking_lot = "0.12.5"
 crossbeam = "0.8.4"
 colored = "3.1.1"
-log = {version = "0.4.29"}
+log = { version = "0.4.29" }
 tokio = "1.45.0"
 crossbeam-channel = "0.5.15"
 fancy-regex = "0.17.0"
 once_cell = "1.21.3"
 smallvec = "1.13.2"
-
+url = "2.5.8"
 
 
 # Oxidize cli dependencies
