@@ -108,6 +108,7 @@ impl Element for RawSizedBox {
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
 
         child_ctx.box_constraint.max_width = self.width.resolve(ctx.box_constraint.max_width, scale);
