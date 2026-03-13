@@ -6,6 +6,6 @@ pub trait Route: Clone + Send + Sync + 'static {
     fn format(&self) -> String;
 }
 
-pub trait Router: Widget + Route {
+pub trait Router: Widget {
     fn build(&self, ctx: &BuildContext) -> Box<dyn Widget>;
 }

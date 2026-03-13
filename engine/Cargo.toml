@@ -16,6 +16,7 @@ color.workspace = true
 attribute.workspace = true
 utils.workspace = true
 events.workspace = true
+router.workspace = true
 
 
 #################
