@@ -7,7 +7,7 @@ pub struct RouterCodegen;
 
 impl RouterCodegen {
     pub fn generate(input: TokenStream) -> TokenStream {
-        let item_enum = match parse2::<ItemEnum>(input) {
+        let mut item_enum = match parse2::<ItemEnum>(input) {
             Ok(item) => item,
             Err(err) => return err.to_compile_error(),
         };
@@ -16,10 +16,12 @@ impl RouterCodegen {
         let mut parse_arms = Vec::new();
         let mut format_arms = Vec::new();
 
-        for variant in &item_enum.variants {
+        for variant in &mut item_enum.variants {
             let variant_name = &variant.ident;
             let mut routes = Vec::new();
 
+            // Extract routes and remove the attributes from the AST
+            let mut new_attrs = Vec::new();
             for attr in &variant.attrs {
                 if attr.path().is_ident("route") {
                     if let Ok(meta) = attr.parse_args::<LitStr>() {
@@ -53,8 +55,11 @@ impl RouterCodegen {
                             }
                         }
                     }
+                } else {
+                    new_attrs.push(attr.clone());
                 }
             }
+            variant.attrs = new_attrs;
 
             if routes.is_empty() {
                 routes.push(format!("/{}", variant_name.to_string().to_lowercase()));
@@ -68,19 +73,13 @@ impl RouterCodegen {
             // This is complex for a generic script, but let's assume simple string interpolation for now.
             
             // For effort < 1.0, generating exact regex match logic
-            let mut bind_pattern = quote! { Self::#variant_name };
-            
             match &variant.fields {
                 Fields::Named(fields) => {
                     let field_names: Vec<_> = fields.named.iter().map(|f| &f.ident).collect();
-                    bind_pattern = quote! { Self::#variant_name { #(#field_names),* } };
+                    let bind_pattern = quote! { Self::#variant_name { #(#field_names),* } };
                     
-                    // Format strings
-                    // We simply use the route string and replace {field} with {}
-                    // This is just a placeholder implementation
                     format_arms.push(quote! {
                         #bind_pattern => {
-                            // Basic format string replace placeholder logic
                             let mut s = #first_route.to_string();
                             #(
                                 s = s.replace(&format!("{{{}}}", stringify!(#field_names)), &#field_names.to_string());
@@ -91,12 +90,14 @@ impl RouterCodegen {
                 },
                 Fields::Unnamed(fields) => {
                     let field_names: Vec<_> = (0..fields.unnamed.len()).map(|i| format_ident!("arg_{}", i)).collect();
-                    bind_pattern = quote! { Self::#variant_name( #(#field_names),* ) };
+                    let bind_pattern = quote! { Self::#variant_name( #(#field_names),* ) };
                     
-                    // Simple logic for unnamed fields format
                     format_arms.push(quote! {
                         #bind_pattern => {
                             let mut s = #first_route.to_string();
+                            #(
+                                s = s.replacen("{}", &#field_names.to_string(), 1);
+                            )*
                             s
                         },
                     });
@@ -108,14 +109,84 @@ impl RouterCodegen {
                 }
             }
 
-            // For parse, generate basic string matches or segment parsing
-            for route in routes {
-                parse_arms.push(quote! {
-                    if path == #route {
-                        // Return unit variant if it's an exact match and has no fields
-                        // For fields, this requires segment splitting logic
+            for route in &routes {
+                let template_segments: Vec<&str> = route.split('/').collect();
+                let n_segments = template_segments.len();
+
+                let parse_arm = match &variant.fields {
+                    Fields::Named(fields) => {
+                        let field_names: Vec<_> = fields.named.iter().map(|f| &f.ident).collect();
+
+                        // For each field, find which segment index it corresponds to
+                        let mut field_indices: Vec<usize> = Vec::new();
+                        for field_name in &field_names {
+                            let placeholder = format!("{{{}}}", field_name.as_ref().unwrap());
+                            let idx = template_segments.iter().position(|s| *s == placeholder).unwrap_or(0);
+                            field_indices.push(idx);
+                        }
+
+                        // Build static segment checks (non-placeholder segments)
+                        let static_checks: Vec<_> = template_segments.iter().enumerate()
+                            .filter(|(_, s)| !s.starts_with('{') || !s.ends_with('}'))
+                            .map(|(i, s)| quote! { parts[#i] == #s })
+                            .collect();
+
+                        let field_extracts = field_names.iter().zip(field_indices.iter()).map(|(name, idx)| {
+                            quote! {
+                                let #name = parts[#idx].parse().ok()?;
+                            }
+                        });
+
+                        quote! {
+                            {
+                                let parts: Vec<&str> = path.splitn(#n_segments + 1, '/').collect();
+                                if parts.len() == #n_segments #( && #static_checks )* {
+                                    #(#field_extracts)*
+                                    return Some(Self::#variant_name { #(#field_names),* });
+                                }
+                            }
+                        }
+                    },
+                    Fields::Unnamed(fields) => {
+                        let n_fields = fields.unnamed.len();
+                        // Find indices of `{}` placeholders
+                        let placeholder_indices: Vec<usize> = template_segments.iter().enumerate()
+                            .filter(|(_, s)| **s == "{}")
+                            .map(|(i, _)| i)
+                            .collect();
+
+                        let static_checks: Vec<_> = template_segments.iter().enumerate()
+                            .filter(|(_, s)| **s != "{}")
+                            .map(|(i, s)| quote! { parts[#i] == #s })
+                            .collect();
+
+                        let arg_names: Vec<_> = (0..n_fields).map(|i| format_ident!("arg_{}", i)).collect();
+                        let field_extracts = arg_names.iter().zip(placeholder_indices.iter()).map(|(name, idx)| {
+                            quote! {
+                                let #name = parts[#idx].parse().ok()?;
+                            }
+                        });
+
+                        quote! {
+                            {
+                                let parts: Vec<&str> = path.splitn(#n_segments + 1, '/').collect();
+                                if parts.len() == #n_segments #( && #static_checks )* {
+                                    #(#field_extracts)*
+                                    return Some(Self::#variant_name( #(#arg_names),* ));
+                                }
+                            }
+                        }
+                    },
+                    Fields::Unit => {
+                        quote! {
+                            if path == #route {
+                                return Some(Self::#variant_name);
+                            }
+                        }
                     }
-                });
+                };
+
+                parse_arms.push(parse_arm);
             }
         }
 
@@ -124,15 +195,14 @@ impl RouterCodegen {
         quote! {
             #item_enum
 
-            impl router::RouteParser<#enum_name> for #enum_name {
-                fn parse(path: &str) -> #enum_name {
-                    // Fallback stub for parse
-                    // Advanced parsing logic using segment splits or regex should be generated here
-                    #enum_name::#first_variant
+            impl router::Route for #enum_name {
+                fn parse(path: &str) -> Option<#enum_name> {
+                    #(#parse_arms)*
+                    None
                 }
 
-                fn format(route: &#enum_name) -> String {
-                    match route {
+                fn format(&self) -> String {
+                    match self {
                         #(#format_arms)*
                         _ => "/".to_string()
                     }

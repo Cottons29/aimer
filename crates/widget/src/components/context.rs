@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::any::{Any, TypeId};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use crate::style::BoxConstraint;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
@@ -32,7 +32,7 @@ pub struct BuildContext<'a> {
     pub window: &'static Window,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_handle: Handle,
-    pub inherited_states: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+    pub inherited_states: Arc<RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>,
 }
 
 impl<'a> std::fmt::Debug for BuildContext<'a> {
@@ -69,16 +69,17 @@ impl<'a> BuildContext<'a> {
             window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle,
-            inherited_states: HashMap::new(),
+            inherited_states: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn insert_state<T: Any + Send + Sync>(&mut self, state: T) {
-        self.inherited_states.insert(TypeId::of::<T>(), Arc::new(state));
+    pub fn insert_state<T: Any + Send + Sync>(&self, state: T) {
+        self.inherited_states.write().unwrap().insert(TypeId::of::<T>(), Arc::new(state));
     }
 
     pub fn get_state<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
         self.inherited_states
+            .read().unwrap()
             .get(&TypeId::of::<T>())
             .and_then(|arc| arc.clone().downcast::<T>().ok())
     }

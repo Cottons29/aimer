@@ -14,8 +14,8 @@ pub struct StatelessElement {
 }
 
 impl Drawable for StatelessElement {
-    fn draw(&self, _ctx: &BuildContext) {
-        // Stateless element doesn't draw itself
+    fn draw(&self, ctx: &BuildContext) {
+        self.child.draw(ctx);
     }
 }
 

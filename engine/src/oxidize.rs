@@ -17,7 +17,6 @@ pub struct OxidizeApp;
 impl OxidizeApp {
     pub fn start(widget : impl Widget + 'static) {
         if APP_STARTED.swap(true, Ordering::SeqCst) {
-            utils::error!("OxidizeApp::start called multiple times. Ignoring subsequent calls.");
             return;
         }
 
@@ -68,10 +67,7 @@ impl OxidizeApp {
             #[cfg(not(target_arch = "wasm32"))]
             async_runtime,
         };
-
-
-
-        utils::info!("Running App...");
+        
         // On iOS, this function never returns.
         match event_loop.run_app(&mut app) {
             Ok(_) => utils::info!("EventLoop finished successfully"),

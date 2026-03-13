@@ -12,6 +12,7 @@ use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
 use widget::{Drawable, Element, LayoutCache};
 use winit::window::Window;
+use color::prelude::ColorMixer;
 
 #[cfg(not(target_arch = "wasm32"))]
 type Float = f32;

@@ -37,15 +37,15 @@ impl Widget for SizedBox {
     }
 }
 
-pub struct RawSizedBox {
-    width: Dimension,
-    height: Dimension,
-    color: Color,
-    child: Box<dyn Element>,
-    cache: LayoutCache,
+pub struct RawSizedBox<E: Element> {
+    pub(crate) width: Dimension,
+    pub(crate) height: Dimension,
+    pub(crate) color: Color,
+    pub(crate) child: E,
+    pub(crate) cache: LayoutCache,
 }
 
-impl Drawable for RawSizedBox {
+impl<E: Element> Drawable for RawSizedBox<E> {
     #[cfg(not(target_arch = "wasm32"))]
     fn draw(&self, ctx: &BuildContext) {
         use skia_safe::Paint;
@@ -76,7 +76,7 @@ impl Drawable for RawSizedBox {
     }
 }
 
-impl Element for RawSizedBox {
+impl<E: Element> Element for RawSizedBox<E> {
 
     fn size(&self) -> Option<Size> {
         match (self.width, self.height) {

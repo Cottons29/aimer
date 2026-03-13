@@ -195,7 +195,7 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
     };
 
     // 3. Generate Declarative Macro
-    let macro_name = name.clone();
+    let macro_name = Ident::new(&name.to_string(), proc_macro2::Span::call_site());
     // Macro Rule: Field Matcher
     // Matches: field_name: value
     let field_rules = public_fields.iter().map(|target| {
