@@ -2,49 +2,9 @@
 
 The Oxidize framework uses a Flexbox-inspired layout engine that allows you to easily structure your UI horizontally, vertically, or in custom box alignments. 
 
-## Flexbox-Inspired Containers
+## Single Child Layouts
 
-### Flex
-
-The foundation of the layout system is the `Flex!` macro, which arranges its children in a flexible box layout.
-- **`alignment`**: Defines how the children should be aligned within the box.
-- **`spacing`**: Controls the space between children.
-- **`direction`**: Defines the direction of the layout (e.g. `Horizontal`, `Vertical`).
-
-
-
-
-
-```rust
-Flex!(
-    alignment: BoxAlignment::Center,
-    children: vec![
-        Text!("Left"),
-        Text!("Center"),
-        Text!("Right"),
-    ],
-    // Optional spacing or alignment attributes can be applied here
-)
-```
-
-> Note: Consider using `Row!` and `Column!` instead of `Flex!` for readability and consistency.
-
-### Row and Column
-
-To align child widgets linearly, use `Row!` and `Column!`:
-- **`Row!`**: Alway arranges its children horizontally.
-- **`Column!`**: Alway arranges its children vertically.
-
-```rust
-Row!(
-    children: vec![
-        Text!("Left"),
-        Text!("Center"),
-        Text!("Right"),
-    ],
-    // Optional spacing or alignment attributes can be applied here
-)
-```
+The Container widget that wraps another widget, allowing you to easily add structural element We are provide the following layout widgets:
 
 ### The Container Widget
 
@@ -92,7 +52,7 @@ Container!(!(
     )
 )
 ```
-**Use `ZeroSizedBox!`** 
+**Use `ZeroSizedBox!`**
 
 ```rust
 Container!(!(
@@ -102,6 +62,52 @@ Container!(!(
 
 > Note: `ZeroSizedBox` has better performance than `SizedBox` while `ZeroSizedBox` is completely skip the layout.
 
+
+
+## Flexbox-Inspired Containers
+
+
+### Flex
+
+The foundation of the layout system is the `Flex!` macro, which arranges its children in a flexible box layout.
+- **`alignment`**: Defines how the children should be aligned within the box.
+- **`spacing`**: Controls the space between children.
+- **`direction`**: Defines the direction of the layout (e.g. `Horizontal`, `Vertical`).
+
+
+
+
+
+```rust
+Flex!(
+    alignment: BoxAlignment::Center,
+    children: vec![
+        Text!("Left"),
+        Text!("Center"),
+        Text!("Right"),
+    ],
+    // Optional spacing or alignment attributes can be applied here
+)
+```
+
+> Note: Consider using `Row!` and `Column!` instead of `Flex!` for readability and consistency.
+
+### Row and Column
+
+To align child widgets linearly, use `Row!` and `Column!`:
+- **`Row!`**: Alway arranges its children horizontally.
+- **`Column!`**: Alway arranges its children vertically.
+
+```rust
+Row!(
+    children: vec![
+        Text!("Left"),
+        Text!("Center"),
+        Text!("Right"),
+    ],
+    // Optional spacing or alignment attributes can be applied here
+)
+```
 
 ### Stack and Positioned
 
