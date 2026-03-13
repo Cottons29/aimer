@@ -27,7 +27,7 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     if args.is_empty()  {
         panic!("Missing the widget kind : Stateless, Stateful or Router");
     }
-    
+
     let args_str = args.to_string();
     let is_stateful = args_str.to_lowercase().contains("stateful");
     let is_router = args_str.to_lowercase().contains("router");
@@ -111,3 +111,5 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
 
     proc_macro::TokenStream::from(final_output)
 }
+
+

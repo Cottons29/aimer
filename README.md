@@ -98,8 +98,8 @@ oxidize run
   - [x] `Row` and `Column` (flexbox-inspired)
   - [x] `Container` with padding, margin, and decoration
   - [x] `Scrollable` with scroll bar support `⚠️ Unstable`
-  - [x] `Spacing` and `LayoutSpacing` attributes
-  - [x] `BoxAlignment` (start, center, end, stretch)
+  - [x] `Spacing` and `LayoutSpacing` attributes `⚠️ Unstable`
+  - [x] `BoxAlignment` (start, center, end, stretch) `⚠️ Unstable`
 - [x] Basic controls
   - [x] `Button` with press handler and hover/style variants
   - [x] `GestureDetector` `⚠️ Unstable`
@@ -136,7 +136,7 @@ oxidize run
   - [ ] Swipe
   - [x] Long press `⚠️ Unstable`
 - [ ] Navigation and routing
-  - [ ] Navigator / route stack
+  - [x] Navigator / route stack `⚠️ Unstable`
   - [ ] Named routes
   - [ ] Page transitions
 - [ ] Theming and dark mode
