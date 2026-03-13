@@ -190,7 +190,7 @@ impl RouterCodegen {
             }
         }
 
-        let first_variant = &item_enum.variants.first().unwrap().ident;
+        // let first_variant = &item_enum.variants.first().unwrap().ident;
 
         quote! {
             #item_enum
@@ -206,6 +206,12 @@ impl RouterCodegen {
                         #(#format_arms)*
                         _ => "/".to_string()
                     }
+                }
+            }
+
+            impl oxidize::widget::Widget for #enum_name {
+                fn to_element(&self, ctx: &oxidize::widget::base::BuildContext) -> Box<dyn oxidize::widget::Element> {
+                    router::Router::build(self, ctx).to_element(ctx)
                 }
             }
         }
