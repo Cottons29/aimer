@@ -6,3 +6,4 @@
   - [Widgets](./guide/widgets.md)
   - [Layout](./guide/layout.md)
   - [State Management](./guide/state.md)
+  - [Router](./guide/route.md)
