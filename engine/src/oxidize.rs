@@ -47,6 +47,12 @@ fn start_event_loop(widget: impl Widget + 'static) {
     #[cfg(not(target_arch = "wasm32"))]
     let async_runtime = Runtime::new().expect("Failed to create async runtime");
 
+    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+    let inspector = crate::inspector::server::start(
+        crate::inspector::server::DEFAULT_PORT,
+        async_runtime.handle(),
+    );
+
     utils::info!("Creating App instance...");
     let mut app = OxidizeAppConfiguration {
         window: None,
@@ -74,6 +80,8 @@ fn start_event_loop(widget: impl Widget + 'static) {
         pending_resize: None,
         #[cfg(not(target_arch = "wasm32"))]
         async_runtime,
+        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+        inspector,
     };
 
     // On iOS, this function never returns.
