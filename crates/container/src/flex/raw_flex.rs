@@ -1,4 +1,5 @@
 use attribute::size::{ResolvedSize, Size};
+use constructor::WidgetConstructor;
 use widget::{Constructor, Drawable, Element, LayoutCache, LayoutSpacing, Widget, base::BuildContext};
 
 #[cfg(target_arch = "wasm32")]
@@ -10,7 +11,7 @@ use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 type DrawCmd<'a> = (u32, Float, Float, BuildContext<'a>, &'a dyn Element);
 /// a flexible layout container
 #[allow(dead_code)]
-#[derive(Constructor)]
+#[derive(WidgetConstructor)]
 pub struct Flex {
     #[constructor(default)]
     pub(crate) direction: LayoutDirection,
