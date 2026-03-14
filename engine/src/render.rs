@@ -35,6 +35,7 @@ use winit::raw_window_handle::HasWindowHandle;
 
 #[cfg(target_os = "android")]
 use khronos_egl as egl;
+use crate::inspector;
 use crate::window_event::handle_window_event;
 #[cfg(target_os = "android")]
 use skia_safe::gpu::{
@@ -77,6 +78,8 @@ pub struct OxidizeAppConfiguration {
     pub pending_resize: Option<PhysicalSize<u32>>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
+    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+    pub inspector: inspector::server::InspectorHandle,
 }
 
 impl ApplicationHandler for OxidizeAppConfiguration {
@@ -285,6 +288,77 @@ impl OxidizeAppConfiguration {
         ctx.canvas.restore();
     }
 
+    /// Draw bounding boxes and widget info labels over the rendered frame when the inspector is active.
+    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+    fn draw_inspector_overlay(element: &dyn Element, canvas: &skia_safe::Canvas, depth: usize) {
+        if let Some((start, end)) = element.pos_start_end() {
+            let w = end.x - start.x;
+            let h = end.y - start.y;
+            if w > 0.0 && h > 0.0 {
+                // Pick a hue based on depth so nested widgets get different colours
+                let colors = [
+                    skia_safe::Color::from_argb(200, 0, 120, 255),
+                    skia_safe::Color::from_argb(200, 255, 80, 0),
+                    skia_safe::Color::from_argb(200, 0, 180, 80),
+                    skia_safe::Color::from_argb(200, 180, 0, 200),
+                    skia_safe::Color::from_argb(200, 200, 160, 0),
+                ];
+                let color = colors[depth % colors.len()];
+
+                // Bounding box stroke
+                let mut paint = skia_safe::Paint::default();
+                paint.set_anti_alias(true);
+                paint.set_color(color);
+                paint.set_style(skia_safe::paint::Style::Stroke);
+                paint.set_stroke_width(1.5);
+                let rect = skia_safe::Rect::from_xywh(start.x, start.y, w, h);
+                canvas.draw_rect(rect, &paint);
+
+                // Semi-transparent label background
+                let label = format!(
+                    "{} ({:.0},{:.0}) {:.0}×{:.0}",
+                    element.debug_name(),
+                    start.x,
+                    start.y,
+                    w,
+                    h
+                );
+                let font_size = 10.0_f32;
+                let label_w = (label.len() as f32) * font_size * 0.55 + 4.0;
+                let label_h = font_size + 4.0;
+                let lx = start.x;
+                let ly = (start.y - label_h).max(0.0);
+
+                let mut bg_paint = skia_safe::Paint::default();
+                bg_paint.set_color(skia_safe::Color::from_argb(180, 0, 0, 0));
+                bg_paint.set_style(skia_safe::paint::Style::Fill);
+                canvas.draw_rect(skia_safe::Rect::from_xywh(lx, ly, label_w, label_h), &bg_paint);
+
+                // Label text
+                let mut font = skia_safe::Font::default();
+                font.set_size(font_size);
+                let mut text_paint = skia_safe::Paint::default();
+                text_paint.set_color(skia_safe::Color::WHITE);
+                text_paint.set_anti_alias(true);
+                canvas.draw_str(&label, (lx + 2.0, ly + font_size), &font, &text_paint);
+            }
+        }
+
+        element.visit_children(&mut |child| {
+            Self::draw_inspector_overlay(child, canvas, depth + 1);
+        });
+    }
+
+    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+    fn broadcast_inspector_snapshot(&self) {
+        if self.inspector.is_enabled() {
+            let snapshot = self.widget_root.as_ref().map(|root| {
+                inspector::server::snapshot_tree(root.as_ref())
+            });
+            self.inspector.broadcast_tree(snapshot);
+        }
+    }
+
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
 
@@ -374,6 +448,9 @@ impl OxidizeAppConfiguration {
             let drawable_ref: Retained<ProtocolObject<dyn objc2_metal::MTLDrawable>> = (&drawable).into();
             cmd_buffer.presentDrawable(&drawable_ref);
             cmd_buffer.commit();
+
+            #[cfg(debug_assertions)]
+            self.broadcast_inspector_snapshot();
         }
 
         #[cfg(target_os = "android")]
@@ -437,6 +514,9 @@ impl OxidizeAppConfiguration {
             egl_lib
                 .swap_buffers(*egl_display, *egl_surface)
                 .expect("failed to swap EGL buffers");
+
+            #[cfg(debug_assertions)]
+            self.broadcast_inspector_snapshot();
         }
 
         #[cfg(target_arch = "wasm32")]
