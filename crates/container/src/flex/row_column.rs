@@ -10,9 +10,11 @@ type Float = f32;
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
 
+
+
 #[derive(WidgetConstructor)]
 /// A flex container that arranges its children in a vertical direction
-pub struct Column {
+pub struct Column<W: Widget + 'static> {
     #[constructor(default)]
     vertical_alignment: BoxAlignment,
     #[constructor(default)]
@@ -22,10 +24,10 @@ pub struct Column {
     #[constructor(default)]
     overflow: OverflowBehavior,
     #[constructor(default, into)]
-    children: Vec<Box<dyn Widget>>,
+    children: Vec<W>,
 }
 
-impl Widget for Column {
+impl<W: Widget + 'static> Widget for Column<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let mut child_ctx = ctx.clone();
         child_ctx.box_constraint.max_height = Float::MAX;
@@ -44,7 +46,7 @@ impl Widget for Column {
 
 #[derive(WidgetConstructor)]
 /// A flex container that arranges its children in a horizontal direction
-pub struct Row {
+pub struct Row<W: Widget + 'static> {
     #[constructor(default)]
     vertical_alignment: BoxAlignment,
     #[constructor(default)]
@@ -54,10 +56,10 @@ pub struct Row {
     #[constructor(default)]
     overflow: OverflowBehavior,
     #[constructor(default, into)]
-    children: Vec<Box<dyn Widget>>,
+    children: Vec<W>,
 }
 
-impl Widget for Row {
+impl<W: Widget + 'static> Widget for Row<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let mut child_ctx = ctx.clone();
         child_ctx.box_constraint.max_width = Float::MAX;
