@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 
 pub mod commands;
 pub mod targets;
+mod inspector;
 
 #[derive(Parser)]
 #[command(name = "oxidize")]
@@ -24,7 +25,7 @@ enum Commands {
 }
 
 pub fn start_cli() {
-    // set_current_dir("/Users/cottons/Documents/oxidize-fw/playground/my_oxidize").unwrap();
+    set_current_dir("/Users/cottons/Documents/oxidize-fw/playground/my_oxidize").unwrap();
     let cli = Cli::parse();
 
     match &cli.command {
