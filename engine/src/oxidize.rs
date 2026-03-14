@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::runtime::Runtime;
 use widget::Widget;
 use winit::event_loop::{ControlFlow, EventLoop};
-use utils::log;
 
 #[cfg(target_os = "android")]
 pub static ANDROID_APP: std::sync::OnceLock<winit::platform::android::activity::AndroidApp> = std::sync::OnceLock::new();
