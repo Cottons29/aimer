@@ -255,13 +255,36 @@ fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream,
         });
 
         let array_rule = if target.dyn_iter || matches!(AutoWrapper::new(target.ty), AutoWrapper::Vec(_)) {
+            // Determine the inner element type of the Vec (or dyn_iter field) to decide
+            // whether items should be wrapped in Box::new(...) or passed through as-is.
+            let vec_inner_ty = if let AutoWrapper::Vec(inner) = AutoWrapper::new(target.ty) {
+                Some(inner)
+            } else {
+                None
+            };
+            let skip_box_wrap = target.dyn_iter || vec_inner_ty.as_ref().map_or(false, |inner| {
+                if let AutoWrapper::Terminal(ty) = inner.as_ref() {
+                    AutoWrapper::is_widget_boxed(ty) || AutoWrapper::is_generic_widget_param(ty)
+                } else {
+                    false
+                }
+            });
+
             let state_update_array = public_fields.iter().map(|f| {
                 let f_ident = f.ident;
                 if f_ident == target_ident {
-                    quote! {
-                        #f_ident : ({
-                            vec![$(Box::new($item),)*]
-                        })
+                    if skip_box_wrap {
+                        quote! {
+                            #f_ident : ({
+                                vec![$($item,)*]
+                            })
+                        }
+                    } else {
+                        quote! {
+                            #f_ident : ({
+                                vec![$(Box::new($item),)*]
+                            })
+                        }
                     }
                 } else {
                     let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());
