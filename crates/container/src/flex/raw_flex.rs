@@ -12,7 +12,7 @@ type DrawCmd<'a> = (u32, Float, Float, BuildContext<'a>, &'a dyn Element);
 /// a flexible layout container
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
-pub struct Flex {
+pub struct Flex<W: Widget + 'static> {
     #[constructor(default)]
     pub(crate) direction: LayoutDirection,
     #[constructor(default)]
@@ -24,10 +24,10 @@ pub struct Flex {
     #[constructor(default)]
     pub(crate) overflow: OverflowBehavior,
     #[constructor(default)]
-    pub(crate) children: Vec<Box<dyn Widget>>,
+    pub(crate) children: Vec<W>,
 }
 
-impl Widget for Flex {
+impl<W: Widget + 'static> Widget for Flex<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let elements = self.children.iter().map(|c| c.to_element(ctx)).collect();
         Box::new(RawFlex {
