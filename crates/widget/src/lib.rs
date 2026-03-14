@@ -22,6 +22,6 @@ pub use crate::text::Text;
 pub use crate::style::text_style::{TextStyle, TextOverflow};
 pub use crate::style::layout_spacing::{LayoutSpacing, Spacing};
 pub use widget_attr;
-pub use constructor::Constructor;
+pub use constructor::*;
 pub use crate::layout_cache::LayoutCache;
 pub use components::drawable::Drawable;
