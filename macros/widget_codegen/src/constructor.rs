@@ -3,13 +3,13 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DataStruct, DeriveInput, Error, Expr, Field, Fields, Ident, Meta, Type, spanned::Spanned};
 
-pub fn constructor_derive(input: TokenStream) -> TokenStream {
+pub fn constructor_derive(input: TokenStream, box_widget: bool) -> TokenStream {
     let input = match syn::parse2::<DeriveInput>(input) {
         Ok(data) => data,
         Err(err) => return err.to_compile_error(),
     };
 
-    create_constructor(input).unwrap_or_else(|err| err.to_compile_error())
+    create_constructor(input, box_widget).unwrap_or_else(|err| err.to_compile_error())
 }
 
 struct FieldInfo<'a> {
@@ -93,7 +93,7 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
     Ok(FieldInfo { ident, ty, skip, default, into, first, dyn_iter, docs })
 }
 
-fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
+fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream, Error> {
     let name = &ast.ident;
 
     let mut crate_path: Option<TokenStream> = None;
@@ -162,13 +162,27 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         Vec::new()
     };
 
-    let constructor_fn = quote! {
-        impl #impl_generics #name #ty_generics #where_clause {
-            #[doc(hidden)]
-            pub fn create_new(#(#public_params),*) -> Self {
-                Self {
-                    #(#public_assigns,)*
-                    #(#skipped_assigns,)*
+    let constructor_fn = if box_widget {
+        quote! {
+            impl #impl_generics #name #ty_generics #where_clause {
+                #[doc(hidden)]
+                pub fn create_new(#(#public_params),*) -> Box<dyn widget::Widget> {
+                    Box::new(Self {
+                        #(#public_assigns,)*
+                        #(#skipped_assigns,)*
+                    })
+                }
+            }
+        }
+    } else {
+        quote! {
+            impl #impl_generics #name #ty_generics #where_clause {
+                #[doc(hidden)]
+                pub fn create_new(#(#public_params),*) -> Self {
+                    Self {
+                        #(#public_assigns,)*
+                        #(#skipped_assigns,)*
+                    }
                 }
             }
         }
