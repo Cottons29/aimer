@@ -14,18 +14,17 @@ pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
     let output = quote! {
         #item_struct
 
-        impl #impl_generics oxidize::widget::Widget for #struct_name #ty_generics #where_clause {
-            fn to_element(&self, ctx: &oxidize::widget::base::BuildContext) -> Box<dyn widget::Element> {
+        impl #impl_generics widget::Widget for #struct_name #ty_generics #where_clause {
+            fn to_element(&self, ctx: &widget::base::BuildContext) -> Box<dyn widget::Element> {
                 use widget::StatelessWidget;
                 // Assumes self implements StatelessWidget
                 let child_widget = self.build(ctx);
-                let child_element = oxidize::widget::Widget::to_element(&child_widget, ctx);
+                let child_element = widget::Widget::to_element(&child_widget, ctx);
                 Box::new(widget::StatelessElement {
                     child: child_element
                 })
             }
         }
     };
-    
     output
 }
