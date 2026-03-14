@@ -22,6 +22,7 @@ use crate::commands::run::ios_sim::spawn_ios_simulator_runner;
 use crate::commands::run::macos::spawn_macos_runner;
 use crate::commands::run::web::spawn_web_runner;
 use crate::commands::run::android::spawn_android_runner;
+use crate::inspector::{InspectorClient, render_tree_lines, INSPECTOR_PORT};
 use crate::targets::Targets;
 use super::Device;
 
@@ -99,9 +100,12 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
     let mut build_logs: Vec<String> = Vec::new();
     let mut app_logs: Vec<String> = Vec::new();
     let mut current_status = Status::Compiling(0);
-    let mut current_pane = 1; // 0 for Build, 1 for App
+    let mut current_pane = 1; // 0 for Build, 1 for App, 2 for Inspector
     let mut build_scroll: u16 = 0;
     let mut app_scroll: u16 = 0;
+    let mut inspector_scroll: u16 = 0;
+
+    let inspector_client = InspectorClient::connect(INSPECTOR_PORT);
 
     // let frames = ["▁","▂","▃","▄","▅","▆","▇","█","▇","▆","▅","▄","▃","▂"];
     // let frames = ["⠁","⠂","⠄","⡀","⢀","⠠","⠐","⠈"];
@@ -153,6 +157,16 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 .flat_map(|l| l.into_text().map(|t| t.lines).unwrap_or_else(|_| vec![Line::from(strip_ansi(l))]))
                 .collect::<Vec<_>>();
 
+            let inspector_state = inspector_client.state.lock().unwrap().clone();
+            let inspector_status = if !inspector_state.connected {
+                " [disconnected]"
+            } else if inspector_state.enabled {
+                " [ON]"
+            } else {
+                " [OFF]"
+            };
+            let inspector_title = format!("Inspector{}", inspector_status);
+
             let build_block = Block::default()
                 .borders(Borders::ALL)
                 .title("Build Logs")
@@ -162,6 +176,11 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 .borders(Borders::ALL)
                 .title("App Logs")
                 .border_style(Style::default().fg(if current_pane == 1 { Color::Yellow } else { Color::White }));
+
+            let inspector_block = Block::default()
+                .borders(Borders::ALL)
+                .title(inspector_title)
+                .border_style(Style::default().fg(if current_pane == 2 { Color::Cyan } else { Color::White }));
 
             let area = chunks[0];
             let height = area.height.saturating_sub(2) as usize;
@@ -212,7 +231,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                     .wrap(Wrap { trim: false })
                     .scroll((skip_top, 0));
                 f.render_widget(p, area);
-            } else {
+            } else if current_pane == 1 {
                 let (start, skip_top, new_scroll) = calc_scroll(&app_text, height, width, app_scroll as usize);
                 app_scroll = new_scroll;
                 let p = Paragraph::new(app_text[start..].to_vec())
@@ -220,6 +239,31 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                     .wrap(Wrap { trim: false })
                     .scroll((skip_top, 0));
                 f.render_widget(p, area);
+            } else {
+                {
+                    // Inspector pane
+                    let mut tree_lines: Vec<String> = Vec::new();
+                    if !inspector_state.connected {
+                        tree_lines.push("Waiting for app to start...".to_string());
+                        tree_lines.push(format!("Connecting to ws://127.0.0.1:{}", INSPECTOR_PORT));
+                    } else if !inspector_state.enabled {
+                        tree_lines.push("Inspector is OFF.".to_string());
+                        tree_lines.push("Press F12 to enable.".to_string());
+                    } else {
+                        match &inspector_state.tree {
+                            Some(root) => render_tree_lines(root, 0, &mut tree_lines),
+                            None => tree_lines.push("No widget tree received yet.".to_string()),
+                        }
+                    }
+                    let inspector_text: Vec<Line> = tree_lines.iter().map(|l| Line::from(l.as_str())).collect();
+                    let max_scroll = (inspector_text.len() as u16).saturating_sub(height as u16);
+                    inspector_scroll = inspector_scroll.min(max_scroll);
+                    let p = Paragraph::new(inspector_text)
+                        .block(inspector_block)
+                        .wrap(Wrap { trim: false })
+                        .scroll((inspector_scroll, 0));
+                    f.render_widget(p, area);
+                }
             }
 
             let (status_icon, status_text) = match current_status {
@@ -283,7 +327,14 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                         .fg(Color::LightGreen)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw("switch pane "),
+                Span::raw("switch pane | "),
+                Span::styled(
+                    "[F12] ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("inspector "),
             ]);
 
             let status_bar = Paragraph::new(status_line).style(Style::default());
@@ -393,34 +444,46 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                             }
                         }
                         (KeyCode::Tab, _) => {
-                            current_pane = (current_pane + 1) % 2;
+                            current_pane = (current_pane + 1) % 3;
+                        }
+                        (KeyCode::F(12), _) => {
+                            inspector_client.send_toggle();
+                            current_pane = 2;
                         }
                         (KeyCode::Up, _) => {
                             if current_pane == 0 {
                                 build_scroll = build_scroll.saturating_add(1);
-                            } else {
+                            } else if current_pane == 1 {
                                 app_scroll = app_scroll.saturating_add(1);
+                            } else {
+                                inspector_scroll = inspector_scroll.saturating_add(1);
                             }
                         }
                         (KeyCode::Down, _) => {
                             if current_pane == 0 {
                                 build_scroll = build_scroll.saturating_sub(1);
-                            } else {
+                            } else if current_pane == 1 {
                                 app_scroll = app_scroll.saturating_sub(1);
+                            } else {
+                                inspector_scroll = inspector_scroll.saturating_sub(1);
                             }
                         }
                         (KeyCode::PageUp, _) => {
                             if current_pane == 0 {
                                 build_scroll = build_scroll.saturating_add(10);
-                            } else {
+                            } else if current_pane == 1 {
                                 app_scroll = app_scroll.saturating_add(10);
+                            } else {
+                                inspector_scroll = inspector_scroll.saturating_add(10);
                             }
                         }
                         (KeyCode::PageDown, _) => {
                             if current_pane == 0 {
                                 build_scroll = build_scroll.saturating_sub(10);
-                            } else {
+                            } else if current_pane == 1 {
                                 app_scroll = app_scroll.saturating_sub(10);
+                            } else {
+                                inspector_scroll = inspector_scroll.saturating_sub(10);
                             }
                         }
                         _ => {}
