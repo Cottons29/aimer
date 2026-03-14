@@ -3,7 +3,7 @@ pub mod scroll_bar;
 
 use std::cell::Cell;
 use attribute::position::Vec2d;
-use constructor::Constructor;
+use constructor::{Constructor, WidgetConstructor};
 use widget::base::BuildContext;
 use widget::{Element, Widget};
 
@@ -15,8 +15,8 @@ type Float = f64;
 #[cfg(not(target_arch = "wasm32"))]
 type Float = f32;
 
-#[derive(Constructor)]
-pub struct Scrollable<W: Widget> {
+#[derive(WidgetConstructor)]
+pub struct Scrollable<W: Widget + 'static> {
     pub child: W,
     #[constructor(default)]
     pub scroll_behavior: ScrollBehavior,
