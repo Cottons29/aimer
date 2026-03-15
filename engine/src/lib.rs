@@ -3,9 +3,10 @@
 extern crate widget;
 
 #[macro_use]
-pub mod oxidize;
+pub mod aimer_app;
 pub mod render;
-pub use oxidize::OxidizeApp;
+pub mod inspector;
+pub use aimer_app::AimerApp;
 #[cfg(target_os = "ios")]
 mod ios_screen;
 pub mod window_attr;

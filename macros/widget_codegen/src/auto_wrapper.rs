@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Type, TypePath, GenericArgument, PathArguments};
+use syn::{Type, TypePath, GenericArgument, PathArguments, TypeTraitObject, TraitBound, TraitBoundModifier};
 
 #[allow(clippy::large_enum_variant)]
 pub enum AutoWrapper {
@@ -117,6 +117,44 @@ impl AutoWrapper {
                 quote! { vec![#inner_expr] }
             }
             AutoWrapper::Terminal(_) => expr,
+        }
+    }
+
+    /// Returns true if this type is `Box<dyn Widget>` or a generic bound with `Widget + 'static`,
+    /// meaning items of this type should NOT be wrapped in `Box::new(...)` in the array rule.
+    pub fn is_widget_boxed(ty: &Type) -> bool {
+        // Check for Box<dyn Widget> or Box<dyn Widget + 'static>
+        if let Some(inner) = get_type_inner(ty, "Box") {
+            if let Type::TraitObject(TypeTraitObject { bounds, .. }) = inner {
+                return bounds.iter().any(|b| {
+                    if let syn::TypeParamBound::Trait(TraitBound { path, modifier, .. }) = b {
+                        if matches!(modifier, TraitBoundModifier::None) {
+                            if let Some(seg) = path.segments.last() {
+                                return seg.ident == "Widget";
+                            }
+                        }
+                    }
+                    false
+                });
+            }
+        }
+        // Check for generic type param bound like `T: Widget + 'static`
+        if let Type::Path(TypePath { path, .. }) = ty {
+            if path.segments.len() == 1 {
+                // Single-segment path — likely a generic type param, treat as widget-boxed
+                // if the field is annotated with dyn_iter (handled at call site)
+            }
+        }
+        false
+    }
+
+    /// Returns true if the type is a single-segment path (i.e., a generic type param like `T`),
+    /// which indicates `Vec<T>` where `T: Widget + 'static` — items should not be wrapped in `Box::new`.
+    pub fn is_generic_widget_param(ty: &Type) -> bool {
+        if let Type::Path(TypePath { qself: None, path }) = ty {
+            path.leading_colon.is_none() && path.segments.len() == 1
+        } else {
+            false
         }
     }
 

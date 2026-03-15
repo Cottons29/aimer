@@ -3,7 +3,7 @@ use std::cell::UnsafeCell;
 
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
-use widget::{Constructor, Element, LayoutCache, Widget, base::*};
+use widget::{Constructor, Element, LayoutCache, Widget, base::*, WidgetConstructor};
 use widget::style::border::{BorderStyle, BoxBorder, BoxOutline};
 use crate::gesture::gesture_detector::GestureDetectorElement;
 use crate::gesture::{CallbackHolder, GestureActions};
@@ -24,8 +24,8 @@ pub struct ButtonStyle {
 }
 
 #[allow(dead_code)]
-#[derive(Constructor)]
-pub struct Button<W: Widget> {
+#[derive(WidgetConstructor)]
+pub struct Button<W: Widget + 'static> {
     #[constructor(default, into)]
     pub on_press: CallbackHolder,
     #[constructor(default, into)]

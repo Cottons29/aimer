@@ -1,6 +1,7 @@
 use crate::ZeroSizedBox;
 use attribute::dimension::Dimension;
 use attribute::size::{ResolvedSize, Size};
+use constructor::WidgetConstructor;
 use widget::base::*;
 use widget::{base::Color, Constructor, Drawable, Element, LayoutCache, Widget};
 
@@ -10,7 +11,7 @@ type FLOAT = f64;
 type FLOAT = f32;
 
 
-#[derive(Constructor)]
+#[derive(WidgetConstructor)]
 pub struct SizedBox {
     #[constructor(default, into)]
     width: Dimension,

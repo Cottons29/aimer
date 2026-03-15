@@ -1,12 +1,12 @@
 use crate::flex::LayoutDirection;
 use crate::single_child::container::RawContainer;
 use crate::single_child::sized_box::RawSizedBox;
-use constructor::Constructor;
+use constructor::{Constructor, WidgetConstructor};
 use widget::base::BuildContext;
 use widget::{Element, LayoutSpacing, Widget};
 
-#[derive(Constructor)]
-pub struct AspectRatio<W: Widget> {
+#[derive(WidgetConstructor)]
+pub struct AspectRatio<W: Widget + 'static> {
     #[constructor(default, into)]
     pub aspect_ratio: f32,
     pub child: W,

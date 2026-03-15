@@ -409,8 +409,6 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             }
         }
 
-        // Now pick the correct style based on reconciled hover state
-
         // Draw background
         let color_str = style.color.to_css_color();
         if self.is_disabled {

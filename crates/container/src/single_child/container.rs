@@ -1,6 +1,6 @@
 use attribute::dimension::Dimension;
 use attribute::size::{ResolvedSize, Size};
-use constructor::Constructor;
+use constructor::{Constructor, WidgetConstructor};
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
 use widget::{Drawable, Element, LayoutCache, LayoutSpacing, Spacing, Widget, base::*, style::border::BoxBorder};
@@ -9,8 +9,8 @@ use widget::{Drawable, Element, LayoutCache, LayoutSpacing, Spacing, Widget, bas
 type FLOAT = f64;
 #[cfg(not(target_arch = "wasm32"))]
 type FLOAT = f32;
-#[derive(Constructor)]
-pub struct Container<T: Widget> {
+#[derive(WidgetConstructor)]
+pub struct Container<T: Widget + 'static> {
     #[constructor(into, default)]
     width: Dimension,
     #[constructor(into, default)]

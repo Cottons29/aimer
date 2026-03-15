@@ -1,6 +1,6 @@
 use attribute::dimension::Dimension;
 use attribute::size::{ResolvedSize, Size};
-use constructor::Constructor;
+use constructor::{Constructor, WidgetConstructor};
 use utils::debug;
 use widget::base::BuildContext;
 use widget::style::BoxConstraint;
@@ -12,8 +12,8 @@ type Float = f64;
 type Float = f32;
 
 #[allow(dead_code)]
-#[derive(Constructor)]
-pub struct Positioned<W: Widget> {
+#[derive(WidgetConstructor)]
+pub struct Positioned<W: Widget + 'static> {
     pub child: W,
     #[constructor(default)]
     pub position: Position,

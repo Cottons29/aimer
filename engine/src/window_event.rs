@@ -1,5 +1,5 @@
 use events::element::KeyAction;
-use crate::render::OxidizeAppConfiguration;
+use crate::render::AimerAppConfiguration;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 use utils::debug;
@@ -11,7 +11,7 @@ use winit::window::WindowId;
 use events::element::{ElementEvent, NamedKey};
 
 pub(crate) fn handle_window_event(
-    app: &mut OxidizeAppConfiguration,
+    app: &mut AimerAppConfiguration,
     event_loop: &ActiveEventLoop,
     _id: WindowId,
     event: WindowEvent,
