@@ -10,15 +10,17 @@ members = [
     "crates/container",
     "crates/color",
     "macros/widget_attr",
-    "oxidize",
+    "aimer",
     "crates/control",
     "crates/canvas",
     "crates/attribute",
     "crates/utils",
     "crates/animation",
-    "macros/oxidize_main",
-    "oxidize_cli"
-    , "crates/events", "crates/router"]
+    "macros/aimer_main",
+    "aimer_cli",
+    "crates/events",
+    "crates/router"
+]
 
 
 [workspace.dependencies]
@@ -35,8 +37,8 @@ widget_attr = { path = "macros/widget_attr" }
 color = { path = "crates/color" }
 attribute = { path = "crates/attribute" }
 utils = { path = "crates/utils" }
-oxidize_main = { path = "macros/oxidize_main" }
-oxidize_cli = { path = "oxidize_cli" }
+aimer_main = { path = "macros/aimer_main" }
+aimer_cli = { path = "aimer_cli" }
 events = { path = "crates/events" }
 router = {path = "crates/router" }
 
@@ -75,7 +77,7 @@ smallvec = "1.13.2"
 url = "2.5.8"
 
 
-# Oxidize cli dependencies
+# Aimer cli dependencies
 crossterm = "0.29.0"
 clap = { version = "4.5.60", features = ["derive"] }
 inquire = "0.9.4"
