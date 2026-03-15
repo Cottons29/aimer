@@ -56,7 +56,7 @@ export default defineConfig({
   </head>
   <style>
 
-    #oxidize_app {{
+    #aimer_app {{
       position: absolute;
       top: 0;
       left: 0;
@@ -79,11 +79,11 @@ export default defineConfig({
     fs::write(
         web_dir.join("main.ts"),
         format!(
-            r#"import init, {{ __oxidize_generated_entrance_point }} from './pkg/{}.js';
+            r#"import init, {{ __generated_entrance_point }} from './pkg/{}.js';
 // @ts-ignore
 async function main() {{
   await init();
-  __oxidize_generated_entrance_point();
+  __generated_entrance_point();
 }}
 
 main().catch((err) => {{}});
