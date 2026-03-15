@@ -1,4 +1,4 @@
-use crate::render::OxidizeAppConfiguration;
+use crate::render::AimerAppConfiguration;
 use attribute::position::Vec2d;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
@@ -11,11 +11,11 @@ pub static ANDROID_APP: std::sync::OnceLock<winit::platform::android::activity::
 
 static APP_STARTED: AtomicBool = AtomicBool::new(false);
 
-pub struct OxidizeApp<T> {
+pub struct AimerApp<T> {
     _marker: std::marker::PhantomData<T>,
 }
 
-impl<T: Widget + 'static> OxidizeApp<T> {
+impl<T: Widget + 'static> AimerApp<T> {
     pub fn start(widget : T) {
         start_event_loop(widget);
     }
@@ -35,7 +35,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
     #[cfg(target_os = "android")]
     let event_loop = {
         use winit::platform::android::EventLoopBuilderExtAndroid;
-        let app = crate::oxidize::ANDROID_APP.get().expect("ANDROID_APP not set").clone();
+        let app = crate::aimer_app::ANDROID_APP.get().expect("ANDROID_APP not set").clone();
         winit::event_loop::EventLoop::builder().with_android_app(app).build().expect("Failed to create EventLoop")
     };
 
@@ -54,7 +54,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
     );
 
     utils::info!("Creating App instance...");
-    let mut app = OxidizeAppConfiguration {
+    let mut app = AimerAppConfiguration {
         window: None,
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         metal_layer: None,
