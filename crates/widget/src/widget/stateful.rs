@@ -241,6 +241,7 @@ pub struct StatefulElement {
     rebuild_generation: AtomicU64,
     /// The generation at which the last rebuild was performed.
     last_rebuilt_generation: AtomicU64,
+    #[cfg(debug_assertions)]
     pub debug_name: &'static str,
 }
 
