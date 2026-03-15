@@ -13,8 +13,8 @@ pub use control::gesture::{AsyncCallback, Callback, CallbackHolder};
 pub use control::input::*;
 pub use control::*;
 pub use engine;
-pub use engine::OxidizeApp;
-pub use oxidize_main::main;
+pub use engine::AimerApp;
+pub use aimer_main::main;
 pub use widget;
 pub use widget::Widget;
 pub use widget::base::BuildContext;
@@ -26,7 +26,7 @@ pub use widget::{State, StatefulWidget, StatelessWidget};
 pub mod macros {
     pub use constructor::Constructor;
     pub use constructor::WidgetConstructor;
-    pub use oxidize_main::main;
+    pub use aimer_main::main;
     pub use widget::widget_attr::widget;
 }
 
@@ -50,9 +50,7 @@ pub mod console {
 }
 
 // wasm dependencies
-pub mod wasm_bindgen {
-    pub use wasm_bindgen::*;
-}
+pub use wasm_bindgen;
 
 pub use router;
 pub use router::Navigator;
