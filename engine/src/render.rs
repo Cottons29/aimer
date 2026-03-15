@@ -52,7 +52,7 @@ pub(crate) type Float = f64;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) type Float = f32;
 
-pub struct OxidizeAppConfiguration {
+pub struct AimerAppConfiguration {
     pub window: Option<&'static Window>,
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub metal_layer: Option<Retained<CAMetalLayer>>,
@@ -82,7 +82,7 @@ pub struct OxidizeAppConfiguration {
     pub inspector: inspector::server::InspectorHandle,
 }
 
-impl ApplicationHandler for OxidizeAppConfiguration {
+impl ApplicationHandler for AimerAppConfiguration {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "ios")]
         {
@@ -259,7 +259,7 @@ impl ApplicationHandler for OxidizeAppConfiguration {
             body.append_child(&canvas).unwrap();
             utils::info!("Canvas created.");
 
-            canvas.set_attribute("id", "oxidize_app").unwrap();
+            canvas.set_attribute("id", "aimer_app").unwrap();
 
             utils::info!("Getting canvas context...");
             let ctx = canvas
@@ -280,7 +280,7 @@ impl ApplicationHandler for OxidizeAppConfiguration {
     }
 }
 #[allow(dead_code)]
-impl OxidizeAppConfiguration {
+impl AimerAppConfiguration {
 
     fn render_widget_tree(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
