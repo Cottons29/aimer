@@ -95,22 +95,6 @@ pub fn execute(project_name: &str) {
         web::create(&dir);
     }
 
-    // Oxidize.toml
-    fs::write(
-        dir.join("Oxidize.toml"),
-        format!(
-            r#"[package]
-name = "{project_name}"
-group = "com.example.app"
-
-[build]
-dir = "."
-"#,
-
-        ),
-    )
-    .unwrap();
-
     // Cargo.toml
     fs::write(
         dir.join("Cargo.toml"),
@@ -124,7 +108,7 @@ edition = "2024"
 crate-type = ["cdylib", "rlib", "staticlib"]
 
 [dependencies]
-oxidize = {{path = "/Users/cottons/Documents/oxidize-fw/oxidize/oxidize"}}
+aimer = {{path = "/Users/cottons/Documents/aimer-fw/aimer/aimer"}}
 "#,
             project_name, version
         ),
@@ -137,36 +121,6 @@ oxidize = {{path = "/Users/cottons/Documents/oxidize-fw/oxidize/oxidize"}}
         include_str!("../../templates/sample.txt"),
     )
     .unwrap();
-
-    // builds/build_src/Cargo.toml
-    fs::write(
-        dir.join("builds/build_src/Cargo.toml"),
-        format!(
-            r#"[package]
-name = "build_src"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-{} = {{ path = "../../../{}" }}
-"#,
-            project_name, project_name
-        ),
-    )
-    .unwrap();
-
-    // builds/build_src/src/main.rs
-//     fs::write(
-//         dir.join("builds/build_src/src/main.rs"),
-//         format!(
-//             r#"fn main() {{
-//     {}::__oxidize_generated_entrance_point()
-// }}
-// "#,
-//             project_name
-//         ),
-//     )
-//     .unwrap();
 
     fs::write(dir.join("README.md"), format!("# {}\n\n{}", project_name, description)).unwrap();
 
