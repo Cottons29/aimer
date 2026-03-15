@@ -6,10 +6,10 @@ pub fn create(dir: &PathBuf) {
     fs::write(
         dir.join("builds/linux/app.desktop"),
         r#"[Desktop Entry]
-Name=OxidizeApp
-Comment=Oxidize Application
-Exec=oxidize_app
-Icon=oxidize
+Name=AimerApp
+Comment=Aimer Application
+Exec=aimer_app
+Icon=aimer
 Terminal=false
 Type=Application
 Categories=Utility;
