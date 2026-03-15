@@ -4,7 +4,7 @@ use crate::time::AnimInstant;
 
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
-use constructor::Constructor;
+use constructor::{Constructor, WidgetConstructor};
 use events::element::ElementEvent;
 use widget::base::*;
 use widget::{Drawable, Element, Widget};
@@ -55,8 +55,8 @@ impl AnimationEffect {
 ///     my_child_widget,
 /// )
 /// ```
-#[derive(Constructor)]
-pub struct Animated<T: Widget> {
+#[derive(WidgetConstructor)]
+pub struct Animated<T: Widget + 'static> {
     pub controller: AnimationController,
     pub effect: AnimationEffect,
     pub child: T,

@@ -3,6 +3,8 @@ use quote::{format_ident, quote};
 use syn::{parse2, ItemEnum, LitStr, Meta, Token, Expr, ExprArray, ExprLit, Lit, Fields};
 use syn::punctuated::Punctuated;
 
+
+
 pub struct RouterCodegen;
 
 impl RouterCodegen {
@@ -190,7 +192,7 @@ impl RouterCodegen {
             }
         }
 
-        let first_variant = &item_enum.variants.first().unwrap().ident;
+        // let first_variant = &item_enum.variants.first().unwrap().ident;
 
         quote! {
             #item_enum
@@ -206,6 +208,12 @@ impl RouterCodegen {
                         #(#format_arms)*
                         _ => "/".to_string()
                     }
+                }
+            }
+
+            impl aimer::widget::Widget for #enum_name {
+                fn to_element(&self, ctx: &aimer::widget::base::BuildContext) -> Box<dyn aimer::widget::Element> {
+                    router::Router::build(self, ctx).to_element(ctx)
                 }
             }
         }

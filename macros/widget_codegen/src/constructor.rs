@@ -3,13 +3,13 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DataStruct, DeriveInput, Error, Expr, Field, Fields, Ident, Meta, Type, spanned::Spanned};
 
-pub fn constructor_derive(input: TokenStream) -> TokenStream {
+pub fn constructor_derive(input: TokenStream, box_widget: bool) -> TokenStream {
     let input = match syn::parse2::<DeriveInput>(input) {
         Ok(data) => data,
         Err(err) => return err.to_compile_error(),
     };
 
-    create_constructor(input).unwrap_or_else(|err| err.to_compile_error())
+    create_constructor(input, box_widget).unwrap_or_else(|err| err.to_compile_error())
 }
 
 struct FieldInfo<'a> {
@@ -93,7 +93,7 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
     Ok(FieldInfo { ident, ty, skip, default, into, first, dyn_iter, docs })
 }
 
-fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
+fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream, Error> {
     let name = &ast.ident;
 
     let mut crate_path: Option<TokenStream> = None;
@@ -162,13 +162,27 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         Vec::new()
     };
 
-    let constructor_fn = quote! {
-        impl #impl_generics #name #ty_generics #where_clause {
-            #[doc(hidden)]
-            pub fn create_new(#(#public_params),*) -> Self {
-                Self {
-                    #(#public_assigns,)*
-                    #(#skipped_assigns,)*
+    let constructor_fn = if box_widget {
+        quote! {
+            impl #impl_generics #name #ty_generics #where_clause {
+                #[doc(hidden)]
+                pub fn create_new(#(#public_params),*) -> Box<dyn widget::Widget> {
+                    Box::new(Self {
+                        #(#public_assigns,)*
+                        #(#skipped_assigns,)*
+                    })
+                }
+            }
+        }
+    } else {
+        quote! {
+            impl #impl_generics #name #ty_generics #where_clause {
+                #[doc(hidden)]
+                pub fn create_new(#(#public_params),*) -> Self {
+                    Self {
+                        #(#public_assigns,)*
+                        #(#skipped_assigns,)*
+                    }
                 }
             }
         }
@@ -241,13 +255,36 @@ fn create_constructor(ast: DeriveInput) -> Result<TokenStream, Error> {
         });
 
         let array_rule = if target.dyn_iter || matches!(AutoWrapper::new(target.ty), AutoWrapper::Vec(_)) {
+            // Determine the inner element type of the Vec (or dyn_iter field) to decide
+            // whether items should be wrapped in Box::new(...) or passed through as-is.
+            let vec_inner_ty = if let AutoWrapper::Vec(inner) = AutoWrapper::new(target.ty) {
+                Some(inner)
+            } else {
+                None
+            };
+            let skip_box_wrap = target.dyn_iter || vec_inner_ty.as_ref().map_or(false, |inner| {
+                if let AutoWrapper::Terminal(ty) = inner.as_ref() {
+                    AutoWrapper::is_widget_boxed(ty) || AutoWrapper::is_generic_widget_param(ty)
+                } else {
+                    false
+                }
+            });
+
             let state_update_array = public_fields.iter().map(|f| {
                 let f_ident = f.ident;
                 if f_ident == target_ident {
-                    quote! {
-                        #f_ident : ({
-                            vec![$(Box::new($item),)*]
-                        })
+                    if skip_box_wrap {
+                        quote! {
+                            #f_ident : ({
+                                vec![$($item,)*]
+                            })
+                        }
+                    } else {
+                        quote! {
+                            #f_ident : ({
+                                vec![$(Box::new($item),)*]
+                            })
+                        }
                     }
                 } else {
                     let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());

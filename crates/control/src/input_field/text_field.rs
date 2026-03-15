@@ -3,14 +3,14 @@ use std::cell::UnsafeCell;
 use winit::window::CursorIcon::Default;
 use widget::base::{BuildContext, Colors};
 use widget::text::TextAlign;
-use widget::{Constructor, Element, TextStyle, Widget};
+use widget::{Constructor, Element, TextStyle, Widget, WidgetConstructor};
 use crate::input_field::controller::TextFieldController;
 use crate::input_field::raw_fields::{
     Cursor, ExpandDirection, InputType, RawTextField, TextFieldStyle,
 };
 
 #[allow(dead_code)]
-#[derive(Constructor)]
+#[derive(WidgetConstructor)]
 pub struct TextField {
     #[constructor(default)]
     controller: TextFieldController,

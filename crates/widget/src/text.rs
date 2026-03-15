@@ -4,19 +4,20 @@ pub mod wasm_raw_text;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod raw_text;
 
+use crate::widget;
 use crate::base::BuildContext;
 pub use crate::style::text_style::{FontStyle, FontWeight, TextAlign, TextOverflow, TextStyle};
-use crate::{Element, LayoutCache, Widget};
-use constructor::Constructor;
-use std::sync::Mutex;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::text::raw_text::RawTextWidget;
 #[cfg(target_arch = "wasm32")]
 use crate::text::wasm_raw_text::RawTextWidget;
+use crate::{Element, LayoutCache, Widget};
+use constructor::WidgetConstructor;
+use std::sync::Mutex;
 
 /// this is a widget for creating the text
 #[allow(dead_code)]
-#[derive(Constructor)]
+#[derive(WidgetConstructor)]
 pub struct Text {
     #[constructor(into, first)]
     text: String, 

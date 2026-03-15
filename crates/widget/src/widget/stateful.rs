@@ -241,11 +241,22 @@ pub struct StatefulElement {
     rebuild_generation: AtomicU64,
     /// The generation at which the last rebuild was performed.
     last_rebuilt_generation: AtomicU64,
+    // #[cfg(debug_assertions)]
+    pub debug_name: &'static str,
 }
 
 impl StatefulElement {
     /// Create a new StatefulElement from a StatefulWidget.
     /// Returns the element and a StateUpdater that can be used in callbacks.
+    pub fn new_with_name<W: StatefulWidget + 'static>(widget: &W, ctx: &BuildContext, debug_name: &'static str) -> (Self, StateUpdater<W::State>)
+    where
+        W::State: Send + Sync + 'static,
+    {
+        let (mut element, updater) = Self::new(widget, ctx);
+        element.debug_name = debug_name;
+        (element, updater)
+    }
+
     pub fn new<W: StatefulWidget + 'static>(widget: &W, ctx: &BuildContext) -> (Self, StateUpdater<W::State>)
     where
         W::State: Send + Sync + 'static,
@@ -293,6 +304,7 @@ impl StatefulElement {
             rebuild_fn,
             rebuild_generation: AtomicU64::new(0),
             last_rebuilt_generation: AtomicU64::new(0),
+            debug_name: "Unknown",
         };
 
         (element, updater)
@@ -352,6 +364,11 @@ impl Drawable for StatefulElement {
         // Safety: single-threaded rendering pipeline
         let child = unsafe { &*self.child.0.get() };
         child.draw(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        if crate::inspector_overlay::is_enabled() {
+            let size = child.computed_size(ctx);
+            crate::widget::draw_inspector_box(ctx, size, self.debug_name);
+        }
     }
 }
 
@@ -403,6 +420,9 @@ impl Element for StatefulElement {
     }
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         StatefulElement::rebuild_if_dirty(self, ctx);
+    }
+    fn debug_name(&self) -> &'static str {
+        self.debug_name
     }
 }
 

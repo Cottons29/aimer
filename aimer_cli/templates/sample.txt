@@ -1,0 +1,131 @@
+use aimer::style::*;
+use aimer::*;
+use aimer::macros::widget;
+
+// this is the entry point of the app
+#[main]
+pub fn my_app() {
+    // simply start the app with AimerApp::start
+    AimerApp::start(CounterWidget!(initial_count: 1))
+}
+
+// creating a widget with state
+#[widget(Stateful)]
+pub struct CounterWidget {
+    initial_count: i32,
+}
+// create a state for the CounterWidget
+pub struct CounterState {
+    count: i32,
+    updater: StateUpdater<Self>,
+}
+
+// implement the StatefulWidget trait for CounterWidget
+impl StatefulWidget for CounterWidget {
+    // define the state type for CounterWidget
+    type State = CounterState;
+
+    fn create_state(&self) -> CounterState {
+        CounterState {
+            count: self.initial_count,
+            updater: StateUpdater::empty(),
+        }
+    }
+}
+// implement the State trait for CounterState
+impl State<CounterWidget> for CounterState {
+    // setting up the updater for the state
+    // if not init the state, the program will panic
+    fn init_state(&mut self, _updater: StateUpdater<Self>)
+    where
+        Self: Sized,
+    {
+        self.updater = _updater
+    }
+
+    // build the widget with state
+    fn build(&self, _ctx: &BuildContext) -> impl Widget {
+        let updater = self.updater.clone();
+        let updater_2 = self.updater.clone();
+        Container!(
+            child: Flex!(
+                direction: LayoutDirection::Column,
+                vertical_alignment: BoxAlignment::Center,
+                horizontal_alignment: BoxAlignment::Center,
+                children: [
+                    Text!(
+                        "Widget With State",
+                        text_style: TextStyle!(
+                            font_size: 30,
+                            color: Colors::Black,
+                            font_weight: FontWeight::Bolder,
+                        )
+                    ),
+
+
+                    SizedBox!(height: 50),
+
+                    Text!(
+                        format!("Clicked: {}", self.count),
+                        text_style: TextStyle!(
+                            font_size: 25,
+                            color: Colors::Black,
+                        )
+                    ),
+                    SizedBox!(height: 50),
+
+                    Container!(
+                        width: 200,
+                        height: 50,
+                        margin: LayoutSpacing!(top : Spacing::Px(140)),
+                        // color: Colors::Yellow,
+                        child: Button!(
+                            on_press: move || {
+                                println!("Loading the response from example.com");
+                                updater.set_state(|state| {
+                                    state.count += 1;
+                                });
+                            },
+                            style: ButtonStyle!(color: Colors::Yellow),
+                            hover_style: ButtonStyle!(color: Colors::Green),
+                            child: Container!(
+                                child: Text!(
+                                    "Increase",
+                                    text_align: TextAlign::MidCenter,
+                                    text_style: TextStyle!(
+                                        color: Colors::Black,
+                                    )
+                                )
+                            )
+                        )
+                    ),
+
+                    Container!(
+                        width: 200,
+                        height: 50,
+                        margin: LayoutSpacing!(top : Spacing::Px(10)),
+                        child: Button!(
+                            on_press:  move || {
+                                println!("Loading the response from example.com");
+                                updater_2.set_state(|state| {
+                                    state.count -= 1;
+                                });
+                            },
+                            style: ButtonStyle!(color: Colors::Yellow),
+                            hover_style: ButtonStyle!(color: Colors::Green),
+                            child: Container!(
+                                child: Text!(
+                                    "Decrease",
+                                    text_align: TextAlign::MidCenter,
+                                    text_style: TextStyle!(
+                                        color: Colors::Black,
+                                    )
+                                )
+                            )
+                        )
+                    ),
+                ]
+            )
+        )
+    }
+}

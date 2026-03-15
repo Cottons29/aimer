@@ -1,3 +1,4 @@
+use constructor::WidgetConstructor;
 use utils::debug;
 use widget::Constructor;
 use widget::base::BuildContext;
@@ -10,7 +11,7 @@ pub enum StackDirection {
     Reverse,
     Inherit,
 }
-#[derive(Constructor)]
+#[derive(WidgetConstructor)]
 pub struct Stack {
     pub children: Vec<Box<dyn Widget>>,
     #[constructor(default)]
