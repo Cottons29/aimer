@@ -47,6 +47,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "aimer"
+version = "0.1.0"
+dependencies = [
+ "aimer_cli",
+ "aimer_main",
+ "animation",
+ "attribute",
+ "color",
+ "constructor",
+ "container",
+ "control",
+ "engine",
+ "router",
+ "utils",
+ "wasm-bindgen",
+ "widget",
+]
+
+[[package]]
+name = "aimer_cli"
+version = "0.1.0"
+dependencies = [
+ "ansi-to-tui",
+ "arboard",
+ "clap",
+ "crossterm",
+ "fancy-regex 0.17.0",
+ "inquire",
+ "once_cell",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "tungstenite",
+]
+
+[[package]]
+name = "aimer_main"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+ "widget_codegen",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2342,52 +2388,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
-]
-
-[[package]]
-name = "oxidize"
-version = "0.1.0"
-dependencies = [
- "animation",
- "attribute",
- "color",
- "constructor",
- "container",
- "control",
- "engine",
- "oxidize_cli",
- "oxidize_main",
- "router",
- "utils",
- "wasm-bindgen",
- "widget",
-]
-
-[[package]]
-name = "oxidize_cli"
-version = "0.1.0"
-dependencies = [
- "ansi-to-tui",
- "arboard",
- "clap",
- "crossterm",
- "fancy-regex 0.17.0",
- "inquire",
- "once_cell",
- "ratatui",
- "serde",
- "serde_json",
- "tungstenite",
-]
-
-[[package]]
-name = "oxidize_main"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
- "widget_codegen",
 ]
 
 [[package]]
