@@ -25,7 +25,6 @@ enum Commands {
 }
 
 pub fn start_cli() {
-    // set_current_dir("/Users/cottons/Documents/aimer-fw/playground/my_oxidize").unwrap();
     let cli = Cli::parse();
 
     match &cli.command {

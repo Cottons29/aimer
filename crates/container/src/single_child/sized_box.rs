@@ -34,6 +34,8 @@ impl Widget for SizedBox {
             child,
             color: self.color,
             cache: LayoutCache::new(),
+            debug_name: "SizedBox",
+            bounds: std::cell::Cell::new(None),
         })
     }
 }
@@ -44,6 +46,8 @@ pub struct RawSizedBox<E: Element> {
     pub(crate) color: Color,
     pub(crate) child: E,
     pub(crate) cache: LayoutCache,
+    pub(crate) debug_name: &'static str,
+    pub(crate) bounds: std::cell::Cell<Option<(attribute::position::Vec2d, attribute::position::Vec2d)>>,
 }
 
 impl<E: Element> Drawable for RawSizedBox<E> {
@@ -54,6 +58,29 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         let size = self.computed_size(ctx);
         let width = size.width;
         let height = size.height;
+
+        #[cfg(debug_assertions)]
+        {
+            if widget::inspector_overlay::is_enabled() {
+                let matrix = ctx.canvas.local_to_device_as_3x3();
+                let start_x = matrix.translate_x() as f32;
+                let start_y = matrix.translate_y() as f32;
+                let end_x = start_x + width as f32;
+                let end_y = start_y + height as f32;
+
+                let scale = ctx.scale as f32;
+                let l_start = attribute::position::Vec2d { x: start_x / scale, y: start_y / scale };
+                let l_end = attribute::position::Vec2d { x: end_x / scale, y: end_y / scale };
+                self.bounds.set(Some((l_start, l_end)));
+
+                let cp = ctx.cursor_pos;
+                if (cp.x as f32) >= start_x && (cp.x as f32) <= end_x && (cp.y as f32) >= start_y && (cp.y as f32) <= end_y {
+                    if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
+                        *hovered = Some((self.debug_name, l_start, l_end));
+                    }
+                }
+            }
+        }
 
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
@@ -71,6 +98,26 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         let width = size.width;
         let height = size.height;
 
+        if widget::inspector_overlay::is_enabled() {
+            let matrix = ctx.canvas.local_to_device_as_3x3();
+            let start_x = matrix.translate_x() as f32;
+            let start_y = matrix.translate_y() as f32;
+            let end_x = start_x + width as f32;
+            let end_y = start_y + height as f32;
+
+            let scale = ctx.scale as f32;
+            let l_start = attribute::position::Vec2d { x: start_x / scale, y: start_y / scale };
+            let l_end = attribute::position::Vec2d { x: end_x / scale, y: end_y / scale };
+            self.bounds.set(Some((l_start, l_end)));
+
+            let cp = ctx.cursor_pos;
+            if (cp.x as f32) >= start_x && (cp.x as f32) <= end_x && (cp.y as f32) >= start_y && (cp.y as f32) <= end_y {
+                if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
+                    *hovered = Some((self.debug_name, l_start, l_end));
+                }
+            }
+        }
+
         let color_str = self.color.to_css_color();
         ctx.canvas.set_fill_style_str(&color_str);
         ctx.canvas.fill_rect(0.0, 0.0, width, height);
@@ -78,6 +125,14 @@ impl<E: Element> Drawable for RawSizedBox<E> {
 }
 
 impl<E: Element> Element for RawSizedBox<E> {
+
+    fn pos_start_end(&self) -> Option<(attribute::position::Vec2d, attribute::position::Vec2d)> {
+        self.bounds.get()
+    }
+
+    fn debug_name(&self) -> &'static str {
+        self.debug_name
+    }
 
     fn size(&self) -> Option<Size> {
         match (self.width, self.height) {

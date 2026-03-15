@@ -84,6 +84,8 @@ impl<W: Widget> Widget for Container<W> {
             margin: self.margin,
             border: self.border,
             cache: LayoutCache::new(),
+            debug_name: "Container",
+            bounds: std::cell::Cell::new(None),
         })
     }
 }
@@ -101,6 +103,8 @@ pub struct RawContainer<T: Element> {
     pub border: BoxBorder,
     pub child: T,
     pub cache: LayoutCache,
+    pub debug_name: &'static str,
+    pub bounds: std::cell::Cell<Option<(attribute::position::Vec2d, attribute::position::Vec2d)>>,
 }
 
 impl<T: Element> RawContainer<T> {
@@ -158,6 +162,30 @@ impl<T: Element> Drawable for RawContainer<T> {
 
         let box_width = box_width.max(0.0);
         let box_height = box_height.max(0.0);
+
+        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+        {
+            if widget::inspector_overlay::is_enabled() {
+                let matrix = ctx.canvas.local_to_device_as_3x3();
+                let start_x = matrix.translate_x() as f32;
+                let start_y = matrix.translate_y() as f32;
+                let end_x = start_x + box_width as f32;
+                let end_y = start_y + box_height as f32;
+
+                let scale = ctx.scale as f32;
+                let l_start = attribute::position::Vec2d { x: start_x / scale, y: start_y / scale };
+                let l_end = attribute::position::Vec2d { x: end_x / scale, y: end_y / scale };
+                self.bounds.set(Some((l_start, l_end)));
+
+                let cp = ctx.cursor_pos;
+                if (cp.x as f32) >= start_x && (cp.x as f32) <= end_x && (cp.y as f32) >= start_y && (cp.y as f32) <= end_y {
+                    if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
+                        *hovered = Some((self.debug_name, l_start, l_end));
+                    }
+                }
+            }
+        }
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut paint = Paint::default();
@@ -303,8 +331,17 @@ impl<T: Element> Drawable for RawContainer<T> {
 }
 
 impl<T: Element> Element for RawContainer<T> {
+
+    fn pos_start_end(&self) -> Option<(attribute::position::Vec2d, attribute::position::Vec2d)> {
+        self.bounds.get()
+    }
+
     fn size(&self) -> Option<Size> {
         Some(Size { width: self.width, height: self.height })
+    }
+
+    fn debug_name(&self) -> &'static str {
+        self.debug_name
     }
 
     fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {

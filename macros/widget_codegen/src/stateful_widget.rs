@@ -16,8 +16,11 @@ pub fn generate_stateful_widget_impl(input: TokenStream) -> TokenStream {
 
         impl #impl_generics widget::Widget for #struct_name #ty_generics #where_clause {
             fn to_element(&self, ctx: &widget::base::BuildContext) -> Box<dyn widget::Element> {
-                let (element, _updater) = widget::StatefulElement::new(self, ctx);
+                let (element, _updater) = widget::StatefulElement::new_with_name(self, ctx, stringify!(#struct_name));
                 Box::new(element)
+            }
+            fn debug_name(&self) -> &'static str {
+                stringify!(#struct_name)
             }
         }
     };

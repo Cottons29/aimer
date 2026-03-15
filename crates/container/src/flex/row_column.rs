@@ -40,6 +40,8 @@ impl<W: Widget + 'static> Widget for Column<W> {
             overflow_behavior: self.overflow,
             children,
             cache: Default::default(),
+            debug_name: "Column",
+            bounds: std::cell::Cell::new(None),
         })
     }
 }
@@ -72,6 +74,8 @@ impl<W: Widget + 'static> Widget for Row<W> {
             overflow_behavior: self.overflow,
             children,
             cache: Default::default(),
+            debug_name: "Row",
+            bounds: std::cell::Cell::new(None),
         })
     }
 }
