@@ -1,11 +1,11 @@
-# Oxidize
+# Aimer
 
-A cross-platform UI framework built with Rust, inspired by Flutter's widget model. Oxidize lets you build native user interfaces from a single codebase using a declarative, composable widget tree.
+A cross-platform UI framework built with Rust, inspired by Flutter's widget model. Aimer lets you build native user interfaces from a single codebase using a declarative, composable widget tree.
 
 ```
-#[oxidize::main]
+#[aimer::main]
 pub fn start_app() {
-    OxidizeApp::start(
+    AimerApp::start(
         Container!(
             child: Text!(
                 "Hello World!",
@@ -38,7 +38,7 @@ pub fn start_app() {
 - **Animation System** — `AnimationController` with configurable duration, curves (`EaseIn`, `EaseOut`, `Bounce`, etc.), and effects (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`). `⚠️ Unstable `
 - **Layout Engine** — Flexbox-inspired layout with `Row`, `Column`, `Scrollable`...
 - **Cross-Platform Rendering** — Skia on native platforms (Metal on Apple, Dx3D on Windoes and Vulkan/OpenGl for Linux and Android) and Canvas 2D on the web.
-- **CLI Tooling** — `oxidize` a cli tool for creating running and builds projects.
+- **CLI Tooling** — `Aimer` a cli tool for creating running and builds projects.
 
 ## Getting Started
 
@@ -54,11 +54,11 @@ pub fn start_app() {
 
 ```bash
 # Clone the repository
-git clone https://github.com/Cottons29/oxidize.git
+git clone https://github.com/Cottons29/Aimer.git
 # get into the directory
-cd oxidize
+cd aimer
 # install the CLI tool
-cargo install --path=./oxidize
+cargo install --path=./aimer
 
 ````
 
@@ -66,27 +66,27 @@ cargo install --path=./oxidize
 ### Create a New Project
 
 ```bash
-oxidize new my_oxidize
+aimer new my_aimer
 ```
 
 ### Running the App
 ```bash
-cd my_oxidize
+cd my_aimer
 
-oxidize run
+Aimer run
 ```
 
 ## Milestone
 
 
 
-- [x] Oxidize CLI 
+- [x] Aimer CLI 
   - [x] `new project_name` to create a new project
   - [x] `run` to run the project
   - [ ] `build` to build the project
   - [ ] `test` to run tests
-- [x] Oxidize Tooling
-  - [x] project scaffolding (`oxidize new`)
+- [x] Aimer Tooling
+  - [x] project scaffolding (`Aimer new`)
   - [x] auto restart app
   - [ ] hot reload
 - [x] Core widget system
