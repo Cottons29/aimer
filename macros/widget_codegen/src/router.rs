@@ -211,8 +211,8 @@ impl RouterCodegen {
                 }
             }
 
-            impl oxidize::widget::Widget for #enum_name {
-                fn to_element(&self, ctx: &oxidize::widget::base::BuildContext) -> Box<dyn oxidize::widget::Element> {
+            impl aimer::widget::Widget for #enum_name {
+                fn to_element(&self, ctx: &aimer::widget::base::BuildContext) -> Box<dyn aimer::widget::Element> {
                     router::Router::build(self, ctx).to_element(ctx)
                 }
             }
