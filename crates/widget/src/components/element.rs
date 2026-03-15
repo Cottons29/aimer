@@ -225,9 +225,6 @@ impl Element for Box<dyn Element> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         self.as_ref().rebuild_if_dirty(ctx)
     }
-    fn debug_name(&self) -> &'static str {
-        self.as_ref().debug_name()
-    }
 }
 
 impl Drawable for Box<dyn Element> {
