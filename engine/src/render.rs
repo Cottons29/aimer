@@ -46,6 +46,7 @@ use skia_safe::gpu::{
 use skia_safe::ColorType as AndroidColorType;
 #[cfg(target_os = "android")]
 use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+use utils::debug;
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) type Float = f64;
@@ -283,6 +284,11 @@ impl ApplicationHandler for AimerAppConfiguration {
 impl AimerAppConfiguration {
 
     fn render_widget_tree(widget: &dyn Element, ctx: &BuildContext) {
+        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+        if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
+            *hovered = None;
+        }
+
         ctx.canvas.save();
         widget.draw(ctx);
         ctx.canvas.restore();
@@ -290,63 +296,50 @@ impl AimerAppConfiguration {
 
     /// Draw bounding boxes and widget info labels over the rendered frame when the inspector is active.
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-    fn draw_inspector_overlay(element: &dyn Element, canvas: &skia_safe::Canvas, depth: usize) {
-        if let Some((start, end)) = element.pos_start_end() {
-            let w = end.x - start.x;
-            let h = end.y - start.y;
-            if w > 0.0 && h > 0.0 {
-                // Pick a hue based on depth so nested widgets get different colours
-                let colors = [
-                    skia_safe::Color::from_argb(200, 0, 120, 255),
-                    skia_safe::Color::from_argb(200, 255, 80, 0),
-                    skia_safe::Color::from_argb(200, 0, 180, 80),
-                    skia_safe::Color::from_argb(200, 180, 0, 200),
-                    skia_safe::Color::from_argb(200, 200, 160, 0),
-                ];
-                let color = colors[depth % colors.len()];
+    fn draw_inspector_overlay(_element: &dyn Element, canvas: &skia_safe::Canvas, _cursor: Vec2d, scale: f32) {
+        if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
+            debug!("Drawing inspector overlay : {hovered:?}");
+            if let Some((name, start, end)) = *hovered {
 
-                // Bounding box stroke
-                let mut paint = skia_safe::Paint::default();
-                paint.set_anti_alias(true);
-                paint.set_color(color);
-                paint.set_style(skia_safe::paint::Style::Stroke);
-                paint.set_stroke_width(1.5);
-                let rect = skia_safe::Rect::from_xywh(start.x, start.y, w, h);
-                canvas.draw_rect(rect, &paint);
+                canvas.save();
+                canvas.scale((scale, scale));
+                let w = end.x - start.x;
+                let h = end.y - start.y;
+                if w > 0.0 && h > 0.0 {
+                    let mut paint = skia_safe::Paint::default();
+                    paint.set_anti_alias(true);
+                    paint.set_color(skia_safe::Color::from_argb(200, 0, 120, 255));
+                    paint.set_style(skia_safe::paint::Style::Stroke);
+                    paint.set_stroke_width(1.5);
+                    let rect = skia_safe::Rect::from_xywh(start.x, start.y, w, h);
+                    canvas.draw_rect(rect, &paint);
 
-                // Semi-transparent label background
-                let label = format!(
-                    "{} ({:.0},{:.0}) {:.0}×{:.0}",
-                    element.debug_name(),
-                    start.x,
-                    start.y,
-                    w,
-                    h
-                );
-                let font_size = 10.0_f32;
-                let label_w = (label.len() as f32) * font_size * 0.55 + 4.0;
-                let label_h = font_size + 4.0;
-                let lx = start.x;
-                let ly = (start.y - label_h).max(0.0);
+                    let label = format!("{:.1}x{:.1}", w, h);
+                    let font_size = 12.0_f32;
+                    let mgr = skia_safe::FontMgr::new();
+                    let typeface = mgr.match_family_style("Arial", skia_safe::font_style::FontStyle::default())
+                        .or_else(|| mgr.match_family_style("", skia_safe::font_style::FontStyle::default()))
+                        .expect("Unable to load any typeface");
+                    let font = skia_safe::Font::new(typeface, font_size);
+                    let text_bounds = font.measure_str(&label, None).1;
+                    let label_w = text_bounds.width() + 8.0;
+                    let label_h = font_size + 4.0;
+                    let lx = start.x;
+                    let ly = (start.y - label_h).max(0.0);
 
-                let mut bg_paint = skia_safe::Paint::default();
-                bg_paint.set_color(skia_safe::Color::from_argb(180, 0, 0, 0));
-                bg_paint.set_style(skia_safe::paint::Style::Fill);
-                canvas.draw_rect(skia_safe::Rect::from_xywh(lx, ly, label_w, label_h), &bg_paint);
+                    let mut bg_paint = skia_safe::Paint::default();
+                    bg_paint.set_color(skia_safe::Color::from_argb(200, 0, 0, 0));
+                    bg_paint.set_style(skia_safe::paint::Style::Fill);
+                    canvas.draw_rect(skia_safe::Rect::from_xywh(lx, ly, label_w, label_h), &bg_paint);
 
-                // Label text
-                let mut font = skia_safe::Font::default();
-                font.set_size(font_size);
-                let mut text_paint = skia_safe::Paint::default();
-                text_paint.set_color(skia_safe::Color::WHITE);
-                text_paint.set_anti_alias(true);
-                canvas.draw_str(&label, (lx + 2.0, ly + font_size), &font, &text_paint);
+                    let mut text_paint = skia_safe::Paint::default();
+                    text_paint.set_color(skia_safe::Color::WHITE);
+                    text_paint.set_anti_alias(true);
+                    canvas.draw_str(&label, (lx + 4.0, ly + font_size), &font, &text_paint);
+                }
+                canvas.restore();
             }
         }
-
-        element.visit_children(&mut |child| {
-            Self::draw_inspector_overlay(child, canvas, depth + 1);
-        });
     }
 
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
@@ -435,6 +428,10 @@ impl AimerAppConfiguration {
 
                 if let Some(root) = &self.widget_root {
                     Self::render_widget_tree(root.as_ref(), &ctx);
+                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    if self.inspector.is_enabled() {
+                        Self::draw_inspector_overlay(root.as_ref(), ctx.canvas, self.cursor_pos, ctx.scale as f32);
+                    }
                 }
             }
 
@@ -504,6 +501,10 @@ impl AimerAppConfiguration {
 
                 if let Some(root) = &self.widget_root {
                     Self::render_widget_tree(root.as_ref(), &ctx);
+                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    if self.inspector.is_enabled() {
+                        Self::draw_inspector_overlay(root.as_ref(), ctx.canvas, self.cursor_pos, ctx.scale as f32);
+                    }
                 }
             }
 
@@ -557,6 +558,10 @@ impl AimerAppConfiguration {
 
                 if let Some(root) = &self.widget_root {
                     Self::render_widget_tree(root.as_ref(), &build_ctx);
+                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    if self.inspector.is_enabled() {
+                        Self::draw_inspector_overlay(root.as_ref(), build_ctx.canvas, self.cursor_pos, build_ctx.scale as f32);
+                    }
                 }
             } else {
                 utils::info!("Canvas context is not ready yet.");

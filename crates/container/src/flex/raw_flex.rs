@@ -38,6 +38,8 @@ impl<W: Widget + 'static> Widget for Flex<W> {
             children: elements,
             cache: LayoutCache::new(),
             overflow_behavior: self.overflow,
+            debug_name: "Flex",
+            bounds: std::cell::Cell::new(None),
         })
     }
 }
@@ -57,6 +59,8 @@ pub struct RawFlex {
     pub(crate) children: Vec<Box<dyn Element>>,
     pub(crate) cache: LayoutCache,
     pub(crate) overflow_behavior: OverflowBehavior,
+    pub(crate) debug_name: &'static str,
+    pub(crate) bounds: std::cell::Cell<Option<(attribute::position::Vec2d, attribute::position::Vec2d)>>,
 }
 
 impl RawFlex {
@@ -147,6 +151,29 @@ impl Drawable for RawFlex {
         }
 
         ctx.canvas.save();
+
+        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+        {
+            if widget::inspector_overlay::is_enabled() {
+                let matrix = ctx.canvas.local_to_device_as_3x3();
+                let start_x = matrix.translate_x() as f32;
+                let start_y = matrix.translate_y() as f32;
+                let end_x = start_x + size.width as f32;
+                let end_y = start_y + size.height as f32;
+
+                let scale = ctx.scale as f32;
+                let l_start = attribute::position::Vec2d { x: start_x / scale, y: start_y / scale };
+                let l_end = attribute::position::Vec2d { x: end_x / scale, y: end_y / scale };
+                self.bounds.set(Some((l_start, l_end)));
+
+                let cp = ctx.cursor_pos;
+                if (cp.x as f32) >= start_x && (cp.x as f32) <= end_x && (cp.y as f32) >= start_y && (cp.y as f32) <= end_y {
+                    if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
+                        *hovered = Some((self.debug_name, l_start, l_end));
+                    }
+                }
+            }
+        }
 
         // Apply clipping for overflow hidden
         self.overflow_behavior.apply_overflow_behave(ctx);
@@ -352,10 +379,19 @@ impl Drawable for RawFlex {
 }
 
 impl Element for RawFlex {
+
+    fn pos_start_end(&self) -> Option<(attribute::position::Vec2d, attribute::position::Vec2d)> {
+        self.bounds.get()
+    }
+
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for child in &self.children {
             visitor(child.as_ref());
         }
+    }
+    
+    fn debug_name(&self) -> &'static str {
+        self.debug_name
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {

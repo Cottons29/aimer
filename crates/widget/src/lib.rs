@@ -8,7 +8,10 @@ pub mod layout_cache;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod inspector_overlay {
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::RwLock;
     pub static INSPECTOR_ENABLED: AtomicBool = AtomicBool::new(false);
+    pub static HOVERED_WIDGET: RwLock<Option<(&'static str, crate::base::Vec2d, crate::base::Vec2d)>> =
+        RwLock::new(None);
     pub fn is_enabled() -> bool {
         INSPECTOR_ENABLED.load(Ordering::Relaxed)
     }
@@ -29,7 +32,7 @@ pub use crate::widget::Widget;
 pub use crate::components::element::Element;
 pub use crate::components::element::{ dispatch_event};
 pub use crate::widget::stateful::{StatefulElement, StatefulWidget, State, StateUpdater};
-pub use crate::widget::stateless::{ StatelessElement, StatelessWidget};
+pub use crate::widget::stateless::{ StatelessElement, StatelessWidget, NamedWidget};
 pub use crate::text::Text;
 pub use crate::style::text_style::{TextStyle, TextOverflow};
 pub use crate::style::layout_spacing::{LayoutSpacing, Spacing};

@@ -29,7 +29,6 @@ pub struct Text {
 
 impl Widget for Text {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-        
         Box::new(RawTextWidget {
             text: self.text.clone(),
             text_style: self.text_style.clone(),

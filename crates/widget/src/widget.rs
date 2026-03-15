@@ -6,14 +6,21 @@ use attribute::size::ResolvedSize;
 pub mod stateful;
 pub mod stateless;
 
+pub use stateless::NamedWidget;
+
 pub trait Widget{
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element>;
-    
+    fn debug_name(&self) -> &'static str {
+        "Unknown"
+    }
 }
 
 impl Widget for Box<dyn Widget> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         self.as_ref().to_element(ctx)
+    }
+    fn debug_name(&self) -> &'static str {
+        self.as_ref().debug_name()
     }
 }
 

@@ -20,6 +20,8 @@ impl<W: Widget> Widget for AspectRatio<W> {
             color: Default::default(),
             child: self.child.to_element(ctx),
             cache: Default::default(),
+            debug_name: "AspectRatio",
+            bounds: std::cell::Cell::new(None),
         })
     }
 }

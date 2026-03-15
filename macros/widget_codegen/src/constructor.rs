@@ -167,10 +167,10 @@ fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream,
             impl #impl_generics #name #ty_generics #where_clause {
                 #[doc(hidden)]
                 pub fn create_new(#(#public_params),*) -> Box<dyn widget::Widget> {
-                    Box::new(Self {
+                    Box::new(widget::NamedWidget::new(Box::new(Self {
                         #(#public_assigns,)*
                         #(#skipped_assigns,)*
-                    })
+                    }), stringify!(#name)))
                 }
             }
         }
