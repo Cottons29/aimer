@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, ItemFn};
 
-/// Attribute macro that marks the Oxidize application entry point.
+/// Attribute macro that marks the Aimer application entry point.
 ///
 /// Wraps the annotated function so it is callable from all supported targets:
 /// native (via a `#[no_mangle] extern "C"` symbol), Android (via `android_main`),
@@ -10,9 +10,9 @@ use syn::{parse_macro_input, ItemFn};
 ///
 /// # Usage
 /// ```rust,ignore
-/// use oxidize::oxidize_main;
+/// use aimer::aimer_main;
 ///
-/// #[oxidize_main::main]
+/// #[aimer_main::main]
 /// fn main() {
 ///     // application setup
 /// }
@@ -20,10 +20,10 @@ use syn::{parse_macro_input, ItemFn};
 ///
 /// # What is generated
 /// - The original function is kept as-is (marked `#[inline]`).
-/// - **Native** (`not(target_arch = "wasm32")`): a `#[no_mangle] pub extern "C" fn __oxidize_generated_entrance_point()` that calls your function.
+/// - **Native** (`not(target_arch = "wasm32")`): a `#[no_mangle] pub extern "C" fn __generated_entrance_point()` that calls your function.
 /// - **Android** (`target_os = "android"`): an `android_main(app: AndroidApp)` that stores the
 ///   `AndroidApp` handle in `ANDROID_APP` and then calls your function.
-/// - **WASM** (`target_arch = "wasm32"`): a `#[wasm_bindgen] pub fn __oxidize_generated_entrance_point()` that calls your function.
+/// - **WASM** (`target_arch = "wasm32"`): a `#[wasm_bindgen] pub fn __generated_entrance_point()` that calls your function.
 ///
 /// # Notes
 /// - The macro does not accept any arguments; the `_attr` parameter is ignored.
@@ -35,27 +35,27 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let expanded = quote! {
 
-        use oxidize::wasm_bindgen;
-        use oxidize::wasm_bindgen::prelude::wasm_bindgen;
+        use aimer::wasm_bindgen;
+        use aimer::wasm_bindgen::prelude::wasm_bindgen;
         #[inline]
         #input_fn
 
         #[cfg(not(target_arch = "wasm32"))]
         #[unsafe(no_mangle)]
-        pub extern "C" fn __oxidize_generated_entrance_point(){
+        pub extern "C" fn __generated_entrance_point(){
             #fn_name()
         }
 
         #[cfg(target_os = "android")]
         #[unsafe(no_mangle)]
-        pub extern "C" fn android_main(app: oxidize::engine::winit::platform::android::activity::AndroidApp) {
-            let _ = oxidize::engine::oxidize::ANDROID_APP.set(app);
+        pub extern "C" fn android_main(app: aimer::engine::winit::platform::android::activity::AndroidApp) {
+            let _ = aimer::engine::aimer_app::ANDROID_APP.set(app);
             #fn_name()
         }
 
         #[cfg(target_arch = "wasm32")]
         #[wasm_bindgen]
-        pub fn __oxidize_generated_entrance_point(){
+        pub fn __generated_entrance_point(){
             #fn_name()
         }
         
