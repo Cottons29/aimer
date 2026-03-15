@@ -1,4 +1,4 @@
-//! Widget Inspector panel for the oxidize CLI.
+//! Widget Inspector panel for the aimer CLI.
 //!
 //! Connects to the engine's WebSocket inspector server (ws://127.0.0.1:9229)
 //! and displays the live widget tree. Toggle with F12 in the console.
