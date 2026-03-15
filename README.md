@@ -54,7 +54,7 @@ pub fn start_app() {
 
 ```bash
 # Clone the repository
-git clone https://github.com/Cottons29/Aimer.git
+git clone https://github.com/Cottons29/aimer.git
 # get into the directory
 cd aimer
 # install the CLI tool
