@@ -57,7 +57,7 @@ pub fn constructor_derive(input: TokenStream) -> TokenStream {
 /// This generates:
 /// ```rust,ignore
 /// impl MyWidget {
-///     pub fn create_new(label: String) -> Box<dyn oxidize::widget::Widget> {
+///     pub fn create_new(label: String) -> Box<dyn aimer::widget::Widget> {
 ///         Box::new(Self { label })
 ///     }
 /// }
