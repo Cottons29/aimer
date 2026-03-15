@@ -6,8 +6,8 @@ pub mod targets;
 mod inspector;
 
 #[derive(Parser)]
-#[command(name = "oxidize")]
-#[command(about = "Oxidize Framework CLI", long_about = None)]
+#[command(name = "aimer")]
+#[command(about = "Aimer Framework CLI", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -25,7 +25,7 @@ enum Commands {
 }
 
 pub fn start_cli() {
-    set_current_dir("/Users/cottons/Documents/oxidize-fw/playground/my_oxidize").unwrap();
+    // set_current_dir("/Users/cottons/Documents/aimer-fw/playground/my_oxidize").unwrap();
     let cli = Cli::parse();
 
     match &cli.command {
