@@ -320,7 +320,7 @@ pub fn execute() {
                 .find(|l| l.starts_with("name ="))
                 .map(|l| l.split('"').nth(1).unwrap_or("").to_string())
         })
-        .unwrap_or_else(|| "oxidize_template".to_string());
+        .unwrap_or_else(|| "aimer_template".to_string());
 
     console::start(selected_device, pkg_name).unwrap();
 }
