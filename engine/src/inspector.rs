@@ -178,7 +178,7 @@ pub mod server {
         };
 
         let mut children = Vec::new();
-        element.visit_children(&mut |child| {
+        element.event_children(&mut |child| {
             children.push(snapshot_tree(child));
         });
 
