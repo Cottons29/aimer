@@ -88,6 +88,7 @@ Aimer run
 - [x] Aimer Tooling
   - [x] project scaffolding (`Aimer new`)
   - [x] auto restart app
+  - [ ] widget inspector `⛔️ Very Unstable`
   - [ ] hot reload
 - [x] Core widget system
   - [x] `StatefulWidget` / `State` pattern
@@ -103,7 +104,7 @@ Aimer run
 - [x] Basic controls
   - [x] `Button` with press handler and hover/style variants
   - [x] `GestureDetector` `⚠️ Unstable`
-  - [x] `InputField` (text field) `⛔️ Very Unstable`
+  - [ ] `InputField` (text field) `⛔️ Very Unstable`
   - [ ] `Checkbox`
   - [ ] `Switch` / `Toggle`
   - [ ] `Slider`
@@ -118,10 +119,10 @@ Aimer run
   - [x] Named color palettes (`Colors::Blue`, `Colors::Gray`, etc.)
   - [x] Shade indexing (`Colors::Blue[100]`)
 - [x] 🧪 Animation framework
-  - [x] `AnimationController` (forward, reverse, repeat, auto-reverse) `⛔️ Very Unstable`
-  - [x] Curves (`EaseIn`, `EaseOut`, `EaseInOut`, `Bounce`, `Linear`, etc.) `⛔️ Very Unstable`
-  - [x] `Animated` widget with effects (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`)  `⛔️ Very Unstable`
-  - [x] 🧪 Enter and exit (delete) transitions `⛔️ Very Unstable`
+  - [ ] `AnimationController` (forward, reverse, repeat, auto-reverse) `⛔️ Very Unstable`
+  - [ ] Curves (`EaseIn`, `EaseOut`, `EaseInOut`, `Bounce`, `Linear`, etc.) `⛔️ Very Unstable`
+  - [ ] `Animated` widget with effects (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`)  `⛔️ Very Unstable`
+  - [ ] 🧪 Enter and exit (delete) transitions `⛔️ Very Unstable`
 - [x] Cross-platform support
   - [x] macOS (Skia + Metal)
   - [x] iOS (Skia + Metal)
