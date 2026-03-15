@@ -410,11 +410,9 @@ pub fn create(dir: &PathBuf) {
         app_dir.join("main.swift"),
         r#"import Foundation
 
-@_silgen_name("__oxidize_generated_entrance_point")
-func __oxidize_generated_entrance_point()
-
-print("Calling Rust...")
-__oxidize_generated_entrance_point()
+@_silgen_name("__generated_entrance_point")
+func __generated_entrance_point()
+__generated_entrance_point()
 "#,
     ).unwrap();
 }
