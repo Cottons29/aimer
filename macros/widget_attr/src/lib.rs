@@ -24,7 +24,7 @@ impl TryFrom<&str> for AttributeKind {
 }
 
 
-/// Attribute macro that wires up a struct (or enum for `Router`) as an Oxidize widget.
+/// Attribute macro that wires up a struct (or enum for `Router`) as a Widget.
 ///
 /// Accepts one of four kinds as its argument:
 ///
