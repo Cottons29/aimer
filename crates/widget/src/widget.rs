@@ -8,6 +8,7 @@ pub mod stateless;
 
 pub trait Widget{
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element>;
+    
 }
 
 impl Widget for Box<dyn Widget> {
