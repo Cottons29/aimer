@@ -1,6 +1,6 @@
 # Router
 
-The Oxidize Router provides a powerful and safe way to manage navigation in your application. It follows a declarative approach inspired by some famous frameworks such as `Flutter` and `Svelte`, allowing you to define your routes and navigate between them using a simple API.
+The Aimer Router provides a powerful and safe way to manage navigation in your application. It follows a declarative approach inspired by some famous frameworks such as `Flutter` and `Svelte`, allowing you to define your routes and navigate between them using a simple API.
 
 ## 4.1 Defining Routes
 
@@ -13,7 +13,7 @@ The `Route` trait requires two methods:
 - `format`: Converts your route type into a string path.
 
 ```rust
-use oxidize::router::Route;
+use aimer::router::Route;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppRoute {
@@ -65,9 +65,9 @@ To make the router work, you need to implement the `Router` trait for your route
 The `Router` trait has one main method: `build(&self, ctx: &BuildContext)`. It works similarly to `StatelessWidget::build`, but it must return a `Box<dyn Widget>` because navigation often involves switching between different types of widgets at runtime.
 
 ```rust
-use oxidize::router::Router;
-use oxidize::Widget;
-use oxidize::BuildContext;
+use aimer::router::Router;
+use aimer::Widget;
+use aimer::BuildContext;
 
 impl Router for AppRoute {
     fn build(&self, ctx: &BuildContext) -> Box<dyn Widget> {
@@ -87,8 +87,8 @@ impl Router for AppRoute {
 The `Navigator` is the heart of navigation. It maintains a stack of routes and builds the widget corresponding to the current top route.
 
 ```rust
-use oxidize::router::Navigator;
-use oxidize::Widget;
+use aimer::router::Navigator;
+use aimer::Widget;
 
 fn main_app() -> impl Widget {
     Navigator::new(AppRoute::Home, |route| {
@@ -106,8 +106,8 @@ fn main_app() -> impl Widget {
 To navigate, you can use `NavigatorController::of(ctx)`. This gives you access to methods like `push` and `pop`.
 
 ```rust
-use oxidize::router::NavigatorController;
-use oxidize::BuildContext;
+use aimer::router::NavigatorController;
+use aimer::BuildContext;
 
 // Inside a build method or event handler:
 fn on_click_settings(ctx: &BuildContext) {
@@ -129,7 +129,7 @@ fn on_click_back(ctx: &BuildContext) {
 
 ## 4.5 Web/WASM Support
 
-When targeting `wasm32`, the Oxidize Router automatically integrates with the browser's History API:
+When targeting `wasm32`, the Aimer Router automatically integrates with the browser's History API:
 - **Initial Route**: When the app starts, it attempts to parse the current browser URL to set the initial route.
 - **Push/Pop**: Calling `push` or `pop` updates the browser's address bar and adds entries to the browser history.
 - **Deep Linking**: Users can navigate directly to a path (e.g., `yourapp.com/settings`) and the app will load the correct route.
