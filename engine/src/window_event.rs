@@ -33,7 +33,12 @@ pub(crate) fn handle_window_event(
             #[allow(clippy::collapsible_if)]
             if let Some(event) = event {
                 if let Some(root) = &app.widget_root {
-                    if dispatch_event(root.as_ref(), pos, &event) {
+                    let mut handled = dispatch_event(root.as_ref(), pos, &event);
+                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    if app.inspector.is_enabled() {
+                        handled = true;
+                    }
+                    if handled {
                         if let Some(window) = &app.window {
                             window.request_redraw();
                         }
@@ -53,7 +58,12 @@ pub(crate) fn handle_window_event(
             app.cursor_pos = new_pos;
             if let Some(root) = &app.widget_root {
                 let event = ElementEvent::PointerMove(app.cursor_pos);
-                if dispatch_event(root.as_ref(), app.cursor_pos, &event) {
+                let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
+                #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                if app.inspector.is_enabled() {
+                    handled = true;
+                }
+                if handled {
                     if let Some(window) = &app.window {
                         window.request_redraw();
                     }
@@ -70,7 +80,16 @@ pub(crate) fn handle_window_event(
             let event = if state.is_pressed() { ElementEvent::PointerDown(c) } else { ElementEvent::PointerUp(c) };
             #[allow(clippy::collapsible_if)]
             if let Some(root) = &app.widget_root {
-                dispatch_event(root.as_ref(), c, &event);
+                let mut handled = dispatch_event(root.as_ref(), c, &event);
+                #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                if app.inspector.is_enabled() {
+                    handled = true;
+                }
+                if handled {
+                    if let Some(window) = &app.window {
+                        window.request_redraw();
+                    }
+                }
             }
         }
 
@@ -97,7 +116,12 @@ pub(crate) fn handle_window_event(
                 if !ch.is_empty() && ch.chars().all(|c| !c.is_control()) {
                     let ev = ElementEvent::CharInput { ch: ch.parse().unwrap(), action: action.clone() };
                     if let Some(root) = &app.widget_root {
-                        if dispatch_event(root.as_ref(), app.cursor_pos, &ev) {
+                        let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+                        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                        if app.inspector.is_enabled() {
+                            handled = true;
+                        }
+                        if handled {
                             if let Some(window) = &app.window {
                                 window.request_redraw();
                             }
@@ -123,7 +147,12 @@ pub(crate) fn handle_window_event(
                 };
                 let ev = ElementEvent::KeyInput { key, action };
                 if let Some(root) = &app.widget_root {
-                    if dispatch_event(root.as_ref(), app.cursor_pos, &ev) {
+                    let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    if app.inspector.is_enabled() {
+                        handled = true;
+                    }
+                    if handled {
                         if let Some(window) = &app.window {
                             window.request_redraw();
                         }
@@ -143,7 +172,12 @@ pub(crate) fn handle_window_event(
             };
             let event = ElementEvent::Scroll(scroll_delta);
             if let Some(root) = &app.widget_root {
-                if dispatch_event(root.as_ref(), app.cursor_pos, &event) {
+                let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
+                #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                if app.inspector.is_enabled() {
+                    handled = true;
+                }
+                if handled {
                     if let Some(window) = &app.window {
                         window.request_redraw();
                     }
