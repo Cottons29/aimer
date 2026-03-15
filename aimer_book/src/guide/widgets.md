@@ -1,6 +1,6 @@
 # Widgets
 
-In Oxidize, everything is a widget. The entire user interface is built as a declarative, composable widget tree using powerful Rust macros. This approach makes code concise and simple to read.
+In Aimer, everything is a widget. The entire user interface is built as a declarative, composable widget tree using powerful Rust macros. This approach makes code concise and simple to read.
 
 ## Core Controls
 
@@ -77,7 +77,7 @@ Button!(
 
 ## Colors System
 
-Oxidize provides a built-in color system via `Colors`.
+Aimer provides a built-in color system via `Colors`.
 - **Named Palettes:** Access colors directly, e.g., `Colors::Blue`, `Colors::Gray`.
 - **Opacity Indexing:** Access specific opacity level like `Colors::Blue[100]`.
 

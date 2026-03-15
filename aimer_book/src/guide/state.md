@@ -1,8 +1,8 @@
 # State Management
 
-Managing application state is crucial for building interactive user interfaces. Oxidize borrows the `StatefulWidget` / `State` pattern directly from Flutter.
+Managing application state is crucial for building interactive user interfaces. Aimer borrows the `StatefulWidget` / `State` pattern directly from Flutter.
 
-In Oxidize, widgets come in two main flavors:
+In Aimer, widgets come in two main flavors:
 - **Stateless Widgets**: Built once based on their initial configuration and parameters.
 - **Stateful Widgets**: Maintain internal data that might change over the lifetime of the widget. When the internal state changes, the widget triggers a rebuild.
 
@@ -17,7 +17,7 @@ Quick rule of thumb:
 A `StatelessWidget` is a widget that does not require mutable state. It simply takes the properties provided to it and builds a widget tree based on those properties. It is ideal for reusable UI components that don't need to change dynamically.
 
 ```rust
-use oxidize::{Widget, BuildContext, StatelessWidget};
+use aimer::{Widget, BuildContext, StatelessWidget};
 
 pub struct GreetingCard {
     pub message: String,
@@ -54,7 +54,7 @@ To create a stateful widget, you generally define two structs:
 Here's an overview of how state is managed using a `StatefulWidget`:
 
 ```rust
-use oxidize::{State, StatefulWidget, StateUpdater, Widget};
+use aimer::{State, StatefulWidget, StateUpdater, Widget};
 
 // 1. Define the Widget
 #[derive(Clone)]

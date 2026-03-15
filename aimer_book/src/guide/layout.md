@@ -1,6 +1,6 @@
 # Layout
 
-The Oxidize framework uses a Flexbox-inspired layout engine that allows you to easily structure your UI horizontally, vertically, or in custom box alignments. 
+The Aimer framework uses a Flexbox-inspired layout engine that allows you to easily structure your UI horizontally, vertically, or in custom box alignments. 
 
 ## Single Child Layouts
 
@@ -131,7 +131,7 @@ Stack!(
 
 ## Alignment and Spacing
 
-Oxidize provides precise control over how elements are distributed within Flexbox-style layouts using alignment and spacing properties.
+Aimer provides precise control over how elements are distributed within Flexbox-style layouts using alignment and spacing properties.
 
 ### BoxAlignment
 
@@ -191,7 +191,7 @@ Scrollable!(
 
 ## Animations and Transitions (Experimental)
 
-Oxidize includes an animation framework to bring your layouts to life. (Note: These features are marked `⛔️ Very Unstable`)
+Aimer includes an animation framework to bring your layouts to life. (Note: These features are marked `⛔️ Very Unstable`)
 - **`AnimationController`**: Controls playback direction and looping (forward, reverse, repeat).
 - **Curves**: Smooth interpolations like `EaseIn`, `EaseOut`, `Bounce`, and `Linear`.
 - **Effects**: Wrappers like `Animated` that apply transitions (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`).
