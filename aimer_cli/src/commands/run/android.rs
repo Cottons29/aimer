@@ -130,7 +130,7 @@ pub fn spawn_android_runner(
     }
 
     let current_dir = current_dir().unwrap().join("builds/android");
-    tx.send(RunnerEvent::BuildLog(format!("[Oxidize] current_dir: {}", current_dir.display()))).unwrap();
+    tx.send(RunnerEvent::BuildLog(format!("[Aimer] current_dir: {}", current_dir.display()))).unwrap();
 
 
     let lib_name = pkg_name.replace("-", "_");
