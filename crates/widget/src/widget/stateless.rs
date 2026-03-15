@@ -68,9 +68,6 @@ impl Element for StatelessElement {
     fn get_size_from_child(&self) -> Option<Size> {
         self.child.get_size_from_child()
     }
-    fn debug_name(&self) -> &'static str {
-        self.debug_name
-    }
 }
 
 
