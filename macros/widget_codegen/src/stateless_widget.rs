@@ -25,7 +25,11 @@ pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
                 Box::new(widget::StatelessElement {
                     child: child_element,
                     debug_name: #struct_name_str,
+                    bounds: std::cell::Cell::new(None),
                 })
+            }
+            fn debug_name(&self) -> &'static str {
+                #struct_name_str
             }
         }
     };
