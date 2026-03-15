@@ -1,19 +1,12 @@
-use oxidize::color::Colors;
-use oxidize::widget::Text;
-use oxidize::widget::Widget;
-use oxidize::widget::flex::BoxAlignment;
-use oxidize::widget::flex::{Flex, FlexDirection};
-use oxidize::widget::widget_attr::widget;
-use oxidize::widget::*;
-use oxidize::widget::{Container, State, StatefulWidget};
-use oxidize::*;
+use aimer::style::*;
+use aimer::*;
+use aimer::macros::widget;
 
-use oxidize::OxidizeApp;
 // this is the entry point of the app
-#[oxidize::main]
+#[main]
 pub fn my_app() {
-    // simply start the app with OxidizeApp::start
-    OxidizeApp::start(CounterWidget!(initial_count: 1))
+    // simply start the app with AimerApp::start
+    AimerApp::start(CounterWidget!(initial_count: 1))
 }
 
 // creating a widget with state
@@ -51,12 +44,12 @@ impl State<CounterWidget> for CounterState {
     }
 
     // build the widget with state
-    fn build(&self) -> impl Widget {
+    fn build(&self, _ctx: &BuildContext) -> impl Widget {
         let updater = self.updater.clone();
         let updater_2 = self.updater.clone();
         Container!(
             child: Flex!(
-                direction: FlexDirection::Column,
+                direction: LayoutDirection::Column,
                 vertical_alignment: BoxAlignment::Center,
                 horizontal_alignment: BoxAlignment::Center,
                 children: [
@@ -65,7 +58,7 @@ impl State<CounterWidget> for CounterState {
                         text_style: TextStyle!(
                             font_size: 30,
                             color: Colors::Black,
-                            font_weight: text::FontWeight::Bolder,
+                            font_weight: FontWeight::Bolder,
                         )
                     ),
 
@@ -98,7 +91,7 @@ impl State<CounterWidget> for CounterState {
                             child: Container!(
                                 child: Text!(
                                     "Increase",
-                                    text_align: text::TextAlign::MidCenter,
+                                    text_align: TextAlign::MidCenter,
                                     text_style: TextStyle!(
                                         color: Colors::Black,
                                     )
@@ -123,7 +116,7 @@ impl State<CounterWidget> for CounterState {
                             child: Container!(
                                 child: Text!(
                                     "Decrease",
-                                    text_align: text::TextAlign::MidCenter,
+                                    text_align: TextAlign::MidCenter,
                                     text_style: TextStyle!(
                                         color: Colors::Black,
                                     )
