@@ -5,7 +5,6 @@ extern crate widget;
 #[macro_use]
 pub mod aimer_app;
 pub mod render;
-pub mod inspector;
 pub use aimer_app::AimerApp;
 #[cfg(target_os = "ios")]
 mod ios_screen;
