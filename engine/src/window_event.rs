@@ -34,7 +34,7 @@ pub(crate) fn handle_window_event(
             if let Some(event) = event {
                 if let Some(root) = &app.widget_root {
                     let mut handled = dispatch_event(root.as_ref(), pos, &event);
-                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    #[cfg(debug_assertions)]
                     if app.inspector.is_enabled() {
                         handled = true;
                     }
@@ -59,7 +59,7 @@ pub(crate) fn handle_window_event(
             if let Some(root) = &app.widget_root {
                 let event = ElementEvent::PointerMove(app.cursor_pos);
                 let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
-                #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                #[cfg(debug_assertions)]
                 if app.inspector.is_enabled() {
                     handled = true;
                 }
@@ -81,7 +81,7 @@ pub(crate) fn handle_window_event(
             #[allow(clippy::collapsible_if)]
             if let Some(root) = &app.widget_root {
                 let mut handled = dispatch_event(root.as_ref(), c, &event);
-                #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                #[cfg(debug_assertions)]
                 if app.inspector.is_enabled() {
                     handled = true;
                 }
@@ -117,7 +117,7 @@ pub(crate) fn handle_window_event(
                     let ev = ElementEvent::CharInput { ch: ch.parse().unwrap(), action: action.clone() };
                     if let Some(root) = &app.widget_root {
                         let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
-                        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                        #[cfg(debug_assertions)]
                         if app.inspector.is_enabled() {
                             handled = true;
                         }
@@ -148,7 +148,7 @@ pub(crate) fn handle_window_event(
                 let ev = ElementEvent::KeyInput { key, action };
                 if let Some(root) = &app.widget_root {
                     let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
-                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    #[cfg(debug_assertions)]
                     if app.inspector.is_enabled() {
                         handled = true;
                     }
@@ -173,7 +173,7 @@ pub(crate) fn handle_window_event(
             let event = ElementEvent::Scroll(scroll_delta);
             if let Some(root) = &app.widget_root {
                 let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
-                #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                #[cfg(debug_assertions)]
                 if app.inspector.is_enabled() {
                     handled = true;
                 }
