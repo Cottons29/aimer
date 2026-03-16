@@ -35,7 +35,6 @@ use winit::raw_window_handle::HasWindowHandle;
 
 #[cfg(target_os = "android")]
 use khronos_egl as egl;
-use crate::inspector;
 use crate::window_event::handle_window_event;
 #[cfg(target_os = "android")]
 use skia_safe::gpu::{
@@ -46,6 +45,9 @@ use skia_safe::gpu::{
 use skia_safe::ColorType as AndroidColorType;
 #[cfg(target_os = "android")]
 use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+use inspector::InspectorOverlay;
+#[cfg(not(target_arch = "wasm32"))]
+use inspector::InspectorServer;
 use utils::debug;
 
 #[cfg(target_arch = "wasm32")]
@@ -79,8 +81,8 @@ pub struct AimerAppConfiguration {
     pub pending_resize: Option<PhysicalSize<u32>>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
-    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-    pub inspector: inspector::server::InspectorHandle,
+    #[cfg(debug_assertions)]
+    pub inspector: inspector::InspectorHandle,
 }
 
 impl ApplicationHandler for AimerAppConfiguration {
@@ -284,7 +286,7 @@ impl ApplicationHandler for AimerAppConfiguration {
 impl AimerAppConfiguration {
 
     fn render_widget_tree(widget: &dyn Element, ctx: &BuildContext) {
-        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+        #[cfg(debug_assertions)]
         if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
             *hovered = None;
         }
@@ -294,59 +296,21 @@ impl AimerAppConfiguration {
         ctx.canvas.restore();
     }
 
-    /// Draw bounding boxes and widget info labels over the rendered frame when the inspector is active.
-    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-    fn draw_inspector_overlay(_element: &dyn Element, canvas: &skia_safe::Canvas, _cursor: Vec2d, scale: f32) {
-        if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
-            debug!("Drawing inspector overlay : {hovered:?}");
-            if let Some((name, start, end)) = *hovered {
-
-                canvas.save();
-                canvas.scale((scale, scale));
-                let w = end.x - start.x;
-                let h = end.y - start.y;
-                if w > 0.0 && h > 0.0 {
-                    let mut paint = skia_safe::Paint::default();
-                    paint.set_anti_alias(true);
-                    paint.set_color(skia_safe::Color::from_argb(200, 0, 120, 255));
-                    paint.set_style(skia_safe::paint::Style::Stroke);
-                    paint.set_stroke_width(1.5);
-                    let rect = skia_safe::Rect::from_xywh(start.x, start.y, w, h);
-                    canvas.draw_rect(rect, &paint);
-
-                    let label = format!("{:.1}x{:.1}", w, h);
-                    let font_size = 12.0_f32;
-                    let mgr = skia_safe::FontMgr::new();
-                    let typeface = mgr.match_family_style("Arial", skia_safe::font_style::FontStyle::default())
-                        .or_else(|| mgr.match_family_style("", skia_safe::font_style::FontStyle::default()))
-                        .expect("Unable to load any typeface");
-                    let font = skia_safe::Font::new(typeface, font_size);
-                    let text_bounds = font.measure_str(&label, None).1;
-                    let label_w = text_bounds.width() + 8.0;
-                    let label_h = font_size + 4.0;
-                    let lx = start.x;
-                    let ly = (start.y - label_h).max(0.0);
-
-                    let mut bg_paint = skia_safe::Paint::default();
-                    bg_paint.set_color(skia_safe::Color::from_argb(200, 0, 0, 0));
-                    bg_paint.set_style(skia_safe::paint::Style::Fill);
-                    canvas.draw_rect(skia_safe::Rect::from_xywh(lx, ly, label_w, label_h), &bg_paint);
-
-                    let mut text_paint = skia_safe::Paint::default();
-                    text_paint.set_color(skia_safe::Color::WHITE);
-                    text_paint.set_anti_alias(true);
-                    canvas.draw_str(&label, (lx + 4.0, ly + font_size), &font, &text_paint);
-                }
-                canvas.restore();
-            }
-        }
-    }
-
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     fn broadcast_inspector_snapshot(&self) {
         if self.inspector.is_enabled() {
             let snapshot = self.widget_root.as_ref().map(|root| {
-                inspector::server::snapshot_tree(root.as_ref())
+                InspectorServer::snapshot_tree(root.as_ref())
+            });
+            self.inspector.broadcast_tree(snapshot);
+        }
+    }
+
+    #[cfg(all(debug_assertions, target_arch = "wasm32"))]
+    fn broadcast_inspector_snapshot(&self) {
+        if self.inspector.is_enabled() {
+            let snapshot = self.widget_root.as_ref().map(|root| {
+                inspector::snapshot_tree(root.as_ref())
             });
             self.inspector.broadcast_tree(snapshot);
         }
@@ -428,9 +392,9 @@ impl AimerAppConfiguration {
 
                 if let Some(root) = &self.widget_root {
                     Self::render_widget_tree(root.as_ref(), &ctx);
-                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    #[cfg(debug_assertions)]
                     if self.inspector.is_enabled() {
-                        Self::draw_inspector_overlay(root.as_ref(), ctx.canvas, self.cursor_pos, ctx.scale as f32);
+                        InspectorOverlay::draw(root.as_ref(), ctx.canvas, self.cursor_pos, ctx.scale as f32);
                     }
                 }
             }
@@ -501,7 +465,7 @@ impl AimerAppConfiguration {
 
                 if let Some(root) = &self.widget_root {
                     Self::render_widget_tree(root.as_ref(), &ctx);
-                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    #[cfg(debug_assertions)]
                     if self.inspector.is_enabled() {
                         Self::draw_inspector_overlay(root.as_ref(), ctx.canvas, self.cursor_pos, ctx.scale as f32);
                     }
@@ -558,14 +522,17 @@ impl AimerAppConfiguration {
 
                 if let Some(root) = &self.widget_root {
                     Self::render_widget_tree(root.as_ref(), &build_ctx);
-                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    #[cfg(debug_assertions)]
                     if self.inspector.is_enabled() {
-                        Self::draw_inspector_overlay(root.as_ref(), build_ctx.canvas, self.cursor_pos, build_ctx.scale as f32);
+                        InspectorOverlay::draw(root.as_ref(), build_ctx.canvas, self.cursor_pos, build_ctx.scale as f32);
                     }
                 }
             } else {
                 utils::info!("Canvas context is not ready yet.");
             }
+
+            #[cfg(debug_assertions)]
+            self.broadcast_inspector_snapshot();
         }
     }
 }
