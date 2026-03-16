@@ -272,9 +272,16 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         let (ol, ot, _or, _ob) = style.outline.strokes(box_width, box_height, ctx.scale);
         ctx.canvas.translate((ol, ot));
 
-        let matrix = ctx.canvas.local_to_device_as_3x3();
-        let abs_x = matrix.translate_x();
-        let abs_y = matrix.translate_y();
+        #[cfg(not(target_arch = "wasm32"))]
+        let (abs_x, abs_y) = {
+            let matrix = ctx.canvas.local_to_device_as_3x3();
+            (matrix.translate_x(), matrix.translate_y())
+        };
+        #[cfg(target_arch = "wasm32")]
+        let (abs_x, abs_y) = {
+            let matrix = ctx.canvas.get_transform().unwrap();
+            (matrix.e() as f32, matrix.f() as f32)
+        };
         let bounds = Rect::from_xywh(abs_x, abs_y, box_width, box_height);
         unsafe {
             *self.cached_bounds.get() = Some(bounds);
