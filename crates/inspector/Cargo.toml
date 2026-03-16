@@ -1,0 +1,22 @@
+[package]
+name = "inspector"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio-tungstenite = "0.28.0"
+tokio = {workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"]}
+tungstenite = { version = "0.28", features = ["native-tls"] }
+skia-safe.workspace = true
+
+[dependencies]
+widget.workspace = true
+utils.workspace = true
+futures-util = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "Node", "HtmlCanvasElement", "CanvasRenderingContext2d", "WebSocket", "MessageEvent", "ErrorEvent"] }
