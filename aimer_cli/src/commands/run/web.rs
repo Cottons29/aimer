@@ -17,6 +17,7 @@ pub fn spawn_web_runner(
 
     let mut wasm_build = match Command::new("wasm-pack")
         .arg("build")
+        .arg("--debug")
         .arg("--target")
         .arg("web")
         .arg("--out-dir")
