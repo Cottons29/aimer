@@ -7,17 +7,16 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod server  {
-    use serde::{Deserialize, Serialize};
+    use crate::{InspectorMessage, InspectorState};
+    use futures_util::{SinkExt, StreamExt};
     use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, Ordering}, Arc,
+        Mutex,
     };
     use tokio::sync::broadcast;
     use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::tungstenite::Utf8Bytes;
     use widget::Element;
-    use crate::{InspectorMessage, InspectorState, WidgetNode};
-    use futures_util::{SinkExt, StreamExt};
 
     /// Shared inspector state accessible from the render loop.
     #[derive(Clone)]
@@ -42,7 +41,7 @@ pub mod server  {
                 let mut s = self.state.lock().unwrap();
                 s.enabled = enabled;
             }
-            let msg = crate::types::InspectorMessage::Status { enabled };
+            let msg = InspectorMessage::Status { enabled };
             if let Ok(json) = serde_json::to_string(&msg) {
                 let _ = self.tx.send(json);
             }
@@ -52,11 +51,12 @@ pub mod server  {
         pub fn send_toggle(&self) {
             let new_val = !self.enabled.load(Ordering::Relaxed);
             self.enabled.store(new_val, Ordering::Relaxed);
+            widget::inspector_overlay::set_enabled(new_val);
             {
                 let mut s = self.state.lock().unwrap();
                 s.enabled = new_val;
             }
-            let msg = crate::types::InspectorMessage::Status { enabled: new_val };
+            let msg = InspectorMessage::Status { enabled: new_val };
             if let Ok(json) = serde_json::to_string(&msg) {
                 let _ = self.tx.send(json);
             }
@@ -71,7 +71,7 @@ pub mod server  {
                 let mut s = self.state.lock().unwrap();
                 s.tree = root.clone();
             }
-            let msg = crate::types::InspectorMessage::Tree { root };
+            let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
                 let _ = self.tx.send(json);
             }
@@ -97,7 +97,7 @@ pub mod server  {
             let state_server = state.clone();
             runtime.spawn(async move {
                 let addr = format!("127.0.0.1:{}", port);
-                let url = format!("ws://{}", addr);
+                // let url = format!("ws://{}", addr);
 
                 let listener = match tokio::net::TcpListener::bind(&addr).await {
                     Ok(l) => l,
@@ -131,7 +131,7 @@ pub mod server  {
                     let mut rx = tx_server.subscribe();
 
                     // Send current status immediately on connect
-                    let status = crate::types::InspectorMessage::Status { enabled: enabled_server.load(Ordering::Relaxed) };
+                    let status = InspectorMessage::Status { enabled: enabled_server.load(Ordering::Relaxed) };
                     if let Ok(json) = serde_json::to_string(&status) {
                         let _ = write
                             .send(Message::Text(Utf8Bytes::from(json.as_str())))
@@ -161,6 +161,7 @@ pub mod server  {
                                             }
                                             InspectorMessage::Status { enabled } => {
                                                 enabled_server.store(enabled, Ordering::Relaxed);
+                                                widget::inspector_overlay::set_enabled(enabled);
                                                 let mut s = state_server.lock().unwrap();
                                                 s.enabled = enabled;
                                             }
@@ -169,6 +170,7 @@ pub mod server  {
                                         if cmd.get("type").and_then(|v| v.as_str()) == Some("toggle") {
                                             let new_val = !enabled_server.load(Ordering::Relaxed);
                                             enabled_server.store(new_val, Ordering::Relaxed);
+                                            widget::inspector_overlay::set_enabled(new_val);
                                             let mut s = state_server.lock().unwrap();
                                             s.enabled = new_val;
                                             drop(s);
@@ -201,7 +203,7 @@ pub mod server  {
         /// Recursively walk the element tree and build a `WidgetNode` snapshot.
         pub fn snapshot_tree(element: &dyn Element) -> crate::types::WidgetNode {
             let (x, y, width, height) = if let Some((start, end)) = element.pos_start_end() {
-                (start.x as f32, start.y as f32, (end.x - start.x) as f32, (end.y - start.y) as f32)
+                (start.x, start.y, end.x - start.x, end.y - start.y)
             } else {
                 (0.0, 0.0, 0.0, 0.0)
             };
@@ -218,14 +220,14 @@ pub mod server  {
 
 #[cfg(target_arch = "wasm32")]
 pub mod server {
-    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    use crate::{InspectorMessage, WidgetNode};
     use serde::{Deserialize, Serialize};
-    use widget::Element;
+    use std::cell::RefCell;
+    use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
     use wasm_bindgen::prelude::*;
     use wasm_bindgen::JsCast;
-    use web_sys::{WebSocket, MessageEvent};
-    use std::cell::RefCell;
-    use crate::{InspectorMessage, WidgetNode};
+    use web_sys::{MessageEvent, WebSocket};
+    use widget::Element;
 
     #[derive(Clone)]
     pub struct InspectorHandle {
