@@ -7,7 +7,7 @@ use tokio::runtime::Runtime;
 use widget::Widget;
 use winit::event_loop::{ControlFlow, EventLoop};
 #[cfg(not(target_arch = "wasm32"))]
-use inspector::InspectorServer;
+use inspector::InspectorAppHandle;
 
 #[cfg(target_os = "android")]
 pub static ANDROID_APP: std::sync::OnceLock<winit::platform::android::activity::AndroidApp> = std::sync::OnceLock::new();
@@ -51,7 +51,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
     let async_runtime = Runtime::new().expect("Failed to create async runtime");
 
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-    let inspector = InspectorServer::start(
+    let inspector = InspectorAppHandle::connect(
         inspector::DEFAULT_INSPECTOR_PORT,
         async_runtime.handle(),
     );
