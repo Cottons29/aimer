@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use crate::render::AimerAppConfiguration;
 use attribute::position::Vec2d;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -86,6 +87,12 @@ fn start_event_loop(widget: impl Widget + 'static) {
         async_runtime,
         #[cfg(debug_assertions)]
         inspector,
+        #[cfg(debug_assertions)]
+        inspector_change: Cell::new(false),
+        #[cfg(debug_assertions)]
+        inspector_prev_enabled: Cell::new(false),
+        #[cfg(debug_assertions)]
+        inspector_redraw_frames: Cell::new(0)
     };
 
     // On iOS, this function never returns.
