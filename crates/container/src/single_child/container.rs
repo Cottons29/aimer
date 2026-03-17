@@ -163,18 +163,25 @@ impl<T: Element> Drawable for RawContainer<T> {
         let box_width = box_width.max(0.0);
         let box_height = box_height.max(0.0);
 
-        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+        #[cfg(debug_assertions)]
         {
             if widget::inspector_overlay::is_enabled() {
-                let matrix = ctx.canvas.local_to_device_as_3x3();
-                let start_x = matrix.translate_x() as f32;
-                let start_y = matrix.translate_y() as f32;
+                #[cfg(not(target_arch = "wasm32"))]
+                let (start_x, start_y) = {
+                    let matrix = ctx.canvas.local_to_device_as_3x3();
+                    (matrix.translate_x() as f32, matrix.translate_y() as f32)
+                };
+                #[cfg(target_arch = "wasm32")]
+                let (start_x, start_y) = {
+                    let matrix = ctx.canvas.get_transform().unwrap();
+                    (matrix.e() as f32, matrix.f() as f32)
+                };
                 let end_x = start_x + box_width as f32;
                 let end_y = start_y + box_height as f32;
 
-                let scale = ctx.scale as f32;
-                let l_start = attribute::position::Vec2d { x: start_x / scale, y: start_y / scale };
-                let l_end = attribute::position::Vec2d { x: end_x / scale, y: end_y / scale };
+                let scale = ctx.scale;
+                let l_start = attribute::position::Vec2d { x: (start_x as f64 / scale as f64) as _, y: (start_y as f64 / scale as f64) as _ };
+                let l_end = attribute::position::Vec2d { x: (end_x as f64 / scale as f64) as _, y: (end_y as f64 / scale as f64) as _ };
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;

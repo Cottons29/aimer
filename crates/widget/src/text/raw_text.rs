@@ -1,11 +1,11 @@
-use std::sync::Mutex;
-use skia_safe::{Canvas, Color, Font, FontMgr, Paint, TextBlob, Typeface};
-use attribute::size::ResolvedSize;
-use crate::text::{ FontWeight, TextAlign, FontStyle};
-use crate::{Drawable, Element, LayoutCache, TextOverflow};
 use crate::base::BuildContext;
 use crate::style::text_style::TextStyle;
+use crate::text::{FontStyle, FontWeight, TextAlign};
+use crate::{Drawable, Element, LayoutCache, TextOverflow};
+use attribute::size::ResolvedSize;
 use skia_safe::font_style::FontStyle as SkFontStyle;
+use skia_safe::{Canvas, Color, Font, FontMgr, Paint, TextBlob, Typeface};
+use std::sync::Mutex;
 use utils::debug;
 
 thread_local! {
@@ -57,9 +57,7 @@ fn build_text_runs(text: &str, primary_font: &Font) -> Vec<TextRun> {
                 current_text.push(ch);
             }
         } else {
-            let fallback = FONT_MGR.with(|mgr| {
-                mgr.match_family_style_character("", style, &[""], ch as i32)
-            });
+            let fallback = FONT_MGR.with(|mgr| mgr.match_family_style_character("", style, &[""], ch as i32));
 
             if current_is_primary {
                 if !current_text.is_empty() {
@@ -238,7 +236,9 @@ impl Drawable for RawTextWidget {
 
         let y = match self.text_align {
             TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => -metrics.ascent,
-            TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => height / 2.0 - (metrics.ascent + metrics.descent) / 2.0,
+            TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
+                height / 2.0 - (metrics.ascent + metrics.descent) / 2.0
+            }
             TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => height - metrics.descent,
         };
 
@@ -250,7 +250,8 @@ impl Drawable for RawTextWidget {
         match self.text_style.text_overflow {
             TextOverflow::Clip => {
                 ctx.canvas.save();
-                ctx.canvas.clip_rect(skia_safe::Rect::from_xywh(0.0, 0.0, width, height), None, false);
+                ctx.canvas
+                    .clip_rect(skia_safe::Rect::from_xywh(0.0, 0.0, width, height), None, false);
                 self.draw_runs(ctx.canvas, &runs, x, y, &paint);
                 ctx.canvas.restore();
             }
@@ -286,12 +287,22 @@ impl Drawable for RawTextWidget {
                         let current_total_width = Self::measure_runs(&new_runs);
                         let display_x = match self.text_align {
                             TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
-                            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => (width - current_total_width) / 2.0,
-                            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => width - current_total_width,
+                            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
+                                (width - current_total_width) / 2.0
+                            }
+                            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => {
+                                width - current_total_width
+                            }
                         };
                         self.draw_runs(ctx.canvas, &new_runs, display_x, y, &paint);
                     } else {
-                        self.draw_runs(ctx.canvas, &[TextRun { text: ellipsis.to_string(), font: font.clone() }], 0.0, y, &paint);
+                        self.draw_runs(
+                            ctx.canvas,
+                            &[TextRun { text: ellipsis.to_string(), font: font.clone() }],
+                            0.0,
+                            y,
+                            &paint,
+                        );
                     }
                 } else {
                     self.draw_runs(ctx.canvas, &runs, x, y, &paint);
@@ -331,7 +342,9 @@ impl Drawable for RawTextWidget {
                     let line_width = Self::measure_runs(line);
                     let line_x = match self.text_align {
                         TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
-                        TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => (width - line_width) / 2.0,
+                        TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
+                            (width - line_width) / 2.0
+                        }
                         TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => width - line_width,
                     };
                     let line_y = y + i as f32 * line_height;
@@ -346,8 +359,6 @@ impl Drawable for RawTextWidget {
 }
 
 impl Element for RawTextWidget {
-
-
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
@@ -360,7 +371,11 @@ impl Element for RawTextWidget {
 
         let result = match self.text_style.text_overflow {
             TextOverflow::Wrap => {
-                let width = if ctx.box_constraint.max_width > 0.0 { ctx.box_constraint.max_width } else { ctx.parent_size.width };
+                let width = if ctx.box_constraint.max_width > 0.0 {
+                    ctx.box_constraint.max_width
+                } else {
+                    ctx.parent_size.width
+                };
                 let mut lines_count = 0;
                 let mut current_line_width = 0.0;
                 let (space_width, _) = font.measure_text(" ", None);
@@ -379,7 +394,9 @@ impl Element for RawTextWidget {
                     }
                     current_line_width += word_width;
                 }
-                if current_line_width > 0.0 { lines_count += 1; }
+                if current_line_width > 0.0 {
+                    lines_count += 1;
+                }
 
                 ResolvedSize { width, height: (lines_count as f32 * line_height).ceil() }
             }
@@ -390,7 +407,8 @@ impl Element for RawTextWidget {
             }
         };
 
-        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
+        self.cache
+            .set_computed(ctx.box_constraint, scale_bits, result);
         result
     }
 
