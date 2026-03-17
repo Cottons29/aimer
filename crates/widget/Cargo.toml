@@ -22,8 +22,8 @@ crossbeam-channel.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 objc.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
-skia-safe.workspace = true
 colored.workspace = true
+skia-safe.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys.workspace = true

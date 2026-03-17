@@ -17,7 +17,7 @@ attribute.workspace = true
 utils.workspace = true
 events.workspace = true
 router.workspace = true
-
+inspector.workspace = true
 
 #################
 
@@ -26,12 +26,15 @@ smallvec.workspace = true
 winit.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 objc.workspace = true
-tokio = {workspace = true, features = ["rt-multi-thread", "macros", "net", "sync"]}
-tokio-tungstenite = "0.26"
-futures-util = "0.3"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+tokio = {workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"]}
 raw-window-handle.workspace = true
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 skia-safe = { workspace = true, features = ["metal"] }
@@ -57,4 +60,5 @@ raw-window-handle.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
-web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "Node", "HtmlCanvasElement", "CanvasRenderingContext2d"] }
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "Node", "HtmlCanvasElement", "CanvasRenderingContext2d", "WebSocket", "MessageEvent", "ErrorEvent"] }

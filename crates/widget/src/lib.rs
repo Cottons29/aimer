@@ -5,7 +5,7 @@ pub mod text;
 pub mod style;
 pub mod layout_cache;
 
-#[cfg(not(target_arch = "wasm32"))]
+// #[cfg(debug_assertions)]
 pub mod inspector_overlay {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::RwLock;

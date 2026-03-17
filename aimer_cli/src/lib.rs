@@ -3,7 +3,6 @@ use clap::{Parser, Subcommand};
 
 pub mod commands;
 pub mod targets;
-mod inspector;
 
 #[derive(Parser)]
 #[command(name = "aimer")]
@@ -25,6 +24,7 @@ enum Commands {
 }
 
 pub fn start_cli() {
+    // set_current_dir("/Users/cottons/Documents/aimer-fw/playground/jaime").unwrap();
     let cli = Cli::parse();
 
     match &cli.command {

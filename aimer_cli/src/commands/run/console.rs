@@ -1,3 +1,4 @@
+use std::cmp::PartialEq;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
@@ -11,18 +12,19 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
-use std::io::{BufRead, BufReader, Write, stdout};
+use std::io::{BufRead, BufReader, stdout};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use arboard::Clipboard;
+use inspector::{render_tree_lines, InspectorClient, InspectorHandle, InspectorServer, InspectorState, DEFAULT_INSPECTOR_PORT};
+use tokio::runtime::Runtime;
 use crate::commands::run::ios::spawn_ios_runner;
 use crate::commands::run::ios_sim::spawn_ios_simulator_runner;
 use crate::commands::run::macos::spawn_macos_runner;
 use crate::commands::run::web::spawn_web_runner;
 use crate::commands::run::android::spawn_android_runner;
-use crate::inspector::{InspectorClient, render_tree_lines, INSPECTOR_PORT};
 use crate::targets::Targets;
 use super::Device;
 
@@ -40,6 +42,23 @@ pub enum RunnerEvent {
     BuildLog(String),
     AppLog(String),
     StatusChange(Status),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ConsoleType {
+    App,
+    Build,
+    Inspector,
+}
+
+impl ConsoleType {
+    pub fn next(&self) -> ConsoleType {
+        match self {
+            ConsoleType::App => ConsoleType::Build,
+            ConsoleType::Build => ConsoleType::Inspector,
+            ConsoleType::Inspector => ConsoleType::App,
+        }
+    }
 }
 
 fn spawn_runner(
@@ -100,12 +119,28 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
     let mut build_logs: Vec<String> = Vec::new();
     let mut app_logs: Vec<String> = Vec::new();
     let mut current_status = Status::Compiling(0);
-    let mut current_pane = 1; // 0 for Build, 1 for App, 2 for Inspector
+    let mut current_pane = ConsoleType::App;
     let mut build_scroll: u16 = 0;
     let mut app_scroll: u16 = 0;
     let mut inspector_scroll: u16 = 0;
 
-    let inspector_client = InspectorClient::connect(INSPECTOR_PORT);
+    // For web targets, run an InspectorServer so the browser wasm app can connect.
+    // For native targets, use InspectorClient which connects to the engine's server.
+    let inspector_runtime: Option<Runtime>;
+    let inspector_handle: Option<InspectorHandle>;
+    let inspector_client: Option<InspectorClient>;
+
+    if device.target == Targets::Web {
+        let rt = Runtime::new().expect("Failed to create inspector tokio runtime");
+        let handle = InspectorServer::start(DEFAULT_INSPECTOR_PORT, rt.handle());
+        inspector_handle = Some(handle);
+        inspector_client = None;
+        inspector_runtime = Some(rt);
+    } else {
+        inspector_client = Some(InspectorClient::connect(DEFAULT_INSPECTOR_PORT));
+        inspector_handle = None;
+        inspector_runtime = None;
+    }
 
     // let frames = ["▁","▂","▃","▄","▅","▆","▇","█","▇","▆","▅","▄","▃","▂"];
     // let frames = ["⠁","⠂","⠄","⡀","⢀","⠠","⠐","⠈"];
@@ -157,7 +192,11 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 .flat_map(|l| l.into_text().map(|t| t.lines).unwrap_or_else(|_| vec![Line::from(strip_ansi(l))]))
                 .collect::<Vec<_>>();
 
-            let inspector_state = inspector_client.state.lock().unwrap().clone();
+            let inspector_state = if let Some(ref handle) = inspector_handle {
+                handle.state.lock().unwrap().clone()
+            } else {
+                inspector_client.as_ref().unwrap().state.lock().unwrap().clone()
+            };
             let inspector_status = if !inspector_state.connected {
                 " [disconnected]"
             } else if inspector_state.enabled {
@@ -170,17 +209,17 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
             let build_block = Block::default()
                 .borders(Borders::ALL)
                 .title("Build Logs")
-                .border_style(Style::default().fg(if current_pane == 0 { Color::Yellow } else { Color::White }));
+                .border_style(Style::default().fg(if current_pane == ConsoleType::Build { Color::Yellow } else { Color::White }));
 
             let app_block = Block::default()
                 .borders(Borders::ALL)
                 .title("App Logs")
-                .border_style(Style::default().fg(if current_pane == 1 { Color::Yellow } else { Color::White }));
+                .border_style(Style::default().fg(if current_pane == ConsoleType::App { Color::Yellow } else { Color::White }));
 
             let inspector_block = Block::default()
                 .borders(Borders::ALL)
                 .title(inspector_title)
-                .border_style(Style::default().fg(if current_pane == 2 { Color::Cyan } else { Color::White }));
+                .border_style(Style::default().fg(if current_pane == ConsoleType::Inspector { Color::Cyan } else { Color::White }));
 
             let area = chunks[0];
             let height = area.height.saturating_sub(2) as usize;
@@ -223,7 +262,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 (start, skip_top as u16, actual_scroll as u16)
             };
 
-            if current_pane == 0 {
+            if current_pane == ConsoleType::Build {
                 let (start, skip_top, new_scroll) = calc_scroll(&build_text, height, width, build_scroll as usize);
                 build_scroll = new_scroll;
                 let p = Paragraph::new(build_text[start..].to_vec())
@@ -231,7 +270,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                     .wrap(Wrap { trim: false })
                     .scroll((skip_top, 0));
                 f.render_widget(p, area);
-            } else if current_pane == 1 {
+            } else if current_pane == ConsoleType::App {
                 let (start, skip_top, new_scroll) = calc_scroll(&app_text, height, width, app_scroll as usize);
                 app_scroll = new_scroll;
                 let p = Paragraph::new(app_text[start..].to_vec())
@@ -245,7 +284,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                     let mut tree_lines: Vec<String> = Vec::new();
                     if !inspector_state.connected {
                         tree_lines.push("Waiting for app to start...".to_string());
-                        tree_lines.push(format!("Connecting to ws://127.0.0.1:{}", INSPECTOR_PORT));
+                        tree_lines.push(format!("Connecting to ws://127.0.0.1:{}", DEFAULT_INSPECTOR_PORT));
                     } else if !inspector_state.enabled {
                         tree_lines.push("Inspector is OFF.".to_string());
                         tree_lines.push("Press F12 to enable.".to_string());
@@ -350,7 +389,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
             .checked_sub(last_tick.elapsed())
             .unwrap_or_else(|| Duration::from_secs(0));
 
-        if crossterm::event::poll(timeout)? {
+        if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(key) => {
                     match (key.code, key.modifiers) {
@@ -372,6 +411,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                                     let _ = tx_clone.send(RunnerEvent::BuildLog("Running wasm-pack build...".to_string()));
                                     let mut wasm_build = Command::new("wasm-pack")
                                         .arg("build")
+                                        .arg("--debug")
                                         .arg("--target")
                                         .arg("web")
                                         .arg("--out-dir")
@@ -398,7 +438,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                                     thread::spawn(move || {
                                         let reader = BufReader::new(stderr);
                                         let mut compile_count = 0;
-                                        let mut all_compile = 0;
+                                        // let mut all_compile = 0;
                                         for line in reader.lines() {
                                             if let Ok(l) = line {
                                                 if l.contains("Compiling") {
@@ -435,7 +475,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                         }
                         (KeyCode::Char('c'), _) | (KeyCode::Char('C'), _) => {
                             if let Ok(mut clipboard) = Clipboard::new() {
-                                let logs = if current_pane == 0 {
+                                let logs = if current_pane == ConsoleType::Build {
                                     build_logs.join("\n")
                                 } else {
                                     app_logs.join("\n")
@@ -444,46 +484,50 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                             }
                         }
                         (KeyCode::Tab, _) => {
-                            current_pane = (current_pane + 1) % 3;
+                            current_pane = current_pane.next()
                         }
                         (KeyCode::F(12), _) => {
-                            inspector_client.send_toggle();
-                            current_pane = 2;
+                            if let Some(ref handle) = inspector_handle {
+                                handle.send_toggle();
+                            } else if let Some(ref client) = inspector_client {
+                                client.send_toggle();
+                            }
+                            current_pane = ConsoleType::Inspector;
                         }
                         (KeyCode::Up, _) => {
-                            if current_pane == 0 {
-                                build_scroll = build_scroll.saturating_add(1);
-                            } else if current_pane == 1 {
-                                app_scroll = app_scroll.saturating_add(1);
-                            } else {
-                                inspector_scroll = inspector_scroll.saturating_add(1);
-                            }
-                        }
-                        (KeyCode::Down, _) => {
-                            if current_pane == 0 {
+                            if current_pane == ConsoleType::Build {
                                 build_scroll = build_scroll.saturating_sub(1);
-                            } else if current_pane == 1 {
+                            } else if current_pane == ConsoleType::App {
                                 app_scroll = app_scroll.saturating_sub(1);
                             } else {
                                 inspector_scroll = inspector_scroll.saturating_sub(1);
                             }
                         }
-                        (KeyCode::PageUp, _) => {
-                            if current_pane == 0 {
-                                build_scroll = build_scroll.saturating_add(10);
-                            } else if current_pane == 1 {
-                                app_scroll = app_scroll.saturating_add(10);
+                        (KeyCode::Down, _) => {
+                            if current_pane == ConsoleType::Build {
+                                build_scroll = build_scroll.saturating_add(1);
+                            } else if current_pane == ConsoleType::App {
+                                app_scroll = app_scroll.saturating_add(1);
                             } else {
-                                inspector_scroll = inspector_scroll.saturating_add(10);
+                                inspector_scroll = inspector_scroll.saturating_add(1);
                             }
                         }
-                        (KeyCode::PageDown, _) => {
-                            if current_pane == 0 {
+                        (KeyCode::PageUp, _) => {
+                            if current_pane == ConsoleType::Build {
                                 build_scroll = build_scroll.saturating_sub(10);
-                            } else if current_pane == 1 {
+                            } else if current_pane == ConsoleType::App {
                                 app_scroll = app_scroll.saturating_sub(10);
                             } else {
                                 inspector_scroll = inspector_scroll.saturating_sub(10);
+                            }
+                        }
+                        (KeyCode::PageDown, _) => {
+                            if current_pane == ConsoleType::Build {
+                                build_scroll = build_scroll.saturating_add(10);
+                            } else if current_pane == ConsoleType::App {
+                                app_scroll = app_scroll.saturating_add(10);
+                            } else {
+                                inspector_scroll = inspector_scroll.saturating_add(10);
                             }
                         }
                         _ => {}
@@ -492,17 +536,21 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 Event::Mouse(mouse_event) => {
                     match mouse_event.kind {
                         crossterm::event::MouseEventKind::ScrollUp => {
-                            if current_pane == 0 {
+                            if current_pane == ConsoleType::Build {
                                 build_scroll = build_scroll.saturating_add(1);
-                            } else {
+                            } else if current_pane == ConsoleType::App{
                                 app_scroll = app_scroll.saturating_add(1);
+                            } else {
+                                inspector_scroll = inspector_scroll.saturating_add(1);
                             }
                         }
                         crossterm::event::MouseEventKind::ScrollDown => {
-                            if current_pane == 0 {
+                            if current_pane == ConsoleType::Build {
                                 build_scroll = build_scroll.saturating_sub(1);
-                            } else {
+                            } else if current_pane == ConsoleType::App {
                                 app_scroll = app_scroll.saturating_sub(1);
+                            } else {
+                                inspector_scroll = inspector_scroll.saturating_sub(1);
                             }
                         }
                         _ => {}

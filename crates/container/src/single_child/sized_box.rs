@@ -62,15 +62,22 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         #[cfg(debug_assertions)]
         {
             if widget::inspector_overlay::is_enabled() {
-                let matrix = ctx.canvas.local_to_device_as_3x3();
-                let start_x = matrix.translate_x() as f32;
-                let start_y = matrix.translate_y() as f32;
+                #[cfg(not(target_arch = "wasm32"))]
+                let (start_x, start_y) = {
+                    let matrix = ctx.canvas.local_to_device_as_3x3();
+                    (matrix.translate_x() as f32, matrix.translate_y() as f32)
+                };
+                #[cfg(target_arch = "wasm32")]
+                let (start_x, start_y) = {
+                    let matrix = ctx.canvas.get_transform().unwrap();
+                    (matrix.e() as f32, matrix.f() as f32)
+                };
                 let end_x = start_x + width as f32;
                 let end_y = start_y + height as f32;
 
-                let scale = ctx.scale as f32;
-                let l_start = attribute::position::Vec2d { x: start_x / scale, y: start_y / scale };
-                let l_end = attribute::position::Vec2d { x: end_x / scale, y: end_y / scale };
+                let scale = ctx.scale;
+                let l_start = attribute::position::Vec2d { x: (start_x as f64 / scale as f64) as _, y: (start_y as f64 / scale as f64) as _ };
+                let l_end = attribute::position::Vec2d { x: (end_x as f64 / scale as f64) as _, y: (end_y as f64 / scale as f64) as _ };
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
@@ -99,19 +106,26 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         let height = size.height;
 
         if widget::inspector_overlay::is_enabled() {
-            let matrix = ctx.canvas.local_to_device_as_3x3();
-            let start_x = matrix.translate_x() as f32;
-            let start_y = matrix.translate_y() as f32;
-            let end_x = start_x + width as f32;
-            let end_y = start_y + height as f32;
+            #[cfg(not(target_arch = "wasm32"))]
+            let (start_x, start_y) = {
+                let matrix = ctx.canvas.local_to_device_as_3x3();
+                (matrix.translate_x() as f32, matrix.translate_y() as f32)
+            };
+            #[cfg(target_arch = "wasm32")]
+            let (start_x, start_y) = {
+                let matrix = ctx.canvas.get_transform().unwrap();
+                (matrix.e(), matrix.f())
+            };
+            let end_x = start_x + width;
+            let end_y = start_y + height;
 
-            let scale = ctx.scale as f32;
-            let l_start = attribute::position::Vec2d { x: start_x / scale, y: start_y / scale };
-            let l_end = attribute::position::Vec2d { x: end_x / scale, y: end_y / scale };
+            let scale = ctx.scale;
+            let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
+            let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
             self.bounds.set(Some((l_start, l_end)));
 
             let cp = ctx.cursor_pos;
-            if (cp.x as f32) >= start_x && (cp.x as f32) <= end_x && (cp.y as f32) >= start_y && (cp.y as f32) <= end_y {
+            if cp.x >= start_x && cp.x <= end_x && cp.y >= start_y && cp.y <= end_y {
                 if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
                     *hovered = Some((self.debug_name, l_start, l_end));
                 }
@@ -125,20 +139,15 @@ impl<E: Element> Drawable for RawSizedBox<E> {
 }
 
 impl<E: Element> Element for RawSizedBox<E> {
-
-    fn pos_start_end(&self) -> Option<(attribute::position::Vec2d, attribute::position::Vec2d)> {
-        self.bounds.get()
-    }
-
-    fn debug_name(&self) -> &'static str {
-        self.debug_name
-    }
-
     fn size(&self) -> Option<Size> {
         match (self.width, self.height) {
             (Dimension::Px(w), Dimension::Px(h)) => Some(Size { width: Dimension::Px(w), height: Dimension::Px(h) }),
             _ => None,
         }
+    }
+
+    fn pos_start_end(&self) -> Option<(attribute::position::Vec2d, attribute::position::Vec2d)> {
+        self.bounds.get()
     }
 
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -202,5 +211,9 @@ impl<E: Element> Element for RawSizedBox<E> {
     fn invalidate_layout(&self) {
         self.cache.invalidate();
         self.child.invalidate_layout();
+    }
+
+    fn debug_name(&self) -> &'static str {
+        self.debug_name
     }
 }
