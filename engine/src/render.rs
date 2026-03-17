@@ -1,3 +1,4 @@
+use std::cell::Cell;
 #[allow(unused)]
 use crate::render;
 use attribute::position::Vec2d;
@@ -83,6 +84,12 @@ pub struct AimerAppConfiguration {
     pub async_runtime: Runtime,
     #[cfg(debug_assertions)]
     pub inspector: inspector::InspectorHandle,
+    #[cfg(debug_assertions)]
+    pub inspector_change: Cell<bool>,
+    #[cfg(debug_assertions)]
+    pub inspector_prev_enabled: Cell<bool>,
+    #[cfg(debug_assertions)]
+    pub inspector_redraw_frames: Cell<u8>
 }
 
 impl ApplicationHandler for AimerAppConfiguration {
@@ -281,6 +288,24 @@ impl ApplicationHandler for AimerAppConfiguration {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         handle_window_event(self, event_loop, _id, event);
     }
+
+    #[cfg(debug_assertions)]
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        let current = self.inspector.is_enabled();
+        let prev = self.inspector_prev_enabled.get();
+        if current != prev {
+            self.inspector_prev_enabled.set(current);
+            self.inspector_change.set(true);
+            self.inspector_redraw_frames.set(5);
+        }
+        let frames = self.inspector_redraw_frames.get();
+        if frames > 0 {
+            self.inspector_redraw_frames.set(frames - 1);
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+        }
+    }
 }
 #[allow(dead_code)]
 impl AimerAppConfiguration {
@@ -299,6 +324,7 @@ impl AimerAppConfiguration {
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     fn broadcast_inspector_snapshot(&self) {
         if self.inspector.is_enabled() {
+
             let snapshot = self.widget_root.as_ref().map(|root| {
                 InspectorServer::snapshot_tree(root.as_ref())
             });
@@ -319,7 +345,23 @@ impl AimerAppConfiguration {
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
 
-
+        #[cfg(debug_assertions)]
+        {
+            let current = self.inspector.is_enabled();
+            let prev = self.inspector_prev_enabled.get();
+            if current != prev {
+                self.inspector_prev_enabled.set(current);
+                self.inspector_change.set(true);
+                self.inspector_redraw_frames.set(5);
+            }
+            let frames = self.inspector_redraw_frames.get();
+            if frames > 0 {
+                self.inspector_redraw_frames.set(frames - 1);
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+        }
 
         #[allow(clippy::collapsible_if)]
         if let Some(size) = self.pending_resize.take() {
@@ -467,7 +509,7 @@ impl AimerAppConfiguration {
                     Self::render_widget_tree(root.as_ref(), &ctx);
                     #[cfg(debug_assertions)]
                     if self.inspector.is_enabled() {
-                        Self::draw_inspector_overlay(root.as_ref(), ctx.canvas, self.cursor_pos, ctx.scale as f32);
+                        InspectorOverlay::draw(root.as_ref(), ctx.canvas, self.cursor_pos, ctx.scale as f32);
                     }
                 }
             }
@@ -539,8 +581,6 @@ impl AimerAppConfiguration {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use attribute::dimension::Dimension;
     use attribute::position::Vec2d;
     use attribute::size::Size;
     use widget::base::BuildContext;
