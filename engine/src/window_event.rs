@@ -131,6 +131,24 @@ pub(crate) fn handle_window_event(
                 }
             }
 
+            // Handle space as text input when it arrives as a named key
+            if let Key::Named(WinitNamedKey::Space) = event.logical_key {
+                let ev = ElementEvent::CharInput { ch: ' ', action: action.clone() };
+                if let Some(root) = &app.widget_root {
+                    let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+                    #[cfg(debug_assertions)]
+                    if app.inspector.is_enabled() {
+                        handled = true;
+                    }
+                    if handled {
+                        if let Some(window) = &app.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+                return;
+            }
+
             // Handle named keys
             if let Key::Named(named) = &event.logical_key {
                 let key = match named {

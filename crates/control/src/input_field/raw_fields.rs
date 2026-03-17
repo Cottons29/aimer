@@ -13,6 +13,7 @@ use events::element::{ElementEvent, KeyAction, NamedKey};
 use skia_safe::{
     Color as SkColor, Font, FontMgr, Paint, Rect, TextBlob, font_style::FontStyle as SkFontStyle, paint::Style,
 };
+use utils::debug;
 // use skia_safe::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
