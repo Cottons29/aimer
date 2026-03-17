@@ -37,6 +37,5 @@ pub enum ElementEvent {
     KeyInput { key: NamedKey, action: KeyAction },
     Cancel,
 }
-
 unsafe impl Send for ElementEvent {}
 unsafe impl Sync for ElementEvent {}
