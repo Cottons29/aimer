@@ -48,13 +48,35 @@ use skia_safe::ColorType as AndroidColorType;
 use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use inspector::InspectorOverlay;
 #[cfg(not(target_arch = "wasm32"))]
-use inspector::InspectorServer;
+use inspector::{InspectorAppHandle, InspectorServer};
 use utils::debug;
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) type Float = f64;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) type Float = f32;
+
+/// Walk the snapshot tree and find a node matching the hovered widget by name and bounds.
+#[cfg(debug_assertions)]
+fn find_hovered_node(node: &inspector::WidgetNode, name: &str, start: Vec2d, end: Vec2d) -> Option<u64> {
+    const EPS: f32 = 1.0;
+    let w = (end.x - start.x) as f32;
+    let h = (end.y - start.y) as f32;
+    if node.name == name
+        && (node.x - start.x as f32).abs() < EPS
+        && (node.y - start.y as f32).abs() < EPS
+        && (node.width - w).abs() < EPS
+        && (node.height - h).abs() < EPS
+    {
+        return Some(node.id);
+    }
+    for child in &node.children {
+        if let Some(id) = find_hovered_node(child, name, start, end) {
+            return Some(id);
+        }
+    }
+    None
+}
 
 pub struct AimerAppConfiguration {
     pub window: Option<&'static Window>,
@@ -82,7 +104,9 @@ pub struct AimerAppConfiguration {
     pub pending_resize: Option<PhysicalSize<u32>>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+    pub inspector: inspector::InspectorAppHandle,
+    #[cfg(all(debug_assertions, target_arch = "wasm32"))]
     pub inspector: inspector::InspectorHandle,
     #[cfg(debug_assertions)]
     pub inspector_change: Cell<bool>,
@@ -324,11 +348,22 @@ impl AimerAppConfiguration {
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     fn broadcast_inspector_snapshot(&self) {
         if self.inspector.is_enabled() {
-
             let snapshot = self.widget_root.as_ref().map(|root| {
                 InspectorServer::snapshot_tree(root.as_ref())
             });
+
+            let hovered_id = if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
+                if let Some((name, start, end)) = hovered.as_ref() {
+                    snapshot.as_ref().and_then(|s| find_hovered_node(s, name, *start, *end))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             self.inspector.broadcast_tree(snapshot);
+            self.inspector.broadcast_hovered(hovered_id);
         }
     }
 
@@ -338,7 +373,19 @@ impl AimerAppConfiguration {
             let snapshot = self.widget_root.as_ref().map(|root| {
                 inspector::snapshot_tree(root.as_ref())
             });
+
+            let hovered_id = if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
+                if let Some((name, start, end)) = hovered.as_ref() {
+                    snapshot.as_ref().and_then(|s| find_hovered_node(s, name, *start, *end))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             self.inspector.broadcast_tree(snapshot);
+            self.inspector.broadcast_hovered(hovered_id);
         }
     }
 
