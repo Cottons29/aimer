@@ -1,16 +1,48 @@
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
+#[cfg(not(target_arch = "wasm32"))]
+pub type Canvas = skia_safe::Canvas;
+#[cfg(target_arch = "wasm32")]
+pub type Canvas = web_sys::CanvasRenderingContext2d;
 
 #[allow(dead_code)]
-pub struct CrossPlatformCanvas<'a> {
+pub struct AimerCanvas<'a> {    
     #[cfg(not(target_arch = "wasm32"))]
     canvas: &'a mut skia_safe::Canvas,
     #[cfg(target_arch = "wasm32")]
     canvas: &'a mut web_sys::CanvasRenderingContext2d,
 }
 
+
+
+impl<'a> AimerCanvas<'a> {
+    /// 
+    /// Provides access to the internal `Canvas` reference tied to the current object instance.
+    ///
+    /// # Safety
+    /// This function is marked as `unsafe` because it directly returns a reference 
+    /// to an internal `Canvas` object. The caller need to write platform-specific code
+    /// for making platform-specific operations.
+    ///
+    /// # Returns
+    /// * `&'a Canvas` - A reference to the internal `Canvas` object.
+    ///
+    /// # Example
+    /// ```rust
+    /// let canvas = my_object.get_canvas();
+    /// // Ensure no mutable operations on `my_object` while using `canvas`.
+    /// ```
+    ///
+    /// # Notes
+    /// The return type is `skia_safe::Canvas` on non-wasm32 targets, and `web_sys::CanvasRenderingContext2d` on wasm32 targets.
+    ///
+    unsafe fn get_canvas(&'a self) -> &'a Canvas  {
+        self.canvas
+    }
+}
+
 #[allow(dead_code)]
-impl<'a> CrossPlatformCanvas<'a> {
+impl<'a> AimerCanvas<'a> {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new(canvas: &'a mut skia_safe::Canvas) -> Self {
         Self { canvas }
