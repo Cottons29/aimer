@@ -1,3 +1,5 @@
+use raw_window_handle::RawWindowHandle::UiKit;
+use raw_window_handle::UiKitWindowHandle;
 use events::element::KeyAction;
 use crate::render::AimerAppConfiguration;
 use attribute::position::Vec2d;
@@ -9,6 +11,49 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 use events::element::{ElementEvent, NamedKey};
+
+pub(crate) fn handle_user_event(app: &mut AimerAppConfiguration, event: crate::aimer_app::CustomAppEvent) {
+    match event {
+        crate::aimer_app::CustomAppEvent::ForceBackspace => {
+            if let Some(root) = &app.widget_root {
+                let ev = ElementEvent::KeyInput {
+                    key: NamedKey::Backspace,
+                    action: KeyAction::Pressed,
+                };
+                let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+                #[cfg(debug_assertions)]
+                if app.inspector.is_enabled() {
+                    handled = true;
+                }
+                if handled {
+                    if let Some(window) = &app.window {
+                        window.request_redraw();
+                    }
+                }
+            }
+        }
+        crate::aimer_app::CustomAppEvent::InsertText(text) => {
+            if let Some(root) = &app.widget_root {
+                let mut handled_any = false;
+                for ch in text.chars() {
+                    let ev = ElementEvent::CharInput { ch, action: KeyAction::Pressed };
+                    let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+                    #[cfg(debug_assertions)]
+                    if app.inspector.is_enabled() {
+                        handled = true;
+                    }
+                    handled_any |= handled;
+                }
+
+                if handled_any {
+                    if let Some(window) = &app.window {
+                        window.request_redraw();
+                    }
+                }
+            }
+        }
+    }
+}
 
 pub(crate) fn handle_window_event(
     app: &mut AimerAppConfiguration,
@@ -93,9 +138,15 @@ pub(crate) fn handle_window_event(
             }
         }
 
-        WindowEvent::KeyboardInput { event, .. } => {
+        WindowEvent::KeyboardInput { event, device_id, .. } => {
             use winit::event::ElementState;
             use winit::keyboard::{Key, NamedKey as WinitNamedKey};
+            
+
+            // debug!("DeviceID : {:?}", device_id);
+            debug!("KeyboardInput: logical {:?},state {:?}", event.logical_key, event.state);
+
+
 
             let action = if event.repeat {
                 KeyAction::Repeat
@@ -106,12 +157,6 @@ pub(crate) fn handle_window_event(
                 }
             };
 
-            // Handle text input from the key event.
-            // Use `logical_key` (Key::Character) as the single source of
-            // printable text to avoid duplicate input.  Winit ≥0.30.6 may
-            // fire two Pressed KeyboardInput events per keystroke on some
-            // platforms (including WASM); using `event.text` would process
-            // both, doubling every character.
             if let Key::Character(ref ch) = event.logical_key {
                 if !ch.is_empty() && ch.chars().all(|c| !c.is_control()) {
                     let ev = ElementEvent::CharInput { ch: ch.parse().unwrap(), action: action.clone() };
@@ -129,6 +174,24 @@ pub(crate) fn handle_window_event(
                     }
                     return;
                 }
+            }
+
+            // Handle space as text input when it arrives as a named key
+            if let Key::Named(WinitNamedKey::Space) = event.logical_key {
+                let ev = ElementEvent::CharInput { ch: ' ', action: action.clone() };
+                if let Some(root) = &app.widget_root {
+                    let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+                    #[cfg(debug_assertions)]
+                    if app.inspector.is_enabled() {
+                        handled = true;
+                    }
+                    if handled {
+                        if let Some(window) = &app.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+                return;
             }
 
             // Handle named keys

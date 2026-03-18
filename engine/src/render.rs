@@ -1,8 +1,8 @@
-use std::cell::Cell;
 #[allow(unused)]
 use crate::render;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
+use std::cell::Cell;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 use widget::base::BuildContext;
@@ -10,7 +10,7 @@ use widget::{Element, Widget};
 use winit::application::ApplicationHandler;
 #[allow(unused)]
 use winit::dpi::{LogicalSize, PhysicalSize, Position};
-use winit::event::WindowEvent;
+use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 #[allow(unused)]
 use winit::monitor::MonitorHandle;
@@ -28,33 +28,55 @@ use objc2_metal::{MTLCommandBuffer, MTLCommandQueue, MTLCreateSystemDefaultDevic
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-use skia_safe::gpu::{self, backend_render_targets, mtl, DirectContext, SurfaceOrigin};
-#[cfg(any(target_os = "macos", target_os = "ios"))]
 use skia_safe::ColorType;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use skia_safe::gpu::{self, DirectContext, SurfaceOrigin, backend_render_targets, mtl};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use winit::raw_window_handle::HasWindowHandle;
 
+use crate::window_event::handle_window_event;
+use inspector::InspectorOverlay;
+#[cfg(not(target_arch = "wasm32"))]
+use inspector::{InspectorAppHandle, InspectorServer};
 #[cfg(target_os = "android")]
 use khronos_egl as egl;
-use crate::window_event::handle_window_event;
-#[cfg(target_os = "android")]
-use skia_safe::gpu::{
-    self as gpu_android, backend_render_targets as android_backend_render_targets, gl as skia_gl,
-    DirectContext as AndroidDirectContext, SurfaceOrigin as AndroidSurfaceOrigin,
-};
 #[cfg(target_os = "android")]
 use skia_safe::ColorType as AndroidColorType;
 #[cfg(target_os = "android")]
-use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
-use inspector::InspectorOverlay;
-#[cfg(not(target_arch = "wasm32"))]
-use inspector::InspectorServer;
+use skia_safe::gpu::{
+    self as gpu_android, DirectContext as AndroidDirectContext, SurfaceOrigin as AndroidSurfaceOrigin,
+    backend_render_targets as android_backend_render_targets, gl as skia_gl,
+};
 use utils::debug;
+#[cfg(target_os = "android")]
+use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) type Float = f64;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) type Float = f32;
+
+/// Walk the snapshot tree and find a node matching the hovered widget by name and bounds.
+#[cfg(debug_assertions)]
+fn find_hovered_node(node: &inspector::WidgetNode, name: &str, start: Vec2d, end: Vec2d) -> Option<u64> {
+    const EPS: f32 = 1.0;
+    let w = (end.x - start.x) as f32;
+    let h = (end.y - start.y) as f32;
+    if node.name == name
+        && (node.x - start.x as f32).abs() < EPS
+        && (node.y - start.y as f32).abs() < EPS
+        && (node.width - w).abs() < EPS
+        && (node.height - h).abs() < EPS
+    {
+        return Some(node.id);
+    }
+    for child in &node.children {
+        if let Some(id) = find_hovered_node(child, name, start, end) {
+            return Some(id);
+        }
+    }
+    None
+}
 
 pub struct AimerAppConfiguration {
     pub window: Option<&'static Window>,
@@ -82,17 +104,19 @@ pub struct AimerAppConfiguration {
     pub pending_resize: Option<PhysicalSize<u32>>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+    pub inspector: inspector::InspectorAppHandle,
+    #[cfg(all(debug_assertions, target_arch = "wasm32"))]
     pub inspector: inspector::InspectorHandle,
     #[cfg(debug_assertions)]
     pub inspector_change: Cell<bool>,
     #[cfg(debug_assertions)]
     pub inspector_prev_enabled: Cell<bool>,
     #[cfg(debug_assertions)]
-    pub inspector_redraw_frames: Cell<u8>
+    pub inspector_redraw_frames: Cell<u8>,
 }
 
-impl ApplicationHandler for AimerAppConfiguration {
+impl ApplicationHandler<crate::aimer_app::CustomAppEvent> for AimerAppConfiguration {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "ios")]
         {
@@ -125,6 +149,7 @@ impl ApplicationHandler for AimerAppConfiguration {
         if self.window.is_none() {
             let window = event_loop.create_window(window_attributes).unwrap();
             let window: &'static Window = Box::leak(Box::new(window)); // Leak to static ref
+            events::window::set_window(window);
             self.window = Some(window);
         }
 
@@ -285,6 +310,11 @@ impl ApplicationHandler for AimerAppConfiguration {
         self.window_scale = window.scale_factor();
     }
 
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: crate::aimer_app::CustomAppEvent) {
+        debug!("User event {:?}", event);
+        crate::window_event::handle_user_event(self, event);
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         handle_window_event(self, event_loop, _id, event);
     }
@@ -309,7 +339,6 @@ impl ApplicationHandler for AimerAppConfiguration {
 }
 #[allow(dead_code)]
 impl AimerAppConfiguration {
-
     fn render_widget_tree(widget: &dyn Element, ctx: &BuildContext) {
         #[cfg(debug_assertions)]
         if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
@@ -324,27 +353,55 @@ impl AimerAppConfiguration {
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     fn broadcast_inspector_snapshot(&self) {
         if self.inspector.is_enabled() {
+            let snapshot = self
+                .widget_root
+                .as_ref()
+                .map(|root| InspectorServer::snapshot_tree(root.as_ref()));
 
-            let snapshot = self.widget_root.as_ref().map(|root| {
-                InspectorServer::snapshot_tree(root.as_ref())
-            });
+            let hovered_id = if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
+                if let Some((name, start, end)) = hovered.as_ref() {
+                    snapshot
+                        .as_ref()
+                        .and_then(|s| find_hovered_node(s, name, *start, *end))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             self.inspector.broadcast_tree(snapshot);
+            self.inspector.broadcast_hovered(hovered_id);
         }
     }
 
     #[cfg(all(debug_assertions, target_arch = "wasm32"))]
     fn broadcast_inspector_snapshot(&self) {
         if self.inspector.is_enabled() {
-            let snapshot = self.widget_root.as_ref().map(|root| {
-                inspector::snapshot_tree(root.as_ref())
-            });
+            let snapshot = self
+                .widget_root
+                .as_ref()
+                .map(|root| inspector::snapshot_tree(root.as_ref()));
+
+            let hovered_id = if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
+                if let Some((name, start, end)) = hovered.as_ref() {
+                    snapshot
+                        .as_ref()
+                        .and_then(|s| find_hovered_node(s, name, *start, *end))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             self.inspector.broadcast_tree(snapshot);
+            self.inspector.broadcast_hovered(hovered_id);
         }
     }
 
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
-
         #[cfg(debug_assertions)]
         {
             let current = self.inspector.is_enabled();
@@ -566,7 +623,12 @@ impl AimerAppConfiguration {
                     Self::render_widget_tree(root.as_ref(), &build_ctx);
                     #[cfg(debug_assertions)]
                     if self.inspector.is_enabled() {
-                        InspectorOverlay::draw(root.as_ref(), build_ctx.canvas, self.cursor_pos, build_ctx.scale as f32);
+                        InspectorOverlay::draw(
+                            root.as_ref(),
+                            build_ctx.canvas,
+                            self.cursor_pos,
+                            build_ctx.scale as f32,
+                        );
                     }
                 }
             } else {

@@ -13,6 +13,7 @@ use events::element::{ElementEvent, KeyAction, NamedKey};
 use skia_safe::{
     Color as SkColor, Font, FontMgr, Paint, Rect, TextBlob, font_style::FontStyle as SkFontStyle, paint::Style,
 };
+use utils::debug;
 // use skia_safe::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -279,11 +280,58 @@ impl RawTextField {
     }
 }
 
+/// On wasm32 / mobile browsers, focusing a hidden `<input>` element inside a
+/// user-gesture handler is the only reliable way to raise the virtual keyboard.
+#[cfg(target_arch = "wasm32")]
+fn wasm_request_keyboard(show: bool) {
+    use wasm_bindgen::JsCast;
+    let Some(window) = web_sys::window() else { return };
+    let Some(document) = window.document() else { return };
+
+    let input: web_sys::HtmlInputElement = match document.get_element_by_id("__aimer_hidden_input") {
+        Some(el) => el.unchecked_into(),
+        None => {
+            let el = document
+                .create_element("input")
+                .expect("failed to create hidden input")
+                .unchecked_into::<web_sys::HtmlInputElement>();
+            el.set_id("__aimer_hidden_input");
+            el.set_type("text");
+            el.set_attribute("autocapitalize", "off").ok();
+            el.set_attribute("autocomplete", "off").ok();
+            el.set_attribute("autocorrect", "off").ok();
+            el.set_attribute("spellcheck", "false").ok();
+            let style = el.style();
+            style.set_property("position", "fixed").ok();
+            style.set_property("opacity", "0").ok();
+            style.set_property("left", "-9999px").ok();
+            style.set_property("top", "0").ok();
+            style.set_property("width", "1px").ok();
+            style.set_property("height", "1px").ok();
+            style.set_property("border", "none").ok();
+            style.set_property("outline", "none").ok();
+            style.set_property("padding", "0").ok();
+            style.set_property("font-size", "16px").ok(); // prevents iOS zoom
+            document.body().unwrap().append_child(&el).ok();
+            el
+        }
+    };
+
+    if show {
+        input.focus().ok();
+    } else {
+        input.blur().ok();
+    }
+}
+
 impl Element for RawTextField {
     fn on_event(&self, event: &ElementEvent) -> bool {
         if !self.enable {
             return false;
         }
+
+
+        // debug!("RawTextField on_event: {:?}", event);
 
         match event {
             ElementEvent::PointerDown(pos) => {
@@ -304,9 +352,16 @@ impl Element for RawTextField {
                         self.set_focused(true);
                         self.cursor.set_offset(self.controller.char_count());
                         self.cursor.reset_blink();
+                        // On native mobile, request the virtual keyboard
+                        if let Some(w) = events::window::get_window() {
+                            w.set_ime_allowed(true);
+                        }
                         true
                     } else {
                         self.set_focused(false);
+                        if let Some(w) = events::window::get_window() {
+                            w.set_ime_allowed(false);
+                        }
                         false
                     };
                 }
@@ -324,9 +379,11 @@ impl Element for RawTextField {
                         self.set_focused(true);
                         self.cursor.set_offset(self.controller.char_count());
                         self.cursor.reset_blink();
+                        wasm_request_keyboard(true);
                         return true;
                     } else {
                         self.set_focused(false);
+                        wasm_request_keyboard(false);
                         return false;
                     }
                 }

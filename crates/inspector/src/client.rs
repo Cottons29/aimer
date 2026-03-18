@@ -65,6 +65,9 @@ impl InspectorClient {
                                     InspectorMessage::Status { enabled } => {
                                         s.enabled = enabled;
                                     }
+                                    InspectorMessage::Hovered { id } => {
+                                        s.hovered_widget_id = id;
+                                    }
                                 }
                             }
                         }
@@ -96,16 +99,62 @@ impl InspectorClient {
     }
 }
 
-/// Render the widget tree as indented text lines for display in ratatui.
-pub fn render_tree_lines(node: &WidgetNode, depth: usize, lines: &mut Vec<String>) {
-    let indent = "  ".repeat(depth);
+/// Render the widget tree as indented text lines for display in ratatui,
+/// using a tree-style layout with box-drawing characters (├──, └──, │).
+/// When `full_tree` is true, each node shows `ElementType: WidgetName`;
+/// otherwise only the widget name is displayed.
+pub fn render_tree_lines(node: &WidgetNode, _depth: usize, lines: &mut Vec<String>, full_tree: bool) {
+    let mut ids = Vec::new();
+    render_tree_recursive(node, lines, &mut ids, "", full_tree);
+}
+
+pub fn render_tree_lines_with_ids(node: &WidgetNode, lines: &mut Vec<String>, ids: &mut Vec<u64>, full_tree: bool) {
+    render_tree_recursive(node, lines, ids, "", full_tree);
+}
+
+fn node_label(node: &WidgetNode, full_tree: bool) -> String {
     let pos_info = if node.width > 0.0 || node.height > 0.0 {
         format!("  [{:.0}×{:.0} @ ({:.0},{:.0})]", node.width, node.height, node.x, node.y)
     } else {
         String::new()
     };
-    lines.push(format!("{}▸ {}{}", indent, node.name, pos_info));
-    for child in &node.children {
-        render_tree_lines(child, depth + 1, lines);
+    if full_tree && !node.element_type.is_empty() {
+        format!("{}  ({}){}", node.name, node.element_type, pos_info)
+    } else {
+        format!("{}{}", node.name, pos_info)
+    }
+}
+
+fn render_tree_recursive(node: &WidgetNode, lines: &mut Vec<String>, ids: &mut Vec<u64>, prefix: &str, full_tree: bool) {
+    lines.push(format!("{}{}", prefix, node_label(node, full_tree)));
+    ids.push(node.id);
+
+    let count = node.children.len();
+    for (i, child) in node.children.iter().enumerate() {
+        let is_last = i == count - 1;
+        let connector = if is_last { "└── " } else { "├── " };
+        let continuation = if is_last { "    " } else { "│   " };
+
+        let child_prefix = format!("{}{}", prefix, connector);
+        let grandchild_base = format!("{}{}", prefix, continuation);
+
+        render_tree_with_base(child, lines, ids, &child_prefix, &grandchild_base, full_tree);
+    }
+}
+
+fn render_tree_with_base(node: &WidgetNode, lines: &mut Vec<String>, ids: &mut Vec<u64>, line_prefix: &str, child_base: &str, full_tree: bool) {
+    lines.push(format!("{}{}", line_prefix, node_label(node, full_tree)));
+    ids.push(node.id);
+
+    let count = node.children.len();
+    for (i, child) in node.children.iter().enumerate() {
+        let is_last = i == count - 1;
+        let connector = if is_last { "└── " } else { "├── " };
+        let continuation = if is_last { "    " } else { "│   " };
+
+        let child_line_prefix = format!("{}{}", child_base, connector);
+        let grandchild_base = format!("{}{}", child_base, continuation);
+
+        render_tree_with_base(child, lines, ids, &child_line_prefix, &grandchild_base, full_tree);
     }
 }

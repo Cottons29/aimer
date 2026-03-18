@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use arboard::Clipboard;
-use inspector::{render_tree_lines, InspectorClient, InspectorHandle, InspectorServer, InspectorState, DEFAULT_INSPECTOR_PORT};
+use inspector::{render_tree_lines_with_ids, InspectorServer, DEFAULT_INSPECTOR_PORT};
 use tokio::runtime::Runtime;
 use crate::commands::run::ios::spawn_ios_runner;
 use crate::commands::run::ios_sim::spawn_ios_simulator_runner;
@@ -123,24 +123,12 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
     let mut build_scroll: u16 = 0;
     let mut app_scroll: u16 = 0;
     let mut inspector_scroll: u16 = 0;
+    let mut inspector_full_tree: bool = false;
+    let mut inspector_cursor: usize = 0;
 
-    // For web targets, run an InspectorServer so the browser wasm app can connect.
-    // For native targets, use InspectorClient which connects to the engine's server.
-    let inspector_runtime: Option<Runtime>;
-    let inspector_handle: Option<InspectorHandle>;
-    let inspector_client: Option<InspectorClient>;
-
-    if device.target == Targets::Web {
-        let rt = Runtime::new().expect("Failed to create inspector tokio runtime");
-        let handle = InspectorServer::start(DEFAULT_INSPECTOR_PORT, rt.handle());
-        inspector_handle = Some(handle);
-        inspector_client = None;
-        inspector_runtime = Some(rt);
-    } else {
-        inspector_client = Some(InspectorClient::connect(DEFAULT_INSPECTOR_PORT));
-        inspector_handle = None;
-        inspector_runtime = None;
-    }
+    // CLI always hosts the inspector server; the app connects as a client.
+    let inspector_runtime = Runtime::new().expect("Failed to create inspector tokio runtime");
+    let inspector_handle = InspectorServer::start(DEFAULT_INSPECTOR_PORT, inspector_runtime.handle());
 
     // let frames = ["▁","▂","▃","▄","▅","▆","▇","█","▇","▆","▅","▄","▃","▂"];
     // let frames = ["⠁","⠂","⠄","⡀","⢀","⠠","⠐","⠈"];
@@ -192,11 +180,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 .flat_map(|l| l.into_text().map(|t| t.lines).unwrap_or_else(|_| vec![Line::from(strip_ansi(l))]))
                 .collect::<Vec<_>>();
 
-            let inspector_state = if let Some(ref handle) = inspector_handle {
-                handle.state.lock().unwrap().clone()
-            } else {
-                inspector_client.as_ref().unwrap().state.lock().unwrap().clone()
-            };
+            let inspector_state = inspector_handle.state.lock().unwrap().clone();
             let inspector_status = if !inspector_state.connected {
                 " [disconnected]"
             } else if inspector_state.enabled {
@@ -289,12 +273,38 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                         tree_lines.push("Inspector is OFF.".to_string());
                         tree_lines.push("Press F12 to enable.".to_string());
                     } else {
+                        let mut tree_ids: Vec<u64> = Vec::new();
                         match &inspector_state.tree {
-                            Some(root) => render_tree_lines(root, 0, &mut tree_lines),
+                            Some(root) => render_tree_lines_with_ids(root, &mut tree_lines, &mut tree_ids, inspector_full_tree),
                             None => tree_lines.push("No widget tree received yet.".to_string()),
                         }
+                        // Auto-move cursor to hovered widget
+                        if let Some(hid) = inspector_state.hovered_widget_id {
+                            if let Some(idx) = tree_ids.iter().position(|&id| id == hid) {
+                                inspector_cursor = idx;
+                            }
+                        }
                     }
-                    let inspector_text: Vec<Line> = tree_lines.iter().map(|l| Line::from(l.as_str())).collect();
+                    // Clamp cursor to valid range
+                    if !tree_lines.is_empty() {
+                        inspector_cursor = inspector_cursor.min(tree_lines.len() - 1);
+                    } else {
+                        inspector_cursor = 0;
+                    }
+                    // Auto-scroll to keep cursor visible
+                    if (inspector_cursor as u16) < inspector_scroll {
+                        inspector_scroll = inspector_cursor as u16;
+                    } else if inspector_cursor as u16 >= inspector_scroll + height as u16 {
+                        inspector_scroll = (inspector_cursor as u16).saturating_sub(height as u16 - 1);
+                    }
+                    let highlight_style = Style::default().bg(Color::DarkGray).fg(Color::White);
+                    let inspector_text: Vec<Line> = tree_lines.iter().enumerate().map(|(i, l)| {
+                        if i == inspector_cursor {
+                            Line::from(Span::styled(l.as_str(), highlight_style))
+                        } else {
+                            Line::from(l.as_str())
+                        }
+                    }).collect();
                     let max_scroll = (inspector_text.len() as u16).saturating_sub(height as u16);
                     inspector_scroll = inspector_scroll.min(max_scroll);
                     let p = Paragraph::new(inspector_text)
@@ -373,7 +383,14 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw("inspector "),
+                Span::raw("inspector | "),
+                Span::styled(
+                    "[t] ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(if inspector_full_tree { "full tree " } else { "widgets " }),
             ]);
 
             let status_bar = Paragraph::new(status_line).style(Style::default());
@@ -487,12 +504,13 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                             current_pane = current_pane.next()
                         }
                         (KeyCode::F(12), _) => {
-                            if let Some(ref handle) = inspector_handle {
-                                handle.send_toggle();
-                            } else if let Some(ref client) = inspector_client {
-                                client.send_toggle();
-                            }
+                            inspector_handle.send_toggle();
                             current_pane = ConsoleType::Inspector;
+                        }
+                        (KeyCode::Char('t'), _) => {
+                            if current_pane == ConsoleType::Inspector {
+                                inspector_full_tree = !inspector_full_tree;
+                            }
                         }
                         (KeyCode::Up, _) => {
                             if current_pane == ConsoleType::Build {
@@ -500,7 +518,10 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                             } else if current_pane == ConsoleType::App {
                                 app_scroll = app_scroll.saturating_sub(1);
                             } else {
-                                inspector_scroll = inspector_scroll.saturating_sub(1);
+                                inspector_cursor = inspector_cursor.saturating_sub(1);
+                                if (inspector_cursor as u16) < inspector_scroll {
+                                    inspector_scroll = inspector_cursor as u16;
+                                }
                             }
                         }
                         (KeyCode::Down, _) => {
@@ -509,7 +530,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                             } else if current_pane == ConsoleType::App {
                                 app_scroll = app_scroll.saturating_add(1);
                             } else {
-                                inspector_scroll = inspector_scroll.saturating_add(1);
+                                inspector_cursor = inspector_cursor.saturating_add(1);
                             }
                         }
                         (KeyCode::PageUp, _) => {
@@ -518,7 +539,10 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                             } else if current_pane == ConsoleType::App {
                                 app_scroll = app_scroll.saturating_sub(10);
                             } else {
-                                inspector_scroll = inspector_scroll.saturating_sub(10);
+                                inspector_cursor = inspector_cursor.saturating_sub(10);
+                                if (inspector_cursor as u16) < inspector_scroll {
+                                    inspector_scroll = inspector_cursor as u16;
+                                }
                             }
                         }
                         (KeyCode::PageDown, _) => {
@@ -527,7 +551,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                             } else if current_pane == ConsoleType::App {
                                 app_scroll = app_scroll.saturating_add(10);
                             } else {
-                                inspector_scroll = inspector_scroll.saturating_add(10);
+                                inspector_cursor = inspector_cursor.saturating_add(10);
                             }
                         }
                         _ => {}

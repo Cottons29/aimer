@@ -1,9 +1,9 @@
 //! Widget Inspector — remote debugging service.
 //!
-//! When enabled, this module starts a WebSocket server (default port 9229).
-//! The CLI connects to it and can toggle inspection on/off via F12.
+//! The CLI always hosts the WebSocket server (default port 9229).
+//! The app (native or WASM) connects to it as a client.
 //! When active, the engine serialises the widget tree after each frame and
-//! broadcasts the JSON snapshot to every connected client.
+//! sends the JSON snapshot to the CLI server.
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod server  {
@@ -18,7 +18,7 @@ pub mod server  {
     use tokio_tungstenite::tungstenite::Utf8Bytes;
     use widget::Element;
 
-    /// Shared inspector state accessible from the render loop.
+    /// Shared inspector state accessible from the CLI server.
     #[derive(Clone)]
     pub struct InspectorHandle {
         pub enabled: Arc<AtomicBool>,
@@ -36,7 +36,6 @@ pub mod server  {
         /// Toggle the inspector on/off and broadcast the new status.
         pub fn set_enabled(&self, enabled: bool) {
             self.enabled.store(enabled, Ordering::Relaxed);
-            widget::inspector_overlay::set_enabled(enabled);
             {
                 let mut s = self.state.lock().unwrap();
                 s.enabled = enabled;
@@ -51,7 +50,6 @@ pub mod server  {
         pub fn send_toggle(&self) {
             let new_val = !self.enabled.load(Ordering::Relaxed);
             self.enabled.store(new_val, Ordering::Relaxed);
-            widget::inspector_overlay::set_enabled(new_val);
             {
                 let mut s = self.state.lock().unwrap();
                 s.enabled = new_val;
@@ -62,7 +60,7 @@ pub mod server  {
             }
         }
 
-        /// Broadcast a widget tree snapshot to all connected CLI clients.
+        /// Broadcast a widget tree snapshot to all connected clients.
         pub fn broadcast_tree(&self, root: Option<crate::types::WidgetNode>) {
             if !self.is_enabled() {
                 return;
@@ -76,15 +74,25 @@ pub mod server  {
                 let _ = self.tx.send(json);
             }
         }
+
+        /// Broadcast the currently hovered widget ID.
+        pub fn broadcast_hovered(&self, id: Option<u64>) {
+            {
+                let mut s = self.state.lock().unwrap();
+                s.hovered_widget_id = id;
+            }
+            let msg = InspectorMessage::Hovered { id };
+            if let Ok(json) = serde_json::to_string(&msg) {
+                let _ = self.tx.send(json);
+            }
+        }
     }
 
     pub struct InspectorServer;
 
-
-
     impl InspectorServer {
         /// Start the WebSocket inspector server on the given port.
-        /// Returns an `InspectorHandle` that the render loop uses to push snapshots.
+        /// Returns an `InspectorHandle` that the CLI uses to read state and send commands.
         pub fn start(port: u16, runtime: &tokio::runtime::Handle) -> InspectorHandle {
             let (tx, _rx) = broadcast::channel::<String>(64);
             let enabled = Arc::new(AtomicBool::new(false));
@@ -97,7 +105,6 @@ pub mod server  {
             let state_server = state.clone();
             runtime.spawn(async move {
                 let addr = format!("127.0.0.1:{}", port);
-                // let url = format!("ws://{}", addr);
 
                 let listener = match tokio::net::TcpListener::bind(&addr).await {
                     Ok(l) => l,
@@ -106,8 +113,6 @@ pub mod server  {
                         return;
                     }
                 };
-
-                // println!("[inspector] hosting cli inspector at ws://{}", addr);
 
                 loop {
                     let (stream, _) = match listener.accept().await {
@@ -119,8 +124,6 @@ pub mod server  {
                         Ok(ws) => ws,
                         Err(_) => continue,
                     };
-
-                    // println!("[inspector] connected to cli inspector");
 
                     {
                         let mut s = state_server.lock().unwrap();
@@ -161,16 +164,18 @@ pub mod server  {
                                             }
                                             InspectorMessage::Status { enabled } => {
                                                 enabled_server.store(enabled, Ordering::Relaxed);
-                                                widget::inspector_overlay::set_enabled(enabled);
                                                 let mut s = state_server.lock().unwrap();
                                                 s.enabled = enabled;
+                                            }
+                                            InspectorMessage::Hovered { id } => {
+                                                let mut s = state_server.lock().unwrap();
+                                                s.hovered_widget_id = id;
                                             }
                                         }
                                     } else if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(&text) {
                                         if cmd.get("type").and_then(|v| v.as_str()) == Some("toggle") {
                                             let new_val = !enabled_server.load(Ordering::Relaxed);
                                             enabled_server.store(new_val, Ordering::Relaxed);
-                                            widget::inspector_overlay::set_enabled(new_val);
                                             let mut s = state_server.lock().unwrap();
                                             s.enabled = new_val;
                                             drop(s);
@@ -192,7 +197,7 @@ pub mod server  {
                         let mut s = state_server.lock().unwrap();
                         s.connected = false;
                     }
-                    println!("[inspector] disconnected from cli");
+                    // println!("[inspector] disconnected from app");
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 }
             });
@@ -202,18 +207,120 @@ pub mod server  {
 
         /// Recursively walk the element tree and build a `WidgetNode` snapshot.
         pub fn snapshot_tree(element: &dyn Element) -> crate::types::WidgetNode {
-            let (x, y, width, height) = if let Some((start, end)) = element.pos_start_end() {
-                (start.x, start.y, end.x - start.x, end.y - start.y)
-            } else {
-                (0.0, 0.0, 0.0, 0.0)
-            };
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            fn build(element: &dyn Element, counter: &AtomicU64) -> crate::types::WidgetNode {
+                let (x, y, width, height) = if let Some((start, end)) = element.pos_start_end() {
+                    (start.x, start.y, end.x - start.x, end.y - start.y)
+                } else {
+                    (0.0, 0.0, 0.0, 0.0)
+                };
+                let id = counter.fetch_add(1, Ordering::Relaxed);
+                let mut children = Vec::new();
+                element.event_children(&mut |child| {
+                    children.push(build(child, counter));
+                });
+                crate::types::WidgetNode {
+                    id,
+                    name: element.debug_name().to_string(),
+                    element_type: std::any::type_name_of_val(element)
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or("Unknown")
+                        .to_string(),
+                    x, y, width, height, children,
+                }
+            }
+            COUNTER.store(0, Ordering::Relaxed);
+            build(element, &COUNTER)
+        }
+    }
 
-            let mut children = Vec::new();
-            element.event_children(&mut |child| {
-                children.push(Self::snapshot_tree(child));
+    /// App-side inspector handle that connects to the CLI server as a WebSocket client.
+    /// Used by the engine/app on all native targets.
+    #[derive(Clone)]
+    pub struct InspectorAppHandle {
+        pub enabled: Arc<AtomicBool>,
+        tx: tokio::sync::mpsc::UnboundedSender<String>,
+    }
+
+    impl InspectorAppHandle {
+        /// Returns `true` if the inspector is currently active.
+        pub fn is_enabled(&self) -> bool {
+            self.enabled.load(Ordering::Relaxed)
+        }
+
+        /// Send a widget tree snapshot to the CLI server.
+        pub fn broadcast_tree(&self, root: Option<crate::types::WidgetNode>) {
+            if !self.is_enabled() {
+                return;
+            }
+            let msg = InspectorMessage::Tree { root };
+            if let Ok(json) = serde_json::to_string(&msg) {
+                let _ = self.tx.send(json);
+            }
+        }
+
+        /// Send the currently hovered widget ID to the CLI server.
+        pub fn broadcast_hovered(&self, id: Option<u64>) {
+            let msg = InspectorMessage::Hovered { id };
+            if let Ok(json) = serde_json::to_string(&msg) {
+                let _ = self.tx.send(json);
+            }
+        }
+
+        /// Connect to the CLI inspector server and return an `InspectorAppHandle`.
+        pub fn connect(port: u16, runtime: &tokio::runtime::Handle) -> Self {
+            let enabled = Arc::new(AtomicBool::new(false));
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+            let enabled_bg = enabled.clone();
+            runtime.spawn(async move {
+                let url = format!("ws://127.0.0.1:{}", port);
+
+                loop {
+                    let ws_stream = match tokio_tungstenite::connect_async(&url).await {
+                        Ok((ws, _)) => ws,
+                        Err(_) => {
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            continue;
+                        }
+                    };
+
+                    let (mut write, mut read) = ws_stream.split();
+
+                    loop {
+                        tokio::select! {
+                            Some(msg_json) = rx.recv() => {
+                                if write.send(Message::Text(Utf8Bytes::from(msg_json.as_str()))).await.is_err() {
+                                    break;
+                                }
+                            }
+                            incoming = read.next() => {
+                                match incoming {
+                                    Some(Ok(Message::Text(text))) => {
+                                        if let Ok(msg) = serde_json::from_str::<InspectorMessage>(&text) {
+                                            match msg {
+                                                InspectorMessage::Status { enabled } => {
+                                                    enabled_bg.store(enabled, Ordering::Relaxed);
+                                                    widget::inspector_overlay::set_enabled(enabled);
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    Some(Ok(Message::Close(_))) | None => break,
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
             });
 
-            crate::types::WidgetNode { name: element.debug_name().to_string(), x, y, width, height, children }
+            InspectorAppHandle { enabled, tx }
         }
     }
 }
@@ -266,6 +373,17 @@ pub mod server {
                 }
             }
         }
+
+        pub fn broadcast_hovered(&self, id: Option<u64>) {
+            let msg = InspectorMessage::Hovered { id };
+            if let Ok(json) = serde_json::to_string(&msg) {
+                if let Some(ws) = self.ws.borrow().as_ref() {
+                    if ws.ready_state() == 1 {
+                        let _ = ws.send_with_str(&json);
+                    }
+                }
+            }
+        }
     }
 
     pub fn start(port: u16) -> InspectorHandle {
@@ -306,24 +424,31 @@ pub mod server {
     }
 
     pub fn snapshot_tree(element: &dyn Element) -> WidgetNode {
-        let (x, y, width, height) = if let Some((start, end)) = element.pos_start_end() {
-            (start.x as f32, start.y as f32, (end.x - start.x) as f32, (end.y - start.y) as f32)
-        } else {
-            (0.0, 0.0, 0.0, 0.0)
-        };
-
-        let mut children = Vec::new();
-        element.event_children(&mut |child| {
-            children.push(snapshot_tree(child));
-        });
-
-        WidgetNode {
-            name: element.debug_name().to_string(),
-            x,
-            y,
-            width,
-            height,
-            children,
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        fn build(element: &dyn Element, counter: &AtomicU64) -> WidgetNode {
+            let (x, y, width, height) = if let Some((start, end)) = element.pos_start_end() {
+                (start.x as f32, start.y as f32, (end.x - start.x) as f32, (end.y - start.y) as f32)
+            } else {
+                (0.0, 0.0, 0.0, 0.0)
+            };
+            let id = counter.fetch_add(1, Ordering::Relaxed);
+            let mut children = Vec::new();
+            element.event_children(&mut |child| {
+                children.push(build(child, counter));
+            });
+            WidgetNode {
+                id,
+                name: element.debug_name().to_string(),
+                element_type: std::any::type_name_of_val(element)
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or("Unknown")
+                    .to_string(),
+                x, y, width, height, children,
+            }
         }
+        COUNTER.store(0, Ordering::Relaxed);
+        build(element, &COUNTER)
     }
 }
