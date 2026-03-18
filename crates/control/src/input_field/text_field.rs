@@ -69,8 +69,6 @@ impl Widget for TextField {
             max_length: self.max_length,
             enable: self.enable,
             expand: self.expand,
-            // box_height: self.box_height,
-            // box_width: self.box_width,
             cursor: Cursor::new(self.cursor_color),
             style: TextFieldStyle {
                 background_color: self.style.background_color,
