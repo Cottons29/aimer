@@ -9,87 +9,29 @@ pub fn create(dir: &PathBuf) {
     // Generate package.json
     fs::write(
         web_dir.join("package.json"),
-        format!(
-            r#"{{
-  "name": "{}",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {{
-    "dev": "vite",
-    "build": "vite build"
-  }},
-  "dependencies": {{}},
-  "devDependencies": {{
-    "vite": "^5.0.0",
-    "typescript": "^5.0.0"
-  }}
-}}"#,
-            project_name
-        ),
+        include_str!("../../../templates/web/package.json.template").replace("${package_name}", project_name),
     )
     .unwrap();
 
     // Generate vite.config.ts
     fs::write(
         web_dir.join("vite.config.ts"),
-        r#"import { defineConfig } from 'vite';
-
-export default defineConfig({
-  server: {
-    port: 3000
-  }
-});
-"#,
+        include_str!("../../../templates/web/vite.config.ts.template"),
     )
     .unwrap();
 
     // Generate index.html
     fs::write(
         web_dir.join("index.html"),
-        format!(
-            r#"<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{}</title>
-  </head>
-  <style>
-
-    #aimer_app {{
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      outline: none;
-    }}
-    </style>
-  <body>
-    <script type="module" src="/main.ts"></script>
-  </body>
-</html>
-"#,
-            project_name
-        ),
+        include_str!("../../../templates/web/index.html.template").replace("${app_title}", project_name),
     )
     .unwrap();
-
+    
+    let wasm_name = project_name.replace("-", "_");
     // Generate main.ts
     fs::write(
         web_dir.join("main.ts"),
-        format!(
-            r#"import init, {{ __generated_entrance_point }} from './pkg/{}.js';
-// @ts-ignore
-async function main() {{
-  await init();
-  __generated_entrance_point();
-}}
-
-main().catch((err) => {{}});
-"#,
-            project_name.replace("-", "_")
-        ),
+        include_str!("../../../templates/web/main.ts.template").replace("${wasm_name}", &*wasm_name),
     )
     .unwrap();
 }
