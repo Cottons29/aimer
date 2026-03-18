@@ -245,7 +245,7 @@ pub fn spawn_android_runner(
 
     let _ = tx.send(RunnerEvent::BuildLog("Launching app on Android device...".to_string()));
 
-    let build_gradle_path = current_dir.join("app/build.gradle.kts");
+    let build_gradle_path = current_dir.join("app/build.gradle.kts.template");
     let mut app_id = "com.example.app".to_string();
     if let Ok(content) = std::fs::read_to_string(build_gradle_path) {
         for line in content.lines() {

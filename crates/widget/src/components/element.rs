@@ -147,19 +147,6 @@ pub trait Element : Drawable{
 /// Returns `true` if any element consumed the event.
 pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> bool {
     use smallvec::SmallVec;
-    // Try children in reverse order (front-to-back)
-    // println!("Dispatch event: {:?}", event);
-    // if matches!(event, ElementEvent::Cancel | ElementEvent::CharInput {.. } | ElementEvent::KeyInput { .. }) {
-    //     let mut consumed = false;
-    //     let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
-    //     root.event_children(&mut |child| children.push(child));
-    //     for child in children.into_iter().rev() {
-    //         if dispatch_event(child, pos, event) {
-    //             consumed = true;
-    //         }
-    //     }
-    //     return root.on_event(event) || consumed;
-    // }
 
     let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
     root.event_children(&mut |child| children.push(child));

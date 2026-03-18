@@ -24,7 +24,8 @@ enum Commands {
 }
 
 pub fn start_cli() {
-    // set_current_dir("/Users/cottons/Documents/aimer-fw/playground/jaime").unwrap();
+    #[cfg(debug_assertions)]
+    set_current_dir("/Users/cottons/Documents/aimer-fw/playground/jaime").unwrap();
     let cli = Cli::parse();
 
     match &cli.command {

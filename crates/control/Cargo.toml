@@ -22,4 +22,5 @@ skia-safe.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"
-web-sys.workspace = true
+wasm-bindgen = { workspace = true }
+web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlInputElement", "HtmlElement", "CssStyleDeclaration", "HtmlCollection"] }

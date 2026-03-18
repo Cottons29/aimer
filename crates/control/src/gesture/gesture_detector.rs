@@ -42,6 +42,8 @@ pub struct GestureDetectorElement<'a, E: Element> {
 }
 
 impl<'a,E: Element> GestureDetectorElement<'a, E> {
+
+
     /// Recursively render a child element and its descendants.
     fn render_child(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
@@ -156,7 +158,7 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
     }
 
     fn on_event(&self, event: &ElementEvent) -> bool {
-        
+
         if self.is_disabled {
             return false;
         }
@@ -256,6 +258,10 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
         let (ol, ot, or, ob) = style.outline.strokes(width, height, scale);
 
         ResolvedSize { width: width + ol + or, height: height + ot + ob }
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "GestureDetector"
     }
 }
 
