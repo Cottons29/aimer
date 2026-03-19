@@ -6,7 +6,7 @@ mod ffi_utils;
 
 #[macro_use]
 pub mod aimer_app;
-pub mod render;
+pub mod handler;
 pub use aimer_app::AimerApp;
 #[cfg(target_os = "ios")]
 mod ios_screen {
@@ -14,6 +14,7 @@ mod ios_screen {
 }
 pub mod window_attr;
 pub mod window_event;
+mod render_ctx;
 
 pub use winit;
 

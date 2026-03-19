@@ -1,28 +1,14 @@
-#[cfg(not(target_arch = "wasm32"))]
-#[repr(C)]
+use attribute::Float;
+
 #[derive(Copy, Clone, PartialEq, Default, Debug)]
 pub struct Rect {
     /// The x coordinate of the rectangle's left edge.
-    pub left: f32,
+    pub left: Float,
     /// The y coordinate of the rectangle's top edge.
-    pub top: f32,
+    pub top: Float,
     /// The x coordinate of the rectangle's right edge.
-    pub right: f32,
+    pub right: Float,
     /// The y coordinate of the rectangle's bottom edge.
-    pub bottom: f32,
+    pub bottom: Float,
 }
 
-
-#[cfg(target_arch = "wasm32")]
-#[repr(C)]
-#[derive(Copy, Clone, PartialEq, Default, Debug)]
-pub struct Rect {
-    /// The x coordinate of the rectangle's left edge.
-    pub left: f64,
-    /// The y coordinate of the rectangle's top edge.
-    pub top: f64,
-    /// The x coordinate of the rectangle's right edge.
-    pub right: f64,
-    /// The y coordinate of the rectangle's bottom edge.
-    pub bottom: f64,
-}
