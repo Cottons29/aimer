@@ -19,4 +19,10 @@ pub fn create(dir: &PathBuf) {
 </assembly>
 "#,
     ).unwrap();
+
+    // Default application icon
+    fs::write(
+        dir.join("builds/windows/app.ico"),
+        include_bytes!("../../../templates/icons/app.ico"),
+    ).unwrap();
 }
