@@ -9,12 +9,14 @@
 /* Begin PBXBuildFile section */
 		C7A3B2D1F5E83D7B1E6F5092 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F2A1C0E4B72C6A0D5E4F81 /* main.swift */; };
 		2471626C6643ED4FC7F810D3 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0B72399071DA7A9D3A3629F8 /* Foundation.framework */; };
+		A1B2C3D4E5F60718293A4B5C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D4E5F6071829A1B2C3D4E5F6 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		B3F2A1C0E4B72C6A0D5E4F81 /* main.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		0B72399071DA7A9D3A3629F8 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		992093C02504A3F306172469 /* ${project_name}.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ${project_name}.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D4E5F6071829A1B2C3D4E5F6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -49,6 +51,7 @@
 			isa = PBXGroup;
 			children = (
 				B3F2A1C0E4B72C6A0D5E4F81 /* main.swift */,
+				D4E5F6071829A1B2C3D4E5F6 /* Assets.xcassets */,
 			);
 			path = ${project_name};
 			sourceTree = "<group>";
@@ -124,6 +127,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1B2C3D4E5F60718293A4B5C /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

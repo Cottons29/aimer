@@ -18,12 +18,12 @@ pub static ANDROID_APP: std::sync::OnceLock<winit::platform::android::activity::
 static APP_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
-pub enum CustomAppEvent {
+pub enum AimerCustomAppEvent {
     ForceBackspace,
     InsertText(String),
 }
 
-pub static EVENT_PROXY: OnceLock<EventLoopProxy<CustomAppEvent>> = OnceLock::new();
+pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerCustomAppEvent>> = OnceLock::new();
 
 #[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
@@ -33,7 +33,7 @@ pub extern "C" fn trigger_rust_backspace() {
         return;
     };
 
-    if let Err(e) = proxy.send_event(CustomAppEvent::ForceBackspace) {
+    if let Err(e) = proxy.send_event(AimerCustomAppEvent::ForceBackspace) {
         utils::error!("trigger_rust_backspace: failed to send event: {:?}", e);
     }
 }
@@ -57,7 +57,7 @@ pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
         return;
     };
 
-    if let Err(e) = proxy.send_event(CustomAppEvent::InsertText(text)) {
+    if let Err(e) = proxy.send_event(AimerCustomAppEvent::InsertText(text)) {
         utils::error!("trigger_rust_insert_text: failed to send event: {:?}", e);
     }
 }
@@ -79,7 +79,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     utils::info!("Initializing EventLoop...");
     #[cfg(not(target_os = "android"))]
-    let event_loop = EventLoop::<CustomAppEvent>::with_user_event()
+    let event_loop = EventLoop::<AimerCustomAppEvent>::with_user_event()
         .build()
         .expect("Failed to create EventLoop");
 
@@ -90,7 +90,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
             .get()
             .expect("ANDROID_APP not set")
             .clone();
-        winit::event_loop::EventLoop::<CustomAppEvent>::with_user_event()
+        winit::event_loop::EventLoop::<AimerCustomAppEvent>::with_user_event()
             .with_android_app(app)
             .build()
             .expect("Failed to create EventLoop")

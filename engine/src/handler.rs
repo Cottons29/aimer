@@ -1,3 +1,6 @@
+pub mod event_handler;
+mod user_events;
+
 #[allow(unused)]
 use crate::handler;
 use attribute::position::Vec2d;
@@ -19,11 +22,12 @@ use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
 
 
 use crate::render_ctx::AimerRenderContext;
-use crate::window_event::handle_window_event;
 use inspector::InspectorOverlay;
 #[cfg(not(target_arch = "wasm32"))]
 use inspector::InspectorServer;
 use utils::debug;
+use crate::handler::event_handler::WindowEventHandler;
+use crate::handler::user_events::handle_user_event;
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) type Float = f64;
@@ -75,7 +79,7 @@ pub struct AimerApplicationHandler {
     pub inspector_redraw_frames: Cell<u8>,
 }
 
-impl ApplicationHandler<crate::aimer_app::CustomAppEvent> for AimerApplicationHandler {
+impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicationHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "ios")]
         {
@@ -112,23 +116,29 @@ impl ApplicationHandler<crate::aimer_app::CustomAppEvent> for AimerApplicationHa
             self.window = Some(window);
         }
 
+
+
+
         let window = self.window.unwrap();
         let size = window.inner_size();
 
-        println!("Window Size : {size:?}");
+        debug!("Window Size : {size:?}");
+        #[cfg(target_os = "ios")]
+        window.set_ime_allowed(true);
+
 
         self.render_ctx.initialize(window, size);
 
         self.window_scale = window.scale_factor();
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: crate::aimer_app::CustomAppEvent) {
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: crate::aimer_app::AimerCustomAppEvent) {
         debug!("User event {:?}", event);
-        crate::window_event::handle_user_event(self, event);
+        handle_user_event(self, event);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        handle_window_event(self, event_loop, _id, event);
+        WindowEventHandler::handle_events(self, event_loop, _id, event);
     }
 
     #[cfg(debug_assertions)]
@@ -310,6 +320,7 @@ mod tests {
     use widget::base::BuildContext;
     use widget::{Drawable, Element};
 
+    #[allow(dead_code)]
     struct MockWidget {
         pos: Option<Vec2d>,
         size: Option<Size>,

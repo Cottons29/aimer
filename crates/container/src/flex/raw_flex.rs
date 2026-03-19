@@ -3,7 +3,7 @@ use attribute::size::{ResolvedSize, Size};
 use constructor::WidgetConstructor;
 use std::cell::Cell;
 use utils::debug;
-use widget::{base::BuildContext, Drawable, Element, LayoutCache, LayoutSpacing, Widget};
+use widget::{Drawable, Element, LayoutCache, LayoutSpacing, Widget, base::BuildContext};
 
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
@@ -62,7 +62,7 @@ pub struct RawFlex {
     pub(crate) cache: LayoutCache,
     pub(crate) overflow_behavior: OverflowBehavior,
     pub(crate) debug_name: &'static str,
-    pub(crate) bounds: Cell<Option<(Vec2d,Vec2d)>>,
+    pub(crate) bounds: Cell<Option<(Vec2d, Vec2d)>>,
 }
 
 impl RawFlex {
@@ -173,24 +173,16 @@ impl Drawable for RawFlex {
                 let parent_pos = ctx.parent_pos;
                 let max_width = ctx.box_constraint.max_width;
                 let max_height = ctx.box_constraint.max_height;
-                let patent_size = ctx.parent_size;
-
-                debug!("Parent size: {:?}", patent_size);
-
-                debug!("Max height: {}", max_height);
 
                 let scale = ctx.scale;
-                // let l_start = Vec2d { x: (start_x as f64 / scale as f64) as _, y: (start_y as f64 / scale as f64) as _ };
-                // let l_end = Vec2d { x: (end_x as f64 / scale as f64) as _, y: (end_y as f64 / scale as f64) as _ };
 
-                let l_start = Vec2d {x: parent_pos.x + (start_x/ scale) , y: parent_pos.y +(start_y/ scale)};
-                let l_end = Vec2d {x: parent_pos.x + (max_width/ scale) , y: parent_pos.y + (max_height / scale) + (start_y/ scale)};
+                let l_start = Vec2d { x: parent_pos.x + (start_x / scale), y: parent_pos.y + (start_y / scale) };
+                let l_end = Vec2d {
+                    x: parent_pos.x + (max_width / scale),
+                    y: parent_pos.y + (max_height / scale) + (start_y / scale),
+                };
 
-
-                debug!("Bound : {:?} {:?}", l_start, l_end);
-
-                self.bounds.set(Some((l_start , l_end)));
-
+                self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
                 if cp.x >= start_x && cp.x <= end_x && cp.y >= start_y && cp.y <= end_y {
@@ -233,7 +225,8 @@ impl Drawable for RawFlex {
         let mut unsized_count: usize = 0;
         let mut child_has_size: Vec<bool> = Vec::with_capacity(child_count);
 
-        for child in &self.children { // ptr -> box -> heap
+        for child in &self.children {
+            // ptr -> box -> heap
             let has_explicit_main = match self.direction {
                 LayoutDirection::Row | LayoutDirection::Inherit => {
                     let has_width = |s: Size| !s.is_auto_width();
@@ -405,7 +398,6 @@ impl Drawable for RawFlex {
 }
 
 impl Element for RawFlex {
-
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.bounds.get()
     }
