@@ -10,7 +10,7 @@ use widget::{Element, Widget};
 use winit::application::ApplicationHandler;
 #[allow(unused)]
 use winit::dpi::{LogicalSize, PhysicalSize, Position};
-use winit::event::{StartCause, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 #[allow(unused)]
 use winit::monitor::MonitorHandle;
@@ -18,11 +18,11 @@ use winit::monitor::MonitorHandle;
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
 
 
-use crate::window_event::handle_window_event;
 use crate::render_ctx::AimerRenderContext;
+use crate::window_event::handle_window_event;
 use inspector::InspectorOverlay;
 #[cfg(not(target_arch = "wasm32"))]
-use inspector::{InspectorAppHandle, InspectorServer};
+use inspector::InspectorServer;
 use utils::debug;
 
 #[cfg(target_arch = "wasm32")]
