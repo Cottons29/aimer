@@ -13,9 +13,7 @@ mod ios_screen {
     pub use crate::ffi_utils::ios_screen::get_screen_resolution_pixels;
 }
 pub mod window_attr;
-pub mod window_event;
 mod render_ctx;
-
 pub use winit;
 
 

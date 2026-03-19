@@ -6,9 +6,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-pub fn spawn_macos_runner(device: Device, pkg_name: String, tx: std::sync::mpsc::Sender<RunnerEvent>, current_child_clone: Arc<Mutex<Option<std::process::Child>>>) {
-
-
+pub fn spawn_macos_runner(
+    device: Device,
+    pkg_name: String,
+    tx: std::sync::mpsc::Sender<RunnerEvent>,
+    current_child_clone: Arc<Mutex<Option<std::process::Child>>>,
+) {
     let _ = tx.send(RunnerEvent::StatusChange(Status::Compiling(0)));
     let _ = tx.send(RunnerEvent::BuildLog("Compiling static library...".to_string()));
 
@@ -17,7 +20,8 @@ pub fn spawn_macos_runner(device: Device, pkg_name: String, tx: std::sync::mpsc:
         .arg("--lib")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn(){
+        .spawn()
+    {
         Ok(build) => build,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to build static library: {}", e)));
@@ -116,7 +120,8 @@ pub fn spawn_macos_runner(device: Device, pkg_name: String, tx: std::sync::mpsc:
         .current_dir("builds/macos")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn(){
+        .spawn()
+    {
         Ok(build) => build,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to build Xcode project: {}", e)));
@@ -184,7 +189,8 @@ pub fn spawn_macos_runner(device: Device, pkg_name: String, tx: std::sync::mpsc:
     let mut app_run = match Command::new(&app_exec_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn(){
+        .spawn()
+    {
         Ok(run) => run,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to launch macOS app: {}", e)));

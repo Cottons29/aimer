@@ -23,11 +23,37 @@ pub fn create(dir: &PathBuf) {
     
     fs::write(
         app_dir.join("Info.plist"),
-        include_str!("../../../templates/ios/Info.plist.template")
+        include_str!("../../../templates/ios/Info.plist.template").replace("${project_name}", project_name)
     ).unwrap();
 
     fs::write(
         app_dir.join("main.swift"),
         include_str!("../../../templates/ios/main.swift.template")
+    ).unwrap();
+
+    // Default AppIcon asset catalog
+    let appiconset_dir = app_dir.join("Assets.xcassets/AppIcon.appiconset");
+    fs::create_dir_all(&appiconset_dir).unwrap();
+    fs::write(
+        appiconset_dir.join("icon_1024.png"),
+        include_bytes!("../../../templates/icons/icon_1024.png"),
+    ).unwrap();
+    fs::write(
+        appiconset_dir.join("Contents.json"),
+        r#"{
+  "images" : [
+    {
+      "filename" : "icon_1024.png",
+      "idiom" : "universal",
+      "platform" : "ios",
+      "size" : "1024x1024"
+    }
+  ],
+  "info" : {
+    "author" : "aimer",
+    "version" : 1
+  }
+}
+"#,
     ).unwrap();
 }

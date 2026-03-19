@@ -34,4 +34,14 @@ pub fn create(dir: &PathBuf) {
         include_str!("../../../templates/web/main.ts.template").replace("${wasm_name}", &*wasm_name),
     )
     .unwrap();
+
+    // Default favicon and icons
+    fs::write(
+        web_dir.join("favicon.ico"),
+        include_bytes!("../../../templates/icons/favicon.ico"),
+    ).unwrap();
+    fs::write(
+        web_dir.join("apple-touch-icon.png"),
+        include_bytes!("../../../templates/icons/icon_180.png"),
+    ).unwrap();
 }

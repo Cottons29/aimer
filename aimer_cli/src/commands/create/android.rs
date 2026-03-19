@@ -70,10 +70,21 @@ plugins {
 
     fs::write(
         dir.join("builds/android/app/src/main/res/values/strings.xml"),
-        r#"<resources>
-    <string name="app_name">Android</string>
-</resources>
-"#,
+        format!("<resources>\n    <string name=\"app_name\">{}</string>\n</resources>\n", project_name),
     )
     .unwrap();
+
+    // Default launcher icons
+    let mipmap_sizes: &[(&str, &[u8])] = &[
+        ("mipmap-mdpi", include_bytes!("../../../templates/icons/icon_48.png")),
+        ("mipmap-hdpi", include_bytes!("../../../templates/icons/icon_72.png")),
+        ("mipmap-xhdpi", include_bytes!("../../../templates/icons/icon_96.png")),
+        ("mipmap-xxhdpi", include_bytes!("../../../templates/icons/icon_144.png")),
+        ("mipmap-xxxhdpi", include_bytes!("../../../templates/icons/icon_192.png")),
+    ];
+    for (folder, data) in mipmap_sizes {
+        let mipmap_dir = dir.join(format!("builds/android/app/src/main/res/{}", folder));
+        fs::create_dir_all(&mipmap_dir).unwrap();
+        fs::write(mipmap_dir.join("ic_launcher.png"), data).unwrap();
+    }
 }
