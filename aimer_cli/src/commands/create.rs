@@ -95,30 +95,19 @@ pub fn execute(project_name: &str) {
         web::create(&dir);
     }
 
+    fs::write(dir.join(".gitignore"), include_str!("../../templates/.gitignore.template")).unwrap();
+
     // Cargo.toml
     fs::write(
         dir.join("Cargo.toml"),
-        format!(
-            r#"[package]
-name = "{}"
-version = "{}"
-edition = "2024"
-
-[lib]
-crate-type = ["cdylib", "rlib", "staticlib"]
-
-[dependencies]
-aimer = {{path = "/Users/cottons/Documents/aimer-fw/aimer/aimer"}}
-"#,
-            project_name, version
-        ),
+         include_str!("../../templates/Cargo.toml.template").replace("${project_name}", project_name).replace("${version}", &version),
     )
     .unwrap();
 
     // src/lib.rs
     fs::write(
         dir.join("src/lib.rs"),
-        include_str!("../../templates/sample.txt"),
+        include_str!("../../templates/lib.rs.template"),
     )
     .unwrap();
 
