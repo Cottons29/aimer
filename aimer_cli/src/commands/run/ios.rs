@@ -109,7 +109,7 @@ pub fn spawn_ios_runner(
         let _ = tx.send(RunnerEvent::BuildLog(format!("Copied static library to {}", dest_lib)));
     }
 
-    let _ = tx.send(RunnerEvent::BuildLog(format!("Building Xcode project for iOS...")));
+    let _ = tx.send(RunnerEvent::BuildLog("Building Xcode project for iOS...".to_string()));
 
     let mut xcode_build = match Command::new("xcodebuild")
         .arg("-project")
