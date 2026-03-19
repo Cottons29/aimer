@@ -72,6 +72,7 @@ dependencies = [
  "ansi-to-tui",
  "arboard",
  "clap",
+ "colored",
  "crossterm",
  "inquire",
  "inspector",
