@@ -1,13 +1,11 @@
-use attribute::dimension::Dimension;
-use std::cell::UnsafeCell;
-use winit::window::CursorIcon::Default;
-use widget::base::{BuildContext, Colors};
-use widget::text::TextAlign;
-use widget::{Constructor, Element, TextStyle, Widget, WidgetConstructor};
 use crate::input_field::controller::TextFieldController;
 use crate::input_field::raw_fields::{
     Cursor, ExpandDirection, InputType, RawTextField, TextFieldStyle,
 };
+use std::cell::UnsafeCell;
+use widget::base::{BuildContext, Colors};
+use widget::text::TextAlign;
+use widget::{Element, TextStyle, Widget, WidgetConstructor};
 
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]

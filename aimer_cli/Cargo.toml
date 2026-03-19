@@ -12,3 +12,4 @@ crossterm.workspace = true
 inquire.workspace = true
 ratatui.workspace = true
 arboard.workspace = true
+colored.workspace = true

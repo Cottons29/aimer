@@ -1,4 +1,5 @@
-use crate::render::AimerAppConfiguration;
+use crate::handler::AimerApplicationHandler;
+use crate::render_ctx::AimerRenderContext;
 use attribute::position::Vec2d;
 #[cfg(not(target_arch = "wasm32"))]
 use inspector::InspectorAppHandle;
@@ -110,24 +111,9 @@ fn start_event_loop(widget: impl Widget + 'static) {
     let inspector = inspector::start(inspector::DEFAULT_INSPECTOR_PORT);
 
     utils::info!("Creating App instance...");
-    let mut app = AimerAppConfiguration {
+    let mut app = AimerApplicationHandler {
         window: None,
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        metal_layer: None,
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        command_queue: None,
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        skia_context: None,
-        #[cfg(target_os = "android")]
-        egl_display: None,
-        #[cfg(target_os = "android")]
-        egl_surface: None,
-        #[cfg(target_os = "android")]
-        egl_context: None,
-        #[cfg(target_os = "android")]
-        skia_gl_context: None,
-        #[cfg(target_arch = "wasm32")]
-        canvas_ctx: None,
+        render_ctx: AimerRenderContext::default(),
         widget_root: None,
         pending_widget: Some(Box::new(widget)),
         cursor_pos: Vec2d { x: 0.0, y: 0.0 },

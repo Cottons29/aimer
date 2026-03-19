@@ -1,18 +1,16 @@
-use raw_window_handle::RawWindowHandle::UiKit;
-use raw_window_handle::UiKitWindowHandle;
-use events::element::KeyAction;
-use crate::render::AimerAppConfiguration;
-use attribute::position::Vec2d;
-use attribute::size::ResolvedSize;
-use utils::debug;
-use widget::{ dispatch_event};
 use winit::dpi::PhysicalSize;
+use crate::handler::AimerApplicationHandler;
+use attribute::position::Vec2d;
+use events::element::KeyAction;
+use events::element::{ElementEvent, NamedKey};
+use utils::debug;
+use widget::dispatch_event;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
-use events::element::{ElementEvent, NamedKey};
+use attribute::size::ResolvedSize;
 
-pub(crate) fn handle_user_event(app: &mut AimerAppConfiguration, event: crate::aimer_app::CustomAppEvent) {
+pub(crate) fn handle_user_event(app: &mut AimerApplicationHandler, event: crate::aimer_app::CustomAppEvent) {
     match event {
         crate::aimer_app::CustomAppEvent::ForceBackspace => {
             if let Some(root) = &app.widget_root {
@@ -56,7 +54,7 @@ pub(crate) fn handle_user_event(app: &mut AimerAppConfiguration, event: crate::a
 }
 
 pub(crate) fn handle_window_event(
-    app: &mut AimerAppConfiguration,
+    app: &mut AimerApplicationHandler,
     event_loop: &ActiveEventLoop,
     _id: WindowId,
     event: WindowEvent,
@@ -67,7 +65,7 @@ pub(crate) fn handle_window_event(
         }
 
         WindowEvent::Touch(item) => {
-            let pos = Vec2d { x: item.location.x as crate::render::Float, y: item.location.y as crate::render::Float };
+            let pos = Vec2d { x: item.location.x as crate::handler::Float, y: item.location.y as crate::handler::Float };
             // info!("Touch: {:?}", pos);
             let event = match item.phase {
                 winit::event::TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
@@ -93,7 +91,7 @@ pub(crate) fn handle_window_event(
         }
         // WindowEvent::Focused
         WindowEvent::CursorMoved { position, .. } => {
-            let new_pos = Vec2d { x: position.x as crate::render::Float, y: position.y as crate::render::Float };
+            let new_pos = Vec2d { x: position.x as crate::handler::Float, y: position.y as crate::handler::Float };
             // Skip dispatch if the cursor barely moved (less than 1 logical pixel).
             let dx = (new_pos.x - app.cursor_pos.x).abs();
             let dy = (new_pos.y - app.cursor_pos.y).abs();
@@ -227,10 +225,10 @@ pub(crate) fn handle_window_event(
         WindowEvent::MouseWheel { delta, .. } => {
             let scroll_delta = match delta {
                 winit::event::MouseScrollDelta::LineDelta(x, y) => {
-                    Vec2d { x: x as crate::render::Float * 30.0, y: y as crate::render::Float * 30.0 }
+                    Vec2d { x: x as crate::handler::Float * 30.0, y: y as crate::handler::Float * 30.0 }
                 }
                 winit::event::MouseScrollDelta::PixelDelta(pos) => {
-                    Vec2d { x: pos.x as crate::render::Float, y: pos.y as crate::render::Float }
+                    Vec2d { x: pos.x as crate::handler::Float, y: pos.y as crate::handler::Float }
                 }
             };
             let event = ElementEvent::Scroll(scroll_delta);

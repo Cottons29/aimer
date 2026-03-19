@@ -1,0 +1,22 @@
+# Androids
+builds/android/.gradle
+builds/android/app/build
+builds/android/app/src/main/jniLibs
+
+# xcode project
+builds/ios/build
+builds/macos/build
+
+# staticlib builds
+staticlib
+
+# web
+builds/web/node_modules
+builds/web/pkg
+builds/web/package-lock.json
+
+# cargo target
+target
+Cargo.lock
+
+# add another ignore here -_-

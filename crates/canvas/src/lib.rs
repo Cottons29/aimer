@@ -1,2 +1,2 @@
-mod canvas_wrapper;
+mod canvas;
 mod mapping;

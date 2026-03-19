@@ -61,6 +61,28 @@ impl ConsoleType {
     }
 }
 
+struct ScrollablePane {
+    scroll: u16,
+}
+
+impl ScrollablePane {
+    fn new() -> Self {
+        Self { scroll: 0 }
+    }
+
+    fn scroll_up(&mut self, amount: u16) {
+        self.scroll = self.scroll.saturating_sub(amount);
+    }
+
+    fn scroll_down(&mut self, amount: u16) {
+        self.scroll = self.scroll.saturating_add(amount);
+    }
+
+    fn reset(&mut self) {
+        self.scroll = 0;
+    }
+}
+
 fn spawn_runner(
     device: Device,
     pkg_name: String,
@@ -120,9 +142,9 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
     let mut app_logs: Vec<String> = Vec::new();
     let mut current_status = Status::Compiling(0);
     let mut current_pane = ConsoleType::App;
-    let mut build_scroll: u16 = 0;
-    let mut app_scroll: u16 = 0;
-    let mut inspector_scroll: u16 = 0;
+    let mut build_pane = ScrollablePane::new();
+    let mut app_pane = ScrollablePane::new();
+    let mut inspector_pane = ScrollablePane::new();
     let mut inspector_full_tree: bool = false;
     let mut inspector_cursor: usize = 0;
 
@@ -247,16 +269,16 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
             };
 
             if current_pane == ConsoleType::Build {
-                let (start, skip_top, new_scroll) = calc_scroll(&build_text, height, width, build_scroll as usize);
-                build_scroll = new_scroll;
+                let (start, skip_top, new_scroll) = calc_scroll(&build_text, height, width, build_pane.scroll as usize);
+                build_pane.scroll = new_scroll;
                 let p = Paragraph::new(build_text[start..].to_vec())
                     .block(build_block)
                     .wrap(Wrap { trim: false })
                     .scroll((skip_top, 0));
                 f.render_widget(p, area);
             } else if current_pane == ConsoleType::App {
-                let (start, skip_top, new_scroll) = calc_scroll(&app_text, height, width, app_scroll as usize);
-                app_scroll = new_scroll;
+                let (start, skip_top, new_scroll) = calc_scroll(&app_text, height, width, app_pane.scroll as usize);
+                app_pane.scroll = new_scroll;
                 let p = Paragraph::new(app_text[start..].to_vec())
                     .block(app_block)
                     .wrap(Wrap { trim: false })
@@ -292,10 +314,10 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                         inspector_cursor = 0;
                     }
                     // Auto-scroll to keep cursor visible
-                    if (inspector_cursor as u16) < inspector_scroll {
-                        inspector_scroll = inspector_cursor as u16;
-                    } else if inspector_cursor as u16 >= inspector_scroll + height as u16 {
-                        inspector_scroll = (inspector_cursor as u16).saturating_sub(height as u16 - 1);
+                    if (inspector_cursor as u16) < inspector_pane.scroll {
+                        inspector_pane.scroll = inspector_cursor as u16;
+                    } else if inspector_cursor as u16 >= inspector_pane.scroll + height as u16 {
+                        inspector_pane.scroll = (inspector_cursor as u16).saturating_sub(height as u16 - 1);
                     }
                     let highlight_style = Style::default().bg(Color::DarkGray).fg(Color::White);
                     let inspector_text: Vec<Line> = tree_lines.iter().enumerate().map(|(i, l)| {
@@ -306,11 +328,11 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                         }
                     }).collect();
                     let max_scroll = (inspector_text.len() as u16).saturating_sub(height as u16);
-                    inspector_scroll = inspector_scroll.min(max_scroll);
+                    inspector_pane.scroll = inspector_pane.scroll.min(max_scroll);
                     let p = Paragraph::new(inspector_text)
                         .block(inspector_block)
                         .wrap(Wrap { trim: false })
-                        .scroll((inspector_scroll, 0));
+                        .scroll((inspector_pane.scroll, 0));
                     f.render_widget(p, area);
                 }
             }
@@ -420,7 +442,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                         (KeyCode::Char('r'), _) => {
                             if device.target == Targets::Web {
                                 build_logs.clear();
-                                build_scroll = 0;
+                                build_pane.reset();
                                 current_status = Status::Compiling(0);
                                 let tx_clone = tx.clone();
                                 thread::spawn(move || {
@@ -484,8 +506,8 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                                 }
                                 build_logs.clear();
                                 app_logs.clear();
-                                build_scroll = 0;
-                                app_scroll = 0;
+                                build_pane.reset();
+                                app_pane.reset();
                                 current_status = Status::Compiling(0);
                                 current_child = spawn_runner(device.clone(), pkg_name.clone(), tx.clone());
                             }
@@ -513,45 +535,45 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                             }
                         }
                         (KeyCode::Up, _) => {
-                            if current_pane == ConsoleType::Build {
-                                build_scroll = build_scroll.saturating_sub(1);
-                            } else if current_pane == ConsoleType::App {
-                                app_scroll = app_scroll.saturating_sub(1);
-                            } else {
-                                inspector_cursor = inspector_cursor.saturating_sub(1);
-                                if (inspector_cursor as u16) < inspector_scroll {
-                                    inspector_scroll = inspector_cursor as u16;
+                            match current_pane {
+                                ConsoleType::Build => build_pane.scroll_up(1),
+                                ConsoleType::App => app_pane.scroll_up(1),
+                                ConsoleType::Inspector => {
+                                    inspector_cursor = inspector_cursor.saturating_add(1);
+                                    if (inspector_cursor as u16) < inspector_pane.scroll {
+                                        inspector_pane.scroll = inspector_cursor as u16;
+                                    }
                                 }
                             }
                         }
                         (KeyCode::Down, _) => {
-                            if current_pane == ConsoleType::Build {
-                                build_scroll = build_scroll.saturating_add(1);
-                            } else if current_pane == ConsoleType::App {
-                                app_scroll = app_scroll.saturating_add(1);
-                            } else {
-                                inspector_cursor = inspector_cursor.saturating_add(1);
+                            match current_pane {
+                                ConsoleType::Build => build_pane.scroll_down(1),
+                                ConsoleType::App => app_pane.scroll_down(1),
+                                ConsoleType::Inspector => {
+                                    inspector_cursor = inspector_cursor.saturating_sub(1);
+                                }
                             }
                         }
                         (KeyCode::PageUp, _) => {
-                            if current_pane == ConsoleType::Build {
-                                build_scroll = build_scroll.saturating_sub(10);
-                            } else if current_pane == ConsoleType::App {
-                                app_scroll = app_scroll.saturating_sub(10);
-                            } else {
-                                inspector_cursor = inspector_cursor.saturating_sub(10);
-                                if (inspector_cursor as u16) < inspector_scroll {
-                                    inspector_scroll = inspector_cursor as u16;
+                            match current_pane {
+                                ConsoleType::Build => build_pane.scroll_up(10),
+                                ConsoleType::App => app_pane.scroll_up(10),
+                                ConsoleType::Inspector => {
+                                    inspector_cursor = inspector_cursor.saturating_add(10);
+                                    if (inspector_cursor as u16) < inspector_pane.scroll {
+                                        inspector_pane.scroll = inspector_cursor as u16;
+                                    }
                                 }
                             }
                         }
                         (KeyCode::PageDown, _) => {
-                            if current_pane == ConsoleType::Build {
-                                build_scroll = build_scroll.saturating_add(10);
-                            } else if current_pane == ConsoleType::App {
-                                app_scroll = app_scroll.saturating_add(10);
-                            } else {
-                                inspector_cursor = inspector_cursor.saturating_add(10);
+                            match current_pane {
+                                ConsoleType::Build => build_pane.scroll_down(10),
+                                ConsoleType::App => app_pane.scroll_down(10),
+                                ConsoleType::Inspector => {
+                                    inspector_cursor = inspector_cursor.saturating_sub(10);
+                                }
                             }
                         }
                         _ => {}
@@ -560,21 +582,17 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 Event::Mouse(mouse_event) => {
                     match mouse_event.kind {
                         crossterm::event::MouseEventKind::ScrollUp => {
-                            if current_pane == ConsoleType::Build {
-                                build_scroll = build_scroll.saturating_add(1);
-                            } else if current_pane == ConsoleType::App{
-                                app_scroll = app_scroll.saturating_add(1);
-                            } else {
-                                inspector_scroll = inspector_scroll.saturating_add(1);
+                            match current_pane {
+                                ConsoleType::Build => build_pane.scroll_down(1),
+                                ConsoleType::App => app_pane.scroll_down(1),
+                                ConsoleType::Inspector => inspector_pane.scroll_down(1),
                             }
                         }
                         crossterm::event::MouseEventKind::ScrollDown => {
-                            if current_pane == ConsoleType::Build {
-                                build_scroll = build_scroll.saturating_sub(1);
-                            } else if current_pane == ConsoleType::App {
-                                app_scroll = app_scroll.saturating_sub(1);
-                            } else {
-                                inspector_scroll = inspector_scroll.saturating_sub(1);
+                            match current_pane {
+                                ConsoleType::Build => build_pane.scroll_up(1),
+                                ConsoleType::App => app_pane.scroll_up(1),
+                                ConsoleType::Inspector => inspector_pane.scroll_up(1),
                             }
                         }
                         _ => {}
