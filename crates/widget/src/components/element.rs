@@ -175,6 +175,29 @@ pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> b
     false
 }
 
+/// Broadcast an event to every element in the tree, regardless of hit-testing.
+/// Returns `true` if any element consumed the event.
+pub fn broadcast_event(root: &dyn Element, event: &ElementEvent) -> bool {
+    use smallvec::SmallVec;
+
+    let mut consumed = false;
+
+    let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
+    root.event_children(&mut |child| children.push(child));
+
+    for child in children.into_iter().rev() {
+        if broadcast_event(child, event) {
+            consumed = true;
+        }
+    }
+
+    if root.on_event(event) {
+        consumed = true;
+    }
+
+    consumed
+}
+
 impl Element for Box<dyn Element> {
     fn pos(&self) -> Option<Vec2d> {
         self.as_ref().pos()
