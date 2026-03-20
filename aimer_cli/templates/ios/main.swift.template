@@ -11,22 +11,22 @@ func trigger_rust_backspace()
 @_silgen_name("trigger_rust_insert_text")
 func trigger_rust_insert_text(_ ptr: UnsafePointer<UInt8>, _ len: Int)
 
+@_cdecl("aimer_ios_show_keyboard")
+func aimer_ios_show_keyboard() {
+    DispatchQueue.main.async {
+        KeyboardForwarder.shared.showKeyboard()
+    }
+}
+
+@_cdecl("aimer_ios_dismiss_keyboard")
+func aimer_ios_dismiss_keyboard() {
+    DispatchQueue.main.async {
+        KeyboardForwarder.shared.dismissKeyboard()
+    }
+}
+
 final class KeyboardForwardingTextView: UITextView {
     override var canBecomeFirstResponder: Bool { true }
-
-    #if DEBUG
-    override func becomeFirstResponder() -> Bool {
-        let ok = super.becomeFirstResponder()
-        print("KeyboardForwardingTextView.becomeFirstResponder ->", ok)
-        return ok
-    }
-
-    override func resignFirstResponder() -> Bool {
-        let ok = super.resignFirstResponder()
-        print("KeyboardForwardingTextView.resignFirstResponder ->", ok)
-        return ok
-    }
-    #endif
 
     // Keep a placeholder so the backspace key stays enabled.
     private let placeholder = " "
@@ -55,9 +55,6 @@ final class KeyboardForwardingTextView: UITextView {
     }
 
     override func insertText(_ text: String) {
-        #if DEBUG
-        print("KeyboardForwardingTextView.insertText:", text)
-        #endif
         if let data = text.data(using: .utf8) {
             data.withUnsafeBytes { rawBuf in
                 if let base = rawBuf.bindMemory(to: UInt8.self).baseAddress {
@@ -70,9 +67,6 @@ final class KeyboardForwardingTextView: UITextView {
     }
 
     override func deleteBackward() {
-        #if DEBUG
-        print("KeyboardForwardingTextView.deleteBackward")
-        #endif
         trigger_rust_backspace()
         super.deleteBackward()
         ensurePlaceholder()
@@ -81,10 +75,19 @@ final class KeyboardForwardingTextView: UITextView {
 
 final class KeyboardForwarder {
     static let shared = KeyboardForwarder()
-    private var inputView: KeyboardForwardingTextView?
+    private(set) var inputView: KeyboardForwardingTextView?
     private var installAttempts: Int = 0
     private var installScheduled: Bool = false
     private var observers: [NSObjectProtocol] = []
+
+    func dismissKeyboard() {
+        guard let v = inputView else { return }
+        v.resignFirstResponder()
+    }
+
+    func showKeyboard() {
+        ensureFirstResponder()
+    }
 
     private func ensureFirstResponder() {
         if inputView == nil {
@@ -136,9 +139,6 @@ final class KeyboardForwarder {
 
         guard let window = keyWindow() else {
             installAttempts += 1
-            #if DEBUG
-            print("KeyboardForwarder: no keyWindow yet (attempt ", installAttempts, ")")
-            #endif
             if installAttempts < 50 {
                 scheduleRetry()
             }
@@ -150,12 +150,8 @@ final class KeyboardForwarder {
         window.addSubview(v)
         window.bringSubviewToFront(v)
         v.ensurePlaceholder()
-        _ = v.becomeFirstResponder()
         inputView = v
 
-        #if DEBUG
-        print("KeyboardForwarder: installed and became first responder")
-        #endif
     }
 
     func start() {
@@ -189,9 +185,6 @@ final class KeyboardForwarder {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                #if DEBUG
-//                 print("KeyboardForwarder: keyboardWillShow -> ensureFirstResponder")
-                #endif
                 self?.ensureFirstResponder()
             })
 
@@ -200,9 +193,7 @@ final class KeyboardForwarder {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                #if DEBUG
-//                 print("KeyboardForwarder: keyboardDidShow -> ensureFirstResponder")
-                #endif
+
                 self?.ensureFirstResponder()
             })
 
@@ -211,9 +202,6 @@ final class KeyboardForwarder {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                #if DEBUG
-//                 print("KeyboardForwarder: windowDidBecomeKey -> install/ensure")
-                #endif
                 self?.ensureFirstResponder()
             })
         }
@@ -225,5 +213,7 @@ final class KeyboardForwarder {
 
 KeyboardForwarder.shared.start()
 
-print("Calling Rust...")
+#if DEBUG
+print("Starting AimerApplication...")
+#endif
 __generated_entrance_point()
