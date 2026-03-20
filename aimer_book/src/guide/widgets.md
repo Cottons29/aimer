@@ -83,10 +83,111 @@ Aimer provides a built-in color system via `Colors`.
 
 ## Input Controls (Experimental)
 
-Several input controls are currently in development:
-- **InputField**: For text input. `⛔️ Very Unstable`
-- **GestureDetector**: For capturing touch/click events (Tap, Long Press). `⚠️ Unstable`
-- **Upcoming**: Checkbox, Switch, Slider, DropdownMenu, Radio.
+### TextField Widget `⛔️ Very Unstable`
+
+The `TextField` struct provides a text input field with customizable styling, input types, and event callbacks. It supports Desktop, iOS, Android, and WASM platforms.
+
+**Struct Fields:**
+```rust
+pub struct TextField {
+    pub controller: TextFieldController,
+    pub input_type: InputType,        // Text, Number, Obscure
+    pub prompt: String,
+    pub hint: String,
+    pub text_style: TextStyle,
+    pub hint_style: TextStyle,
+    pub prompt_style: TextStyle,
+    pub text_align: TextAlign,
+    pub auto_focus: bool,
+    pub max_lines: Option<usize>,
+    pub min_lines: Option<usize>,
+    pub max_length: Option<usize>,
+    pub enable: bool,
+    pub expand: ExpandDirection,
+    pub style: TextFieldStyle,
+    pub hover_style: Option<TextFieldStyle>,
+    pub focus_style: Option<TextFieldStyle>,
+    pub disabled_style: Option<TextFieldStyle>,
+    pub cursor_color: Colors,
+    pub on_changed: TextFieldCallback,
+    pub on_submitted: TextFieldCallback,
+}
+```
+
+**Basic Usage:**
+
+```rust
+TextField!(
+    controller: my_controller.clone(),
+    hint: "Enter your name",
+    input_type: InputType::Text,
+)
+```
+
+**Event Callbacks:**
+
+The `on_changed` callback fires whenever the text content changes (character insertion, deletion). The `on_submitted` callback fires when the user presses Enter.
+
+Synchronous closures:
+```rust
+TextField!(
+    controller: my_controller.clone(),
+    on_changed: {
+        move |item| {
+            println!("Input changed: {}", item);
+        }
+    },
+    on_submitted: {
+        move |text| {
+            println!("Submitted: {}", text);
+        }
+    },
+)
+```
+
+Async closures (auto-wrapped via the macro):
+```rust
+TextField!(
+    controller: my_controller.clone(),
+    on_changed: async move |item| {
+        println!("Input changed: {}", item);
+    },
+)
+```
+
+For async closures that need to capture state from surrounding scope, use the `AsyncTextFieldCallback` wrapper:
+```rust
+TextField!(
+    controller: my_controller.clone(),
+    on_changed: {
+        let is_cooldown = self.is_cooldown;
+        AsyncTextFieldCallback(move |item: String| async move {
+            if !is_cooldown {
+                println!("Input changed: {}", item);
+            }
+        })
+    },
+)
+```
+
+**Attributes:**
+- `controller`: A `TextFieldController` for reading/writing the text value programmatically.
+- `input_type`: The type of input (`Text`, `Number`, `Obscure`).
+- `hint`: Placeholder text shown when the field is empty.
+- `prompt`: Text displayed before the input area.
+- `auto_focus`: Whether the field is focused on mount.
+- `enable`: Whether the field accepts input (default: `true`).
+- `style` / `hover_style` / `focus_style` / `disabled_style`: Visual style variants.
+- `on_changed`: Callback invoked with the current text on every change.
+- `on_submitted`: Callback invoked with the current text when Enter is pressed.
+
+### GestureDetector Widget `⚠️ Unstable`
+
+For capturing touch/click events (Tap, Long Press).
+
+### Upcoming
+
+Checkbox, Switch, Slider, DropdownMenu, Radio.
 
 ## The Widget Tree
 
