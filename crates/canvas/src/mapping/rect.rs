@@ -1,5 +1,7 @@
 use attribute::Float;
 
+
+#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq, Default, Debug)]
 pub struct Rect {
     /// The x coordinate of the rectangle's left edge.
