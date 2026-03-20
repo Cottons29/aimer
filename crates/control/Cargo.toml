@@ -16,11 +16,11 @@ utils.workspace = true
 chrono.workspace = true
 animation.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-objc.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
 skia-safe.workspace = true
+arboard.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"
 wasm-bindgen = { workspace = true }
-web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlInputElement", "HtmlElement", "CssStyleDeclaration", "HtmlCollection"] }
+web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlInputElement", "HtmlElement", "CssStyleDeclaration", "HtmlCollection", "KeyboardEvent", "KeyboardEventInit", "InputEvent", "EventTarget", "Navigator", "Clipboard"] }

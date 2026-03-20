@@ -1,6 +1,7 @@
 pub mod position;
 pub mod size;
 pub mod dimension;
+mod devices;
 
 #[cfg(not(target_arch = "wasm32"))]
 ///  Float type for rendering

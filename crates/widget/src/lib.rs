@@ -31,7 +31,7 @@ pub mod base {
 }
 pub use crate::widget::Widget;
 pub use crate::components::element::Element;
-pub use crate::components::element::{ dispatch_event};
+pub use crate::components::element::{dispatch_event, broadcast_event};
 pub use crate::widget::stateful::{StatefulElement, StatefulWidget, State, StateUpdater};
 pub use crate::widget::stateless::{ StatelessElement, StatelessWidget, NamedWidget};
 pub use crate::text::Text;
