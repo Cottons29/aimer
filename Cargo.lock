@@ -618,11 +618,11 @@ name = "control"
 version = "0.1.0"
 dependencies = [
  "animation",
+ "arboard",
  "attribute",
  "chrono",
  "color",
  "events",
- "objc",
  "skia-safe",
  "tokio",
  "utils",
