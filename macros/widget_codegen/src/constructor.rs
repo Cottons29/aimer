@@ -20,6 +20,7 @@ struct FieldInfo<'a> {
     into: bool,
     first: bool,
     dyn_iter: bool,
+    async_wrapper: Option<String>,
     docs: Vec<String>,
 }
 
@@ -34,6 +35,7 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
     let mut into = false;
     let mut first = false;
     let mut dyn_iter = false;
+    let mut async_wrapper: Option<String> = None;
     let mut docs = Vec::new();
 
     for attr in &field.attrs {
@@ -70,6 +72,10 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
                 } else if meta.path.is_ident("dyn_iter") {
                     dyn_iter = true;
                     Ok(())
+                } else if meta.path.is_ident("async_wrapper") {
+                    let value: syn::LitStr = meta.value()?.parse()?;
+                    async_wrapper = Some(value.value());
+                    Ok(())
                 } else if meta.path.is_ident("visibility") {
                     let value: syn::LitStr = meta.value()?.parse()?;
                     if value.value() == "private" {
@@ -90,7 +96,7 @@ fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
         }
     }
 
-    Ok(FieldInfo { ident, ty, skip, default, into, first, dyn_iter, docs })
+    Ok(FieldInfo { ident, ty, skip, default, into, first, dyn_iter, async_wrapper, docs })
 }
 
 fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream, Error> {
@@ -341,7 +347,72 @@ fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream,
                 }
             });
 
+            // Generate additional rules for async closures with arguments (async_wrapper)
+            let async_arg_rules = if let Some(ref wrapper_name) = target.async_wrapper {
+                let wrapper_ident = Ident::new(wrapper_name, target_ident.span());
+
+                let state_matcher_arg1: Vec<_> = public_fields
+                    .iter()
+                    .map(|f| {
+                        let f_ident = f.ident;
+                        let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());
+                        quote! { #f_ident : $#var_name:tt }
+                    })
+                    .collect();
+                let state_matcher_arg2 = state_matcher_arg1.clone();
+
+                // async move |arg| { body }
+                let state_update_arg_move = public_fields.iter().map(|f| {
+                    let f_ident = f.ident;
+                    if f_ident == target_ident {
+                        quote! { #f_ident : ((#wrapper_ident(move |$arg| async move { $($body)* })).into()) }
+                    } else {
+                        let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());
+                        quote! { #f_ident : $#var_name }
+                    }
+                });
+
+                // async |arg| { body }
+                let state_update_arg = public_fields.iter().map(|f| {
+                    let f_ident = f.ident;
+                    if f_ident == target_ident {
+                        quote! { #f_ident : ((#wrapper_ident(|$arg| async { $($body)* })).into()) }
+                    } else {
+                        let var_name = Ident::new(&format!("{}_old", f_ident), f_ident.span());
+                        quote! { #f_ident : $#var_name }
+                    }
+                });
+
+                quote! {
+                    // async move |arg| { body }
+                    (
+                        @munch { #(#state_matcher_arg1),* }
+                        #target_ident : async move |$arg:ident| { $($body:tt)* } $(, $($rest:tt)*)?
+                    ) => {
+                        #macro_name!(
+                            @munch { #(#state_update_arg_move),* }
+                            $($($rest)*)?
+                        )
+                    };
+
+                    // async |arg| { body }
+                    (
+                        @munch { #(#state_matcher_arg2),* }
+                        #target_ident : async |$arg:ident| { $($body:tt)* } $(, $($rest:tt)*)?
+                    ) => {
+                        #macro_name!(
+                            @munch { #(#state_update_arg),* }
+                            $($($rest)*)?
+                        )
+                    };
+                }
+            } else {
+                quote! {}
+            };
+
             quote! {
+                #async_arg_rules
+
                 // async move || { body }
                 (
                     @munch { #(#state_matcher_clone1),* }

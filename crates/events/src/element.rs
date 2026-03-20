@@ -8,6 +8,15 @@ pub enum KeyAction {
     Repeat,
 }
 
+/// Modifier key state carried with keyboard events.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub meta: bool,
+}
+
 /// Named (non-text) keys.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NamedKey {
@@ -31,10 +40,10 @@ pub enum ElementEvent {
     PointerMove(Vec2d),
     Scroll(Vec2d),
     /// A character was typed (text input).
-    CharInput { ch: char, action: KeyAction },
+    CharInput { ch: char, action: KeyAction, modifiers: Modifiers },
 
     /// A named key was pressed or released.
-    KeyInput { key: NamedKey, action: KeyAction },
+    KeyInput { key: NamedKey, action: KeyAction, modifiers: Modifiers },
     Cancel,
 }
 unsafe impl Send for ElementEvent {}

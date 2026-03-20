@@ -1,7 +1,6 @@
 use animation::AnimInstant;
 use attribute::size::ResolvedSize;
 use std::cell::UnsafeCell;
-use std::sync::Arc;
 use widget::base::{BuildContext, Color, Colors};
 use widget::style::border::{BoxBorder, BoxOutline};
 use widget::text::{FontWeight, TextAlign};
@@ -9,16 +8,236 @@ use widget::{Constructor, Drawable, Element, LayoutSpacing, Spacing, TextStyle};
 
 use crate::input_field::controller::TextFieldController;
 use events::element::{ElementEvent, KeyAction, NamedKey};
+use std::future::Future;
+use std::pin::Pin;
+use std::rc::Rc;
+
+/// Write text to the system clipboard.
+#[cfg(not(target_arch = "wasm32"))]
+fn clipboard_write(text: &str) {
+    if let Ok(mut cb) = arboard::Clipboard::new() {
+        cb.set_text(text).ok();
+    }
+}
+
+/// Read text from the system clipboard.
+#[cfg(not(target_arch = "wasm32"))]
+fn clipboard_read() -> Option<String> {
+    arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok())
+}
+
+/// Write text to the browser clipboard (fire-and-forget).
+#[cfg(target_arch = "wasm32")]
+fn clipboard_write(text: &str) {
+    let Some(window) = web_sys::window() else { return };
+    let clipboard = window.navigator().clipboard();
+    let _ = clipboard.write_text(text);
+}
+
+/// Read text from the browser clipboard (synchronous fallback: returns None on wasm
+/// because the async Clipboard API cannot be awaited here).
+#[cfg(target_arch = "wasm32")]
+fn clipboard_read() -> Option<String> {
+    // The web Clipboard API is async-only; we read from the hidden input as a fallback.
+    let window = web_sys::window()?;
+    let document = window.document()?;
+    let el = document.get_element_by_id("__aimer_hidden_input")?;
+    use wasm_bindgen::JsCast;
+    let input: web_sys::HtmlInputElement = el.unchecked_into();
+    let val = input.value();
+    if val.is_empty() { None } else { Some(val) }
+}
+
+/// Inner enum distinguishing sync vs async text-field callbacks.
+#[cfg(not(target_arch = "wasm32"))]
+enum TextFieldCb {
+    Sync(Box<dyn Fn(String)>),
+    Async(Box<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>),
+}
+
+#[cfg(target_arch = "wasm32")]
+enum TextFieldCb {
+    Sync(Box<dyn Fn(String)>),
+    Async(Box<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()>>>>),
+}
+
+/// A cloneable, optional callback that receives the current text value.
+///
+/// Used for `on_changed` (fired after every text mutation) and
+/// `on_submitted` (fired when the user presses Enter).
+///
+/// Supports both synchronous and asynchronous closures.
+///
+/// # Examples
+/// ```rust,ignore
+/// // Sync
+/// TextField::create_new()
+///     .on_changed(|text| println!("changed: {text}"))
+///
+/// // Async (wrap with AsyncTextFieldCallback)
+/// TextField::create_new()
+///     .on_changed(AsyncTextFieldCallback(|text| async move {
+///         println!("changed: {text}");
+///     }))
+/// ```
+#[derive(Clone)]
+pub struct TextFieldCallback(Option<Rc<TextFieldCb>>);
+
+/// Wrapper to convert an async closure that takes a `String` into a
+/// `TextFieldCallback`.
+///
+/// # Examples
+/// ```rust,ignore
+/// use control::input::AsyncTextFieldCallback;
+///
+/// TextField::create_new()
+///     .on_changed(AsyncTextFieldCallback(|text| async move {
+///         println!("async changed: {text}");
+///     }))
+/// ```
+pub struct AsyncTextFieldCallback<F>(pub F);
+
+impl Default for TextFieldCallback {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+impl TextFieldCallback {
+    /// Invoke the callback if one is set.
+    pub fn call(&self, text: &str) {
+        if let Some(cb) = &self.0 {
+            match cb.as_ref() {
+                TextFieldCb::Sync(f) => f(text.to_owned()),
+                TextFieldCb::Async(f) => {
+                    let fut = f(text.to_owned());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                            handle.spawn(fut);
+                        }
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        wasm_bindgen_futures::spawn_local(fut);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Returns `true` if a callback is set.
+    pub fn is_some(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+impl<F> From<F> for TextFieldCallback
+where
+    F: Fn(String) + 'static,
+{
+    fn from(f: F) -> Self {
+        Self(Some(Rc::new(TextFieldCb::Sync(Box::new(f)))))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<F, Fut> From<AsyncTextFieldCallback<F>> for TextFieldCallback
+where
+    F: Fn(String) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    fn from(ac: AsyncTextFieldCallback<F>) -> Self {
+        Self(Some(Rc::new(TextFieldCb::Async(Box::new(move |s| Box::pin(ac.0(s)))))))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<F, Fut> From<AsyncTextFieldCallback<F>> for TextFieldCallback
+where
+    F: Fn(String) -> Fut + 'static,
+    Fut: Future<Output = ()> + 'static,
+{
+    fn from(ac: AsyncTextFieldCallback<F>) -> Self {
+        Self(Some(Rc::new(TextFieldCb::Async(Box::new(move |s| Box::pin(ac.0(s)))))))
+    }
+}
+
+impl std::fmt::Debug for TextFieldCallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_some() {
+            write!(f, "TextFieldCallback(Some(...))")
+        } else {
+            write!(f, "TextFieldCallback(None)")
+        }
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 use skia_safe::{
-    Color as SkColor, Font, FontMgr, Paint, Rect, TextBlob, font_style::FontStyle as SkFontStyle, paint::Style,
+    font_style::FontStyle as SkFontStyle, paint::Style, Color as SkColor, Font, FontMgr, Paint, Rect, TextBlob,
 };
-use utils::debug;
-// use skia_safe::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
 thread_local! {
     static FONT_MGR: FontMgr = FontMgr::new();
+}
+
+#[cfg(target_os = "ios")]
+mod ios_keyboard {
+    use std::ffi::{c_char, c_void, CStr};
+    use std::sync::OnceLock;
+
+    const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
+
+    unsafe extern "C" {
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+
+    type VoidFn = unsafe extern "C" fn();
+
+    static SHOW_FN: OnceLock<Option<VoidFn>> = OnceLock::new();
+    static DISMISS_FN: OnceLock<Option<VoidFn>> = OnceLock::new();
+
+    fn lookup(name: &CStr) -> Option<VoidFn> {
+        unsafe {
+            let ptr = dlsym(RTLD_DEFAULT, name.as_ptr());
+            if ptr.is_null() {
+                None
+            } else {
+                Some(std::mem::transmute::<*mut c_void, VoidFn>(ptr))
+            }
+        }
+    }
+
+    pub fn show_keyboard() {
+        let f = SHOW_FN.get_or_init(|| lookup(c"aimer_ios_show_keyboard"));
+        if let Some(f) = f {
+            unsafe { f() }
+        }
+    }
+
+    pub fn dismiss_keyboard() {
+        let f = DISMISS_FN.get_or_init(|| lookup(c"aimer_ios_dismiss_keyboard"));
+        if let Some(f) = f {
+            unsafe { f() }
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+mod android_keyboard {
+    pub fn show_keyboard() {
+        if let Some(app) = events::android_app::get_android_app() {
+            app.show_soft_input(false);
+        }
+    }
+
+    pub fn dismiss_keyboard() {
+        if let Some(app) = events::android_app::get_android_app() {
+            app.hide_soft_input(false);
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -42,6 +261,8 @@ impl Default for InputType {
 pub struct Cursor {
     cursor: String,
     offset: UnsafeCell<usize>,
+    /// Selection anchor (the end that doesn't move). `None` means no selection.
+    selection_anchor: UnsafeCell<Option<usize>>,
     visible: UnsafeCell<bool>,
     blink_rate_ms: u64,
     last_blink: UnsafeCell<AnimInstant>,
@@ -54,6 +275,7 @@ impl Cursor {
         Self {
             cursor: "|".to_string(),
             offset: UnsafeCell::new(0),
+            selection_anchor: UnsafeCell::new(None),
             visible: UnsafeCell::new(true),
             blink_rate_ms: 500,
             last_blink: UnsafeCell::new(AnimInstant::now()),
@@ -104,6 +326,35 @@ impl Cursor {
         unsafe {
             *self.last_blink.get() = AnimInstant::now();
         }
+    }
+
+    /// Returns the selection anchor, if any.
+    pub fn selection_anchor(&self) -> Option<usize> {
+        unsafe { *self.selection_anchor.get() }
+    }
+
+    /// Set the selection anchor.
+    pub fn set_selection_anchor(&self, anchor: Option<usize>) {
+        unsafe {
+            *self.selection_anchor.get() = anchor;
+        }
+    }
+
+    /// Returns the ordered (start, end) of the current selection, or `None`.
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        self.selection_anchor().map(|anchor| {
+            let offset = self.offset();
+            if anchor <= offset {
+                (anchor, offset)
+            } else {
+                (offset, anchor)
+            }
+        })
+    }
+
+    /// Clear the selection without moving the cursor.
+    pub fn clear_selection(&self) {
+        self.set_selection_anchor(None);
     }
 }
 
@@ -170,6 +421,8 @@ pub(crate) struct RawTextField {
     pub cached_bounds: UnsafeCell<Option<Rect>>,
     #[cfg(target_arch = "wasm32")]
     pub cached_bounds: UnsafeCell<Option<(f64, f64, f64, f64)>>,
+    pub on_changed: TextFieldCallback,
+    pub on_submitted: TextFieldCallback,
 }
 
 impl RawTextField {
@@ -246,7 +499,6 @@ impl RawTextField {
     }
 
     fn compute_dimensions(&self, ctx: &BuildContext) -> (Float, Float) {
-        let scale = ctx.scale;
         let constraint = ctx.box_constraint;
 
         (constraint.max_width, constraint.max_height)
@@ -282,8 +534,13 @@ impl RawTextField {
 
 /// On wasm32 / mobile browsers, focusing a hidden `<input>` element inside a
 /// user-gesture handler is the only reliable way to raise the virtual keyboard.
+///
+/// Event listeners on the hidden input re-dispatch `keydown` and `input` events
+/// to the winit canvas (`#aimer_app`) so that the framework's normal keyboard
+/// pipeline (`WindowEvent::KeyboardInput`) still fires.
 #[cfg(target_arch = "wasm32")]
 fn wasm_request_keyboard(show: bool) {
+    use wasm_bindgen::prelude::*;
     use wasm_bindgen::JsCast;
     let Some(window) = web_sys::window() else { return };
     let Some(document) = window.document() else { return };
@@ -313,11 +570,112 @@ fn wasm_request_keyboard(show: bool) {
             style.set_property("padding", "0").ok();
             style.set_property("font-size", "16px").ok(); // prevents iOS zoom
             document.body().unwrap().append_child(&el).ok();
+
+            // Forward keydown events to the winit canvas so the framework
+            // receives them through its normal WindowEvent::KeyboardInput path.
+            {
+                let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |evt: web_sys::KeyboardEvent| {
+                    evt.stop_propagation();
+                    evt.prevent_default();
+                    let Some(w) = web_sys::window() else { return };
+                    let Some(doc) = w.document() else { return };
+                    let Some(canvas) = doc.get_element_by_id("aimer_app") else { return };
+                    let new_evt = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(
+                        evt.type_().as_str(),
+                        web_sys::KeyboardEventInit::new()
+                            .key(&evt.key())
+                            .code(&evt.code())
+                            .location(evt.location())
+                            .repeat(evt.repeat())
+                            .is_composing(evt.is_composing())
+                            .bubbles(true)
+                            .cancelable(true)
+                            .ctrl_key(evt.ctrl_key())
+                            .shift_key(evt.shift_key())
+                            .alt_key(evt.alt_key())
+                            .meta_key(evt.meta_key()),
+                    )
+                    .unwrap();
+                    canvas.dispatch_event(&new_evt).ok();
+                });
+                el.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref()).ok();
+                cb.forget();
+            }
+
+            // Forward keyup events as well.
+            {
+                let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |evt: web_sys::KeyboardEvent| {
+                    evt.stop_propagation();
+                    evt.prevent_default();
+                    let Some(w) = web_sys::window() else { return };
+                    let Some(doc) = w.document() else { return };
+                    let Some(canvas) = doc.get_element_by_id("aimer_app") else { return };
+                    let new_evt = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(
+                        evt.type_().as_str(),
+                        web_sys::KeyboardEventInit::new()
+                            .key(&evt.key())
+                            .code(&evt.code())
+                            .location(evt.location())
+                            .repeat(evt.repeat())
+                            .is_composing(evt.is_composing())
+                            .bubbles(true)
+                            .cancelable(true)
+                            .ctrl_key(evt.ctrl_key())
+                            .shift_key(evt.shift_key())
+                            .alt_key(evt.alt_key())
+                            .meta_key(evt.meta_key()),
+                    )
+                    .unwrap();
+                    canvas.dispatch_event(&new_evt).ok();
+                });
+                el.add_event_listener_with_callback("keyup", cb.as_ref().unchecked_ref()).ok();
+                cb.forget();
+            }
+
+            // Handle compositionless text input (e.g. mobile virtual keyboards)
+            // that may not fire keydown for each character.
+            {
+                let cb = Closure::<dyn FnMut(web_sys::InputEvent)>::new(move |evt: web_sys::InputEvent| {
+                    if evt.is_composing() {
+                        return;
+                    }
+                    let Some(data) = evt.data() else { return };
+                    let Some(w) = web_sys::window() else { return };
+                    let Some(doc) = w.document() else { return };
+                    let Some(canvas) = doc.get_element_by_id("aimer_app") else { return };
+                    // Synthesize a keydown + keyup pair for each character so
+                    // winit can translate them into KeyboardInput events.
+                    let chars: Vec<char> = data.chars().collect();
+                    for ch in chars {
+                        let key = ch.to_string();
+                        for event_type in &["keydown", "keyup"] {
+                            let synth = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(
+                                event_type,
+                                web_sys::KeyboardEventInit::new()
+                                    .key(&key)
+                                    .bubbles(true)
+                                    .cancelable(true),
+                            )
+                            .unwrap();
+                            canvas.dispatch_event(&synth).ok();
+                        }
+                    }
+                    // Clear the hidden input so subsequent input events keep working.
+                    if let Some(el) = doc.get_element_by_id("__aimer_hidden_input") {
+                        let el: web_sys::HtmlInputElement = el.unchecked_into();
+                        el.set_value("");
+                    }
+                });
+                el.add_event_listener_with_callback("input", cb.as_ref().unchecked_ref()).ok();
+                cb.forget();
+            }
+
             el
         }
     };
 
     if show {
+        input.set_value("");
         input.focus().ok();
     } else {
         input.blur().ok();
@@ -352,13 +710,22 @@ impl Element for RawTextField {
                         self.set_focused(true);
                         self.cursor.set_offset(self.controller.char_count());
                         self.cursor.reset_blink();
-                        // On native mobile, request the virtual keyboard
+                        #[cfg(target_os = "ios")]
+                        ios_keyboard::show_keyboard();
+                        #[cfg(target_os = "android")]
+                        android_keyboard::show_keyboard();
+                        #[cfg(not(any(target_os = "ios", target_os = "android")))]
                         if let Some(w) = events::window::get_window() {
                             w.set_ime_allowed(true);
                         }
                         true
                     } else {
                         self.set_focused(false);
+                        #[cfg(target_os = "ios")]
+                        ios_keyboard::dismiss_keyboard();
+                        #[cfg(target_os = "android")]
+                        android_keyboard::dismiss_keyboard();
+                        #[cfg(not(any(target_os = "ios", target_os = "android")))]
                         if let Some(w) = events::window::get_window() {
                             w.set_ime_allowed(false);
                         }
@@ -388,13 +755,19 @@ impl Element for RawTextField {
                     }
                 }
             }
-            ElementEvent::CharInput { ch, action } => {
+            ElementEvent::CharInput { ch, action, modifiers } => {
                 if !self.is_focused() {
                     return false;
                 }
-                // debug!("Pressed: {}, action: {:?}", ch, action);
                 if *action == KeyAction::Released {
                     return false;
+                }
+
+                // If there is a selection, delete it first
+                if let Some((start, end)) = self.cursor.selection_range() {
+                    self.controller.delete_range(start, end);
+                    self.cursor.set_offset(start);
+                    self.cursor.clear_selection();
                 }
 
                 let offset = self.cursor.offset();
@@ -403,55 +776,179 @@ impl Element for RawTextField {
                 }
                 self.cursor.set_offset(offset + 1);
                 self.cursor.reset_blink();
+                self.on_changed.call(&self.controller.text());
                 true
             }
-            ElementEvent::KeyInput { key, action } => {
+            ElementEvent::KeyInput { key, action, modifiers } => {
                 if !self.is_focused() {
                     return false;
                 }
                 if *action == KeyAction::Released {
                     return false;
                 }
+
+                let is_shortcut = modifiers.ctrl || modifiers.meta;
+
+                // Handle Ctrl/Cmd shortcuts
+                if is_shortcut {
+                    let result = match key {
+                        NamedKey::Other(k) if k == "a" => {
+                            // Select all
+                            self.cursor.set_selection_anchor(Some(0));
+                            self.cursor.set_offset(self.controller.char_count());
+                            true
+                        }
+                        NamedKey::Other(k) if k == "c" => {
+                            // Copy
+                            if let Some((start, end)) = self.cursor.selection_range() {
+                                let selected = self.controller.get_range(start, end);
+                                clipboard_write(&selected);
+                            }
+                            true
+                        }
+                        NamedKey::Other(k) if k == "x" => {
+                            // Cut
+                            if let Some((start, end)) = self.cursor.selection_range() {
+                                let selected = self.controller.delete_range(start, end);
+                                clipboard_write(&selected);
+                                self.cursor.set_offset(start);
+                                self.cursor.clear_selection();
+                                self.on_changed.call(&self.controller.text());
+                            }
+                            true
+                        }
+                        NamedKey::Other(k) if k == "v" => {
+                            // Paste
+                            if let Some(text) = clipboard_read() {
+                                // Delete selection first if any
+                                if let Some((start, end)) = self.cursor.selection_range() {
+                                    self.controller.delete_range(start, end);
+                                    self.cursor.set_offset(start);
+                                    self.cursor.clear_selection();
+                                }
+                                let offset = self.cursor.offset();
+                                let char_count = text.chars().count();
+                                self.controller.insert_str(&text, offset);
+                                self.cursor.set_offset(offset + char_count);
+                                self.on_changed.call(&self.controller.text());
+                            }
+                            true
+                        }
+                        _ => false,
+                    };
+                    if result {
+                        self.cursor.reset_blink();
+                        return true;
+                    }
+                }
+
                 let result = match key {
                     NamedKey::Backspace => {
-                        let offset = self.cursor.offset();
-                        if offset > 0 {
-                            self.controller.delete_char(offset - 1);
-                            self.cursor.set_offset(offset - 1);
+                        if let Some((start, end)) = self.cursor.selection_range() {
+                            self.controller.delete_range(start, end);
+                            self.cursor.set_offset(start);
+                            self.cursor.clear_selection();
+                            self.on_changed.call(&self.controller.text());
+                        } else {
+                            let offset = self.cursor.offset();
+                            if offset > 0 {
+                                self.controller.delete_char(offset - 1);
+                                self.cursor.set_offset(offset - 1);
+                                self.on_changed.call(&self.controller.text());
+                            }
                         }
                         true
                     }
                     NamedKey::Delete => {
-                        let offset = self.cursor.offset();
-                        if offset < self.controller.char_count() {
-                            self.controller.delete_char(offset);
+                        if let Some((start, end)) = self.cursor.selection_range() {
+                            self.controller.delete_range(start, end);
+                            self.cursor.set_offset(start);
+                            self.cursor.clear_selection();
+                            self.on_changed.call(&self.controller.text());
+                        } else {
+                            let offset = self.cursor.offset();
+                            if offset < self.controller.char_count() {
+                                self.controller.delete_char(offset);
+                                self.on_changed.call(&self.controller.text());
+                            }
                         }
+                        true
+                    }
+                    NamedKey::Enter => {
+                        self.cursor.clear_selection();
+                        self.on_submitted.call(&self.controller.text());
                         true
                     }
                     NamedKey::ArrowLeft => {
                         let offset = self.cursor.offset();
-                        if offset > 0 {
-                            self.cursor.set_offset(offset - 1);
+                        if modifiers.shift {
+                            if self.cursor.selection_anchor().is_none() {
+                                self.cursor.set_selection_anchor(Some(offset));
+                            }
+                            if offset > 0 {
+                                self.cursor.set_offset(offset - 1);
+                            }
+                        } else {
+                            if let Some((start, _end)) = self.cursor.selection_range() {
+                                self.cursor.set_offset(start);
+                            } else if offset > 0 {
+                                self.cursor.set_offset(offset - 1);
+                            }
+                            self.cursor.clear_selection();
                         }
                         true
                     }
                     NamedKey::ArrowRight => {
                         let offset = self.cursor.offset();
-                        if offset < self.controller.char_count() {
-                            self.cursor.set_offset(offset + 1);
+                        let len = self.controller.char_count();
+                        if modifiers.shift {
+                            if self.cursor.selection_anchor().is_none() {
+                                self.cursor.set_selection_anchor(Some(offset));
+                            }
+                            if offset < len {
+                                self.cursor.set_offset(offset + 1);
+                            }
+                        } else {
+                            if let Some((_start, end)) = self.cursor.selection_range() {
+                                self.cursor.set_offset(end);
+                            } else if offset < len {
+                                self.cursor.set_offset(offset + 1);
+                            }
+                            self.cursor.clear_selection();
                         }
                         true
                     }
                     NamedKey::Home => {
+                        if modifiers.shift {
+                            let offset = self.cursor.offset();
+                            if self.cursor.selection_anchor().is_none() {
+                                self.cursor.set_selection_anchor(Some(offset));
+                            }
+                        } else {
+                            self.cursor.clear_selection();
+                        }
                         self.cursor.set_offset(0);
                         true
                     }
                     NamedKey::End => {
+                        if modifiers.shift {
+                            let offset = self.cursor.offset();
+                            if self.cursor.selection_anchor().is_none() {
+                                self.cursor.set_selection_anchor(Some(offset));
+                            }
+                        } else {
+                            self.cursor.clear_selection();
+                        }
                         self.cursor.set_offset(self.controller.char_count());
                         true
                     }
                     NamedKey::Escape => {
+                        self.cursor.clear_selection();
                         self.set_focused(false);
+                        #[cfg(target_os = "ios")]
+                        ios_keyboard::dismiss_keyboard();
+                        #[cfg(target_os = "android")]
+                        android_keyboard::dismiss_keyboard();
                         true
                     }
                     _ => false,
@@ -494,6 +991,10 @@ impl Element for RawTextField {
             }
             ElementEvent::Cancel => {
                 self.set_focused(false);
+                #[cfg(target_os = "ios")]
+                ios_keyboard::dismiss_keyboard();
+                #[cfg(target_os = "android")]
+                android_keyboard::dismiss_keyboard();
                 true
             }
             _ => false,

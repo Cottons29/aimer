@@ -90,6 +90,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
             .get()
             .expect("ANDROID_APP not set")
             .clone();
+        events::android_app::set_android_app(app.clone());
         winit::event_loop::EventLoop::<AimerCustomAppEvent>::with_user_event()
             .with_android_app(app)
             .build()
@@ -117,6 +118,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
         widget_root: None,
         pending_widget: Some(Box::new(widget)),
         cursor_pos: Vec2d { x: 0.0, y: 0.0 },
+        current_modifiers: Default::default(),
         window_scale: 1.0,
         native_window_size: None,
         pending_resize: None,

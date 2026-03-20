@@ -1,9 +1,9 @@
 use crate::handler::AimerApplicationHandler;
 use attribute::position::Vec2d;
 use events::element::KeyAction;
-use events::element::{ElementEvent, NamedKey};
+use events::element::{ElementEvent, Modifiers, NamedKey};
 use utils::debug;
-use widget::dispatch_event;
+use widget::{broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -26,6 +26,16 @@ impl WindowEventHandler {
             WindowEvent::CursorMoved { position, .. } => Self::handle_cursor_move(position, app),
 
             WindowEvent::MouseInput { state, button, .. } => Self::handle_mouse_input(state, button, app),
+
+            WindowEvent::ModifiersChanged(mods) => {
+                let state = mods.state();
+                app.current_modifiers = Modifiers {
+                    ctrl: state.control_key(),
+                    shift: state.shift_key(),
+                    alt: state.alt_key(),
+                    meta: state.super_key(),
+                };
+            }
 
             WindowEvent::KeyboardInput { event, .. } => Self::handle_keyboard_input(event, app),
 
@@ -58,10 +68,13 @@ impl WindowEventHandler {
                     if app.inspector.is_enabled() {
                         handled = true;
                     }
-                    if handled {
-                        if let Some(window) = &app.window {
-                            window.request_redraw();
+                    if !handled {
+                        if matches!(&event, ElementEvent::PointerDown(_)) {
+                            broadcast_event(root.as_ref(), &event);
                         }
+                    }
+                    if let Some(window) = &app.window {
+                        window.request_redraw();
                     }
                 }
             }
@@ -106,10 +119,13 @@ impl WindowEventHandler {
             if app.inspector.is_enabled() {
                 handled = true;
             }
-            if handled {
-                if let Some(window) = &app.window {
-                    window.request_redraw();
+            if !handled {
+                if matches!(&event, ElementEvent::PointerDown(_)) {
+                    broadcast_event(root.as_ref(), &event);
                 }
+            }
+            if let Some(window) = &app.window {
+                window.request_redraw();
             }
         }
     }
@@ -130,9 +146,41 @@ impl WindowEventHandler {
             }
         };
 
+        let modifiers = app.current_modifiers.clone();
+
+        // When Ctrl (or Meta on macOS) is held, map letter keys to named shortcuts
+        // so they reach the text field as KeyInput instead of being filtered out.
+        if modifiers.ctrl || modifiers.meta {
+            use winit::keyboard::PhysicalKey;
+            use winit::keyboard::KeyCode;
+            let named = match event.physical_key {
+                PhysicalKey::Code(KeyCode::KeyA) => Some(NamedKey::Other("a".into())),
+                PhysicalKey::Code(KeyCode::KeyC) => Some(NamedKey::Other("c".into())),
+                PhysicalKey::Code(KeyCode::KeyV) => Some(NamedKey::Other("v".into())),
+                PhysicalKey::Code(KeyCode::KeyX) => Some(NamedKey::Other("x".into())),
+                _ => None,
+            };
+            if let Some(key) = named {
+                let ev = ElementEvent::KeyInput { key, action, modifiers };
+                if let Some(root) = &app.widget_root {
+                    let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+                    #[cfg(debug_assertions)]
+                    if app.inspector.is_enabled() {
+                        handled = true;
+                    }
+                    if handled {
+                        if let Some(window) = &app.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+                return;
+            }
+        }
+
         if let Key::Character(ref ch) = event.logical_key {
             if !ch.is_empty() && ch.chars().all(|c| !c.is_control()) {
-                let ev = ElementEvent::CharInput { ch: ch.parse().unwrap(), action: action.clone() };
+                let ev = ElementEvent::CharInput { ch: ch.parse().unwrap(), action: action.clone(), modifiers: modifiers.clone() };
                 if let Some(root) = &app.widget_root {
                     let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                     #[cfg(debug_assertions)]
@@ -151,7 +199,7 @@ impl WindowEventHandler {
 
         // Handle space as text input when it arrives as a named key
         if let Key::Named(WinitNamedKey::Space) = event.logical_key {
-            let ev = ElementEvent::CharInput { ch: ' ', action: action.clone() };
+            let ev = ElementEvent::CharInput { ch: ' ', action: action.clone(), modifiers: modifiers.clone() };
             if let Some(root) = &app.widget_root {
                 let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                 #[cfg(debug_assertions)]
@@ -181,7 +229,7 @@ impl WindowEventHandler {
                 WinitNamedKey::Tab => NamedKey::Tab,
                 other => NamedKey::Other(format!("{:?}", other)),
             };
-            let ev = ElementEvent::KeyInput { key, action };
+            let ev = ElementEvent::KeyInput { key, action, modifiers: modifiers.clone() };
             if let Some(root) = &app.widget_root {
                 let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                 #[cfg(debug_assertions)]
@@ -227,7 +275,8 @@ impl WindowEventHandler {
             let is_portrait = size.width < size.height;
             match crate::ios_screen::get_screen_resolution_pixels() {
                 Some((width, height)) => {
-                    app.native_window_size = Some(attribute::size::ResolvedSize { width: width as f32, height: height as f32 });
+                    app.native_window_size =
+                        Some(attribute::size::ResolvedSize { width: width as f32, height: height as f32 });
                     if is_portrait {
                         PhysicalSize::new(width as u32, height as u32)
                     } else {

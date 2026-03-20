@@ -62,6 +62,7 @@ pub struct AimerApplicationHandler {
     pub widget_root: Option<Box<dyn Element>>,
     pub pending_widget: Option<Box<dyn Widget>>,
     pub cursor_pos: Vec2d,
+    pub current_modifiers: events::element::Modifiers,
     pub window_scale: f64,
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
@@ -123,8 +124,6 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
         let size = window.inner_size();
 
         debug!("Window Size : {size:?}");
-        #[cfg(target_os = "ios")]
-        window.set_ime_allowed(true);
 
 
         self.render_ctx.initialize(window, size);

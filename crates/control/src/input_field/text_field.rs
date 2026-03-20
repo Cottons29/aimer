@@ -1,14 +1,73 @@
 use crate::input_field::controller::TextFieldController;
 use crate::input_field::raw_fields::{
-    Cursor, ExpandDirection, InputType, RawTextField, TextFieldStyle,
+    Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback, TextFieldStyle,
 };
 use std::cell::UnsafeCell;
 use widget::base::{BuildContext, Colors};
 use widget::text::TextAlign;
 use widget::{Element, TextStyle, Widget, WidgetConstructor};
 
+
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
+///
+/// A configurable `TextField` widget struct that provides input capabilities
+/// with an array of customizable properties for text input, styling, behavior,
+/// and event handling.
+///
+/// # Fields
+///
+/// * `controller` - The `TextFieldController` instance to control the `TextField` widget.
+///   Defaults to the `TextFieldController` implementation.
+///
+/// * `input_type` - Specifies the type of input allowed (e.g., text, number, password).
+///   Defaults to a default implementation of `InputType`.
+///
+/// * `prompt` - The text prompt displayed when the `TextField` is empty. This field
+///   can be initialized using types that implement `Into<String>`.
+///
+/// * `hint` - Hint text displayed within the `TextField` to provide user guidance.
+///   Can be initialized using types implementing `Into<String>`.
+///
+/// * `hint_style` - Styling applied to the hint text. Defaults to a `TextStyle` implementation.
+///
+/// * `text_style` - Styling applied to the user-inputted text. Defaults to a `TextStyle` implementation.
+///
+/// * `prompt_style` - Styling for the text prompt. Defaults to a `TextStyle` implementation.
+///
+/// * `text_align` - The alignment of the text within the `TextField`. Defaults to a default implementation of `TextAlign`.
+///
+/// * `auto_focus` - Boolean indicating if the field should be automatically focused upon rendering. Defaults to `false`.
+///
+/// * `max_lines` - An optional maximum number of lines allowed for the text input. Defaults to `None`.
+///
+/// * `min_lines` - An optional minimum number of lines for the text input. Defaults to `None`.
+///
+/// * `max_length` - An optional maximum number of characters allowed in the input. Defaults to `None`.
+///
+/// * `enable` - Indicates whether the `TextField` is enabled for interaction.
+///   Defaults to `true`.
+///
+/// * `expand` - Determines the expansion direction of the `TextField`.
+///   Defaults to a default implementation of `ExpandDirection`.
+///
+/// * `style` - The default style applied to the `TextField`. Defaults to `TextFieldStyle`.
+///
+/// * `hover_style` - The style applied to the `TextField` when hovered. Defaults to `None`.
+///
+/// * `focus_style` - The style applied to the `TextField` when it gains focus. Defaults to `None`.
+///
+/// * `disabled_style` - The style applied to the `TextField` when it is disabled. Defaults to `None`.
+///
+/// * `cursor_color` - Color of the text cursor. Defaults to a default `Colors` implementation.
+///
+/// * `on_changed` - Callback triggered when the input text changes. Accepts a `TextFieldCallback`
+///   which is wrapped with an `AsyncTextFieldCallback`.
+///
+/// * `on_submitted` - Callback triggered when the user submits the input (e.g., pressing Enter).
+///   Accepts a `TextFieldCallback` which is wrapped with an `AsyncTextFieldCallback`.
+///
+///
 pub struct TextField {
     #[constructor(default)]
     controller: TextFieldController,
@@ -48,6 +107,10 @@ pub struct TextField {
     pub disabled_style: Option<TextFieldStyle>,
     #[constructor(default)]
     pub cursor_color: Colors,
+    #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
+    pub on_changed: TextFieldCallback,
+    #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
+    pub on_submitted: TextFieldCallback,
 }
 
 impl Widget for TextField {
@@ -80,6 +143,8 @@ impl Widget for TextField {
             focused: UnsafeCell::new(self.auto_focus),
             hovered: UnsafeCell::new(false),
             cached_bounds: UnsafeCell::new(None),
+            on_changed: self.on_changed.clone(),
+            on_submitted: self.on_submitted.clone(),
         })
     }
 }

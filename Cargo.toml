@@ -41,7 +41,7 @@ members = [
     "aimer_cli",
     "crates/events",
     "crates/router"
-, "crates/inspector"]
+, "crates/inspector", "cupid"]
 
 
 [workspace.dependencies]

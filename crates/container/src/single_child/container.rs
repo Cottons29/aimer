@@ -163,6 +163,12 @@ impl<T: Element> Drawable for RawContainer<T> {
         let box_width = box_width.max(0.0);
         let box_height = box_height.max(0.0);
 
+        // Use computed_size to get correct dimensions (handles unbounded/scrollable case)
+        let computed = self.computed_size(ctx);
+        let (m_left_v, m_top_v, m_right_v, m_bottom_v) = self.margin(ctx);
+        let draw_width = (computed.width - m_left_v - m_right_v).max(0.0);
+        let draw_height = (computed.height - m_top_v - m_bottom_v).max(0.0);
+
         #[cfg(debug_assertions)]
         {
             if widget::inspector_overlay::is_enabled() {
@@ -200,9 +206,9 @@ impl<T: Element> Drawable for RawContainer<T> {
             paint.set_color(SkColor::from(self.color));
             paint.set_style(Style::Fill);
 
-            let rect = Rect::from_xywh(0.0, 0.0, box_width, box_height);
+            let rect = Rect::from_xywh(0.0, 0.0, draw_width, draw_height);
 
-            let has_radius = self.border.get_uniform_radius(box_width, box_height, scale);
+            let has_radius = self.border.get_uniform_radius(draw_width, draw_height, scale);
 
             if let Some(radius) = has_radius {
                 let rrect = skia_safe::RRect::new_rect_xy(rect, radius, radius);
@@ -218,16 +224,16 @@ impl<T: Element> Drawable for RawContainer<T> {
 
             let has_radius = self
                 .border
-                .get_uniform_radius(box_width, box_height, scale);
+                .get_uniform_radius(draw_width, draw_height, scale);
 
             if let Some(radius) = has_radius {
                 ctx.canvas.begin_path();
                 let _ = ctx
                     .canvas
-                    .round_rect_with_f64(0.0, 0.0, box_width, box_height, radius);
+                    .round_rect_with_f64(0.0, 0.0, draw_width, draw_height, radius);
                 ctx.canvas.fill();
             } else {
-                ctx.canvas.fill_rect(0.0, 0.0, box_width, box_height);
+                ctx.canvas.fill_rect(0.0, 0.0, draw_width, draw_height);
             }
         }
 
@@ -369,6 +375,7 @@ impl<T: Element> Element for RawContainer<T> {
         let scale = ctx.scale;
         let p_w = ctx.box_constraint.max_width;
         let p_h = ctx.box_constraint.max_height;
+        let threshold = 1_000_000.0 as FLOAT;
 
         let m_left = self.margin.left.value(p_w, scale);
         let m_right = self.margin.right.value(p_w, scale);
@@ -387,9 +394,56 @@ impl<T: Element> Element for RawContainer<T> {
             Dimension::Auto => p_h - (m_top + m_bottom),
         };
 
-        let result = ResolvedSize {
-            width: (box_width + m_left + m_right).max(0.0),
-            height: (box_height + m_top + m_bottom).max(0.0),
+        // When Auto dimension is unbounded (e.g. inside scrollable), derive size from child
+        let width_unbounded = matches!(self.width, Dimension::Auto) && box_width > threshold;
+        let height_unbounded = matches!(self.height, Dimension::Auto) && box_height > threshold;
+
+        let result = if width_unbounded || height_unbounded {
+            let capped_w = box_width.min(threshold);
+            let capped_h = box_height.min(threshold);
+
+            let p_left = self.padding.left.value(capped_w, scale);
+            let p_right = self.padding.right.value(capped_w, scale);
+            let p_top = self.padding.top.value(capped_h, scale);
+            let p_bottom = self.padding.bottom.value(capped_h, scale);
+
+            let get_stroke = |dim: Dimension, parent_val: FLOAT| -> FLOAT {
+                match dim {
+                    Dimension::Px(w) => w * scale,
+                    Dimension::Percent(p) => parent_val * (p / 100.0),
+                    Dimension::Auto => 0.0,
+                }
+            };
+            let bl = get_stroke(self.border.left.stroke, capped_w).max(0.0);
+            let br = get_stroke(self.border.right.stroke, capped_w).max(0.0);
+            let bt = get_stroke(self.border.top.stroke, capped_h).max(0.0);
+            let bb = get_stroke(self.border.bottom.stroke, capped_h).max(0.0);
+
+            let mut child_ctx = ctx.clone();
+            child_ctx.box_constraint.max_width = if width_unbounded { FLOAT::MAX } else { (box_width - p_left - bl - p_right - br).max(0.0) };
+            child_ctx.box_constraint.max_height = if height_unbounded { FLOAT::MAX } else { (box_height - p_top - bt - p_bottom - bb).max(0.0) };
+            let child_size = self.child.computed_size(&child_ctx);
+
+            let final_w = if width_unbounded {
+                child_size.width + p_left + p_right + bl + br + m_left + m_right
+            } else {
+                box_width + m_left + m_right
+            };
+            let final_h = if height_unbounded {
+                child_size.height + p_top + p_bottom + bt + bb + m_top + m_bottom
+            } else {
+                box_height + m_top + m_bottom
+            };
+
+            ResolvedSize {
+                width: final_w.max(0.0),
+                height: final_h.max(0.0),
+            }
+        } else {
+            ResolvedSize {
+                width: (box_width + m_left + m_right).max(0.0),
+                height: (box_height + m_top + m_bottom).max(0.0),
+            }
         };
         self.cache
             .set_computed(ctx.box_constraint, scale_bits, result);
@@ -405,15 +459,12 @@ impl<T: Element> Element for RawContainer<T> {
         let scale = ctx.scale;
         let p_w = ctx.box_constraint.max_width;
         let p_h = ctx.box_constraint.max_height;
+        let threshold = 1_000_000.0 as FLOAT;
 
         let m_left = self.margin.left.value(p_w, scale);
-        let m_right = self
-            .margin
-            .right.value(p_w, scale);
+        let m_right = self.margin.right.value(p_w, scale);
         let m_top = self.margin.top.value(p_h, scale);
-        let m_bottom = self
-            .margin
-            .bottom.value(p_h, scale);
+        let m_bottom = self.margin.bottom.value(p_h, scale);
 
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
@@ -426,19 +477,18 @@ impl<T: Element> Element for RawContainer<T> {
             Dimension::Auto => p_h - (m_top + m_bottom),
         };
 
+        let width_unbounded = matches!(self.width, Dimension::Auto) && box_width > threshold;
+        let height_unbounded = matches!(self.height, Dimension::Auto) && box_height > threshold;
+
         let b_w = box_width.max(0.0);
         let b_h = box_height.max(0.0);
+        let capped_w = b_w.min(threshold);
+        let capped_h = b_h.min(threshold);
 
-        let p_left = self
-            .padding
-            .left.value(b_w, scale);
-        let p_right = self
-            .padding
-            .right.value(b_w, scale);
-        let p_top = self.padding.top.value(b_h, scale);
-        let p_bottom = self
-            .padding
-            .bottom.value(b_h, scale);
+        let p_left = self.padding.left.value(capped_w, scale);
+        let p_right = self.padding.right.value(capped_w, scale);
+        let p_top = self.padding.top.value(capped_h, scale);
+        let p_bottom = self.padding.bottom.value(capped_h, scale);
 
         let get_stroke = |dim: Dimension, parent_val: FLOAT| -> FLOAT {
             match dim {
@@ -450,14 +500,26 @@ impl<T: Element> Element for RawContainer<T> {
 
         let border = self.border;
 
-        let b_left = get_stroke(border.left.stroke, b_w).max(0.0);
-        let b_right = get_stroke(border.right.stroke, b_w).max(0.0);
-        let b_top = get_stroke(border.top.stroke, b_h).max(0.0);
-        let b_bottom = get_stroke(border.bottom.stroke, b_h).max(0.0);
+        let b_left = get_stroke(border.left.stroke, capped_w).max(0.0);
+        let b_right = get_stroke(border.right.stroke, capped_w).max(0.0);
+        let b_top = get_stroke(border.top.stroke, capped_h).max(0.0);
+        let b_bottom = get_stroke(border.bottom.stroke, capped_h).max(0.0);
 
-        let result = ResolvedSize {
-            width: (b_w - p_left - p_right - b_left - b_right).max(0.0),
-            height: (b_h - p_top - p_bottom - b_top - b_bottom).max(0.0),
+        let result = if width_unbounded || height_unbounded {
+            let mut child_ctx = ctx.clone();
+            child_ctx.box_constraint.max_width = if width_unbounded { FLOAT::MAX } else { (b_w - p_left - b_left - p_right - b_right).max(0.0) };
+            child_ctx.box_constraint.max_height = if height_unbounded { FLOAT::MAX } else { (b_h - p_top - b_top - p_bottom - b_bottom).max(0.0) };
+            let child_size = self.child.computed_size(&child_ctx);
+
+            ResolvedSize {
+                width: if width_unbounded { child_size.width } else { (b_w - p_left - p_right - b_left - b_right).max(0.0) },
+                height: if height_unbounded { child_size.height } else { (b_h - p_top - p_bottom - b_top - b_bottom).max(0.0) },
+            }
+        } else {
+            ResolvedSize {
+                width: (b_w - p_left - p_right - b_left - b_right).max(0.0),
+                height: (b_h - p_top - p_bottom - b_top - b_bottom).max(0.0),
+            }
         };
         self.cache
             .set_content(ctx.box_constraint, scale_bits, result);

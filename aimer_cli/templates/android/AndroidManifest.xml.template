@@ -11,7 +11,8 @@
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"
-            android:configChanges="orientation|keyboardHidden|screenSize">
+            android:configChanges="orientation|keyboardHidden|screenSize"
+            android:windowSoftInputMode="stateHidden|adjustResize">
             <meta-data android:name="android.app.lib_name" android:value="${app_name}" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

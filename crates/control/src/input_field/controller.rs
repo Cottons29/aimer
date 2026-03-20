@@ -342,4 +342,26 @@ impl TextFieldController {
     pub fn char_count(&self) -> usize {
         self.text().chars().count()
     }
+
+    /// Returns the substring between two character offsets.
+    pub fn get_range(&self, start: usize, end: usize) -> String {
+        self.text().chars().skip(start).take(end.saturating_sub(start)).collect()
+    }
+
+    /// Deletes characters in the range `[start, end)` and returns the removed text.
+    pub fn delete_range(&self, start: usize, end: usize) -> String {
+        let removed = self.get_range(start, end);
+        let s = unsafe { self.text_mut() };
+        let byte_start = s.char_indices().nth(start).map(|(i, _)| i).unwrap_or(s.len());
+        let byte_end = s.char_indices().nth(end).map(|(i, _)| i).unwrap_or(s.len());
+        s.drain(byte_start..byte_end);
+        removed
+    }
+
+    /// Inserts a string at the given character offset.
+    pub fn insert_str(&self, text: &str, offset: usize) {
+        let s = unsafe { self.text_mut() };
+        let byte_offset = s.char_indices().nth(offset).map(|(i, _)| i).unwrap_or(s.len());
+        s.insert_str(byte_offset, text);
+    }
 }
