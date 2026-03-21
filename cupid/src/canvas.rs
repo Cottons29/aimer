@@ -21,6 +21,25 @@ impl CupidCanvas {
             Rect::new(x, y, width, height),
             color,
             border_radius,
+            0.0,
+            Color::transparent(),
+        );
+    }
+
+    pub fn fill_rect_with_border(
+        &mut self,
+        x: f32, y: f32, width: f32, height: f32,
+        color: Color,
+        border_radius: f32,
+        border_width: f32,
+        border_color: Color,
+    ) {
+        self.draw_list.fill_rect(
+            Rect::new(x, y, width, height),
+            color,
+            border_radius,
+            border_width,
+            border_color,
         );
     }
 
