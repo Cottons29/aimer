@@ -1,9 +1,9 @@
 use attribute::dimension::Dimension;
+use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use constructor::{Constructor, WidgetConstructor};
-#[cfg(not(target_arch = "wasm32"))]
-use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
 use widget::{Drawable, Element, LayoutCache, LayoutSpacing, Spacing, Widget, base::*, style::border::BoxBorder};
+use canvas::CanvasRendering;
 
 #[cfg(target_arch = "wasm32")]
 type FLOAT = f64;
@@ -124,10 +124,6 @@ impl<T: Element> RawContainer<T> {
 
 impl<T: Element> Drawable for RawContainer<T> {
     fn draw(&self, ctx: &BuildContext) {
-        // debug!("RawContainer::draw");
-        #[cfg(not(target_arch = "wasm32"))]
-        ctx.canvas.save();
-        #[cfg(target_arch = "wasm32")]
         ctx.canvas.save();
 
         let constraint = ctx.box_constraint;
@@ -138,15 +134,7 @@ impl<T: Element> Drawable for RawContainer<T> {
 
         let (m_left, m_top, m_right, m_bottom) = self.margin(ctx);
 
-        #[cfg(not(target_arch = "wasm32"))]
-        ctx.canvas.translate((m_left, m_top));
-        #[cfg(target_arch = "wasm32")]
-        match ctx.canvas.translate(m_left, m_top) {
-            Ok(_) => {}
-            Err(err) => {
-                utils::error!("Failed to translate canvas: {:?}", err);
-            }
-        }
+        ctx.canvas.translate(Vec2d { x: m_left, y: m_top });
 
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
@@ -172,16 +160,8 @@ impl<T: Element> Drawable for RawContainer<T> {
         #[cfg(debug_assertions)]
         {
             if widget::inspector_overlay::is_enabled() {
-                #[cfg(not(target_arch = "wasm32"))]
-                let (start_x, start_y) = {
-                    let matrix = ctx.canvas.local_to_device_as_3x3();
-                    (matrix.translate_x() as f32, matrix.translate_y() as f32)
-                };
-                #[cfg(target_arch = "wasm32")]
-                let (start_x, start_y) = {
-                    let matrix = ctx.canvas.get_transform().unwrap();
-                    (matrix.e() as f32, matrix.f() as f32)
-                };
+                // TODO: expose transform position from AimerCanvas for inspector
+                let (start_x, start_y): (f32, f32) = (0.0, 0.0);
                 let end_x = start_x + box_width as f32;
                 let end_y = start_y + box_height as f32;
 
@@ -199,43 +179,15 @@ impl<T: Element> Drawable for RawContainer<T> {
             }
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut paint = Paint::default();
-            paint.set_anti_alias(true);
-            paint.set_color(SkColor::from(self.color));
-            paint.set_style(Style::Fill);
-
-            let rect = Rect::from_xywh(0.0, 0.0, draw_width, draw_height);
-
-            let has_radius = self.border.get_uniform_radius(draw_width, draw_height, scale);
-
-            if let Some(radius) = has_radius {
-                let rrect = skia_safe::RRect::new_rect_xy(rect, radius, radius);
-                ctx.canvas.draw_rrect(rrect, &paint);
-            } else {
-                ctx.canvas.draw_rect(rect, &paint);
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let color_str = self.color.to_css_color();
-            ctx.canvas.set_fill_style_str(&color_str);
-
-            let has_radius = self
-                .border
-                .get_uniform_radius(draw_width, draw_height, scale);
-
-            if let Some(radius) = has_radius {
-                ctx.canvas.begin_path();
-                let _ = ctx
-                    .canvas
-                    .round_rect_with_f64(0.0, 0.0, draw_width, draw_height, radius);
-                ctx.canvas.fill();
-            } else {
-                ctx.canvas.fill_rect(0.0, 0.0, draw_width, draw_height);
-            }
-        }
+        // Draw background fill
+        let has_radius = self.border.get_uniform_radius(draw_width, draw_height, scale);
+        let radius = has_radius.unwrap_or(0.0);
+        ctx.canvas.fill_color_rect(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width: draw_width, height: draw_height },
+            self.color,
+            radius as f32,
+        );
 
         self.border.draw(ctx);
 
@@ -244,8 +196,6 @@ impl<T: Element> Drawable for RawContainer<T> {
         let _p_right = self.padding.right.value(box_width, scale);
         let _p_bottom = self.padding.bottom.value(box_height, scale);
 
-        let mut b_left = 0.0;
-        let mut b_top = 0.0;
         let border = self.border;
 
         let get_stroke = |dim: Dimension, parent_val: FLOAT| -> FLOAT {
@@ -255,78 +205,22 @@ impl<T: Element> Drawable for RawContainer<T> {
                 Dimension::Auto => 0.0,
             }
         };
-        b_left = get_stroke(border.left.stroke, box_width).max(0.0);
+        let b_left = get_stroke(border.left.stroke, box_width).max(0.0);
         let b_right = get_stroke(border.right.stroke, box_width).max(0.0);
-        b_top = get_stroke(border.top.stroke, box_height).max(0.0);
+        let b_top = get_stroke(border.top.stroke, box_height).max(0.0);
         let b_bottom = get_stroke(border.bottom.stroke, box_height).max(0.0);
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let inset_rect = Rect::from_ltrb(
-            b_left / 2.0,
-            b_top / 2.0,
-            (box_width - b_right / 2.0).max(0.0),
-            (box_height - b_bottom / 2.0).max(0.0),
+        // Clip to inset rect (inside borders)
+        let clip_x = b_left / 2.0;
+        let clip_y = b_top / 2.0;
+        let clip_w = ((box_width - b_right / 2.0).max(0.0) - clip_x).max(0.0);
+        let clip_h = ((box_height - b_bottom / 2.0).max(0.0) - clip_y).max(0.0);
+        ctx.canvas.set_clip(
+            Vec2d { x: clip_x, y: clip_y },
+            ResolvedSize { width: clip_w, height: clip_h },
         );
 
-        if let Some(radius) = border.get_uniform_radius(box_width, box_height, scale) {
-            let inner_radius = (radius - (b_left / 2.0)).max(0.0);
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let rrect = skia_safe::RRect::new_rect_xy(inset_rect, inner_radius, inner_radius);
-                ctx.canvas
-                    .clip_rrect(rrect, skia_safe::ClipOp::Intersect, true);
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                ctx.canvas.begin_path();
-                let _ = ctx.canvas.round_rect_with_f64(
-                    b_left / 2.0,
-                    b_top / 2.0,
-                    (box_width - b_right / 2.0).max(0.0) - (b_left / 2.0),
-                    (box_height - b_bottom / 2.0).max(0.0) - (b_top / 2.0),
-                    inner_radius,
-                );
-                ctx.canvas.clip();
-            }
-        } else {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                ctx.canvas
-                    .clip_rect(inset_rect, skia_safe::ClipOp::Intersect, true);
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                ctx.canvas.begin_path();
-                ctx.canvas.rect(
-                    b_left / 2.0,
-                    b_top / 2.0,
-                    (box_width - b_right / 2.0).max(0.0) - (b_left / 2.0),
-                    (box_height - b_bottom / 2.0).max(0.0) - (b_top / 2.0),
-                );
-                ctx.canvas.clip();
-            }
-        }
-
-        // #[cfg(not(target_arch = "wasm32"))]
-        // ctx.canvas
-        //     .clip_rect(Rect::from_xywh(0.0, 0.0, box_width, box_height), skia_safe::ClipOp::Intersect, true);
-        // #[cfg(target_arch = "wasm32")]
-        // {
-        //     ctx.canvas.begin_path();
-        //     ctx.canvas.rect(0.0, 0.0, box_width, box_height);
-        //     ctx.canvas.clip();
-        // }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        ctx.canvas.translate((p_left + b_left, p_top + b_top));
-
-        #[cfg(target_arch = "wasm32")]
-        match ctx.canvas.translate(p_left + b_left, p_top + b_top) {
-            Ok(_) => {}
-            Err(err) => {
-                utils::error!("Failed to translate canvas: {:?}", err);
-            }
-        }
+        ctx.canvas.translate(Vec2d { x: p_left + b_left, y: p_top + b_top });
 
         let mut child_ctx = ctx.clone();
         let content_w = (box_width - p_left - b_left - _p_right - b_right).max(0.0);
@@ -336,9 +230,7 @@ impl<T: Element> Drawable for RawContainer<T> {
         child_ctx.parent_size = ResolvedSize { width: content_w, height: content_h };
 
         self.child.draw(&child_ctx);
-        #[cfg(not(target_arch = "wasm32"))]
-        ctx.canvas.restore();
-        #[cfg(target_arch = "wasm32")]
+        ctx.canvas.clear_clip();
         ctx.canvas.restore();
     }
 }
