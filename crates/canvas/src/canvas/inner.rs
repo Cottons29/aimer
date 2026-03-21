@@ -1,7 +1,7 @@
 use crate::canvas::AimerCanvas;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub type Canvas = skia_safe::Canvas;
+pub type Canvas = cupid::canvas::CupidCanvas;
 #[cfg(target_arch = "wasm32")]
 pub type Canvas = web_sys::CanvasRenderingContext2d;
 

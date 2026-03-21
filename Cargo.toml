@@ -40,8 +40,10 @@ members = [
     "macros/aimer_main",
     "aimer_cli",
     "crates/events",
-    "crates/router"
-, "crates/inspector", "cupid"]
+    "crates/router",
+    "crates/inspector",
+    "cupid"
+]
 
 
 [workspace.dependencies]
@@ -63,7 +65,7 @@ aimer_cli = { path = "aimer_cli" }
 events = { path = "crates/events" }
 router = {path = "crates/router" }
 inspector = {path = "./crates/inspector"}
-
+cupid = {path = "./cupid"}
 #############
 
 

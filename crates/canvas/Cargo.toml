@@ -9,7 +9,8 @@ utils.workspace = true
 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-skia-safe.workspace = true
+cupid.workspace = true
+
 
 [target.wasm32-unknown-unknown.dependencies]
 web-sys.workspace = true
