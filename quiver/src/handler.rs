@@ -261,10 +261,11 @@ impl AimerApplicationHandler {
         #[cfg(debug_assertions)]
         let inspector_enabled = self.inspector.is_enabled();
 
-        let draw_widgets = |canvas: &_, width: u32, height: u32| {
+        let draw_widgets = |canvas: &canvas::InnerCanvas, width: u32, height: u32| {
+            let canvas = canvas::Canvas::new(canvas);
             let build_ctx = BuildContext {
                 parent_size: ResolvedSize { width: width as Float, height: height as Float },
-                canvas,
+                canvas: canvas.clone(),
                 scale: window_scale as Float,
                 parent_pos: Default::default(),
                 cursor_pos,
@@ -292,17 +293,13 @@ impl AimerApplicationHandler {
                 Self::render_widget_tree(root.as_ref(), &build_ctx);
                 #[cfg(debug_assertions)]
                 if inspector_enabled {
-                    InspectorOverlay::draw(root.as_ref(), build_ctx.canvas, cursor_pos, build_ctx.scale as f32);
+                    InspectorOverlay::draw(root.as_ref(), &build_ctx.canvas, cursor_pos, build_ctx.scale as f32);
                 }
             }
         };
 
         #[cfg(not(target_arch = "wasm32"))]
-        self.render_ctx.render_frame(
-            #[cfg(target_os = "android")]
-            window,
-            draw_widgets,
-        );
+        self.render_ctx.render_frame(draw_widgets);
 
         #[cfg(target_arch = "wasm32")]
         self.render_ctx.render_frame(window, draw_widgets);

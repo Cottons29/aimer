@@ -1,10 +1,13 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use glyphon::{
     Attrs, Buffer as GlyphonBuffer, Cache, Color as GlyphonColor, Family, FontSystem, Metrics,
     Resolution, Shaping, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport,
 };
 
 pub struct TextPipeline {
-    pub font_system: FontSystem,
+    pub font_system: Rc<RefCell<FontSystem>>,
     pub swash_cache: SwashCache,
     pub atlas: TextAtlas,
     pub text_renderer: TextRenderer,
@@ -28,8 +31,8 @@ impl TextPipeline {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
+        font_system: Rc<RefCell<FontSystem>>,
     ) -> Self {
-        let font_system = FontSystem::new();
         let swash_cache = SwashCache::new();
         let cache = Cache::new(device);
         let mut atlas = TextAtlas::new(device, queue, &cache, format);
@@ -62,25 +65,26 @@ impl TextPipeline {
         self.viewport.update(queue, Resolution { width, height });
 
         let mut buffers: Vec<GlyphonBuffer> = Vec::with_capacity(requests.len());
+        let mut fs = self.font_system.borrow_mut();
 
         for req in requests {
             let mut buffer = GlyphonBuffer::new(
-                &mut self.font_system,
+                &mut fs,
                 Metrics::new(req.font_size, req.font_size * 1.2),
             );
             buffer.set_size(
-                &mut self.font_system,
+                &mut fs,
                 Some(req.bounds_width),
                 Some(req.bounds_height),
             );
             buffer.set_text(
-                &mut self.font_system,
+                &mut fs,
                 &req.text,
                 &Attrs::new().family(Family::SansSerif),
                 Shaping::Advanced,
                 None,
             );
-            buffer.shape_until_scroll(&mut self.font_system, false);
+            buffer.shape_until_scroll(&mut fs, false);
             buffers.push(buffer);
         }
 
@@ -89,14 +93,16 @@ impl TextPipeline {
             .zip(buffers.iter())
             .map(|(req, buf)| {
                 let c = req.color;
+                let ascent = req.font_size * 0.8;
+                let top_y = req.y - ascent;
                 TextArea {
                     buffer: buf,
                     left: req.x,
-                    top: req.y,
+                    top: top_y,
                     scale: 1.0,
                     bounds: TextBounds {
                         left: req.x as i32,
-                        top: req.y as i32,
+                        top: top_y as i32,
                         right: (req.x + req.bounds_width) as i32,
                         bottom: (req.y + req.bounds_height) as i32,
                     },
@@ -115,7 +121,7 @@ impl TextPipeline {
             .prepare(
                 device,
                 queue,
-                &mut self.font_system,
+                &mut fs,
                 &mut self.atlas,
                 &self.viewport,
                 text_areas,

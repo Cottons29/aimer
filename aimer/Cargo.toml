@@ -5,9 +5,6 @@ edition = "2024"
 resolver = "3"
 description = "The organized export of other Aimer project"
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [[bin]]
 name = "aimer"
 path = "src/bin.rs"
@@ -19,7 +16,7 @@ constructor.workspace  = true
 widget.workspace = true
 color.workspace = true
 container.workspace = true
-engine.workspace = true
+quiver.workspace = true
 control.workspace= true
 aimer_main.workspace = true
 wasm-bindgen.workspace = true
@@ -27,11 +24,5 @@ animation.workspace = true
 utils.workspace = true
 router.workspace = true
 ###############
-[target.'cfg(target_os = "windows")'.dependencies]
-aimer_cli.workspace = true
-
-[target.'cfg(target_os = "macos")'.dependencies]
-aimer_cli.workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 aimer_cli.workspace = true

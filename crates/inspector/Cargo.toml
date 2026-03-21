@@ -7,12 +7,14 @@ edition = "2024"
 tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
 tokio = {workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"]}
 tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
-skia-safe.workspace = true
 
 
 [dependencies]
+canvas.workspace = true
 widget.workspace = true
 utils.workspace = true
+attribute.workspace = true
+color.workspace = true
 futures-util = "0.3"
 serde.workspace = true
 serde_json.workspace = true

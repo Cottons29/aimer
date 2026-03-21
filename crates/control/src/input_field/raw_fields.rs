@@ -173,15 +173,7 @@ impl std::fmt::Debug for TextFieldCallback {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-use skia_safe::{
-    font_style::FontStyle as SkFontStyle, paint::Style, Color as SkColor, Font, FontMgr, Paint, Rect, TextBlob,
-};
-
-#[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    static FONT_MGR: FontMgr = FontMgr::new();
-}
+use canvas::CanvasRendering;
 
 #[cfg(target_os = "ios")]
 mod ios_keyboard {
@@ -244,6 +236,7 @@ mod android_keyboard {
 type Float = f32;
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputType {
@@ -417,46 +410,15 @@ pub(crate) struct RawTextField {
     pub disabled_style: Option<TextFieldStyle>,
     pub focused: UnsafeCell<bool>,
     pub hovered: UnsafeCell<bool>,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub cached_bounds: UnsafeCell<Option<Rect>>,
-    #[cfg(target_arch = "wasm32")]
     pub cached_bounds: UnsafeCell<Option<(f64, f64, f64, f64)>>,
     pub on_changed: TextFieldCallback,
     pub on_submitted: TextFieldCallback,
 }
 
 impl RawTextField {
-    #[cfg(not(target_arch = "wasm32"))]
-    fn make_font(&self, style: &TextStyle, scale: Float) -> Font {
-        let weight = match style.font_weight {
-            FontWeight::VeryThin => skia_safe::font_style::Weight::EXTRA_LIGHT,
-            FontWeight::Thin => skia_safe::font_style::Weight::THIN,
-            FontWeight::Normal => skia_safe::font_style::Weight::NORMAL,
-            FontWeight::Bold => skia_safe::font_style::Weight::BOLD,
-            FontWeight::Bolder => skia_safe::font_style::Weight::EXTRA_BOLD,
-            FontWeight::Value(v) => skia_safe::font_style::Weight::from(v as i32),
-        };
-
-        let slant = match style.font_style {
-            widget::text::FontStyle::Normal => skia_safe::font_style::Slant::Upright,
-            widget::text::FontStyle::Italic => skia_safe::font_style::Slant::Italic,
-            widget::text::FontStyle::Oblique | widget::text::FontStyle::ObliqueDeg(_) => {
-                skia_safe::font_style::Slant::Oblique
-            }
-        };
-
-        let sk_font_style = SkFontStyle::new(weight, skia_safe::font_style::Width::NORMAL, slant);
-        let font_size = if style.font_size == 0 { 14.0 } else { style.font_size as Float };
-        let scaled_size = font_size * scale;
-
-        let typeface = FONT_MGR.with(|mgr| {
-            mgr.match_family_style("Arial", sk_font_style)
-                .or_else(|| mgr.match_family_style("Helvetica", sk_font_style))
-                .or_else(|| mgr.match_family_style("", sk_font_style))
-                .expect("Unable to load any typeface")
-        });
-
-        Font::new(typeface, scaled_size)
+    fn scaled_font_size(&self, style: &TextStyle, scale: Float) -> f32 {
+        let fs = if style.font_size == 0 { 14.0 } else { style.font_size as f32 };
+        fs * scale as f32
     }
 
     fn is_focused(&self) -> bool {
@@ -510,25 +472,11 @@ impl RawTextField {
             .strokes(box_width, box_height, scale)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn cursor_x_offset(&self, font: &Font) -> Float {
+    fn cursor_x_offset_canvas(&self, canvas: &canvas::Canvas, font_size: f32) -> Float {
         let text = self.controller.text();
         let offset = self.cursor.offset();
         let prefix: String = text.chars().take(offset).collect();
-        let (w, _) = font.measure_text(&prefix, None);
-        w
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn cursor_x_offset_wasm(&self, canvas: &web_sys::CanvasRenderingContext2d, font_str: &str) -> Float {
-        let text = self.controller.text();
-        let offset = self.cursor.offset();
-        let prefix: String = text.chars().take(offset).collect();
-        canvas.set_font(font_str);
-        match canvas.measure_text(&prefix) {
-            Ok(metrics) => metrics.width(),
-            Err(_) => 0.0,
-        }
+        canvas.measure_text(&prefix, font_size) as Float
     }
 }
 
@@ -693,66 +641,42 @@ impl Element for RawTextField {
 
         match event {
             ElementEvent::PointerDown(pos) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let is_inside = unsafe {
-                        if let Some(bounds) = *self.cached_bounds.get() {
-                            pos.x >= bounds.left
-                                && pos.x <= bounds.right
-                                && pos.y >= bounds.top
-                                && pos.y <= bounds.bottom
-                        } else {
-                            false
-                        }
-                    };
-
-                    return if is_inside {
-                        self.set_focused(true);
-                        self.cursor.set_offset(self.controller.char_count());
-                        self.cursor.reset_blink();
-                        #[cfg(target_os = "ios")]
-                        ios_keyboard::show_keyboard();
-                        #[cfg(target_os = "android")]
-                        android_keyboard::show_keyboard();
-                        #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                        if let Some(w) = events::window::get_window() {
-                            w.set_ime_allowed(true);
-                        }
-                        true
+                let is_inside = unsafe {
+                    if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
+                        pos.x as f64 >= left && pos.x as f64 <= right && pos.y as f64 >= top && pos.y as f64 <= bottom
                     } else {
-                        self.set_focused(false);
-                        #[cfg(target_os = "ios")]
-                        ios_keyboard::dismiss_keyboard();
-                        #[cfg(target_os = "android")]
-                        android_keyboard::dismiss_keyboard();
-                        #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                        if let Some(w) = events::window::get_window() {
-                            w.set_ime_allowed(false);
-                        }
                         false
-                    };
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let is_inside = unsafe {
-                        if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
-                            pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom
-                        } else {
-                            false
-                        }
-                    };
-
-                    if is_inside {
-                        self.set_focused(true);
-                        self.cursor.set_offset(self.controller.char_count());
-                        self.cursor.reset_blink();
-                        wasm_request_keyboard(true);
-                        return true;
-                    } else {
-                        self.set_focused(false);
-                        wasm_request_keyboard(false);
-                        return false;
                     }
+                };
+
+                if is_inside {
+                    self.set_focused(true);
+                    self.cursor.set_offset(self.controller.char_count());
+                    self.cursor.reset_blink();
+                    #[cfg(target_os = "ios")]
+                    ios_keyboard::show_keyboard();
+                    #[cfg(target_os = "android")]
+                    android_keyboard::show_keyboard();
+                    #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
+                    if let Some(w) = events::window::get_window() {
+                        w.set_ime_allowed(true);
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    wasm_request_keyboard(true);
+                    return true;
+                } else {
+                    self.set_focused(false);
+                    #[cfg(target_os = "ios")]
+                    ios_keyboard::dismiss_keyboard();
+                    #[cfg(target_os = "android")]
+                    android_keyboard::dismiss_keyboard();
+                    #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
+                    if let Some(w) = events::window::get_window() {
+                        w.set_ime_allowed(false);
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    wasm_request_keyboard(false);
+                    return false;
                 }
             }
             ElementEvent::CharInput { ch, action, modifiers } => {
@@ -959,35 +883,16 @@ impl Element for RawTextField {
                 result
             }
             ElementEvent::PointerMove(pos) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let is_inside = unsafe {
-                        if let Some(bounds) = *self.cached_bounds.get() {
-                            pos.x >= bounds.left
-                                && pos.x <= bounds.right
-                                && pos.y >= bounds.top
-                                && pos.y <= bounds.bottom
-                        } else {
-                            false
-                        }
-                    };
-                    let was_hovered = self.is_hovered();
-                    self.set_hovered(is_inside);
-                    was_hovered != is_inside
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let is_inside = unsafe {
-                        if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
-                            pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom
-                        } else {
-                            false
-                        }
-                    };
-                    let was_hovered = self.is_hovered();
-                    self.set_hovered(is_inside);
-                    was_hovered != is_inside
-                }
+                let is_inside = unsafe {
+                    if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
+                        pos.x as f64 >= left && pos.x as f64 <= right && pos.y as f64 >= top && pos.y as f64 <= bottom
+                    } else {
+                        false
+                    }
+                };
+                let was_hovered = self.is_hovered();
+                self.set_hovered(is_inside);
+                was_hovered != is_inside
             }
             ElementEvent::Cancel => {
                 self.set_focused(false);
@@ -1010,7 +915,6 @@ impl Element for RawTextField {
 }
 
 impl Drawable for RawTextField {
-    #[cfg(not(target_arch = "wasm32"))]
     fn draw(&self, ctx: &BuildContext) {
         ctx.canvas.save();
 
@@ -1019,44 +923,29 @@ impl Drawable for RawTextField {
 
         // Translate inward by outline strokes so the outline has room to draw
         let (ol, ot, _or, _ob) = self.outline_strokes(box_width, box_height, scale);
-        ctx.canvas.translate((ol, ot));
+        ctx.canvas.translate((ol, ot).into());
 
         // Cache absolute bounds for hit-testing
-        #[cfg(not(target_arch = "wasm32"))]
         let (abs_x, abs_y) = {
-            let matrix = ctx.canvas.local_to_device_as_3x3();
-            (matrix.translate_x(), matrix.translate_y())
-        };
-        #[cfg(target_arch = "wasm32")]
-        let (abs_x, abs_y) = {
-            let matrix = ctx.canvas.get_transform().unwrap();
-            (matrix.e() as f32, matrix.f() as f32)
+            let (tx, ty) = ctx.canvas.get_transform_translation();
+            (tx as f64, ty as f64)
         };
         unsafe {
-            *self.cached_bounds.get() = Some(Rect::from_xywh(abs_x, abs_y, box_width, box_height));
+            *self.cached_bounds.get() = Some((abs_x, abs_y, abs_x + box_width as f64, abs_y + box_height as f64));
         }
 
         // --- Resolve active style ---
         let style = self.active_style();
 
         // --- Draw background ---
-        let mut bg_paint = Paint::default();
-        bg_paint.set_anti_alias(true);
-        bg_paint.set_color(SkColor::from(Color::from(style.background_color)));
-        bg_paint.set_style(Style::Fill);
-
-        let rect = Rect::from_xywh(0.0, 0.0, box_width, box_height);
-        // debug!("Width: {box_width}, Height: {box_height}");
-        if let Some(radius) = style
-            .border
-            .get_uniform_radius(box_width, box_height, scale)
-        {
-            use skia_safe::RRect;
-            let rrect = RRect::new_rect_xy(rect, radius, radius);
-            ctx.canvas.draw_rrect(rrect, &bg_paint);
-        } else {
-            ctx.canvas.draw_rect(rect, &bg_paint);
-        }
+        let bg_color: color::prelude::Color = style.background_color.into();
+        let radius = style.border.get_uniform_radius(box_width, box_height, scale).unwrap_or(0.0);
+        ctx.canvas.fill_color_rect(
+            (0.0, 0.0).into(),
+            ResolvedSize { width: box_width, height: box_height },
+            bg_color,
+            radius as f32,
+        );
 
         // --- Draw border ---
         style.border.draw(ctx);
@@ -1069,55 +958,51 @@ impl Drawable for RawTextField {
         let pad_right = style.padding.right.value(box_width, scale);
 
         ctx.canvas.save();
-        ctx.canvas.clip_rect(
-            Rect::from_xywh(
-                pad_left,
-                pad_top,
-                (box_width - pad_left - pad_right).max(0.0),
-                (box_height - pad_top - pad_bottom).max(0.0),
-            ),
-            None,
-            false,
+        ctx.canvas.set_clip(
+            (pad_left, pad_top).into(),
+            ResolvedSize {
+                width: (box_width - pad_left - pad_right).max(0.0),
+                height: (box_height - pad_top - pad_bottom).max(0.0),
+            },
         );
-        ctx.canvas.translate((pad_left, pad_top));
+        ctx.canvas.translate((pad_left, pad_top).into());
 
         let content_height = (box_height - pad_top - pad_bottom).max(0.0);
 
         let text = self.controller.text();
         let is_empty = text.is_empty();
 
-        let font = self.make_font(&self.text_style, scale);
-        let (_, metrics) = font.metrics();
-        let text_y = content_height / 2.0 - (metrics.ascent + metrics.descent) / 2.0;
+        let font_size = self.scaled_font_size(&self.text_style, scale);
+        // Approximate text_y for vertical centering (baseline offset)
+        let text_y = (content_height as f32 - font_size) / 2.0;
 
         if is_empty {
             // --- Draw prompt (visible when field is empty) ---
             if !self.prompt.is_empty() {
-                let prompt_font = self.make_font(&self.prompt_style, scale);
-                let mut prompt_paint = Paint::default();
-                prompt_paint.set_anti_alias(true);
-                prompt_paint.set_color(SkColor::from(self.prompt_style.color));
-
-                if let Some(blob) = TextBlob::new(&self.prompt, &prompt_font) {
-                    ctx.canvas
-                        .draw_text_blob(&blob, (0.0, text_y), &prompt_paint);
-                }
+                let prompt_fs = self.scaled_font_size(&self.prompt_style, scale);
+                let prompt_color: color::prelude::Color = self.prompt_style.color.into();
+                ctx.canvas.draw_text(
+                    &self.prompt,
+                    (0.0, text_y as Float).into(),
+                    prompt_fs,
+                    prompt_color,
+                );
             }
 
             // --- Draw hint text (visible when field is empty and no prompt) ---
             if self.prompt.is_empty() && !self.hint.is_empty() {
-                let hint_font = self.make_font(&self.hint_style, scale);
-                let mut hint_paint = Paint::default();
-                hint_paint.set_anti_alias(true);
-                hint_paint.set_color(SkColor::from(self.hint_style.color));
-
-                if let Some(blob) = TextBlob::new(&self.hint, &hint_font) {
-                    ctx.canvas.draw_text_blob(&blob, (0.0, text_y), &hint_paint);
-                }
+                let hint_fs = self.scaled_font_size(&self.hint_style, scale);
+                let hint_color: color::prelude::Color = self.hint_style.color.into();
+                ctx.canvas.draw_text(
+                    &self.hint,
+                    (0.0, text_y as Float).into(),
+                    hint_fs,
+                    hint_color,
+                );
             }
         } else {
-            // --- Draw text (no prompt when there is input) ---
-            let text_x = 0.0_f32;
+            // --- Draw text ---
+            let text_x: Float = 0.0;
 
             let display = match self.input_type {
                 InputType::Obscure => "\u{2022}".repeat(self.controller.char_count()),
@@ -1125,230 +1010,55 @@ impl Drawable for RawTextField {
             };
 
             if !display.is_empty() {
-                let mut text_paint = Paint::default();
-                text_paint.set_anti_alias(true);
-                text_paint.set_color(SkColor::from(self.text_style.color));
-
-                if let Some(blob) = TextBlob::new(&display, &font) {
-                    ctx.canvas
-                        .draw_text_blob(&blob, (text_x, text_y), &text_paint);
-                }
+                let text_color: color::prelude::Color = self.text_style.color.into();
+                ctx.canvas.draw_text(
+                    &display,
+                    (text_x, text_y as Float).into(),
+                    font_size,
+                    text_color,
+                );
             }
 
             // --- Draw cursor ---
             if self.is_focused() && self.cursor.is_visible() {
-                let cursor_x = text_x + self.cursor_x_offset(&font);
+                let cursor_x = text_x + self.cursor_x_offset_canvas(&ctx.canvas, font_size);
                 let cursor_top = content_height * 0.15;
                 let cursor_bottom = content_height * 0.85;
+                let cursor_height = cursor_bottom - cursor_top;
+                let cursor_color: color::prelude::Color = self.cursor.color.into();
+                let stroke_w = 1.5 * scale;
 
-                let mut cursor_paint = Paint::default();
-                cursor_paint.set_anti_alias(true);
-                cursor_paint.set_color(SkColor::from(Color::from(self.cursor.color)));
-                cursor_paint.set_style(Style::Stroke);
-                cursor_paint.set_stroke_width(1.5 * scale);
-
-                ctx.canvas
-                    .draw_line((cursor_x, cursor_top), (cursor_x, cursor_bottom), &cursor_paint);
+                ctx.canvas.fill_color_rect(
+                    (cursor_x, cursor_top).into(),
+                    ResolvedSize { width: stroke_w, height: cursor_height },
+                    cursor_color,
+                    0.0,
+                );
             }
         }
 
         // --- Draw cursor when field is empty but focused ---
         if is_empty && self.is_focused() && self.cursor.is_visible() {
-            let cursor_x = 0.0_f32;
+            let cursor_x: Float = 0.0;
             let cursor_top = content_height * 0.15;
             let cursor_bottom = content_height * 0.85;
+            let cursor_height = cursor_bottom - cursor_top;
+            let cursor_color: color::prelude::Color = self.cursor.color.into();
+            let stroke_w = 1.5 * scale;
 
-            let mut cursor_paint = Paint::default();
-            cursor_paint.set_anti_alias(true);
-            cursor_paint.set_color(SkColor::from(Color::from(self.cursor.color)));
-            cursor_paint.set_style(Style::Stroke);
-            cursor_paint.set_stroke_width(1.5 * scale);
-
-            ctx.canvas
-                .draw_line((cursor_x, cursor_top), (cursor_x, cursor_bottom), &cursor_paint);
+            ctx.canvas.fill_color_rect(
+                (cursor_x, cursor_top).into(),
+                ResolvedSize { width: stroke_w, height: cursor_height },
+                cursor_color,
+                0.0,
+            );
         }
 
+        ctx.canvas.clear_clip();
         ctx.canvas.restore(); // clip + translate
         ctx.canvas.restore(); // outer save
 
         // Drive cursor blink: toggle visibility and schedule next redraw while focused
-        if self.is_focused() {
-            self.cursor.update_blink();
-            ctx.window.request_redraw();
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn draw(&self, ctx: &BuildContext) {
-        use color::prelude::ColorMixer;
-
-        let canvas = &ctx.canvas;
-        let (box_width, box_height) = self.compute_dimensions(ctx);
-        let scale = ctx.scale;
-
-        // Translate inward by outline strokes so the outline has room to draw
-        let (ol, ot, _or, _ob) = self.outline_strokes(box_width, box_height, scale);
-        let _ = canvas.translate(ol, ot);
-
-        // Cache absolute bounds for hit-testing
-        // On WASM the canvas transform gives us the absolute position
-        let transform = canvas
-            .get_transform()
-            .unwrap_or_else(|_| web_sys::DomMatrix::new().unwrap());
-        let abs_x = transform.e();
-        let abs_y = transform.f();
-        unsafe {
-            *self.cached_bounds.get() = Some((abs_x, abs_y, abs_x + box_width, abs_y + box_height));
-        }
-
-        // --- Resolve active style ---
-        let style = self.active_style();
-
-        // --- Draw background ---
-        let bg_color: Color = style.background_color.into();
-        canvas.set_fill_style_str(&bg_color.to_css_color());
-        if let Some(radius) = style
-            .border
-            .get_uniform_radius(box_width, box_height, scale)
-        {
-            canvas.begin_path();
-            let _ = canvas.round_rect_with_f64(0.0, 0.0, box_width, box_height, radius);
-            canvas.fill();
-        } else {
-            canvas.fill_rect(0.0, 0.0, box_width, box_height);
-        }
-
-        // --- Draw border ---
-        style.border.draw(ctx);
-        style.outline.draw(ctx);
-
-        // --- Padding ---
-        let pad_top = style.padding.top.value(box_height, scale);
-        let pad_bottom = style.padding.bottom.value(box_height, scale);
-        let pad_left = style.padding.left.value(box_width, scale);
-        let pad_right = style.padding.right.value(box_width, scale);
-
-        canvas.save();
-        canvas.begin_path();
-        canvas.rect(
-            pad_left,
-            pad_top,
-            (box_width - pad_left - pad_right).max(0.0),
-            (box_height - pad_top - pad_bottom).max(0.0),
-        );
-        canvas.clip();
-        let _ = canvas.translate(pad_left, pad_top);
-
-        let content_height = (box_height - pad_top - pad_bottom).max(0.0);
-
-        let text = self.controller.text();
-        let is_empty = text.is_empty();
-
-        let get_css_font = |style: &TextStyle| -> String {
-            let fs = if style.font_size == 0 { 14.0 } else { style.font_size as Float };
-            let sfs = fs * scale;
-            let weight = match style.font_weight {
-                FontWeight::VeryThin => "100",
-                FontWeight::Thin => "300",
-                FontWeight::Normal => "normal",
-                FontWeight::Bold => "bold",
-                FontWeight::Bolder => "900",
-                FontWeight::Value(_) => "normal",
-            };
-            let font_style = match style.font_style {
-                widget::text::FontStyle::Normal => "normal",
-                widget::text::FontStyle::Italic => "italic",
-                widget::text::FontStyle::Oblique | widget::text::FontStyle::ObliqueDeg(_) => "oblique",
-            };
-            format!("{} {} {}px Arial, sans-serif", font_style, weight, sfs)
-        };
-
-        let text_font = get_css_font(&self.text_style);
-        canvas.set_font(&text_font);
-        canvas.set_text_baseline("middle");
-        canvas.set_text_align("left");
-
-        let text_y = content_height / 2.0;
-
-        if is_empty {
-            // --- Draw prompt ---
-            if !self.prompt.is_empty() {
-                let prompt_font = get_css_font(&self.prompt_style);
-                canvas.set_font(&prompt_font);
-                let argb = self.prompt_style.color.to_u32();
-                let a = ((argb >> 24) & 0xFF) as f64 / 255.0;
-                let r = (argb >> 16) & 0xFF;
-                let g = (argb >> 8) & 0xFF;
-                let b = argb & 0xFF;
-                canvas.set_fill_style_str(&format!("rgba({}, {}, {}, {})", r, g, b, a));
-                let _ = canvas.fill_text(&self.prompt, 0.0, text_y);
-            }
-
-            // --- Draw hint ---
-            if self.prompt.is_empty() && !self.hint.is_empty() {
-                let hint_font = get_css_font(&self.hint_style);
-                canvas.set_font(&hint_font);
-                let argb = self.hint_style.color.to_u32();
-                let a = ((argb >> 24) & 0xFF) as f64 / 255.0;
-                let r = (argb >> 16) & 0xFF;
-                let g = (argb >> 8) & 0xFF;
-                let b = argb & 0xFF;
-                canvas.set_fill_style_str(&format!("rgba({}, {}, {}, {})", r, g, b, a));
-                let _ = canvas.fill_text(&self.hint, 0.0, text_y);
-            }
-        } else {
-            // --- Draw text ---
-            let text_x = 0.0;
-
-            let display = match self.input_type {
-                InputType::Obscure => "\u{2022}".repeat(self.controller.char_count()),
-                _ => text.to_string(),
-            };
-
-            if !display.is_empty() {
-                let argb = self.text_style.color.to_u32();
-                let a = ((argb >> 24) & 0xFF) as f64 / 255.0;
-                let r = (argb >> 16) & 0xFF;
-                let g = (argb >> 8) & 0xFF;
-                let b = argb & 0xFF;
-                canvas.set_fill_style_str(&format!("rgba({}, {}, {}, {})", r, g, b, a));
-                let _ = canvas.fill_text(&display, text_x, text_y);
-            }
-
-            // --- Draw cursor ---
-            if self.is_focused() && self.cursor.is_visible() {
-                let cursor_x = text_x + self.cursor_x_offset_wasm(canvas, &text_font);
-                let cursor_top = content_height * 0.15;
-                let cursor_bottom = content_height * 0.85;
-
-                let cursor_color: Color = self.cursor.color.into();
-                canvas.set_stroke_style_str(&cursor_color.to_css_color());
-                canvas.set_line_width(1.5 * scale);
-                canvas.begin_path();
-                canvas.move_to(cursor_x, cursor_top);
-                canvas.line_to(cursor_x, cursor_bottom);
-                canvas.stroke();
-            }
-        }
-
-        // --- Draw cursor when empty but focused ---
-        if is_empty && self.is_focused() && self.cursor.is_visible() {
-            let cursor_x = 0.0;
-            let cursor_top = content_height * 0.15;
-            let cursor_bottom = content_height * 0.85;
-
-            let cursor_color: Color = self.cursor.color.into();
-            canvas.set_stroke_style_str(&cursor_color.to_css_color());
-            canvas.set_line_width(1.5 * scale);
-            canvas.begin_path();
-            canvas.move_to(cursor_x, cursor_top);
-            canvas.line_to(cursor_x, cursor_bottom);
-            canvas.stroke();
-        }
-
-        canvas.restore();
-
-        // Drive cursor blink
         if self.is_focused() {
             self.cursor.update_blink();
             ctx.window.request_redraw();
