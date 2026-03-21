@@ -47,7 +47,7 @@ impl<'w> ApplicationHandler for App<'w> {
         let gpu = GpuContext::initialize(window_ref, size);
 
         // Upload test image from cupid/image.png
-        let mut img_renderer = Renderer::new(&gpu.device, &gpu.queue, gpu.format);
+        let mut img_renderer = Renderer::new(&gpu.device, &gpu.queue, gpu.format, self.canvas.font_system());
         let image_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("image.png");
         let img = image::open(&image_path)
             .unwrap_or_else(|e| panic!("Failed to load {}: {e}", image_path.display()))
@@ -187,7 +187,7 @@ impl<'w> ApplicationHandler for App<'w> {
                     &view,
                     width,
                     height,
-                    self.canvas.draw_list(),
+                    &self.canvas.draw_list(),
                 );
 
                 gpu.end_frame(frame);
