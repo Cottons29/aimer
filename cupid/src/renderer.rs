@@ -1,3 +1,8 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use glyphon::FontSystem;
+
 use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::rect_pipeline::{RectInstance, RectPipeline};
@@ -15,10 +20,15 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        font_system: Rc<RefCell<FontSystem>>,
+    ) -> Self {
         Self {
             rect_pipeline: RectPipeline::new(device, format),
-            text_pipeline: TextPipeline::new(device, queue, format),
+            text_pipeline: TextPipeline::new(device, queue, format, font_system),
             image_pipeline: ImagePipeline::new(device, format),
         }
     }
@@ -57,7 +67,7 @@ impl Renderer {
             match cmd {
                 DrawCommand::PushTransform { matrix } => {
                     transform_stack.push(current_transform);
-                    current_transform = current_transform.mul(matrix);
+                    current_transform = *matrix;
                 }
                 DrawCommand::PopTransform => {
                     if let Some(prev) = transform_stack.pop() {
@@ -125,6 +135,12 @@ impl Renderer {
                     resolved.push(ResolvedCmd {
                         kind: ResolvedKind::TextIndex(()),
                     });
+                }
+                DrawCommand::SetTransform { matrix } => {
+                    current_transform = *matrix;
+                }
+                DrawCommand::SetAlpha { .. } | DrawCommand::RestoreAlpha => {
+                    // Alpha state is tracked at the canvas level; no GPU-side handling yet.
                 }
                 DrawCommand::DrawImage { rect, texture_id } => {
                     let (tx, ty) = current_transform.transform_point(rect.x, rect.y);

@@ -5,9 +5,7 @@ use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 use widget::base::*;
 use widget::{Drawable, Element};
-
-#[cfg(not(target_arch = "wasm32"))]
-use skia_safe::{Color as SkColor, Paint, Rect, paint::Style, RRect};
+use canvas::CanvasRendering;
 use winit::window::Window;
 use events::element::ElementEvent;
 use crate::scrollable::scroll_bar::ScrollBar;
@@ -92,7 +90,6 @@ impl<E: Element> RawScrollableContainer<E> {
         let scale = ctx.scale;
         let offset = self.visual_offset(self.scroll_offset.get());
 
-        // Resolve track width
         let track_width = match scroll_bar.track.width {
             Dimension::Px(v) => v * scale,
             Dimension::Percent(p) => {
@@ -101,14 +98,12 @@ impl<E: Element> RawScrollableContainer<E> {
             Dimension::Auto => 12.0 * scale,
         };
 
-        // Resolve thumb width
         let thumb_width = match scroll_bar.thumb.width {
             Dimension::Px(v) => v * scale,
             Dimension::Percent(p) => track_width * (p / 100.0),
             Dimension::Auto => (track_width * 0.6).max(4.0),
         };
 
-        // Compute content extent and thumb size/position
         let (track_length, content_extent, scroll_pos) = if is_vertical {
             let content_size = self.content_size(ctx);
             (viewport_h, content_size.height, -offset.y)
@@ -117,7 +112,6 @@ impl<E: Element> RawScrollableContainer<E> {
             (viewport_w, content_size.width, -offset.x)
         };
 
-        // Button heights (if present)
         let button_h = if is_vertical {
             let resolve_btn_h = |btn: &crate::scrollable::scroll_bar::ScrollButton| -> FLOAT {
                 match btn.height {
@@ -157,7 +151,7 @@ impl<E: Element> RawScrollableContainer<E> {
         } else {
             self.h_scroll_multiplier.set(multiplier);
         }
-        
+
         let scroll_ratio = if max_scroll > 0.0 {
             scroll_pos / max_scroll
         } else {
@@ -175,81 +169,74 @@ impl<E: Element> RawScrollableContainer<E> {
 
         // Position the scrollbar at the edge of the viewport
         if is_vertical {
-            ctx.canvas.translate(((viewport_w - track_width).round(), 0.0));
+            ctx.canvas.translate(Vec2d { x: (viewport_w - track_width).round(), y: 0.0 });
         } else {
-            ctx.canvas.translate((0.0, (viewport_h - track_width).round()));
+            ctx.canvas.translate(Vec2d { x: 0.0, y: (viewport_h - track_width).round() });
         }
 
         // Draw track
         let track_color: Color = scroll_bar.track.color.into();
-        let mut track_paint = Paint::default();
-        track_paint.set_anti_alias(true);
-        track_paint.set_color(SkColor::from(track_color));
-        track_paint.set_style(Style::Fill);
-
-        let track_rect = if is_vertical {
-            Rect::from_xywh(0.0, 0.0, track_width, track_length)
+        let (track_w, track_h) = if is_vertical {
+            (track_width, track_length)
         } else {
-            Rect::from_xywh(0.0, 0.0, track_length, track_width)
+            (track_length, track_width)
         };
-        ctx.canvas.draw_rect(track_rect, &track_paint);
+        ctx.canvas.fill_color_rect(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width: track_w, height: track_h },
+            track_color,
+            0.0,
+        );
 
         // Draw up/left button
         if let Some(ref btn) = scroll_bar.up_button {
             let btn_color: Color = btn.color.into();
-            let mut btn_paint = Paint::default();
-            btn_paint.set_anti_alias(true);
-            btn_paint.set_color(SkColor::from(btn_color));
-            btn_paint.set_style(Style::Fill);
-
-            let btn_rect = if is_vertical {
-                Rect::from_xywh(0.0, 0.0, track_width, button_h.0)
+            let (bw, bh) = if is_vertical {
+                (track_width, button_h.0)
             } else {
-                Rect::from_xywh(0.0, 0.0, button_h.0, track_width)
+                (button_h.0, track_width)
             };
-            ctx.canvas.draw_rect(btn_rect, &btn_paint);
+            ctx.canvas.fill_color_rect(
+                Vec2d { x: 0.0, y: 0.0 },
+                ResolvedSize { width: bw, height: bh },
+                btn_color,
+                0.0,
+            );
         }
 
         // Draw down/right button
         if let Some(ref btn) = scroll_bar.down_button {
             let btn_color: Color = btn.color.into();
-            let mut btn_paint = Paint::default();
-            btn_paint.set_anti_alias(true);
-            btn_paint.set_color(SkColor::from(btn_color));
-            btn_paint.set_style(Style::Fill);
-
-            let btn_rect = if is_vertical {
-                Rect::from_xywh(0.0, track_length - button_h.1, track_width, button_h.1)
+            let (bx, by, bw, bh) = if is_vertical {
+                (0.0, track_length - button_h.1, track_width, button_h.1)
             } else {
-                Rect::from_xywh(track_length - button_h.1, 0.0, button_h.1, track_width)
+                (track_length - button_h.1, 0.0, button_h.1, track_width)
             };
-            ctx.canvas.draw_rect(btn_rect, &btn_paint);
+            ctx.canvas.fill_color_rect(
+                Vec2d { x: bx, y: by },
+                ResolvedSize { width: bw, height: bh },
+                btn_color,
+                0.0,
+            );
         }
 
         // Draw thumb
         let thumb_color: Color = scroll_bar.thumb.color.into();
-        let mut thumb_paint = Paint::default();
-        thumb_paint.set_anti_alias(true);
-        thumb_paint.set_color(SkColor::from(thumb_color));
-        thumb_paint.set_style(Style::Fill);
-
         let thumb_x_offset = (track_width - thumb_width) / 2.0;
-        let thumb_rect = if is_vertical {
-            let tr = Rect::from_xywh(thumb_x_offset, thumb_offset, thumb_width, thumb_length);
+        let (tx, ty, tw, th) = if is_vertical {
             self.v_thumb_rect.set(Some((viewport_w - track_width + thumb_x_offset, thumb_offset, thumb_width, thumb_length)));
-            tr
+            (thumb_x_offset, thumb_offset, thumb_width, thumb_length)
         } else {
-            let tr = Rect::from_xywh(thumb_offset, thumb_x_offset, thumb_length, thumb_width);
             self.h_thumb_rect.set(Some((thumb_offset, viewport_h - track_width + thumb_x_offset, thumb_length, thumb_width)));
-            tr
+            (thumb_offset, thumb_x_offset, thumb_length, thumb_width)
         };
 
-        if thumb_radius > 0.0 {
-            let rrect = RRect::new_rect_xy(thumb_rect, thumb_radius, thumb_radius);
-            ctx.canvas.draw_rrect(rrect, &thumb_paint);
-        } else {
-            ctx.canvas.draw_rect(thumb_rect, &thumb_paint);
-        }
+        ctx.canvas.fill_color_rect(
+            Vec2d { x: tx, y: ty },
+            ResolvedSize { width: tw, height: th },
+            thumb_color,
+            thumb_radius,
+        );
 
         ctx.canvas.restore();
     }
@@ -342,48 +329,44 @@ impl<E: Element> RawScrollableContainer<E> {
             Dimension::Auto => thumb_width / 2.0,
         };
 
-        let _ = ctx.canvas.save();
+        ctx.canvas.save();
 
         if is_vertical {
-            let _ = ctx.canvas.translate((viewport_w - track_width).round() as f64, 0.0);
+            ctx.canvas.translate(Vec2d { x: (viewport_w - track_width).round(), y: 0.0 });
         } else {
-            let _ = ctx.canvas.translate(0.0, (viewport_h - track_width).round() as f64);
+            ctx.canvas.translate(Vec2d { x: 0.0, y: (viewport_h - track_width).round() });
         }
 
         // Draw track
         let track_color: Color = scroll_bar.track.color.into();
-        ctx.canvas.set_fill_style_str(&track_color.to_css_color());
         if is_vertical {
-            ctx.canvas.fill_rect(0.0, 0.0, track_width, track_length);
+            ctx.canvas.fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: track_width, height: track_length }, track_color, 0.0);
         } else {
-            ctx.canvas.fill_rect(0.0, 0.0, track_length, track_width);
+            ctx.canvas.fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: track_length, height: track_width }, track_color, 0.0);
         }
 
         // Draw up/left button
         if let Some(ref btn) = scroll_bar.up_button {
             let btn_color: Color = btn.color.into();
-            ctx.canvas.set_fill_style_str(&btn_color.to_css_color());
             if is_vertical {
-                ctx.canvas.fill_rect(0.0, 0.0, track_width, button_h.0);
+                ctx.canvas.fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: track_width, height: button_h.0 }, btn_color, 0.0);
             } else {
-                ctx.canvas.fill_rect(0.0, 0.0, button_h.0, track_width);
+                ctx.canvas.fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: button_h.0, height: track_width }, btn_color, 0.0);
             }
         }
 
         // Draw down/right button
         if let Some(ref btn) = scroll_bar.down_button {
             let btn_color: Color = btn.color.into();
-            ctx.canvas.set_fill_style_str(&btn_color.to_css_color());
             if is_vertical {
-                ctx.canvas.fill_rect(0.0, track_length - button_h.1, track_width, button_h.1);
+                ctx.canvas.fill_color_rect(Vec2d { x: 0.0, y: track_length - button_h.1 }, ResolvedSize { width: track_width, height: button_h.1 }, btn_color, 0.0);
             } else {
-                ctx.canvas.fill_rect(track_length - button_h.1, 0.0, button_h.1, track_width);
+                ctx.canvas.fill_color_rect(Vec2d { x: track_length - button_h.1, y: 0.0 }, ResolvedSize { width: button_h.1, height: track_width }, btn_color, 0.0);
             }
         }
 
         // Draw thumb
         let thumb_color: Color = scroll_bar.thumb.color.into();
-        ctx.canvas.set_fill_style_str(&thumb_color.to_css_color());
         let thumb_x_offset = (track_width - thumb_width) / 2.0;
         
         if is_vertical {
@@ -392,22 +375,10 @@ impl<E: Element> RawScrollableContainer<E> {
             self.h_thumb_rect.set(Some((thumb_offset, viewport_h - track_width + thumb_x_offset, thumb_length, thumb_width)));
         }
 
-        if thumb_radius > 0.0 {
-            ctx.canvas.begin_path();
-            if is_vertical {
-                let _ = ctx.canvas.round_rect_with_f64(
-                    thumb_x_offset, thumb_offset, thumb_width, thumb_length, thumb_radius,
-                );
-            } else {
-                let _ = ctx.canvas.round_rect_with_f64(
-                    thumb_offset, thumb_x_offset, thumb_length, thumb_width, thumb_radius,
-                );
-            }
-            ctx.canvas.fill();
-        } else if is_vertical {
-            ctx.canvas.fill_rect(thumb_x_offset, thumb_offset, thumb_width, thumb_length);
+        if is_vertical {
+            ctx.canvas.fill_color_rect(Vec2d { x: thumb_x_offset, y: thumb_offset }, ResolvedSize { width: thumb_width, height: thumb_length }, thumb_color, thumb_radius as f32);
         } else {
-            ctx.canvas.fill_rect(thumb_offset, thumb_x_offset, thumb_length, thumb_width);
+            ctx.canvas.fill_color_rect(Vec2d { x: thumb_offset, y: thumb_x_offset }, ResolvedSize { width: thumb_length, height: thumb_width }, thumb_color, thumb_radius as f32);
         }
 
         ctx.canvas.restore();
@@ -526,22 +497,11 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         let offset = self.visual_offset(offset);
 
         // Clip to viewport
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            ctx.canvas.save();
-            ctx.canvas.clip_rect(
-                Rect::from_xywh(0.0, 0.0, viewport_w.round(), viewport_h.round()),
-                skia_safe::ClipOp::Intersect,
-                false,
-            );
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = ctx.canvas.save();
-            ctx.canvas.begin_path();
-            ctx.canvas.rect(0.0, 0.0, viewport_w.round() as f64, viewport_h.round() as f64);
-            ctx.canvas.clip();
-        }
+        ctx.canvas.save();
+        ctx.canvas.set_clip(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width: viewport_w.round(), height: viewport_h.round() },
+        );
 
         // Translate by scroll offset
         // On high-DPI displays (e.g. iOS retina), avoid rounding to preserve smooth sub-pixel scrolling
@@ -551,12 +511,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             (offset.x.round(), offset.y.round())
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        ctx.canvas.translate((offset_x, offset_y));
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = ctx.canvas.translate(offset_x as f64, offset_y as f64);
-        }
+        ctx.canvas.translate(Vec2d { x: offset_x, y: offset_y });
 
         let mut child_ctx = ctx.clone();
         match self.axis {
@@ -569,20 +524,17 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         self.child.draw(&child_ctx);
 
         // Restore before drawing scrollbars (they should not be offset by scroll)
-        #[cfg(not(target_arch = "wasm32"))]
-        ctx.canvas.restore();
-        #[cfg(target_arch = "wasm32")]
+        ctx.canvas.clear_clip();
         ctx.canvas.restore();
 
         // Draw scrollbars on top, clipped to viewport
+        ctx.canvas.save();
+        ctx.canvas.set_clip(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width: viewport_w.round(), height: viewport_h.round() },
+        );
         #[cfg(not(target_arch = "wasm32"))]
         {
-            ctx.canvas.save();
-            ctx.canvas.clip_rect(
-                Rect::from_xywh(0.0, 0.0, viewport_w.round(), viewport_h.round()),
-                skia_safe::ClipOp::Intersect,
-                false,
-            );
             if let Some(ref vbar) = self.vertical_scroll_bar {
                 if matches!(self.axis, ScrollAxis::Vertical) {
                     self.draw_scrollbar_native(ctx, vbar, viewport_w, viewport_h, true);
@@ -593,14 +545,9 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                     self.draw_scrollbar_native(ctx, hbar, viewport_w, viewport_h, false);
                 }
             }
-            ctx.canvas.restore();
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = ctx.canvas.save();
-            ctx.canvas.begin_path();
-            ctx.canvas.rect(0.0, 0.0, viewport_w, viewport_h);
-            ctx.canvas.clip();
             if let Some(ref vbar) = self.vertical_scroll_bar {
                 if matches!(self.axis, ScrollAxis::Vertical) {
                     self.draw_scrollbar_wasm(ctx, vbar, viewport_w, viewport_h, true);
@@ -611,8 +558,9 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                     self.draw_scrollbar_wasm(ctx, hbar, viewport_w, viewport_h, false);
                 }
             }
-            ctx.canvas.restore();
         }
+        ctx.canvas.clear_clip();
+        ctx.canvas.restore();
     }
 }
 

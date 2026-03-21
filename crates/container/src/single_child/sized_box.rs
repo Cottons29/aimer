@@ -1,9 +1,11 @@
 use crate::ZeroSizedBox;
 use attribute::dimension::Dimension;
+use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use constructor::WidgetConstructor;
 use widget::base::*;
 use widget::{base::Color, Constructor, Drawable, Element, LayoutCache, Widget};
+use canvas::CanvasRendering;
 
 #[cfg(target_arch = "wasm32")]
 type FLOAT = f64;
@@ -51,10 +53,7 @@ pub struct RawSizedBox<E: Element> {
 }
 
 impl<E: Element> Drawable for RawSizedBox<E> {
-    #[cfg(not(target_arch = "wasm32"))]
     fn draw(&self, ctx: &BuildContext) {
-        use skia_safe::Paint;
-        use skia_safe::{paint::Style, Color as SkColor, Rect};
         let size = self.computed_size(ctx);
         let width = size.width;
         let height = size.height;
@@ -62,26 +61,18 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         #[cfg(debug_assertions)]
         {
             if widget::inspector_overlay::is_enabled() {
-                #[cfg(not(target_arch = "wasm32"))]
-                let (start_x, start_y) = {
-                    let matrix = ctx.canvas.local_to_device_as_3x3();
-                    (matrix.translate_x() as f32, matrix.translate_y() as f32)
-                };
-                #[cfg(target_arch = "wasm32")]
-                let (start_x, start_y) = {
-                    let matrix = ctx.canvas.get_transform().unwrap();
-                    (matrix.e() as f32, matrix.f() as f32)
-                };
-                let end_x = start_x + width as f32;
-                let end_y = start_y + height as f32;
+                // TODO: expose transform position from AimerCanvas for inspector
+                let (start_x, start_y): (FLOAT, FLOAT) = (0.0, 0.0);
+                let end_x = start_x + width;
+                let end_y = start_y + height;
 
                 let scale = ctx.scale;
-                let l_start = attribute::position::Vec2d { x: (start_x as f64 / scale as f64) as _, y: (start_y as f64 / scale as f64) as _ };
-                let l_end = attribute::position::Vec2d { x: (end_x as f64 / scale as f64) as _, y: (end_y as f64 / scale as f64) as _ };
+                let l_start = Vec2d { x: (start_x as f64 / scale as f64) as _, y: (start_y as f64 / scale as f64) as _ };
+                let l_end = Vec2d { x: (end_x as f64 / scale as f64) as _, y: (end_y as f64 / scale as f64) as _ };
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if (cp.x as f32) >= start_x && (cp.x as f32) <= end_x && (cp.y as f32) >= start_y && (cp.y as f32) <= end_y {
+                if (cp.x as FLOAT) >= start_x && (cp.x as FLOAT) <= end_x && (cp.y as FLOAT) >= start_y && (cp.y as FLOAT) <= end_y {
                     if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
                         *hovered = Some((self.debug_name, l_start, l_end));
                     }
@@ -89,52 +80,12 @@ impl<E: Element> Drawable for RawSizedBox<E> {
             }
         }
 
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        paint.set_color(SkColor::from(self.color));
-        paint.set_style(Style::Fill);
-        {
-            let rect = Rect::from_xywh(0.0, 0.0, width, height);
-            ctx.canvas.draw_rect(rect, &paint);
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn draw(&self, ctx: &BuildContext) {
-        let size = self.computed_size(ctx);
-        let width = size.width;
-        let height = size.height;
-
-        if widget::inspector_overlay::is_enabled() {
-            #[cfg(not(target_arch = "wasm32"))]
-            let (start_x, start_y) = {
-                let matrix = ctx.canvas.local_to_device_as_3x3();
-                (matrix.translate_x() as f32, matrix.translate_y() as f32)
-            };
-            #[cfg(target_arch = "wasm32")]
-            let (start_x, start_y) = {
-                let matrix = ctx.canvas.get_transform().unwrap();
-                (matrix.e(), matrix.f())
-            };
-            let end_x = start_x + width;
-            let end_y = start_y + height;
-
-            let scale = ctx.scale;
-            let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
-            let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
-            self.bounds.set(Some((l_start, l_end)));
-
-            let cp = ctx.cursor_pos;
-            if cp.x >= start_x && cp.x <= end_x && cp.y >= start_y && cp.y <= end_y {
-                if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
-                    *hovered = Some((self.debug_name, l_start, l_end));
-                }
-            }
-        }
-
-        let color_str = self.color.to_css_color();
-        ctx.canvas.set_fill_style_str(&color_str);
-        ctx.canvas.fill_rect(0.0, 0.0, width, height);
+        ctx.canvas.fill_color_rect(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width, height },
+            self.color,
+            0.0,
+        );
     }
 }
 
@@ -164,7 +115,7 @@ impl<E: Element> Element for RawSizedBox<E> {
 
         let mut child_ctx = BuildContext {
             parent_size: ctx.parent_size,
-            canvas: ctx.canvas,
+            canvas: ctx.canvas.clone(),
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             cursor_pos: ctx.cursor_pos,

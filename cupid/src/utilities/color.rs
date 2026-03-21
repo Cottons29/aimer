@@ -1,4 +1,5 @@
 use std::ops::{Index, Mul};
+use color::prelude::{Color as AimerColor, ColorMixer};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Color {
@@ -65,5 +66,16 @@ impl Color {
     pub const fn set_alpha(&mut self, alpha: u8) -> Self{
         self.a = alpha as f32 / 255.0;
         *self
+    }
+}
+
+impl From<AimerColor> for Color {
+    fn from(c: AimerColor) -> Self {
+        let argb = c.to_u32();
+        let a = ((argb >> 24) & 0xFF) as f32 / 255.0;
+        let r = ((argb >> 16) & 0xFF) as f32 / 255.0;
+        let g = ((argb >> 8) & 0xFF) as f32 / 255.0;
+        let b = (argb & 0xFF) as f32 / 255.0;
+        Self { r, g, b, a }
     }
 }

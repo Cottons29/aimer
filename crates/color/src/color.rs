@@ -67,11 +67,3 @@ impl From<Colors> for Color {
         Self::Basic(value)
     }
 }
-
-
-#[cfg(not(target_arch = "wasm32"))]
-impl From<Color> for skia_safe::Color {
-    fn from(value: Color) -> Self {
-        skia_safe::Color::new(value.to_u32())
-    }
-}

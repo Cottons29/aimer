@@ -5,14 +5,13 @@ use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use events::element::ElementEvent;
 use events::pointer::{PointerEvent, PointerPosition};
-#[cfg(not(target_arch = "wasm32"))]
-use skia_safe::{Paint, Rect};
 use std::cell::UnsafeCell;
 use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
 use widget::{Drawable, Element, LayoutCache};
 use winit::window::Window;
 use color::prelude::ColorMixer;
+use canvas::CanvasRendering;
 
 #[cfg(not(target_arch = "wasm32"))]
 type Float = f32;
@@ -33,10 +32,7 @@ pub struct GestureDetectorElement<'a, E: Element> {
     pub(crate) is_dirty: UnsafeCell<bool>,
     pub(crate) child: E,
     pub(crate) cache: LayoutCache,
-    /// Cached absolute bounding rect, updated during draw.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) cached_bounds: UnsafeCell<Option<Rect>>,
-    #[cfg(target_arch = "wasm32")]
+    /// Cached absolute bounding rect (abs_x, abs_y, width, height), updated during draw.
     pub(crate) cached_bounds: UnsafeCell<Option<(f64, f64, f64, f64)>>,
     pub(crate) window: &'a Window,
 }
@@ -51,7 +47,7 @@ impl<'a,E: Element> GestureDetectorElement<'a, E> {
         let content = widget.content_size(ctx);
         let child_ctx = BuildContext {
             parent_size: content,
-            canvas: ctx.canvas,
+            canvas: ctx.canvas.clone(),
             scale: ctx.scale,
             parent_pos: Vec2d::default(),
             cursor_pos: ctx.cursor_pos,
@@ -177,16 +173,9 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
         };
 
         let mut is_inside = false;
-        #[cfg(not(target_arch = "wasm32"))]
-        unsafe {
-            if let Some(bounds) = *self.cached_bounds.get() {
-                is_inside = pos.x >= bounds.left && pos.x <= bounds.right && pos.y >= bounds.top && pos.y <= bounds.bottom;
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
         unsafe {
             if let Some((x, y, w, h)) = *self.cached_bounds.get() {
-                is_inside = pos.x >= x && pos.x <= x + w && pos.y >= y && pos.y <= y + h;
+                is_inside = pos.x as f64 >= x && pos.x as f64 <= x + w && pos.y as f64 >= y && pos.y as f64 <= y + h;
             }
         }
 
@@ -266,7 +255,6 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
 }
 
 impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
-    #[cfg(not(target_arch = "wasm32"))]
     fn draw(&self, ctx: &BuildContext<'_>) {
         unsafe {
             *self.is_dirty.get() = false;
@@ -276,57 +264,37 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
 
         ctx.canvas.save();
         let (ol, ot, _or, _ob) = style.outline.strokes(box_width, box_height, ctx.scale);
-        ctx.canvas.translate((ol, ot));
+        ctx.canvas.translate((ol, ot).into());
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let (abs_x, abs_y) = {
-            let matrix = ctx.canvas.local_to_device_as_3x3();
-            (matrix.translate_x(), matrix.translate_y())
-        };
-        #[cfg(target_arch = "wasm32")]
-        let (abs_x, abs_y) = {
-            let matrix = ctx.canvas.get_transform().unwrap();
-            (matrix.e() as f32, matrix.f() as f32)
-        };
-        let bounds = Rect::from_xywh(abs_x, abs_y, box_width, box_height);
+        // Cache absolute bounds for hit-testing
+        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         unsafe {
-            *self.cached_bounds.get() = Some(bounds);
-        }
-        if !self.is_disabled {
-            let cursor_inside = ctx.cursor_pos.x >= bounds.left
-                && ctx.cursor_pos.x <= bounds.right
-                && ctx.cursor_pos.y >= bounds.top
-                && ctx.cursor_pos.y <= bounds.bottom;
-            unsafe {
-                *self.is_hovered.get() = cursor_inside;
-            }
+            *self.cached_bounds.get() = Some((abs_x, abs_y, box_width as f64, box_height as f64));
         }
 
         // Draw background
-        use skia_safe::Color as SkColor;
-        use skia_safe::paint::Style;
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        paint.set_color(SkColor::from(Color::from(style.color)));
-        paint.set_style(Style::Fill);
+        let bg_color: Color = style.color.into();
+        let radius = style.border.get_uniform_radius(box_width, box_height, ctx.scale).unwrap_or(0.0);
 
         if self.is_disabled {
-            paint.set_alpha(128);
+            ctx.canvas.set_alpha(0.5);
         }
 
-        let rect = Rect::from_xywh(0.0, 0.0, box_width, box_height);
-        if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, ctx.scale) {
-            use skia_safe::RRect;
-            let rrect = RRect::new_rect_xy(rect, radius, radius);
-            ctx.canvas.draw_rrect(rrect, &paint);
-        } else {
-            ctx.canvas.draw_rect(rect, &paint);
+        ctx.canvas.fill_color_rect(
+            (0.0, 0.0).into(),
+            ResolvedSize { width: box_width, height: box_height },
+            bg_color,
+            radius as f32,
+        );
+
+        if self.is_disabled {
+            ctx.canvas.restore_alpha();
         }
 
         // Draw border and outline
         let border_ctx = BuildContext {
             parent_size: ResolvedSize { width: box_width, height: box_height },
-            canvas: ctx.canvas,
+            canvas: ctx.canvas.clone(),
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             cursor_pos: ctx.cursor_pos,
@@ -342,17 +310,12 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
 
         // Draw pressed overlay for visual feedback
         if unsafe { *self.is_pressed.get() } && !self.is_disabled {
-            let mut pressed_paint = Paint::default();
-            pressed_paint.set_anti_alias(true);
-            pressed_paint.set_color(SkColor::from_argb(40, 0, 0, 0));
-            pressed_paint.set_style(Style::Fill);
-            if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, ctx.scale) {
-                use skia_safe::RRect;
-                let rrect = RRect::new_rect_xy(rect, radius, radius);
-                ctx.canvas.draw_rrect(rrect, &pressed_paint);
-            } else {
-                ctx.canvas.draw_rect(rect, &pressed_paint);
-            }
+            ctx.canvas.fill_color_rect(
+                (0.0, 0.0).into(),
+                ResolvedSize { width: box_width, height: box_height },
+                Color::Rgba(0, 0, 0, 40),
+                radius as f32,
+            );
         }
 
         // Draw child centered within the button bounds
@@ -361,11 +324,11 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         let offset_y = (box_height - child_size.height).max(0.0) / 2.0;
 
         ctx.canvas.save();
-        ctx.canvas.translate((offset_x, offset_y));
+        ctx.canvas.translate((offset_x, offset_y).into());
 
         let child_ctx = BuildContext {
             parent_size: ResolvedSize { width: box_width, height: box_height },
-            canvas: ctx.canvas,
+            canvas: ctx.canvas.clone(),
             scale: ctx.scale,
             parent_pos: Vec2d::default(),
             cursor_pos: ctx.cursor_pos,
@@ -379,122 +342,6 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             window: ctx.window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx.async_handle.clone(),
-            inherited_states: ctx.inherited_states.clone(),
-        };
-        Self::render_child(&self.child, &child_ctx);
-
-        ctx.canvas.restore();
-        ctx.canvas.restore();
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn draw(&self, ctx: &BuildContext) {
-        unsafe {
-            *self.is_dirty.get() = false;
-        }
-
-        let (box_width, box_height) = self.compute_dimensions(ctx);
-        let style = self.active_style();
-
-        let (ol, ot, _or, _ob) = style.outline.strokes(box_width, box_height, ctx.scale);
-        ctx.canvas.save();
-        match ctx.canvas.translate(ol, ot) {
-            Ok(_) => (),
-            Err(e) => {
-                println!("{:?}", e);
-            }
-        }
-
-        if let Ok(transform) = ctx.canvas.get_transform() {
-            let abs_x = transform.e();
-            let abs_y = transform.f();
-            unsafe {
-                *self.cached_bounds.get() = Some((abs_x, abs_y, box_width, box_height));
-            }
-            if !self.is_disabled {
-                let cursor_inside = ctx.cursor_pos.x >= abs_x
-                    && ctx.cursor_pos.x <= abs_x + box_width
-                    && ctx.cursor_pos.y >= abs_y
-                    && ctx.cursor_pos.y <= abs_y + box_height;
-                unsafe {
-                    *self.is_hovered.get() = cursor_inside;
-                }
-            }
-        }
-
-        // Draw background
-        let color_str = style.color.to_css_color();
-        if self.is_disabled {
-            ctx.canvas.set_global_alpha(0.5);
-        }
-
-        ctx.canvas.set_fill_style_str(&color_str);
-        if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, ctx.scale) {
-            ctx.canvas.begin_path();
-            let _ = ctx.canvas.round_rect_with_f64(0.0, 0.0, box_width, box_height, radius);
-            ctx.canvas.fill();
-        } else {
-            ctx.canvas.fill_rect(0.0, 0.0, box_width, box_height);
-        }
-
-        if self.is_disabled {
-            ctx.canvas.set_global_alpha(1.0);
-        }
-
-        if unsafe { *self.is_pressed.get() } && !self.is_disabled {
-            ctx.canvas.set_fill_style_str("rgba(0, 0, 0, 0.15)");
-            if let Some(radius) = style.border.get_uniform_radius(box_width, box_height, ctx.scale) {
-                ctx.canvas.begin_path();
-                let _ = ctx.canvas.round_rect_with_f64(0.0, 0.0, box_width, box_height, radius);
-                ctx.canvas.fill();
-            } else {
-                ctx.canvas.fill_rect(0.0, 0.0, box_width, box_height);
-            }
-        }
-
-        // Draw border and outline
-        let border_ctx = BuildContext {
-            parent_size: ResolvedSize { width: box_width, height: box_height },
-            canvas: ctx.canvas,
-            scale: ctx.scale,
-            parent_pos: ctx.parent_pos,
-            cursor_pos: ctx.cursor_pos,
-            box_constraint: ctx.box_constraint,
-            visible_rect: ctx.visible_rect,
-            window: ctx.window,
-            inherited_states: ctx.inherited_states.clone(),
-        };
-        style.border.draw(&border_ctx);
-        style.outline.draw(&border_ctx);
-
-        // Draw child centered within the button bounds
-        let child_size = self.child.computed_size(ctx);
-        let offset_x = (box_width - child_size.width).max(0.0) / 2.0;
-        let offset_y = (box_height - child_size.height).max(0.0) / 2.0;
-
-        ctx.canvas.save();
-        #[cfg(target_arch = "wasm32")]
-        match ctx.canvas.translate(offset_x, offset_y) {
-            Ok(_) => (),
-            Err(e) => {
-                println!("{:?}", e);
-            }
-        }
-
-        let child_ctx = BuildContext {
-            parent_size: ResolvedSize { width: box_width, height: box_height },
-            canvas: ctx.canvas,
-            scale: ctx.scale,
-            parent_pos: Vec2d::default(),
-            cursor_pos: ctx.cursor_pos,
-            box_constraint: BoxConstraint {
-                min_width: 0.0,
-                min_height: 0.0,
-                max_width: box_width,
-                max_height: box_height,
-            },
-            visible_rect: ctx.visible_rect,
-            window: ctx.window,
             inherited_states: ctx.inherited_states.clone(),
         };
         Self::render_child(&self.child, &child_ctx);

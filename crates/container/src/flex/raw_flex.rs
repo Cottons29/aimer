@@ -4,6 +4,7 @@ use constructor::WidgetConstructor;
 use std::cell::Cell;
 use utils::debug;
 use widget::{Drawable, Element, LayoutCache, LayoutSpacing, Widget, base::BuildContext};
+use canvas::CanvasRendering;
 
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
@@ -72,7 +73,7 @@ impl RawFlex {
         let content = widget.content_size(ctx);
         let child_ctx = BuildContext {
             parent_size: content,
-            canvas: ctx.canvas,
+            canvas: ctx.canvas.clone(),
             scale: ctx.scale,
             parent_pos: Default::default(),
             cursor_pos: ctx.cursor_pos,
@@ -157,16 +158,8 @@ impl Drawable for RawFlex {
         #[cfg(debug_assertions)]
         {
             if widget::inspector_overlay::is_enabled() {
-                #[cfg(not(target_arch = "wasm32"))]
-                let (start_x, start_y) = {
-                    let matrix = ctx.canvas.local_to_device_as_3x3();
-                    (matrix.translate_x() as f32, matrix.translate_y() as f32)
-                };
-                #[cfg(target_arch = "wasm32")]
-                let (start_x, start_y) = {
-                    let matrix = ctx.canvas.get_transform().unwrap();
-                    (matrix.e() as Float, matrix.f() as Float)
-                };
+                // TODO: expose transform position from AimerCanvas for inspector
+                let (start_x, start_y): (Float, Float) = (0.0, 0.0);
                 let end_x = start_x + size.width;
                 let end_y = start_y + size.height;
 
@@ -198,7 +191,7 @@ impl Drawable for RawFlex {
 
         let mut child_ctx = BuildContext {
             parent_size: ctx.parent_size,
-            canvas: ctx.canvas,
+            canvas: ctx.canvas.clone(),
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             cursor_pos: ctx.cursor_pos,
@@ -332,7 +325,7 @@ impl Drawable for RawFlex {
             if is_visible {
                 let draw_ctx = BuildContext {
                     parent_size: child_size,
-                    canvas: ctx.canvas,
+                    canvas: ctx.canvas.clone(),
                     scale: ctx.scale,
                     parent_pos: ctx.parent_pos,
                     cursor_pos: ctx.cursor_pos,
@@ -369,30 +362,16 @@ impl Drawable for RawFlex {
         for cmd in draw_commands {
             let (_, offset_x, offset_y, draw_ctx, child) = cmd;
 
-            // non wasm
-            #[cfg(not(target_arch = "wasm32"))]
             draw_ctx.canvas.save();
-            #[cfg(target_arch = "wasm32")]
-            draw_ctx.canvas.save();
-
-            #[cfg(not(target_arch = "wasm32"))]
-            draw_ctx.canvas.translate((offset_x, offset_y));
-            #[cfg(target_arch = "wasm32")]
-            match draw_ctx.canvas.translate(offset_x, offset_y) {
-                Ok(_) => {}
-                Err(err) => {
-                    utils::error!("Failed to translate canvas: {:?}", err);
-                }
-            }
+            draw_ctx.canvas.translate(Vec2d { x: offset_x, y: offset_y });
             Self::render_child(child, &draw_ctx);
-
-            #[cfg(not(target_arch = "wasm32"))]
-            draw_ctx.canvas.restore();
-            #[cfg(target_arch = "wasm32")]
             draw_ctx.canvas.restore();
         }
 
-        // non wasm
+        // Pop the clip pushed by overflow_behavior.apply_overflow_behave()
+        if self.overflow_behavior == OverflowBehavior::Hidden {
+            ctx.canvas.clear_clip();
+        }
         ctx.canvas.restore();
     }
 }
@@ -454,7 +433,7 @@ impl Element for RawFlex {
 
         let mut child_ctx = BuildContext {
             parent_size: ctx.parent_size,
-            canvas: ctx.canvas,
+            canvas: ctx.canvas.clone(),
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             cursor_pos: ctx.cursor_pos,

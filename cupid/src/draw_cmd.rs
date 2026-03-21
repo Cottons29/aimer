@@ -1,5 +1,6 @@
 use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
 
+#[derive(Clone)]
 pub enum DrawCommand {
     FillRect {
         rect: Rect,
@@ -29,8 +30,16 @@ pub enum DrawCommand {
         matrix: Mat3,
     },
     PopTransform,
+    SetAlpha {
+        alpha: f32,
+    },
+    RestoreAlpha,
+    SetTransform {
+        matrix: Mat3,
+    },
 }
 
+#[derive(Clone)]
 pub struct DrawList {
     commands: Vec<DrawCommand>,
     transform_stack: Vec<Mat3>,
@@ -91,6 +100,14 @@ impl DrawList {
         self.commands.push(DrawCommand::PopClip);
     }
 
+    pub fn set_alpha(&mut self, alpha: f32) {
+        self.commands.push(DrawCommand::SetAlpha { alpha });
+    }
+
+    pub fn restore_alpha(&mut self) {
+        self.commands.push(DrawCommand::RestoreAlpha);
+    }
+
     pub fn save(&mut self) {
         self.transform_stack.push(self.current_transform);
         self.commands.push(DrawCommand::PushTransform {
@@ -108,6 +125,25 @@ impl DrawList {
     pub fn translate(&mut self, x: f32, y: f32) {
         let t = Mat3::translate(x, y);
         self.current_transform = self.current_transform.mul(&t);
+        self.commands.push(DrawCommand::SetTransform {
+            matrix: self.current_transform,
+        });
+    }
+
+    pub fn scale(&mut self, sx: f32, sy: f32) {
+        let s = Mat3::scale(sx, sy);
+        self.current_transform = self.current_transform.mul(&s);
+        self.commands.push(DrawCommand::SetTransform {
+            matrix: self.current_transform,
+        });
+    }
+
+    pub fn rotate(&mut self, radians: f32) {
+        let r = Mat3::rotate(radians);
+        self.current_transform = self.current_transform.mul(&r);
+        self.commands.push(DrawCommand::SetTransform {
+            matrix: self.current_transform,
+        });
     }
 
     pub fn current_transform(&self) -> &Mat3 {

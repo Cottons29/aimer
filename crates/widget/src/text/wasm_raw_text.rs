@@ -2,6 +2,8 @@ use crate::text::{FontStyle, FontWeight, TextAlign};
 use crate::{Drawable, Element, LayoutCache, TextOverflow};
 use crate::base::BuildContext;
 use crate::style::text_style::TextStyle;
+use attribute::position::Vec2d;
+use attribute::size::ResolvedSize;
 use std::sync::Mutex;
 use color::prelude::ColorMixer;
 
@@ -13,98 +15,162 @@ pub struct RawTextWidget {
     pub cache: LayoutCache,
     pub typeface: Mutex<Option<()>>,
 }
-/// this is low level TextWidget that covert to element
+
 impl RawTextWidget {
-    fn get_css_font(&self, scale: f64) -> String {
-        let font_size = if self.text_style.font_size == 0 { 14.0 } else { self.text_style.font_size as f64 };
-        let scaled_font_size = font_size * scale;
-        
-        let weight = match self.text_style.font_weight {
-            FontWeight::VeryThin => "100",
-            FontWeight::Thin => "300",
-            FontWeight::Normal => "normal",
-            FontWeight::Bold => "bold",
-            FontWeight::Bolder => "900",
-            FontWeight::Value(_v) => "",
-        };
-        
-        let style = match self.text_style.font_style {
-            FontStyle::Normal => "normal",
-            FontStyle::Italic => "italic",
-            FontStyle::Oblique | FontStyle::ObliqueDeg(_) => "oblique",
-        };
-        
-        format!("{} {} {}px Arial, sans-serif", style, weight, scaled_font_size)
+    fn font_size(&self, scale: f64) -> f32 {
+        let base = if self.text_style.font_size == 0 { 14.0 } else { self.text_style.font_size as f64 };
+        (base * scale) as f32
+    }
+
+    /// Approximate line height as 1.2 × font_size (standard heuristic).
+    fn line_height(&self, font_size: f32) -> f64 {
+        font_size as f64 * 1.2
+    }
+
+    /// Approximate ascent as 0.8 × font_size.
+    fn ascent(&self, font_size: f32) -> f64 {
+        font_size as f64 * 0.8
+    }
+
+    /// Approximate descent as 0.2 × font_size.
+    fn descent(&self, font_size: f32) -> f64 {
+        font_size as f64 * 0.2
     }
 }
 
+/// this is low level TextWidget that covert to element
 impl Drawable for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
         let canvas = &ctx.canvas;
-        let font_str = self.get_css_font(ctx.scale);
-        canvas.set_font(&font_str);
-
-        let argb = self.text_style.color.to_u32();
-        let a = ((argb >> 24) & 0xFF) as f32 / 255.0;
-        let r = (argb >> 16) & 0xFF;
-        let g = (argb >> 8) & 0xFF;
-        let b = argb & 0xFF;
-        let color_str = format!("rgba({}, {}, {}, {})", r, g, b, a);
-        canvas.set_fill_style_str(&color_str);
+        let font_size = self.font_size(ctx.scale);
+        let text_width = canvas.measure_text(&self.text, font_size) as f64;
+        let line_height = self.line_height(font_size);
+        let ascent = self.ascent(font_size);
+        let descent = self.descent(font_size);
 
         let width = ctx.parent_size.width;
         let height = ctx.parent_size.height;
 
-        let align_str = match self.text_align {
-            TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => "left",
-            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => "center",
-            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => "right",
-        };
-        canvas.set_text_align(align_str);
-
-        let baseline_str = match self.text_align {
-            TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => "top",
-            TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => "middle",
-            TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => "bottom",
-        };
-        canvas.set_text_baseline(baseline_str);
-
         let x = match self.text_align {
             TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
-            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => width / 2.0,
-            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => width,
+            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => (width - text_width) / 2.0,
+            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => width - text_width,
         };
 
         let y = match self.text_align {
-            TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => 0.0,
-            TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => height / 2.0,
-            TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => height,
+            TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => ascent,
+            TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
+                height / 2.0 + (ascent - descent) / 2.0
+            }
+            TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => height - descent,
         };
 
-        let _ = canvas.fill_text(&self.text, x, y);
+        let color = self.text_style.color;
+
+        match self.text_style.text_overflow {
+            TextOverflow::Clip => {
+                canvas.save();
+                canvas.set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width, height });
+                canvas.draw_text(&self.text, Vec2d { x, y }, font_size, color);
+                canvas.clear_clip();
+                canvas.restore();
+            }
+            TextOverflow::Ellipsis => {
+                if text_width > width {
+                    let ellipsis = "...";
+                    let ellipsis_width = canvas.measure_text(ellipsis, font_size) as f64;
+                    let available_width = width - ellipsis_width;
+
+                    if available_width > 0.0 {
+                        let mut truncated = String::new();
+                        let mut current_w = 0.0;
+
+                        for c in self.text.chars() {
+                            let char_w = canvas.measure_text(&c.to_string(), font_size) as f64;
+                            if current_w + char_w > available_width {
+                                break;
+                            }
+                            truncated.push(c);
+                            current_w += char_w;
+                        }
+
+                        truncated.push_str(ellipsis);
+                        let display_width = canvas.measure_text(&truncated, font_size) as f64;
+                        let display_x = match self.text_align {
+                            TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
+                            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
+                                (width - display_width) / 2.0
+                            }
+                            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => {
+                                width - display_width
+                            }
+                        };
+                        canvas.draw_text(&truncated, Vec2d { x: display_x, y }, font_size, color);
+                    } else {
+                        canvas.draw_text(ellipsis, Vec2d { x: 0.0, y }, font_size, color);
+                    }
+                } else {
+                    canvas.draw_text(&self.text, Vec2d { x, y }, font_size, color);
+                }
+            }
+            TextOverflow::Wrap => {
+                let space_width = canvas.measure_text(" ", font_size) as f64;
+                let mut lines: Vec<String> = Vec::new();
+                let mut current_line = String::new();
+                let mut current_line_width = 0.0;
+
+                for word in self.text.split_whitespace() {
+                    let word_width = canvas.measure_text(word, font_size) as f64;
+
+                    if current_line_width + word_width > width && !current_line.is_empty() {
+                        lines.push(current_line);
+                        current_line = String::new();
+                        current_line_width = 0.0;
+                    }
+
+                    if !current_line.is_empty() {
+                        current_line.push(' ');
+                        current_line_width += space_width;
+                    }
+
+                    current_line.push_str(word);
+                    current_line_width += word_width;
+                }
+
+                if !current_line.is_empty() {
+                    lines.push(current_line);
+                }
+
+                for (i, line) in lines.iter().enumerate() {
+                    let line_width = canvas.measure_text(line, font_size) as f64;
+                    let line_x = match self.text_align {
+                        TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
+                        TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
+                            (width - line_width) / 2.0
+                        }
+                        TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => width - line_width,
+                    };
+                    let line_y = y + i as f64 * line_height;
+                    canvas.draw_text(line, Vec2d { x: line_x, y: line_y }, font_size, color);
+                }
+            }
+            _ => {
+                canvas.draw_text(&self.text, Vec2d { x, y }, font_size, color);
+            }
+        }
     }
 }
 
 impl Element for RawTextWidget {
-
-
-    fn computed_size(&self, ctx: &BuildContext) -> attribute::size::ResolvedSize {
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
             return cached;
         }
 
-        let canvas = ctx.canvas;
-        let font_str = self.get_css_font(ctx.scale);
-        canvas.set_font(&font_str);
-
-        let text_width = match canvas.measure_text(&self.text) {
-            Ok(metrics) => metrics.width(),
-            Err(_) => 0.0,
-        };
-
-        let font_size = if self.text_style.font_size == 0 { 14.0 } else { self.text_style.font_size as f64 };
-        let line_height = font_size * ctx.scale;
+        let canvas = &ctx.canvas;
+        let font_size = self.font_size(ctx.scale);
+        let line_height = self.line_height(font_size);
 
         let result = match self.text_style.text_overflow {
             TextOverflow::Wrap => {
@@ -115,41 +181,34 @@ impl Element for RawTextWidget {
                 };
 
                 let mut lines_count = 0;
-                let mut current_line = String::new();
-                let words = self.text.split_whitespace();
+                let mut current_line_width = 0.0;
+                let space_width = canvas.measure_text(" ", font_size) as f64;
 
-                for word in words {
-                    let test_line = if current_line.is_empty() {
-                        word.to_string()
-                    } else {
-                        format!("{} {}", current_line, word)
-                    };
+                for word in self.text.split_whitespace() {
+                    let word_width = canvas.measure_text(word, font_size) as f64;
 
-                    let test_width = match canvas.measure_text(&test_line) {
-                        Ok(metrics) => metrics.width(),
-                        Err(_) => 0.0,
-                    };
-                    
-                    if test_width <= width {
-                        current_line = test_line;
-                    } else {
-                        if !current_line.is_empty() {
-                            lines_count += 1;
-                        }
-                        current_line = word.to_string();
+                    if current_line_width + word_width > width && current_line_width > 0.0 {
+                        lines_count += 1;
+                        current_line_width = 0.0;
                     }
+
+                    if current_line_width > 0.0 {
+                        current_line_width += space_width;
+                    }
+                    current_line_width += word_width;
                 }
-                if !current_line.is_empty() {
+                if current_line_width > 0.0 {
                     lines_count += 1;
                 }
 
-                attribute::size::ResolvedSize {
+                ResolvedSize {
                     width,
                     height: (lines_count as f64 * line_height).ceil(),
                 }
             }
             _ => {
-                attribute::size::ResolvedSize {
+                let text_width = canvas.measure_text(&self.text, font_size) as f64;
+                ResolvedSize {
                     width: text_width.ceil(),
                     height: line_height.ceil(),
                 }

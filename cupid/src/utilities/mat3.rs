@@ -39,6 +39,28 @@ impl Mat3 {
         Mat3 { cols: out }
     }
 
+    pub fn scale(sx: f32, sy: f32) -> Self {
+        Self {
+            cols: [
+                [sx, 0.0, 0.0],
+                [0.0, sy, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
+    pub fn rotate(radians: f32) -> Self {
+        let c = radians.cos();
+        let s = radians.sin();
+        Self {
+            cols: [
+                [c, s, 0.0],
+                [-s, c, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
     /// Transform a 2D point by this matrix.
     pub const fn transform_point(&self, x: f32, y: f32) -> (f32, f32) {
         let c = &self.cols;

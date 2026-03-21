@@ -1,28 +1,81 @@
-use crate::canvas::inner::{AimerCanvasInner, Canvas};
+
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
+use color::prelude::Color;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_impl;
 #[cfg(not(target_arch = "wasm32"))]
 mod native_impl;
-mod inner;
 
+pub trait CanvasRendering : Clone {
+    fn begin_frame(&self);
+    fn fill_rect(&self, pos: Vec2d, size: ResolvedSize);
+    fn fill_rect_with_border(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: f32,
+        border_width: f32,
+        border_color: Color,
+    );
+    fn clear_rect(&self, pos: Vec2d, size: ResolvedSize);
+    fn translate(&self, pos: Vec2d);
+    fn scale(&self, sx: f32, sy: f32);
+    fn rotate(&self, radians: f32);
+    fn save(&self);
+    fn restore(&self);
+    fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color);
+    fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize);
+    fn set_clip(&self, pos: Vec2d, size: ResolvedSize);
+    fn clear_clip(&self);
+    fn measure_text(&self, text: &str, font_size: f32) -> f32;
+    fn stroke_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        stroke_color: Color,
+        stroke_width: f32,
+        border_radius: f32,
+    );
+    fn fill_color_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: f32,
+    );
+    fn set_alpha(&self, alpha: f32);
+    fn restore_alpha(&self);
+    fn get_transform_translation(&self) -> (f64, f64) { (0.0, 0.0) }
+}
+
+
+#[cfg(target_arch = "wasm32")]
+use web_sys::CanvasRenderingContext2d as Canvas;
+#[cfg(not(target_arch = "wasm32"))]
+use cupid::canvas::CupidCanvas as Canvas;
+
+pub type InnerCanvas = Canvas;
 
 
 #[allow(dead_code)]
-pub struct AimerCanvas<'a> {    
-    inner: AimerCanvasInner<'a>
+// #[derive(Clone)]
+#[derive(Clone)]
+pub struct AimerCanvas<'a> {
+    inner: &'a Canvas
 }
 
 
 
 impl<'a> AimerCanvas<'a> {
     #[allow(dead_code)]
+    #[inline]
     /// Provides low level control to AimerCanvas
     ///
     /// # Safety
-    /// This function is marked as `unsafe` because it directly returns a reference 
+    /// This function is marked as `unsafe` because it directly returns a reference
     /// to an internal `Canvas` object. The caller need to write platform-specific code
     /// for making platform-specific operations.
     ///
@@ -35,110 +88,193 @@ impl<'a> AimerCanvas<'a> {
     /// // Ensure no mutable operations on `my_object` while using `canvas`.
     /// ```
     ///
-    /// # Notes
-    /// The return type is `skia_safe::Canvas` on non-wasm32 targets, and `web_sys::CanvasRenderingContext2d` on wasm32 targets.
-    ///
     unsafe fn get_canvas(&'a self) -> &'a Canvas  {
-        self.inner.canvas()
+        self.inner
     }
 
     #[allow(dead_code)]
+    #[inline]
     pub fn new(canvas: &'a Canvas) -> Self {
         Self {
-            inner: AimerCanvasInner {canvas }
+            inner: canvas
         }
     }
 }
 
 impl<'a> AimerCanvas<'a> {
-    ///
+
+    /// Prepares the canvas for a new frame, clearing any previous draw commands.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn begin_frame(&self) {
+        CanvasRendering::begin_frame(self.inner);
+    }
+
     /// Fills a rectangular area on the canvas with the specified position and size.
-    ///
-    /// # Parameters
-    /// - `pos`: A `Vec2d` representing the top-left corner of the rectangle.
-    ///   It specifies the position on the canvas where the rectangle will be drawn.
-    /// - `size`: A `ResolvedSize` object defining the width and height of the rectangle.
-    ///
-    /// # Example
-    /// ```rust skip-test
-    /// use attribute::{Vec2d, ResolvedSize};
-    ///
-    ///
-    /// let mut canvas = Canvas::new(...);
-    /// let position = Vec2d::new(10.0, 20.0);
-    /// let size = ResolvedSize::new(100.0, 50.0);
-    /// canvas.fill_rect(position, size);
-    /// ```
-    ///
-    /// This function forwards the call to an internal implementation to draw the rectangle.
-    ///
-    /// # Notes
-    /// - Ensure that the `Vec2d` and `ResolvedSize` types are properly defined in your codebase
-    ///   before using this function.
-    /// - This method modifies the internal state of the canvas object (`self`).
-    ///
     #[allow(dead_code)]
-    pub fn fill_rect(&mut self, pos: Vec2d, size: ResolvedSize) {
-        self.inner.fill_rect(pos, size);
+    #[inline]
+    pub fn fill_rect(&self, pos: Vec2d, size: ResolvedSize) {
+        CanvasRendering::fill_rect(self.inner, pos, size);
     }
 
-    ///
+    /// Fills a rectangular area with explicit color, border radius, border width, and border color.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn fill_rect_with_border(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: f32,
+        border_width: f32,
+        border_color: Color,
+    ) {
+        CanvasRendering::fill_rect_with_border(
+            self.inner,
+            pos,
+            size,
+            color,
+            border_radius,
+            border_width,
+            border_color,
+        );
+    }
+
     /// Clears a rectangular area on the canvas at the specified position and with the specified size.
-    ///
-    /// # Parameters
-    /// - `pos`: A `Vec2d` struct representing the top-left corner of the rectangle to be cleared.
-    /// - `size`: A `ResolvedSize` struct representing the dimensions (width and height) of the rectangle to be cleared.
-    ///
-    /// # Behavior
-    /// This function delegates the operation of clearing the rectangular area to the `clear_rect`
-    /// method of the `inner` object, erasing any existing content within the specified rectangle.
-    ///
-    /// # Examples
-    /// ```rust skip-test
-    /// use attribute::{Vec2d, ResolvedSize};
-    ///
-    /// let mut canvas = Canvas::new(...);
-    /// let position = Vec2d::new(10.0, 20.0);
-    /// let size = ResolvedSize::new(100.0, 50.0);
-    /// canvas.clear_rect(position, size);
-    /// ```
-    ///
-    /// This will clear a rectangle starting at position `(10.0, 20.0)` with a width of `100.0`
-    /// and a height of `50.0` on the canvas.
-    ///
     #[allow(dead_code)]
-    pub fn clear_rect(&mut self,pos: Vec2d, size: ResolvedSize) {
-        self.inner.clear_rect(pos, size);
+    #[inline]
+    pub fn clear_rect(&self, pos: Vec2d, size: ResolvedSize) {
+        CanvasRendering::clear_rect(self.inner, pos, size);
     }
 
-    ///
-    /// Translates the position of the object by the given vector.
-    ///
-    /// This method updates the position of the object by applying the specified
-    /// 2D translation vector (`pos`). It modifies the object's internal position
-    /// by delegating the translation operation to the `translate` method of the
-    /// `inner` object.
-    ///
-    /// # Arguments
-    ///
-    /// * `pos` - A `Vec2d` structure representing the translation vector. This
-    ///           specifies the amount by which the object's position should be
-    ///           shifted in both the X and Y axes.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// our_canvas.translate(Vec2d{x: 10.0, y: 5.0});
-    /// ```
-    ///
-    /// After this call, the object's position will have been shifted by (10.0, 5.0).
-    ///
-    /// # Note
-    /// The method assumes that the `inner` object has a `translate` method that
-    /// takes a `Vec2d` as its argument.
-    ///
+    /// Translates the canvas origin by the given vector.
     #[allow(dead_code)]
-    pub fn translate(&mut self, pos: Vec2d) {
-        self.inner.translate(pos);
+    #[inline]
+    pub fn translate(&self, pos: Vec2d) {
+        CanvasRendering::translate(self.inner, pos);
+    }
+
+    /// Scales the canvas by the given factors.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn scale(&self, sx: f32, sy: f32) {
+        CanvasRendering::scale(self.inner, sx, sy);
+    }
+
+    /// Rotates the canvas by the given angle in radians.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn rotate(&self, radians: f32) {
+        CanvasRendering::rotate(self.inner, radians);
+    }
+
+    /// Saves the entire state of the canvas by pushing the current state onto a stack.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn save(&self) {
+        CanvasRendering::save(self.inner);
+    }
+
+    /// Restores the most recently saved canvas state from the stack.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn restore(&self) {
+        CanvasRendering::restore(self.inner);
+    }
+
+    /// Draws text at the specified position with the given font size and color.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color) {
+        CanvasRendering::draw_text(self.inner, text, pos, font_size, color);
+    }
+
+    /// Draws an image identified by `image_id` at the specified position and size.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize) {
+        CanvasRendering::draw_image(self.inner, image_id, pos, size);
+    }
+
+    /// Sets a clipping rectangle. Drawing outside this rect will be clipped.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn set_clip(&self, pos: Vec2d, size: ResolvedSize) {
+        CanvasRendering::set_clip(self.inner, pos, size);
+    }
+
+    /// Clears the current clipping rectangle.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn clear_clip(&self) {
+        CanvasRendering::clear_clip(self.inner);
+    }
+
+    /// Measures the approximate width of text at the given font size.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn measure_text(&self, text: &str, font_size: f32) -> f32 {
+        CanvasRendering::measure_text(self.inner, text, font_size)
+    }
+
+    /// Draws a stroked (outline-only) rectangle.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn stroke_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        stroke_color: Color,
+        stroke_width: f32,
+        border_radius: f32,
+    ) {
+        CanvasRendering::stroke_rect(
+            self.inner,
+            pos,
+            size,
+            stroke_color,
+            stroke_width,
+            border_radius,
+        );
+    }
+
+    /// Sets the global alpha (opacity) for subsequent draw commands.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn set_alpha(&self, alpha: f32) {
+        CanvasRendering::set_alpha(self.inner, alpha);
+    }
+
+    /// Restores the alpha to the previous value.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn restore_alpha(&self) {
+        CanvasRendering::restore_alpha(self.inner);
+    }
+
+    /// Returns the current transform's translation (tx, ty) in physical pixels.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn get_transform_translation(&self) -> (f64, f64) {
+        CanvasRendering::get_transform_translation(self.inner)
+    }
+
+    /// Draws a filled rectangle with a specific color.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn fill_color_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: f32,
+    ) {
+        CanvasRendering::fill_color_rect(
+            self.inner,
+            pos,
+            size,
+            color,
+            border_radius,
+        );
     }
 }

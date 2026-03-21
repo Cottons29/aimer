@@ -9,6 +9,7 @@ widget.workspace = true
 attribute.workspace =  true
 color.workspace = true
 events.workspace = true
+canvas.workspace = true
 
 #####################
 winit.workspace = true
@@ -17,7 +18,6 @@ chrono.workspace = true
 animation.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
-skia-safe.workspace = true
 arboard.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -3,7 +3,7 @@ resolver = "3"
 
 default-members = [
     ".",
-    "engine",
+    "quiver",
     "crates/widget",
     "macros/constructor",
     "macros/widget_codegen",
@@ -20,11 +20,12 @@ default-members = [
     "crates/events",
     "crates/router",
     "crates/inspector",
+    "cupid",
 ]
 
 members = [
     ".",
-    "engine",
+    "quiver",
     "crates/widget",
     "macros/constructor",
     "macros/widget_codegen",
@@ -48,13 +49,13 @@ members = [
 
 [workspace.dependencies]
 
-
+canvas = {path = "crates/canvas"}
 animation = { path = "crates/animation" }
 control = { path = "crates/control" }
 widget_codegen = { path = "macros/widget_codegen" }
 container = { path = "crates/container" }
 constructor = { path = "./macros/constructor" }
-engine = { path = "./engine" }
+quiver = { path = "quiver" }
 widget = { path = "crates/widget" }
 widget_attr = { path = "macros/widget_attr" }
 color = { path = "crates/color" }

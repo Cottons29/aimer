@@ -1,10 +1,12 @@
 use attribute::dimension::Dimension;
+use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use constructor::{Constructor, WidgetConstructor};
 use utils::debug;
 use widget::base::BuildContext;
 use widget::style::BoxConstraint;
 use widget::{BoxConstraint, Drawable, Element, Widget};
+use canvas::CanvasRendering;
 
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
@@ -120,57 +122,30 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             }
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        ctx.canvas.translate((offset_x, offset_y));
-        #[cfg(target_arch = "wasm32")]
-        let _ = ctx.canvas.translate(offset_x.into(), offset_y.into());
+        ctx.canvas.translate(Vec2d { x: offset_x, y: offset_y });
 
         match &self.transform {
             Transform::Translate(tx, ty) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                ctx.canvas.translate((*tx, *ty));
-                #[cfg(target_arch = "wasm32")]
-                let _ = ctx.canvas.translate((*tx).into(), (*ty).into());
+                ctx.canvas.translate(Vec2d { x: *tx, y: *ty });
             }
             Transform::TranslateX(tx) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                ctx.canvas.translate((*tx, 0.0));
-                #[cfg(target_arch = "wasm32")]
-                let _ = ctx.canvas.translate((*tx).into(), 0.0);
+                ctx.canvas.translate(Vec2d { x: *tx, y: 0.0 });
             }
             Transform::TranslateY(ty) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                ctx.canvas.translate((0.0, *ty));
-                #[cfg(target_arch = "wasm32")]
-                let _ = ctx.canvas.translate(0.0, (*ty).into());
+                ctx.canvas.translate(Vec2d { x: 0.0, y: *ty });
             }
             Transform::Scale(sx, sy) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                ctx.canvas.scale((*sx, *sy));
-                #[cfg(target_arch = "wasm32")]
-                let _ = ctx.canvas.scale((*sx).into(), (*sy).into());
+                ctx.canvas.scale(*sx as f32, *sy as f32);
             }
             Transform::ScaleX(sx) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                ctx.canvas.scale((*sx, 1.0));
-                #[cfg(target_arch = "wasm32")]
-                let _ = ctx.canvas.scale((*sx).into(), 1.0);
+                ctx.canvas.scale(*sx as f32, 1.0);
             }
             Transform::ScaleY(sy) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                ctx.canvas.scale((1.0, *sy));
-                #[cfg(target_arch = "wasm32")]
-                let _ = ctx.canvas.scale(1.0, (*sy).into());
+                ctx.canvas.scale(1.0, *sy as f32);
             }
             Transform::Rotate(rad) => {
-                #[cfg(not(target_arch = "wasm32"))]
-                ctx.canvas.rotate(rad * 180.0 / std::f32::consts::PI, None);
-                #[cfg(target_arch = "wasm32")]
-                let _ = ctx.canvas.rotate((*rad).into());
+                ctx.canvas.rotate(*rad as f32);
             }
-            // Transform::Matrix(_) => {
-            //     // TODO: Implement matrix transform
-            // }
             Transform::None => {}
         }
 
@@ -193,7 +168,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
 
             let child_ctx = BuildContext {
                 parent_size,
-                canvas: ctx.canvas,
+                canvas: ctx.canvas.clone(),
                 scale: ctx.scale,
                 parent_pos,
                 cursor_pos: ctx.cursor_pos,

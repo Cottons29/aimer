@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use crate::time::AnimInstant;
 
+use attribute::Float;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use constructor::{Constructor, WidgetConstructor};
@@ -11,10 +12,6 @@ use widget::{Drawable, Element, Widget};
 
 use crate::controller::AnimationController;
 
-#[cfg(target_arch = "wasm32")]
-type FLOAT = f64;
-#[cfg(not(target_arch = "wasm32"))]
-type FLOAT = f32;
 
 /// Describes what visual property the `Animated` widget should animate.
 #[derive(Debug, Clone, Copy)]
@@ -114,9 +111,6 @@ impl Drawable for AnimatedElement {
             v
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        ctx.canvas.save();
-        #[cfg(target_arch = "wasm32")]
         ctx.canvas.save();
 
         // Clip to the widget's bounds so content outside (e.g. sliding in) is hidden
@@ -125,9 +119,7 @@ impl Drawable for AnimatedElement {
         self.apply_effect(ctx, curved_value);
         self.child.draw(ctx);
 
-        #[cfg(not(target_arch = "wasm32"))]
-        ctx.canvas.restore();
-        #[cfg(target_arch = "wasm32")]
+        ctx.canvas.clear_clip();
         ctx.canvas.restore();
 
         // Request another frame if still animating
@@ -144,105 +136,48 @@ impl AnimatedElement {
         let child_size = self.child.computed_size(ctx);
         let w = child_size.width;
         let h = child_size.height;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            ctx.canvas.clip_rect(
-                skia_safe::Rect::from_xywh(0.0, 0.0, w, h),
-                skia_safe::ClipOp::Intersect,
-                true,
-            );
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            ctx.canvas.begin_path();
-            ctx.canvas.rect(0.0, 0.0, w as f64, h as f64);
-            ctx.canvas.clip();
-        }
+        ctx.canvas.set_clip(
+            (0.0 as Float, 0.0 as Float).into(),
+            ResolvedSize { width: w, height: h },
+        );
     }
 
     fn apply_effect(&self, ctx: &BuildContext, t: f64) {
         match self.effect {
             AnimationEffect::Opacity { from, to } => {
                 let alpha = AnimationEffect::lerp(from, to, t);
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    ctx.canvas.save_layer_alpha(None, (alpha * 255.0) as u32);
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    ctx.canvas.set_global_alpha(alpha);
-                }
+                ctx.canvas.set_alpha(alpha as f32);
             }
             AnimationEffect::Scale { from, to } => {
-                let scale = AnimationEffect::lerp(from, to, t) as FLOAT;
-                // Scale around the center of the parent area
+                let scale = AnimationEffect::lerp(from, to, t) as Float;
                 let cx = ctx.box_constraint.max_width / 2.0;
                 let cy = ctx.box_constraint.max_height / 2.0;
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    ctx.canvas.translate((cx, cy));
-                    ctx.canvas.scale((scale, scale));
-                    ctx.canvas.translate((-cx, -cy));
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let _ = ctx.canvas.translate(cx, cy);
-                    let _ = ctx.canvas.scale(scale, scale);
-                    let _ = ctx.canvas.translate(-cx, -cy);
-                }
+                ctx.canvas.translate((cx, cy).into());
+                ctx.canvas.scale(scale as f32, scale as f32);
+                ctx.canvas.translate((-cx, -cy).into());
             }
             AnimationEffect::Translate { from_x, from_y, to_x, to_y } => {
-                let dx = AnimationEffect::lerp(from_x, to_x, t) as FLOAT;
-                let dy = AnimationEffect::lerp(from_y, to_y, t) as FLOAT;
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    ctx.canvas.translate((dx, dy));
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let _ = ctx.canvas.translate(dx, dy);
-                }
+                let dx = AnimationEffect::lerp(from_x, to_x, t) as Float;
+                let dy = AnimationEffect::lerp(from_y, to_y, t) as Float;
+                ctx.canvas.translate((dx, dy).into());
             }
             AnimationEffect::Rotate { from, to } => {
-                let angle = AnimationEffect::lerp(from, to, t);
+                let angle = AnimationEffect::lerp(from, to, t) as f32;
                 let cx = ctx.box_constraint.max_width / 2.0;
                 let cy = ctx.box_constraint.max_height / 2.0;
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    ctx.canvas.translate((cx, cy));
-                    ctx.canvas.rotate(angle as f32 * 180.0 / std::f32::consts::PI, None);
-                    ctx.canvas.translate((-cx, -cy));
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let _ = ctx.canvas.translate(cx, cy);
-                    ctx.canvas.rotate(angle);
-                    let _ = ctx.canvas.translate(-cx, -cy);
-                }
+                ctx.canvas.translate((cx, cy).into());
+                ctx.canvas.rotate(angle);
+                ctx.canvas.translate((-cx, -cy).into());
             }
             AnimationEffect::SlideX { from, to } => {
-                let offset = AnimationEffect::lerp(from, to, t) as FLOAT;
+                let offset = AnimationEffect::lerp(from, to, t) as Float;
                 let dx = ctx.box_constraint.max_width * offset;
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    ctx.canvas.translate((dx, 0.0));
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let _ = ctx.canvas.translate(dx, 0.0);
-                }
+                ctx.canvas.translate((dx, 0.0 as Float).into());
             }
             AnimationEffect::SlideY { from, to } => {
-                let offset = AnimationEffect::lerp(from, to, t) as FLOAT;
+                let offset = AnimationEffect::lerp(from, to, t) as Float;
                 let dy = ctx.box_constraint.max_height * offset;
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    ctx.canvas.translate((0.0, dy));
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let _ = ctx.canvas.translate(0.0, dy);
-                }
+                ctx.canvas.translate((0.0 as Float, dy).into());
             }
         }
     }
