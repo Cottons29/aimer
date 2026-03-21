@@ -28,7 +28,8 @@ impl Widget for Box<dyn Widget> {
 /// Called during the draw pass when the widget inspector is enabled.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &'static str) {
-    use skia_safe::{Color, Font, Paint, Rect, paint::Style};
+    use color::prelude::Color;
+
     let w = size.width;
     let h = size.height;
     if w <= 0.0 || h <= 0.0 {
@@ -36,12 +37,14 @@ pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &
     }
 
     // Bounding box stroke
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(Color::from_argb(200, 0, 120, 255));
-    paint.set_style(Style::Stroke);
-    paint.set_stroke_width(1.5);
-    ctx.canvas.draw_rect(Rect::from_xywh(0.0, 0.0, w, h), &paint);
+    let stroke_color = Color::Rgba(0, 120, 255, 200);
+    ctx.canvas.stroke_rect(
+        (0.0_f32, 0.0_f32).into(),
+        ResolvedSize { width: w, height: h },
+        stroke_color,
+        1.5,
+        0.0,
+    );
 
     // Label
     let font_size = 10.0_f32;
@@ -49,17 +52,16 @@ pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &
     let label_w = (label.len() as f32) * font_size * 0.55 + 4.0;
     let label_h = font_size + 4.0;
 
-    let mut bg = Paint::default();
-    bg.set_color(Color::from_argb(180, 0, 0, 0));
-    bg.set_style(Style::Fill);
-    ctx.canvas.draw_rect(Rect::from_xywh(0.0, 0.0, label_w, label_h), &bg);
+    let bg_color = Color::Rgba(0, 0, 0, 180);
+    ctx.canvas.fill_color_rect(
+        (0.0_f32, 0.0_f32).into(),
+        ResolvedSize { width: label_w, height: label_h },
+        bg_color,
+        0.0,
+    );
 
-    let mut font = Font::default();
-    font.set_size(font_size);
-    let mut tp = Paint::default();
-    tp.set_color(Color::WHITE);
-    tp.set_anti_alias(true);
-    ctx.canvas.draw_str(&label, (2.0_f32, font_size), &font, &tp);
+    let text_color = Color::Rgba(255, 255, 255, 255);
+    ctx.canvas.draw_text(&label, (2.0_f32, font_size).into(), font_size, text_color);
 }
 
 
