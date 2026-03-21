@@ -35,8 +35,6 @@ impl Widget for Text {
             text_align: self.text_align,
             cache: LayoutCache::new(),
             typeface: Mutex::new(None),
-            #[cfg(not(target_arch = "wasm32"))]
-            text_runs: Mutex::new(None),
         })
     }
 }
