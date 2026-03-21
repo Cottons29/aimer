@@ -1,10 +1,13 @@
 use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 
-use glyphon::{Attrs, Buffer as GlyphonBuffer, Family, FontSystem, Metrics, Shaping};
+use glyphon::{Attrs, Buffer as GlyphonBuffer, Family, FontSystem, Metrics, Shaping, fontdb};
 
 use crate::draw_cmd::DrawList;
 use crate::utilities::{Color, Rect, TextureId, Vec2d};
+
+/// Embedded fallback font (Roboto) for platforms without system font access (e.g. iOS).
+const FALLBACK_FONT: &[u8] = include_bytes!("../fonts/Roboto.ttf");
 
 #[derive(Clone)]
 pub struct CupidCanvas {
@@ -14,9 +17,13 @@ pub struct CupidCanvas {
 
 impl CupidCanvas {
     pub fn new() -> Self {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        db.load_font_data(FALLBACK_FONT.to_vec());
+        let font_system = FontSystem::new_with_locale_and_db("en-US".to_string(), db);
         Self {
             draw_list: Rc::new(RefCell::new(DrawList::new())),
-            font_system: Rc::new(RefCell::new(FontSystem::new())),
+            font_system: Rc::new(RefCell::new(font_system)),
         }
     }
 
