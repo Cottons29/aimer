@@ -5,15 +5,10 @@ use crate::style::BoxConstraint;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 #[cfg(not(target_arch = "wasm32"))]
-use skia_safe::Canvas;
-#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Handle;
 use winit::window::Window;
+use canvas::{Canvas, CanvasRendering};
 
-#[cfg(target_arch = "wasm32")]
-type RenderingCanvas = web_sys::CanvasRenderingContext2d;
-#[cfg(not(target_arch = "wasm32"))]
-type RenderingCanvas = skia_safe::Canvas;
 
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
@@ -23,7 +18,7 @@ type Float = f32;
 #[derive(Clone)]
 pub struct BuildContext<'a> {
     pub parent_size: ResolvedSize,
-    pub canvas: &'a RenderingCanvas,
+    pub canvas:  Canvas<'a>,
     pub scale: Float,
     pub parent_pos: Vec2d,
     pub cursor_pos: Vec2d,
@@ -49,7 +44,7 @@ impl<'a> std::fmt::Debug for BuildContext<'a> {
 
 impl<'a> BuildContext<'a> {
     pub fn new(
-        canvas: &'a RenderingCanvas,
+        canvas: Canvas<'a>,
         size: ResolvedSize,
         scale: Float,
         parent_pos: Vec2d,
