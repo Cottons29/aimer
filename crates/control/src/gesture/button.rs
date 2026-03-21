@@ -1,8 +1,6 @@
 use attribute::dimension::Dimension;
 use std::cell::UnsafeCell;
 
-#[cfg(not(target_arch = "wasm32"))]
-use skia_safe::{Color as SkColor, Paint, Rect, paint::Style};
 use widget::{Constructor, Element, LayoutCache, Widget, base::*, WidgetConstructor};
 use widget::style::border::{BorderStyle, BoxBorder, BoxOutline};
 use crate::gesture::gesture_detector::GestureDetectorElement;
