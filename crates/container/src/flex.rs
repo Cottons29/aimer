@@ -7,6 +7,8 @@ pub use row_column::Row;
 
 pub use raw_flex::Flex;
 use widget::base::BuildContext;
+use attribute::position::Vec2d;
+use attribute::size::ResolvedSize;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutDirection {
@@ -36,11 +38,9 @@ impl OverflowBehavior {
         #[allow(clippy::single_match)]
         match self {
             Self::Hidden => {
-                #[cfg(not(target_arch = "wasm32"))]
-                ctx.canvas.clip_rect(
-                    skia_safe::Rect::from_xywh(0.0, 0.0, ctx.box_constraint.max_width, ctx.box_constraint.max_height),
-                    skia_safe::ClipOp::Intersect,
-                    true,
+                ctx.canvas.set_clip(
+                    Vec2d { x: 0.0, y: 0.0 },
+                    ResolvedSize { width: ctx.box_constraint.max_width, height: ctx.box_constraint.max_height },
                 );
             }
             _ => ()
