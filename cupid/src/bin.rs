@@ -123,12 +123,38 @@ impl<'w> ApplicationHandler for App<'w> {
                     20.0,
                 );
 
+                // Draw a rect with border
+                self.canvas.fill_rect_with_border(
+                    420.0, 300.0, 160.0, 100.0,
+                    Color::white(),
+                    12.0,
+                    3.0,
+                    Color::new(0.2, 0.2, 0.8, 1.0),
+                );
+
+                // Draw a border-only rect (transparent fill)
+                self.canvas.fill_rect_with_border(
+                    420.0, 420.0, 160.0, 80.0,
+                    Color::transparent(),
+                    8.0,
+                    2.0,
+                    Color::red(),
+                );
+
+                // Test clipping
+                self.canvas.set_clip(50.0, 400.0, 200.0, 100.0);
+                self.canvas.fill_rect(
+                    30.0, 380.0, 300.0, 150.0,
+                    Color::red(),
+                    0.0,
+                );
+
                 // Test save/translate/restore
                 self.canvas.save();
                 self.canvas.translate(400.0, 50.0);
                 self.canvas.fill_rect(
-                    0.0, 0.0, 100.0, 100.0,
-                    Color::new(0.8, 0.2, 0.8, 1.0),
+                    0.0, 0.0, 500.0, 450.0,
+                    Color::new(0.8, 0.2, 0.8, 1.0).set_alpha(128),
                     5.0,
                 );
                 self.canvas.restore();
@@ -153,13 +179,6 @@ impl<'w> ApplicationHandler for App<'w> {
                     self.canvas.draw_image(500.0, 200.0, 300.0, 300.0, tex_id);
                 }
 
-                // Test clipping
-                self.canvas.set_clip(50.0, 400.0, 200.0, 100.0);
-                self.canvas.fill_rect(
-                    30.0, 380.0, 300.0, 150.0,
-                    Color::new(1.0, 0.5, 0.0, 0.8),
-                    0.0,
-                );
                 self.canvas.clear_clip();
 
                 renderer.render(

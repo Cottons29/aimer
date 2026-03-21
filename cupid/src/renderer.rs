@@ -4,6 +4,10 @@ use crate::rect_pipeline::{RectInstance, RectPipeline};
 use crate::text_pipeline::{TextDrawRequest, TextPipeline};
 use crate::utilities::{Mat3, Rect};
 
+fn clip_to_array(clip: Option<&Rect>) -> [f32; 4] {
+    clip.map(|c| [c.x, c.y, c.width, c.height]).unwrap_or([0.0, 0.0, 0.0, 0.0])
+}
+
 pub struct Renderer {
     pub rect_pipeline: RectPipeline,
     pub text_pipeline: TextPipeline,
@@ -37,7 +41,6 @@ impl Renderer {
         // Resolved commands with transforms applied
         struct ResolvedCmd {
             kind: ResolvedKind,
-            clip: Option<Rect>,
         }
         enum ResolvedKind {
             Rect(RectInstance),
@@ -72,6 +75,8 @@ impl Renderer {
                     rect,
                     color,
                     border_radius,
+                    border_width,
+                    border_color,
                 } => {
                     let (tx, ty) = current_transform.transform_point(rect.x, rect.y);
                     resolved.push(ResolvedCmd {
@@ -80,9 +85,10 @@ impl Renderer {
                             size: [rect.width, rect.height],
                             color: color.to_array(),
                             border_radius: *border_radius,
-                            _pad: [0.0; 3],
+                            border_width: *border_width,
+                            border_color: border_color.to_array(),
+                            clip_rect: clip_to_array(clip_stack.last()),
                         }),
-                        clip: clip_stack.last().copied(),
                     });
                 }
                 DrawCommand::ClearRect { rect } => {
@@ -93,9 +99,10 @@ impl Renderer {
                             size: [rect.width, rect.height],
                             color: [0.0, 0.0, 0.0, 0.0],
                             border_radius: 0.0,
-                            _pad: [0.0; 3],
+                            border_width: 0.0,
+                            border_color: [0.0; 4],
+                            clip_rect: clip_to_array(clip_stack.last()),
                         }),
-                        clip: clip_stack.last().copied(),
                     });
                 }
                 DrawCommand::DrawText {
@@ -117,7 +124,6 @@ impl Renderer {
                     });
                     resolved.push(ResolvedCmd {
                         kind: ResolvedKind::TextIndex(()),
-                        clip: clip_stack.last().copied(),
                     });
                 }
                 DrawCommand::DrawImage { rect, texture_id } => {
@@ -130,9 +136,9 @@ impl Renderer {
                                 size: [rect.width, rect.height],
                                 uv_offset: [0.0, 0.0],
                                 uv_scale: [1.0, 1.0],
+                                clip_rect: clip_to_array(clip_stack.last()),
                             },
                         },
-                        clip: clip_stack.last().copied(),
                     });
                 }
             }
@@ -175,35 +181,17 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            // Apply scissor for clip rects — we process in order to maintain painter's algorithm
-            let mut active_clip: Option<Rect> = None;
-
-            // Flush rects first
+            // Flush rects (AA clipping is handled per-instance in the shader)
             self.rect_pipeline
                 .flush(device, queue, &mut pass, width, height);
 
-            // Render text
+            // Render text (glyphon handles its own bounds clipping)
             if !text_requests.is_empty() {
                 self.text_pipeline.render(&mut pass);
             }
 
-            // Render images in order
+            // Render images (AA clipping is handled per-instance in the shader)
             for rc in &resolved {
-                // Update scissor rect if clip changed
-                if rc.clip != active_clip {
-                    if let Some(clip) = &rc.clip {
-                        pass.set_scissor_rect(
-                            clip.x.max(0.0) as u32,
-                            clip.y.max(0.0) as u32,
-                            (clip.width as u32).min(width),
-                            (clip.height as u32).min(height),
-                        );
-                    } else {
-                        pass.set_scissor_rect(0, 0, width, height);
-                    }
-                    active_clip = rc.clip;
-                }
-
                 if let ResolvedKind::Image {
                     texture_id,
                     instance,

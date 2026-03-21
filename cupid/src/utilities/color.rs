@@ -61,4 +61,9 @@ impl Color {
     pub const fn to_array(&self) -> [f32; 4] {
         [self.r, self.g, self.b, self.a]
     }
+
+    pub const fn set_alpha(&mut self, alpha: u8) -> Self{
+        self.a = alpha as f32 / 255.0;
+        *self
+    }
 }

@@ -449,7 +449,7 @@ name = "canvas"
 version = "0.1.0"
 dependencies = [
  "attribute",
- "skia-safe",
+ "cupid",
  "utils",
  "wasm-bindgen",
  "web-sys",

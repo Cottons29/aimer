@@ -5,6 +5,8 @@ pub enum DrawCommand {
         rect: Rect,
         color: Color,
         border_radius: f32,
+        border_width: f32,
+        border_color: Color,
     },
     ClearRect {
         rect: Rect,
@@ -54,11 +56,13 @@ impl DrawList {
         self.commands.push(cmd);
     }
 
-    pub fn fill_rect(&mut self, rect: Rect, color: Color, border_radius: f32) {
+    pub fn fill_rect(&mut self, rect: Rect, color: Color, border_radius: f32, border_width: f32, border_color: Color) {
         self.commands.push(DrawCommand::FillRect {
             rect,
             color,
             border_radius,
+            border_width,
+            border_color,
         });
     }
 

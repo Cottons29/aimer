@@ -7,15 +7,21 @@ pub struct RectInstance {
     pub size: [f32; 2],
     pub color: [f32; 4],
     pub border_radius: f32,
-    pub _pad: [f32; 3],
+    pub border_width: f32,
+    pub border_color: [f32; 4],
+    /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
+    pub clip_rect: [f32; 4],
 }
 
 impl RectInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x4,
         3 => Float32,
+        4 => Float32,
+        5 => Float32x4,
+        6 => Float32x4,
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
@@ -42,9 +48,7 @@ impl RectPipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rect shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/rect.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/rect.wgsl").into()),
         });
 
         let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -54,28 +58,24 @@ impl RectPipeline {
             mapped_at_creation: false,
         });
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("rect bind group layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rect bind group layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
 
         let viewport_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rect viewport bind group"),
             layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: viewport_buffer.as_entire_binding(),
-            }],
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: viewport_buffer.as_entire_binding() }],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -103,10 +103,7 @@ impl RectPipeline {
                 })],
                 compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
@@ -115,7 +112,7 @@ impl RectPipeline {
 
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rect instance buffer"),
-            size: (Self::INITIAL_CAPACITY * std::mem::size_of::<RectInstance>()) as u64,
+            size: (Self::INITIAL_CAPACITY * size_of::<RectInstance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -151,11 +148,7 @@ impl RectPipeline {
         }
 
         // Update viewport uniform
-        queue.write_buffer(
-            &self.viewport_buffer,
-            0,
-            bytemuck::cast_slice(&[width as f32, height as f32, 0.0, 0.0]),
-        );
+        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, 0.0, 0.0]));
 
         // Grow instance buffer if needed
         if self.instances.len() > self.instance_capacity {
@@ -168,11 +161,7 @@ impl RectPipeline {
             });
         }
 
-        queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&self.instances),
-        );
+        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances));
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
