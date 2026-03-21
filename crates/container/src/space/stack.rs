@@ -35,7 +35,7 @@ impl Drawable for RawStackElement {
         let content_size = self.content_size(ctx);
         let child_ctx = BuildContext {
             parent_size: content_size,
-            canvas: ctx.canvas,
+            canvas: ctx.canvas.clone(),
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             cursor_pos: ctx.cursor_pos,
