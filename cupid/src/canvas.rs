@@ -1,23 +1,35 @@
+use std::cell::{Ref, RefCell};
+use std::rc::Rc;
+
+use glyphon::{Attrs, Buffer as GlyphonBuffer, Family, FontSystem, Metrics, Shaping};
+
 use crate::draw_cmd::DrawList;
 use crate::utilities::{Color, Rect, TextureId, Vec2d};
 
+#[derive(Clone)]
 pub struct CupidCanvas {
-    draw_list: DrawList,
+    draw_list: Rc<RefCell<DrawList>>,
+    font_system: Rc<RefCell<FontSystem>>,
 }
 
 impl CupidCanvas {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            draw_list: DrawList::new(),
+            draw_list: Rc::new(RefCell::new(DrawList::new())),
+            font_system: Rc::new(RefCell::new(FontSystem::new())),
         }
     }
 
-    pub fn begin_frame(&mut self) {
-        self.draw_list.clear();
+    pub fn font_system(&self) -> Rc<RefCell<FontSystem>> {
+        self.font_system.clone()
     }
 
-    pub fn fill_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: Color, border_radius: f32) {
-        self.draw_list.fill_rect(
+    pub fn begin_frame(&self) {
+        self.draw_list.borrow_mut().clear();
+    }
+
+    pub fn fill_rect(&self, x: f32, y: f32, width: f32, height: f32, color: Color, border_radius: f32) {
+        self.draw_list.borrow_mut().fill_rect(
             Rect::new(x, y, width, height),
             color,
             border_radius,
@@ -27,14 +39,14 @@ impl CupidCanvas {
     }
 
     pub fn fill_rect_with_border(
-        &mut self,
+        &self,
         x: f32, y: f32, width: f32, height: f32,
         color: Color,
         border_radius: f32,
         border_width: f32,
         border_color: Color,
     ) {
-        self.draw_list.fill_rect(
+        self.draw_list.borrow_mut().fill_rect(
             Rect::new(x, y, width, height),
             color,
             border_radius,
@@ -43,24 +55,32 @@ impl CupidCanvas {
         );
     }
 
-    pub fn clear_rect(&mut self, x: f32, y: f32, width: f32, height: f32) {
-        self.draw_list.clear_rect(Rect::new(x, y, width, height));
+    pub fn clear_rect(&self, x: f32, y: f32, width: f32, height: f32) {
+        self.draw_list.borrow_mut().clear_rect(Rect::new(x, y, width, height));
     }
 
-    pub fn translate(&mut self, x: f32, y: f32) {
-        self.draw_list.translate(x, y);
+    pub fn translate(&self, x: f32, y: f32) {
+        self.draw_list.borrow_mut().translate(x, y);
     }
 
-    pub fn save(&mut self) {
-        self.draw_list.save();
+    pub fn scale(&self, sx: f32, sy: f32) {
+        self.draw_list.borrow_mut().scale(sx, sy);
     }
 
-    pub fn restore(&mut self) {
-        self.draw_list.restore();
+    pub fn rotate(&self, radians: f32) {
+        self.draw_list.borrow_mut().rotate(radians);
     }
 
-    pub fn draw_text(&mut self, x: f32, y: f32, text: &str, font_size: f32, color: Color) {
-        self.draw_list.draw_text(
+    pub fn save(&self) {
+        self.draw_list.borrow_mut().save();
+    }
+
+    pub fn restore(&self) {
+        self.draw_list.borrow_mut().restore();
+    }
+
+    pub fn draw_text(&self, x: f32, y: f32, text: &str, font_size: f32, color: Color) {
+        self.draw_list.borrow_mut().draw_text(
             Vec2d::new(x, y),
             text.to_string(),
             font_size,
@@ -68,23 +88,93 @@ impl CupidCanvas {
         );
     }
 
-    pub fn draw_image(&mut self, x: f32, y: f32, width: f32, height: f32, texture_id: TextureId) {
-        self.draw_list.draw_image(
+    pub fn draw_image(&self, x: f32, y: f32, width: f32, height: f32, texture_id: TextureId) {
+        self.draw_list.borrow_mut().draw_image(
             Rect::new(x, y, width, height),
             texture_id,
         );
     }
 
-    pub fn set_clip(&mut self, x: f32, y: f32, width: f32, height: f32) {
-        self.draw_list.push_clip(Rect::new(x, y, width, height));
+    /// Measure text width using glyphon's font system for accurate results.
+    pub fn measure_text(&self, text: &str, font_size: f32) -> f32 {
+        let mut fs = self.font_system.borrow_mut();
+        let mut buffer = GlyphonBuffer::new(
+            &mut fs,
+            Metrics::new(font_size, font_size * 1.2),
+        );
+        buffer.set_size(&mut fs, None, None);
+        buffer.set_text(
+            &mut fs,
+            text,
+            &Attrs::new().family(Family::SansSerif),
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut fs, false);
+
+        buffer
+            .layout_runs()
+            .map(|run| run.line_w)
+            .fold(0.0_f32, f32::max)
     }
 
-    pub fn clear_clip(&mut self) {
-        self.draw_list.pop_clip();
+    /// Draws a stroked (outline-only) rectangle.
+    pub fn stroke_rect(
+        &self,
+        x: f32, y: f32, width: f32, height: f32,
+        stroke_color: Color,
+        stroke_width: f32,
+        border_radius: f32,
+    ) {
+        self.draw_list.borrow_mut().fill_rect(
+            Rect::new(x, y, width, height),
+            Color::transparent(),
+            border_radius,
+            stroke_width,
+            stroke_color,
+        );
     }
 
-    pub fn draw_list(&self) -> &DrawList {
-        &self.draw_list
+    /// Draws a filled rectangle with a specific color (convenience method).
+    pub fn fill_color_rect(
+        &self,
+        x: f32, y: f32, width: f32, height: f32,
+        color: Color,
+        border_radius: f32,
+    ) {
+        self.draw_list.borrow_mut().fill_rect(
+            Rect::new(x, y, width, height),
+            color,
+            border_radius,
+            0.0,
+            Color::transparent(),
+        );
+    }
+
+    pub fn set_clip(&self, x: f32, y: f32, width: f32, height: f32) {
+        self.draw_list.borrow_mut().push_clip(Rect::new(x, y, width, height));
+    }
+
+    pub fn clear_clip(&self) {
+        self.draw_list.borrow_mut().pop_clip();
+    }
+
+    pub fn get_transform_translation(&self) -> (f32, f32) {
+        let transform = self.draw_list.borrow();
+        let t = transform.current_transform();
+        (t.cols[2][0], t.cols[2][1])
+    }
+
+    pub fn set_alpha(&self, alpha: f32) {
+        self.draw_list.borrow_mut().set_alpha(alpha);
+    }
+
+    pub fn restore_alpha(&self) {
+        self.draw_list.borrow_mut().restore_alpha();
+    }
+
+    pub fn draw_list(&self) -> Ref<'_, DrawList> {
+        self.draw_list.borrow()
     }
 }
 
