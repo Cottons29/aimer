@@ -9,3 +9,6 @@ mod pipeline;
 pub use pipeline::rect_pipeline;
 pub use pipeline::text_pipeline;
 pub use pipeline::image_pipeline;
+pub use pipeline::glyph_rasterizer;
+pub use pipeline::glyph_atlas;
+pub use pipeline::text_layout;
