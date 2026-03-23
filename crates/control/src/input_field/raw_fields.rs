@@ -11,6 +11,7 @@ use events::element::{ElementEvent, KeyAction, NamedKey};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
+use attribute::{Bounds, CacheBounds};
 
 /// Write text to the system clipboard.
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
@@ -409,7 +410,7 @@ pub(crate) struct RawTextField {
     pub disabled_style: Option<TextFieldStyle>,
     pub focused: UnsafeCell<bool>,
     pub hovered: UnsafeCell<bool>,
-    pub cached_bounds: UnsafeCell<Option<(Float, Float, Float, Float)>>,
+    pub cached_bounds: CacheBounds,
     pub on_changed: TextFieldCallback,
     pub on_submitted: TextFieldCallback,
 }
@@ -642,15 +643,11 @@ impl Element for RawTextField {
 
         match event {
             ElementEvent::PointerDown(pos) => {
-                let is_inside = unsafe {
-                    if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
-                        pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom
-                    } else {
-                        false
-                    }
-                };
+                let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
-                return if is_inside {
+                // debug!("RawTextField on_event: is_inside I = {}", is_inside);
+
+                if is_inside {
                     self.set_focused(true);
                     self.cursor.set_offset(self.controller.char_count());
                     self.cursor.reset_blink();
@@ -678,7 +675,7 @@ impl Element for RawTextField {
                     #[cfg(target_arch = "wasm32")]
                     wasm_request_keyboard(false);
                     false
-                };
+                }
             }
             ElementEvent::CharInput { ch, action, modifiers } => {
                 if !self.is_focused() {
@@ -884,14 +881,8 @@ impl Element for RawTextField {
                 result
             }
             ElementEvent::PointerMove(pos) => {
-                let is_inside = unsafe {
-                    if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
-                        debug!("RawTextfield: caches bound : ({}, {}, {}, {})", left, top, right, bottom);
-                        pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom
-                    } else {
-                        false
-                    }
-                };
+                let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
+                // debug!("RawTextfield: is_inside II = {}", is_inside);
                 let was_hovered = self.is_hovered();
                 self.set_hovered(is_inside);
                 was_hovered != is_inside
@@ -936,9 +927,8 @@ impl Drawable for RawTextField {
         let cache_y = abs_y as Float / ctx.scale * 0.99;
         let cache_w = box_width as Float / ctx.scale * 0.99;
         let cache_h = box_height as Float / ctx.scale * 0.99;
-        unsafe {
-            *self.cached_bounds.get() = Some((cache_x, cache_y, cache_w,  cache_h));
-        }
+
+        self.cached_bounds.set_bounds(Bounds::new(cache_x, cache_y, cache_w, cache_h));
 
         // --- Resolve active style ---
         let style = self.active_style();
@@ -949,6 +939,8 @@ impl Drawable for RawTextField {
             .border
             .get_uniform_radius(box_width, box_height, scale)
             .unwrap_or(0.0);
+
+        debug!("RawTextField: radius = {}", radius);
         ctx.canvas.fill_color_rect(
             (0.0, 0.0).into(),
             ResolvedSize { width: box_width, height: box_height },
@@ -983,7 +975,7 @@ impl Drawable for RawTextField {
 
         let font_size = self.scaled_font_size(&self.text_style, scale);
         // Approximate text_y for vertical centering (baseline offset)
-        let text_y = (content_height as f32 - font_size) / 2.0;
+        let text_y = (content_height as f32 - font_size as f32) / 2.0;
 
         if is_empty {
             // --- Draw prompt (visible when field is empty) ---
@@ -991,7 +983,7 @@ impl Drawable for RawTextField {
                 let prompt_fs = self.scaled_font_size(&self.prompt_style, scale);
                 let prompt_color: color::prelude::Color = self.prompt_style.color.into();
                 ctx.canvas
-                    .draw_text(&self.prompt, (0.0, text_y as Float).into(), prompt_fs, prompt_color);
+                    .draw_text(&self.prompt, (0.0, text_y as Float).into(), prompt_fs as f32, prompt_color);
             }
 
             // --- Draw hint text (visible when field is empty and no prompt) ---
@@ -999,7 +991,7 @@ impl Drawable for RawTextField {
                 let hint_fs = self.scaled_font_size(&self.hint_style, scale);
                 let hint_color: color::prelude::Color = self.hint_style.color.into();
                 ctx.canvas
-                    .draw_text(&self.hint, (0.0, text_y as Float).into(), hint_fs, hint_color);
+                    .draw_text(&self.hint, (0.0, text_y as Float).into(), hint_fs as f32, hint_color);
             }
         } else {
             // --- Draw text ---
@@ -1013,12 +1005,12 @@ impl Drawable for RawTextField {
             if !display.is_empty() {
                 let text_color: color::prelude::Color = self.text_style.color.into();
                 ctx.canvas
-                    .draw_text(&display, (text_x, text_y as Float).into(), font_size, text_color);
+                    .draw_text(&display, (text_x, text_y as Float).into(), font_size as f32, text_color);
             }
 
             // --- Draw cursor ---
             if self.is_focused() && self.cursor.is_visible() {
-                let cursor_x = text_x + self.cursor_x_offset_canvas(&ctx.canvas, font_size);
+                let cursor_x = text_x + self.cursor_x_offset_canvas(&ctx.canvas, font_size as f32);
                 let cursor_top = content_height * 0.15;
                 let cursor_bottom = content_height * 0.85;
                 let cursor_height = cursor_bottom - cursor_top;

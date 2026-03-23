@@ -113,6 +113,27 @@ impl RawBoxBorder {
             None
         }
     }
+
+    /// Returns per-corner radii [top-left, top-right, bottom-right, bottom-left].
+    /// Each corner radius is the minimum of its two adjacent side radii.
+    /// Returns None if all radii are zero.
+    pub fn get_per_corner_radii(&self, box_width: Float, box_height: Float, scale: Float) -> Option<[f32; 4]> {
+        let left_r = resolve_dim(self.left.radius, box_width, scale);
+        let right_r = resolve_dim(self.right.radius, box_width, scale);
+        let top_r = resolve_dim(self.top.radius, box_height, scale);
+        let bottom_r = resolve_dim(self.bottom.radius, box_height, scale);
+
+        let tl = left_r.min(top_r);
+        let tr = right_r.min(top_r);
+        let br = right_r.min(bottom_r);
+        let bl = left_r.min(bottom_r);
+
+        if tl == 0.0 && tr == 0.0 && br == 0.0 && bl == 0.0 {
+            None
+        } else {
+            Some([tl as f32, tr as f32, br as f32, bl as f32])
+        }
+    }
 }
 
 impl BoxBorder {
@@ -138,6 +159,27 @@ impl BoxBorder {
             Some(left_r)
         } else {
             None
+        }
+    }
+
+    /// Returns per-corner radii [top-left, top-right, bottom-right, bottom-left].
+    /// Each corner radius is the minimum of its two adjacent side radii.
+    /// Returns None if all radii are zero.
+    pub fn get_per_corner_radii(&self, box_width: Float, box_height: Float, scale: Float) -> Option<[f32; 4]> {
+        let left_r = resolve_dim(self.left.radius, box_width, scale);
+        let right_r = resolve_dim(self.right.radius, box_width, scale);
+        let top_r = resolve_dim(self.top.radius, box_height, scale);
+        let bottom_r = resolve_dim(self.bottom.radius, box_height, scale);
+
+        let tl = left_r.min(top_r);
+        let tr = right_r.min(top_r);
+        let br = right_r.min(bottom_r);
+        let bl = left_r.min(bottom_r);
+
+        if tl == 0.0 && tr == 0.0 && br == 0.0 && bl == 0.0 {
+            None
+        } else {
+            Some([tl as f32, tr as f32, br as f32, bl as f32])
         }
     }
 }
