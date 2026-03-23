@@ -1,4 +1,6 @@
 use crate::Float;
+use std::cell::Cell;
+use crate::position::Vec2d;
 
 ///
 /// Represents a dimension type that can be used to define sizes in different units.
@@ -54,7 +56,6 @@ impl From<Float> for Dimension {
     }
 }
 
-
 impl From<i32> for Dimension {
     fn from(v: i32) -> Self {
         Self::Px(v as Float)
@@ -78,15 +79,57 @@ impl Dimension {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CacheBounds {
-    pub left: Float,
-    pub top: Float,
+pub struct Bounds {
+    pub x: Float,
+    pub y: Float,
     pub width: Float,
     pub height: Float,
 }
 
-impl CacheBounds {
-    pub fn new(left: Float, top: Float, width: Float, height: Float) -> Self {
-        Self { left, top, width, height }
+impl Bounds {
+    pub fn new(x: Float, y: Float, width: Float, height: Float) -> Self {
+        Self { x, y, width, height }
+    }
+
+}
+impl Default for Bounds {
+    fn default() -> Self {
+        Self::new(0.0, 0.0, 0.0, 0.0)
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CacheBounds {
+    bound: Option<Bounds>,
+}
+
+impl CacheBounds {
+    pub fn new() -> Self {
+        Self { bound: None }
+    }
+
+    pub fn is_cached(&self) -> bool {
+        self.bound.is_some()
+    }
+
+    pub fn get_bounds(&self) -> Option<Bounds> {
+        self.bound
+    }
+
+    pub fn set_bounds(&self, bounds: Bounds) {
+        let bound_ptr = &raw const self.bound as *mut Option<Bounds>;
+        unsafe {
+            *bound_ptr = Some(bounds);
+        }
+    }
+
+    pub fn is_inside(&self, x: Float, y: Float) -> bool {
+        let Some(bound) = self.bound else { return false };
+        bound.x <= x && x <= bound.x + bound.width && bound.y <= y && y <= bound.y + bound.height
+    }
+
+
+
+}
+
+
