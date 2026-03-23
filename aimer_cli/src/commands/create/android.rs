@@ -74,6 +74,18 @@ plugins {
     )
     .unwrap();
 
+    fs::write(
+        dir.join("builds/android/app/src/main/res/values/themes.xml"),
+        r#"<resources>
+    <style name="AimerFullscreenTheme" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>
+"#,
+    )
+    .unwrap();
+
     // Default launcher icons
     let mipmap_sizes: &[(&str, &[u8])] = &[
         ("mipmap-mdpi", include_bytes!("../../../templates/icons/icon_48.png")),

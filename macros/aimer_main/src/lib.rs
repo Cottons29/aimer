@@ -48,8 +48,8 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #[cfg(target_os = "android")]
         #[unsafe(no_mangle)]
-        pub extern "C" fn android_main(app: aimer::engine::winit::platform::android::activity::AndroidApp) {
-            let _ = aimer::engine::aimer_app::ANDROID_APP.set(app);
+        pub extern "C" fn android_main(app: aimer::quiver::winit::platform::android::activity::AndroidApp) {
+            let _ = aimer::quiver::aimer_app::ANDROID_APP.set(app);
             #fn_name()
         }
 

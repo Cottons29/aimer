@@ -6,6 +6,7 @@ resolver = "3"
 
 
 [dependencies]
+
 constructor.workspace  = true
 widget.workspace = true
 color.workspace = true
@@ -22,6 +23,7 @@ canvas.workspace = true
 smallvec.workspace = true
 winit.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wgpu = "29.0.0"
 objc.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"]}
 raw-window-handle.workspace = true
@@ -35,6 +37,11 @@ version = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.cupid]
 path = "../cupid"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni.workspace = true
+ndk-glue.workspace = true
+ndk.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
