@@ -6,8 +6,10 @@ pub struct RectInstance {
     pub position: [f32; 2],
     pub size: [f32; 2],
     pub color: [f32; 4],
-    pub border_radius: f32,
-    pub border_width: f32,
+    /// Per-corner border radius: [top-left, top-right, bottom-right, bottom-left]
+    pub border_radius: [f32; 4],
+    /// Per-side border width: [top, right, bottom, left]
+    pub border_width: [f32; 4],
     pub border_color: [f32; 4],
     /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
     pub clip_rect: [f32; 4],
@@ -18,8 +20,8 @@ impl RectInstance {
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x4,
-        3 => Float32,
-        4 => Float32,
+        3 => Float32x4,
+        4 => Float32x4,
         5 => Float32x4,
         6 => Float32x4,
     ];
