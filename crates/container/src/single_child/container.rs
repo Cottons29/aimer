@@ -15,7 +15,7 @@ pub struct Container<T: Widget + 'static> {
     width: Dimension,
     #[constructor(into, default)]
     height: Dimension,
-    #[constructor(into, default)]
+    #[constructor(into, default )]
     color: Color,
     #[constructor(default)]
     pub padding: LayoutSpacing,
@@ -25,6 +25,7 @@ pub struct Container<T: Widget + 'static> {
     pub border: BoxBorder,
     child: T,
 }
+
 
 impl<W: Widget> Widget for Container<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
