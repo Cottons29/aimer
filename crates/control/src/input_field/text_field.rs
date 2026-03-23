@@ -3,6 +3,7 @@ use crate::input_field::raw_fields::{
     Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback, TextFieldStyle,
 };
 use std::cell::UnsafeCell;
+use attribute::CacheBounds;
 use widget::base::{BuildContext, Colors};
 use widget::text::TextAlign;
 use widget::{Element, TextStyle, Widget, WidgetConstructor};
@@ -142,7 +143,7 @@ impl Widget for TextField {
             disabled_style: self.disabled_style.clone(),
             focused: UnsafeCell::new(self.auto_focus),
             hovered: UnsafeCell::new(false),
-            cached_bounds: UnsafeCell::new(None),
+            cached_bounds: CacheBounds::new(),
             on_changed: self.on_changed.clone(),
             on_submitted: self.on_submitted.clone(),
         })
