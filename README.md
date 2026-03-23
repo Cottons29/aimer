@@ -19,16 +19,26 @@ pub fn start_app() {
 }
 ```
 
+## Cupid
+
+Cupid is Aimer's high-performance, cross-platform 2D rendering engine. It provides the foundation for drawing the widget tree on native platforms.
+
+- **WGPU-powered** — Uses `wgpu` to provide a consistent rendering API across Metal, Vulkan, and DirectX.
+- **Batched Rendering** — Automatically batches draw calls (rectangles, text, images) to minimize GPU overhead.
+- **Hardware Acceleration** — Fully utilizes the GPU for effects like rounded corners, borders, and complex clipping.
+- **Canvas-like API** — Simple and intuitive `CupidCanvas` API for lower-level drawing operations.
+- **High-Quality Typography** — Integrated text layout and glyph rasterization for crisp text at any scale.
+
 ## Supported Platforms
 
-| Platform   | Rendering Backend    | Status            |
-|------------|----------------------|-------------------|
-| macOS      | Skia (Metal)         | ✅ Supported       |
-| iOS        | Skia (Metal)         | ✅ Supported       |
-| Android    | Skia (Vuklan/Opengl) | ✅ Supported       |
-| Windows    | Skia (Dx13)          | ❌ Not Support yet |
-| Linux      | Skia (Vuklan/Opengl) | ❌ Not Support yet |
-| Web (WASM) | Canvas 2D            | ✅ Supported       |
+| Platform   | Rendering Backend | Status            |
+|------------|-------------------|-------------------|
+| macOS      | Cupid             | ✅ Supported       |
+| iOS        | Cupid             | ✅ Supported       |
+| Android    | Cupid             | ✅ Supported       |
+| Windows    | Cupid             | ❌ Not Support yet |
+| Linux      | Cupid             | ❌ Not Support yet |
+| Web (WASM) | Canvas 2D         | ✅ Supported       |
 
 
 ## Features
@@ -37,7 +47,7 @@ pub fn start_app() {
 - **Stateful Widgets** — Flutter-style `StatefulWidget` / `State` pattern with `StateUpdater` for reactive rebuilds.
 - **Animation System** — `AnimationController` with configurable duration, curves (`EaseIn`, `EaseOut`, `Bounce`, etc.), and effects (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`). `⚠️ Unstable `
 - **Layout Engine** — Flexbox-inspired layout with `Row`, `Column`, `Scrollable`...
-- **Cross-Platform Rendering** — Skia on native platforms (Metal on Apple, Dx3D on Windoes and Vulkan/OpenGl for Linux and Android) and Canvas 2D on the web.
+- **Cross-Platform Rendering** — Cupid on native platforms (Metal on Apple, Dx3D on Windoes and Vulkan/OpenGl for Linux and Android) and Canvas 2D on the web.
 - **CLI Tooling** — `Aimer` a cli tool for creating running and builds projects.
 
 ## Getting Started
@@ -124,12 +134,12 @@ Aimer run
   - [ ] `Animated` widget with effects (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`)  `⛔️ Very Unstable`
   - [ ] 🧪 Enter and exit (delete) transitions `⛔️ Very Unstable`
 - [x] Cross-platform support
-  - [x] macOS (Skia + Metal)
-  - [x] iOS (Skia + Metal)
-  - [x] Android (Skia + OpenGL)
-  - [x] 🧪 Web / WASM (Canvas 2D) `⚠️ Unstable`
-  - [ ] Windows (Skia)
-  - [ ] Linux (Skia)
+  - [x] macOS (Cupid)
+  - [x] iOS (Cupid)
+  - [x] Android (Cupid)
+  - [x] Web / WASM (Canvas 2D) `⚠️ Unstable`
+  - [ ] Windows (Cupid)
+  - [ ] Linux (Cupid)
   
 - [ ] Gesture system
   - [x] Tap, double-tap `⚠️ Unstable`

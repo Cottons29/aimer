@@ -1,19 +1,34 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use bytemuck::{Pod, Zeroable};
 
-use glyphon::{
-    Attrs, Buffer as GlyphonBuffer, Cache, Color as GlyphonColor, Family, FontSystem, Metrics,
-    Resolution, Shaping, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport,
-};
+use super::glyph_atlas::GlyphAtlas;
+use super::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
+use super::text_layout::layout_text;
 
-pub struct TextPipeline {
-    pub font_system: Rc<RefCell<FontSystem>>,
-    pub swash_cache: SwashCache,
-    pub atlas: TextAtlas,
-    pub text_renderer: TextRenderer,
-    pub viewport: Viewport,
-    #[allow(dead_code)]
-    cache: Cache,
+/// Per-instance data for one glyph quad.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct GlyphInstance {
+    position: [f32; 2],
+    size: [f32; 2],
+    uv_rect: [f32; 4],
+    color: [f32; 4],
+}
+
+impl GlyphInstance {
+    const ATTRIBS: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+        0 => Float32x2,
+        1 => Float32x2,
+        2 => Float32x4,
+        3 => Float32x4,
+    ];
+
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<GlyphInstance>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &Self::ATTRIBS,
+        }
+    }
 }
 
 pub struct TextDrawRequest {
@@ -26,32 +41,157 @@ pub struct TextDrawRequest {
     pub bounds_height: f32,
 }
 
-impl TextPipeline {
-    pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        format: wgpu::TextureFormat,
-        font_system: Rc<RefCell<FontSystem>>,
-    ) -> Self {
-        let swash_cache = SwashCache::new();
-        let cache = Cache::new(device);
-        let mut atlas = TextAtlas::new(device, queue, &cache, format);
-        let text_renderer = TextRenderer::new(
-            &mut atlas,
-            device,
-            wgpu::MultisampleState::default(),
-            None,
-        );
-        let viewport = Viewport::new(device, &cache);
+pub struct TextPipelineV2 {
+    rasterizer: GlyphRasterizer,
+    atlas: GlyphAtlas,
+    pipeline: wgpu::RenderPipeline,
+    viewport_buffer: wgpu::Buffer,
+    bind_group_layout: wgpu::BindGroupLayout,
+    bind_group: wgpu::BindGroup,
+    sampler: wgpu::Sampler,
+    instance_buffer: wgpu::Buffer,
+    instance_capacity: usize,
+    instances: Vec<GlyphInstance>,
+    /// Track atlas generation to only rebuild bind group when atlas texture changes.
+    atlas_generation: u64,
+    /// Cached viewport dimensions to skip redundant uniform writes.
+    last_viewport: (u32, u32),
+}
+
+impl TextPipelineV2 {
+    const INITIAL_CAPACITY: usize = 512;
+
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let rasterizer = GlyphRasterizer::new();
+        let atlas = GlyphAtlas::new(device);
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("text shader v2"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/text.wgsl").into()),
+        });
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("text atlas sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("text viewport uniform"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("text bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let bind_group = Self::create_bind_group(device, &bind_group_layout, &viewport_buffer, &atlas.view, &sampler);
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("text pipeline layout"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("text pipeline v2"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[GlyphInstance::layout()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("text instance buffer"),
+            size: (Self::INITIAL_CAPACITY * std::mem::size_of::<GlyphInstance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         Self {
-            font_system,
-            swash_cache,
+            rasterizer,
             atlas,
-            text_renderer,
-            viewport,
-            cache,
+            pipeline,
+            viewport_buffer,
+            bind_group_layout,
+            bind_group,
+            sampler,
+            instance_buffer,
+            instance_capacity: Self::INITIAL_CAPACITY,
+            instances: Vec::new(),
+            atlas_generation: 0,
+            last_viewport: (0, 0),
         }
+    }
+
+    fn create_bind_group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        viewport_buffer: &wgpu::Buffer,
+        atlas_view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("text bind group"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: viewport_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(atlas_view) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+            ],
+        })
     }
 
     pub fn prepare(
@@ -62,77 +202,101 @@ impl TextPipeline {
         height: u32,
         requests: &[TextDrawRequest],
     ) {
-        self.viewport.update(queue, Resolution { width, height });
-
-        let mut buffers: Vec<GlyphonBuffer> = Vec::with_capacity(requests.len());
-        let mut fs = self.font_system.borrow_mut();
+        self.instances.clear();
 
         for req in requests {
-            let mut buffer = GlyphonBuffer::new(
-                &mut fs,
-                Metrics::new(req.font_size, req.font_size * 1.2),
-            );
-            buffer.set_size(
-                &mut fs,
-                Some(req.bounds_width),
-                Some(req.bounds_height),
-            );
-            buffer.set_text(
-                &mut fs,
+            let positioned = layout_text(
+                &mut self.rasterizer,
                 &req.text,
-                &Attrs::new().family(Family::SansSerif),
-                Shaping::Advanced,
-                None,
+                req.font_size,
+                req.x,
+                req.y,
+                req.bounds_width,
             );
-            buffer.shape_until_scroll(&mut fs, false);
-            buffers.push(buffer);
+
+            for pg in &positioned {
+                let key = GlyphKey::new(pg.codepoint, pg.font_size);
+                // Only rasterize if the atlas doesn't already have this glyph.
+                let region = if let Some(region) = self.atlas.get(&key) {
+                    region
+                } else {
+                    let rg = self.rasterizer.rasterize(pg.codepoint, pg.font_size);
+                    self.atlas.get_or_insert(device, key, rg.width, rg.height, &rg.bitmap)
+                };
+                let uvs = region.uvs(self.atlas.width, self.atlas.height);
+
+                self.instances.push(GlyphInstance {
+                    position: [pg.x, pg.y],
+                    size: [pg.width as f32, pg.height as f32],
+                    uv_rect: uvs,
+                    color: req.color,
+                });
+            }
         }
 
-        let text_areas: Vec<TextArea<'_>> = requests
-            .iter()
-            .zip(buffers.iter())
-            .map(|(req, buf)| {
-                let c = req.color;
-                let ascent = req.font_size * 0.8;
-                let top_y = req.y - ascent;
-                TextArea {
-                    buffer: buf,
-                    left: req.x,
-                    top: top_y,
-                    scale: 1.0,
-                    bounds: TextBounds {
-                        left: req.x as i32,
-                        top: top_y as i32,
-                        right: (req.x + req.bounds_width) as i32,
-                        bottom: (req.y + req.bounds_height) as i32,
-                    },
-                    default_color: GlyphonColor::rgba(
-                        (c[0] * 255.0) as u8,
-                        (c[1] * 255.0) as u8,
-                        (c[2] * 255.0) as u8,
-                        (c[3] * 255.0) as u8,
-                    ),
-                    custom_glyphs: &[],
-                }
-            })
-            .collect();
+        // Upload atlas if new glyphs were added.
+        self.atlas.upload(queue);
 
-        self.text_renderer
-            .prepare(
+        // Rebuild bind group only if atlas texture was recreated (grow).
+        let atlas_gen = self.atlas.generation();
+        if atlas_gen != self.atlas_generation {
+            self.atlas_generation = atlas_gen;
+            self.bind_group = Self::create_bind_group(
                 device,
-                queue,
-                &mut fs,
-                &mut self.atlas,
-                &self.viewport,
-                text_areas,
-                &mut self.swash_cache,
-            )
-            .expect("failed to prepare text");
+                &self.bind_group_layout,
+                &self.viewport_buffer,
+                &self.atlas.view,
+                &self.sampler,
+            );
+        }
+
+        // Update viewport uniform only when dimensions change.
+        if self.last_viewport != (width, height) {
+            self.last_viewport = (width, height);
+            queue.write_buffer(
+                &self.viewport_buffer,
+                0,
+                bytemuck::cast_slice(&[width as f32, height as f32, 0.0, 0.0]),
+            );
+        }
+
+        // Grow instance buffer if needed.
+        if self.instances.len() > self.instance_capacity {
+            self.instance_capacity = self.instances.len().next_power_of_two();
+            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("text instance buffer"),
+                size: (self.instance_capacity * std::mem::size_of::<GlyphInstance>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+
+        // Upload instance data.
+        if !self.instances.is_empty() {
+            queue.write_buffer(
+                &self.instance_buffer,
+                0,
+                bytemuck::cast_slice(&self.instances),
+            );
+        }
     }
 
-    pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
-        self.text_renderer
-            .render(&self.atlas, &self.viewport, pass)
-            .expect("failed to render text");
+    pub fn render<'a>(
+        &'a self,
+        pass: &mut wgpu::RenderPass<'a>,
+    ) {
+        if self.instances.is_empty() {
+            return;
+        }
+
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+        pass.draw(0..6, 0..self.instances.len() as u32);
+    }
+
+    /// Measure text width using the rasterizer.
+    pub fn measure_text(&mut self, text: &str, font_size: f32) -> f32 {
+        self.rasterizer.measure_text(text, font_size)
     }
 }

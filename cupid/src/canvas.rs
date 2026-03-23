@@ -1,34 +1,22 @@
 use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 
-use glyphon::{Attrs, Buffer as GlyphonBuffer, Family, FontSystem, Metrics, Shaping, fontdb};
-
 use crate::draw_cmd::DrawList;
+use crate::pipeline::glyph_rasterizer::GlyphRasterizer;
 use crate::utilities::{Color, Rect, TextureId, Vec2d};
-
-/// Embedded fallback font (Roboto) for platforms without system font access (e.g. iOS).
-const FALLBACK_FONT: &[u8] = include_bytes!("../fonts/Roboto.ttf");
 
 #[derive(Clone)]
 pub struct CupidCanvas {
     draw_list: Rc<RefCell<DrawList>>,
-    font_system: Rc<RefCell<FontSystem>>,
+    rasterizer: Rc<RefCell<GlyphRasterizer>>,
 }
 
 impl CupidCanvas {
     pub fn new() -> Self {
-        let mut db = fontdb::Database::new();
-        db.load_system_fonts();
-        db.load_font_data(FALLBACK_FONT.to_vec());
-        let font_system = FontSystem::new_with_locale_and_db("en-US".to_string(), db);
         Self {
             draw_list: Rc::new(RefCell::new(DrawList::new())),
-            font_system: Rc::new(RefCell::new(font_system)),
+            rasterizer: Rc::new(RefCell::new(GlyphRasterizer::primary_only())),
         }
-    }
-
-    pub fn font_system(&self) -> Rc<RefCell<FontSystem>> {
-        self.font_system.clone()
     }
 
     pub fn begin_frame(&self) {
@@ -102,27 +90,9 @@ impl CupidCanvas {
         );
     }
 
-    /// Measure text width using glyphon's font system for accurate results.
+    /// Measure text width using the cached fontdue rasterizer.
     pub fn measure_text(&self, text: &str, font_size: f32) -> f32 {
-        let mut fs = self.font_system.borrow_mut();
-        let mut buffer = GlyphonBuffer::new(
-            &mut fs,
-            Metrics::new(font_size, font_size * 1.2),
-        );
-        buffer.set_size(&mut fs, None, None);
-        buffer.set_text(
-            &mut fs,
-            text,
-            &Attrs::new().family(Family::SansSerif),
-            Shaping::Advanced,
-            None,
-        );
-        buffer.shape_until_scroll(&mut fs, false);
-
-        buffer
-            .layout_runs()
-            .map(|run| run.line_w)
-            .fold(0.0_f32, f32::max)
+        self.rasterizer.borrow_mut().measure_text(text, font_size)
     }
 
     /// Draws a stroked (outline-only) rectangle.

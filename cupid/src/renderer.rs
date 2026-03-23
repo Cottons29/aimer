@@ -1,36 +1,61 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
-use glyphon::FontSystem;
-
+use std::sync::Arc;
+use std::thread::spawn;
+use utils::debug;
 use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::rect_pipeline::{RectInstance, RectPipeline};
-use crate::text_pipeline::{TextDrawRequest, TextPipeline};
+use crate::renderer;
+use crate::text_pipeline::{TextDrawRequest, TextPipelineV2};
 use crate::utilities::{Mat3, Rect};
 
 fn clip_to_array(clip: Option<&Rect>) -> [f32; 4] {
     clip.map(|c| [c.x, c.y, c.width, c.height]).unwrap_or([0.0, 0.0, 0.0, 0.0])
 }
 
+struct ResolvedCmd {
+    kind: ResolvedKind,
+}
+
+enum ResolvedKind {
+    Rect(RectInstance),
+    Image {
+        texture_id: u32,
+        instance: ImageInstance,
+    },
+    TextIndex(()),
+}
+
 pub struct Renderer {
     pub rect_pipeline: RectPipeline,
-    pub text_pipeline: TextPipeline,
+    pub text_pipeline: TextPipelineV2,
     pub image_pipeline: ImagePipeline,
+    // Reusable per-frame scratch buffers to avoid allocations.
+    transform_stack: Vec<Mat3>,
+    clip_stack: Vec<Rect>,
+    text_requests: Vec<TextDrawRequest>,
+    resolved: Vec<ResolvedCmd>,
 }
 
 impl Renderer {
     pub fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
-        font_system: Rc<RefCell<FontSystem>>,
     ) -> Self {
-        Self {
+        let start = chrono::Utc::now().timestamp_millis();
+
+        let renderer = Self {
             rect_pipeline: RectPipeline::new(device, format),
-            text_pipeline: TextPipeline::new(device, queue, format, font_system),
+            text_pipeline: TextPipelineV2::new(device, format),
             image_pipeline: ImagePipeline::new(device, format),
-        }
+            transform_stack: Vec::new(),
+            clip_stack: Vec::new(),
+            text_requests: Vec::new(),
+            resolved: Vec::new(),
+        };
+
+        let end = chrono::Utc::now().timestamp_millis();
+        debug!("Renderer initialization ready {}ms", end - start);
+        renderer
     }
 
     /// Process a DrawList into pipeline-specific batches and render in a single pass.
@@ -43,43 +68,31 @@ impl Renderer {
         height: u32,
         draw_list: &DrawList,
     ) {
-        let mut transform_stack: Vec<Mat3> = Vec::new();
+        // debug!("Rendering draw list with {} commands", draw_list.commands().len());
+        // debug!("Rendering with width: {}, height: {}", width, height);
+        self.transform_stack.clear();
         let mut current_transform = Mat3::identity();
-        let mut clip_stack: Vec<Rect> = Vec::new();
-        let mut text_requests: Vec<TextDrawRequest> = Vec::new();
-
-        // Resolved commands with transforms applied
-        struct ResolvedCmd {
-            kind: ResolvedKind,
-        }
-        enum ResolvedKind {
-            Rect(RectInstance),
-            Image {
-                texture_id: u32,
-                instance: ImageInstance,
-            },
-            TextIndex(()),
-        }
-
-        let mut resolved: Vec<ResolvedCmd> = Vec::new();
+        self.clip_stack.clear();
+        self.text_requests.clear();
+        self.resolved.clear();
 
         for cmd in draw_list.commands() {
             match cmd {
                 DrawCommand::PushTransform { matrix } => {
-                    transform_stack.push(current_transform);
+                    self.transform_stack.push(current_transform);
                     current_transform = *matrix;
                 }
                 DrawCommand::PopTransform => {
-                    if let Some(prev) = transform_stack.pop() {
+                    if let Some(prev) = self.transform_stack.pop() {
                         current_transform = prev;
                     }
                 }
                 DrawCommand::PushClip { rect } => {
                     let (tx, ty) = current_transform.transform_point(rect.x, rect.y);
-                    clip_stack.push(Rect::new(tx, ty, rect.width, rect.height));
+                    self.clip_stack.push(Rect::new(tx, ty, rect.width, rect.height));
                 }
                 DrawCommand::PopClip => {
-                    clip_stack.pop();
+                    self.clip_stack.pop();
                 }
                 DrawCommand::FillRect {
                     rect,
@@ -89,7 +102,7 @@ impl Renderer {
                     border_color,
                 } => {
                     let (tx, ty) = current_transform.transform_point(rect.x, rect.y);
-                    resolved.push(ResolvedCmd {
+                    self.resolved.push(ResolvedCmd {
                         kind: ResolvedKind::Rect(RectInstance {
                             position: [tx, ty],
                             size: [rect.width, rect.height],
@@ -97,13 +110,13 @@ impl Renderer {
                             border_radius: *border_radius,
                             border_width: *border_width,
                             border_color: border_color.to_array(),
-                            clip_rect: clip_to_array(clip_stack.last()),
+                            clip_rect: clip_to_array(self.clip_stack.last()),
                         }),
                     });
                 }
                 DrawCommand::ClearRect { rect } => {
                     let (tx, ty) = current_transform.transform_point(rect.x, rect.y);
-                    resolved.push(ResolvedCmd {
+                    self.resolved.push(ResolvedCmd {
                         kind: ResolvedKind::Rect(RectInstance {
                             position: [tx, ty],
                             size: [rect.width, rect.height],
@@ -111,7 +124,7 @@ impl Renderer {
                             border_radius: 0.0,
                             border_width: 0.0,
                             border_color: [0.0; 4],
-                            clip_rect: clip_to_array(clip_stack.last()),
+                            clip_rect: clip_to_array(self.clip_stack.last()),
                         }),
                     });
                 }
@@ -122,8 +135,8 @@ impl Renderer {
                     color,
                 } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
-                    let _idx = text_requests.len();
-                    text_requests.push(TextDrawRequest {
+                    let _idx = self.text_requests.len();
+                    self.text_requests.push(TextDrawRequest {
                         x: tx,
                         y: ty,
                         text: text.clone(),
@@ -132,7 +145,7 @@ impl Renderer {
                         bounds_width: width as f32 - tx,
                         bounds_height: height as f32 - ty,
                     });
-                    resolved.push(ResolvedCmd {
+                    self.resolved.push(ResolvedCmd {
                         kind: ResolvedKind::TextIndex(()),
                     });
                 }
@@ -144,7 +157,7 @@ impl Renderer {
                 }
                 DrawCommand::DrawImage { rect, texture_id } => {
                     let (tx, ty) = current_transform.transform_point(rect.x, rect.y);
-                    resolved.push(ResolvedCmd {
+                    self.resolved.push(ResolvedCmd {
                         kind: ResolvedKind::Image {
                             texture_id: *texture_id,
                             instance: ImageInstance {
@@ -152,7 +165,7 @@ impl Renderer {
                                 size: [rect.width, rect.height],
                                 uv_offset: [0.0, 0.0],
                                 uv_scale: [1.0, 1.0],
-                                clip_rect: clip_to_array(clip_stack.last()),
+                                clip_rect: clip_to_array(self.clip_stack.last()),
                             },
                         },
                     });
@@ -161,14 +174,14 @@ impl Renderer {
         }
 
         // Prepare text
-        if !text_requests.is_empty() {
+        if !self.text_requests.is_empty() {
             self.text_pipeline
-                .prepare(device, queue, width, height, &text_requests);
+                .prepare(device, queue, width, height, &self.text_requests);
         }
 
         // Batch rects
         self.rect_pipeline.clear();
-        for rc in &resolved {
+        for rc in &self.resolved {
             if let ResolvedKind::Rect(inst) = &rc.kind {
                 self.rect_pipeline.push(*inst);
             }
@@ -201,13 +214,13 @@ impl Renderer {
             self.rect_pipeline
                 .flush(device, queue, &mut pass, width, height);
 
-            // Render text (glyphon handles its own bounds clipping)
-            if !text_requests.is_empty() {
+            // Render text
+            if !self.text_requests.is_empty() {
                 self.text_pipeline.render(&mut pass);
             }
 
             // Render images (AA clipping is handled per-instance in the shader)
-            for rc in &resolved {
+            for rc in &self.resolved {
                 if let ResolvedKind::Image {
                     texture_id,
                     instance,

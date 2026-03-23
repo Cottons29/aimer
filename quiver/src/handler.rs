@@ -1,13 +1,25 @@
 pub mod event_handler;
 mod user_events;
 
+#[cfg(target_os = "android")]
+use crate::aimer_app::ANDROID_APP;
+#[cfg(target_os = "android")]
+use crate::ffi_utils::android_screen;
 #[allow(unused)]
 use crate::handler;
+use crate::handler::event_handler::WindowEventHandler;
+use crate::handler::user_events::handle_user_event;
+use crate::render_ctx::AimerRenderContext;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
+use events::window::get_window;
+use inspector::InspectorOverlay;
+#[cfg(not(target_arch = "wasm32"))]
+use inspector::InspectorServer;
 use std::cell::Cell;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
+use utils::debug;
 use widget::base::BuildContext;
 use widget::{Element, Widget};
 use winit::application::ApplicationHandler;
@@ -19,15 +31,6 @@ use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
 #[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
-
-
-use crate::render_ctx::AimerRenderContext;
-use inspector::InspectorOverlay;
-#[cfg(not(target_arch = "wasm32"))]
-use inspector::InspectorServer;
-use utils::debug;
-use crate::handler::event_handler::WindowEventHandler;
-use crate::handler::user_events::handle_user_event;
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) type Float = f64;
@@ -66,6 +69,7 @@ pub struct AimerApplicationHandler {
     pub window_scale: f64,
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
+    pub start_up_frames: Cell<u8>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
@@ -82,6 +86,13 @@ pub struct AimerApplicationHandler {
 
 impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicationHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "android")]
+        {
+            use winit::event_loop::ControlFlow;
+            event_loop.set_control_flow(ControlFlow::Poll);
+            debug!("Set ControlFlow::Poll for Android");
+        }
+
         #[cfg(target_os = "ios")]
         {
             match crate::ios_screen::get_screen_resolution_pixels() {
@@ -93,7 +104,11 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
         }
 
         let window_attributes = {
-            #[cfg(not(target_os = "ios"))]
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                WindowAttributes::default()
+            }
+            #[cfg(target_os = "android")]
             {
                 WindowAttributes::default()
             }
@@ -117,18 +132,32 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
             self.window = Some(window);
         }
 
-
-
-
         let window = self.window.unwrap();
-        let size = window.inner_size();
+        #[allow(unused_mut)]
+        let mut size = window.inner_size();
 
-        debug!("Window Size : {size:?}");
+        #[cfg(target_os = "android")]
+        {
+            if let Some(android_app) = crate::aimer_app::ANDROID_APP.get() {
+                if let Some(native_window) = android_app.native_window() {
+                    let width = native_window.width() as u32;
+                    let height = native_window.height() as u32;
+                    size = winit::dpi::PhysicalSize::new(width, height);
+                }
+            }
+        }
 
+        debug!("Magical Window Size : {:?}", window.outer_size());
+        debug!("Physical Window Size : {size:?}");
 
         self.render_ctx.initialize(window, size);
 
         self.window_scale = window.scale_factor();
+
+        // On Android the surface may be (re-)created with the correct size now.
+        // Schedule a resize so the GPU surface matches the actual window dimensions.
+        self.pending_resize = Some(size);
+        window.request_redraw();
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: crate::aimer_app::AimerCustomAppEvent) {
@@ -140,20 +169,28 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
         WindowEventHandler::handle_events(self, event_loop, _id, event);
     }
 
-    #[cfg(debug_assertions)]
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        let current = self.inspector.is_enabled();
-        let prev = self.inspector_prev_enabled.get();
-        if current != prev {
-            self.inspector_prev_enabled.set(current);
-            self.inspector_change.set(true);
-            self.inspector_redraw_frames.set(5);
+        if self.start_up_frames.get() > 0 {
+            let Some(window) = self.window.as_ref() else { return };
+            window.request_redraw();
+            self.start_up_frames.set(self.start_up_frames.get() - 1);
+            debug!("About to wait, {} frames left", self.start_up_frames.get());
         }
-        let frames = self.inspector_redraw_frames.get();
-        if frames > 0 {
-            self.inspector_redraw_frames.set(frames - 1);
-            if let Some(window) = &self.window {
-                window.request_redraw();
+        #[cfg(debug_assertions)]
+        {
+            let current = self.inspector.is_enabled();
+            let prev = self.inspector_prev_enabled.get();
+            if current != prev {
+                self.inspector_prev_enabled.set(current);
+                self.inspector_change.set(true);
+                self.inspector_redraw_frames.set(5);
+            }
+            let frames = self.inspector_redraw_frames.get();
+            if frames > 0 {
+                self.inspector_redraw_frames.set(frames - 1);
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
             }
         }
     }
@@ -223,6 +260,16 @@ impl AimerApplicationHandler {
 
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "android")]
+        {
+            if let Some(android_app) = crate::aimer_app::ANDROID_APP.get() {
+                let Some(native_window) = android_app.native_window() else {
+                    debug!("Android native window is not ready yet");
+                    return;
+                };
+            }
+        }
+
         #[cfg(debug_assertions)]
         {
             let current = self.inspector.is_enabled();
@@ -254,6 +301,7 @@ impl AimerApplicationHandler {
         let Some(window) = self.window else { return };
         let window_scale = self.window_scale;
         let cursor_pos = self.cursor_pos;
+
         #[cfg(not(target_arch = "wasm32"))]
         let async_handle = self.async_runtime.handle().clone();
         let widget_root = &mut self.widget_root;

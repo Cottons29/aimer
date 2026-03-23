@@ -12,6 +12,7 @@ use widget::{Drawable, Element, LayoutCache};
 use winit::window::Window;
 use color::prelude::ColorMixer;
 use canvas::CanvasRendering;
+use utils::debug;
 
 #[cfg(not(target_arch = "wasm32"))]
 type Float = f32;
@@ -33,7 +34,7 @@ pub struct GestureDetectorElement<'a, E: Element> {
     pub(crate) child: E,
     pub(crate) cache: LayoutCache,
     /// Cached absolute bounding rect (abs_x, abs_y, width, height), updated during draw.
-    pub(crate) cached_bounds: UnsafeCell<Option<(f64, f64, f64, f64)>>,
+    pub(crate) cached_bounds: UnsafeCell<Option<(Float, Float, Float, Float)>>,
     pub(crate) window: &'a Window,
 }
 
@@ -71,7 +72,9 @@ impl<'a,E: Element> GestureDetectorElement<'a, E> {
 
     /// Feed a pointer event into the button. Returns `true` if the event was consumed.
     pub fn handle_pointer_event(&self, event: &PointerEvent) {
+        // debug!("GestureDetectorElement::handle_pointer_event: {:?}", event);
         if self.is_disabled {
+            debug!("GestureDetectorElement::handle_pointer_event: disabled");
             return;
         }
 
@@ -154,12 +157,15 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
     }
 
     fn on_event(&self, event: &ElementEvent) -> bool {
+        debug!("GestureDetectorElement::on_event: {:?}", event);
 
         if self.is_disabled {
+            debug!("GestureDetectorElement::on_event: disabled");
             return false;
         }
 
         if matches!(event, ElementEvent::Cancel) {
+            debug!("GestureDetectorElement::on_event: cancel");
             self.handle_pointer_event(&PointerEvent::Cancel);
             unsafe {
                 *self.is_hovered.get() = false;
@@ -171,13 +177,16 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
             ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) => p,
             _ => return false,
         };
+        debug!("Step 1");
 
         let mut is_inside = false;
         unsafe {
             if let Some((x, y, w, h)) = *self.cached_bounds.get() {
-                is_inside = pos.x as f64 >= x && pos.x as f64 <= x + w && pos.y as f64 >= y && pos.y as f64 <= y + h;
+                debug!("GestureDetectorElement::on_event: cached_bounds: {:?}, pos: {:?}", (x, y, w, h), pos);
+                is_inside = pos.x as Float >= x && pos.x as Float <= x + w && pos.y as Float >= y && pos.y as Float <= y + h;
             }
         }
+        debug!("Step 2");
 
         let is_pressed = unsafe { *self.is_pressed.get() };
 
@@ -191,19 +200,25 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
             }
             return false;
         }
+        debug!("Step 3");
 
         if matches!(event, ElementEvent::PointerMove(_)) && is_inside == unsafe { *self.is_hovered.get() } {
             return true;
         }
 
+        debug!("Step 4");
+
         unsafe {
             let current_hovered = *self.is_hovered.get();
+            debug!("GestureDetectorElement::on_event: is_inside: {}, current_hovered: {}", is_inside, current_hovered);
             if current_hovered != is_inside {
                 *self.is_hovered.get() = is_inside;
                 *self.is_dirty.get() = true;
                 self.window.request_redraw();
             }
         }
+
+        debug!("Step 5");
 
         let pointer_event = match event {
             ElementEvent::PointerDown(pos) => PointerEvent::Down(PointerPosition { x: pos.x, y: pos.y }),
@@ -212,6 +227,8 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
             ElementEvent::Cancel => PointerEvent::Cancel,
             _ => return false,
         };
+
+        debug!("Step 6");
 
         self.handle_pointer_event(&pointer_event);
 
@@ -246,7 +263,9 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
         let height = height.max(0.0);
         let (ol, ot, or, ob) = style.outline.strokes(width, height, scale);
 
-        ResolvedSize { width: width + ol + or, height: height + ot + ob }
+        let size = ResolvedSize { width: width + ol + or, height: height + ot + ob };
+        debug!("GestureDetectorElement::computed_size: size: {:?}", size);
+        size
     }
 
     fn debug_name(&self) -> &'static str {
@@ -268,8 +287,12 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
 
         // Cache absolute bounds for hit-testing
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
+        let cache_x = abs_x as Float / ctx.scale as Float * 0.99;
+        let cache_y = abs_y as Float / ctx.scale as Float * 0.99;
+        let cache_w = box_width as Float / ctx.scale as Float * 0.99;
+        let cache_h = box_height as Float / ctx.scale as Float * 0.99;
         unsafe {
-            *self.cached_bounds.get() = Some((abs_x, abs_y, box_width as f64, box_height as f64));
+            *self.cached_bounds.get() = Some((cache_x, cache_y, cache_w, cache_h));
         }
 
         // Draw background
@@ -290,6 +313,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         if self.is_disabled {
             ctx.canvas.restore_alpha();
         }
+
 
         // Draw border and outline
         let border_ctx = BuildContext {

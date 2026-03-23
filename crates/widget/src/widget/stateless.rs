@@ -83,19 +83,18 @@ impl Drawable for StatelessElement {
 }
 
 impl Element for StatelessElement {
+    fn pos(&self) -> Option<Vec2d> {
+        self.child.pos()
+    }
 
+    fn size(&self) -> Option<Size> {
+        self.child.size()
+    }
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         if self.bounds.get().is_some() {
             return self.bounds.get();
         }
         self.child.pos_start_end()
-    }
-
-    fn pos(&self) -> Option<Vec2d> {
-        self.child.pos()
-    }
-    fn size(&self) -> Option<Size> {
-        self.child.size()
     }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());

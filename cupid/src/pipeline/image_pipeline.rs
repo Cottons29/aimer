@@ -1,6 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
+use wgpu::Backends;
 
 use crate::utilities::TextureId;
 
@@ -117,7 +118,7 @@ impl ImagePipeline {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("image pipeline layout"),
-            bind_group_layouts: &[&viewport_layout, &texture_bind_group_layout],
+            bind_group_layouts: &[Some(&viewport_layout), Some(&texture_bind_group_layout)],
             immediate_size: 0,
         });
 
