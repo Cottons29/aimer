@@ -54,7 +54,48 @@ impl Drawable for RawBoxBorder {
             return;
         }
 
-        // Per-side borders: draw each side as a filled rectangle
+        // Per-side borders with per-corner radii using the new per-side API.
+        // When all colors are the same we can use a single stroke_rect_per_side call.
+        if is_uniform_color && self.left.style != BorderStyle::None {
+            // border_radius: [top-left, top-right, bottom-right, bottom-left]
+            // For the radius we map: top→top-left & top-right, bottom→bottom-left & bottom-right,
+            // left→top-left & bottom-left, right→top-right & bottom-right.
+            // The data model stores radius per side, so we derive corner radii from adjacent sides.
+            let tl_radius = left_radius.min(top_radius);
+            let tr_radius = right_radius.min(top_radius);
+            let br_radius = right_radius.min(bottom_radius);
+            let bl_radius = left_radius.min(bottom_radius);
+
+            let border_radius = [
+                tl_radius as f32,
+                tr_radius as f32,
+                br_radius as f32,
+                bl_radius as f32,
+            ];
+            let border_width = [
+                top_stroke as f32,
+                right_stroke as f32,
+                bottom_stroke as f32,
+                left_stroke as f32,
+            ];
+
+            let (x, y, w, h) = if is_outline {
+                (0.0, 0.0, box_width, box_height)
+            } else {
+                (0.0, 0.0, box_width, box_height)
+            };
+
+            canvas.stroke_rect_per_side(
+                (x, y).into(),
+                ResolvedSize { width: w, height: h },
+                self.left.color,
+                border_width,
+                border_radius,
+            );
+            return;
+        }
+
+        // Fallback: draw each side as a filled rectangle
         // Top border
         if self.top.style != BorderStyle::None && top_stroke > 0.0 {
             let (x, y, w, h) = if is_outline {
