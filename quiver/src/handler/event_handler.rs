@@ -50,40 +50,42 @@ impl WindowEventHandler {
     }
 
     fn handle_touch(item: Touch, app: &mut AimerApplicationHandler, _id: WindowId, _event: WindowEvent) {
-        {
-            let pos =
-                Vec2d { x: item.location.x as crate::handler::Float, y: item.location.y as crate::handler::Float };
-            // info!("Touch: {:?}", pos);
-            let event = match item.phase {
-                winit::event::TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
-                winit::event::TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
-                winit::event::TouchPhase::Ended => Some(ElementEvent::PointerUp(pos)),
-                winit::event::TouchPhase::Cancelled => Some(ElementEvent::Cancel),
-            };
-            #[allow(clippy::collapsible_if)]
-            if let Some(event) = event {
-                if let Some(root) = &app.widget_root {
-                    let mut handled = dispatch_event(root.as_ref(), pos, &event);
-                    #[cfg(debug_assertions)]
-                    if app.inspector.is_enabled() {
-                        handled = true;
+        let scale = app.window_scale as crate::handler::Float;
+        let pos = Vec2d {
+            x: item.location.x as crate::handler::Float / scale,
+            y: item.location.y as crate::handler::Float / scale,
+        };
+        // info!("Touch: {:?}", pos);
+        let event = match item.phase {
+            winit::event::TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
+            winit::event::TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
+            winit::event::TouchPhase::Ended => Some(ElementEvent::PointerUp(pos)),
+            winit::event::TouchPhase::Cancelled => Some(ElementEvent::Cancel),
+        };
+        #[allow(clippy::collapsible_if)]
+        if let Some(event) = event {
+            if let Some(root) = &app.widget_root {
+                let mut handled = dispatch_event(root.as_ref(), pos, &event);
+                #[cfg(debug_assertions)]
+                if app.inspector.is_enabled() {
+                    handled = true;
+                }
+                if !handled {
+                    if matches!(&event, ElementEvent::PointerDown(_)) {
+                        broadcast_event(root.as_ref(), &event);
                     }
-                    if !handled {
-                        if matches!(&event, ElementEvent::PointerDown(_)) {
-                            broadcast_event(root.as_ref(), &event);
-                        }
-                    }
-                    if let Some(window) = &app.window {
-                        window.request_redraw();
-                    }
+                }
+                if let Some(window) = &app.window {
+                    window.request_redraw();
                 }
             }
         }
     }
 
     fn handle_cursor_move(position: PhysicalPosition<f64>, app: &mut AimerApplicationHandler) {
-        let new_pos = Vec2d { x: position.x as crate::handler::Float, y: position.y as crate::handler::Float };
-        // Skip dispatch if the cursor barely moved (less than 1 logical pixel).
+        let scale = app.window_scale as crate::handler::Float;
+        let new_pos =
+            Vec2d { x: position.x as crate::handler::Float / scale, y: position.y as crate::handler::Float / scale };
         let dx = (new_pos.x - app.cursor_pos.x).abs();
         let dy = (new_pos.y - app.cursor_pos.y).abs();
         if dx < 1.0 && dy < 1.0 {
@@ -148,11 +150,9 @@ impl WindowEventHandler {
 
         let modifiers = app.current_modifiers.clone();
 
-        // When Ctrl (or Meta on macOS) is held, map letter keys to named shortcuts
-        // so they reach the text field as KeyInput instead of being filtered out.
         if modifiers.ctrl || modifiers.meta {
-            use winit::keyboard::PhysicalKey;
             use winit::keyboard::KeyCode;
+            use winit::keyboard::PhysicalKey;
             let named = match event.physical_key {
                 PhysicalKey::Code(KeyCode::KeyA) => Some(NamedKey::Other("a".into())),
                 PhysicalKey::Code(KeyCode::KeyC) => Some(NamedKey::Other("c".into())),
@@ -180,7 +180,11 @@ impl WindowEventHandler {
 
         if let Key::Character(ref ch) = event.logical_key {
             if !ch.is_empty() && ch.chars().all(|c| !c.is_control()) {
-                let ev = ElementEvent::CharInput { ch: ch.parse().unwrap(), action: action.clone(), modifiers: modifiers.clone() };
+                let ev = ElementEvent::CharInput {
+                    ch: ch.parse().unwrap(),
+                    action: action.clone(),
+                    modifiers: modifiers.clone(),
+                };
                 if let Some(root) = &app.widget_root {
                     let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                     #[cfg(debug_assertions)]
@@ -291,9 +295,28 @@ impl WindowEventHandler {
                 }
             }
         };
+
+        #[cfg(target_os = "android")]
+        let size = {
+            if let Some(android_app) = crate::aimer_app::ANDROID_APP.get() {
+                if let Some(window) = android_app.native_window() {
+                    let width = window.width() as u32;
+                    let height = window.height() as u32;
+                    winit::dpi::PhysicalSize::new(width, height)
+                } else {
+                    size
+                }
+            } else {
+                size
+            }
+        };
+
         debug!("Window resized to {:?}", size);
 
         app.pending_resize = Some(size);
+        if let Some(root) = &app.widget_root {
+            root.invalidate_layout();
+        }
         if let Some(window) = &app.window {
             window.request_redraw();
         }
