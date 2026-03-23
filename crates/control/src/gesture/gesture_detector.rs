@@ -1,18 +1,19 @@
-use crate::gesture::button::ButtonStyle;
 use crate::gesture::GestureActions;
+use crate::gesture::button::ButtonStyle;
+use attribute::{Bounds, CacheBounds};
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
+use canvas::CanvasRendering;
+use color::prelude::ColorMixer;
 use events::element::ElementEvent;
 use events::pointer::{PointerEvent, PointerPosition};
 use std::cell::UnsafeCell;
+use utils::debug;
 use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
 use widget::{Drawable, Element, LayoutCache};
 use winit::window::Window;
-use color::prelude::ColorMixer;
-use canvas::CanvasRendering;
-use utils::debug;
 
 #[cfg(not(target_arch = "wasm32"))]
 type Float = f32;
@@ -34,13 +35,11 @@ pub struct GestureDetectorElement<'a, E: Element> {
     pub(crate) child: E,
     pub(crate) cache: LayoutCache,
     /// Cached absolute bounding rect (abs_x, abs_y, width, height), updated during draw.
-    pub(crate) cached_bounds: UnsafeCell<Option<(Float, Float, Float, Float)>>,
+    pub(crate) cached_bounds: CacheBounds,
     pub(crate) window: &'a Window,
 }
 
-impl<'a,E: Element> GestureDetectorElement<'a, E> {
-
-
+impl<'a, E: Element> GestureDetectorElement<'a, E> {
     /// Recursively render a child element and its descendants.
     fn render_child(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
@@ -74,7 +73,7 @@ impl<'a,E: Element> GestureDetectorElement<'a, E> {
     pub fn handle_pointer_event(&self, event: &PointerEvent) {
         // debug!("GestureDetectorElement::handle_pointer_event: {:?}", event);
         if self.is_disabled {
-            debug!("GestureDetectorElement::handle_pointer_event: disabled");
+            // debug!("GestureDetectorElement::handle_pointer_event: disabled");
             return;
         }
 
@@ -129,7 +128,6 @@ impl<'a,E: Element> GestureDetectorElement<'a, E> {
     }
 
     fn compute_dimensions(&self, ctx: &BuildContext) -> (Float, Float) {
-
         let base_style = &self.style;
 
         let box_width = match base_style.width {
@@ -145,7 +143,6 @@ impl<'a,E: Element> GestureDetectorElement<'a, E> {
         };
 
         (box_width.max(0.0), box_height.max(0.0))
-
     }
 }
 
@@ -157,15 +154,16 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
     }
 
     fn on_event(&self, event: &ElementEvent) -> bool {
-        debug!("GestureDetectorElement::on_event: {:?}", event);
+        // debug!("GestureDetectorElement::on_event: {:?}", event);
+        // debug!("GestureDetectorElement::caches_bound: {:?}", self.cached_bounds);
 
         if self.is_disabled {
-            debug!("GestureDetectorElement::on_event: disabled");
+            // debug!("GestureDetectorElement::on_event: disabled");
             return false;
         }
 
         if matches!(event, ElementEvent::Cancel) {
-            debug!("GestureDetectorElement::on_event: cancel");
+            // debug!("GestureDetectorElement::on_event: cancel");
             self.handle_pointer_event(&PointerEvent::Cancel);
             unsafe {
                 *self.is_hovered.get() = false;
@@ -177,16 +175,9 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
             ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) => p,
             _ => return false,
         };
-        debug!("Step 1");
+        // debug!("Step 1");
 
-        let mut is_inside = false;
-        unsafe {
-            if let Some((x, y, w, h)) = *self.cached_bounds.get() {
-                debug!("GestureDetectorElement::on_event: cached_bounds: {:?}, pos: {:?}", (x, y, w, h), pos);
-                is_inside = pos.x as Float >= x && pos.x as Float <= x + w && pos.y as Float >= y && pos.y as Float <= y + h;
-            }
-        }
-        debug!("Step 2");
+        let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
         let is_pressed = unsafe { *self.is_pressed.get() };
 
@@ -200,13 +191,13 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
             }
             return false;
         }
-        debug!("Step 3");
+        // debug!("Step 3");
 
         if matches!(event, ElementEvent::PointerMove(_)) && is_inside == unsafe { *self.is_hovered.get() } {
             return true;
         }
 
-        debug!("Step 4");
+        // debug!("Step 4");
 
         unsafe {
             let current_hovered = *self.is_hovered.get();
@@ -218,7 +209,7 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
             }
         }
 
-        debug!("Step 5");
+        // debug!("Step 5");
 
         let pointer_event = match event {
             ElementEvent::PointerDown(pos) => PointerEvent::Down(PointerPosition { x: pos.x, y: pos.y }),
@@ -228,7 +219,7 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
             _ => return false,
         };
 
-        debug!("Step 6");
+        // debug!("Step 6");
 
         self.handle_pointer_event(&pointer_event);
 
@@ -291,13 +282,14 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         let cache_y = abs_y as Float / ctx.scale as Float * 0.99;
         let cache_w = box_width as Float / ctx.scale as Float * 0.99;
         let cache_h = box_height as Float / ctx.scale as Float * 0.99;
-        unsafe {
-            *self.cached_bounds.get() = Some((cache_x, cache_y, cache_w, cache_h));
-        }
+        self.cached_bounds.set_bounds(Bounds::new(cache_x, cache_y, cache_w, cache_h));
 
         // Draw background
         let bg_color: Color = style.color.into();
-        let radius = style.border.get_uniform_radius(box_width, box_height, ctx.scale).unwrap_or(0.0);
+        let radius = style
+            .border
+            .get_uniform_radius(box_width, box_height, ctx.scale)
+            .unwrap_or(0.0);
 
         if self.is_disabled {
             ctx.canvas.set_alpha(0.5);
@@ -313,7 +305,6 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         if self.is_disabled {
             ctx.canvas.restore_alpha();
         }
-
 
         // Draw border and outline
         let border_ctx = BuildContext {
