@@ -76,3 +76,17 @@ impl Dimension {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CacheBounds {
+    pub left: Float,
+    pub top: Float,
+    pub width: Float,
+    pub height: Float,
+}
+
+impl CacheBounds {
+    pub fn new(left: Float, top: Float, width: Float, height: Float) -> Self {
+        Self { left, top, width, height }
+    }
+}

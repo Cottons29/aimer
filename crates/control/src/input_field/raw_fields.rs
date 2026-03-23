@@ -13,7 +13,7 @@ use std::pin::Pin;
 use std::rc::Rc;
 
 /// Write text to the system clipboard.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 fn clipboard_write(text: &str) {
     if let Ok(mut cb) = arboard::Clipboard::new() {
         cb.set_text(text).ok();
@@ -21,9 +21,20 @@ fn clipboard_write(text: &str) {
 }
 
 /// Read text from the system clipboard.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 fn clipboard_read() -> Option<String> {
-    arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok())
+    arboard::Clipboard::new()
+        .ok()
+        .and_then(|mut cb| cb.get_text().ok())
+}
+
+/// Clipboard stub for Android (not yet supported).
+#[cfg(target_os = "android")]
+fn clipboard_write(_text: &str) {}
+
+#[cfg(target_os = "android")]
+fn clipboard_read() -> Option<String> {
+    None
 }
 
 /// Write text to the browser clipboard (fire-and-forget).
@@ -165,19 +176,16 @@ where
 
 impl std::fmt::Debug for TextFieldCallback {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.0.is_some() {
-            write!(f, "TextFieldCallback(Some(...))")
-        } else {
-            write!(f, "TextFieldCallback(None)")
-        }
+        if self.0.is_some() { write!(f, "TextFieldCallback(Some(...))") } else { write!(f, "TextFieldCallback(None)") }
     }
 }
 
 use canvas::CanvasRendering;
+use utils::debug;
 
 #[cfg(target_os = "ios")]
 mod ios_keyboard {
-    use std::ffi::{c_char, c_void, CStr};
+    use std::ffi::{CStr, c_char, c_void};
     use std::sync::OnceLock;
 
     const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
@@ -194,11 +202,7 @@ mod ios_keyboard {
     fn lookup(name: &CStr) -> Option<VoidFn> {
         unsafe {
             let ptr = dlsym(RTLD_DEFAULT, name.as_ptr());
-            if ptr.is_null() {
-                None
-            } else {
-                Some(std::mem::transmute::<*mut c_void, VoidFn>(ptr))
-            }
+            if ptr.is_null() { None } else { Some(std::mem::transmute::<*mut c_void, VoidFn>(ptr)) }
         }
     }
 
@@ -236,7 +240,6 @@ mod android_keyboard {
 type Float = f32;
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputType {
@@ -337,11 +340,7 @@ impl Cursor {
     pub fn selection_range(&self) -> Option<(usize, usize)> {
         self.selection_anchor().map(|anchor| {
             let offset = self.offset();
-            if anchor <= offset {
-                (anchor, offset)
-            } else {
-                (offset, anchor)
-            }
+            if anchor <= offset { (anchor, offset) } else { (offset, anchor) }
         })
     }
 
@@ -410,15 +409,15 @@ pub(crate) struct RawTextField {
     pub disabled_style: Option<TextFieldStyle>,
     pub focused: UnsafeCell<bool>,
     pub hovered: UnsafeCell<bool>,
-    pub cached_bounds: UnsafeCell<Option<(f64, f64, f64, f64)>>,
+    pub cached_bounds: UnsafeCell<Option<(Float, Float, Float, Float)>>,
     pub on_changed: TextFieldCallback,
     pub on_submitted: TextFieldCallback,
 }
 
 impl RawTextField {
-    fn scaled_font_size(&self, style: &TextStyle, scale: Float) -> f32 {
-        let fs = if style.font_size == 0 { 14.0 } else { style.font_size as f32 };
-        fs * scale as f32
+    fn scaled_font_size(&self, style: &TextStyle, scale: Float) -> Float {
+        let fs = if style.font_size == 0 { 14.0 } else { style.font_size as Float };
+        fs * scale as Float
     }
 
     fn is_focused(&self) -> bool {
@@ -488,8 +487,8 @@ impl RawTextField {
 /// pipeline (`WindowEvent::KeyboardInput`) still fires.
 #[cfg(target_arch = "wasm32")]
 fn wasm_request_keyboard(show: bool) {
-    use wasm_bindgen::prelude::*;
     use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::*;
     let Some(window) = web_sys::window() else { return };
     let Some(document) = window.document() else { return };
 
@@ -546,7 +545,8 @@ fn wasm_request_keyboard(show: bool) {
                     .unwrap();
                     canvas.dispatch_event(&new_evt).ok();
                 });
-                el.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref()).ok();
+                el.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref())
+                    .ok();
                 cb.forget();
             }
 
@@ -576,7 +576,8 @@ fn wasm_request_keyboard(show: bool) {
                     .unwrap();
                     canvas.dispatch_event(&new_evt).ok();
                 });
-                el.add_event_listener_with_callback("keyup", cb.as_ref().unchecked_ref()).ok();
+                el.add_event_listener_with_callback("keyup", cb.as_ref().unchecked_ref())
+                    .ok();
                 cb.forget();
             }
 
@@ -614,7 +615,8 @@ fn wasm_request_keyboard(show: bool) {
                         el.set_value("");
                     }
                 });
-                el.add_event_listener_with_callback("input", cb.as_ref().unchecked_ref()).ok();
+                el.add_event_listener_with_callback("input", cb.as_ref().unchecked_ref())
+                    .ok();
                 cb.forget();
             }
 
@@ -636,20 +638,19 @@ impl Element for RawTextField {
             return false;
         }
 
-
         // debug!("RawTextField on_event: {:?}", event);
 
         match event {
             ElementEvent::PointerDown(pos) => {
                 let is_inside = unsafe {
                     if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
-                        pos.x as f64 >= left && pos.x as f64 <= right && pos.y as f64 >= top && pos.y as f64 <= bottom
+                        pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom
                     } else {
                         false
                     }
                 };
 
-                if is_inside {
+                return if is_inside {
                     self.set_focused(true);
                     self.cursor.set_offset(self.controller.char_count());
                     self.cursor.reset_blink();
@@ -663,7 +664,7 @@ impl Element for RawTextField {
                     }
                     #[cfg(target_arch = "wasm32")]
                     wasm_request_keyboard(true);
-                    return true;
+                    true
                 } else {
                     self.set_focused(false);
                     #[cfg(target_os = "ios")]
@@ -676,8 +677,8 @@ impl Element for RawTextField {
                     }
                     #[cfg(target_arch = "wasm32")]
                     wasm_request_keyboard(false);
-                    return false;
-                }
+                    false
+                };
             }
             ElementEvent::CharInput { ch, action, modifiers } => {
                 if !self.is_focused() {
@@ -885,7 +886,8 @@ impl Element for RawTextField {
             ElementEvent::PointerMove(pos) => {
                 let is_inside = unsafe {
                     if let Some((left, top, right, bottom)) = *self.cached_bounds.get() {
-                        pos.x as f64 >= left && pos.x as f64 <= right && pos.y as f64 >= top && pos.y as f64 <= bottom
+                        debug!("RawTextfield: caches bound : ({}, {}, {}, {})", left, top, right, bottom);
+                        pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom
                     } else {
                         false
                     }
@@ -930,8 +932,12 @@ impl Drawable for RawTextField {
             let (tx, ty) = ctx.canvas.get_transform_translation();
             (tx as f64, ty as f64)
         };
+        let cache_x = abs_x as Float / ctx.scale * 0.99;
+        let cache_y = abs_y as Float / ctx.scale * 0.99;
+        let cache_w = box_width as Float / ctx.scale * 0.99;
+        let cache_h = box_height as Float / ctx.scale * 0.99;
         unsafe {
-            *self.cached_bounds.get() = Some((abs_x, abs_y, abs_x + box_width as f64, abs_y + box_height as f64));
+            *self.cached_bounds.get() = Some((cache_x, cache_y, cache_w,  cache_h));
         }
 
         // --- Resolve active style ---
@@ -939,7 +945,10 @@ impl Drawable for RawTextField {
 
         // --- Draw background ---
         let bg_color: color::prelude::Color = style.background_color.into();
-        let radius = style.border.get_uniform_radius(box_width, box_height, scale).unwrap_or(0.0);
+        let radius = style
+            .border
+            .get_uniform_radius(box_width, box_height, scale)
+            .unwrap_or(0.0);
         ctx.canvas.fill_color_rect(
             (0.0, 0.0).into(),
             ResolvedSize { width: box_width, height: box_height },
@@ -981,24 +990,16 @@ impl Drawable for RawTextField {
             if !self.prompt.is_empty() {
                 let prompt_fs = self.scaled_font_size(&self.prompt_style, scale);
                 let prompt_color: color::prelude::Color = self.prompt_style.color.into();
-                ctx.canvas.draw_text(
-                    &self.prompt,
-                    (0.0, text_y as Float).into(),
-                    prompt_fs,
-                    prompt_color,
-                );
+                ctx.canvas
+                    .draw_text(&self.prompt, (0.0, text_y as Float).into(), prompt_fs, prompt_color);
             }
 
             // --- Draw hint text (visible when field is empty and no prompt) ---
             if self.prompt.is_empty() && !self.hint.is_empty() {
                 let hint_fs = self.scaled_font_size(&self.hint_style, scale);
                 let hint_color: color::prelude::Color = self.hint_style.color.into();
-                ctx.canvas.draw_text(
-                    &self.hint,
-                    (0.0, text_y as Float).into(),
-                    hint_fs,
-                    hint_color,
-                );
+                ctx.canvas
+                    .draw_text(&self.hint, (0.0, text_y as Float).into(), hint_fs, hint_color);
             }
         } else {
             // --- Draw text ---
@@ -1011,12 +1012,8 @@ impl Drawable for RawTextField {
 
             if !display.is_empty() {
                 let text_color: color::prelude::Color = self.text_style.color.into();
-                ctx.canvas.draw_text(
-                    &display,
-                    (text_x, text_y as Float).into(),
-                    font_size,
-                    text_color,
-                );
+                ctx.canvas
+                    .draw_text(&display, (text_x, text_y as Float).into(), font_size, text_color);
             }
 
             // --- Draw cursor ---

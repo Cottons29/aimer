@@ -1,10 +1,12 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod render_ctx {
+    use wgpu::{TextureViewDescriptor, TextureViewDimension};
     use cupid::canvas::CupidCanvas;
     use cupid::gpu_context::GpuContext;
     use cupid::renderer::Renderer;
     use winit::dpi::PhysicalSize;
     use winit::window::Window;
+    use utils::debug;
 
     pub struct WgpuApi {
         gpu: Option<GpuContext<'static>>,
@@ -23,18 +25,23 @@ pub mod render_ctx {
     }
 
     impl WgpuApi {
-        pub fn initialize(&mut self, window: &Window, size: PhysicalSize<u32>) {
+        pub fn initialize(&mut self, window: &'static Window, size: PhysicalSize<u32>) {
             if self.gpu.is_some() {
+                // On Android, `resumed` is called again when the surface is recreated.
+                // Re-configure the surface with the current size.
+                self.resize(size);
                 return;
             }
 
-            // SAFETY: The window is leaked to 'static in handler.rs (Box::leak),
-            // so this transmute is sound for the GpuContext<'w> lifetime.
-            let window_static: &'static Window = unsafe { std::mem::transmute(window) };
+            // debug!("WgpuApi : Initializing GPU context with size: {} x {}", size.width, size.height);
 
-            let gpu = GpuContext::initialize(window_static, size);
+            #[cfg(target_os = "android")]
+            self.resize(size);
+
+            // let gpu = GpuContext::initialize(window, size);
+            let gpu = GpuContext::initialize(window, (1344, 2833).into());
             let canvas = CupidCanvas::new();
-            let renderer = Renderer::new(&gpu.device, &gpu.queue, gpu.format, canvas.font_system());
+            let renderer = Renderer::new(&gpu.device, gpu.format);
 
             self.gpu = Some(gpu);
             self.renderer = Some(renderer);
@@ -43,6 +50,7 @@ pub mod render_ctx {
 
         pub fn resize(&mut self, size: PhysicalSize<u32>) {
             if let Some(gpu) = &mut self.gpu {
+                // debug!("WgpuApi::resize : Resizing GPU context to size: {} x {}", size.width, size.height);
                 gpu.resize(size);
             }
         }
@@ -50,22 +58,32 @@ pub mod render_ctx {
         /// Create a CupidCanvas, call `draw_fn` with it and dimensions,
         /// then flush the draw list through the renderer and present.
         pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) {
+
             let (gpu, renderer, canvas) = match (&self.gpu, &mut self.renderer, &self.canvas) {
                 (Some(g), Some(r), Some(c)) => (g, r, c),
                 _ => return,
             };
 
+
             let frame = match gpu.begin_frame() {
-                Some(f) => f,
-                None => return,
+                wgpu::CurrentSurfaceTexture::Success(texture)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+                _ => return,
             };
+
 
             let view = frame
                 .texture
                 .create_view(&Default::default());
 
+            let dimension = (frame.texture.width(), frame.texture.height());
+            // debug!("Gpu Context : Rendering frame with dimension: {:?}", dimension);
+
             let width = gpu.width();
             let height = gpu.height();
+
+            // debug!("Gpu Context : Rendering frame with width: {}, height: {}", width, height);
+
 
             canvas.begin_frame();
             draw_fn(canvas, width, height);

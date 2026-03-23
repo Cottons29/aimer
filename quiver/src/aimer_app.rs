@@ -99,8 +99,10 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     EVENT_PROXY.set(event_loop.create_proxy()).ok();
 
+    #[cfg(target_os = "android")]
+    event_loop.set_control_flow(ControlFlow::Poll);
+    #[cfg(not(target_os = "android"))]
     event_loop.set_control_flow(ControlFlow::Wait);
-    // event_loop.set_control_flow(ControlFlow::Poll);
 
     utils::debug!("Creating async runtime...");
     #[cfg(not(target_arch = "wasm32"))]
@@ -132,6 +134,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
         inspector_prev_enabled: Cell::new(false),
         #[cfg(debug_assertions)]
         inspector_redraw_frames: Cell::new(0),
+        start_up_frames: Cell::new(100),
     };
 
     // On iOS, this function never returns.
