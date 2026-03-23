@@ -5,8 +5,10 @@ pub enum DrawCommand {
     FillRect {
         rect: Rect,
         color: Color,
-        border_radius: f32,
-        border_width: f32,
+        /// Per-corner border radius: [top-left, top-right, bottom-right, bottom-left]
+        border_radius: [f32; 4],
+        /// Per-side border width: [top, right, bottom, left]
+        border_width: [f32; 4],
         border_color: Color,
     },
     ClearRect {
@@ -65,7 +67,7 @@ impl DrawList {
         self.commands.push(cmd);
     }
 
-    pub fn fill_rect(&mut self, rect: Rect, color: Color, border_radius: f32, border_width: f32, border_color: Color) {
+    pub fn fill_rect(&mut self, rect: Rect, color: Color, border_radius: [f32; 4], border_width: [f32; 4], border_color: Color) {
         self.commands.push(DrawCommand::FillRect {
             rect,
             color,
