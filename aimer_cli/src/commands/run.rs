@@ -52,28 +52,33 @@ fn fetch_devices() -> Vec<Device> {
                     if let Some(id) = parts.first() {
                         let connection_type = if id.contains('.') && id.contains(':') { "Wireless" } else { "Wired" };
 
+                        let mut device_name = "Android Device".to_string();
+                        // Try to find a better name from 'adb devices -l' output
+                        for part in &parts {
+                            if part.starts_with("model:") {
+                                device_name = part["model:".len()..].replace('_', " ");
+                                break;
+                            }
+                        }
+
                         let pretty_name_cmd = Command::new("adb")
                             .args(["-s", id, "emu", "avd", "name"])
                             .output();
 
                         if let Ok(output) = pretty_name_cmd {
-
-                            let output = String::from_utf8_lossy(&output.stdout);
-                            let name = output.split_whitespace().collect::<Vec<&str>>()[0];
-
-                            // println!("text: {}", name);
-
-                            devices.push(Device {
-                                name: format!("{} ({})", name, connection_type),
-                                target: Targets::Android,
-                                id: id.to_string(),
-                            });
-
-
+                            if output.status.success() {
+                                let output_str = String::from_utf8_lossy(&output.stdout);
+                                if let Some(name) = output_str.split_whitespace().next() {
+                                    device_name = name.to_string();
+                                }
+                            }
                         }
 
-
-
+                        devices.push(Device {
+                            name: format!("{} ({})", device_name, connection_type),
+                            target: Targets::Android,
+                            id: id.to_string(),
+                        });
                     }
                 }
             }

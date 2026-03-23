@@ -17,8 +17,8 @@ struct Cli {
     version: bool,
 }
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const APP_VERSION: &str = "0.1.1";
+// pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const VERSION: &str = "0.1.2";
 
 #[derive(Subcommand)]
 enum Commands {

@@ -1,6 +1,6 @@
-use std::env::current_dir;
 use crate::commands::run::Device;
 use crate::commands::run::console::{RunnerEvent, Status};
+use std::env::current_dir;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -34,7 +34,8 @@ pub fn spawn_android_runner(
 ) {
     let abi_output = match Command::new("adb")
         .args(["-s", &device.id, "shell", "getprop", "ro.product.cpu.abi"])
-        .output(){
+        .output()
+    {
         Ok(output) => output,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to get ABI: {}", e)));
@@ -42,9 +43,11 @@ pub fn spawn_android_runner(
             return;
         }
     };
-    
-    let abi = String::from_utf8_lossy(&abi_output.stdout).trim().to_string();
-    
+
+    let abi = String::from_utf8_lossy(&abi_output.stdout)
+        .trim()
+        .to_string();
+
     let (rust_target, jni_dir_name) = match abi.as_str() {
         "x86_64" => ("x86_64-linux-android", "x86_64"),
         "armeabi-v7a" => ("armv7-linux-androideabi", "armeabi-v7a"),
@@ -63,7 +66,8 @@ pub fn spawn_android_runner(
         .arg("--lib")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn(){
+        .spawn()
+    {
         Ok(status) => status,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run cargo: {}", e)));
@@ -86,8 +90,6 @@ pub fn spawn_android_runner(
             }
         }
     });
-
-
 
     let tx_clone2 = tx.clone();
     thread::spawn(move || {
@@ -130,8 +132,8 @@ pub fn spawn_android_runner(
     }
 
     let current_dir = current_dir().unwrap().join("builds/android");
-    tx.send(RunnerEvent::BuildLog(format!("[Aimer] current_dir: {}", current_dir.display()))).unwrap();
-
+    tx.send(RunnerEvent::BuildLog(format!("[Aimer] current_dir: {}", current_dir.display())))
+        .unwrap();
 
     let lib_name = pkg_name.replace("-", "_");
     let src_lib = format!("target/{}/debug/lib{}.so", rust_target, lib_name);
@@ -147,7 +149,7 @@ pub fn spawn_android_runner(
 
     let gradlew = if cfg!(windows) { "gradlew.bat" } else { "gradlew" };
     let gradlew_path = current_dir.join(gradlew);
-    
+
     let mut cmd = Command::new(&gradlew_path);
     cmd.arg("assembleDebug")
         .current_dir(&current_dir)
@@ -228,7 +230,8 @@ pub fn spawn_android_runner(
         .args(["-s", &device.id, "install", "-r", apk_path])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .status() {
+        .status()
+    {
         Ok(status) => status,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to install: {}", e)));
@@ -270,7 +273,8 @@ pub fn spawn_android_runner(
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn() {
+        .spawn()
+    {
         Ok(status) => status,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run app: {}", e)));
@@ -347,7 +351,7 @@ pub fn spawn_android_runner(
     // Launch logcat to tail logs
     let mut logcat_cmd = Command::new("adb");
     logcat_cmd.args(["-s", &device.id, "logcat", "-v", "time"]);
-    
+
     if !pid.is_empty() {
         logcat_cmd.args(["--pid", &pid]);
     }
@@ -355,7 +359,8 @@ pub fn spawn_android_runner(
     let mut logcat = match logcat_cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn() {
+        .spawn()
+    {
         Ok(status) => status,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run logcat: {}", e)));
@@ -366,15 +371,30 @@ pub fn spawn_android_runner(
 
     let logcat_stdout = logcat.stdout.take().unwrap();
     let logcat_stderr = logcat.stderr.take().unwrap();
-    
+
     *current_child_clone.lock().unwrap() = Some(logcat);
+
+    let parse_log = move |l: String| -> String {
+
+        if l.contains("I/RustStdoutStderr") {
+            if let Some(item) =  l.split_once("): ") {
+                return format!("{}", item.1.replace("       ", " "));
+            }
+        }
+
+        match l.split_once("]") {
+            Some((_, log)) => log.to_string(),
+            None => l,
+        }
+    };
 
     let tx_logcat1 = tx.clone();
     thread::spawn(move || {
         let reader = BufReader::new(logcat_stdout);
         for line in reader.lines() {
             if let Ok(l) = line {
-                let _ = tx_logcat1.send(RunnerEvent::AppLog(l));
+                let log = parse_log(l);
+                let _ = tx_logcat1.send(RunnerEvent::AppLog(log));
             }
         }
     });
@@ -384,7 +404,8 @@ pub fn spawn_android_runner(
         let reader = BufReader::new(logcat_stderr);
         for line in reader.lines() {
             if let Ok(l) = line {
-                let _ = tx_logcat2.send(RunnerEvent::AppLog(l));
+                let log = parse_log(l);
+                let _ = tx_logcat2.send(RunnerEvent::AppLog(log));
             }
         }
     });
