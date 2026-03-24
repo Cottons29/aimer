@@ -12,14 +12,21 @@ struct GlyphInstance {
     size: [f32; 2],
     uv_rect: [f32; 4],
     color: [f32; 4],
+    /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
+    clip_rect: [f32; 4],
+    /// Border radius for the clip rect. 0.0 means rectangular clip.
+    clip_border_radius: f32,
+    _pad: f32,
 }
 
 impl GlyphInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x4,
         3 => Float32x4,
+        4 => Float32x4,
+        5 => Float32,
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
@@ -39,6 +46,8 @@ pub struct TextDrawRequest {
     pub color: [f32; 4],
     pub bounds_width: f32,
     pub bounds_height: f32,
+    pub clip_rect: [f32; 4],
+    pub clip_border_radius: f32,
 }
 
 pub struct TextPipelineV2 {
@@ -230,6 +239,9 @@ impl TextPipelineV2 {
                     size: [pg.width as f32, pg.height as f32],
                     uv_rect: uvs,
                     color: req.color,
+                    clip_rect: req.clip_rect,
+                    clip_border_radius: req.clip_border_radius,
+                    _pad: 0.0,
                 });
             }
         }
