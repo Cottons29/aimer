@@ -169,7 +169,7 @@ impl<E: Element> RawScrollableContainer<E> {
 
         // Position the scrollbar at the edge of the viewport
         if is_vertical {
-            ctx.canvas.translate(Vec2d { x: (viewport_w - track_width).round(), y: 0.0 });
+                ctx.canvas.translate(Vec2d { x: (viewport_w - track_width).round(), y: 0.0 });
         } else {
             ctx.canvas.translate(Vec2d { x: 0.0, y: (viewport_h - track_width).round() });
         }
@@ -387,7 +387,12 @@ impl<E: Element> RawScrollableContainer<E> {
 
 impl<E: Element> Drawable for RawScrollableContainer<E> {
     fn draw(&self, ctx: &BuildContext) {
-        let (viewport_w, viewport_h) = self.viewport_size(ctx);
+        let (raw_viewport_w, raw_viewport_h) = self.viewport_size(ctx);
+        // Cap viewport size to avoid precision issues with Float::MAX in shaders/transforms
+        let max_dim = 1e7 as FLOAT;
+        let viewport_w = raw_viewport_w.min(max_dim);
+        let viewport_h = raw_viewport_h.min(max_dim);
+
         let content_size = self.content_size(ctx);
         let max_x = (content_size.width - viewport_w).max(0.0);
         let max_y = (content_size.height - viewport_h).max(0.0);
