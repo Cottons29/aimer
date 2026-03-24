@@ -104,6 +104,11 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
+    fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: f32) {
+        CupidCanvas::set_clip_rounded(self, pos.x, pos.y, size.width, size.height, border_radius);
+    }
+
+    #[inline]
     fn clear_clip(&self) {
         CupidCanvas::clear_clip(self);
     }
@@ -146,6 +151,54 @@ impl CanvasRendering for CupidCanvas {
             CupidColor::from(stroke_color),
             stroke_width,
             border_radius,
+        );
+    }
+
+    #[inline]
+    fn fill_rect_with_border_and_outline(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: f32,
+        border_width: f32,
+        border_color: Color,
+        outline_width: f32,
+        outline_color: Color,
+    ) {
+        CupidCanvas::fill_rect_with_border_and_outline(
+            self,
+            pos.x, pos.y, size.width, size.height,
+            CupidColor::from(color),
+            border_radius,
+            border_width,
+            CupidColor::from(border_color),
+            outline_width,
+            CupidColor::from(outline_color),
+        );
+    }
+
+    #[inline]
+    fn fill_rect_with_border_and_outline_per_side(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
+        border_color: Color,
+        outline_width: [f32; 4],
+        outline_color: Color,
+    ) {
+        CupidCanvas::fill_rect_with_border_and_outline_per_side(
+            self,
+            pos.x, pos.y, size.width, size.height,
+            CupidColor::from(color),
+            border_radius,
+            border_width,
+            CupidColor::from(border_color),
+            outline_width,
+            CupidColor::from(outline_color),
         );
     }
 
