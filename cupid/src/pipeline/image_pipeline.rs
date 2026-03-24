@@ -14,15 +14,18 @@ pub struct ImageInstance {
     pub uv_scale: [f32; 2],
     /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
     pub clip_rect: [f32; 4],
+    /// Border radius for the clip rect. 0.0 means rectangular clip.
+    pub clip_border_radius: f32,
 }
 
 impl ImageInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x2,
         3 => Float32x2,
         4 => Float32x4,
+        5 => Float32,
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
