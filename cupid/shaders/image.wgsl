@@ -11,6 +11,7 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) pixel_pos: vec2<f32>,
     @location(2) clip_rect: vec4<f32>,
+    @location(3) clip_border_radius: f32,
 };
 
 struct ImageInstance {
@@ -19,6 +20,7 @@ struct ImageInstance {
     @location(2) uv_offset: vec2<f32>,
     @location(3) uv_scale: vec2<f32>,
     @location(4) clip_rect: vec4<f32>,
+    @location(5) clip_border_radius: f32,
 };
 
 @vertex
@@ -45,15 +47,51 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: ImageInstance) -> VertexOutput 
     out.uv = inst.uv_offset + corner * inst.uv_scale;
     out.pixel_pos = pixel_pos;
     out.clip_rect = inst.clip_rect;
+    out.clip_border_radius = inst.clip_border_radius;
     return out;
 }
 
 /// Compute anti-aliased clip alpha from a clip rect in pixel coordinates.
 /// clip_rect = (x, y, width, height). If width <= 0, clipping is disabled (returns 1.0).
-fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>) -> f32 {
-    if clip_rect.z <= 0.0 {
+/// SDF for a rounded rectangle with per-corner radii.
+fn sdf_rounded_rect(p: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>) -> f32 {
+    var r: f32;
+    if p.x < 0.0 {
+        if p.y < 0.0 {
+            r = radii.x;
+        } else {
+            r = radii.w;
+        }
+    } else {
+        if p.y < 0.0 {
+            r = radii.y;
+        } else {
+            r = radii.z;
+        }
+    }
+    r = min(r, min(half_size.x, half_size.y));
+    let q = abs(p) - half_size + vec2<f32>(r, r);
+    return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radius: f32) -> f32 {
+    if clip_rect.z < 0.0 {
         return 1.0;
     }
+
+    if clip_rect.z <= 0.01 || clip_rect.w <= 0.01 {
+        return 0.0;
+    }
+
+    if clip_radius > 0.0 {
+        let clip_center = clip_rect.xy + clip_rect.zw * 0.5;
+        let clip_half = clip_rect.zw * 0.5;
+        let p = pixel_pos - clip_center;
+        let radii = vec4<f32>(clip_radius, clip_radius, clip_radius, clip_radius);
+        let d = sdf_rounded_rect(p, clip_half, radii);
+        return 1.0 - smoothstep(-0.5, 0.5, d);
+    }
+
     let clip_min = clip_rect.xy;
     let clip_max = clip_rect.xy + clip_rect.zw;
 
@@ -73,6 +111,6 @@ fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>) -> f32 {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let color = textureSample(t_diffuse, s_diffuse, in.uv);
-    let ca = clip_alpha(in.pixel_pos, in.clip_rect);
+    let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
     return color * ca;
 }
