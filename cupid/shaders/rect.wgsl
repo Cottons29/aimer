@@ -12,8 +12,11 @@ struct VertexOutput {
     @location(3) border_radius: vec4<f32>,
     @location(4) border_width: vec4<f32>,
     @location(5) border_color: vec4<f32>,
-    @location(6) pixel_pos: vec2<f32>,
-    @location(7) clip_rect: vec4<f32>,
+    @location(6) outline_width: vec4<f32>,
+    @location(7) outline_color: vec4<f32>,
+    @location(8) pixel_pos: vec2<f32>,
+    @location(9) clip_rect: vec4<f32>,
+    @location(10) clip_border_radius: f32,
 };
 
 struct RectInstance {
@@ -23,7 +26,10 @@ struct RectInstance {
     @location(3) border_radius: vec4<f32>,
     @location(4) border_width: vec4<f32>,
     @location(5) border_color: vec4<f32>,
-    @location(6) clip_rect: vec4<f32>,
+    @location(6) outline_width: vec4<f32>,
+    @location(7) outline_color: vec4<f32>,
+    @location(8) clip_rect: vec4<f32>,
+    @location(9) clip_border_radius: f32,
 };
 
 @vertex
@@ -55,8 +61,11 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: RectInstance) -> VertexOutput {
     out.border_radius = inst.border_radius;
     out.border_width = inst.border_width;
     out.border_color = inst.border_color;
+    out.outline_width = inst.outline_width;
+    out.outline_color = inst.outline_color;
     out.pixel_pos = pixel_pos;
     out.clip_rect = inst.clip_rect;
+    out.clip_border_radius = inst.clip_border_radius;
     return out;
 }
 
@@ -85,10 +94,25 @@ fn sdf_rounded_rect(p: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>) -> f32
 
 /// Compute anti-aliased clip alpha from a clip rect in pixel coordinates.
 /// clip_rect = (x, y, width, height). If width <= 0, clipping is disabled (returns 1.0).
-fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>) -> f32 {
-    if clip_rect.z <= 0.0 {
+fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radius: f32) -> f32 {
+    if clip_rect.z < 0.0 {
         return 1.0;
     }
+
+    if clip_rect.z <= 0.01 || clip_rect.w <= 0.01 {
+        return 0.0;
+    }
+
+    if clip_radius > 0.0 {
+        // Rounded clip: use SDF
+        let clip_center = clip_rect.xy + clip_rect.zw * 0.5;
+        let clip_half = clip_rect.zw * 0.5;
+        let p = pixel_pos - clip_center;
+        let radii = vec4<f32>(clip_radius, clip_radius, clip_radius, clip_radius);
+        let d = sdf_rounded_rect(p, clip_half, radii);
+        return 1.0 - smoothstep(-0.5, 0.5, d);
+    }
+
     let clip_min = clip_rect.xy;
     let clip_max = clip_rect.xy + clip_rect.zw;
 
@@ -127,17 +151,53 @@ fn srgb_color_to_linear(c: vec4<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let half_size = in.rect_size * 0.5;
-    let centered = in.local_pos - half_size;
-    let d = sdf_rounded_rect(centered, half_size, in.border_radius);
+    // The quad may have been expanded by outline_width on each side.
+    let ow_top = in.outline_width.x;
+    let ow_right = in.outline_width.y;
+    let ow_bottom = in.outline_width.z;
+    let ow_left = in.outline_width.w;
+    let has_outline = (ow_top + ow_right + ow_bottom + ow_left) > 0.0;
+
+    // Original rect size (before outline expansion)
+    let orig_size = vec2<f32>(
+        in.rect_size.x - ow_left - ow_right,
+        in.rect_size.y - ow_top - ow_bottom,
+    );
+    let orig_half = orig_size * 0.5;
+
+    // local_pos relative to the original rect
+    let orig_local = in.local_pos - vec2<f32>(ow_left, ow_top);
+    let orig_centered = orig_local - orig_half;
+
+    // SDF for the original rect outer edge
+    let d = sdf_rounded_rect(orig_centered, orig_half, in.border_radius);
     let outer_alpha = 1.0 - smoothstep(-0.5, 0.5, d);
 
     // Anti-aliased clip
-    let ca = clip_alpha(in.pixel_pos, in.clip_rect);
+    let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
 
     // Convert sRGB input colors to linear space for correct blending on sRGB surface
     let fill_color = srgb_color_to_linear(in.color);
     let stroke_color = srgb_color_to_linear(in.border_color);
+    let ol_color = srgb_color_to_linear(in.outline_color);
+
+    // Compute outline ring if needed
+    var outline_premul = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    if has_outline {
+        // Outline outer edge: expanded rect with expanded radii
+        let expanded_half = in.rect_size * 0.5;
+        let expanded_centered = in.local_pos - expanded_half;
+        let outline_radii = vec4<f32>(
+            in.border_radius.x + max(ow_top, ow_left),
+            in.border_radius.y + max(ow_top, ow_right),
+            in.border_radius.z + max(ow_bottom, ow_right),
+            in.border_radius.w + max(ow_bottom, ow_left),
+        );
+        let outline_d = sdf_rounded_rect(expanded_centered, expanded_half, outline_radii);
+        let outline_outer_alpha = 1.0 - smoothstep(-0.5, 0.5, outline_d);
+        let outline_ring_alpha = clamp(outline_outer_alpha - outer_alpha, 0.0, 1.0);
+        outline_premul = vec4<f32>(ol_color.rgb * ol_color.a, ol_color.a) * outline_ring_alpha;
+    }
 
     // border_width: (top, right, bottom, left)
     let has_border = (in.border_width.x + in.border_width.y + in.border_width.z + in.border_width.w) > 0.0;
@@ -151,8 +211,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Inner rect center offset and half-size
         let inner_offset = vec2<f32>((bw_left - bw_right) * 0.5, (bw_top - bw_bottom) * 0.5);
         let inner_half = vec2<f32>(
-            half_size.x - (bw_left + bw_right) * 0.5,
-            half_size.y - (bw_top + bw_bottom) * 0.5,
+            orig_half.x - (bw_left + bw_right) * 0.5,
+            orig_half.y - (bw_top + bw_bottom) * 0.5,
         );
 
         // Inner radii: shrink each corner radius by the max of its two adjacent border widths
@@ -163,18 +223,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             max(in.border_radius.w - max(bw_bottom, bw_left), 0.0),  // bottom-left
         );
 
-        let inner_p = centered - inner_offset;
+        let inner_p = orig_centered - inner_offset;
         let inner_d = sdf_rounded_rect(inner_p, max(inner_half, vec2<f32>(0.0, 0.0)), inner_radii);
         let inner_alpha = 1.0 - smoothstep(-0.5, 0.5, inner_d);
 
         // Border ring: outer minus inner
-        let border_alpha = outer_alpha - inner_alpha;
+        let border_alpha = clamp(outer_alpha - inner_alpha, 0.0, 1.0);
         let bc = stroke_color;
         let fc = fill_color;
         let border_premul = vec4<f32>(bc.rgb * bc.a, bc.a) * border_alpha;
         let fill_premul = vec4<f32>(fc.rgb * fc.a, fc.a) * inner_alpha;
-        return (border_premul + fill_premul) * ca;
+        return (outline_premul + border_premul + fill_premul) * ca;
     } else {
-        return vec4<f32>(fill_color.rgb * fill_color.a, fill_color.a * outer_alpha) * ca;
+        let fill_premul = vec4<f32>(fill_color.rgb * fill_color.a, fill_color.a) * outer_alpha;
+        return (outline_premul + fill_premul) * ca;
     }
 }
