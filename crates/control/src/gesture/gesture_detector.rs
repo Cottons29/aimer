@@ -1,17 +1,17 @@
 use crate::gesture::GestureActions;
 use crate::gesture::button::ButtonStyle;
-use attribute::{Bounds, CacheBounds};
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
+use attribute::{Bounds, CacheBounds};
 use canvas::CanvasRendering;
-use color::prelude::ColorMixer;
+use color::prelude::{ColorMixer, Colors};
 use events::element::ElementEvent;
 use events::pointer::{PointerEvent, PointerPosition};
 use std::cell::UnsafeCell;
-use utils::debug;
 use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
+use widget::style::border::resolve_dim;
 use widget::{Drawable, Element, LayoutCache};
 use winit::window::Window;
 
@@ -201,7 +201,6 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
 
         unsafe {
             let current_hovered = *self.is_hovered.get();
-            debug!("GestureDetectorElement::on_event: is_inside: {}, current_hovered: {}", is_inside, current_hovered);
             if current_hovered != is_inside {
                 *self.is_hovered.get() = is_inside;
                 *self.is_dirty.get() = true;
@@ -255,7 +254,6 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
         let (ol, ot, or, ob) = style.outline.strokes(width, height, scale);
 
         let size = ResolvedSize { width: width + ol + or, height: height + ot + ob };
-        debug!("GestureDetectorElement::computed_size: size: {:?}", size);
         size
     }
 
@@ -278,50 +276,76 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
 
         // Cache absolute bounds for hit-testing
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
-        let cache_x = abs_x as Float / ctx.scale as Float * 0.99;
-        let cache_y = abs_y as Float / ctx.scale as Float * 0.99;
-        let cache_w = box_width as Float / ctx.scale as Float * 0.99;
-        let cache_h = box_height as Float / ctx.scale as Float * 0.99;
-        self.cached_bounds.set_bounds(Bounds::new(cache_x, cache_y, cache_w, cache_h));
+        self.cached_bounds.save_cache(
+            ctx.scale,
+            abs_x as Float,
+            abs_y as Float,
+            box_width as Float,
+            box_height as Float,
+        );
 
-        // Draw background
+        // Draw background + border + outline in a single pass
         let bg_color: Color = style.color.into();
         let radius = style
             .border
             .get_uniform_radius(box_width, box_height, ctx.scale)
             .unwrap_or(0.0);
 
+        let has_border = style.border.has_visible_border(box_width, box_height, ctx.scale);
+        let has_outline = style.outline.has_visible_outline(box_width, box_height, ctx.scale);
+
         if self.is_disabled {
             ctx.canvas.set_alpha(0.5);
         }
 
-        ctx.canvas.fill_color_rect(
-            (0.0, 0.0).into(),
-            ResolvedSize { width: box_width, height: box_height },
-            bg_color,
-            radius as f32,
-        );
+        let size = ResolvedSize { width: box_width, height: box_height };
+        let pos: Vec2d = (0.0, 0.0).into();
+
+        if has_border || has_outline {
+            // Resolve border strokes
+            let (bl, bt, br, bb) = if has_border {
+                style.border.strokes(box_width, box_height, ctx.scale)
+            } else {
+                (0.0, 0.0, 0.0, 0.0)
+            };
+            let border_width = [bt as f32, br as f32, bb as f32, bl as f32];
+            let border_color = if has_border { style.border.left.color } else { Color::Transparent };
+
+            // Resolve outline strokes
+            let (ol_l, ol_t, ol_r, ol_b) = if has_outline {
+                style.outline.strokes(box_width, box_height, ctx.scale)
+            } else {
+                (0.0, 0.0, 0.0, 0.0)
+            };
+            let outline_width = [ol_t as f32, ol_r as f32, ol_b as f32, ol_l as f32];
+            let outline_color = if has_outline { style.outline.left.color } else { Color::Transparent };
+
+            // Resolve per-corner radii
+            let border_radius = style.border.get_per_corner_radii(box_width, box_height, ctx.scale)
+                .unwrap_or([0.0; 4]);
+
+            ctx.canvas.fill_rect_with_border_and_outline_per_side(
+                pos,
+                size,
+                bg_color,
+                border_radius,
+                border_width,
+                border_color,
+                outline_width,
+                outline_color,
+            );
+        } else {
+            ctx.canvas.fill_color_rect(
+                pos,
+                size,
+                bg_color,
+                radius as f32,
+            );
+        }
 
         if self.is_disabled {
             ctx.canvas.restore_alpha();
         }
-
-        // Draw border and outline
-        let border_ctx = BuildContext {
-            parent_size: ResolvedSize { width: box_width, height: box_height },
-            canvas: ctx.canvas.clone(),
-            scale: ctx.scale,
-            parent_pos: ctx.parent_pos,
-            cursor_pos: ctx.cursor_pos,
-            box_constraint: ctx.box_constraint,
-            visible_rect: ctx.visible_rect,
-            window: ctx.window,
-            #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx.async_handle.clone(),
-            inherited_states: ctx.inherited_states.clone(),
-        };
-        style.border.draw(&border_ctx);
-        style.outline.draw(&border_ctx);
 
         // Draw pressed overlay for visual feedback
         if unsafe { *self.is_pressed.get() } && !self.is_disabled {
@@ -329,6 +353,16 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
                 (0.0, 0.0).into(),
                 ResolvedSize { width: box_width, height: box_height },
                 Color::Rgba(0, 0, 0, 40),
+                // Colors::Green.into(),
+                radius as f32,
+            );
+        }
+
+        // Clip children to the rounded border so they don't leak outside
+        if radius > 0.0 {
+            ctx.canvas.set_clip_rounded(
+                (0.0, 0.0).into(),
+                ResolvedSize { width: box_width, height: box_height },
                 radius as f32,
             );
         }
@@ -362,6 +396,12 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         Self::render_child(&self.child, &child_ctx);
 
         ctx.canvas.restore();
+
+        // Clear the rounded clip if it was set
+        if radius > 0.0 {
+            ctx.canvas.clear_clip();
+        }
+
         ctx.canvas.restore();
     }
 }
