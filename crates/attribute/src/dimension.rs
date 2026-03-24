@@ -1,6 +1,6 @@
 use crate::Float;
-use std::cell::Cell;
 use crate::position::Vec2d;
+use std::cell::Cell;
 
 ///
 /// Represents a dimension type that can be used to define sizes in different units.
@@ -90,7 +90,6 @@ impl Bounds {
     pub fn new(x: Float, y: Float, width: Float, height: Float) -> Self {
         Self { x, y, width, height }
     }
-
 }
 impl Default for Bounds {
     fn default() -> Self {
@@ -123,13 +122,17 @@ impl CacheBounds {
         }
     }
 
+    pub fn save_cache(&self, scale: Float, x: Float, y: Float, width: Float, height: Float) {
+        let cache_x = x as Float / scale;
+        let cache_y = y as Float / scale;
+        let cache_w = width as Float / scale;
+        let cache_h = height as Float / scale;
+        let bound = Bounds::new(cache_x, cache_y, cache_w, cache_h);
+        self.set_bounds(bound);
+    }
+
     pub fn is_inside(&self, x: Float, y: Float) -> bool {
         let Some(bound) = self.bound else { return false };
         bound.x <= x && x <= bound.x + bound.width && bound.y <= y && y <= bound.y + bound.height
     }
-
-
-
 }
-
-
