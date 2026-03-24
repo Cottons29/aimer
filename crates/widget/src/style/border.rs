@@ -55,7 +55,7 @@ pub struct BorderSide {
     pub color: Color,
 }
 
-pub(crate) fn resolve_dim(dim: Dimension, parent_val: Float, scale: Float) -> Float {
+pub fn resolve_dim(dim: Dimension, parent_val: Float, scale: Float) -> Float {
     match dim {
         Dimension::Px(w) => w * scale,
         Dimension::Percent(p) => parent_val * (p / 100.0),
@@ -141,6 +141,25 @@ impl BoxBorder {
         Self { left: border, right: border, top: border, bottom: border, ..Default::default() }
     }
 
+    /// Returns the resolved border stroke for each side: (left, top, right, bottom).
+    pub fn strokes(&self, box_width: Float, box_height: Float, scale: Float) -> (Float, Float, Float, Float) {
+        (
+            resolve_dim(self.left.stroke, box_width, scale),
+            resolve_dim(self.top.stroke, box_height, scale),
+            resolve_dim(self.right.stroke, box_width, scale),
+            resolve_dim(self.bottom.stroke, box_height, scale),
+        )
+    }
+
+    /// Returns true if any side has a non-None style and non-zero stroke.
+    pub fn has_visible_border(&self, box_width: Float, box_height: Float, scale: Float) -> bool {
+        let (l, t, r, b) = self.strokes(box_width, box_height, scale);
+        (l > 0.0 && self.left.style != BorderStyle::None)
+            || (t > 0.0 && self.top.style != BorderStyle::None)
+            || (r > 0.0 && self.right.style != BorderStyle::None)
+            || (b > 0.0 && self.bottom.style != BorderStyle::None)
+    }
+
     pub fn horizontal(border: BorderSide) -> Self {
         Self { top: border, bottom: border, ..Default::default() }
     }
@@ -187,6 +206,15 @@ impl BoxBorder {
 impl BoxOutline {
     pub fn all(border: BorderSide) -> Self {
         Self { left: border, right: border, top: border, bottom: border, ..Default::default() }
+    }
+
+    /// Returns true if any side has a non-None style and non-zero stroke.
+    pub fn has_visible_outline(&self, box_width: Float, box_height: Float, scale: Float) -> bool {
+        let (l, t, r, b) = self.strokes(box_width, box_height, scale);
+        (l > 0.0 && self.left.style != BorderStyle::None)
+            || (t > 0.0 && self.top.style != BorderStyle::None)
+            || (r > 0.0 && self.right.style != BorderStyle::None)
+            || (b > 0.0 && self.bottom.style != BorderStyle::None)
     }
 
     pub fn horizontal(border: BorderSide) -> Self {
