@@ -190,7 +190,11 @@ impl<T: Element> Drawable for RawContainer<T> {
             radius as f32,
         );
 
-        self.border.draw(ctx);
+        let border_ctx = BuildContext {
+            parent_size: ResolvedSize { width: draw_width, height: draw_height },
+            ..ctx.clone()
+        };
+        self.border.draw(&border_ctx);
 
         let p_left = self.padding.left.value(box_width, scale);
         let p_top = self.padding.top.value(box_height, scale);
@@ -237,17 +241,12 @@ impl<T: Element> Drawable for RawContainer<T> {
 }
 
 impl<T: Element> Element for RawContainer<T> {
-
-    fn pos_start_end(&self) -> Option<(attribute::position::Vec2d, attribute::position::Vec2d)> {
-        self.bounds.get()
-    }
-
     fn size(&self) -> Option<Size> {
         Some(Size { width: self.width, height: self.height })
     }
 
-    fn debug_name(&self) -> &'static str {
-        self.debug_name
+    fn pos_start_end(&self) -> Option<(attribute::position::Vec2d, attribute::position::Vec2d)> {
+        self.bounds.get()
     }
 
     fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -484,5 +483,9 @@ impl<T: Element> Element for RawContainer<T> {
     fn invalidate_layout(&self) {
         self.cache.invalidate();
         self.child.invalidate_layout();
+    }
+
+    fn debug_name(&self) -> &'static str {
+        self.debug_name
     }
 }
