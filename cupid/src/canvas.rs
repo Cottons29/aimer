@@ -22,6 +22,7 @@ impl CupidCanvas {
     pub fn begin_frame(&self) {
         self.draw_list.borrow_mut().clear();
     }
+    
 
     pub fn fill_rect(&self, x: f32, y: f32, width: f32, height: f32, color: Color, border_radius: f32) {
         self.draw_list.borrow_mut().fill_rect(
@@ -115,6 +116,50 @@ impl CupidCanvas {
         self.rasterizer.borrow_mut().measure_text(text, font_size)
     }
 
+    /// Draws a filled rectangle with border and outline in a single pass (no gap).
+    pub fn fill_rect_with_border_and_outline(
+        &self,
+        x: f32, y: f32, width: f32, height: f32,
+        color: Color,
+        border_radius: f32,
+        border_width: f32,
+        border_color: Color,
+        outline_width: f32,
+        outline_color: Color,
+    ) {
+        self.draw_list.borrow_mut().fill_rect_with_outline(
+            Rect::new(x, y, width, height),
+            color,
+            [border_radius; 4],
+            [border_width; 4],
+            border_color,
+            [outline_width; 4],
+            outline_color,
+        );
+    }
+
+    /// Draws a filled rectangle with border and outline with per-corner/per-side control.
+    pub fn fill_rect_with_border_and_outline_per_side(
+        &self,
+        x: f32, y: f32, width: f32, height: f32,
+        color: Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
+        border_color: Color,
+        outline_width: [f32; 4],
+        outline_color: Color,
+    ) {
+        self.draw_list.borrow_mut().fill_rect_with_outline(
+            Rect::new(x, y, width, height),
+            color,
+            border_radius,
+            border_width,
+            border_color,
+            outline_width,
+            outline_color,
+        );
+    }
+
     /// Draws a stroked (outline-only) rectangle.
     pub fn stroke_rect(
         &self,
@@ -186,6 +231,10 @@ impl CupidCanvas {
 
     pub fn set_clip(&self, x: f32, y: f32, width: f32, height: f32) {
         self.draw_list.borrow_mut().push_clip(Rect::new(x, y, width, height));
+    }
+
+    pub fn set_clip_rounded(&self, x: f32, y: f32, width: f32, height: f32, border_radius: f32) {
+        self.draw_list.borrow_mut().push_clip_rounded(Rect::new(x, y, width, height), border_radius);
     }
 
     pub fn clear_clip(&self) {
