@@ -10,6 +10,9 @@ pub enum DrawCommand {
         /// Per-side border width: [top, right, bottom, left]
         border_width: [f32; 4],
         border_color: Color,
+        /// Per-side outline width: [top, right, bottom, left]
+        outline_width: [f32; 4],
+        outline_color: Color,
     },
     ClearRect {
         rect: Rect,
@@ -26,6 +29,7 @@ pub enum DrawCommand {
     },
     PushClip {
         rect: Rect,
+        border_radius: f32,
     },
     PopClip,
     PushTransform {
@@ -74,6 +78,20 @@ impl DrawList {
             border_radius,
             border_width,
             border_color,
+            outline_width: [0.0; 4],
+            outline_color: Color::transparent(),
+        });
+    }
+
+    pub fn fill_rect_with_outline(&mut self, rect: Rect, color: Color, border_radius: [f32; 4], border_width: [f32; 4], border_color: Color, outline_width: [f32; 4], outline_color: Color) {
+        self.commands.push(DrawCommand::FillRect {
+            rect,
+            color,
+            border_radius,
+            border_width,
+            border_color,
+            outline_width,
+            outline_color,
         });
     }
 
@@ -95,7 +113,11 @@ impl DrawList {
     }
 
     pub fn push_clip(&mut self, rect: Rect) {
-        self.commands.push(DrawCommand::PushClip { rect });
+        self.commands.push(DrawCommand::PushClip { rect, border_radius: 0.0 });
+    }
+
+    pub fn push_clip_rounded(&mut self, rect: Rect, border_radius: f32) {
+        self.commands.push(DrawCommand::PushClip { rect, border_radius });
     }
 
     pub fn pop_clip(&mut self) {
