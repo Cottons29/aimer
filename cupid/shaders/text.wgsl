@@ -5,11 +5,17 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) pixel_pos: vec2<f32>,
+    @location(3) clip_rect: vec4<f32>,
+    @location(4) clip_border_radius: f32,
 };
 
 struct FragmentInput {
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) pixel_pos: vec2<f32>,
+    @location(3) clip_rect: vec4<f32>,
+    @location(4) clip_border_radius: f32,
 };
 
 struct Viewport {
@@ -26,6 +32,8 @@ struct Viewport {
 //   size:     vec2<f32>  (quad width/height in pixels)
 //   uv_rect:  vec4<f32>  (u_min, v_min, u_max, v_max)
 //   color:    vec4<f32>  (text color with alpha)
+//   clip_rect: vec4<f32> (x, y, w, h)
+//   clip_radius: f32
 
 @vertex
 fn vs_main(
@@ -34,6 +42,8 @@ fn vs_main(
     @location(1) inst_size: vec2<f32>,
     @location(2) inst_uv: vec4<f32>,
     @location(3) inst_color: vec4<f32>,
+    @location(4) clip_rect: vec4<f32>,
+    @location(5) clip_radius: f32,
 ) -> VertexOutput {
     // Triangle list for a quad: vertices 0-5 map to corners.
     // 0(0,0) 1(1,0) 2(0,1) | 3(0,1) 4(1,0) 5(1,1)
@@ -57,7 +67,66 @@ fn vs_main(
     out.position = vec4<f32>(ndc, 0.0, 1.0);
     out.uv = mix(inst_uv.xy, inst_uv.zw, c);
     out.color = inst_color;
+    out.pixel_pos = pixel_pos;
+    out.clip_rect = clip_rect;
+    out.clip_border_radius = clip_radius;
     return out;
+}
+
+/// SDF for a rounded rectangle with per-corner radii.
+fn sdf_rounded_rect(p: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>) -> f32 {
+    var r: f32;
+    if p.x < 0.0 {
+        if p.y < 0.0 {
+            r = radii.x;
+        } else {
+            r = radii.w;
+        }
+    } else {
+        if p.y < 0.0 {
+            r = radii.y;
+        } else {
+            r = radii.z;
+        }
+    }
+    r = min(r, min(half_size.x, half_size.y));
+    let q = abs(p) - half_size + vec2<f32>(r, r);
+    return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radius: f32) -> f32 {
+    if clip_rect.z < 0.0 {
+        return 1.0;
+    }
+    
+    // Fallback: If width or height is zero or very small, treat as empty clip (fully clipped)
+    if clip_rect.z <= 0.01 || clip_rect.w <= 0.01 {
+        return 0.0;
+    }
+
+    if clip_radius > 0.0 {
+        let clip_center = clip_rect.xy + clip_rect.zw * 0.5;
+        let clip_half = clip_rect.zw * 0.5;
+        let p = pixel_pos - clip_center;
+        let radii = vec4<f32>(clip_radius, clip_radius, clip_radius, clip_radius);
+        let d = sdf_rounded_rect(p, clip_half, radii);
+        return 1.0 - smoothstep(-0.5, 0.5, d);
+    }
+
+    let clip_min = clip_rect.xy;
+    let clip_max = clip_rect.xy + clip_rect.zw;
+
+    let d_left   = pixel_pos.x - clip_min.x;
+    let d_right  = clip_max.x - pixel_pos.x;
+    let d_top    = pixel_pos.y - clip_min.y;
+    let d_bottom = clip_max.y - pixel_pos.y;
+
+    let a_left   = smoothstep(0.0, 1.0, d_left);
+    let a_right  = smoothstep(0.0, 1.0, d_right);
+    let a_top    = smoothstep(0.0, 1.0, d_top);
+    let a_bottom = smoothstep(0.0, 1.0, d_bottom);
+
+    return a_left * a_right * a_top * a_bottom;
 }
 
 // Convert a single sRGB channel to linear space.
@@ -71,7 +140,8 @@ fn srgb_to_linear(c: f32) -> f32 {
 @fragment
 fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
     let alpha = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0).r;
-    let a = in.color.a * alpha;
+    let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
+    let a = in.color.a * alpha * ca;
     let r = srgb_to_linear(in.color.r);
     let g = srgb_to_linear(in.color.g);
     let b = srgb_to_linear(in.color.b);
