@@ -41,6 +41,7 @@ pub trait CanvasRendering : Clone {
     fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color);
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize);
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize);
+    fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: f32);
     fn clear_clip(&self);
     fn measure_text(&self, text: &str, font_size: f32) -> f32;
     fn stroke_rect(
@@ -61,6 +62,30 @@ pub trait CanvasRendering : Clone {
         stroke_color: Color,
         stroke_width: [f32; 4],
         border_radius: [f32; 4],
+    );
+    /// Draws a filled rectangle with border and outline in a single pass.
+    fn fill_rect_with_border_and_outline(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: f32,
+        border_width: f32,
+        border_color: Color,
+        outline_width: f32,
+        outline_color: Color,
+    );
+    /// Draws a filled rectangle with border and outline with per-corner/per-side control.
+    fn fill_rect_with_border_and_outline_per_side(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
+        border_color: Color,
+        outline_width: [f32; 4],
+        outline_color: Color,
     );
     fn fill_color_rect(
         &self,
@@ -260,6 +285,13 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::set_clip(self.inner, pos, size);
     }
 
+    /// Sets a rounded clipping rectangle. Drawing outside this rounded rect will be clipped.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: f32) {
+        CanvasRendering::set_clip_rounded(self.inner, pos, size, border_radius);
+    }
+
     /// Clears the current clipping rectangle.
     #[allow(dead_code)]
     #[inline]
@@ -337,6 +369,60 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn get_transform_translation(&self) -> (f64, f64) {
         CanvasRendering::get_transform_translation(self.inner)
+    }
+
+    /// Draws a filled rectangle with border and outline in a single pass (no gap).
+    #[allow(dead_code)]
+    #[inline]
+    pub fn fill_rect_with_border_and_outline(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: f32,
+        border_width: f32,
+        border_color: Color,
+        outline_width: f32,
+        outline_color: Color,
+    ) {
+        CanvasRendering::fill_rect_with_border_and_outline(
+            self.inner,
+            pos,
+            size,
+            color,
+            border_radius,
+            border_width,
+            border_color,
+            outline_width,
+            outline_color,
+        );
+    }
+
+    /// Draws a filled rectangle with border and outline with per-corner/per-side control.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn fill_rect_with_border_and_outline_per_side(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
+        border_color: Color,
+        outline_width: [f32; 4],
+        outline_color: Color,
+    ) {
+        CanvasRendering::fill_rect_with_border_and_outline_per_side(
+            self.inner,
+            pos,
+            size,
+            color,
+            border_radius,
+            border_width,
+            border_color,
+            outline_width,
+            outline_color,
+        );
     }
 
     /// Draws a filled rectangle with a specific color.
