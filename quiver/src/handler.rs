@@ -161,7 +161,7 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: crate::aimer_app::AimerCustomAppEvent) {
-        debug!("User event {:?}", event);
+        // debug!("User event {:?}", event);
         handle_user_event(self, event);
     }
 
@@ -174,7 +174,7 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
             let Some(window) = self.window.as_ref() else { return };
             window.request_redraw();
             self.start_up_frames.set(self.start_up_frames.get() - 1);
-            debug!("About to wait, {} frames left", self.start_up_frames.get());
+            // debug!("About to wait, {} frames left", self.start_up_frames.get());
         }
         #[cfg(debug_assertions)]
         {
