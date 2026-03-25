@@ -1,15 +1,15 @@
-use std::cell::Cell;
-use chrono::{DateTime, Utc};
+use crate::scrollable::scroll_bar::ScrollBar;
+use crate::scrollable::{ScrollAxis, ScrollBehavior};
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
+use canvas::CanvasRendering;
+use chrono::{DateTime, Utc};
+use events::element::ElementEvent;
+use std::cell::Cell;
 use widget::base::*;
 use widget::{Drawable, Element};
-use canvas::CanvasRendering;
 use winit::window::Window;
-use events::element::ElementEvent;
-use crate::scrollable::scroll_bar::ScrollBar;
-use crate::scrollable::{ScrollAxis, ScrollBehavior};
 
 #[cfg(not(target_arch = "wasm32"))]
 type FLOAT = f32;
@@ -34,7 +34,7 @@ pub struct RawScrollableContainer<E: Element> {
     pub(crate) h_thumb_rect: Cell<Option<(FLOAT, FLOAT, FLOAT, FLOAT)>>, // (x, y, w, h)
     pub(crate) v_scroll_multiplier: Cell<FLOAT>,
     pub(crate) h_scroll_multiplier: Cell<FLOAT>,
-    pub(crate) window: &'static Window
+    pub(crate) window: &'static Window,
 }
 
 impl<E: Element> RawScrollableContainer<E> {
@@ -53,33 +53,41 @@ impl<E: Element> RawScrollableContainer<E> {
         offset
     }
 
-    fn visual_offset(&self, mut offset: Vec2d) -> Vec2d {
-        let min = self.cached_min_scroll.get();
-        let max = self.cached_max_scroll.get();
-        
-        if self.scroll_behavior.bouncy {
-            let resistance = self.scroll_behavior.bouncy_resistance as FLOAT;
-            // Apply resistance if out of bounds
-            if offset.x < -max.x {
-                offset.x = -max.x - ((-max.x - offset.x) * resistance);
-            } else if offset.x > -min.x {
-                offset.x = -min.x + ((offset.x - -min.x) * resistance);
-            }
-            if offset.y < -max.y {
-                offset.y = -max.y - ((-max.y - offset.y) * resistance);
-            } else if offset.y > -min.y {
-                offset.y = -min.y + ((offset.y - -min.y) * resistance);
-            }
+    #[inline(always)]
+    fn apply_bouncy(value: FLOAT, min: FLOAT, max: FLOAT, resistance: FLOAT) -> FLOAT {
+        if value < min {
+            min - (min - value) * resistance
+        } else if value > max {
+            max + (value - max) * resistance
         } else {
-            offset.x = offset.x.max(-max.x).min(-min.x);
-            offset.y = offset.y.max(-max.y).min(-min.y);
+            value
         }
-        offset
     }
 
-    /// Draw a single scrollbar (vertical or horizontal).
-    #[cfg(not(target_arch = "wasm32"))]
-    fn draw_scrollbar_native(
+    fn visual_offset(&self, offset: Vec2d) -> Vec2d {
+        let min = self.cached_min_scroll.get();
+        let max = self.cached_max_scroll.get();
+
+        let min_x = -min.x;
+        let max_x = -max.x;
+        let min_y = -min.y;
+        let max_y = -max.y;
+
+        if self.scroll_behavior.bouncy {
+            let resistance = self.scroll_behavior.bouncy_resistance as FLOAT;
+
+            (
+                Self::apply_bouncy(offset.x, max_x, min_x, resistance),
+                Self::apply_bouncy(offset.y, max_y, min_y, resistance),
+            )
+                .into()
+        } else {
+            (offset.x.clamp(max_x, min_x), offset.y.clamp(max_y, min_y)).into()
+        }
+    }
+    
+
+    fn draw_scrollbar(
         &self,
         ctx: &BuildContext,
         scroll_bar: &ScrollBar,
@@ -93,7 +101,11 @@ impl<E: Element> RawScrollableContainer<E> {
         let track_width = match scroll_bar.track.width {
             Dimension::Px(v) => v * scale,
             Dimension::Percent(p) => {
-                if is_vertical { viewport_w * (p / 100.0) } else { viewport_h * (p / 100.0) }
+                if is_vertical {
+                    viewport_w * (p / 100.0)
+                } else {
+                    viewport_h * (p / 100.0)
+                }
             }
             Dimension::Auto => 12.0 * scale,
         };
@@ -120,8 +132,16 @@ impl<E: Element> RawScrollableContainer<E> {
                     Dimension::Auto => track_width,
                 }
             };
-            let up_h = scroll_bar.up_button.as_ref().map(|b| resolve_btn_h(b)).unwrap_or(0.0);
-            let down_h = scroll_bar.down_button.as_ref().map(|b| resolve_btn_h(b)).unwrap_or(0.0);
+            let up_h = scroll_bar
+                .up_button
+                .as_ref()
+                .map(|b| resolve_btn_h(b))
+                .unwrap_or(0.0);
+            let down_h = scroll_bar
+                .down_button
+                .as_ref()
+                .map(|b| resolve_btn_h(b))
+                .unwrap_or(0.0);
             (up_h, down_h)
         } else {
             let resolve_btn_w = |btn: &crate::scrollable::scroll_bar::ScrollButton| -> FLOAT {
@@ -131,17 +151,21 @@ impl<E: Element> RawScrollableContainer<E> {
                     Dimension::Auto => track_width,
                 }
             };
-            let left_w = scroll_bar.up_button.as_ref().map(|b| resolve_btn_w(b)).unwrap_or(0.0);
-            let right_w = scroll_bar.down_button.as_ref().map(|b| resolve_btn_w(b)).unwrap_or(0.0);
+            let left_w = scroll_bar
+                .up_button
+                .as_ref()
+                .map(|b| resolve_btn_w(b))
+                .unwrap_or(0.0);
+            let right_w = scroll_bar
+                .down_button
+                .as_ref()
+                .map(|b| resolve_btn_w(b))
+                .unwrap_or(0.0);
             (left_w, right_w)
         };
 
         let usable_track = (track_length - button_h.0 - button_h.1).max(0.0);
-        let thumb_ratio = if content_extent > 0.0 {
-            (track_length / content_extent).min(1.0)
-        } else {
-            1.0
-        };
+        let thumb_ratio = if content_extent > 0.0 { (track_length / content_extent).min(1.0) } else { 1.0 };
         let thumb_length = (usable_track * thumb_ratio).max(20.0 * scale);
         let max_thumb_move = (usable_track - thumb_length).max(0.0);
         let max_scroll = (content_extent - track_length).max(0.0);
@@ -152,11 +176,7 @@ impl<E: Element> RawScrollableContainer<E> {
             self.h_scroll_multiplier.set(multiplier);
         }
 
-        let scroll_ratio = if max_scroll > 0.0 {
-            scroll_pos / max_scroll
-        } else {
-            0.0
-        };
+        let scroll_ratio = if max_scroll > 0.0 { scroll_pos / max_scroll } else { 0.0 };
         let thumb_offset = button_h.0 + scroll_ratio * max_thumb_move;
 
         let thumb_radius = match scroll_bar.thumb.radius {
@@ -169,18 +189,16 @@ impl<E: Element> RawScrollableContainer<E> {
 
         // Position the scrollbar at the edge of the viewport
         if is_vertical {
-                ctx.canvas.translate(Vec2d { x: (viewport_w - track_width).round(), y: 0.0 });
+            ctx.canvas
+                .translate(Vec2d { x: (viewport_w - track_width).round(), y: 0.0 });
         } else {
-            ctx.canvas.translate(Vec2d { x: 0.0, y: (viewport_h - track_width).round() });
+            ctx.canvas
+                .translate(Vec2d { x: 0.0, y: (viewport_h - track_width).round() });
         }
 
         // Draw track
         let track_color: Color = scroll_bar.track.color.into();
-        let (track_w, track_h) = if is_vertical {
-            (track_width, track_length)
-        } else {
-            (track_length, track_width)
-        };
+        let (track_w, track_h) = if is_vertical { (track_width, track_length) } else { (track_length, track_width) };
         ctx.canvas.fill_color_rect(
             Vec2d { x: 0.0, y: 0.0 },
             ResolvedSize { width: track_w, height: track_h },
@@ -191,11 +209,7 @@ impl<E: Element> RawScrollableContainer<E> {
         // Draw up/left button
         if let Some(ref btn) = scroll_bar.up_button {
             let btn_color: Color = btn.color.into();
-            let (bw, bh) = if is_vertical {
-                (track_width, button_h.0)
-            } else {
-                (button_h.0, track_width)
-            };
+            let (bw, bh) = if is_vertical { (track_width, button_h.0) } else { (button_h.0, track_width) };
             ctx.canvas.fill_color_rect(
                 Vec2d { x: 0.0, y: 0.0 },
                 ResolvedSize { width: bw, height: bh },
@@ -212,22 +226,28 @@ impl<E: Element> RawScrollableContainer<E> {
             } else {
                 (track_length - button_h.1, 0.0, button_h.1, track_width)
             };
-            ctx.canvas.fill_color_rect(
-                Vec2d { x: bx, y: by },
-                ResolvedSize { width: bw, height: bh },
-                btn_color,
-                0.0,
-            );
+            ctx.canvas
+                .fill_color_rect(Vec2d { x: bx, y: by }, ResolvedSize { width: bw, height: bh }, btn_color, 0.0);
         }
 
         // Draw thumb
         let thumb_color: Color = scroll_bar.thumb.color.into();
         let thumb_x_offset = (track_width - thumb_width) / 2.0;
         let (tx, ty, tw, th) = if is_vertical {
-            self.v_thumb_rect.set(Some((viewport_w - track_width + thumb_x_offset, thumb_offset, thumb_width, thumb_length)));
+            self.v_thumb_rect.set(Some((
+                viewport_w - track_width + thumb_x_offset,
+                thumb_offset,
+                thumb_width,
+                thumb_length,
+            )));
             (thumb_x_offset, thumb_offset, thumb_width, thumb_length)
         } else {
-            self.h_thumb_rect.set(Some((thumb_offset, viewport_h - track_width + thumb_x_offset, thumb_length, thumb_width)));
+            self.h_thumb_rect.set(Some((
+                thumb_offset,
+                viewport_h - track_width + thumb_x_offset,
+                thumb_length,
+                thumb_width,
+            )));
             (thumb_offset, thumb_x_offset, thumb_length, thumb_width)
         };
 
@@ -235,151 +255,8 @@ impl<E: Element> RawScrollableContainer<E> {
             Vec2d { x: tx, y: ty },
             ResolvedSize { width: tw, height: th },
             thumb_color,
-            thumb_radius,
+            thumb_radius as f32,
         );
-
-        ctx.canvas.restore();
-    }
-
-    /// Draw a single scrollbar (vertical or horizontal) for wasm.
-    #[cfg(target_arch = "wasm32")]
-    fn draw_scrollbar_wasm(
-        &self,
-        ctx: &BuildContext,
-        scroll_bar: &ScrollBar,
-        viewport_w: FLOAT,
-        viewport_h: FLOAT,
-        is_vertical: bool,
-    ) {
-        let scale = ctx.scale;
-        let offset = self.visual_offset(self.scroll_offset.get());
-
-        let track_width = match scroll_bar.track.width {
-            Dimension::Px(v) => v * scale,
-            Dimension::Percent(p) => {
-                if is_vertical { viewport_w * (p / 100.0) } else { viewport_h * (p / 100.0) }
-            }
-            Dimension::Auto => 12.0 * scale,
-        };
-
-        let thumb_width = match scroll_bar.thumb.width {
-            Dimension::Px(v) => v * scale,
-            Dimension::Percent(p) => track_width * (p / 100.0),
-            Dimension::Auto => (track_width * 0.6).max(4.0),
-        };
-
-        let (track_length, content_extent, scroll_pos) = if is_vertical {
-            let content_size = self.content_size(ctx);
-            (viewport_h, content_size.height, -offset.y)
-        } else {
-            let content_size = self.content_size(ctx);
-            (viewport_w, content_size.width, -offset.x)
-        };
-
-        let button_h = if is_vertical {
-            let resolve_btn_h = |btn: &crate::scrollable::scroll_bar::ScrollButton| -> FLOAT {
-                match btn.height {
-                    Dimension::Px(v) => v * scale,
-                    Dimension::Percent(p) => track_length * (p / 100.0),
-                    Dimension::Auto => track_width,
-                }
-            };
-            let up_h = scroll_bar.up_button.as_ref().map(|b| resolve_btn_h(b)).unwrap_or(0.0);
-            let down_h = scroll_bar.down_button.as_ref().map(|b| resolve_btn_h(b)).unwrap_or(0.0);
-            (up_h, down_h)
-        } else {
-            let resolve_btn_w = |btn: &crate::scrollable::scroll_bar::ScrollButton| -> FLOAT {
-                match btn.width {
-                    Dimension::Px(v) => v * scale,
-                    Dimension::Percent(p) => track_length * (p / 100.0),
-                    Dimension::Auto => track_width,
-                }
-            };
-            let left_w = scroll_bar.up_button.as_ref().map(|b| resolve_btn_w(b)).unwrap_or(0.0);
-            let right_w = scroll_bar.down_button.as_ref().map(|b| resolve_btn_w(b)).unwrap_or(0.0);
-            (left_w, right_w)
-        };
-
-        let usable_track = (track_length - button_h.0 - button_h.1).max(0.0);
-        let thumb_ratio = if content_extent > 0.0 {
-            (track_length / content_extent).min(1.0)
-        } else {
-            1.0
-        };
-        let thumb_length = (usable_track * thumb_ratio).max(20.0 * scale);
-        let max_thumb_move = (usable_track - thumb_length).max(0.0);
-        let max_scroll = (content_extent - track_length).max(0.0);
-        let multiplier = if max_thumb_move > 0.0 { max_scroll / max_thumb_move } else { 0.0 };
-        if is_vertical {
-            self.v_scroll_multiplier.set(multiplier);
-        } else {
-            self.h_scroll_multiplier.set(multiplier);
-        }
-        
-        let scroll_ratio = if max_scroll > 0.0 {
-            scroll_pos / max_scroll
-        } else {
-            0.0
-        };
-        let thumb_offset = button_h.0 + scroll_ratio * max_thumb_move;
-
-        let thumb_radius = match scroll_bar.thumb.radius {
-            Dimension::Px(v) => v * scale,
-            Dimension::Percent(p) => thumb_width * (p / 100.0),
-            Dimension::Auto => thumb_width / 2.0,
-        };
-
-        ctx.canvas.save();
-
-        if is_vertical {
-            ctx.canvas.translate(Vec2d { x: (viewport_w - track_width).round(), y: 0.0 });
-        } else {
-            ctx.canvas.translate(Vec2d { x: 0.0, y: (viewport_h - track_width).round() });
-        }
-
-        // Draw track
-        let track_color: Color = scroll_bar.track.color.into();
-        if is_vertical {
-            ctx.canvas.fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: track_width, height: track_length }, track_color, 0.0);
-        } else {
-            ctx.canvas.fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: track_length, height: track_width }, track_color, 0.0);
-        }
-
-        // Draw up/left button
-        if let Some(ref btn) = scroll_bar.up_button {
-            let btn_color: Color = btn.color.into();
-            if is_vertical {
-                ctx.canvas.fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: track_width, height: button_h.0 }, btn_color, 0.0);
-            } else {
-                ctx.canvas.fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: button_h.0, height: track_width }, btn_color, 0.0);
-            }
-        }
-
-        // Draw down/right button
-        if let Some(ref btn) = scroll_bar.down_button {
-            let btn_color: Color = btn.color.into();
-            if is_vertical {
-                ctx.canvas.fill_color_rect(Vec2d { x: 0.0, y: track_length - button_h.1 }, ResolvedSize { width: track_width, height: button_h.1 }, btn_color, 0.0);
-            } else {
-                ctx.canvas.fill_color_rect(Vec2d { x: track_length - button_h.1, y: 0.0 }, ResolvedSize { width: button_h.1, height: track_width }, btn_color, 0.0);
-            }
-        }
-
-        // Draw thumb
-        let thumb_color: Color = scroll_bar.thumb.color.into();
-        let thumb_x_offset = (track_width - thumb_width) / 2.0;
-        
-        if is_vertical {
-            self.v_thumb_rect.set(Some((viewport_w - track_width + thumb_x_offset, thumb_offset, thumb_width, thumb_length)));
-        } else {
-            self.h_thumb_rect.set(Some((thumb_offset, viewport_h - track_width + thumb_x_offset, thumb_length, thumb_width)));
-        }
-
-        if is_vertical {
-            ctx.canvas.fill_color_rect(Vec2d { x: thumb_x_offset, y: thumb_offset }, ResolvedSize { width: thumb_width, height: thumb_length }, thumb_color, thumb_radius as f32);
-        } else {
-            ctx.canvas.fill_color_rect(Vec2d { x: thumb_offset, y: thumb_x_offset }, ResolvedSize { width: thumb_length, height: thumb_width }, thumb_color, thumb_radius as f32);
-        }
 
         ctx.canvas.restore();
     }
@@ -409,10 +286,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         self.cached_max_scroll.set(final_max);
 
         let user_min = self.scroll_behavior.min_scroll;
-        self.cached_min_scroll.set(Vec2d {
-            x: user_min.x * ctx.scale,
-            y: user_min.y * ctx.scale,
-        });
+        self.cached_min_scroll
+            .set(Vec2d { x: user_min.x * ctx.scale, y: user_min.y * ctx.scale });
 
         let mut offset = self.scroll_offset.get();
 
@@ -423,7 +298,9 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
             // Time-based momentum scrolling
             let now = Utc::now();
-            let dt = self.last_frame_time.get()
+            let dt = self
+                .last_frame_time
+                .get()
                 .map(|t| (now - t).num_microseconds().unwrap_or(0) as f64 / 1_000_000.0)
                 .map(|dt| dt as FLOAT)
                 .unwrap_or(1.0 / 120.0)
@@ -503,18 +380,13 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         // Clip to viewport
         ctx.canvas.save();
-        ctx.canvas.set_clip(
-            Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize { width: viewport_w.round(), height: viewport_h.round() },
-        );
+        ctx.canvas
+            .set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
 
         // Translate by scroll offset
         // On high-DPI displays (e.g. iOS retina), avoid rounding to preserve smooth sub-pixel scrolling
-        let (offset_x, offset_y) = if ctx.scale > 1.5 {
-            (offset.x, offset.y)
-        } else {
-            (offset.x.round(), offset.y.round())
-        };
+        let (offset_x, offset_y) =
+            if ctx.scale > 1.5 { (offset.x, offset.y) } else { (offset.x.round(), offset.y.round()) };
 
         ctx.canvas.translate(Vec2d { x: offset_x, y: offset_y });
 
@@ -523,7 +395,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = FLOAT::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = FLOAT::MAX,
         }
-        child_ctx.visible_rect = Some(( -offset_x as FLOAT, -offset_y as FLOAT, viewport_w, viewport_h ));
+        child_ctx.visible_rect = Some((-offset_x as FLOAT, -offset_y as FLOAT, viewport_w, viewport_h));
 
         // Draw child content
         self.child.draw(&child_ctx);
@@ -534,33 +406,17 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         // Draw scrollbars on top, clipped to viewport
         ctx.canvas.save();
-        ctx.canvas.set_clip(
-            Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize { width: viewport_w.round(), height: viewport_h.round() },
-        );
-        #[cfg(not(target_arch = "wasm32"))]
+        ctx.canvas
+            .set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
         {
             if let Some(ref vbar) = self.vertical_scroll_bar {
                 if matches!(self.axis, ScrollAxis::Vertical) {
-                    self.draw_scrollbar_native(ctx, vbar, viewport_w, viewport_h, true);
+                    self.draw_scrollbar(ctx, vbar, viewport_w, viewport_h, true);
                 }
             }
             if let Some(ref hbar) = self.horizontal_scroll_bar {
                 if matches!(self.axis, ScrollAxis::Horizontal) {
-                    self.draw_scrollbar_native(ctx, hbar, viewport_w, viewport_h, false);
-                }
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            if let Some(ref vbar) = self.vertical_scroll_bar {
-                if matches!(self.axis, ScrollAxis::Vertical) {
-                    self.draw_scrollbar_wasm(ctx, vbar, viewport_w, viewport_h, true);
-                }
-            }
-            if let Some(ref hbar) = self.horizontal_scroll_bar {
-                if matches!(self.axis, ScrollAxis::Horizontal) {
-                    self.draw_scrollbar_wasm(ctx, hbar, viewport_w, viewport_h, false);
+                    self.draw_scrollbar(ctx, hbar, viewport_w, viewport_h, false);
                 }
             }
         }
@@ -570,11 +426,12 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 }
 
 impl<E: Element> Element for RawScrollableContainer<E> {
-
-
     fn on_event(&self, event: &ElementEvent) -> bool {
         let pos = match event {
-            ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) | ElementEvent::Scroll(p) => *p,
+            ElementEvent::PointerDown(p)
+            | ElementEvent::PointerUp(p)
+            | ElementEvent::PointerMove(p)
+            | ElementEvent::Scroll(p) => *p,
             ElementEvent::Cancel | ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } => Vec2d::default(),
         };
 
@@ -621,49 +478,49 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                         }
                     }
                 }
-                
+
                 // Stop any existing momentum
                 self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
-                
+
                 self.drag_mode.set(mode);
                 self.last_pointer_pos.set(Some(*p));
                 false
             }
             ElementEvent::PointerMove(p) => {
                 let mut mode = self.drag_mode.get();
-                
+
                 // Touch slop (drag threshold) check
                 if mode == 4 {
                     if let Some(start) = self.last_pointer_pos.get() {
                         let dx = p.x - start.x;
                         let dy = p.y - start.y;
-                        
+
                         let exceeds_threshold = match self.axis {
                             ScrollAxis::Vertical => dy.abs() > 10.0 && dy.abs() > dx.abs(),
                             ScrollAxis::Horizontal => dx.abs() > 10.0 && dx.abs() > dy.abs(),
                         };
-                        
+
                         if exceeds_threshold {
                             mode = 1;
                             self.drag_mode.set(1);
                             // Update last_pointer_pos to current pos so the initial drag
                             // doesn't cause a large delta and artificially spike velocity
                             self.last_pointer_pos.set(Some(*p));
-                            
+
                             // Steal gesture: Send cancel to child so it releases pressed states
                             let _ = widget::dispatch_event(&self.child, *p, &ElementEvent::Cancel);
                         } else {
                             // Still within touch slop or moving in wrong axis, don't scroll yet
-                            return child_consumed; 
+                            return child_consumed;
                         }
                     }
                 }
-                
+
                 if mode != 0 && mode != 4 {
                     if let Some(last) = self.last_pointer_pos.get() {
                         let dx = p.x - last.x;
                         let dy = p.y - last.y;
-                        
+
                         // Track velocity based on the current scroll axis and drag mode
                         let mut new_velocity = match mode {
                             1 => match self.axis {
@@ -672,10 +529,12 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                             },
                             _ => Vec2d { x: 0.0, y: 0.0 }, // No momentum for scrollbar drags
                         };
-                        
+
                         // Time-based velocity tracking
                         let now = Utc::now();
-                        let dt = self.last_event_time.get()
+                        let dt = self
+                            .last_event_time
+                            .get()
                             .map(|t| (now - t).num_microseconds().unwrap_or(0) as f64 / 1_000_000.0)
                             .map(|dt| dt as FLOAT)
                             .unwrap_or(1.0 / 120.0)
@@ -698,24 +557,22 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                         let clamped = self.clamp_offset(offset);
 
                         match mode {
-                            1 => {
-                                match self.axis {
-                                    ScrollAxis::Vertical => {
-                                        let mut actual_dy = dy;
-                                        if offset.y != clamped.y {
-                                            actual_dy *= 0.3;
-                                        }
-                                        offset.y += actual_dy;
+                            1 => match self.axis {
+                                ScrollAxis::Vertical => {
+                                    let mut actual_dy = dy;
+                                    if offset.y != clamped.y {
+                                        actual_dy *= 0.3;
                                     }
-                                    ScrollAxis::Horizontal => {
-                                        let mut actual_dx = dx;
-                                        if offset.x != clamped.x {
-                                            actual_dx *= 0.3;
-                                        }
-                                        offset.x += actual_dx;
-                                    }
+                                    offset.y += actual_dy;
                                 }
-                            }
+                                ScrollAxis::Horizontal => {
+                                    let mut actual_dx = dx;
+                                    if offset.x != clamped.x {
+                                        actual_dx *= 0.3;
+                                    }
+                                    offset.x += actual_dx;
+                                }
+                            },
                             2 => {
                                 // Scrollbar thumb drag moves thumb down, which means content must move up (-y)
                                 // We multiply thumb movement by the calculated multiplier.
@@ -738,9 +595,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                 }
                 false
             }
-            ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } => {
-                child_consumed
-            }
+            ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } => child_consumed,
             ElementEvent::PointerUp(_) | ElementEvent::Cancel => {
                 self.drag_mode.set(0);
                 self.last_pointer_pos.set(None);
@@ -758,10 +613,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        ResolvedSize {
-            width: ctx.box_constraint.max_width,
-            height: ctx.box_constraint.max_height,
-        }
+        ResolvedSize { width: ctx.box_constraint.max_width, height: ctx.box_constraint.max_height }
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
