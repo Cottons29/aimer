@@ -2,7 +2,7 @@ use crate::handler::AimerApplicationHandler;
 use attribute::position::Vec2d;
 use events::element::KeyAction;
 use events::element::{ElementEvent, Modifiers, NamedKey};
-use utils::debug;
+use utils::{debug, info};
 use widget::{broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, WindowEvent};
@@ -10,6 +10,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 
 pub struct WindowEventHandler;
+
 
 impl WindowEventHandler {
     pub(crate) fn handle_events(
@@ -41,7 +42,9 @@ impl WindowEventHandler {
 
             WindowEvent::MouseWheel { delta, .. } => Self::handle_mouse_wheel(delta, app),
 
-            WindowEvent::RedrawRequested => app.render(event_loop),
+            WindowEvent::RedrawRequested => {
+             app.render(event_loop)
+            },
 
             WindowEvent::Resized(size) => Self::handle_resize(size, app),
 
