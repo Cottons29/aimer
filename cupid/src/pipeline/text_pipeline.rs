@@ -75,8 +75,8 @@ impl TextPipelineV2 {
         let atlas = GlyphAtlas::new(device);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("text shader v2"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/text.wgsl").into()),
+            label: Some("text shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("text.wgsl").into()),
         });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -98,7 +98,7 @@ impl TextPipelineV2 {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -209,6 +209,7 @@ impl TextPipelineV2 {
         queue: &wgpu::Queue,
         width: u32,
         height: u32,
+        is_srgb: bool,
         requests: &[TextDrawRequest],
     ) {
         self.instances.clear();
@@ -262,13 +263,14 @@ impl TextPipelineV2 {
             );
         }
 
-        // Update viewport uniform only when dimensions change.
+        // Update viewport uniform only when dimensions or sRGB state change.
+        let is_srgb_f32 = if is_srgb { 1.0 } else { 0.0 };
         if self.last_viewport != (width, height) {
             self.last_viewport = (width, height);
             queue.write_buffer(
                 &self.viewport_buffer,
                 0,
-                bytemuck::cast_slice(&[width as f32, height as f32, 0.0, 0.0]),
+                bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
             );
         }
 
