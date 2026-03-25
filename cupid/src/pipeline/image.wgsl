@@ -1,5 +1,7 @@
 struct Viewport {
     size: vec2<f32>,
+    surface_is_srgb: f32,
+    _pad: f32,
 };
 
 @group(0) @binding(0) var<uniform> viewport: Viewport;
@@ -108,9 +110,40 @@ fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radius: f32) -> f
     return a_left * a_right * a_top * a_bottom;
 }
 
+// Convert a single sRGB channel to linear space.
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        return c / 12.92;
+    }
+    return pow((c + 0.055) / 1.055, 2.4);
+}
+
+// Convert a single linear channel back to sRGB.
+fn linear_to_srgb(c: f32) -> f32 {
+    if c <= 0.0031308 {
+        return c * 12.92;
+    }
+    return 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let color = textureSample(t_diffuse, s_diffuse, in.uv);
+    var color = textureSample(t_diffuse, s_diffuse, in.uv);
+    
+    // Images are usually sRGB. If surface is sRGB, WGPU expects linear output.
+    // We should convert sRGB texture to linear.
+    // If surface is not sRGB, we can just output sRGB directly.
+    
+    if viewport.surface_is_srgb > 0.5 {
+        // Convert sRGB texture sample to linear for blending and output to sRGB surface
+        color = vec4<f32>(
+            srgb_to_linear(color.r),
+            srgb_to_linear(color.g),
+            srgb_to_linear(color.b),
+            color.a
+        );
+    }
+    
     let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
     return color * ca;
 }
