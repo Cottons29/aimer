@@ -5,7 +5,7 @@ use cupid::utilities::Color;
 use std::path::PathBuf;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 struct App<'w> {
@@ -187,6 +187,7 @@ impl<'w> ApplicationHandler for App<'w> {
                     &view,
                     width,
                     height,
+                    gpu.is_srgb,
                     &self.canvas.draw_list(),
                 );
 
