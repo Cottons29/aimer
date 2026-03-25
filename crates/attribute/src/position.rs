@@ -28,6 +28,7 @@ pub struct Vec2d {
     pub y: Float,
 }
 
+
 impl Mul<Vec2d> for Float {
     type Output = Vec2d;
     fn mul(self, rhs: Vec2d) -> Self::Output {
