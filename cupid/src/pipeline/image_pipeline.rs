@@ -62,7 +62,7 @@ impl ImagePipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/image.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("image.wgsl").into()),
         });
 
         let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -77,7 +77,7 @@ impl ImagePipeline {
                 label: Some("image viewport layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -241,6 +241,7 @@ impl ImagePipeline {
         pass: &mut wgpu::RenderPass<'_>,
         width: u32,
         height: u32,
+        is_srgb: bool,
         texture_id: TextureId,
         instance: ImageInstance,
     ) {
@@ -249,10 +250,11 @@ impl ImagePipeline {
             None => return,
         };
 
+        let is_srgb_f32 = if is_srgb { 1.0 } else { 0.0 };
         queue.write_buffer(
             &self.viewport_buffer,
             0,
-            bytemuck::cast_slice(&[width as f32, height as f32, 0.0, 0.0]),
+            bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
         );
 
         queue.write_buffer(
