@@ -250,9 +250,10 @@ impl WindowEventHandler {
     }
 
     fn handle_mouse_wheel(delta: MouseScrollDelta, app: &mut AimerApplicationHandler) {
+        // debug!("Mouse wheel delta: {:?}", delta);
         let scroll_delta = match delta {
             MouseScrollDelta::LineDelta(x, y) => {
-                Vec2d { x: x as crate::handler::Float * 30.0, y: y as crate::handler::Float * 30.0 }
+                Vec2d { x: x as crate::handler::Float * 20.0, y: y as crate::handler::Float * 20.0 }
             }
             MouseScrollDelta::PixelDelta(pos) => {
                 Vec2d { x: pos.x as crate::handler::Float, y: pos.y as crate::handler::Float }
