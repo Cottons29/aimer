@@ -10,6 +10,7 @@ use std::cell::Cell;
 use widget::base::*;
 use widget::{Drawable, Element};
 use winit::window::Window;
+use utils::debug;
 
 #[cfg(not(target_arch = "wasm32"))]
 type FLOAT = f32;
@@ -44,6 +45,7 @@ pub struct RawScrollableContainer<E: Element> {
     pub(crate) v_scroll_multiplier: Cell<FLOAT>,
     pub(crate) h_scroll_multiplier: Cell<FLOAT>,
     pub(crate) window: &'static Window,
+    pub(crate) speed_multiplier: f32
 }
 
 impl<E: Element> RawScrollableContainer<E> {
@@ -94,7 +96,7 @@ impl<E: Element> RawScrollableContainer<E> {
             (offset.x.clamp(max_x, min_x), offset.y.clamp(max_y, min_y)).into()
         }
     }
-    
+
 
     fn draw_scrollbar(
         &self,
@@ -457,6 +459,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
 
         let we_consumed = match event {
             ElementEvent::Scroll(delta) => {
+
                 let mut offset = self.scroll_offset.get();
                 match self.axis {
                     ScrollAxis::Vertical => {
@@ -504,17 +507,28 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                         let dx = p.x - start.x;
                         let dy = p.y - start.y;
 
+                        let threshold = 10.0;
                         let exceeds_threshold = match self.axis {
-                            ScrollAxis::Vertical => dy.abs() > 10.0 && dy.abs() > dx.abs(),
-                            ScrollAxis::Horizontal => dx.abs() > 10.0 && dx.abs() > dy.abs(),
+                            ScrollAxis::Vertical => dy.abs() > threshold && dy.abs() > dx.abs(),
+                            ScrollAxis::Horizontal => dx.abs() > threshold && dx.abs() > dy.abs(),
                         };
 
                         if exceeds_threshold {
                             mode = DragMode::Content;
                             self.drag_mode.set(DragMode::Content);
-                            // Update last_pointer_pos to current pos so the initial drag
-                            // doesn't cause a large delta and artificially spike velocity
-                            self.last_pointer_pos.set(Some(*p));
+                            
+                            // Adjust last_pointer_pos so we don't 'lose' the first 10px of movement
+                            // We set it to where the threshold was crossed.
+                            let mut adjusted_start = start;
+                            match self.axis {
+                                ScrollAxis::Vertical => {
+                                    if dy > 0.0 { adjusted_start.y += threshold; } else { adjusted_start.y -= threshold; }
+                                }
+                                ScrollAxis::Horizontal => {
+                                    if dx > 0.0 { adjusted_start.x += threshold; } else { adjusted_start.x -= threshold; }
+                                }
+                            }
+                            self.last_pointer_pos.set(Some(adjusted_start));
 
                             // Steal gesture: Send cancel to child so it releases pressed states
                             let _ = widget::dispatch_event(&self.child, *p, &ElementEvent::Cancel);
@@ -527,8 +541,11 @@ impl<E: Element> Element for RawScrollableContainer<E> {
 
                 if mode != DragMode::None && mode != DragMode::Pending {
                     if let Some(last) = self.last_pointer_pos.get() {
-                        let dx = p.x - last.x;
-                        let dy = p.y - last.y;
+                        let speed_multiplier = self.speed_multiplier;
+                        let dx = p.x - last.x * speed_multiplier;
+
+                        let dy = (p.y - last.y) * speed_multiplier;
+                        debug!("PointerMove: y={} | last_y={}", p.y, last.y);
 
                         // Track velocity based on the current scroll axis and drag mode
                         let mut new_velocity = match mode {
@@ -546,17 +563,23 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                             .get()
                             .map(|t| (now - t).num_microseconds().unwrap_or(0) as f64 / 1_000_000.0)
                             .map(|dt| dt as FLOAT)
-                            .unwrap_or(1.0 / 120.0)
+                            .unwrap_or(1.0 / 60.0)
                             .max(0.001); // avoid division by zero
                         self.last_event_time.set(Some(now));
 
-                        let frame_ref = 1.0 / 120.0;
+                        let frame_ref = 1.0 / 60.0;
                         new_velocity.x = (new_velocity.x / dt) * frame_ref;
                         new_velocity.y = (new_velocity.y / dt) * frame_ref;
 
-                        // Smooth acceleration: blend with previous velocity (lighter smoothing for responsive touch)
+                        // Apply a gain/sensitivity boost to feel faster on touch
+                        let sensitivity_gain = 1.25 as FLOAT;
+                        new_velocity.x *= sensitivity_gain;
+                        new_velocity.y *= sensitivity_gain;
+
+                        // Smooth acceleration: blend with previous velocity 
+                        // Reduced history weight (0.4) so the final flick dominates the estimation
                         let old_velocity = self.pointer_velocity.get();
-                        let (blend_old, blend_new) = (0.3 as FLOAT, 0.7 as FLOAT);
+                        let (blend_old, blend_new) = (0.4 as FLOAT, 0.6 as FLOAT);
                         new_velocity.x = old_velocity.x * blend_old + new_velocity.x * blend_new;
                         new_velocity.y = old_velocity.y * blend_old + new_velocity.y * blend_new;
 
@@ -569,22 +592,22 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                             DragMode::Content => match self.axis {
                                 ScrollAxis::Vertical => {
                                     let mut actual_dy = dy;
-                                    if offset.y != clamped.y {
+                                    // Non-linear rubber banding feels more natural
+                                    if offset.y > clamped.y || offset.y < clamped.y {
+                                         // Simplify for now: use existing 0.3 but could be viewport-relative
                                         actual_dy *= 0.3;
                                     }
                                     offset.y += actual_dy;
                                 }
                                 ScrollAxis::Horizontal => {
                                     let mut actual_dx = dx;
-                                    if offset.x != clamped.x {
+                                    if offset.x > clamped.x || offset.x < clamped.x {
                                         actual_dx *= 0.3;
                                     }
                                     offset.x += actual_dx;
                                 }
                             },
                             DragMode::VerticalScrollbar => {
-                                // Scrollbar thumb drag moves thumb down, which means content must move up (-y)
-                                // We multiply thumb movement by the calculated multiplier.
                                 offset.y -= dy * self.v_scroll_multiplier.get();
                             }
                             DragMode::HorizontalScrollbar => {
@@ -606,6 +629,15 @@ impl<E: Element> Element for RawScrollableContainer<E> {
             }
             ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } => child_consumed,
             ElementEvent::PointerUp(_) | ElementEvent::Cancel => {
+                // If the user pauses before lifting, momentum should be cleared
+                let now = Utc::now();
+                if let Some(last_time) = self.last_event_time.get() {
+                    let elapsed = (now - last_time).num_milliseconds();
+                    if elapsed > 100 {
+                        self.pointer_velocity.set(Vec2d::default());
+                    }
+                }
+
                 self.drag_mode.set(DragMode::None);
                 self.last_pointer_pos.set(None);
                 self.window.request_redraw();
