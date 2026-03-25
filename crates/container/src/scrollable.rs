@@ -65,6 +65,7 @@ impl<W: Widget> Widget for Scrollable<W> {
             h_thumb_rect: Cell::new(None),
             v_scroll_multiplier: Cell::new(0.0),
             h_scroll_multiplier: Cell::new(0.0),
+            last_scale: Cell::new(ctx.scale),
             scroll_behavior: ScrollBehavior {
                 max_scroll: self.scroll_behavior.max_scroll,
                 min_scroll: self.scroll_behavior.min_scroll,
