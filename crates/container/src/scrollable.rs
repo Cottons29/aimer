@@ -10,6 +10,7 @@ use std::cell::Cell;
 use std::default::Default;
 use widget::base::{BuildContext, Colors};
 use widget::{Element, LayoutSpacing, Widget};
+use crate::raw_scroll::DragMode;
 
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
@@ -47,7 +48,7 @@ impl<W: Widget> Widget for Scrollable<W> {
                 y: self.scroll_behavior.scroll_offset.y * ctx.scale,
             }),
             last_pointer_pos: Cell::new(None),
-            drag_mode: Cell::new(0),
+            drag_mode: Cell::new(DragMode::None),
             cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             cached_min_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             pointer_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
@@ -110,6 +111,16 @@ impl Default for ScrollBehavior {
             bouncy_resistance: defaults.0,
             bouncy_recovery: defaults.1,
             friction: defaults.2,
+        }
+    }
+}
+
+
+impl ScrollBehavior {
+    pub fn no_bounce() -> Self {
+        Self {
+            bouncy: false,
+            ..Default::default()
         }
     }
 }
