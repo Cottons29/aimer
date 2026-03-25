@@ -16,6 +16,15 @@ type FLOAT = f32;
 #[cfg(target_arch = "wasm32")]
 type FLOAT = f64;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragMode {
+    None = 0,
+    Content = 1,
+    VerticalScrollbar = 2,
+    HorizontalScrollbar = 3,
+    Pending = 4,
+}
+
 pub struct RawScrollableContainer<E: Element> {
     pub(crate) child: E,
     pub(crate) scroll_behavior: ScrollBehavior,
@@ -24,7 +33,7 @@ pub struct RawScrollableContainer<E: Element> {
     pub(crate) horizontal_scroll_bar: Option<ScrollBar>,
     pub(crate) scroll_offset: Cell<Vec2d>,
     pub(crate) last_pointer_pos: Cell<Option<Vec2d>>,
-    pub(crate) drag_mode: Cell<u8>, // 0=none, 1=content, 2=v_scrollbar, 3=h_scrollbar
+    pub(crate) drag_mode: Cell<DragMode>, // 0=none, 1=content, 2=v_scrollbar, 3=h_scrollbar 4=pending
     pub(crate) cached_max_scroll: Cell<Vec2d>,
     pub(crate) cached_min_scroll: Cell<Vec2d>,
     pub(crate) pointer_velocity: Cell<Vec2d>,
@@ -291,7 +300,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         let mut offset = self.scroll_offset.get();
 
-        if self.drag_mode.get() == 0 {
+        if self.drag_mode.get() == DragMode::None {
             let clamped = self.clamp_offset(offset);
             let mut velocity = self.pointer_velocity.get();
             let mut needs_redraw = false;
@@ -439,7 +448,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
         let mut child_consumed = false;
 
         // Forward events to child manually if we haven't stolen the drag yet
-        if mode_before == 0 || mode_before == 4 {
+        if mode_before == DragMode::None || mode_before == DragMode::Pending {
             child_consumed = widget::dispatch_event(&self.child, pos, event);
         } else if matches!(event, ElementEvent::PointerUp(_) | ElementEvent::Cancel) {
             // Ensure child gets cancel if we are active
@@ -465,16 +474,16 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                 true
             }
             ElementEvent::PointerDown(p) => {
-                let mut mode = 4; // 4 = pending content drag
+                let mut mode = DragMode::Pending; // 4 = pending content drag
                 if let Some((x, y, w, h)) = self.v_thumb_rect.get() {
                     if p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h {
-                        mode = 2;
+                        mode = DragMode::VerticalScrollbar;
                     }
                 }
-                if mode == 4 {
+                if mode == DragMode::Pending {
                     if let Some((x, y, w, h)) = self.h_thumb_rect.get() {
                         if p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h {
-                            mode = 3;
+                            mode = DragMode::HorizontalScrollbar;
                         }
                     }
                 }
@@ -490,7 +499,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                 let mut mode = self.drag_mode.get();
 
                 // Touch slop (drag threshold) check
-                if mode == 4 {
+                if mode == DragMode::Pending {
                     if let Some(start) = self.last_pointer_pos.get() {
                         let dx = p.x - start.x;
                         let dy = p.y - start.y;
@@ -501,8 +510,8 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                         };
 
                         if exceeds_threshold {
-                            mode = 1;
-                            self.drag_mode.set(1);
+                            mode = DragMode::Content;
+                            self.drag_mode.set(DragMode::Content);
                             // Update last_pointer_pos to current pos so the initial drag
                             // doesn't cause a large delta and artificially spike velocity
                             self.last_pointer_pos.set(Some(*p));
@@ -516,14 +525,14 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                     }
                 }
 
-                if mode != 0 && mode != 4 {
+                if mode != DragMode::None && mode != DragMode::Pending {
                     if let Some(last) = self.last_pointer_pos.get() {
                         let dx = p.x - last.x;
                         let dy = p.y - last.y;
 
                         // Track velocity based on the current scroll axis and drag mode
                         let mut new_velocity = match mode {
-                            1 => match self.axis {
+                            DragMode::Content => match self.axis {
                                 ScrollAxis::Vertical => Vec2d { x: 0.0, y: dy },
                                 ScrollAxis::Horizontal => Vec2d { x: dx, y: 0.0 },
                             },
@@ -557,7 +566,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                         let clamped = self.clamp_offset(offset);
 
                         match mode {
-                            1 => match self.axis {
+                            DragMode::Content => match self.axis {
                                 ScrollAxis::Vertical => {
                                     let mut actual_dy = dy;
                                     if offset.y != clamped.y {
@@ -573,12 +582,12 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                                     offset.x += actual_dx;
                                 }
                             },
-                            2 => {
+                            DragMode::VerticalScrollbar => {
                                 // Scrollbar thumb drag moves thumb down, which means content must move up (-y)
                                 // We multiply thumb movement by the calculated multiplier.
                                 offset.y -= dy * self.v_scroll_multiplier.get();
                             }
-                            3 => {
+                            DragMode::HorizontalScrollbar => {
                                 offset.x -= dx * self.h_scroll_multiplier.get();
                             }
                             _ => {}
@@ -597,7 +606,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
             }
             ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } => child_consumed,
             ElementEvent::PointerUp(_) | ElementEvent::Cancel => {
-                self.drag_mode.set(0);
+                self.drag_mode.set(DragMode::None);
                 self.last_pointer_pos.set(None);
                 self.window.request_redraw();
                 false
