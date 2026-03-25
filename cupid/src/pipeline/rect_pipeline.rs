@@ -58,7 +58,7 @@ impl RectPipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rect shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/rect.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("rect.wgsl").into()),
         });
 
         let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -72,7 +72,7 @@ impl RectPipeline {
             label: Some("rect bind group layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -152,13 +152,15 @@ impl RectPipeline {
         pass: &mut wgpu::RenderPass<'_>,
         width: u32,
         height: u32,
+        is_srgb: bool,
     ) {
         if self.instances.is_empty() {
             return;
         }
 
         // Update viewport uniform
-        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, 0.0, 0.0]));
+        let is_srgb_f32 = if is_srgb { 1.0 } else { 0.0 };
+        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
 
         // Grow instance buffer if needed
         if self.instances.len() > self.instance_capacity {
