@@ -12,18 +12,18 @@ type FLOAT = f32;
 #[derive(WidgetConstructor)]
 pub struct Container<T: Widget + 'static> {
     #[constructor(into, default)]
-    width: Dimension,
+    pub(crate) width: Dimension,
     #[constructor(into, default)]
-    height: Dimension,
+    pub(crate) height: Dimension,
     #[constructor(into, default )]
-    color: Color,
+    pub(crate) color: Color,
     #[constructor(default)]
     pub padding: LayoutSpacing,
     #[constructor(default)]
     pub margin: LayoutSpacing,
     #[constructor(default)]
     pub border: BoxBorder,
-    child: T,
+    pub(crate) child: T,
 }
 
 
@@ -95,6 +95,7 @@ impl<W: Widget> Widget for Container<W> {
 /// - **Container**: safe wrapper for RawContainer
 ///
 /// - **SizedBox**: fixed size container or place holder
+#[derive(Default)]
 pub struct RawContainer<T: Element> {
     pub padding: LayoutSpacing,
     pub margin: LayoutSpacing,
@@ -106,6 +107,23 @@ pub struct RawContainer<T: Element> {
     pub cache: LayoutCache,
     pub debug_name: &'static str,
     pub bounds: std::cell::Cell<Option<(attribute::position::Vec2d, attribute::position::Vec2d)>>,
+}
+
+impl<E: Element > RawContainer<E> {
+    pub fn new(child: E) -> Self {
+        Self {
+            child,
+            padding: Default::default(),
+            margin: Default::default(),
+            width: Default::default(),
+            height: Default::default(),
+            color: Default::default(),
+            border: Default::default(),
+            cache: LayoutCache::new(),
+            debug_name: "Container",
+            bounds: std::cell::Cell::new(None),
+        }
+    }
 }
 
 impl<T: Element> RawContainer<T> {
