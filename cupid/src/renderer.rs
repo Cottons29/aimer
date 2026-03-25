@@ -75,6 +75,7 @@ impl Renderer {
         view: &wgpu::TextureView,
         width: u32,
         height: u32,
+        is_srgb: bool,
         draw_list: &DrawList,
     ) {
         // debug!("Rendering draw list with {} commands", draw_list.commands().len());
@@ -255,7 +256,7 @@ impl Renderer {
         // Prepare text
         if !self.text_requests.is_empty() {
             self.text_pipeline
-                .prepare(device, queue, width, height, &self.text_requests);
+                .prepare(device, queue, width, height, is_srgb, &self.text_requests);
         }
 
         // Batch rects
@@ -291,7 +292,7 @@ impl Renderer {
 
             // Flush rects (AA clipping is handled per-instance in the shader)
             self.rect_pipeline
-                .flush(device, queue, &mut pass, width, height);
+                .flush(device, queue, &mut pass, width, height, is_srgb);
 
             // Render text
             if !self.text_requests.is_empty() {
@@ -311,6 +312,7 @@ impl Renderer {
                         &mut pass,
                         width,
                         height,
+                        is_srgb,
                         *texture_id,
                         *instance,
                     );
