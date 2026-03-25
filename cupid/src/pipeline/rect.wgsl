@@ -1,5 +1,7 @@
 struct Viewport {
     size: vec2<f32>,
+    surface_is_srgb: f32,
+    _pad: f32,
 };
 
 @group(0) @binding(0) var<uniform> viewport: Viewport;
@@ -139,12 +141,30 @@ fn srgb_to_linear(c: f32) -> f32 {
     return pow((c + 0.055) / 1.055, 2.4);
 }
 
+// Convert a single linear channel back to sRGB.
+fn linear_to_srgb(c: f32) -> f32 {
+    if c <= 0.0031308 {
+        return c * 12.92;
+    }
+    return 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+}
+
 // Convert an sRGB color (with alpha) to linear space. Alpha is kept as-is.
 fn srgb_color_to_linear(c: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(
         srgb_to_linear(c.r),
         srgb_to_linear(c.g),
         srgb_to_linear(c.b),
+        c.a,
+    );
+}
+
+// Convert a linear color (with alpha) back to sRGB space.
+fn linear_color_to_srgb(c: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(
+        linear_to_srgb(c.r),
+        linear_to_srgb(c.g),
+        linear_to_srgb(c.b),
         c.a,
     );
 }
@@ -176,7 +196,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Anti-aliased clip
     let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
 
-    // Convert sRGB input colors to linear space for correct blending on sRGB surface
+    // Always convert sRGB input colors to linear space for correct blending.
     let fill_color = srgb_color_to_linear(in.color);
     let stroke_color = srgb_color_to_linear(in.border_color);
     let ol_color = srgb_color_to_linear(in.outline_color);
@@ -233,9 +253,34 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let fc = fill_color;
         let border_premul = vec4<f32>(bc.rgb * bc.a, bc.a) * border_alpha;
         let fill_premul = vec4<f32>(fc.rgb * fc.a, fc.a) * inner_alpha;
-        return (outline_premul + border_premul + fill_premul) * ca;
+        var result = (outline_premul + border_premul + fill_premul) * ca;
+        
+        // If the surface is NOT sRGB, we must manually convert back to sRGB from linear
+        // because WGPU won't do it for us.
+        if viewport.surface_is_srgb < 0.5 {
+            // result is currently premultiplied linear.
+            // sRGB conversion should ideally happen on non-premultiplied color.
+            let a = result.a;
+            if a > 0.00001 {
+                let unpremul = result.rgb / a;
+                let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
+                result = vec4<f32>(srgb_rgb * a, a);
+            }
+        }
+        return result;
     } else {
         let fill_premul = vec4<f32>(fill_color.rgb * fill_color.a, fill_color.a) * outer_alpha;
-        return (outline_premul + fill_premul) * ca;
+        var result = (outline_premul + fill_premul) * ca;
+
+        // Same for the non-border case.
+        if viewport.surface_is_srgb < 0.5 {
+            let a = result.a;
+            if a > 0.00001 {
+                let unpremul = result.rgb / a;
+                let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
+                result = vec4<f32>(srgb_rgb * a, a);
+            }
+        }
+        return result;
     }
 }
