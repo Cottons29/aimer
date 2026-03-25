@@ -19,7 +19,7 @@ use inspector::InspectorServer;
 use std::cell::Cell;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
-use utils::debug;
+use utils::{debug, info};
 use widget::base::BuildContext;
 use widget::{Element, Widget};
 use winit::application::ApplicationHandler;
@@ -57,6 +57,17 @@ fn find_hovered_node(node: &inspector::WidgetNode, name: &str, start: Vec2d, end
         }
     }
     None
+}
+
+fn frame_time (func: impl FnOnce() -> ())  {
+    let start = chrono::Utc::now().timestamp_micros();
+    func();
+    let end = chrono::Utc::now().timestamp_micros();
+    let duration = end - start;
+    if duration == 0 {
+        return;
+    }
+    info!("FPS: {} | Frame time: {} ns", 1_000_000 / duration, duration);
 }
 
 pub struct AimerApplicationHandler {
@@ -166,6 +177,7 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+
         WindowEventHandler::handle_events(self, event_loop, _id, event);
     }
 
