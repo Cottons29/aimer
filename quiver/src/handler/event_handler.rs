@@ -138,10 +138,7 @@ impl WindowEventHandler {
     fn handle_keyboard_input(event: KeyEvent, app: &mut AimerApplicationHandler) {
         use winit::event::ElementState;
         use winit::keyboard::{Key, NamedKey as WinitNamedKey};
-
-        // debug!("DeviceID : {:?}", device_id);
-        debug!("KeyboardInput: logical {:?},state {:?}", event.logical_key, event.state);
-
+        
         let action = if event.repeat {
             KeyAction::Repeat
         } else {
