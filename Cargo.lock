@@ -3004,6 +3004,7 @@ version = "0.1.0"
 dependencies = [
  "attribute",
  "canvas",
+ "chrono",
  "color",
  "constructor",
  "cupid",
