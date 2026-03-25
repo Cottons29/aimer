@@ -53,10 +53,10 @@ pub struct DrawList {
 }
 
 impl DrawList {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            commands: Vec::new(),
-            transform_stack: Vec::new(),
+            commands: Vec::with_capacity(512),
+            transform_stack: Vec::with_capacity(512),
             current_transform: Mat3::identity(),
         }
     }
