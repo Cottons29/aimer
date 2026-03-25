@@ -1,14 +1,15 @@
 pub mod raw_scroll;
 pub mod scroll_bar;
 
-use std::cell::Cell;
-use attribute::position::Vec2d;
-use constructor::{Constructor, WidgetConstructor};
-use widget::base::BuildContext;
-use widget::{Element, Widget};
-
 use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
+use crate::single_child::container::RawContainer;
+use attribute::position::Vec2d;
+use constructor::{Constructor, WidgetConstructor};
+use std::cell::Cell;
+use std::default::Default;
+use widget::base::{BuildContext, Colors};
+use widget::{Element, LayoutSpacing, Widget};
 
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
@@ -37,8 +38,9 @@ impl<W: Widget> Widget for Scrollable<W> {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = Float::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = Float::MAX,
         }
+
         let child = self.child.to_element(&child_ctx);
-        Box::new(RawScrollableContainer {
+        Box::new(RawContainer::new(RawScrollableContainer {
             child,
             scroll_offset: Cell::new(Vec2d {
                 x: self.scroll_behavior.scroll_offset.x * ctx.scale,
@@ -72,10 +74,9 @@ impl<W: Widget> Widget for Scrollable<W> {
             vertical_scroll_bar: self.vertical_scroll_bar.clone(),
             horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
             window: ctx.window,
-        })
+        }))
     }
 }
-
 
 #[derive(Constructor)]
 pub struct ScrollBehavior {
@@ -119,7 +120,3 @@ pub enum ScrollAxis {
     Vertical,
     Horizontal,
 }
-
-
-
-
