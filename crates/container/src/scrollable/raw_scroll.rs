@@ -7,10 +7,10 @@ use canvas::CanvasRendering;
 use chrono::{DateTime, Utc};
 use events::element::ElementEvent;
 use std::cell::Cell;
+use utils::debug;
 use widget::base::*;
 use widget::{Drawable, Element};
 use winit::window::Window;
-use utils::debug;
 
 #[cfg(not(target_arch = "wasm32"))]
 type FLOAT = f32;
@@ -44,8 +44,9 @@ pub struct RawScrollableContainer<E: Element> {
     pub(crate) h_thumb_rect: Cell<Option<(FLOAT, FLOAT, FLOAT, FLOAT)>>, // (x, y, w, h)
     pub(crate) v_scroll_multiplier: Cell<FLOAT>,
     pub(crate) h_scroll_multiplier: Cell<FLOAT>,
+    pub(crate) last_scale: Cell<FLOAT>,
     pub(crate) window: &'static Window,
-    pub(crate) speed_multiplier: f32
+    pub(crate) speed_multiplier: f32,
 }
 
 impl<E: Element> RawScrollableContainer<E> {
@@ -67,9 +68,13 @@ impl<E: Element> RawScrollableContainer<E> {
     #[inline(always)]
     fn apply_bouncy(value: FLOAT, min: FLOAT, max: FLOAT, resistance: FLOAT) -> FLOAT {
         if value < min {
-            min - (min - value) * resistance
+            let diff = min - value;
+            // Chrome-like power-based resistance for rubber-banding (more stable than log)
+            // d_visual = d_offset ^ 0.75 * factor
+            min - diff.powf(0.75) * (resistance * 2.0)
         } else if value > max {
-            max + (value - max) * resistance
+            let diff = value - max;
+            max + diff.powf(0.75) * (resistance * 2.0)
         } else {
             value
         }
@@ -96,7 +101,6 @@ impl<E: Element> RawScrollableContainer<E> {
             (offset.x.clamp(max_x, min_x), offset.y.clamp(max_y, min_y)).into()
         }
     }
-
 
     fn draw_scrollbar(
         &self,
@@ -300,6 +304,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         self.cached_min_scroll
             .set(Vec2d { x: user_min.x * ctx.scale, y: user_min.y * ctx.scale });
 
+        self.last_scale.set(ctx.scale);
+
         let mut offset = self.scroll_offset.get();
 
         if self.drag_mode.get() == DragMode::None {
@@ -329,10 +335,20 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 if offset.x != clamped.x {
                     let damping = oob_damping_base.powf(frame_ratio);
                     velocity.x *= damping;
+
+                    // If we are moving towards the boundary, reflect some velocity or damp it even more
+                    // Point 4: Overscroll Velocity Reflection
+                    if (offset.x > clamped.x && velocity.x > 0.0) || (offset.x < clamped.x && velocity.x < 0.0) {
+                        velocity.x *= 0.5; // Stronger damping when pulling away from bounds
+                    }
                 }
                 if offset.y != clamped.y {
                     let damping = oob_damping_base.powf(frame_ratio);
                     velocity.y *= damping;
+
+                    if (offset.y > clamped.y && velocity.y > 0.0) || (offset.y < clamped.y && velocity.y < 0.0) {
+                        velocity.y *= 0.5;
+                    }
                 }
 
                 offset.x += velocity.x * frame_ratio;
@@ -348,9 +364,24 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
             // Spring back if bouncy is enabled (time-based for consistent behavior across frame rates)
             if self.scroll_behavior.bouncy && (offset.x != clamped.x || offset.y != clamped.y) {
-                let spring_factor = 1.0 - (1.0 - self.scroll_behavior.bouncy_recovery as FLOAT).powf(frame_ratio);
-                offset.x += (clamped.x - offset.x) * spring_factor;
-                offset.y += (clamped.y - offset.y) * spring_factor;
+                // Point 4: Harmonic-like spring back
+                let dx = clamped.x - offset.x;
+                let dy = clamped.y - offset.y;
+
+                // Chrome-like bounce: use a slightly more "elastic" spring factor
+                // We use a square-root easing for the spring factor to make it feel more "Chrome-like" (snappy at first, then smooth)
+                let base_spring = 1.0 - (1.0 - self.scroll_behavior.bouncy_recovery as FLOAT).powf(frame_ratio);
+                let spring_factor = base_spring.sqrt(); 
+                
+                offset.x += dx * spring_factor;
+                offset.y += dy * spring_factor;
+
+                // Damp velocity during spring back to avoid oscillation
+                // Chrome's bounce is very damped.
+                let mut v = self.pointer_velocity.get();
+                v.x *= (0.7 as FLOAT).powf(frame_ratio);
+                v.y *= (0.7 as FLOAT).powf(frame_ratio);
+                self.pointer_velocity.set(v);
 
                 // Snap if close enough (sub-pixel threshold)
                 if (offset.x - clamped.x).abs() < 0.25 {
@@ -459,20 +490,85 @@ impl<E: Element> Element for RawScrollableContainer<E> {
 
         let we_consumed = match event {
             ElementEvent::Scroll(delta) => {
-
                 let mut offset = self.scroll_offset.get();
-                match self.axis {
-                    ScrollAxis::Vertical => {
-                        offset.y += delta.y;
-                    }
-                    ScrollAxis::Horizontal => {
-                        offset.x += delta.x;
+                let clamped = self.clamp_offset(offset);
+
+                // For MacOS trackpads/Natural scroll, we want to treat scroll events
+                // more like velocity inputs to allow for smooth interpolation and momentum.
+                let mut scroll_delta = match self.axis {
+                    ScrollAxis::Vertical => Vec2d { x: 0.0, y: delta.y },
+                    ScrollAxis::Horizontal => Vec2d { x: delta.x, y: 0.0 },
+                };
+
+                // Apply bouncy resistance if we're out of bounds
+                // This ensures the injected velocity reflects the resistance immediately
+                if self.scroll_behavior.bouncy {
+                    match self.axis {
+                        ScrollAxis::Vertical => {
+                            if offset.y > clamped.y || offset.y < clamped.y {
+                                let oob_dist = (offset.y - clamped.y).abs();
+                                let viewport_h = self.cached_max_scroll.get().y.max(100.0);
+                                let resistance = (1.0 - (oob_dist / viewport_h).min(0.75)).powi(2) * 0.3;
+                                scroll_delta.y *= resistance;
+                            }
+                        }
+                        ScrollAxis::Horizontal => {
+                            if offset.x > clamped.x || offset.x < clamped.x {
+                                let oob_dist = (offset.x - clamped.x).abs();
+                                let viewport_w = self.cached_max_scroll.get().x.max(100.0);
+                                let resistance = (1.0 - (oob_dist / viewport_w).min(0.75)).powi(2) * 0.3;
+                                scroll_delta.x *= resistance;
+                            }
+                        }
                     }
                 }
+
+                // If not bouncy, we clamp the delta to prevent over-scrolling via high-velocity scroll events
                 if !self.scroll_behavior.bouncy {
-                    offset = self.clamp_offset(offset);
+                     if (offset.y <= clamped.y && scroll_delta.y < 0.0) || (offset.y >= clamped.y && scroll_delta.y > 0.0) {
+                         scroll_delta.y = 0.0;
+                     }
+                     if (offset.x <= clamped.x && scroll_delta.x < 0.0) || (offset.x >= clamped.x && scroll_delta.x > 0.0) {
+                         scroll_delta.x = 0.0;
+                     }
                 }
-                self.scroll_offset.set(offset);
+
+                // Inject some velocity so that high-frequency scroll events 
+                // integrate into the momentum system for a smoother "glide".
+                let now = Utc::now();
+                let dt = self
+                    .last_event_time
+                    .get()
+                    .map(|t| (now - t).num_microseconds().unwrap_or(0) as f64 / 1_000_000.0)
+                    .map(|dt| dt as FLOAT)
+                    .unwrap_or(1.0 / 60.0)
+                    .max(0.005); // 5ms floor
+                self.last_event_time.set(Some(now));
+
+                let frame_ref = 1.0 / 60.0;
+                let mut v = self.pointer_velocity.get();
+                
+                let mut target_vx = (scroll_delta.x / dt) * frame_ref;
+                let mut target_vy = (scroll_delta.y / dt) * frame_ref;
+
+                let max_scroll_v = 5000.0 * self.last_scale.get();
+                target_vx = target_vx.clamp(-max_scroll_v, max_scroll_v);
+                target_vy = target_vy.clamp(-max_scroll_v, max_scroll_v);
+
+                // For MacOS trackpads, high-frequency events need smoother blending.
+                // We use a stronger blend to filter noise.
+                v.x = v.x * 0.8 + target_vx * 0.2;
+                v.y = v.y * 0.8 + target_vy * 0.2;
+                
+                self.pointer_velocity.set(v);
+
+                // Update offset immediately for responsiveness, but ONLY if we aren't 
+                // already moving very fast (let draw handle fast motion).
+                // Actually, to fix shaking, we must ensure we don't have conflicting sources of truth.
+                // Let's apply a fraction of the delta here, and let the velocity handle the rest.
+                // Or simply let draw() handle it ALL if we request redraw.
+                // Redraw is generally fast enough (60-120fps).
+                
                 self.window.request_redraw();
                 true
             }
@@ -507,7 +603,8 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                         let dx = p.x - start.x;
                         let dy = p.y - start.y;
 
-                        let threshold = 10.0;
+                        // Point 5: DPI Awareness
+                        let threshold = 10.0 * self.last_scale.get();
                         let exceeds_threshold = match self.axis {
                             ScrollAxis::Vertical => dy.abs() > threshold && dy.abs() > dx.abs(),
                             ScrollAxis::Horizontal => dx.abs() > threshold && dx.abs() > dy.abs(),
@@ -516,16 +613,24 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                         if exceeds_threshold {
                             mode = DragMode::Content;
                             self.drag_mode.set(DragMode::Content);
-                            
+
                             // Adjust last_pointer_pos so we don't 'lose' the first 10px of movement
                             // We set it to where the threshold was crossed.
                             let mut adjusted_start = start;
                             match self.axis {
                                 ScrollAxis::Vertical => {
-                                    if dy > 0.0 { adjusted_start.y += threshold; } else { adjusted_start.y -= threshold; }
+                                    if dy > 0.0 {
+                                        adjusted_start.y += threshold;
+                                    } else {
+                                        adjusted_start.y -= threshold;
+                                    }
                                 }
                                 ScrollAxis::Horizontal => {
-                                    if dx > 0.0 { adjusted_start.x += threshold; } else { adjusted_start.x -= threshold; }
+                                    if dx > 0.0 {
+                                        adjusted_start.x += threshold;
+                                    } else {
+                                        adjusted_start.x -= threshold;
+                                    }
                                 }
                             }
                             self.last_pointer_pos.set(Some(adjusted_start));
@@ -542,7 +647,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                 if mode != DragMode::None && mode != DragMode::Pending {
                     if let Some(last) = self.last_pointer_pos.get() {
                         let speed_multiplier = self.speed_multiplier;
-                        let dx = p.x - last.x * speed_multiplier;
+                        let dx = (p.x - last.x) * speed_multiplier;
 
                         let dy = (p.y - last.y) * speed_multiplier;
                         debug!("PointerMove: y={} | last_y={}", p.y, last.y);
@@ -576,10 +681,13 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                         new_velocity.x *= sensitivity_gain;
                         new_velocity.y *= sensitivity_gain;
 
-                        // Smooth acceleration: blend with previous velocity 
-                        // Reduced history weight (0.4) so the final flick dominates the estimation
+                        // Point 2: Time-weighted moving average for velocity blending
+                        // Makes it robust against irregular event timing
                         let old_velocity = self.pointer_velocity.get();
-                        let (blend_old, blend_new) = (0.4 as FLOAT, 0.6 as FLOAT);
+                        let blend_factor = (dt / 0.05).min(1.0); // 50ms window for full replacement
+                        let blend_new = (0.6 * (1.0 - blend_factor) + blend_factor).min(1.0);
+                        let blend_old = 1.0 - blend_new;
+
                         new_velocity.x = old_velocity.x * blend_old + new_velocity.x * blend_new;
                         new_velocity.y = old_velocity.y * blend_old + new_velocity.y * blend_new;
 
@@ -592,26 +700,35 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                             DragMode::Content => match self.axis {
                                 ScrollAxis::Vertical => {
                                     let mut actual_dy = dy;
-                                    // Non-linear rubber banding feels more natural
+                                    // Point 3: Non-linear rubber banding
                                     if offset.y > clamped.y || offset.y < clamped.y {
-                                         // Simplify for now: use existing 0.3 but could be viewport-relative
-                                        actual_dy *= 0.3;
+                                        let oob_dist = (offset.y - clamped.y).abs();
+                                        // Viewport-relative quadratic resistance
+                                        let viewport_h = self.cached_max_scroll.get().y.max(100.0);
+                                        let resistance = (1.0 - (oob_dist / viewport_h).min(0.75)).powi(2) * 0.3;
+                                        actual_dy *= resistance;
                                     }
                                     offset.y += actual_dy;
                                 }
                                 ScrollAxis::Horizontal => {
                                     let mut actual_dx = dx;
                                     if offset.x > clamped.x || offset.x < clamped.x {
-                                        actual_dx *= 0.3;
+                                        let oob_dist = (offset.x - clamped.x).abs();
+                                        let viewport_w = self.cached_max_scroll.get().x.max(100.0);
+                                        let resistance = (1.0 - (oob_dist / viewport_w).min(0.75)).powi(2) * 0.3;
+                                        actual_dx *= resistance;
                                     }
                                     offset.x += actual_dx;
                                 }
                             },
                             DragMode::VerticalScrollbar => {
-                                offset.y -= dy * self.v_scroll_multiplier.get();
+                                // Point 7: Smooth scrollbar interaction
+                                let target_y = offset.y - dy * self.v_scroll_multiplier.get();
+                                offset.y = offset.y * 0.4 + target_y * 0.6;
                             }
                             DragMode::HorizontalScrollbar => {
-                                offset.x -= dx * self.h_scroll_multiplier.get();
+                                let target_x = offset.x - dx * self.h_scroll_multiplier.get();
+                                offset.x = offset.x * 0.4 + target_x * 0.6;
                             }
                             _ => {}
                         }
