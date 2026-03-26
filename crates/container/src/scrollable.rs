@@ -48,7 +48,7 @@ impl<W: Widget> Widget for Scrollable<W> {
 
         let raw_container = RawContainer::new(RawScrollableContainer {
             child: self.child.to_element(&child_ctx),
-            speed_multiplier: ctx.scale,
+            speed_multiplier: ctx.scale as f32,
             scroll_offset: Cell::new(Vec2d {
                 x: self.scroll_behavior.scroll_offset.x * ctx.scale,
                 y: self.scroll_behavior.scroll_offset.y * ctx.scale,
