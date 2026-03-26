@@ -21,6 +21,8 @@ pub use widget::base::BuildContext;
 pub use widget::text::Text;
 pub use widget::*;
 pub use widget::{State, StatefulWidget, StatelessWidget};
+pub use media::*;
+pub use media::image::ImageSource;
 
 // Macro re-export
 pub mod macros {

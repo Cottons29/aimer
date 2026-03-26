@@ -22,13 +22,14 @@ impl CupidCanvas {
     pub fn begin_frame(&self) {
         self.draw_list.borrow_mut().clear();
     }
+    
 
     pub fn fill_rect(&self, x: f32, y: f32, width: f32, height: f32, color: Color, border_radius: f32) {
         self.draw_list.borrow_mut().fill_rect(
             Rect::new(x, y, width, height),
             color,
-            border_radius,
-            0.0,
+            [border_radius; 4],
+            [0.0; 4],
             Color::transparent(),
         );
     }
@@ -39,6 +40,26 @@ impl CupidCanvas {
         color: Color,
         border_radius: f32,
         border_width: f32,
+        border_color: Color,
+    ) {
+        self.draw_list.borrow_mut().fill_rect(
+            Rect::new(x, y, width, height),
+            color,
+            [border_radius; 4],
+            [border_width; 4],
+            border_color,
+        );
+    }
+
+    /// Draws a filled rectangle with per-corner border radii and per-side border widths.
+    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
+    /// `border_width`: [top, right, bottom, left]
+    pub fn fill_rect_with_per_side_border(
+        &self,
+        x: f32, y: f32, width: f32, height: f32,
+        color: Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
         border_color: Color,
     ) {
         self.draw_list.borrow_mut().fill_rect(
@@ -95,6 +116,50 @@ impl CupidCanvas {
         self.rasterizer.borrow_mut().measure_text(text, font_size)
     }
 
+    /// Draws a filled rectangle with border and outline in a single pass (no gap).
+    pub fn fill_rect_with_border_and_outline(
+        &self,
+        x: f32, y: f32, width: f32, height: f32,
+        color: Color,
+        border_radius: f32,
+        border_width: f32,
+        border_color: Color,
+        outline_width: f32,
+        outline_color: Color,
+    ) {
+        self.draw_list.borrow_mut().fill_rect_with_outline(
+            Rect::new(x, y, width, height),
+            color,
+            [border_radius; 4],
+            [border_width; 4],
+            border_color,
+            [outline_width; 4],
+            outline_color,
+        );
+    }
+
+    /// Draws a filled rectangle with border and outline with per-corner/per-side control.
+    pub fn fill_rect_with_border_and_outline_per_side(
+        &self,
+        x: f32, y: f32, width: f32, height: f32,
+        color: Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
+        border_color: Color,
+        outline_width: [f32; 4],
+        outline_color: Color,
+    ) {
+        self.draw_list.borrow_mut().fill_rect_with_outline(
+            Rect::new(x, y, width, height),
+            color,
+            border_radius,
+            border_width,
+            border_color,
+            outline_width,
+            outline_color,
+        );
+    }
+
     /// Draws a stroked (outline-only) rectangle.
     pub fn stroke_rect(
         &self,
@@ -102,6 +167,25 @@ impl CupidCanvas {
         stroke_color: Color,
         stroke_width: f32,
         border_radius: f32,
+    ) {
+        self.draw_list.borrow_mut().fill_rect(
+            Rect::new(x, y, width, height),
+            Color::transparent(),
+            [border_radius; 4],
+            [stroke_width; 4],
+            stroke_color,
+        );
+    }
+
+    /// Draws a stroked (outline-only) rectangle with per-corner radii and per-side widths.
+    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
+    /// `stroke_width`: [top, right, bottom, left]
+    pub fn stroke_rect_per_side(
+        &self,
+        x: f32, y: f32, width: f32, height: f32,
+        stroke_color: Color,
+        stroke_width: [f32; 4],
+        border_radius: [f32; 4],
     ) {
         self.draw_list.borrow_mut().fill_rect(
             Rect::new(x, y, width, height),
@@ -122,14 +206,35 @@ impl CupidCanvas {
         self.draw_list.borrow_mut().fill_rect(
             Rect::new(x, y, width, height),
             color,
+            [border_radius; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+    }
+
+    /// Draws a filled rectangle with per-corner border radii.
+    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
+    pub fn fill_color_rect_per_corner(
+        &self,
+        x: f32, y: f32, width: f32, height: f32,
+        color: Color,
+        border_radius: [f32; 4],
+    ) {
+        self.draw_list.borrow_mut().fill_rect(
+            Rect::new(x, y, width, height),
+            color,
             border_radius,
-            0.0,
+            [0.0; 4],
             Color::transparent(),
         );
     }
 
     pub fn set_clip(&self, x: f32, y: f32, width: f32, height: f32) {
         self.draw_list.borrow_mut().push_clip(Rect::new(x, y, width, height));
+    }
+
+    pub fn set_clip_rounded(&self, x: f32, y: f32, width: f32, height: f32, border_radius: f32) {
+        self.draw_list.borrow_mut().push_clip_rounded(Rect::new(x, y, width, height), border_radius);
     }
 
     pub fn clear_clip(&self) {
@@ -148,6 +253,10 @@ impl CupidCanvas {
 
     pub fn restore_alpha(&self) {
         self.draw_list.borrow_mut().restore_alpha();
+    }
+
+    pub fn load_image(&self, path: &str) -> TextureId {
+        self.draw_list.borrow_mut().load_image(path.to_string())
     }
 
     pub fn draw_list(&self) -> Ref<'_, DrawList> {

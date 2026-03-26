@@ -1,6 +1,6 @@
 use attribute::dimension::Dimension;
 use std::cell::UnsafeCell;
-
+use attribute::CacheBounds;
 use widget::{Constructor, Element, LayoutCache, Widget, base::*, WidgetConstructor};
 use widget::style::border::{BorderStyle, BoxBorder, BoxOutline};
 use crate::gesture::gesture_detector::GestureDetectorElement;
@@ -67,7 +67,7 @@ impl<W: Widget> Widget for Button<W> {
             is_dirty: UnsafeCell::new(true),
             child,
             cache: LayoutCache::new(),
-            cached_bounds: UnsafeCell::new(None),
+            cached_bounds: CacheBounds::new(),
             window: ctx.window,
         })
     }

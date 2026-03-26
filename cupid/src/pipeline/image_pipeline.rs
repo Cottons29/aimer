@@ -14,15 +14,18 @@ pub struct ImageInstance {
     pub uv_scale: [f32; 2],
     /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
     pub clip_rect: [f32; 4],
+    /// Border radius for the clip rect. 0.0 means rectangular clip.
+    pub clip_border_radius: f32,
 }
 
 impl ImageInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x2,
         3 => Float32x2,
         4 => Float32x4,
+        5 => Float32,
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
@@ -59,7 +62,7 @@ impl ImagePipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/image.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("image.wgsl").into()),
         });
 
         let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -74,7 +77,7 @@ impl ImagePipeline {
                 label: Some("image viewport layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -187,6 +190,25 @@ impl ImagePipeline {
         height: u32,
         data: &[u8],
     ) -> TextureId {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.upload_image_with_id(device, queue, id, width, height, data);
+        id
+    }
+
+    pub fn has_texture(&self, id: TextureId) -> bool {
+        self.textures.contains_key(&id)
+    }
+
+    pub fn upload_image_with_id(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: TextureId,
+        width: u32,
+        height: u32,
+        data: &[u8],
+    ) {
         let texture = device.create_texture_with_data(
             queue,
             &wgpu::TextureDescriptor {
@@ -223,45 +245,58 @@ impl ImagePipeline {
             ],
         });
 
-        let id = self.next_id;
-        self.next_id += 1;
         self.textures.insert(id, TextureEntry { bind_group, texture });
-        id
     }
 
-    /// Draw a single textured quad. Each image draw is a separate draw call
-    /// (grouped by texture_id for batching in the renderer).
-    pub fn draw_image(
-        &self,
-        _device: &wgpu::Device,
+    /// Draw a batch of instances with the same texture_id.
+    pub fn draw_batch(
+        &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         pass: &mut wgpu::RenderPass<'_>,
         width: u32,
         height: u32,
+        is_srgb: bool,
         texture_id: TextureId,
-        instance: ImageInstance,
+        instances: &[ImageInstance],
     ) {
+        if instances.is_empty() {
+            return;
+        }
+
         let entry = match self.textures.get(&texture_id) {
             Some(e) => e,
             None => return,
         };
 
+        // Resize instance buffer if needed
+        if instances.len() > self.instance_capacity {
+            self.instance_capacity = instances.len().next_power_of_two();
+            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("image instance buffer (resized)"),
+                size: (self.instance_capacity * std::mem::size_of::<ImageInstance>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+
+        let is_srgb_f32 = if is_srgb { 1.0 } else { 0.0 };
         queue.write_buffer(
             &self.viewport_buffer,
             0,
-            bytemuck::cast_slice(&[width as f32, height as f32, 0.0, 0.0]),
+            bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
         );
 
         queue.write_buffer(
             &self.instance_buffer,
             0,
-            bytemuck::cast_slice(&[instance]),
+            bytemuck::cast_slice(instances),
         );
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_bind_group(1, &entry.bind_group, &[]);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-        pass.draw(0..6, 0..1);
+        pass.draw(0..6, 0..instances.len() as u32);
     }
 }

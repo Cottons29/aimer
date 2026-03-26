@@ -1,5 +1,6 @@
 
 use crate::dimension::Dimension;
+use crate::Float;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Size {
@@ -63,12 +64,11 @@ impl Size {
 /// - f64 for wasm32
 #[derive(Copy, Clone, Default, Debug, PartialEq)]
 pub struct ResolvedSize {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub width: f32,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub height: f32,
-    #[cfg(target_arch = "wasm32")]
-    pub width: f64,
-    #[cfg(target_arch = "wasm32")]
-    pub height: f64,
+    pub width: Float,
+    pub height: Float,
+}
+
+
+impl ResolvedSize {
+    
 }

@@ -10,3 +10,6 @@ pub type Float = f32;
 ///  Float type for rendering
 pub type Float = f64;
 
+pub use dimension::Dimension;
+pub use dimension::Bounds;
+pub use dimension::CacheBounds;

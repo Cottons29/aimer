@@ -40,6 +40,7 @@ pub enum Color {
 }
 
 impl Color {
+
     fn to_css_color(&self) -> String {
         let c = self.to_u32();
         let a = ((c >> 24) & 0xFF) as f64 / 255.0;
@@ -50,10 +51,6 @@ impl Color {
         format!("rgba({}, {}, {}, {})", r, g, b, a)
     }
 }
-
-// impl Index<u8> for Color {
-//     type Output = u8;
-// }
 
 #[allow(clippy::derivable_impls)]
 impl Default for Color {

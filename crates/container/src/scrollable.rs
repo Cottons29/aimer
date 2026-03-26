@@ -1,14 +1,22 @@
 pub mod raw_scroll;
 pub mod scroll_bar;
+pub mod scroll_behavior;
+pub mod scroll_spring;
+pub mod draw_scroll;
+pub mod handle_scroll;
 
-use std::cell::Cell;
-use attribute::position::Vec2d;
-use constructor::{Constructor, WidgetConstructor};
-use widget::base::BuildContext;
-use widget::{Element, Widget};
+pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
 
+use crate::raw_scroll::DragMode;
 use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
+use crate::single_child::container::RawContainer;
+use attribute::position::Vec2d;
+use constructor::WidgetConstructor;
+use std::cell::Cell;
+use attribute::CacheBounds;
+use widget::base::BuildContext;
+use widget::{Element, Widget};
 
 #[cfg(target_arch = "wasm32")]
 type Float = f64;
@@ -37,24 +45,29 @@ impl<W: Widget> Widget for Scrollable<W> {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = Float::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = Float::MAX,
         }
-        let child = self.child.to_element(&child_ctx);
-        Box::new(RawScrollableContainer {
-            child,
+
+        let raw_container = RawContainer::new(RawScrollableContainer {
+            child: self.child.to_element(&child_ctx),
+            speed_multiplier: ctx.scale as f32,
             scroll_offset: Cell::new(Vec2d {
                 x: self.scroll_behavior.scroll_offset.x * ctx.scale,
                 y: self.scroll_behavior.scroll_offset.y * ctx.scale,
             }),
             last_pointer_pos: Cell::new(None),
-            drag_mode: Cell::new(0),
+            drag_mode: Cell::new(DragMode::None),
             cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             cached_min_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
-            pointer_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            pointer_velocity: Cell::new(Vec2d {
+                x: self.scroll_behavior.velocity.x * ctx.scale,
+                y: self.scroll_behavior.velocity.y * ctx.scale,
+            }),
             last_event_time: Cell::new(None),
             last_frame_time: Cell::new(None),
             v_thumb_rect: Cell::new(None),
             h_thumb_rect: Cell::new(None),
             v_scroll_multiplier: Cell::new(0.0),
             h_scroll_multiplier: Cell::new(0.0),
+            last_scale: Cell::new(ctx.scale),
             scroll_behavior: ScrollBehavior {
                 max_scroll: self.scroll_behavior.max_scroll,
                 min_scroll: self.scroll_behavior.min_scroll,
@@ -72,54 +85,9 @@ impl<W: Widget> Widget for Scrollable<W> {
             vertical_scroll_bar: self.vertical_scroll_bar.clone(),
             horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
             window: ctx.window,
-        })
+            bounds: CacheBounds::with_vec2d(child_ctx.parent_pos),
+            cursor_pos: Cell::new(None),
+        });
+        Box::new(raw_container)
     }
 }
-
-
-#[derive(Constructor)]
-pub struct ScrollBehavior {
-    pub max_scroll: Vec2d,
-    pub min_scroll: Vec2d,
-    pub velocity: Vec2d,
-    pub scroll_offset: Vec2d,
-    #[constructor(default = true)]
-    pub bouncy: bool,
-    #[constructor(default = 0.6)]
-    pub bouncy_resistance: Float,
-    #[constructor(default = 0.15)]
-    pub bouncy_recovery: Float,
-    #[constructor(default = 0.95)]
-    pub friction: Float,
-}
-
-impl Default for ScrollBehavior {
-    fn default() -> Self {
-        #[cfg(target_os = "ios")]
-        let defaults = (0.55, 0.13, 0.991);
-        #[cfg(not(target_os = "ios"))]
-        let defaults = (0.6, 0.15, 0.95);
-
-        Self {
-            max_scroll: Vec2d { x: Float::MAX, y: Float::MAX },
-            min_scroll: Vec2d { x: 0.0, y: 0.0 },
-            velocity: Vec2d { x: 0.0, y: 0.0 },
-            scroll_offset: Vec2d { x: 0.0, y: 0.0 },
-            bouncy: true,
-            bouncy_resistance: defaults.0,
-            bouncy_recovery: defaults.1,
-            friction: defaults.2,
-        }
-    }
-}
-
-#[derive(Default)]
-pub enum ScrollAxis {
-    #[default]
-    Vertical,
-    Horizontal,
-}
-
-
-
-

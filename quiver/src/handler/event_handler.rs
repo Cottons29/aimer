@@ -2,7 +2,7 @@ use crate::handler::AimerApplicationHandler;
 use attribute::position::Vec2d;
 use events::element::KeyAction;
 use events::element::{ElementEvent, Modifiers, NamedKey};
-use utils::debug;
+use utils::{debug, info};
 use widget::{broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, WindowEvent};
@@ -10,6 +10,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 
 pub struct WindowEventHandler;
+
 
 impl WindowEventHandler {
     pub(crate) fn handle_events(
@@ -41,7 +42,9 @@ impl WindowEventHandler {
 
             WindowEvent::MouseWheel { delta, .. } => Self::handle_mouse_wheel(delta, app),
 
-            WindowEvent::RedrawRequested => app.render(event_loop),
+            WindowEvent::RedrawRequested => {
+             app.render(event_loop)
+            },
 
             WindowEvent::Resized(size) => Self::handle_resize(size, app),
 
@@ -135,10 +138,7 @@ impl WindowEventHandler {
     fn handle_keyboard_input(event: KeyEvent, app: &mut AimerApplicationHandler) {
         use winit::event::ElementState;
         use winit::keyboard::{Key, NamedKey as WinitNamedKey};
-
-        // debug!("DeviceID : {:?}", device_id);
-        debug!("KeyboardInput: logical {:?},state {:?}", event.logical_key, event.state);
-
+        
         let action = if event.repeat {
             KeyAction::Repeat
         } else {
@@ -250,9 +250,10 @@ impl WindowEventHandler {
     }
 
     fn handle_mouse_wheel(delta: MouseScrollDelta, app: &mut AimerApplicationHandler) {
+        // debug!("Mouse wheel delta: {:?}", delta);
         let scroll_delta = match delta {
             MouseScrollDelta::LineDelta(x, y) => {
-                Vec2d { x: x as crate::handler::Float * 30.0, y: y as crate::handler::Float * 30.0 }
+                Vec2d { x: x as crate::handler::Float * 20.0, y: y as crate::handler::Float * 20.0 }
             }
             MouseScrollDelta::PixelDelta(pos) => {
                 Vec2d { x: pos.x as crate::handler::Float, y: pos.y as crate::handler::Float }

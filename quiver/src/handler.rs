@@ -19,7 +19,7 @@ use inspector::InspectorServer;
 use std::cell::Cell;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
-use utils::debug;
+use utils::{debug, info};
 use widget::base::BuildContext;
 use widget::{Element, Widget};
 use winit::application::ApplicationHandler;
@@ -57,6 +57,17 @@ fn find_hovered_node(node: &inspector::WidgetNode, name: &str, start: Vec2d, end
         }
     }
     None
+}
+
+fn frame_time (func: impl FnOnce() -> ())  {
+    let start = chrono::Utc::now().timestamp_micros();
+    func();
+    let end = chrono::Utc::now().timestamp_micros();
+    let duration = end - start;
+    if duration == 0 {
+        return;
+    }
+    info!("FPS: {} | Frame time: {} ns", 1_000_000 / duration, duration);
 }
 
 pub struct AimerApplicationHandler {
@@ -161,11 +172,12 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: crate::aimer_app::AimerCustomAppEvent) {
-        debug!("User event {:?}", event);
+        // debug!("User event {:?}", event);
         handle_user_event(self, event);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+
         WindowEventHandler::handle_events(self, event_loop, _id, event);
     }
 
@@ -174,7 +186,7 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
             let Some(window) = self.window.as_ref() else { return };
             window.request_redraw();
             self.start_up_frames.set(self.start_up_frames.get() - 1);
-            debug!("About to wait, {} frames left", self.start_up_frames.get());
+            // debug!("About to wait, {} frames left", self.start_up_frames.get());
         }
         #[cfg(debug_assertions)]
         {
@@ -208,54 +220,29 @@ impl AimerApplicationHandler {
         ctx.canvas.restore();
     }
 
-    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+    // #[cfg(debug_assertions)]
     fn broadcast_inspector_snapshot(&self) {
-        if self.inspector.is_enabled() {
-            let snapshot = self
-                .widget_root
-                .as_ref()
-                .map(|root| InspectorServer::snapshot_tree(root.as_ref()));
-
-            let hovered_id = if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
-                if let Some((name, start, end)) = hovered.as_ref() {
-                    snapshot
-                        .as_ref()
-                        .and_then(|s| find_hovered_node(s, name, *start, *end))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            self.inspector.broadcast_tree(snapshot);
-            self.inspector.broadcast_hovered(hovered_id);
-        }
-    }
-
-    #[cfg(all(debug_assertions, target_arch = "wasm32"))]
-    fn broadcast_inspector_snapshot(&self) {
-        if self.inspector.is_enabled() {
-            let snapshot = self
-                .widget_root
-                .as_ref()
-                .map(|root| inspector::snapshot_tree(root.as_ref()));
-
-            let hovered_id = if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
-                if let Some((name, start, end)) = hovered.as_ref() {
-                    snapshot
-                        .as_ref()
-                        .and_then(|s| find_hovered_node(s, name, *start, *end))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            self.inspector.broadcast_tree(snapshot);
-            self.inspector.broadcast_hovered(hovered_id);
-        }
+        // if self.inspector.is_enabled() {
+        //     let snapshot = self
+        //         .widget_root
+        //         .as_ref()
+        //         .map(|root| inspector::InspectorServer::snapshot_tree(root.as_ref()));
+        //
+        //     let hovered_id = if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
+        //         if let Some((name, start, end)) = hovered.as_ref() {
+        //             snapshot
+        //                 .as_ref()
+        //                 .and_then(|s| find_hovered_node(s, name, *start, *end))
+        //         } else {
+        //             None
+        //         }
+        //     } else {
+        //         None
+        //     };
+        //
+        //     self.inspector.broadcast_tree(snapshot);
+        //     self.inspector.broadcast_hovered(hovered_id);
+        // }
     }
 
     #[allow(unused)]

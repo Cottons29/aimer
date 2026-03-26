@@ -1,5 +1,6 @@
-use std::ops::{Index, Mul};
 use color::prelude::{Color as AimerColor, ColorMixer};
+use std::ops::{Index, Mul};
+use utils::debug;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Color {
@@ -15,12 +16,7 @@ impl Color {
     }
 
     pub const fn rgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
-        Self {
-            r: r as f32 / 255.0,
-            g: g as f32 / 255.0,
-            b: b as f32 / 255.0,
-            a: a as f32 / 255.0,
-        }
+        Self { r: r as f32 / 255.0, g: g as f32 / 255.0, b: b as f32 / 255.0, a: a as f32 / 255.0 }
     }
 
     pub const fn white() -> Self {
@@ -51,10 +47,7 @@ impl Color {
 impl Mul<u8> for Color {
     type Output = Self;
     fn mul(self, rhs: u8) -> Self::Output {
-        Self {
-            a: self.a * rhs as f32,
-            ..self
-        }
+        Self { a: self.a * rhs as f32, ..self }
     }
 }
 
@@ -63,7 +56,7 @@ impl Color {
         [self.r, self.g, self.b, self.a]
     }
 
-    pub const fn set_alpha(&mut self, alpha: u8) -> Self{
+    pub const fn set_alpha(&mut self, alpha: u8) -> Self {
         self.a = alpha as f32 / 255.0;
         *self
     }
@@ -76,6 +69,7 @@ impl From<AimerColor> for Color {
         let r = ((argb >> 16) & 0xFF) as f32 / 255.0;
         let g = ((argb >> 8) & 0xFF) as f32 / 255.0;
         let b = (argb & 0xFF) as f32 / 255.0;
+
         Self { r, g, b, a }
     }
 }

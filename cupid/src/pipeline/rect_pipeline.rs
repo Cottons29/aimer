@@ -6,22 +6,32 @@ pub struct RectInstance {
     pub position: [f32; 2],
     pub size: [f32; 2],
     pub color: [f32; 4],
-    pub border_radius: f32,
-    pub border_width: f32,
+    /// Per-corner border radius: [top-left, top-right, bottom-right, bottom-left]
+    pub border_radius: [f32; 4],
+    /// Per-side border width: [top, right, bottom, left]
+    pub border_width: [f32; 4],
     pub border_color: [f32; 4],
+    /// Per-side outline width: [top, right, bottom, left]
+    pub outline_width: [f32; 4],
+    pub outline_color: [f32; 4],
     /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
     pub clip_rect: [f32; 4],
+    /// Border radius for the clip rect. 0.0 means rectangular clip.
+    pub clip_border_radius: f32,
 }
 
 impl RectInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x4,
-        3 => Float32,
-        4 => Float32,
+        3 => Float32x4,
+        4 => Float32x4,
         5 => Float32x4,
         6 => Float32x4,
+        7 => Float32x4,
+        8 => Float32x4,
+        9 => Float32,
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
@@ -48,7 +58,7 @@ impl RectPipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rect shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/rect.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("rect.wgsl").into()),
         });
 
         let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -62,7 +72,7 @@ impl RectPipeline {
             label: Some("rect bind group layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -142,13 +152,15 @@ impl RectPipeline {
         pass: &mut wgpu::RenderPass<'_>,
         width: u32,
         height: u32,
+        is_srgb: bool,
     ) {
         if self.instances.is_empty() {
             return;
         }
 
         // Update viewport uniform
-        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, 0.0, 0.0]));
+        let is_srgb_f32 = if is_srgb { 1.0 } else { 0.0 };
+        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
 
         // Grow instance buffer if needed
         if self.instances.len() > self.instance_capacity {

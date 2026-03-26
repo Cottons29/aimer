@@ -182,7 +182,6 @@ impl GestureActions {
 
     /// Feed a `PointerEvent` into the detector. Returns a recognized `GestureEvent` if any.
     pub fn handle_pointer_event(&mut self, event: &PointerEvent) -> Option<GestureEvent> {
-        utils::debug!("Handling : {:?}", self);
         match event {
             PointerEvent::Down(pos) => {
                 let timestamp = Duration::microseconds(Local::now().timestamp_micros());
@@ -192,7 +191,6 @@ impl GestureActions {
             }
 
             PointerEvent::Up(pos) => {
-                utils::debug!("PointerEvent::Up : {:?}", pos);
                 let down_pos = self.state.down_position.take()?;
                 let down_time = self.state.down_time.take()?;
                 let now = Duration::microseconds(Local::now().timestamp_micros());

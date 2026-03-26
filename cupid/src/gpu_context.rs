@@ -9,6 +9,7 @@ pub struct GpuContext<'w> {
     pub surface: Surface<'w>,
     pub config: SurfaceConfiguration,
     pub format: TextureFormat,
+    pub is_srgb: bool,
 }
 
 impl<'w> GpuContext<'w> {
@@ -18,11 +19,21 @@ impl<'w> GpuContext<'w> {
             {
                 wgpu::Backends::GL
             }
-            #[cfg(not(target_os = "android"))]
+            #[cfg(any(target_os = "ios", target_os = "macos"))]
             {
-                wgpu::Backends::all()
+                wgpu::Backends::METAL
+            }
+            #[cfg(target_os = "windows")]
+            {
+                wgpu::Backends::D3D11
+            }
+            #[cfg(target_os = "linux")]
+            {
+                wgpu::Backends::VULKAN
             }
         };
+
+        debug!("gpu backends: {:?}", backends);
 
         let instance = Instance::new(wgpu::InstanceDescriptor {
             backends,
@@ -82,19 +93,24 @@ impl<'w> GpuContext<'w> {
         };
 
         let caps = surface.get_capabilities(&adapter);
-        let format = caps
+
+        debug!("Surface format: {:?}", caps.formats);
+
+        let selected_format = caps
             .formats
             .iter()
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(caps.formats[0]);
 
+        let is_srgb = selected_format.is_srgb();
+
         let max_dim = device.limits().max_texture_dimension_2d;
 
-        debug!("Gpu Context : Initialized with max texture dimension: {}", max_dim);
+        debug!("Gpu Context : Initialized with max texture dimension: {} and is_srgb: {}", max_dim, is_srgb);
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
+            format: selected_format,
             width: size.width.max(1).min(max_dim),
             height: size.height.max(1).min(max_dim),
             present_mode: wgpu::PresentMode::Fifo,
@@ -104,7 +120,7 @@ impl<'w> GpuContext<'w> {
         };
         surface.configure(&device, &config);
 
-        Self { device, queue, surface, config, format }
+        Self { device, queue, surface, config, format: selected_format, is_srgb }
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {

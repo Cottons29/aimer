@@ -27,16 +27,9 @@ pub mod render_ctx {
     impl WgpuApi {
         pub fn initialize(&mut self, window: &'static Window, size: PhysicalSize<u32>) {
             if self.gpu.is_some() {
-                // On Android, `resumed` is called again when the surface is recreated.
-                // Re-configure the surface with the current size.
                 self.resize(size);
                 return;
             }
-
-            // debug!("WgpuApi : Initializing GPU context with size: {} x {}", size.width, size.height);
-
-            #[cfg(target_os = "android")]
-            self.resize(size);
 
             // let gpu = GpuContext::initialize(window, size);
             let gpu = GpuContext::initialize(window, (1344, 2833).into());
@@ -76,20 +69,16 @@ pub mod render_ctx {
                 .texture
                 .create_view(&Default::default());
 
-            let dimension = (frame.texture.width(), frame.texture.height());
-            // debug!("Gpu Context : Rendering frame with dimension: {:?}", dimension);
 
             let width = gpu.width();
             let height = gpu.height();
-
-            // debug!("Gpu Context : Rendering frame with width: {}, height: {}", width, height);
 
 
             canvas.begin_frame();
             draw_fn(canvas, width, height);
 
             let draw_list = canvas.draw_list();
-            renderer.render(&gpu.device, &gpu.queue, &view, width, height, &draw_list);
+            renderer.render(&gpu.device, &gpu.queue, &view, width, height, gpu.is_srgb, &draw_list);
 
             gpu.end_frame(frame);
         }

@@ -1,3 +1,4 @@
+use std::ops::{Add, Mul, Sub, SubAssign};
 use crate::Float;
 use crate::size::ResolvedSize;
 
@@ -25,6 +26,49 @@ macro_rules! impl_from_tuple {
 pub struct Vec2d {
     pub x: Float,
     pub y: Float,
+}
+
+
+impl Mul<Vec2d> for Float {
+    type Output = Vec2d;
+    fn mul(self, rhs: Vec2d) -> Self::Output {
+        Self::Output { x: self * rhs.x, y: self * rhs.y }
+    }
+}
+
+impl Mul<Float> for Vec2d {
+    type Output = Vec2d;
+    fn mul(self, rhs: Float) -> Self::Output {
+        Self::Output { x: self.x * rhs, y: self.y * rhs }
+    }
+}
+
+impl Add<Vec2d> for Vec2d {
+    type Output = Vec2d;
+    fn add(self, rhs: Vec2d) -> Self::Output {
+        Self::Output { x: self.x + rhs.x, y: self.y + rhs.y }
+    }
+}
+
+impl Add<Float> for Vec2d {
+    type Output = Vec2d;
+    fn add(self, rhs: Float) -> Self::Output {
+        Self::Output { x: self.x + rhs, y: self.y + rhs }
+    }
+}
+
+impl Sub<(Float, Float)> for Vec2d {
+    type Output = Vec2d;
+    fn sub(self, rhs: (Float, Float)) -> Self::Output {
+        Self::Output { x: self.x - rhs.0, y: self.y - rhs.1 }
+    }
+}
+
+impl SubAssign<(Float, Float)> for Vec2d {
+    fn sub_assign(&mut self, rhs: (Float, Float)) {
+        self.x -= rhs.0;
+        self.y -= rhs.1;
+    }
 }
 
 impl Vec2d {
