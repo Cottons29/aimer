@@ -5,7 +5,7 @@ use cupid::utilities::Color;
 use std::path::PathBuf;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 struct App<'w> {
@@ -113,7 +113,7 @@ impl<'w> ApplicationHandler for App<'w> {
                 self.canvas.fill_rect(
                     50.0, 50.0, 150.0, 80.0,
                     Color::red(),
-                    0.0,
+                    20.0,
                 );
 
                 // Draw a green rounded rect
@@ -135,7 +135,7 @@ impl<'w> ApplicationHandler for App<'w> {
                 // Draw a border-only rect (transparent fill)
                 self.canvas.fill_rect_with_border(
                     420.0, 420.0, 160.0, 80.0,
-                    Color::transparent(),
+                    Color::blue(),
                     8.0,
                     2.0,
                     Color::red(),
@@ -169,7 +169,7 @@ impl<'w> ApplicationHandler for App<'w> {
 
                 self.canvas.draw_text(
                     30.0, 300.0,
-                    "WGPU-powered UI render engine",
+                    "Wgpu-powered UI render engine",
                     20.0,
                     Color::new(0.3, 0.3, 0.3, 1.0),
                 );
@@ -187,6 +187,7 @@ impl<'w> ApplicationHandler for App<'w> {
                     &view,
                     width,
                     height,
+                    gpu.is_srgb,
                     &self.canvas.draw_list(),
                 );
 

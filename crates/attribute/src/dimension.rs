@@ -1,4 +1,8 @@
 use crate::Float;
+use crate::position::Vec2d;
+use std::cell::Cell;
+use std::ops::{Div, Mul};
+use crate::size::{ResolvedSize, Size};
 
 ///
 /// Represents a dimension type that can be used to define sizes in different units.
@@ -54,7 +58,6 @@ impl From<Float> for Dimension {
     }
 }
 
-
 impl From<i32> for Dimension {
     fn from(v: i32) -> Self {
         Self::Px(v as Float)
@@ -78,15 +81,89 @@ impl Dimension {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CacheBounds {
-    pub left: Float,
-    pub top: Float,
+pub struct Bounds {
+    pub x: Float,
+    pub y: Float,
     pub width: Float,
     pub height: Float,
 }
 
+impl Mul<Float> for Bounds {
+    type Output = Self;
+    fn mul(self, rhs: Float) -> Self::Output {
+        Self { x: self.x * rhs, y: self.y * rhs, width: self.width * rhs, height: self.height * rhs }
+    }
+}
+
+impl Div<Float> for Bounds {
+    type Output = Self;
+    fn div(self, rhs: Float) -> Self::Output {
+        Self { x: self.x / rhs, y: self.y / rhs, width: self.width / rhs, height: self.height / rhs }
+    }
+}
+
+impl Bounds {
+    pub const fn new(x: Float, y: Float, width: Float, height: Float) -> Self {
+        Self { x, y, width, height }
+    }
+}
+impl Default for Bounds {
+    fn default() -> Self {
+        Self::new(0.0, 0.0, 0.0, 0.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CacheBounds {
+    bound: Option<Bounds>,
+}
+
 impl CacheBounds {
-    pub fn new(left: Float, top: Float, width: Float, height: Float) -> Self {
-        Self { left, top, width, height }
+    pub fn new() -> Self {
+        Self { bound: None }
+    }
+
+    pub const fn with_vec2d(vec2d: Vec2d) -> Self {
+        Self { bound: Some(Bounds::new(vec2d.x, vec2d.y, 0.0, 0.0)) }
+    }
+
+    pub const fn is_cached(&self) -> bool {
+        self.bound.is_some()
+    }
+
+    pub const fn get_bounds(&self) -> Option<Bounds> {
+        self.bound
+    }
+
+    pub const fn set_bounds(&self, bounds: Bounds) {
+        let bound_ptr = &raw const self.bound as *mut Option<Bounds>;
+        unsafe {
+            *bound_ptr = Some(bounds);
+        }
+    }
+
+    pub const fn set_size(&self, size: ResolvedSize) {
+        let bound_ptr = &raw const self.bound as *mut Option<Bounds>;
+        unsafe {
+            if let Some(bound) = &mut *bound_ptr {
+                bound.width = size.width;
+                bound.height = size.height;
+            }
+        }
+    }
+
+    pub const fn save(&self, scale: Float, x: Float, y: Float, width: Float, height: Float) {
+        let cache_x = x as Float / scale;
+        let cache_y = y as Float / scale;
+        let cache_w = width as Float / scale;
+        let cache_h = height as Float / scale;
+        let bound = Bounds::new(cache_x, cache_y, cache_w, cache_h);
+        self.set_bounds(bound);
+    }
+    
+
+    pub const fn is_inside(&self, x: Float, y: Float) -> bool {
+        let Some(bound) = self.bound else { return false };
+        bound.x <= x && x <= bound.x + bound.width && bound.y <= y && y <= bound.y + bound.height
     }
 }

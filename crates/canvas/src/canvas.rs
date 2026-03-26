@@ -1,14 +1,13 @@
-
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 use color::prelude::Color;
 
-#[cfg(target_arch = "wasm32")]
-mod wasm_impl;
 #[cfg(not(target_arch = "wasm32"))]
 mod native_impl;
+#[cfg(target_arch = "wasm32")]
+mod wasm_impl;
 
-pub trait CanvasRendering : Clone {
+pub trait CanvasRendering: Clone {
     fn begin_frame(&self);
     fn fill_rect(&self, pos: Vec2d, size: ResolvedSize);
     fn fill_rect_with_border(
@@ -20,6 +19,18 @@ pub trait CanvasRendering : Clone {
         border_width: f32,
         border_color: Color,
     );
+    /// Draws a filled rectangle with per-corner border radii and per-side border widths.
+    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
+    /// `border_width`: [top, right, bottom, left]
+    fn fill_rect_with_per_side_border(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
+        border_color: Color,
+    );
     fn clear_rect(&self, pos: Vec2d, size: ResolvedSize);
     fn translate(&self, pos: Vec2d);
     fn scale(&self, sx: f32, sy: f32);
@@ -29,45 +40,70 @@ pub trait CanvasRendering : Clone {
     fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color);
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize);
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize);
+    fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: f32);
     fn clear_clip(&self);
     fn measure_text(&self, text: &str, font_size: f32) -> f32;
-    fn stroke_rect(
+    fn stroke_rect(&self, pos: Vec2d, size: ResolvedSize, stroke_color: Color, stroke_width: f32, border_radius: f32);
+    /// Draws a stroked rectangle with per-corner radii and per-side widths.
+    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
+    /// `stroke_width`: [top, right, bottom, left]
+    fn stroke_rect_per_side(
         &self,
         pos: Vec2d,
         size: ResolvedSize,
         stroke_color: Color,
-        stroke_width: f32,
-        border_radius: f32,
+        stroke_width: [f32; 4],
+        border_radius: [f32; 4],
     );
-    fn fill_color_rect(
+    /// Draws a filled rectangle with border and outline in a single pass.
+    fn fill_rect_with_border_and_outline(
         &self,
         pos: Vec2d,
         size: ResolvedSize,
         color: Color,
         border_radius: f32,
+        border_width: f32,
+        border_color: Color,
+        outline_width: f32,
+        outline_color: Color,
     );
+    /// Draws a filled rectangle with border and outline with per-corner/per-side control.
+    fn fill_rect_with_border_and_outline_per_side(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
+        border_color: Color,
+        outline_width: [f32; 4],
+        outline_color: Color,
+    );
+    fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: f32);
+    /// Draws a filled rectangle with per-corner border radii.
+    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
+    fn fill_color_rect_per_corner(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
     fn set_alpha(&self, alpha: f32);
     fn restore_alpha(&self);
-    fn get_transform_translation(&self) -> (f64, f64) { (0.0, 0.0) }
+    fn load_image(&self, path: &str) -> u32;
+    fn get_transform_translation(&self) -> (f64, f64) {
+        (0.0, 0.0)
+    }
 }
 
-
-#[cfg(target_arch = "wasm32")]
-use web_sys::CanvasRenderingContext2d as Canvas;
 #[cfg(not(target_arch = "wasm32"))]
 use cupid::canvas::CupidCanvas as Canvas;
+#[cfg(target_arch = "wasm32")]
+use web_sys::CanvasRenderingContext2d as Canvas;
 
 pub type InnerCanvas = Canvas;
-
 
 #[allow(dead_code)]
 // #[derive(Clone)]
 #[derive(Clone)]
 pub struct AimerCanvas<'a> {
-    inner: &'a Canvas
+    inner: &'a Canvas,
 }
-
-
 
 impl<'a> AimerCanvas<'a> {
     #[allow(dead_code)]
@@ -88,21 +124,18 @@ impl<'a> AimerCanvas<'a> {
     /// // Ensure no mutable operations on `my_object` while using `canvas`.
     /// ```
     ///
-    unsafe fn get_canvas(&'a self) -> &'a Canvas  {
+    unsafe fn get_canvas(&'a self) -> &'a Canvas {
         self.inner
     }
 
     #[allow(dead_code)]
     #[inline]
     pub fn new(canvas: &'a Canvas) -> Self {
-        Self {
-            inner: canvas
-        }
+        Self { inner: canvas }
     }
 }
 
 impl<'a> AimerCanvas<'a> {
-
     /// Prepares the canvas for a new frame, clearing any previous draw commands.
     #[allow(dead_code)]
     #[inline]
@@ -129,7 +162,24 @@ impl<'a> AimerCanvas<'a> {
         border_width: f32,
         border_color: Color,
     ) {
-        CanvasRendering::fill_rect_with_border(
+        CanvasRendering::fill_rect_with_border(self.inner, pos, size, color, border_radius, border_width, border_color);
+    }
+
+    /// Fills a rectangular area with per-corner border radii and per-side border widths.
+    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
+    /// `border_width`: [top, right, bottom, left]
+    #[allow(dead_code)]
+    #[inline]
+    pub fn fill_rect_with_per_side_border(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
+        border_color: Color,
+    ) {
+        CanvasRendering::fill_rect_with_per_side_border(
             self.inner,
             pos,
             size,
@@ -196,11 +246,25 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::draw_image(self.inner, image_id, pos, size);
     }
 
+    /// Loads an image from the specified path and returns a unique image ID.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn load_image(&self, path: &str) -> u32 {
+        CanvasRendering::load_image(self.inner, path)
+    }
+
     /// Sets a clipping rectangle. Drawing outside this rect will be clipped.
     #[allow(dead_code)]
     #[inline]
     pub fn set_clip(&self, pos: Vec2d, size: ResolvedSize) {
         CanvasRendering::set_clip(self.inner, pos, size);
+    }
+
+    /// Sets a rounded clipping rectangle. Drawing outside this rounded rect will be clipped.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: f32) {
+        CanvasRendering::set_clip_rounded(self.inner, pos, size, border_radius);
     }
 
     /// Clears the current clipping rectangle.
@@ -228,14 +292,23 @@ impl<'a> AimerCanvas<'a> {
         stroke_width: f32,
         border_radius: f32,
     ) {
-        CanvasRendering::stroke_rect(
-            self.inner,
-            pos,
-            size,
-            stroke_color,
-            stroke_width,
-            border_radius,
-        );
+        CanvasRendering::stroke_rect(self.inner, pos, size, stroke_color, stroke_width, border_radius);
+    }
+
+    /// Draws a stroked rectangle with per-corner radii and per-side widths.
+    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
+    /// `stroke_width`: [top, right, bottom, left]
+    #[allow(dead_code)]
+    #[inline]
+    pub fn stroke_rect_per_side(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        stroke_color: Color,
+        stroke_width: [f32; 4],
+        border_radius: [f32; 4],
+    ) {
+        CanvasRendering::stroke_rect_per_side(self.inner, pos, size, stroke_color, stroke_width, border_radius);
     }
 
     /// Sets the global alpha (opacity) for subsequent draw commands.
@@ -259,22 +332,72 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::get_transform_translation(self.inner)
     }
 
-    /// Draws a filled rectangle with a specific color.
+    /// Draws a filled rectangle with border and outline in a single pass (no gap).
     #[allow(dead_code)]
     #[inline]
-    pub fn fill_color_rect(
+    pub fn fill_rect_with_border_and_outline(
         &self,
         pos: Vec2d,
         size: ResolvedSize,
         color: Color,
         border_radius: f32,
+        border_width: f32,
+        border_color: Color,
+        outline_width: f32,
+        outline_color: Color,
     ) {
-        CanvasRendering::fill_color_rect(
+        CanvasRendering::fill_rect_with_border_and_outline(
             self.inner,
             pos,
             size,
             color,
             border_radius,
+            border_width,
+            border_color,
+            outline_width,
+            outline_color,
         );
+    }
+
+    /// Draws a filled rectangle with border and outline with per-corner/per-side control.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn fill_rect_with_border_and_outline_per_side(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
+        border_color: Color,
+        outline_width: [f32; 4],
+        outline_color: Color,
+    ) {
+        CanvasRendering::fill_rect_with_border_and_outline_per_side(
+            self.inner,
+            pos,
+            size,
+            color,
+            border_radius,
+            border_width,
+            border_color,
+            outline_width,
+            outline_color,
+        );
+    }
+
+    /// Draws a filled rectangle with a specific color.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: f32) {
+        CanvasRendering::fill_color_rect(self.inner, pos, size, color, border_radius);
+    }
+
+    /// Draws a filled rectangle with per-corner border radii.
+    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
+    #[allow(dead_code)]
+    #[inline]
+    pub fn fill_color_rect_per_corner(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]) {
+        CanvasRendering::fill_color_rect_per_corner(self.inner, pos, size, color, border_radius);
     }
 }

@@ -55,7 +55,7 @@ pub struct BorderSide {
     pub color: Color,
 }
 
-pub(crate) fn resolve_dim(dim: Dimension, parent_val: Float, scale: Float) -> Float {
+pub fn resolve_dim(dim: Dimension, parent_val: Float, scale: Float) -> Float {
     match dim {
         Dimension::Px(w) => w * scale,
         Dimension::Percent(p) => parent_val * (p / 100.0),
@@ -113,11 +113,51 @@ impl RawBoxBorder {
             None
         }
     }
+
+    /// Returns per-corner radii [top-left, top-right, bottom-right, bottom-left].
+    /// Each corner radius is the minimum of its two adjacent side radii.
+    /// Returns None if all radii are zero.
+    pub fn get_per_corner_radii(&self, box_width: Float, box_height: Float, scale: Float) -> Option<[f32; 4]> {
+        let left_r = resolve_dim(self.left.radius, box_width, scale);
+        let right_r = resolve_dim(self.right.radius, box_width, scale);
+        let top_r = resolve_dim(self.top.radius, box_height, scale);
+        let bottom_r = resolve_dim(self.bottom.radius, box_height, scale);
+
+        let tl = left_r.min(top_r);
+        let tr = right_r.min(top_r);
+        let br = right_r.min(bottom_r);
+        let bl = left_r.min(bottom_r);
+
+        if tl == 0.0 && tr == 0.0 && br == 0.0 && bl == 0.0 {
+            None
+        } else {
+            Some([tl as f32, tr as f32, br as f32, bl as f32])
+        }
+    }
 }
 
 impl BoxBorder {
     pub fn all(border: BorderSide) -> Self {
         Self { left: border, right: border, top: border, bottom: border, ..Default::default() }
+    }
+
+    /// Returns the resolved border stroke for each side: (left, top, right, bottom).
+    pub fn strokes(&self, box_width: Float, box_height: Float, scale: Float) -> (Float, Float, Float, Float) {
+        (
+            resolve_dim(self.left.stroke, box_width, scale),
+            resolve_dim(self.top.stroke, box_height, scale),
+            resolve_dim(self.right.stroke, box_width, scale),
+            resolve_dim(self.bottom.stroke, box_height, scale),
+        )
+    }
+
+    /// Returns true if any side has a non-None style and non-zero stroke.
+    pub fn has_visible_border(&self, box_width: Float, box_height: Float, scale: Float) -> bool {
+        let (l, t, r, b) = self.strokes(box_width, box_height, scale);
+        (l > 0.0 && self.left.style != BorderStyle::None)
+            || (t > 0.0 && self.top.style != BorderStyle::None)
+            || (r > 0.0 && self.right.style != BorderStyle::None)
+            || (b > 0.0 && self.bottom.style != BorderStyle::None)
     }
 
     pub fn horizontal(border: BorderSide) -> Self {
@@ -140,11 +180,41 @@ impl BoxBorder {
             None
         }
     }
+
+    /// Returns per-corner radii [top-left, top-right, bottom-right, bottom-left].
+    /// Each corner radius is the minimum of its two adjacent side radii.
+    /// Returns None if all radii are zero.
+    pub fn get_per_corner_radii(&self, box_width: Float, box_height: Float, scale: Float) -> Option<[f32; 4]> {
+        let left_r = resolve_dim(self.left.radius, box_width, scale);
+        let right_r = resolve_dim(self.right.radius, box_width, scale);
+        let top_r = resolve_dim(self.top.radius, box_height, scale);
+        let bottom_r = resolve_dim(self.bottom.radius, box_height, scale);
+
+        let tl = left_r.min(top_r);
+        let tr = right_r.min(top_r);
+        let br = right_r.min(bottom_r);
+        let bl = left_r.min(bottom_r);
+
+        if tl == 0.0 && tr == 0.0 && br == 0.0 && bl == 0.0 {
+            None
+        } else {
+            Some([tl as f32, tr as f32, br as f32, bl as f32])
+        }
+    }
 }
 
 impl BoxOutline {
     pub fn all(border: BorderSide) -> Self {
         Self { left: border, right: border, top: border, bottom: border, ..Default::default() }
+    }
+
+    /// Returns true if any side has a non-None style and non-zero stroke.
+    pub fn has_visible_outline(&self, box_width: Float, box_height: Float, scale: Float) -> bool {
+        let (l, t, r, b) = self.strokes(box_width, box_height, scale);
+        (l > 0.0 && self.left.style != BorderStyle::None)
+            || (t > 0.0 && self.top.style != BorderStyle::None)
+            || (r > 0.0 && self.right.style != BorderStyle::None)
+            || (b > 0.0 && self.bottom.style != BorderStyle::None)
     }
 
     pub fn horizontal(border: BorderSide) -> Self {

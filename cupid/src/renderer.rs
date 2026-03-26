@@ -8,8 +8,17 @@ use crate::renderer;
 use crate::text_pipeline::{TextDrawRequest, TextPipelineV2};
 use crate::utilities::{Mat3, Rect};
 
-fn clip_to_array(clip: Option<&Rect>) -> [f32; 4] {
-    clip.map(|c| [c.x, c.y, c.width, c.height]).unwrap_or([0.0, 0.0, 0.0, 0.0])
+struct ClipState {
+    rect: Rect,
+    border_radius: f32,
+}
+
+fn clip_to_array(clip: Option<&ClipState>) -> [f32; 4] {
+    clip.map(|c| [c.rect.x, c.rect.y, c.rect.width, c.rect.height]).unwrap_or([0.0, 0.0, -1.0, 0.0])
+}
+
+fn clip_border_radius(clip: Option<&ClipState>) -> f32 {
+    clip.map(|c| c.border_radius).unwrap_or(0.0)
 }
 
 struct ResolvedCmd {
@@ -31,7 +40,7 @@ pub struct Renderer {
     pub image_pipeline: ImagePipeline,
     // Reusable per-frame scratch buffers to avoid allocations.
     transform_stack: Vec<Mat3>,
-    clip_stack: Vec<Rect>,
+    clip_stack: Vec<ClipState>,
     text_requests: Vec<TextDrawRequest>,
     resolved: Vec<ResolvedCmd>,
 }
@@ -66,6 +75,7 @@ impl Renderer {
         view: &wgpu::TextureView,
         width: u32,
         height: u32,
+        is_srgb: bool,
         draw_list: &DrawList,
     ) {
         // debug!("Rendering draw list with {} commands", draw_list.commands().len());
@@ -87,9 +97,32 @@ impl Renderer {
                         current_transform = prev;
                     }
                 }
-                DrawCommand::PushClip { rect } => {
-                    let (tx, ty) = current_transform.transform_point(rect.x, rect.y);
-                    self.clip_stack.push(Rect::new(tx, ty, rect.width, rect.height));
+                DrawCommand::PushClip { rect, border_radius } => {
+                    let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
+                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
+                    let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
+                    
+                    let new_rect = Rect::new(
+                        p1x.min(p2x),
+                        p1y.min(p2y),
+                        (p2x - p1x).abs(),
+                        (p2y - p1y).abs(),
+                    );
+
+                    let effective_clip = if let Some(parent) = self.clip_stack.last() {
+                        let x = new_rect.x.max(parent.rect.x);
+                        let y = new_rect.y.max(parent.rect.y);
+                        let r = (new_rect.x + new_rect.width).min(parent.rect.x + parent.rect.width);
+                        let b = (new_rect.y + new_rect.height).min(parent.rect.y + parent.rect.height);
+                        Rect::new(x, y, (r - x).max(0.0), (b - y).max(0.0))
+                    } else {
+                        new_rect
+                    };
+
+                    self.clip_stack.push(ClipState {
+                        rect: effective_clip,
+                        border_radius: *border_radius * sx,
+                    });
                 }
                 DrawCommand::PopClip => {
                     self.clip_stack.pop();
@@ -100,31 +133,74 @@ impl Renderer {
                     border_radius,
                     border_width,
                     border_color,
+                    outline_width,
+                    outline_color,
                 } => {
-                    let (tx, ty) = current_transform.transform_point(rect.x, rect.y);
+                    // Extract scale factors from the current transform matrix
+                    let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
+                    let sy = (current_transform.cols[1][0].powi(2) + current_transform.cols[1][1].powi(2)).sqrt();
+
+                    // Expand the quad by the outline width so the outline ring is visible.
+                    // These are in logical pixels and must be scaled to device pixels.
+                    let ol = outline_width[3]; // left
+                    let or = outline_width[1]; // right
+                    let ot = outline_width[0]; // top
+                    let ob = outline_width[2]; // bottom
+                    
+                    // Transform the top-left and bottom-right corners of the expanded quad.
+                    // This correctly handles translation and scaling.
+                    let (p1x, p1y) = current_transform.transform_point(rect.x - ol, rect.y - ot);
+                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width + or, rect.y + rect.height + ob);
+                    
+                    let expanded_w = p2x - p1x;
+                    let expanded_h = p2y - p1y;
+
+                    // Scale other properties by the appropriate axis
+                    let mut scaled_br = *border_radius;
+                    for r in &mut scaled_br { *r *= sx; } // Assuming uniform scale for simplicity, or use sx
+                    
+                    let mut scaled_bw = *border_width;
+                    scaled_bw[0] *= sy; // top
+                    scaled_bw[1] *= sx; // right
+                    scaled_bw[2] *= sy; // bottom
+                    scaled_bw[3] *= sx; // left
+                    
+                    let mut scaled_ow = *outline_width;
+                    scaled_ow[0] *= sy; // top
+                    scaled_ow[1] *= sx; // right
+                    scaled_ow[2] *= sy; // bottom
+                    scaled_ow[3] *= sx; // left
+
                     self.resolved.push(ResolvedCmd {
                         kind: ResolvedKind::Rect(RectInstance {
-                            position: [tx, ty],
-                            size: [rect.width, rect.height],
+                            position: [p1x.min(p2x), p1y.min(p2y)],
+                            size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
                             color: color.to_array(),
-                            border_radius: *border_radius,
-                            border_width: *border_width,
+                            border_radius: scaled_br,
+                            border_width: scaled_bw,
                             border_color: border_color.to_array(),
+                            outline_width: scaled_ow,
+                            outline_color: outline_color.to_array(),
                             clip_rect: clip_to_array(self.clip_stack.last()),
+                            clip_border_radius: clip_border_radius(self.clip_stack.last()),
                         }),
                     });
                 }
                 DrawCommand::ClearRect { rect } => {
-                    let (tx, ty) = current_transform.transform_point(rect.x, rect.y);
+                    let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
+                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
                     self.resolved.push(ResolvedCmd {
                         kind: ResolvedKind::Rect(RectInstance {
-                            position: [tx, ty],
-                            size: [rect.width, rect.height],
+                            position: [p1x.min(p2x), p1y.min(p2y)],
+                            size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
                             color: [0.0, 0.0, 0.0, 0.0],
-                            border_radius: 0.0,
-                            border_width: 0.0,
+                            border_radius: [0.0; 4],
+                            border_width: [0.0; 4],
                             border_color: [0.0; 4],
+                            outline_width: [0.0; 4],
+                            outline_color: [0.0; 4],
                             clip_rect: clip_to_array(self.clip_stack.last()),
+                            clip_border_radius: clip_border_radius(self.clip_stack.last()),
                         }),
                     });
                 }
@@ -144,6 +220,8 @@ impl Renderer {
                         color: color.to_array(),
                         bounds_width: width as f32 - tx,
                         bounds_height: height as f32 - ty,
+                        clip_rect: clip_to_array(self.clip_stack.last()),
+                        clip_border_radius: clip_border_radius(self.clip_stack.last()),
                     });
                     self.resolved.push(ResolvedCmd {
                         kind: ResolvedKind::TextIndex(()),
@@ -156,19 +234,31 @@ impl Renderer {
                     // Alpha state is tracked at the canvas level; no GPU-side handling yet.
                 }
                 DrawCommand::DrawImage { rect, texture_id } => {
-                    let (tx, ty) = current_transform.transform_point(rect.x, rect.y);
+                    let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
+                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
                     self.resolved.push(ResolvedCmd {
                         kind: ResolvedKind::Image {
                             texture_id: *texture_id,
                             instance: ImageInstance {
-                                position: [tx, ty],
-                                size: [rect.width, rect.height],
+                                position: [p1x.min(p2x), p1y.min(p2y)],
+                                size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
                                 uv_offset: [0.0, 0.0],
                                 uv_scale: [1.0, 1.0],
                                 clip_rect: clip_to_array(self.clip_stack.last()),
+                                clip_border_radius: clip_border_radius(self.clip_stack.last()),
                             },
                         },
                     });
+                }
+                DrawCommand::LoadImage { path, texture_id } => {
+                    if !self.image_pipeline.has_texture(*texture_id) {
+                        if let Ok(img) = image::open(path) {
+                            let rgba = img.to_rgba8();
+                            let (w, h) = rgba.dimensions();
+                            debug!("Image dimensions {:?}", (w, h));
+                            self.image_pipeline.upload_image_with_id(device, queue, *texture_id, w, h, &rgba);
+                        }
+                    }
                 }
             }
         }
@@ -176,7 +266,7 @@ impl Renderer {
         // Prepare text
         if !self.text_requests.is_empty() {
             self.text_pipeline
-                .prepare(device, queue, width, height, &self.text_requests);
+                .prepare(device, queue, width, height, is_srgb, &self.text_requests);
         }
 
         // Batch rects
@@ -212,28 +302,62 @@ impl Renderer {
 
             // Flush rects (AA clipping is handled per-instance in the shader)
             self.rect_pipeline
-                .flush(device, queue, &mut pass, width, height);
+                .flush(device, queue, &mut pass, width, height, is_srgb);
 
             // Render text
             if !self.text_requests.is_empty() {
                 self.text_pipeline.render(&mut pass);
             }
 
-            // Render images (AA clipping is handled per-instance in the shader)
+            // Render images (batched by texture_id)
+            let mut current_texture_id = None;
+            let mut batch = Vec::new();
+
             for rc in &self.resolved {
                 if let ResolvedKind::Image {
                     texture_id,
                     instance,
                 } = &rc.kind
                 {
-                    self.image_pipeline.draw_image(
+                    if current_texture_id.is_none() {
+                        current_texture_id = Some(*texture_id);
+                    }
+
+                    if Some(*texture_id) != current_texture_id {
+                        // Flush current batch
+                        if let Some(tid) = current_texture_id {
+                            if !batch.is_empty() {
+                                self.image_pipeline.draw_batch(
+                                    device,
+                                    queue,
+                                    &mut pass,
+                                    width,
+                                    height,
+                                    is_srgb,
+                                    tid,
+                                    &batch,
+                                );
+                            }
+                        }
+                        current_texture_id = Some(*texture_id);
+                        batch.clear();
+                    }
+                    batch.push(*instance);
+                }
+            }
+
+            // Flush last batch
+            if let Some(tid) = current_texture_id {
+                if !batch.is_empty() {
+                    self.image_pipeline.draw_batch(
                         device,
                         queue,
                         &mut pass,
                         width,
                         height,
-                        *texture_id,
-                        *instance,
+                        is_srgb,
+                        tid,
+                        &batch,
                     );
                 }
             }

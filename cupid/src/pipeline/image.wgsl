@@ -1,0 +1,153 @@
+struct Viewport {
+    size: vec2<f32>,
+    surface_is_srgb: f32,
+    _pad: f32,
+};
+
+@group(0) @binding(0) var<uniform> viewport: Viewport;
+@group(1) @binding(0) var t_diffuse: texture_2d<f32>;
+@group(1) @binding(1) var s_diffuse: sampler;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) pixel_pos: vec2<f32>,
+    @location(2) clip_rect: vec4<f32>,
+    @location(3) clip_border_radius: f32,
+};
+
+struct ImageInstance {
+    @location(0) pos: vec2<f32>,
+    @location(1) size: vec2<f32>,
+    @location(2) uv_offset: vec2<f32>,
+    @location(3) uv_scale: vec2<f32>,
+    @location(4) clip_rect: vec4<f32>,
+    @location(5) clip_border_radius: f32,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32, inst: ImageInstance) -> VertexOutput {
+    var corners = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 1.0),
+    );
+
+    let corner = corners[vi];
+    let pixel_pos = inst.pos + corner * inst.size;
+
+    let ndc = vec2<f32>(
+        (pixel_pos.x / viewport.size.x) * 2.0 - 1.0,
+        1.0 - (pixel_pos.y / viewport.size.y) * 2.0,
+    );
+
+    var out: VertexOutput;
+    out.position = vec4<f32>(ndc, 0.0, 1.0);
+    out.uv = inst.uv_offset + corner * inst.uv_scale;
+    out.pixel_pos = pixel_pos;
+    out.clip_rect = inst.clip_rect;
+    out.clip_border_radius = inst.clip_border_radius;
+    return out;
+}
+
+/// Compute anti-aliased clip alpha from a clip rect in pixel coordinates.
+/// clip_rect = (x, y, width, height). If width <= 0, clipping is disabled (returns 1.0).
+/// SDF for a rounded rectangle with per-corner radii.
+fn sdf_rounded_rect(p: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>) -> f32 {
+    var r: f32;
+    if p.x < 0.0 {
+        if p.y < 0.0 {
+            r = radii.x;
+        } else {
+            r = radii.w;
+        }
+    } else {
+        if p.y < 0.0 {
+            r = radii.y;
+        } else {
+            r = radii.z;
+        }
+    }
+    r = min(r, min(half_size.x, half_size.y));
+    let q = abs(p) - half_size + vec2<f32>(r, r);
+    return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radius: f32) -> f32 {
+    if clip_rect.z < 0.0 {
+        return 1.0;
+    }
+
+    if clip_rect.z <= 0.01 || clip_rect.w <= 0.01 {
+        return 0.0;
+    }
+
+    if clip_radius > 0.0 {
+        let clip_center = clip_rect.xy + clip_rect.zw * 0.5;
+        let clip_half = clip_rect.zw * 0.5;
+        let p = pixel_pos - clip_center;
+        let radii = vec4<f32>(clip_radius, clip_radius, clip_radius, clip_radius);
+        let d = sdf_rounded_rect(p, clip_half, radii);
+        return 1.0 - smoothstep(-0.5, 0.5, d);
+    }
+
+    let clip_min = clip_rect.xy;
+    let clip_max = clip_rect.xy + clip_rect.zw;
+
+    let d_left   = pixel_pos.x - clip_min.x;
+    let d_right  = clip_max.x - pixel_pos.x;
+    let d_top    = pixel_pos.y - clip_min.y;
+    let d_bottom = clip_max.y - pixel_pos.y;
+
+    let a_left   = smoothstep(0.0, 1.0, d_left);
+    let a_right  = smoothstep(0.0, 1.0, d_right);
+    let a_top    = smoothstep(0.0, 1.0, d_top);
+    let a_bottom = smoothstep(0.0, 1.0, d_bottom);
+
+    return a_left * a_right * a_top * a_bottom;
+}
+
+// Convert a single sRGB channel to linear space.
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        return c / 12.92;
+    }
+    return pow((c + 0.055) / 1.055, 2.4);
+}
+
+// Convert a single linear channel back to sRGB.
+fn linear_to_srgb(c: f32) -> f32 {
+    if c <= 0.0031308 {
+        return c * 12.92;
+    }
+    return 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    var color = textureSample(t_diffuse, s_diffuse, in.uv);
+    
+    // The texture format is Rgba8UnormSrgb, which WGPU automatically converts 
+    // to Linear space when sampled in the shader.
+    // If surface is not sRGB (e.g., bgra8unorm), WGPU might expect sRGB output,
+    // but usually we want to stay in linear for blending.
+    // Our renderer passes is_srgb flag which indicates if the surface is sRGB.
+    
+    if viewport.surface_is_srgb < 0.5 {
+        // If surface is NOT sRGB (e.g. bgra8unorm), we need to convert
+        // the linear color from the sampler back to sRGB for final output
+        // so it looks correct on a non-sRGB surface.
+        color = vec4<f32>(
+            linear_to_srgb(color.r),
+            linear_to_srgb(color.g),
+            linear_to_srgb(color.b),
+            color.a
+        );
+    }
+    
+    let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
+    return color * ca;
+}

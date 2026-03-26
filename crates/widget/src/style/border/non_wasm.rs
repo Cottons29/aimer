@@ -3,6 +3,7 @@ use crate::components::drawable::Drawable;
 use crate::style::border::{resolve_dim, BorderMode, BorderStyle, BoxBorder, RawBoxBorder};
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
+use color::prelude::Color;
 
 #[allow(dead_code)]
 impl Drawable for RawBoxBorder {
@@ -28,33 +29,87 @@ impl Drawable for RawBoxBorder {
         let is_uniform_color = self.left.color == self.right.color && self.left.color == self.top.color && self.left.color == self.bottom.color;
         let is_uniform_radius = left_radius == right_radius && left_radius == top_radius && left_radius == bottom_radius;
 
-        // Uniform border: single stroke_rect call
+        // Uniform border: single call
         if is_uniform_style && is_uniform_stroke && is_uniform_color && is_uniform_radius && left_stroke > 0.0 && self.left.style != BorderStyle::None {
-            let (x, y, w, h) = if is_outline {
-                (-left_stroke / 2.0, -left_stroke / 2.0, box_width + left_stroke, box_height + left_stroke)
+            if is_outline {
+                // Use the single-pass outline API: the border is drawn outside the box
+                canvas.fill_rect_with_border_and_outline(
+                    (0.0, 0.0).into(),
+                    ResolvedSize { width: box_width, height: box_height },
+                    Color::Transparent,
+                    left_radius as f32,
+                    0.0,
+                    Color::Transparent,
+                    left_stroke as f32,
+                    self.left.color,
+                );
             } else {
-                (left_stroke / 2.0, left_stroke / 2.0, box_width - left_stroke, box_height - left_stroke)
-            };
-            let stroke_radius = if left_radius > 0.0 {
-                if is_outline {
-                    left_radius + left_stroke / 2.0
-                } else {
+                let x = left_stroke / 2.0;
+                let y = left_stroke / 2.0;
+                let w = box_width - left_stroke;
+                let h = box_height - left_stroke;
+                let stroke_radius = if left_radius > 0.0 {
                     (left_radius - left_stroke / 2.0).max(0.0)
-                }
-            } else {
-                0.0
-            };
-            canvas.stroke_rect(
-                (x, y).into(),
-                ResolvedSize { width: w, height: h },
-                self.left.color,
-                left_stroke,
-                stroke_radius,
-            );
+                } else {
+                    0.0
+                };
+                canvas.stroke_rect(
+                    (x, y).into(),
+                    ResolvedSize { width: w, height: h },
+                    self.left.color,
+                    left_stroke,
+                    stroke_radius,
+                );
+            }
             return;
         }
 
-        // Per-side borders: draw each side as a filled rectangle
+        // Per-side borders with per-corner radii.
+        // When all colors are the same we can use a single call.
+        if is_uniform_color && self.left.style != BorderStyle::None {
+            let tl_radius = left_radius.min(top_radius);
+            let tr_radius = right_radius.min(top_radius);
+            let br_radius = right_radius.min(bottom_radius);
+            let bl_radius = left_radius.min(bottom_radius);
+
+            let border_radius = [
+                tl_radius as f32,
+                tr_radius as f32,
+                br_radius as f32,
+                bl_radius as f32,
+            ];
+            let border_width = [
+                top_stroke as f32,
+                right_stroke as f32,
+                bottom_stroke as f32,
+                left_stroke as f32,
+            ];
+
+            if is_outline {
+                // Use the single-pass outline API with per-side control
+                canvas.fill_rect_with_border_and_outline_per_side(
+                    (0.0, 0.0).into(),
+                    ResolvedSize { width: box_width, height: box_height },
+                    Color::Transparent,
+                    border_radius,
+                    [0.0; 4],
+                    Color::Transparent,
+                    border_width,
+                    self.left.color,
+                );
+            } else {
+                canvas.stroke_rect_per_side(
+                    (0.0, 0.0).into(),
+                    ResolvedSize { width: box_width, height: box_height },
+                    self.left.color,
+                    border_width,
+                    border_radius,
+                );
+            }
+            return;
+        }
+
+        // Fallback: draw each side as a filled rectangle
         // Top border
         if self.top.style != BorderStyle::None && top_stroke > 0.0 {
             let (x, y, w, h) = if is_outline {

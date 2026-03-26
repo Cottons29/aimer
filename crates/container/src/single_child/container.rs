@@ -12,19 +12,20 @@ type FLOAT = f32;
 #[derive(WidgetConstructor)]
 pub struct Container<T: Widget + 'static> {
     #[constructor(into, default)]
-    width: Dimension,
+    pub(crate) width: Dimension,
     #[constructor(into, default)]
-    height: Dimension,
-    #[constructor(into, default)]
-    color: Color,
+    pub(crate) height: Dimension,
+    #[constructor(into, default )]
+    pub(crate) color: Color,
     #[constructor(default)]
     pub padding: LayoutSpacing,
     #[constructor(default)]
     pub margin: LayoutSpacing,
     #[constructor(default)]
     pub border: BoxBorder,
-    child: T,
+    pub(crate) child: T,
 }
+
 
 impl<W: Widget> Widget for Container<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
@@ -94,6 +95,7 @@ impl<W: Widget> Widget for Container<W> {
 /// - **Container**: safe wrapper for RawContainer
 ///
 /// - **SizedBox**: fixed size container or place holder
+#[derive(Default)]
 pub struct RawContainer<T: Element> {
     pub padding: LayoutSpacing,
     pub margin: LayoutSpacing,
@@ -105,6 +107,23 @@ pub struct RawContainer<T: Element> {
     pub cache: LayoutCache,
     pub debug_name: &'static str,
     pub bounds: std::cell::Cell<Option<(attribute::position::Vec2d, attribute::position::Vec2d)>>,
+}
+
+impl<E: Element > RawContainer<E> {
+    pub fn new(child: E) -> Self {
+        Self {
+            child,
+            padding: Default::default(),
+            margin: Default::default(),
+            width: Default::default(),
+            height: Default::default(),
+            color: Default::default(),
+            border: Default::default(),
+            cache: LayoutCache::new(),
+            debug_name: "Container",
+            bounds: std::cell::Cell::new(None),
+        }
+    }
 }
 
 impl<T: Element> RawContainer<T> {
@@ -189,7 +208,11 @@ impl<T: Element> Drawable for RawContainer<T> {
             radius as f32,
         );
 
-        self.border.draw(ctx);
+        let border_ctx = BuildContext {
+            parent_size: ResolvedSize { width: draw_width, height: draw_height },
+            ..ctx.clone()
+        };
+        self.border.draw(&border_ctx);
 
         let p_left = self.padding.left.value(box_width, scale);
         let p_top = self.padding.top.value(box_height, scale);
@@ -236,17 +259,12 @@ impl<T: Element> Drawable for RawContainer<T> {
 }
 
 impl<T: Element> Element for RawContainer<T> {
-
-    fn pos_start_end(&self) -> Option<(attribute::position::Vec2d, attribute::position::Vec2d)> {
-        self.bounds.get()
-    }
-
     fn size(&self) -> Option<Size> {
         Some(Size { width: self.width, height: self.height })
     }
 
-    fn debug_name(&self) -> &'static str {
-        self.debug_name
+    fn pos_start_end(&self) -> Option<(attribute::position::Vec2d, attribute::position::Vec2d)> {
+        self.bounds.get()
     }
 
     fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -483,5 +501,9 @@ impl<T: Element> Element for RawContainer<T> {
     fn invalidate_layout(&self) {
         self.cache.invalidate();
         self.child.invalidate_layout();
+    }
+
+    fn debug_name(&self) -> &'static str {
+        self.debug_name
     }
 }

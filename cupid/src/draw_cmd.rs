@@ -5,9 +5,14 @@ pub enum DrawCommand {
     FillRect {
         rect: Rect,
         color: Color,
-        border_radius: f32,
-        border_width: f32,
+        /// Per-corner border radius: [top-left, top-right, bottom-right, bottom-left]
+        border_radius: [f32; 4],
+        /// Per-side border width: [top, right, bottom, left]
+        border_width: [f32; 4],
         border_color: Color,
+        /// Per-side outline width: [top, right, bottom, left]
+        outline_width: [f32; 4],
+        outline_color: Color,
     },
     ClearRect {
         rect: Rect,
@@ -24,6 +29,7 @@ pub enum DrawCommand {
     },
     PushClip {
         rect: Rect,
+        border_radius: f32,
     },
     PopClip,
     PushTransform {
@@ -34,6 +40,10 @@ pub enum DrawCommand {
         alpha: f32,
     },
     RestoreAlpha,
+    LoadImage {
+        path: String,
+        texture_id: TextureId,
+    },
     SetTransform {
         matrix: Mat3,
     },
@@ -47,10 +57,10 @@ pub struct DrawList {
 }
 
 impl DrawList {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            commands: Vec::new(),
-            transform_stack: Vec::new(),
+            commands: Vec::with_capacity(512),
+            transform_stack: Vec::with_capacity(512),
             current_transform: Mat3::identity(),
         }
     }
@@ -65,13 +75,27 @@ impl DrawList {
         self.commands.push(cmd);
     }
 
-    pub fn fill_rect(&mut self, rect: Rect, color: Color, border_radius: f32, border_width: f32, border_color: Color) {
+    pub fn fill_rect(&mut self, rect: Rect, color: Color, border_radius: [f32; 4], border_width: [f32; 4], border_color: Color) {
         self.commands.push(DrawCommand::FillRect {
             rect,
             color,
             border_radius,
             border_width,
             border_color,
+            outline_width: [0.0; 4],
+            outline_color: Color::transparent(),
+        });
+    }
+
+    pub fn fill_rect_with_outline(&mut self, rect: Rect, color: Color, border_radius: [f32; 4], border_width: [f32; 4], border_color: Color, outline_width: [f32; 4], outline_color: Color) {
+        self.commands.push(DrawCommand::FillRect {
+            rect,
+            color,
+            border_radius,
+            border_width,
+            border_color,
+            outline_width,
+            outline_color,
         });
     }
 
@@ -93,7 +117,11 @@ impl DrawList {
     }
 
     pub fn push_clip(&mut self, rect: Rect) {
-        self.commands.push(DrawCommand::PushClip { rect });
+        self.commands.push(DrawCommand::PushClip { rect, border_radius: 0.0 });
+    }
+
+    pub fn push_clip_rounded(&mut self, rect: Rect, border_radius: f32) {
+        self.commands.push(DrawCommand::PushClip { rect, border_radius });
     }
 
     pub fn pop_clip(&mut self) {
@@ -106,6 +134,15 @@ impl DrawList {
 
     pub fn restore_alpha(&mut self) {
         self.commands.push(DrawCommand::RestoreAlpha);
+    }
+
+    pub fn load_image(&mut self, path: String) -> TextureId {
+        let texture_id = fxhash::hash32(path.as_bytes());
+        self.commands.push(DrawCommand::LoadImage {
+            path,
+            texture_id,
+        });
+        texture_id
     }
 
     pub fn save(&mut self) {

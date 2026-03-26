@@ -10,3 +10,4 @@ pub use single_child::zero_size_box::ZeroSizedBox;
 pub use space::positioned::Positioned;
 pub use space::stack::Stack;
 pub use scrollable::*;
+pub use scrollable::scroll_behavior::*;
