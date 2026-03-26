@@ -19,11 +19,21 @@ impl<'w> GpuContext<'w> {
             {
                 wgpu::Backends::GL
             }
-            #[cfg(not(target_os = "android"))]
+            #[cfg(any(target_os = "ios", target_os = "macos"))]
             {
-                wgpu::Backends::all()
+                wgpu::Backends::METAL
+            }
+            #[cfg(target_os = "windows")]
+            {
+                wgpu::Backends::D3D11
+            }
+            #[cfg(target_os = "linux")]
+            {
+                wgpu::Backends::VULKAN
             }
         };
+
+        debug!("gpu backends: {:?}", backends);
 
         let instance = Instance::new(wgpu::InstanceDescriptor {
             backends,
