@@ -512,6 +512,11 @@ impl CanvasRendering for H5Canvas {
     }
 
     #[inline]
+    fn load_image(&self, _path: &str) -> u32 {
+        0
+    }
+
+    #[inline]
     fn get_transform_translation(&self) -> (f64, f64) {
         let matrix = self.get_transform().unwrap();
         (matrix.e(), matrix.f())
