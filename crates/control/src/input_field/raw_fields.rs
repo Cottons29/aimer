@@ -12,6 +12,7 @@ use events::element::{ElementEvent, KeyAction, NamedKey};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
+use events::window::get_window;
 
 /// Write text to the system clipboard.
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
@@ -907,8 +908,12 @@ impl Element for RawTextField {
             }
             ElementEvent::PointerMove(pos) => {
                 let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
-                // debug!("RawTextfield: is_inside II = {}", is_inside);
                 let was_hovered = self.is_hovered();
+                if was_hovered {
+                    get_window().unwrap().set_cursor(winit::window::CursorIcon::Text);
+                }else{
+                    get_window().unwrap().set_cursor(winit::window::CursorIcon::Default);
+                }
                 self.set_hovered(is_inside);
                 was_hovered != is_inside
             }
