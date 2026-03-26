@@ -1,4 +1,5 @@
 use chrono::Utc;
+use attribute::Float;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 use events::element::ElementEvent;
@@ -206,9 +207,9 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                 if mode != DragMode::None && mode != DragMode::Pending {
                     if let Some(last) = self.last_pointer_pos.get() {
                         let speed_multiplier = self.speed_multiplier;
-                        let dx = (p.x - last.x) * speed_multiplier;
+                        let dx = (p.x - last.x) * speed_multiplier as Float;
 
-                        let dy = (p.y - last.y) * speed_multiplier;
+                        let dy = (p.y - last.y) * speed_multiplier as Float;
                         // debug!("PointerMove: y={} | last_y={}", p.y, last.y);
 
                         // Track velocity based on the current scroll axis and drag mode
