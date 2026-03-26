@@ -245,6 +245,11 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
+    fn load_image(&self, path: &str) -> u32 {
+        self.load_image(path)
+    }
+
+    #[inline]
     fn get_transform_translation(&self) -> (f64, f64) {
         let (tx, ty) = CupidCanvas::get_transform_translation(self);
         (tx as f64, ty as f64)
