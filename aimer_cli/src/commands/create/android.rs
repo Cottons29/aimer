@@ -78,13 +78,15 @@ plugins {
         dir.join("builds/android/app/src/main/res/values/themes.xml"),
         r#"<resources>
     <style name="AimerFullscreenTheme" parent="Theme.AppCompat.Light.NoActionBar">
-        <item name="android:windowFullscreen">true</item>
-        <item name="android:windowNoTitle">true</item>
+
     </style>
 </resources>
 "#,
     )
     .unwrap();
+
+    //<item name="android:windowFullscreen">true</item>
+    //<item name="android:windowNoTitle">true</item>
 
     // Default launcher icons
     let mipmap_sizes: &[(&str, &[u8])] = &[
