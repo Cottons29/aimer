@@ -276,7 +276,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
 
         // Cache absolute bounds for hit-testing
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
-        self.cached_bounds.save_cache(
+        self.cached_bounds.save(
             ctx.scale,
             abs_x as Float,
             abs_y as Float,
