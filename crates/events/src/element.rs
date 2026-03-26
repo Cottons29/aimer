@@ -46,5 +46,15 @@ pub enum ElementEvent {
     KeyInput { key: NamedKey, action: KeyAction, modifiers: Modifiers },
     Cancel,
 }
+
+impl ElementEvent {
+    pub fn get_pointer_pos(&self) -> Option<Vec2d> {
+        match self {
+            ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) => Some(*p),
+            _ => None,
+        }
+    }
+}
+
 unsafe impl Send for ElementEvent {}
 unsafe impl Sync for ElementEvent {}
