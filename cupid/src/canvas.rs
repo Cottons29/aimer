@@ -255,6 +255,10 @@ impl CupidCanvas {
         self.draw_list.borrow_mut().restore_alpha();
     }
 
+    pub fn load_image(&self, path: &str) -> TextureId {
+        self.draw_list.borrow_mut().load_image(path.to_string())
+    }
+
     pub fn draw_list(&self) -> Ref<'_, DrawList> {
         self.draw_list.borrow()
     }
