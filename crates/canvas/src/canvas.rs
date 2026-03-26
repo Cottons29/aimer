@@ -85,6 +85,7 @@ pub trait CanvasRendering: Clone {
     fn fill_color_rect_per_corner(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
     fn set_alpha(&self, alpha: f32);
     fn restore_alpha(&self);
+    fn load_image(&self, path: &str) -> u32;
     fn get_transform_translation(&self) -> (f64, f64) {
         (0.0, 0.0)
     }
@@ -243,6 +244,13 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize) {
         CanvasRendering::draw_image(self.inner, image_id, pos, size);
+    }
+
+    /// Loads an image from the specified path and returns a unique image ID.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn load_image(&self, path: &str) -> u32 {
+        CanvasRendering::load_image(self.inner, path)
     }
 
     /// Sets a clipping rectangle. Drawing outside this rect will be clipped.
