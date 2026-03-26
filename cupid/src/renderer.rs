@@ -250,6 +250,16 @@ impl Renderer {
                         },
                     });
                 }
+                DrawCommand::LoadImage { path, texture_id } => {
+                    if !self.image_pipeline.has_texture(*texture_id) {
+                        if let Ok(img) = image::open(path) {
+                            let rgba = img.to_rgba8();
+                            let (w, h) = rgba.dimensions();
+                            debug!("Image dimensions {:?}", (w, h));
+                            self.image_pipeline.upload_image_with_id(device, queue, *texture_id, w, h, &rgba);
+                        }
+                    }
+                }
             }
         }
 
@@ -299,22 +309,55 @@ impl Renderer {
                 self.text_pipeline.render(&mut pass);
             }
 
-            // Render images (AA clipping is handled per-instance in the shader)
+            // Render images (batched by texture_id)
+            let mut current_texture_id = None;
+            let mut batch = Vec::new();
+
             for rc in &self.resolved {
                 if let ResolvedKind::Image {
                     texture_id,
                     instance,
                 } = &rc.kind
                 {
-                    self.image_pipeline.draw_image(
+                    if current_texture_id.is_none() {
+                        current_texture_id = Some(*texture_id);
+                    }
+
+                    if Some(*texture_id) != current_texture_id {
+                        // Flush current batch
+                        if let Some(tid) = current_texture_id {
+                            if !batch.is_empty() {
+                                self.image_pipeline.draw_batch(
+                                    device,
+                                    queue,
+                                    &mut pass,
+                                    width,
+                                    height,
+                                    is_srgb,
+                                    tid,
+                                    &batch,
+                                );
+                            }
+                        }
+                        current_texture_id = Some(*texture_id);
+                        batch.clear();
+                    }
+                    batch.push(*instance);
+                }
+            }
+
+            // Flush last batch
+            if let Some(tid) = current_texture_id {
+                if !batch.is_empty() {
+                    self.image_pipeline.draw_batch(
                         device,
                         queue,
                         &mut pass,
                         width,
                         height,
                         is_srgb,
-                        *texture_id,
-                        *instance,
+                        tid,
+                        &batch,
                     );
                 }
             }
