@@ -40,6 +40,10 @@ pub enum DrawCommand {
         alpha: f32,
     },
     RestoreAlpha,
+    LoadImage {
+        path: String,
+        texture_id: TextureId,
+    },
     SetTransform {
         matrix: Mat3,
     },
@@ -130,6 +134,15 @@ impl DrawList {
 
     pub fn restore_alpha(&mut self) {
         self.commands.push(DrawCommand::RestoreAlpha);
+    }
+
+    pub fn load_image(&mut self, path: String) -> TextureId {
+        let texture_id = fxhash::hash32(path.as_bytes());
+        self.commands.push(DrawCommand::LoadImage {
+            path,
+            texture_id,
+        });
+        texture_id
     }
 
     pub fn save(&mut self) {
