@@ -2,6 +2,8 @@ pub mod raw_scroll;
 pub mod scroll_bar;
 pub mod scroll_behavior;
 pub mod scroll_spring;
+pub mod draw_scroll;
+pub mod handle_scroll;
 
 pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
 
@@ -12,6 +14,7 @@ use crate::single_child::container::RawContainer;
 use attribute::position::Vec2d;
 use constructor::WidgetConstructor;
 use std::cell::Cell;
+use attribute::CacheBounds;
 use widget::base::BuildContext;
 use widget::{Element, Widget};
 
@@ -43,9 +46,8 @@ impl<W: Widget> Widget for Scrollable<W> {
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = Float::MAX,
         }
 
-        let child = self.child.to_element(&child_ctx);
-        Box::new(RawContainer::new(RawScrollableContainer {
-            child,
+        let raw_container = RawContainer::new(RawScrollableContainer {
+            child: self.child.to_element(&child_ctx),
             speed_multiplier: ctx.scale,
             scroll_offset: Cell::new(Vec2d {
                 x: self.scroll_behavior.scroll_offset.x * ctx.scale,
@@ -83,6 +85,9 @@ impl<W: Widget> Widget for Scrollable<W> {
             vertical_scroll_bar: self.vertical_scroll_bar.clone(),
             horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
             window: ctx.window,
-        }))
+            bounds: CacheBounds::with_vec2d(child_ctx.parent_pos),
+            cursor_pos: Cell::new(None),
+        });
+        Box::new(raw_container)
     }
 }
