@@ -190,6 +190,25 @@ impl ImagePipeline {
         height: u32,
         data: &[u8],
     ) -> TextureId {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.upload_image_with_id(device, queue, id, width, height, data);
+        id
+    }
+
+    pub fn has_texture(&self, id: TextureId) -> bool {
+        self.textures.contains_key(&id)
+    }
+
+    pub fn upload_image_with_id(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: TextureId,
+        width: u32,
+        height: u32,
+        data: &[u8],
+    ) {
         let texture = device.create_texture_with_data(
             queue,
             &wgpu::TextureDescriptor {
@@ -226,29 +245,40 @@ impl ImagePipeline {
             ],
         });
 
-        let id = self.next_id;
-        self.next_id += 1;
         self.textures.insert(id, TextureEntry { bind_group, texture });
-        id
     }
 
-    /// Draw a single textured quad. Each image draw is a separate draw call
-    /// (grouped by texture_id for batching in the renderer).
-    pub fn draw_image(
-        &self,
-        _device: &wgpu::Device,
+    /// Draw a batch of instances with the same texture_id.
+    pub fn draw_batch(
+        &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         pass: &mut wgpu::RenderPass<'_>,
         width: u32,
         height: u32,
         is_srgb: bool,
         texture_id: TextureId,
-        instance: ImageInstance,
+        instances: &[ImageInstance],
     ) {
+        if instances.is_empty() {
+            return;
+        }
+
         let entry = match self.textures.get(&texture_id) {
             Some(e) => e,
             None => return,
         };
+
+        // Resize instance buffer if needed
+        if instances.len() > self.instance_capacity {
+            self.instance_capacity = instances.len().next_power_of_two();
+            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("image instance buffer (resized)"),
+                size: (self.instance_capacity * std::mem::size_of::<ImageInstance>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
 
         let is_srgb_f32 = if is_srgb { 1.0 } else { 0.0 };
         queue.write_buffer(
@@ -260,13 +290,13 @@ impl ImagePipeline {
         queue.write_buffer(
             &self.instance_buffer,
             0,
-            bytemuck::cast_slice(&[instance]),
+            bytemuck::cast_slice(instances),
         );
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_bind_group(1, &entry.bind_group, &[]);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-        pass.draw(0..6, 0..1);
+        pass.draw(0..6, 0..instances.len() as u32);
     }
 }
