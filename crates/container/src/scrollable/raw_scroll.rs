@@ -16,7 +16,7 @@ use winit::window::Window;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) type Float = f32;
 #[cfg(target_arch = "wasm32")]
-type Float = f64;
+pub(crate) type Float = f64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DragMode {
