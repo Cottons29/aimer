@@ -950,7 +950,7 @@ impl Drawable for RawTextField {
         };
 
         self.cached_bounds
-            .save_cache(scale, abs_x as Float, abs_y as Float, box_width, box_height);
+            .save(scale, abs_x as Float, abs_y as Float, box_width, box_height);
 
         // --- Resolve active style ---
         let style = self.active_style();
