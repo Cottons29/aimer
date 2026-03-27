@@ -312,14 +312,18 @@ impl WindowEventHandler {
             }
         };
 
-        debug!("Window resized to {:?}", size);
+        // debug!("Window resized to {:?}", size);
 
         app.pending_resize = Some(size);
+
         if let Some(root) = &app.widget_root {
             root.invalidate_layout();
         }
         if let Some(window) = &app.window {
             window.request_redraw();
         }
+
+        // debug!("Rendered a frame");
+
     }
 }
