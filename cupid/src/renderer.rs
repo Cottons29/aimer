@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use std::thread::spawn;
-use utils::debug;
 use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::rect_pipeline::{RectInstance, RectPipeline};
 use crate::renderer;
 use crate::text_pipeline::{TextDrawRequest, TextPipelineV2};
 use crate::utilities::{Mat3, Rect};
+use std::sync::Arc;
+use std::thread::spawn;
+use utils::debug;
 
 struct ClipState {
     rect: Rect,
@@ -14,7 +14,8 @@ struct ClipState {
 }
 
 fn clip_to_array(clip: Option<&ClipState>) -> [f32; 4] {
-    clip.map(|c| [c.rect.x, c.rect.y, c.rect.width, c.rect.height]).unwrap_or([0.0, 0.0, -1.0, 0.0])
+    clip.map(|c| [c.rect.x, c.rect.y, c.rect.width, c.rect.height])
+        .unwrap_or([0.0, 0.0, -1.0, 0.0])
 }
 
 fn clip_border_radius(clip: Option<&ClipState>) -> f32 {
@@ -27,10 +28,7 @@ struct ResolvedCmd {
 
 enum ResolvedKind {
     Rect(RectInstance),
-    Image {
-        texture_id: u32,
-        instance: ImageInstance,
-    },
+    Image { texture_id: u32, instance: ImageInstance },
     TextIndex(()),
 }
 
@@ -46,10 +44,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let start = chrono::Utc::now().timestamp_millis();
 
         let renderer = Self {
@@ -78,8 +73,6 @@ impl Renderer {
         is_srgb: bool,
         draw_list: &DrawList,
     ) {
-        // debug!("Rendering draw list with {} commands", draw_list.commands().len());
-        // debug!("Rendering with width: {}, height: {}", width, height);
         self.transform_stack.clear();
         let mut current_transform = Mat3::identity();
         self.clip_stack.clear();
@@ -101,13 +94,8 @@ impl Renderer {
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
                     let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
                     let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
-                    
-                    let new_rect = Rect::new(
-                        p1x.min(p2x),
-                        p1y.min(p2y),
-                        (p2x - p1x).abs(),
-                        (p2y - p1y).abs(),
-                    );
+
+                    let new_rect = Rect::new(p1x.min(p2x), p1y.min(p2y), (p2x - p1x).abs(), (p2y - p1y).abs());
 
                     let effective_clip = if let Some(parent) = self.clip_stack.last() {
                         let x = new_rect.x.max(parent.rect.x);
@@ -119,23 +107,13 @@ impl Renderer {
                         new_rect
                     };
 
-                    self.clip_stack.push(ClipState {
-                        rect: effective_clip,
-                        border_radius: *border_radius * sx,
-                    });
+                    self.clip_stack
+                        .push(ClipState { rect: effective_clip, border_radius: *border_radius * sx });
                 }
                 DrawCommand::PopClip => {
                     self.clip_stack.pop();
                 }
-                DrawCommand::FillRect {
-                    rect,
-                    color,
-                    border_radius,
-                    border_width,
-                    border_color,
-                    outline_width,
-                    outline_color,
-                } => {
+                DrawCommand::FillRect { rect, color, border_radius, border_width, border_color, outline_width, outline_color } => {
                     // Extract scale factors from the current transform matrix
                     let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
                     let sy = (current_transform.cols[1][0].powi(2) + current_transform.cols[1][1].powi(2)).sqrt();
@@ -146,25 +124,27 @@ impl Renderer {
                     let or = outline_width[1]; // right
                     let ot = outline_width[0]; // top
                     let ob = outline_width[2]; // bottom
-                    
+
                     // Transform the top-left and bottom-right corners of the expanded quad.
                     // This correctly handles translation and scaling.
                     let (p1x, p1y) = current_transform.transform_point(rect.x - ol, rect.y - ot);
                     let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width + or, rect.y + rect.height + ob);
-                    
-                    let expanded_w = p2x - p1x;
-                    let expanded_h = p2y - p1y;
+
+                    // let expanded_w = p2x - p1x;
+                    // let expanded_h = p2y - p1y;
 
                     // Scale other properties by the appropriate axis
                     let mut scaled_br = *border_radius;
-                    for r in &mut scaled_br { *r *= sx; } // Assuming uniform scale for simplicity, or use sx
-                    
+                    for r in &mut scaled_br {
+                        *r *= sx;
+                    } // Assuming uniform scale for simplicity, or use sx
+
                     let mut scaled_bw = *border_width;
                     scaled_bw[0] *= sy; // top
                     scaled_bw[1] *= sx; // right
                     scaled_bw[2] *= sy; // bottom
                     scaled_bw[3] *= sx; // left
-                    
+
                     let mut scaled_ow = *outline_width;
                     scaled_ow[0] *= sy; // top
                     scaled_ow[1] *= sx; // right
@@ -204,12 +184,7 @@ impl Renderer {
                         }),
                     });
                 }
-                DrawCommand::DrawText {
-                    position,
-                    text,
-                    font_size,
-                    color,
-                } => {
+                DrawCommand::DrawText { position, text, font_size, color } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
                     let _idx = self.text_requests.len();
                     self.text_requests.push(TextDrawRequest {
@@ -223,9 +198,8 @@ impl Renderer {
                         clip_rect: clip_to_array(self.clip_stack.last()),
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),
                     });
-                    self.resolved.push(ResolvedCmd {
-                        kind: ResolvedKind::TextIndex(()),
-                    });
+                    self.resolved
+                        .push(ResolvedCmd { kind: ResolvedKind::TextIndex(()) });
                 }
                 DrawCommand::SetTransform { matrix } => {
                     current_transform = *matrix;
@@ -250,15 +224,13 @@ impl Renderer {
                         },
                     });
                 }
-                DrawCommand::LoadImage { path, texture_id } => {
+                DrawCommand::LoadImage { bytes, texture_id, width, height } => {
                     if !self.image_pipeline.has_texture(*texture_id) {
-                        if let Ok(img) = image::open(path) {
-                            let rgba = img.to_rgba8();
-                            let (w, h) = rgba.dimensions();
-                            debug!("Image dimensions {:?}", (w, h));
-                            self.image_pipeline.upload_image_with_id(device, queue, *texture_id, w, h, &rgba);
-                        }
+                        self.image_pipeline.upload_image_with_id(device, queue, *texture_id, *width, *height, &bytes);
                     }
+                }
+                DrawCommand::LoadImageWithId { texture_id, bytes, width, height } => {
+                    self.image_pipeline.upload_image_with_id(device, queue, *texture_id, *width, *height, &bytes);
                 }
             }
         }
@@ -278,9 +250,7 @@ impl Renderer {
         }
 
         // Create encoder and render pass
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("cupid render encoder"),
-        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cupid render encoder") });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -288,10 +258,7 @@ impl Renderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                        store: wgpu::StoreOp::Store,
-                    },
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::WHITE), store: wgpu::StoreOp::Store },
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
@@ -314,11 +281,7 @@ impl Renderer {
             let mut batch = Vec::new();
 
             for rc in &self.resolved {
-                if let ResolvedKind::Image {
-                    texture_id,
-                    instance,
-                } = &rc.kind
-                {
+                if let ResolvedKind::Image { texture_id, instance } = &rc.kind {
                     if current_texture_id.is_none() {
                         current_texture_id = Some(*texture_id);
                     }
@@ -327,16 +290,8 @@ impl Renderer {
                         // Flush current batch
                         if let Some(tid) = current_texture_id {
                             if !batch.is_empty() {
-                                self.image_pipeline.draw_batch(
-                                    device,
-                                    queue,
-                                    &mut pass,
-                                    width,
-                                    height,
-                                    is_srgb,
-                                    tid,
-                                    &batch,
-                                );
+                                self.image_pipeline
+                                    .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &batch);
                             }
                         }
                         current_texture_id = Some(*texture_id);
@@ -349,16 +304,8 @@ impl Renderer {
             // Flush last batch
             if let Some(tid) = current_texture_id {
                 if !batch.is_empty() {
-                    self.image_pipeline.draw_batch(
-                        device,
-                        queue,
-                        &mut pass,
-                        width,
-                        height,
-                        is_srgb,
-                        tid,
-                        &batch,
-                    );
+                    self.image_pipeline
+                        .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &batch);
                 }
             }
         }

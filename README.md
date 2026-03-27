@@ -114,7 +114,7 @@ Aimer run
 - [x] Basic controls
   - [x] `Button` with press handler and hover/style variants
   - [x] `GestureDetector` `⚠️ Unstable`
-  - [ ] `InputField` (text field) `⛔️ Very Unstable`
+  - [x] `InputField` (text field) `⚠️ Unstable`
   - [ ] `Checkbox`
   - [ ] `Switch` / `Toggle`
   - [ ] `Slider`

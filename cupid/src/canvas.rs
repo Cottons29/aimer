@@ -2,7 +2,7 @@ use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 
 use crate::draw_cmd::DrawList;
-use crate::pipeline::glyph_rasterizer::GlyphRasterizer;
+use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
 use crate::utilities::{Color, Rect, TextureId, Vec2d};
 
 #[derive(Clone)]
@@ -10,6 +10,7 @@ pub struct CupidCanvas {
     draw_list: Rc<RefCell<DrawList>>,
     rasterizer: Rc<RefCell<GlyphRasterizer>>,
 }
+
 
 impl CupidCanvas {
     pub fn new() -> Self {
@@ -255,12 +256,24 @@ impl CupidCanvas {
         self.draw_list.borrow_mut().restore_alpha();
     }
 
-    pub fn load_image(&self, path: &str) -> TextureId {
-        self.draw_list.borrow_mut().load_image(path.to_string())
+    pub fn load_image(&self, bytes: &[u8], width: u32, height: u32) -> TextureId {
+        self.draw_list.borrow_mut().load_image(bytes, width, height)
+    }
+
+    pub fn load_image_with_id(&self, texture_id: TextureId, bytes: &[u8], width: u32, height: u32) {
+        self.draw_list.borrow_mut().load_image_with_id(texture_id, bytes, width, height)
+    }
+
+    pub fn set_texture_size(&self, texture_id: TextureId, width: u32, height: u32) {
+        self.draw_list.borrow_mut().set_texture_size(texture_id, width, height);
     }
 
     pub fn draw_list(&self) -> Ref<'_, DrawList> {
         self.draw_list.borrow()
+    }
+
+    pub fn get_image_size(&self, texture_id: TextureId) -> Option<(u32, u32)> {
+        self.draw_list.borrow().get_texture_size(texture_id)
     }
 }
 
