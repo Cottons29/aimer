@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::io::Bytes;
 use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
 
 #[derive(Clone)]
@@ -16,10 +18,6 @@ pub enum DrawCommand {
     },
     ClearRect {
         rect: Rect,
-    },
-    DrawImage {
-        rect: Rect,
-        texture_id: TextureId,
     },
     DrawText {
         position: Vec2d,
@@ -41,7 +39,19 @@ pub enum DrawCommand {
     },
     RestoreAlpha,
     LoadImage {
-        path: String,
+        bytes: Vec<u8>,
+        texture_id: TextureId,
+        width: u32,
+        height: u32,
+    },
+    LoadImageWithId {
+        texture_id: TextureId,
+        bytes: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
+    DrawImage {
+        rect: Rect,
         texture_id: TextureId,
     },
     SetTransform {
@@ -54,6 +64,7 @@ pub struct DrawList {
     commands: Vec<DrawCommand>,
     transform_stack: Vec<Mat3>,
     current_transform: Mat3,
+    texture_sizes: HashMap<TextureId, (u32, u32)>,
 }
 
 impl DrawList {
@@ -62,6 +73,7 @@ impl DrawList {
             commands: Vec::with_capacity(512),
             transform_stack: Vec::with_capacity(512),
             current_transform: Mat3::identity(),
+            texture_sizes: HashMap::new(),
         }
     }
 
@@ -136,13 +148,34 @@ impl DrawList {
         self.commands.push(DrawCommand::RestoreAlpha);
     }
 
-    pub fn load_image(&mut self, path: String) -> TextureId {
-        let texture_id = fxhash::hash32(path.as_bytes());
+    pub fn load_image(&mut self, bytes: &[u8], width: u32, height: u32) -> TextureId {
+        let texture_id = fxhash::hash32(&bytes);
+        // Record size always so future frames can query it, even if we already queued the load.
+        self.set_texture_size(texture_id, width, height);
+        if self.has_texture_id(texture_id) {
+            return texture_id;
+        }
         self.commands.push(DrawCommand::LoadImage {
-            path,
+            bytes: bytes.to_vec(),
             texture_id,
+            width,
+            height,
         });
         texture_id
+    }
+
+    pub fn load_image_with_id(&mut self, texture_id: TextureId, bytes: &[u8], width: u32, height: u32) {
+        self.set_texture_size(texture_id, width, height);
+        self.commands.push(DrawCommand::LoadImageWithId {
+            texture_id,
+            bytes: bytes.to_vec(),
+            width,
+            height,
+        });
+    }
+
+    pub fn set_texture_size(&mut self, texture_id: TextureId, width: u32, height: u32) {
+        self.texture_sizes.insert(texture_id, (width, height));
     }
 
     pub fn save(&mut self) {
@@ -194,7 +227,20 @@ impl DrawList {
     pub fn drain_commands(&mut self) -> Vec<DrawCommand> {
         std::mem::take(&mut self.commands)
     }
+
+    pub fn has_texture_id(&self, texture_id: TextureId) -> bool {
+        self.commands.iter().any(|cmd| match cmd {
+            DrawCommand::DrawImage { texture_id: id, .. } => *id == texture_id,
+            _ => false,
+        })
+    }
+
+    pub fn get_texture_size(&self, texture_id: TextureId) -> Option<(u32, u32)> {
+        self.texture_sizes.get(&texture_id).copied()
+    }
 }
+
+
 
 impl Default for DrawList {
     fn default() -> Self {

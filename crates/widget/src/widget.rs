@@ -8,7 +8,7 @@ pub mod stateless;
 
 pub use stateless::NamedWidget;
 
-pub trait Widget{
+pub trait Widget {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element>;
     fn debug_name(&self) -> &'static str {
         "Unknown"

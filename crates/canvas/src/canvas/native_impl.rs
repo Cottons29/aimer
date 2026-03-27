@@ -99,6 +99,11 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
+    fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)> {
+        CupidCanvas::get_image_size(self, image_id)
+    }
+
+    #[inline]
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize) {
         CupidCanvas::set_clip(self, pos.x, pos.y, size.width, size.height);
     }
@@ -245,8 +250,17 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
-    fn load_image(&self, path: &str) -> u32 {
-        self.load_image(path)
+    fn load_image(&self, bytes: &[u8], width: u32, height: u32) -> u32 {
+        self.load_image(bytes, width, height)
+    }
+
+    fn load_image_with_id(&self, image_id: u32, bytes: &[u8], width: u32, height: u32) {
+        self.load_image_with_id(image_id, bytes, width, height)
+    }
+
+    #[inline]
+    fn set_texture_size(&self, image_id: u32, width: u32, height: u32) {
+        self.set_texture_size(image_id, width, height)
     }
 
     #[inline]

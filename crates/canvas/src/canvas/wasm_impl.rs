@@ -231,6 +231,11 @@ impl CanvasRendering for H5Canvas {
     }
 
     #[inline]
+    fn get_image_size(&self, _image_id: u32) -> Option<(u32, u32)> {
+        None
+    }
+
+    #[inline]
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize) {
         H5Canvas::save(self);
         self.begin_path();
@@ -512,9 +517,14 @@ impl CanvasRendering for H5Canvas {
     }
 
     #[inline]
-    fn load_image(&self, _path: &str) -> u32 {
+    fn load_image(&self, _bytes: &[u8], _width: u32, _height: u32) -> u32 {
         0
     }
+
+    fn load_image_with_id(&self, _image_id: u32, _bytes: &[u8], _width: u32, _height: u32) {}
+
+    #[inline]
+    fn set_texture_size(&self, _image_id: u32, _width: u32, _height: u32) {}
 
     #[inline]
     fn get_transform_translation(&self) -> (f64, f64) {

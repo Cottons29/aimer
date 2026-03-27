@@ -1,8 +1,12 @@
-use bytemuck::{Pod, Zeroable};
+pub mod glyph_atlas;
+pub mod glyph_rasterizer;
+pub mod text_layout;
 
-use super::glyph_atlas::GlyphAtlas;
-use super::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
-use super::text_layout::layout_text;
+
+use bytemuck::{Pod, Zeroable};
+use crate::text_pipeline::glyph_atlas::GlyphAtlas;
+use crate::text_pipeline::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
+use crate::text_pipeline::text_layout::layout_text;
 
 /// Per-instance data for one glyph quad.
 #[repr(C)]

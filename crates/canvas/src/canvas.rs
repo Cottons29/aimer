@@ -39,6 +39,7 @@ pub trait CanvasRendering: Clone {
     fn restore(&self);
     fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color);
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize);
+    fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)>;
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize);
     fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: f32);
     fn clear_clip(&self);
@@ -85,7 +86,9 @@ pub trait CanvasRendering: Clone {
     fn fill_color_rect_per_corner(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
     fn set_alpha(&self, alpha: f32);
     fn restore_alpha(&self);
-    fn load_image(&self, path: &str) -> u32;
+    fn load_image(&self, bytes: &[u8], width: u32, height: u32) -> u32;
+    fn load_image_with_id(&self, image_id: u32, bytes: &[u8], width: u32, height: u32);
+    fn set_texture_size(&self, image_id: u32, width: u32, height: u32);
     fn get_transform_translation(&self) -> (f64, f64) {
         (0.0, 0.0)
     }
@@ -132,6 +135,10 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn new(canvas: &'a Canvas) -> Self {
         Self { inner: canvas }
+    }
+
+    pub fn get_inner_canvas(&self) -> &Canvas {
+        self.inner
     }
 }
 
@@ -246,11 +253,28 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::draw_image(self.inner, image_id, pos, size);
     }
 
-    /// Loads an image from the specified path and returns a unique image ID.
     #[allow(dead_code)]
     #[inline]
-    pub fn load_image(&self, path: &str) -> u32 {
-        CanvasRendering::load_image(self.inner, path)
+    pub fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)> {
+        CanvasRendering::get_image_size(self.inner, image_id)
+    }
+
+    #[allow(dead_code)]
+    #[inline]
+    pub fn load_image(&self, bytes:  &[u8], width: u32, height: u32) -> u32 {
+        CanvasRendering::load_image(self.inner, bytes,  width, height)
+    }
+
+    /// Loads an image from the specified path with a predefined image ID.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn load_image_with_id(&self, image_id: u32, bytes: &[u8], width: u32, height: u32) {
+        CanvasRendering::load_image_with_id(self.inner, image_id, bytes, width, height)
+    }
+
+    /// Sets the intrinsic size of a texture. This is useful for preserving metadata across frames.
+    pub fn set_texture_size(&self, image_id: u32, width: u32, height: u32) {
+        CanvasRendering::set_texture_size(self.inner, image_id, width, height);
     }
 
     /// Sets a clipping rectangle. Drawing outside this rect will be clipped.

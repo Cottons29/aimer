@@ -1,7 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
-use wgpu::Backends;
 
 use crate::utilities::TextureId;
 
@@ -30,7 +29,7 @@ impl ImageInstance {
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<ImageInstance>() as wgpu::BufferAddress,
+            array_stride: size_of::<ImageInstance>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &Self::ATTRIBS,
         }
@@ -158,12 +157,14 @@ impl ImagePipeline {
             label: Some("image sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 4,
             ..Default::default()
         });
 
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("image instance buffer"),
-            size: (Self::INITIAL_CAPACITY * std::mem::size_of::<ImageInstance>()) as u64,
+            size: (Self::INITIAL_CAPACITY * size_of::<ImageInstance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -209,6 +210,33 @@ impl ImagePipeline {
         height: u32,
         data: &[u8],
     ) {
+        if let Some(entry) = self.textures.get(&id) {
+            // Check if dimensions match for in-place update
+            let size = entry.texture.size();
+            if size.width == width && size.height == height {
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &entry.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * width),
+                        rows_per_image: Some(height),
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                return;
+            }
+        }
+
         let texture = device.create_texture_with_data(
             queue,
             &wgpu::TextureDescriptor {
@@ -221,7 +249,7 @@ impl ImagePipeline {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             },
@@ -274,7 +302,7 @@ impl ImagePipeline {
             self.instance_capacity = instances.len().next_power_of_two();
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("image instance buffer (resized)"),
-                size: (self.instance_capacity * std::mem::size_of::<ImageInstance>()) as u64,
+                size: (self.instance_capacity * size_of::<ImageInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
