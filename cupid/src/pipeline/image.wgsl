@@ -130,24 +130,27 @@ fn linear_to_srgb(c: f32) -> f32 {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = textureSample(t_diffuse, s_diffuse, in.uv);
     
-    // The texture format is Rgba8UnormSrgb, which WGPU automatically converts 
-    // to Linear space when sampled in the shader.
-    // If surface is not sRGB (e.g., bgra8unorm), WGPU might expect sRGB output,
-    // but usually we want to stay in linear for blending.
-    // Our renderer passes is_srgb flag which indicates if the surface is sRGB.
+    // Convert from sRGB to Linear space manually for consistent blending.
+    color = vec4<f32>(
+        srgb_to_linear(color.r),
+        srgb_to_linear(color.g),
+        srgb_to_linear(color.b),
+        color.a
+    );
     
+    // Premultiply alpha for correct blending
+    var result = vec4<f32>(color.rgb * color.a, color.a);
+    
+    // If the surface is NOT sRGB, we must manually convert back to sRGB.
     if viewport.surface_is_srgb < 0.5 {
-        // If surface is NOT sRGB (e.g. bgra8unorm), we need to convert
-        // the linear color from the sampler back to sRGB for final output
-        // so it looks correct on a non-sRGB surface.
-        color = vec4<f32>(
-            linear_to_srgb(color.r),
-            linear_to_srgb(color.g),
-            linear_to_srgb(color.b),
-            color.a
-        );
+        let a = result.a;
+        if a > 0.00001 {
+            let unpremul = result.rgb / a;
+            let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
+            result = vec4<f32>(srgb_rgb * a, a);
+        }
     }
     
     let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
-    return color * ca;
+    return result * ca;
 }
