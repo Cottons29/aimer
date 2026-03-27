@@ -3,10 +3,10 @@ use utils::*;
 use utils::log::debug;
 
 /// Embedded primary font (Roboto) — covers Latin and common scripts.
-const PRIMARY_FONT: &[u8] = include_bytes!("../../fonts/Roboto.ttf");
+const PRIMARY_FONT: &[u8] = include_bytes!("../../../fonts/Roboto.ttf");
 
 /// Embedded fallback font (Noto Sans SC) — covers CJK and extended Unicode.
-const FALLBACK_FONT: &[u8] = include_bytes!("../../fonts/NotoSansSC-Regular.ttf");
+const FALLBACK_FONT: &[u8] = include_bytes!("../../../fonts/NotoSansSC-Regular.ttf");
 
 /// A rasterized glyph bitmap with its metrics.
 #[derive(Clone)]
