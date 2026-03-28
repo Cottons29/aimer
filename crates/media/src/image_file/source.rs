@@ -1,20 +1,21 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use crate::ImageResult::Success;
+use crate::{ImageProvider, ImageResult};
 use once_cell::sync::Lazy;
-use canvas::Canvas;
-use utils::{error, info};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use utils::error;
 use widget::base::BuildContext;
-use crate::{ImageProvider, LoadingResult};
 
 static NETWORK_CACHE: Lazy<Mutex<HashMap<String, NetworkImageState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-pub static FILE_CACHE: Lazy<Mutex<HashMap<String, (u32, u32, u32)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+pub static FILE_CACHE: Lazy<Mutex<HashMap<PathBuf, (u32, u32, u32)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Clone, Debug)]
 enum NetworkImageState {
     Loading,
     Ready(Vec<u8>, u32, u32),
     Loaded(u32, u32, u32),
-    Error(&'static str),
+    Error(String),
 }
 
 ///
@@ -57,69 +58,63 @@ enum NetworkImageState {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ImageSource {
     Id(u32),
-    File(String),
+    File(PathBuf),
     Network(String),
     NetworkWithHeaders(String, HashMap<String, String>),
 }
 
 impl ImageProvider for ImageSource {
-    fn get_image(&self, ctx: &BuildContext) -> LoadingResult {
+    fn get_image(&self, ctx: &BuildContext) -> ImageResult {
         match self {
-            ImageSource::Id(id) => Ok(*id),
+            ImageSource::Id(id) => Success(*id),
             ImageSource::File(path) => Self::load_image(ctx, path),
             ImageSource::Network(url) => Self::load_network_image(ctx, url),
-            ImageSource::NetworkWithHeaders(url, headers) => {
-                Self::load_network_image_with_headers(ctx, url, headers)
-            }
+            ImageSource::NetworkWithHeaders(url, headers) => Self::load_network_image_with_headers(ctx, url, headers),
         }
     }
 }
 
 impl ImageSource {
-    pub fn load_image(ctx: &BuildContext, path: &str) -> LoadingResult {
+    pub fn load_image(ctx: &BuildContext, path: &PathBuf) -> ImageResult {
         {
             let cache = FILE_CACHE.lock().unwrap();
             if let Some((id, width, height)) = cache.get(path) {
                 ctx.canvas.set_texture_size(*id, *width, *height);
-                return Ok(*id);
+                return Success(*id);
             }
         }
 
-        let Ok(image) = image::open(path) else { return Err("Failed to load image") };
+        let Ok(image) = image::open(path) else { return ImageResult::Error("Failed to load image".into()) };
         let bytes = image.to_rgba8();
         let width = image.width();
         let height = image.height();
         let id = ctx.canvas.load_image(&bytes, width, height);
 
         let mut cache = FILE_CACHE.lock().unwrap();
-        cache.insert(path.to_string(), (id, width, height));
+        cache.insert(path.clone(), (id, width, height));
 
-        Ok(id)
+        Success(id)
     }
 
-    pub fn load_network_image(ctx: &BuildContext, url: &str) -> LoadingResult {
+    pub fn load_network_image(ctx: &BuildContext, url: &str) -> ImageResult {
         Self::load_network_image_with_headers(ctx, url, &HashMap::new())
     }
 
-    pub fn load_network_image_with_headers(
-        ctx: &BuildContext,
-        url: &str,
-        headers: &HashMap<String, String>,
-    ) -> LoadingResult {
+    pub fn load_network_image_with_headers(ctx: &BuildContext, url: &str, headers: &HashMap<String, String>) -> ImageResult {
         let mut cache = NETWORK_CACHE.lock().unwrap();
         match cache.get_mut(url) {
             Some(NetworkImageState::Loaded(id, width, height)) => {
                 ctx.canvas.set_texture_size(*id, *width, *height);
-                Ok(*id)
+                Success(*id)
             }
             Some(NetworkImageState::Ready(bytes, width, height)) => {
                 let id = ctx.canvas.load_image(bytes, *width, *height);
                 let (w, h) = (*width, *height);
                 *cache.get_mut(url).unwrap() = NetworkImageState::Loaded(id, w, h);
-                Ok(id)
+                Success(id)
             }
-            Some(NetworkImageState::Loading) => Err("Loading"),
-            Some(NetworkImageState::Error(err)) => Err(err),
+            Some(NetworkImageState::Loading) => ImageResult::Loading,
+            Some(NetworkImageState::Error(err)) => ImageResult::Error(err.to_string()),
             None => {
                 cache.insert(url.to_string(), NetworkImageState::Loading);
                 let url = url.to_string();
@@ -133,22 +128,18 @@ impl ImageSource {
                         Err(err) => {
                             error!("Failed to fetch network image ({}): {}", url, err);
                             let mut cache = NETWORK_CACHE.lock().unwrap();
-                            cache.insert(url, NetworkImageState::Error(err));
+                            cache.insert(url, NetworkImageState::Error(err.to_string()));
                             window.request_redraw();
                         }
                     }
                 });
-
-                Err("Loading")
+                ImageResult::Loading
             }
         }
     }
 
     #[allow(dead_code)]
-    async fn fetch_full_image(
-        url: &str,
-        window: &'static winit::window::Window,
-    ) -> Result<(), &'static str> {
+    async fn fetch_full_image(url: &str, window: &'static winit::window::Window) -> Result<(), &'static str> {
         Self::fetch_full_image_with_headers(url, &HashMap::new(), window).await
     }
 
@@ -157,9 +148,11 @@ impl ImageSource {
         headers: &HashMap<String, String>,
         window: &'static winit::window::Window,
     ) -> Result<(), &'static str> {
-        let client_builder = reqwest::Client::builder().user_agent("aimer-fw/0.1.0");
+        let client_builder = reqwest::Client::builder().user_agent("aimer/0.1.0");
 
-        let client = client_builder.build().map_err(|_| "Failed to create client")?;
+        let client = client_builder
+            .build()
+            .map_err(|_| "Failed to create client")?;
 
         let mut request_builder = client.get(url);
         for (key, value) in headers {
@@ -176,7 +169,11 @@ impl ImageSource {
             return Err("HTTP error");
         }
 
-        let all_bytes = response.bytes().await.map_err(|_| "Failed to download bytes")?.to_vec();
+        let all_bytes = response
+            .bytes()
+            .await
+            .map_err(|_| "Failed to download bytes")?
+            .to_vec();
 
         match image::load_from_memory(&all_bytes) {
             Ok(image) => {

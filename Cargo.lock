@@ -2482,6 +2482,8 @@ version = "0.1.0"
 dependencies = [
  "attribute",
  "canvas",
+ "color",
+ "container",
  "futures-util",
  "fxhash",
  "image",
