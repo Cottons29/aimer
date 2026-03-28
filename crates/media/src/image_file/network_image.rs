@@ -26,6 +26,9 @@ pub struct NetworkImage {
     pub loading_widget: Option<Box<dyn Widget>>,
     #[constructor(default)]
     pub delay: Option<u64>,
+    #[constructor(default = 1.0, into)]
+    pub scale: f32
+
 }
 
 impl Widget for NetworkImage {
@@ -44,6 +47,7 @@ impl Widget for NetworkImage {
             cache: LayoutCache::new(),
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),
+            scale: self.scale
         })
     }
 
