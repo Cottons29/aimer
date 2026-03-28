@@ -1,0 +1,53 @@
+use std::cell::{Cell, UnsafeCell};
+use crate::image_file::image_widget::RawImageWidget;
+use crate::image_file::source::ImageSource;
+use attribute::Dimension;
+use attribute::size::Size;
+use std::collections::HashMap;
+use widget::base::BuildContext;
+use widget::style::BoxFit;
+use widget::{Constructor, Element, LayoutCache, Widget};
+
+#[derive(Constructor)]
+pub struct NetworkImage {
+    #[constructor(first, into)]
+    pub url: String,
+    #[constructor(default, into)]
+    pub width: Dimension,
+    #[constructor(default, into)]
+    pub height: Dimension,
+    #[constructor(default)]
+    pub fit: BoxFit,
+    #[constructor(default)]
+    pub header: Option<HashMap<String, String>>,
+    #[constructor(default)]
+    pub error_widget: Option<Box<dyn Widget>>,
+    #[constructor(default)]
+    pub loading_widget: Option<Box<dyn Widget>>,
+    #[constructor(default)]
+    pub delay: Option<u64>,
+}
+
+impl Widget for NetworkImage {
+    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+        let source = match self.header.as_ref() {
+            Some(header) => ImageSource::NetworkWithHeaders(self.url.clone(), header.clone()),
+            None => ImageSource::Network(self.url.clone()),
+        };
+        Box::new(RawImageWidget {
+            source,
+            size: Size::new(self.width, self.height),
+            fit: self.fit,
+            keep_aspect_ratio: self.fit != BoxFit::Fill,
+            error_element: self.error_widget.as_ref().map(|w| w.to_element(ctx)),
+            loading_element: self.loading_widget.as_ref().map(|w| w.to_element(ctx)),
+            cache: LayoutCache::new(),
+            original_size: Cell::new(None),
+            cached_id: UnsafeCell::new(None),
+        })
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "NetworkImage"
+    }
+}
