@@ -22,8 +22,8 @@ pub use widget::text::Text;
 pub use widget::*;
 pub use widget::{State, StatefulWidget, StatelessWidget};
 pub use media::*;
-pub use media::single_frame::image_widget::Image;
-pub use media::single_frame::source::ImageSource;
+pub use media::image_file::image_widget::Image;
+pub use media::image_file::source::ImageSource;
 
 // Macro re-export
 pub mod macros {
