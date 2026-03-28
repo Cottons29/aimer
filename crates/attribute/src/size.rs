@@ -1,4 +1,4 @@
-
+use std::ops::Mul;
 use crate::dimension::Dimension;
 use crate::Float;
 
@@ -66,6 +66,17 @@ impl Size {
 pub struct ResolvedSize {
     pub width: Float,
     pub height: Float,
+}
+
+
+impl Mul<f32> for ResolvedSize {
+    type Output = ResolvedSize;
+    fn mul(self, rhs: f32) -> Self::Output {
+        ResolvedSize {
+            width: self.width * rhs,
+            height: self.height * rhs,
+        }
+    }
 }
 
 

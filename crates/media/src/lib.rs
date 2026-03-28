@@ -1,8 +1,17 @@
 
-pub mod single_frame;
+pub mod image_file;
 
-pub use single_frame::image_widget::Image;
+pub use image_file::image_widget::Image;
+pub use image_file::network_image::NetworkImage;
 use widget::base::BuildContext;
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImageResult {
+    Loading,
+    Success(u32),
+    Error(String),
+}
 
 pub type LoadingResult = Result<u32, &'static str>;
 
@@ -44,5 +53,5 @@ pub type LoadingResult = Result<u32, &'static str>;
 ///   and is expected to be provided by the caller.
 ///
 pub trait ImageProvider: Clone {
-    fn get_image(&self, ctx: &BuildContext) -> LoadingResult;
+    fn get_image(&self, ctx: &BuildContext) -> ImageResult;
 }

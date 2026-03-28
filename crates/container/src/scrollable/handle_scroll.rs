@@ -52,8 +52,8 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                 // For MacOS trackpads/Natural scroll, we want to treat scroll events
                 // more like velocity inputs to allow for smooth interpolation and momentum.
                 let mut scroll_delta = match self.axis {
-                    ScrollAxis::Vertical => Vec2d { x: 0.0, y: delta.y },
-                    ScrollAxis::Horizontal => Vec2d { x: delta.x, y: 0.0 },
+                    ScrollAxis::Vertical => Vec2d { x: 0.0, y: delta.y * 1.1 },
+                    ScrollAxis::Horizontal => Vec2d { x: delta.x * 1.1, y: 0.0 },
                 };
 
                 // Apply bouncy resistance if we're out of bounds
