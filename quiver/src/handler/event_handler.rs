@@ -5,7 +5,7 @@ use events::element::{ElementEvent, Modifiers, NamedKey};
 use utils::{debug, info};
 use widget::{broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 
@@ -40,7 +40,11 @@ impl WindowEventHandler {
 
             WindowEvent::KeyboardInput { event, .. } => Self::handle_keyboard_input(event, app),
 
-            WindowEvent::MouseWheel { delta, .. } => Self::handle_mouse_wheel(delta, app),
+            WindowEvent::MouseWheel { delta, phase,.. } => {
+                debug!("Mouse wheel phase: {:?}", phase);
+                Self::handle_mouse_wheel(delta,phase, app)
+            },
+
 
             WindowEvent::RedrawRequested => {
              app.render(event_loop)
@@ -249,7 +253,7 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_mouse_wheel(delta: MouseScrollDelta, app: &mut AimerApplicationHandler) {
+    fn handle_mouse_wheel(delta: MouseScrollDelta, phase: TouchPhase, app: &mut AimerApplicationHandler) {
         // debug!("Mouse wheel delta: {:?}", delta);
         let scroll_delta = match delta {
             MouseScrollDelta::LineDelta(x, y) => {
@@ -259,7 +263,7 @@ impl WindowEventHandler {
                 Vec2d { x: pos.x as crate::handler::Float, y: pos.y as crate::handler::Float }
             }
         };
-        let event = ElementEvent::Scroll(scroll_delta);
+        let event = ElementEvent::Scroll{delta: scroll_delta, phase};
         if let Some(root) = &app.widget_root {
             let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
             #[cfg(debug_assertions)]
