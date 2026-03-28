@@ -1,5 +1,5 @@
 use crate::ImageResult::Success;
-use crate::{ImageProvider, ImageResult, LoadingResult};
+use crate::{ImageProvider, ImageResult};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -133,7 +133,6 @@ impl ImageSource {
                         }
                     }
                 });
-
                 ImageResult::Loading
             }
         }
@@ -149,7 +148,7 @@ impl ImageSource {
         headers: &HashMap<String, String>,
         window: &'static winit::window::Window,
     ) -> Result<(), &'static str> {
-        let client_builder = reqwest::Client::builder().user_agent("aimer-fw/0.1.0");
+        let client_builder = reqwest::Client::builder().user_agent("aimer/0.1.0");
 
         let client = client_builder
             .build()
