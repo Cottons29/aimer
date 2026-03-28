@@ -20,6 +20,8 @@ pub struct Image{
     pub height: Dimension,
     #[constructor(default)]
     pub fit: BoxFit,
+    #[constructor(default = 1.0, into)]
+    pub scale: f32
 }
 
 impl Widget for Image{
@@ -34,6 +36,7 @@ impl Widget for Image{
             error_element: None,
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),
+            scale: self.scale
         })
     }
 
@@ -52,6 +55,7 @@ pub struct RawImageWidget<P: ImageProvider> {
     pub loading_element: Option<Box<dyn Element>>,
     pub error_element: Option<Box<dyn Element>>,
     pub cached_id: UnsafeCell<Option<ImageResult>>,
+    pub scale: f32
 }
 
 impl<P: ImageProvider> Element for RawImageWidget<P> {
@@ -120,31 +124,31 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                                     if let BoxFit::ScaleDown = self.fit {
                                         scale = scale.min(1.0);
                                     }
-                                    let w = iw * scale;
-                                    let h = ih * scale;
+                                    let w = iw * scale * self.scale;
+                                    let h = ih * scale * self.scale;
                                     (w, h, true, false)
                                 }
                                 BoxFit::FitWidth => {
-                                    let w = target_w;
-                                    let h = if iw > 0.0 { w * (ih / iw) } else { target_h };
+                                    let w = target_w * self.scale;
+                                    let h = if iw > 0.0 { w * (ih / iw) } else { target_h * self.scale };
                                     (w, h, true, false)
                                 }
                                 BoxFit::FitHeight => {
-                                    let h = target_h;
-                                    let w = if ih > 0.0 { h * (iw / ih) } else { target_w };
+                                    let h = target_h * self.scale;
+                                    let w = if ih > 0.0 { h * (iw / ih) } else { target_w * self.scale };
                                     (w, h, true, false)
                                 }
                                 BoxFit::Cover => {
                                     let scale = scale_x.max(scale_y);
-                                    let w = iw * scale;
-                                    let h = ih * scale;
+                                    let w = iw * scale * self.scale;
+                                    let h = ih * scale * self.scale;
                                     (w, h, true, true)
                                 }
                                 BoxFit::Fill => {
                                     // With keep_aspect_ratio=true, prefer Contain semantics to avoid distortion
                                     let scale = scale_x.min(scale_y);
-                                    let w = iw * scale;
-                                    let h = ih * scale;
+                                    let w = iw * scale * self.scale;
+                                    let h = ih * scale * self.scale;
                                     (w, h, true, false)
                                 }
                             };
@@ -166,15 +170,36 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                             }
                         } else {
                             // Fallback: invalid intrinsic size
-                            ctx.canvas.draw_image(id, Vec2d::default(), size)
+                            let final_w = size.width * self.scale;
+                            let final_h = size.height * self.scale;
+                            let draw_pos = Vec2d {
+                                x: (size.width - final_w) * 0.5,
+                                y: (size.height - final_h) * 0.5,
+                            };
+                            let draw_size = ResolvedSize { width: final_w, height: final_h };
+                            ctx.canvas.draw_image(id, draw_pos, draw_size)
                         }
                     } else {
                         // Fallback when intrinsic size is unknown
-                        ctx.canvas.draw_image(id, Vec2d::default(), size)
+                        let final_w = size.width * self.scale;
+                        let final_h = size.height * self.scale;
+                        let draw_pos = Vec2d {
+                            x: (size.width - final_w) * 0.5,
+                            y: (size.height - final_h) * 0.5,
+                        };
+                        let draw_size = ResolvedSize { width: final_w, height: final_h };
+                        ctx.canvas.draw_image(id, draw_pos, draw_size)
                     }
                 } else {
                     // Not preserving aspect ratio: fill allocated box
-                    ctx.canvas.draw_image(id, Vec2d::default(), size)
+                    let final_w = size.width * self.scale;
+                    let final_h = size.height * self.scale;
+                    let draw_pos = Vec2d {
+                        x: (size.width - final_w) * 0.5,
+                        y: (size.height - final_h) * 0.5,
+                    };
+                    let draw_size = ResolvedSize { width: final_w, height: final_h };
+                    ctx.canvas.draw_image(id, draw_pos, draw_size)
                 }
             }
 
