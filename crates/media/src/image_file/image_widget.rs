@@ -1,33 +1,39 @@
-use crate::{ ImageProvider};
+use crate::image_file::source::ImageSource;
+use crate::ImageResult::Success;
+use crate::{ImageProvider, ImageResult};
 use attribute::Dimension;
-use std::cell::Cell;
+use container::ZeroSizedBox;
+use std::cell::{Cell, UnsafeCell};
+use std::path::PathBuf;
+use utils::error;
 use widget::base::{BuildContext, Color, Colors, ResolvedSize, Size, Vec2d};
 use widget::style::BoxFit;
 use widget::{Constructor, Drawable, Element, LayoutCache, Widget};
 
 #[derive(Constructor)]
-pub struct Image<P: ImageProvider> {
-    pub source: P,
+pub struct Image{
+    #[constructor(first, into)]
+    pub path: PathBuf,
     #[constructor(default, into)]
     pub width: Dimension,
     #[constructor(default, into)]
     pub height: Dimension,
     #[constructor(default)]
     pub fit: BoxFit,
-    #[constructor(default = true)]
-    pub keep_aspect_ratio: bool,
 }
 
-impl<P: ImageProvider + 'static> Widget for Image<P> {
+impl Widget for Image{
     fn to_element(&self, _: &BuildContext) -> Box<dyn Element> {
         Box::new(RawImageWidget {
-            source: self.source.clone(),
+            source: ImageSource::File(self.path.clone()),
             size: Size { width: self.width, height: self.height },
             cache: LayoutCache::new(),
             fit: self.fit,
-            keep_aspect_ratio: self.keep_aspect_ratio,
+            keep_aspect_ratio: self.fit != BoxFit::Fill,
+            loading_element: None,
+            error_element: None,
             original_size: Cell::new(None),
-            cached_id: Cell::new(None),
+            cached_id: UnsafeCell::new(None),
         })
     }
 
@@ -43,7 +49,9 @@ pub struct RawImageWidget<P: ImageProvider> {
     pub fit: BoxFit,
     pub keep_aspect_ratio: bool,
     pub original_size: Cell<Option<Size>>,
-    cached_id: Cell<Option<Result<u32, &'static str>>>,
+    pub loading_element: Option<Box<dyn Element>>,
+    pub error_element: Option<Box<dyn Element>>,
+    pub cached_id: UnsafeCell<Option<ImageResult>>,
 }
 
 impl<P: ImageProvider> Element for RawImageWidget<P> {
@@ -73,27 +81,27 @@ impl<P: ImageProvider> Element for RawImageWidget<P> {
 impl<P: ImageProvider> Drawable for RawImageWidget<P> {
     fn draw(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
-        let image_result = if let Some(result) = self.cached_id.get() {
-            if result == Err("Loading") {
+        let image_result = if let Some(result) = unsafe { &*self.cached_id.get() } {
+            if result == &ImageResult::Loading {
                 let r = self.source.get_image(&ctx);
-                if r != Err("Loading") {
-                    self.cached_id.set(Some(r));
+                if r != ImageResult::Loading {
+                    unsafe { *self.cached_id.get() = Some(r.clone()) };
                 }
                 r
             } else {
-                result
+                result.clone()
             }
         } else {
             let result = self.source.get_image(&ctx);
-            if result != Err("Loading") {
-                self.cached_id.set(Some(result));
+            if result != ImageResult::Loading {
+                unsafe { *self.cached_id.get() = Some(result.clone()) };
             }
             result
         };
 
         match image_result {
-            Ok(id) => {
-                if self.keep_aspect_ratio {
+            Success(id) => {
+                if self.keep_aspect_ratio{
                     if let Some((iw, ih)) = ctx.canvas.get_image_size(id) {
                         let iw = iw as f32;
                         let ih = ih as f32;
@@ -168,29 +176,33 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                     // Not preserving aspect ratio: fill allocated box
                     ctx.canvas.draw_image(id, Vec2d::default(), size)
                 }
-            },
-            Err(_) => {
+            }
+
+            ImageResult::Loading => {
+                self.loading_element
+                    .as_ref()
+                    .unwrap_or(&ZeroSizedBox.to_element(ctx))
+                    .draw(ctx);
+            }
+
+            ImageResult::Error(err) => {
+                if let Some(error_element) = &self.error_element {
+                    error_element.draw(ctx);
+                    return;
+                }
+                error!("Failed to load image : {err}");
                 let grid_size = 32.0;
                 let rows = (size.height / grid_size).ceil() as i32;
                 let cols = (size.width / grid_size).ceil() as i32;
 
                 for row in 0..rows {
                     for col in 0..cols {
-                        let color = if (row + col) % 2 == 0 {
-                            Color::Basic(Colors::Magenta)
-                        } else {
-                            Color::Basic(Colors::Black)
-                        };
+                        let color = if (row + col) % 2 == 0 { Color::Basic(Colors::Magenta) } else { Color::Basic(Colors::Black) };
 
-                        let pos = Vec2d {
-                            x: col as f32 * grid_size,
-                            y: row as f32 * grid_size,
-                        };
+                        let pos = Vec2d { x: col as f32 * grid_size, y: row as f32 * grid_size };
 
-                        let rect_size = ResolvedSize {
-                            width: grid_size.min(size.width - pos.x),
-                            height: grid_size.min(size.height - pos.y),
-                        };
+                        let rect_size =
+                            ResolvedSize { width: grid_size.min(size.width - pos.x), height: grid_size.min(size.height - pos.y) };
 
                         if rect_size.width > 0.0 && rect_size.height > 0.0 {
                             ctx.canvas.fill_color_rect(pos, rect_size, color, 0.0);
