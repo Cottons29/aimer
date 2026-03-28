@@ -14,16 +14,16 @@ pub struct ScrollBehavior {
     pub bouncy_resistance: Float,
     #[constructor(default = 0.15)]
     pub bouncy_recovery: Float,
-    #[constructor(default = 0.95)]
+    #[constructor(default = 0.99)]
     pub friction: Float,
 }
 
 impl Default for ScrollBehavior {
     fn default() -> Self {
         #[cfg(target_os = "ios")]
-        let defaults = (0.6, 0.15, 0.98);
+        let defaults = (0.6, 0.15, 0.99);
         #[cfg(not(target_os = "ios"))]
-        let defaults = (0.6, 0.15, 0.95);
+        let defaults = (0.6, 0.15, 0.98);
 
         Self {
             max_scroll: Vec2d { x: Float::MAX, y: Float::MAX },
