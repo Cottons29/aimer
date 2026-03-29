@@ -235,10 +235,6 @@ mod android_keyboard {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-type Float = f32;
-#[cfg(target_arch = "wasm32")]
-type Float = f64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputType {
@@ -414,9 +410,9 @@ pub(crate) struct RawTextField {
 }
 
 impl RawTextField {
-    fn scaled_font_size(&self, style: &TextStyle, scale: Float) -> Float {
-        let fs = if style.font_size == 0 { 14.0 } else { style.font_size as Float };
-        fs * scale as Float
+    fn scaled_font_size(&self, style: &TextStyle, scale: f32) -> f32 {
+        let fs = if style.font_size == 0 { 14.0 } else { style.font_size as f32 };
+        fs * scale as f32
     }
 
     fn is_focused(&self) -> bool {
@@ -458,23 +454,23 @@ impl RawTextField {
         &self.style
     }
 
-    fn compute_dimensions(&self, ctx: &BuildContext) -> (Float, Float) {
+    fn compute_dimensions(&self, ctx: &BuildContext) -> (f32, f32) {
         let constraint = ctx.box_constraint;
 
         (constraint.max_width, constraint.max_height)
     }
 
-    fn outline_strokes(&self, box_width: Float, box_height: Float, scale: Float) -> (Float, Float, Float, Float) {
+    fn outline_strokes(&self, box_width: f32, box_height: f32, scale: f32) -> (f32, f32, f32, f32) {
         self.active_style()
             .outline
             .strokes(box_width, box_height, scale)
     }
 
-    fn cursor_x_offset_canvas(&self, canvas: &canvas::Canvas, font_size: f32) -> Float {
+    fn cursor_x_offset_canvas(&self, canvas: &canvas::Canvas, font_size: f32) -> f32 {
         let text = self.controller.text();
         let offset = self.cursor.offset();
         let prefix: String = text.chars().take(offset).collect();
-        canvas.measure_text(&prefix, font_size) as Float
+        canvas.measure_text(&prefix, font_size) as f32
     }
 
     fn ascent(&self, font_size: f32) -> f32 {
@@ -485,7 +481,7 @@ impl RawTextField {
         font_size * 0.2
     }
 
-    fn align_x(&self, text_width: Float, content_width: Float) -> Float {
+    fn align_x(&self, text_width: f32, content_width: f32) -> f32 {
         match self.text_align {
             TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
             TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => (content_width - text_width) / 2.0,
@@ -955,7 +951,7 @@ impl Drawable for RawTextField {
         };
 
         self.cached_bounds
-            .save(scale, abs_x as Float, abs_y as Float, box_width, box_height);
+            .save(scale, abs_x as f32, abs_y as f32, box_width, box_height);
 
         // --- Resolve active style ---
         let style = self.active_style();
@@ -1019,15 +1015,7 @@ impl Drawable for RawTextField {
 
         ctx.canvas.save();
         let clip_radius = if radius > 0.0 {
-            // Shrink the clip radius by the padding so the inner clip follows the border curve
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                (radius as f32 - pad_left.max(pad_top).min(radius as f32)).max(0.0)
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                (radius as f64 - pad_left.max(pad_top).min(radius as f64)).max(0.0) as f32
-            }
+            (radius - pad_left.max(pad_top).min(radius)).max(0.0)
         } else {
             0.0
         };
@@ -1054,12 +1042,12 @@ impl Drawable for RawTextField {
             if !self.prompt.is_empty() {
                 let prompt_fs = self.scaled_font_size(&self.prompt_style, scale);
                 let prompt_width = ctx.canvas.measure_text(&self.prompt, prompt_fs as f32);
-                let prompt_x = self.align_x(prompt_width as Float, content_width);
+                let prompt_x = self.align_x(prompt_width as f32, content_width);
                 let prompt_y = self.align_y(prompt_fs as f32, content_height as f32);
                 let prompt_color: color::prelude::Color = self.prompt_style.color.into();
                 ctx.canvas.draw_text(
                     &self.prompt,
-                    (prompt_x, prompt_y as Float).into(),
+                    (prompt_x, prompt_y as f32).into(),
                     prompt_fs as f32,
                     prompt_color,
                 );
@@ -1067,11 +1055,11 @@ impl Drawable for RawTextField {
                 // --- Draw hint text (visible when field is empty and no prompt) ---
                 let hint_fs = self.scaled_font_size(&self.hint_style, scale);
                 let hint_width = ctx.canvas.measure_text(&self.hint, hint_fs as f32);
-                let hint_x = self.align_x(hint_width as Float, content_width);
+                let hint_x = self.align_x(hint_width as f32, content_width);
                 let hint_y = self.align_y(hint_fs as f32, content_height as f32);
                 let hint_color: color::prelude::Color = self.hint_style.color.into();
                 ctx.canvas
-                    .draw_text(&self.hint, (hint_x, hint_y as Float).into(), hint_fs as f32, hint_color);
+                    .draw_text(&self.hint, (hint_x, hint_y as f32).into(), hint_fs as f32, hint_color);
             }
 
             // --- Draw cursor when field is empty but focused ---
@@ -1098,13 +1086,13 @@ impl Drawable for RawTextField {
             };
 
             let text_width = ctx.canvas.measure_text(&display, font_size as f32);
-            let text_x = self.align_x(text_width as Float, content_width);
+            let text_x = self.align_x(text_width as f32, content_width);
             let text_y = self.align_y(font_size as f32, content_height as f32);
 
             if !display.is_empty() {
                 let text_color: color::prelude::Color = self.text_style.color.into();
                 ctx.canvas
-                    .draw_text(&display, (text_x, text_y as Float).into(), font_size as f32, text_color);
+                    .draw_text(&display, (text_x, text_y as f32).into(), font_size as f32, text_color);
             }
 
             // --- Draw cursor ---
