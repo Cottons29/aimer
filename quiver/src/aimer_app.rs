@@ -13,6 +13,7 @@ use winit::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
 
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
+use utils::debug;
 
 #[cfg(target_os = "android")]
 pub static ANDROID_APP: std::sync::OnceLock<AndroidApp> =
@@ -94,6 +95,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
             .expect("ANDROID_APP not set")
             .clone();
 
+        /*
         // Initialize rustls-platform-verifier for Android
         #[cfg(target_os = "android")]
         {
@@ -101,7 +103,8 @@ fn start_event_loop(widget: impl Widget + 'static) {
             use jni::JavaVM;
             let vm_ptr = app.vm_as_ptr();
             let context = app.activity_as_ptr();
-            
+
+
             if vm_ptr.is_null() {
                 utils::error!("Android JavaVM pointer is NULL!");
             } else if context.is_null() {
@@ -110,10 +113,20 @@ fn start_event_loop(widget: impl Widget + 'static) {
                 let res = unsafe {
                     let vm = JavaVM::from_raw(vm_ptr as *mut _).expect("Failed to get JavaVM");
                     let mut env = vm.attach_current_thread().expect("Failed to attach thread");
-                    rustls_platform_verifier::android::init_hosted(
+                    debug!("rustls-platform-verifier: attaching thread to JavaVM");
+                    match rustls_platform_verifier::android::init_hosted(
                         &mut env,
                         JObject::from_raw(context as *mut _),
-                    )
+                    ) {
+                        Ok(_) => {
+                            debug!("rustls-platform-verifier: initialized successfully");
+                            Ok(())
+                        },
+                        Err(e) => {
+                            utils::error!("rustls-platform-verifier: failed to initialize: {:?}", e);
+                            Err(e)
+                        },
+                    }
                 };
                 if let Err(e) = res {
                     utils::error!("rustls-platform-verifier: failed to initialize: {:?}", e);
@@ -121,10 +134,12 @@ fn start_event_loop(widget: impl Widget + 'static) {
                     utils::info!("rustls-platform-verifier initialized successfully");
                 }
             }
+
         }
+        */
 
         events::android_app::set_android_app(app.clone());
-        winit::event_loop::EventLoop::<AimerCustomAppEvent>::with_user_event()
+        EventLoop::<AimerCustomAppEvent>::with_user_event()
             .with_android_app(app)
             .build()
             .expect("Failed to create EventLoop")
