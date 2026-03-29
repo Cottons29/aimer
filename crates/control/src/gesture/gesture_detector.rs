@@ -1,24 +1,16 @@
-use crate::gesture::GestureActions;
 use crate::gesture::button::ButtonStyle;
+use crate::gesture::GestureActions;
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
-use attribute::{Bounds, CacheBounds};
-use canvas::CanvasRendering;
-use color::prelude::{ColorMixer, Colors};
+use attribute::CacheBounds;
 use events::element::ElementEvent;
 use events::pointer::{PointerEvent, PointerPosition};
 use std::cell::UnsafeCell;
 use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
-use widget::style::border::resolve_dim;
 use widget::{Drawable, Element, LayoutCache};
 use winit::window::Window;
-
-#[cfg(not(target_arch = "wasm32"))]
-type Float = f32;
-#[cfg(target_arch = "wasm32")]
-type Float = f64;
 
 #[allow(dead_code)]
 pub struct GestureDetectorElement<'a, E: Element> {
@@ -127,7 +119,7 @@ impl<'a, E: Element> GestureDetectorElement<'a, E> {
         }
     }
 
-    fn compute_dimensions(&self, ctx: &BuildContext) -> (Float, Float) {
+    fn compute_dimensions(&self, ctx: &BuildContext) -> (f32, f32) {
         let base_style = &self.style;
 
         let box_width = match base_style.width {
@@ -278,10 +270,10 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         self.cached_bounds.save(
             ctx.scale,
-            abs_x as Float,
-            abs_y as Float,
-            box_width as Float,
-            box_height as Float,
+            abs_x ,
+            abs_y ,
+            box_width ,
+            box_height ,
         );
 
         // Draw background + border + outline in a single pass
@@ -308,7 +300,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             } else {
                 (0.0, 0.0, 0.0, 0.0)
             };
-            let border_width = [bt as f32, br as f32, bb as f32, bl as f32];
+            let border_width = [bt , br , bb , bl ];
             let border_color = if has_border { style.border.left.color } else { Color::Transparent };
 
             // Resolve outline strokes
@@ -317,7 +309,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             } else {
                 (0.0, 0.0, 0.0, 0.0)
             };
-            let outline_width = [ol_t as f32, ol_r as f32, ol_b as f32, ol_l as f32];
+            let outline_width = [ol_t , ol_r , ol_b , ol_l ];
             let outline_color = if has_outline { style.outline.left.color } else { Color::Transparent };
 
             // Resolve per-corner radii
@@ -339,7 +331,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
                 pos,
                 size,
                 bg_color,
-                radius as f32,
+                radius ,
             );
         }
 
@@ -354,7 +346,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
                 ResolvedSize { width: box_width, height: box_height },
                 Color::Rgba(0, 0, 0, 40),
                 // Colors::Green.into(),
-                radius as f32,
+                radius ,
             );
         }
 
@@ -363,7 +355,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             ctx.canvas.set_clip_rounded(
                 (0.0, 0.0).into(),
                 ResolvedSize { width: box_width, height: box_height },
-                radius as f32,
+                radius ,
             );
         }
 
