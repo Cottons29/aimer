@@ -215,7 +215,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                     error_element.draw(ctx);
                     return;
                 }
-                error!("Failed to load image : {err}");
+                // error!("Failed to load image : {err}");
                 let grid_size = 32.0;
                 let rows = (size.height / grid_size).ceil() as i32;
                 let cols = (size.width / grid_size).ceil() as i32;

@@ -1,6 +1,5 @@
 use attribute::position::Vec2d;
 use constructor::Constructor;
-use crate::scrollable::Float;
 
 #[derive(Constructor)]
 pub struct ScrollBehavior {
@@ -11,22 +10,22 @@ pub struct ScrollBehavior {
     #[constructor(default = true)]
     pub bouncy: bool,
     #[constructor(default = 0.6)]
-    pub bouncy_resistance: Float,
+    pub bouncy_resistance: f32,
     #[constructor(default = 0.15)]
-    pub bouncy_recovery: Float,
-    #[constructor(default = 0.95)]
-    pub friction: Float,
+    pub bouncy_recovery: f32,
+    #[constructor(default = 0.99)]
+    pub friction: f32,
 }
 
 impl Default for ScrollBehavior {
     fn default() -> Self {
         #[cfg(target_os = "ios")]
-        let defaults = (0.6, 0.15, 0.98);
+        let defaults = (0.6, 0.15, 0.99);
         #[cfg(not(target_os = "ios"))]
-        let defaults = (0.6, 0.15, 0.95);
+        let defaults = (0.6, 0.15, 0.98);
 
         Self {
-            max_scroll: Vec2d { x: Float::MAX, y: Float::MAX },
+            max_scroll: Vec2d { x: f32::MAX, y: f32::MAX },
             min_scroll: Vec2d { x: 0.0, y: 0.0 },
             velocity: Vec2d { x: 0.0, y: 0.0 },
             scroll_offset: Vec2d { x: 0.0, y: 0.0 },

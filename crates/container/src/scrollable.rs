@@ -18,11 +18,6 @@ use attribute::CacheBounds;
 use widget::base::BuildContext;
 use widget::{Element, Widget};
 
-#[cfg(target_arch = "wasm32")]
-type Float = f64;
-#[cfg(not(target_arch = "wasm32"))]
-type Float = f32;
-
 #[derive(WidgetConstructor)]
 pub struct Scrollable<W: Widget + 'static> {
     pub child: W,
@@ -42,13 +37,13 @@ impl<W: Widget> Widget for Scrollable<W> {
         child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
         child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
         match self.axis {
-            ScrollAxis::Vertical => child_ctx.box_constraint.max_height = Float::MAX,
-            ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = Float::MAX,
+            ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
+            ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
         }
 
         let raw_container = RawContainer::new(RawScrollableContainer {
             child: self.child.to_element(&child_ctx),
-            speed_multiplier: ctx.scale as f32,
+            speed_multiplier: ctx.scale,
             scroll_offset: Cell::new(Vec2d {
                 x: self.scroll_behavior.scroll_offset.x * ctx.scale,
                 y: self.scroll_behavior.scroll_offset.y * ctx.scale,

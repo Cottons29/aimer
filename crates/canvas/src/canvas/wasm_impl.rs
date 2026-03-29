@@ -1,17 +1,26 @@
-use std::panic::Location;
+use crate::canvas::CanvasRendering;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 use color::prelude::{Color, ColorMixer};
-use utils::{debug, error};
-use crate::canvas::CanvasRendering;
 #[cfg(target_arch = "wasm32")]
-use web_sys::CanvasRenderingContext2d as H5Canvas;
-use attribute::Float;
+use once_cell::sync::Lazy;
+#[cfg(target_arch = "wasm32")]
+use std::collections::HashMap;
+use std::panic::Location;
+#[cfg(target_arch = "wasm32")]
+use std::sync::Mutex;
+use utils::{debug, error};
+#[cfg(target_arch = "wasm32")]
+use web_sys::{CanvasRenderingContext2d as H5Canvas, HtmlImageElement};
+
+#[cfg(target_arch = "wasm32")]
+static IMAGE_REGISTRY: Lazy<Mutex<HashMap<u32, HtmlImageElement>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+#[cfg(target_arch = "wasm32")]
+static NEXT_IMAGE_ID: Mutex<u32> = Mutex::new(1);
 
 #[cfg(target_arch = "wasm32")]
 #[allow(dead_code)]
 impl CanvasRendering for H5Canvas {
-
     #[inline]
     fn begin_frame(&self) {
         // self.begin_path();
@@ -19,7 +28,7 @@ impl CanvasRendering for H5Canvas {
 
     #[inline]
     fn fill_rect(&self, pos: Vec2d, size: ResolvedSize) {
-        H5Canvas::fill_rect(self, pos.x, pos.y, size.width, size.height);
+        H5Canvas::fill_rect(self, pos.x as f64, pos.y as f64, size.width as f64, size.height as f64);
     }
 
     #[inline]
@@ -32,27 +41,21 @@ impl CanvasRendering for H5Canvas {
         border_width: f32,
         border_color: Color,
     ) {
-        // Fill
-        let argb = color.to_u32();
-        let a = ((argb >> 24) & 0xFF) as f64 / 255.0;
-        let r = (argb >> 16) & 0xFF;
-        let g = (argb >> 8) & 0xFF;
-        let b = argb & 0xFF;
-        let fill_style = format!("rgba({},{},{},{})", r, g, b, a);
-        self.set_fill_style_str(&fill_style);
+        self.set_fill_style_str(&color.to_css_color());
 
         if border_radius > 0.0 {
             self.begin_path();
-            let x = pos.x;
-            let y = pos.y;
-            let w = size.width;
-            let h = size.height;
+            let x = pos.x  as f64;
+            let y = pos.y  as f64;
+            let w = size.width  as f64;
+            let h = size.height  as f64;
             let br = border_radius as f64;
             self.move_to(x + br, y);
             self.line_to(x + w - br, y);
             self.arc_to(x + w, y, x + w, y + br, br).unwrap_or(());
             self.line_to(x + w, y + h - br);
-            self.arc_to(x + w, y + h, x + w - br, y + h, br).unwrap_or(());
+            self.arc_to(x + w, y + h, x + w - br, y + h, br)
+                .unwrap_or(());
             self.line_to(x + br, y + h);
             self.arc_to(x, y + h, x, y + h - br, br).unwrap_or(());
             self.line_to(x, y + br);
@@ -60,32 +63,28 @@ impl CanvasRendering for H5Canvas {
             self.close_path();
             self.fill();
         } else {
-            H5Canvas::fill_rect(self, pos.x, pos.y, size.width, size.height);
+            H5Canvas::fill_rect(self, pos.x  as f64, pos.y  as f64, size.width  as f64, size.height  as f64);
         }
 
         // Border
         if border_width > 0.0 {
-            let bargb = border_color.to_u32();
-            let ba = ((bargb >> 24) & 0xFF) as f64 / 255.0;
-            let br_c = (bargb >> 16) & 0xFF;
-            let bg = (bargb >> 8) & 0xFF;
-            let bb = bargb & 0xFF;
-            let stroke_style = format!("rgba({},{},{},{})", br_c, bg, bb, ba);
-            self.set_stroke_style_str(&stroke_style);
+
+            self.set_stroke_style_str(&border_color.to_css_color());
             self.set_line_width(border_width as f64);
 
             if border_radius > 0.0 {
                 self.begin_path();
-                let x = pos.x;
-                let y = pos.y;
-                let w = size.width;
-                let h = size.height;
+                let x = pos.x  as f64;
+                let y = pos.y  as f64;
+                let w = size.width  as f64;
+                let h = size.height  as f64;
                 let br = border_radius as f64;
                 self.move_to(x + br, y);
                 self.line_to(x + w - br, y);
                 self.arc_to(x + w, y, x + w, y + br, br).unwrap_or(());
                 self.line_to(x + w, y + h - br);
-                self.arc_to(x + w, y + h, x + w - br, y + h, br).unwrap_or(());
+                self.arc_to(x + w, y + h, x + w - br, y + h, br)
+                    .unwrap_or(());
                 self.line_to(x + br, y + h);
                 self.arc_to(x, y + h, x, y + h - br, br).unwrap_or(());
                 self.line_to(x, y + br);
@@ -93,7 +92,7 @@ impl CanvasRendering for H5Canvas {
                 self.close_path();
                 self.stroke();
             } else {
-                self.stroke_rect(pos.x, pos.y, size.width, size.height);
+                self.stroke_rect(pos.x  as f64, pos.y  as f64, size.width as f64, size.height as f64);
             }
         }
     }
@@ -108,19 +107,12 @@ impl CanvasRendering for H5Canvas {
         border_width: [f32; 4],
         border_color: Color,
     ) {
-        // Fill with per-corner radii
-        let argb = color.to_u32();
-        let a = ((argb >> 24) & 0xFF) as f64 / 255.0;
-        let r = (argb >> 16) & 0xFF;
-        let g = (argb >> 8) & 0xFF;
-        let b = argb & 0xFF;
-        let fill_style = format!("rgba({},{},{},{})", r, g, b, a);
-        self.set_fill_style_str(&fill_style);
+        self.set_fill_style_str(&color.to_css_color());
 
-        let x = pos.x;
-        let y = pos.y;
-        let w = size.width;
-        let h = size.height;
+        let x = pos.x as f64;
+        let y = pos.y as f64;
+        let w = size.width  as f64;
+        let h = size.height as f64;
         let tl = border_radius[0] as f64;
         let tr = border_radius[1] as f64;
         let br = border_radius[2] as f64;
@@ -131,7 +123,8 @@ impl CanvasRendering for H5Canvas {
         self.line_to(x + w - tr, y);
         self.arc_to(x + w, y, x + w, y + tr, tr).unwrap_or(());
         self.line_to(x + w, y + h - br);
-        self.arc_to(x + w, y + h, x + w - br, y + h, br).unwrap_or(());
+        self.arc_to(x + w, y + h, x + w - br, y + h, br)
+            .unwrap_or(());
         self.line_to(x + bl, y + h);
         self.arc_to(x, y + h, x, y + h - bl, bl).unwrap_or(());
         self.line_to(x, y + tl);
@@ -140,7 +133,10 @@ impl CanvasRendering for H5Canvas {
         self.fill();
 
         // Border with per-side widths
-        let max_w = border_width[0].max(border_width[1]).max(border_width[2]).max(border_width[3]);
+        let max_w = border_width[0]
+            .max(border_width[1])
+            .max(border_width[2])
+            .max(border_width[3]);
         if max_w > 0.0 {
             let bargb = border_color.to_u32();
             let ba = ((bargb >> 24) & 0xFF) as f64 / 255.0;
@@ -156,7 +152,8 @@ impl CanvasRendering for H5Canvas {
             self.line_to(x + w - tr, y);
             self.arc_to(x + w, y, x + w, y + tr, tr).unwrap_or(());
             self.line_to(x + w, y + h - br);
-            self.arc_to(x + w, y + h, x + w - br, y + h, br).unwrap_or(());
+            self.arc_to(x + w, y + h, x + w - br, y + h, br)
+                .unwrap_or(());
             self.line_to(x + bl, y + h);
             self.arc_to(x, y + h, x, y + h - bl, bl).unwrap_or(());
             self.line_to(x, y + tl);
@@ -168,7 +165,7 @@ impl CanvasRendering for H5Canvas {
 
     #[inline]
     fn clear_rect(&self, pos: Vec2d, size: ResolvedSize) {
-        H5Canvas::clear_rect(self, pos.x, pos.y, size.width, size.height);
+        H5Canvas::clear_rect(self, pos.x as f64, pos.y as f64, size.width as f64, size.height as f64);
     }
 
     #[inline]
@@ -178,7 +175,7 @@ impl CanvasRendering for H5Canvas {
         H5Canvas::translate(self, pos.x, pos.y).unwrap();
         #[cfg(debug_assertions)]
         {
-            if let Err(err) = H5Canvas::translate(self, pos.x, pos.y) {
+            if let Err(err) = H5Canvas::translate(self, pos.x as f64, pos.y as f64) {
                 let err = err.as_string().unwrap_or_default();
                 let location = Location::caller();
                 let file_name = location.file();
@@ -220,19 +217,23 @@ impl CanvasRendering for H5Canvas {
         let fill_style = format!("rgba({},{},{},{})", r, g, b, a);
         self.set_fill_style_str(&fill_style);
         self.set_font(&format!("{}px sans-serif", font_size));
-        let _ = self.fill_text(text, pos.x, pos.y);
+        let _ = self.fill_text(text, pos.x as f64, pos.y as f64);
     }
 
     #[inline]
-    fn draw_image(&self, _image_id: u32, _pos: Vec2d, _size: ResolvedSize) {
-        // Image drawing on wasm requires HtmlImageElement lookup by image_id.
-        // This is a placeholder — the actual implementation depends on the
-        // image asset management strategy for the wasm target.
+    fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize) {
+        let registry = IMAGE_REGISTRY.lock().unwrap();
+        if let Some(img) = registry.get(&image_id) {
+            let _ = self.draw_image_with_html_image_element_and_dw_and_dh(img, pos.x as f64, pos.y as f64, size.width as f64, size.height as f64);
+        }
     }
 
     #[inline]
-    fn get_image_size(&self, _image_id: u32) -> Option<(u32, u32)> {
-        None
+    fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)> {
+        let registry = IMAGE_REGISTRY.lock().unwrap();
+        registry
+            .get(&image_id)
+            .map(|img: &HtmlImageElement| (img.natural_width(), img.natural_height()))
     }
 
     #[inline]
@@ -240,9 +241,9 @@ impl CanvasRendering for H5Canvas {
         H5Canvas::save(self);
         self.begin_path();
         let max_dim = 1e7;
-        let w = size.width.min(max_dim);
-        let h = size.height.min(max_dim);
-        self.rect(pos.x, pos.y, w, h);
+        let w = size.width.min(max_dim) as f64;
+        let h = size.height.min(max_dim) as f64;
+        self.rect(pos.x as f64, pos.y as f64, w, h);
         let _ = self.clip();
     }
 
@@ -251,17 +252,18 @@ impl CanvasRendering for H5Canvas {
         H5Canvas::save(self);
         self.begin_path();
         let max_dim = 1e7;
-        let w = size.width.min(max_dim);
-        let h = size.height.min(max_dim);
-        let x = pos.x;
-        let y = pos.y;
+        let w = size.width.min(max_dim)  as f64;
+        let h = size.height.min(max_dim)  as f64;
+        let x = pos.x  as f64;
+        let y = pos.y  as f64;
         let br = border_radius as f64;
         if br > 0.0 {
             self.move_to(x + br, y);
             self.line_to(x + w - br, y);
             self.arc_to(x + w, y, x + w, y + br, br).unwrap_or(());
             self.line_to(x + w, y + h - br);
-            self.arc_to(x + w, y + h, x + w - br, y + h, br).unwrap_or(());
+            self.arc_to(x + w, y + h, x + w - br, y + h, br)
+                .unwrap_or(());
             self.line_to(x + br, y + h);
             self.arc_to(x, y + h, x, y + h - br, br).unwrap_or(());
             self.line_to(x, y + br);
@@ -289,35 +291,24 @@ impl CanvasRendering for H5Canvas {
     }
 
     #[inline]
-    fn stroke_rect(
-        &self,
-        pos: Vec2d,
-        size: ResolvedSize,
-        stroke_color: Color,
-        stroke_width: f32,
-        border_radius: f32,
-    ) {
-        let argb = stroke_color.to_u32();
-        let a = ((argb >> 24) & 0xFF) as f64 / 255.0;
-        let r = (argb >> 16) & 0xFF;
-        let g = (argb >> 8) & 0xFF;
-        let b = argb & 0xFF;
-        let stroke_style = format!("rgba({},{},{},{})", r, g, b, a);
-        self.set_stroke_style_str(&stroke_style);
+    fn stroke_rect(&self, pos: Vec2d, size: ResolvedSize, stroke_color: Color, stroke_width: f32, border_radius: f32) {
+        let argb = stroke_color.to_css_color();
+        self.set_stroke_style_str(&argb);
         self.set_line_width(stroke_width as f64);
 
         if border_radius > 0.0 {
             self.begin_path();
-            let x = pos.x;
-            let y = pos.y;
-            let w = size.width;
-            let h = size.height;
+            let x = pos.x as f64;
+            let y = pos.y as f64;
+            let w = size.width as f64;
+            let h = size.height as f64;
             let br = border_radius as f64;
             self.move_to(x + br, y);
             self.line_to(x + w - br, y);
             self.arc_to(x + w, y, x + w, y + br, br).unwrap_or(());
             self.line_to(x + w, y + h - br);
-            self.arc_to(x + w, y + h, x + w - br, y + h, br).unwrap_or(());
+            self.arc_to(x + w, y + h, x + w - br, y + h, br)
+                .unwrap_or(());
             self.line_to(x + br, y + h);
             self.arc_to(x, y + h, x, y + h - br, br).unwrap_or(());
             self.line_to(x, y + br);
@@ -325,36 +316,27 @@ impl CanvasRendering for H5Canvas {
             self.close_path();
             self.stroke();
         } else {
-            H5Canvas::stroke_rect(self, pos.x, pos.y, size.width, size.height);
+            H5Canvas::stroke_rect(self, pos.x as f64, pos.y as f64, size.width as f64, size.height as f64);
         }
     }
 
     #[inline]
-    fn stroke_rect_per_side(
-        &self,
-        pos: Vec2d,
-        size: ResolvedSize,
-        stroke_color: Color,
-        stroke_width: [f32; 4],
-        border_radius: [f32; 4],
-    ) {
-        let argb = stroke_color.to_u32();
-        let a = ((argb >> 24) & 0xFF) as f64 / 255.0;
-        let r = (argb >> 16) & 0xFF;
-        let g = (argb >> 8) & 0xFF;
-        let b = argb & 0xFF;
-        let stroke_style = format!("rgba({},{},{},{})", r, g, b, a);
+    fn stroke_rect_per_side(&self, pos: Vec2d, size: ResolvedSize, stroke_color: Color, stroke_width: [f32; 4], border_radius: [f32; 4]) {
+        let stroke_style = stroke_color.to_css_color();
         self.set_stroke_style_str(&stroke_style);
         // Use the max border width for the stroke; the visual per-side effect
         // is approximated by the rounded-rect path.
-        let max_w = stroke_width[0].max(stroke_width[1]).max(stroke_width[2]).max(stroke_width[3]);
+        let max_w = stroke_width[0]
+            .max(stroke_width[1])
+            .max(stroke_width[2])
+            .max(stroke_width[3]);
         self.set_line_width(max_w as f64);
 
         self.begin_path();
-        let x = pos.x;
-        let y = pos.y;
-        let w = size.width;
-        let h = size.height;
+        let x = pos.x as f64;
+        let y = pos.y as f64;
+        let w = size.width as f64;
+        let h = size.height as f64;
         let tl = border_radius[0] as f64;
         let tr = border_radius[1] as f64;
         let br = border_radius[2] as f64;
@@ -363,7 +345,8 @@ impl CanvasRendering for H5Canvas {
         self.line_to(x + w - tr, y);
         self.arc_to(x + w, y, x + w, y + tr, tr).unwrap_or(());
         self.line_to(x + w, y + h - br);
-        self.arc_to(x + w, y + h, x + w - br, y + h, br).unwrap_or(());
+        self.arc_to(x + w, y + h, x + w - br, y + h, br)
+            .unwrap_or(());
         self.line_to(x + bl, y + h);
         self.arc_to(x, y + h, x, y + h - bl, bl).unwrap_or(());
         self.line_to(x, y + tl);
@@ -384,15 +367,15 @@ impl CanvasRendering for H5Canvas {
         outline_width: f32,
         outline_color: Color,
     ) {
-        debug!("fill_rect_with_border_and_outline");
+        // debug!("fill_rect_with_border_and_outline");
         // Wasm fallback: draw border rect then outline rect separately
         self.fill_rect_with_border(pos, size, color, border_radius, border_width, border_color);
         if outline_width > 0.0 {
             let outline_radius = if border_radius > 0.0 { border_radius + outline_width / 2.0 } else { 0.0 };
             <H5Canvas as CanvasRendering>::stroke_rect(
                 self,
-                Vec2d { x: (pos.x as f32 - outline_width / 2.0) as f64, y: (pos.y as f32 - outline_width / 2.0) as f64 },
-                ResolvedSize { width: (size.width as f32 + outline_width) as f64, height: (size.height as f32 + outline_width) as f64 },
+                Vec2d { x: (pos.x as f32 - outline_width / 2.0), y: (pos.y as f32 - outline_width / 2.0) },
+                ResolvedSize { width: size.width + outline_width, height: size.height + outline_width },
                 outline_color,
                 outline_width,
                 outline_radius,
@@ -416,27 +399,15 @@ impl CanvasRendering for H5Canvas {
         let has_outline = outline_width.iter().any(|w| *w > 0.0);
         if has_outline {
             let (b1, b2, b3, b4) = (border_width[0], border_width[1], border_width[2], border_width[3]);
-            let new_pos = pos - (b1 as Float, b2 as Float);
-            let new_size = ResolvedSize {width: size.width + b1 as Float + b3 as Float, height: size.height + b2 as Float + b4 as Float};
+            let new_pos = pos - (b1, b2);
+            let new_size = ResolvedSize { width: size.width + b1 + b3, height: size.height + b2 + b4 };
             let new_radius = border_radius.map(|r| r * 1.18);
-            self.stroke_rect_per_side(
-                new_pos,
-                new_size,
-                outline_color,
-                border_width,
-                new_radius,
-            );
+            self.stroke_rect_per_side(new_pos, new_size, outline_color, border_width, new_radius);
         }
     }
 
     #[inline]
-    fn fill_color_rect(
-        &self,
-        pos: Vec2d,
-        size: ResolvedSize,
-        color: Color,
-        border_radius: f32,
-    ) {
+    fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: f32) {
         let argb = color.to_u32();
         let a = ((argb >> 24) & 0xFF) as f64 / 255.0;
         let r = (argb >> 16) & 0xFF;
@@ -447,16 +418,17 @@ impl CanvasRendering for H5Canvas {
 
         if border_radius > 0.0 {
             self.begin_path();
-            let x = pos.x;
-            let y = pos.y;
-            let w = size.width;
-            let h = size.height;
+            let x = pos.x as f64;
+            let y = pos.y as f64;
+            let w = size.width as f64;
+            let h = size.height as f64;
             let br = border_radius as f64;
             self.move_to(x + br, y);
             self.line_to(x + w - br, y);
             self.arc_to(x + w, y, x + w, y + br, br).unwrap_or(());
             self.line_to(x + w, y + h - br);
-            self.arc_to(x + w, y + h, x + w - br, y + h, br).unwrap_or(());
+            self.arc_to(x + w, y + h, x + w - br, y + h, br)
+                .unwrap_or(());
             self.line_to(x + br, y + h);
             self.arc_to(x, y + h, x, y + h - br, br).unwrap_or(());
             self.line_to(x, y + br);
@@ -464,31 +436,19 @@ impl CanvasRendering for H5Canvas {
             self.close_path();
             self.fill();
         } else {
-            H5Canvas::fill_rect(self, pos.x, pos.y, size.width, size.height);
+            H5Canvas::fill_rect(self, pos.x as f64, pos.y as f64, size.width as f64, size.height as f64);
         }
     }
 
     #[inline]
-    fn fill_color_rect_per_corner(
-        &self,
-        pos: Vec2d,
-        size: ResolvedSize,
-        color: Color,
-        border_radius: [f32; 4],
-    ) {
-        let argb = color.to_u32();
-        let a = ((argb >> 24) & 0xFF) as f64 / 255.0;
-        let r = (argb >> 16) & 0xFF;
-        let g = (argb >> 8) & 0xFF;
-        let b = argb & 0xFF;
-        let fill_style = format!("rgba({},{},{},{})", r, g, b, a);
-        self.set_fill_style_str(&fill_style);
+    fn fill_color_rect_per_corner(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]) {
+        self.set_fill_style_str(&color.to_css_color());
 
         self.begin_path();
-        let x = pos.x;
-        let y = pos.y;
-        let w = size.width;
-        let h = size.height;
+        let x = pos.x as f64;
+        let y = pos.y as f64;
+        let w = size.width as f64;
+        let h = size.height as f64;
         let tl = border_radius[0] as f64;
         let tr = border_radius[1] as f64;
         let br = border_radius[2] as f64;
@@ -497,7 +457,8 @@ impl CanvasRendering for H5Canvas {
         self.line_to(x + w - tr, y);
         self.arc_to(x + w, y, x + w, y + tr, tr).unwrap_or(());
         self.line_to(x + w, y + h - br);
-        self.arc_to(x + w, y + h, x + w - br, y + h, br).unwrap_or(());
+        self.arc_to(x + w, y + h, x + w - br, y + h, br)
+            .unwrap_or(());
         self.line_to(x + bl, y + h);
         self.arc_to(x, y + h, x, y + h - bl, bl).unwrap_or(());
         self.line_to(x, y + tl);
@@ -517,19 +478,47 @@ impl CanvasRendering for H5Canvas {
     }
 
     #[inline]
-    fn load_image(&self, _bytes: &[u8], _width: u32, _height: u32) -> u32 {
-        0
+    fn load_image(&self, bytes: &[u8], _width: u32, _height: u32) -> u32 {
+        let mut next_id = NEXT_IMAGE_ID.lock().unwrap();
+        let id = *next_id;
+        *next_id += 1;
+
+        let array = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
+        array.copy_from(bytes);
+        let blob_parts = js_sys::Array::new();
+        blob_parts.push(&array);
+        let blob = web_sys::Blob::new_with_u8_array_sequence(&blob_parts).unwrap();
+        let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
+
+        let img = HtmlImageElement::new().unwrap();
+        img.set_src(&url);
+
+        let mut registry = IMAGE_REGISTRY.lock().unwrap();
+        registry.insert(id, img);
+        id
     }
 
-    fn load_image_with_id(&self, _image_id: u32, _bytes: &[u8], _width: u32, _height: u32) {}
+    fn load_image_with_id(&self, image_id: u32, bytes: &[u8], _width: u32, _height: u32) {
+        let array = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
+        array.copy_from(bytes);
+        let blob_parts = js_sys::Array::new();
+        blob_parts.push(&array);
+        let blob = web_sys::Blob::new_with_u8_array_sequence(&blob_parts).unwrap();
+        let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
+
+        let img = HtmlImageElement::new().unwrap();
+        img.set_src(&url);
+
+        let mut registry = IMAGE_REGISTRY.lock().unwrap();
+        registry.insert(image_id, img);
+    }
 
     #[inline]
     fn set_texture_size(&self, _image_id: u32, _width: u32, _height: u32) {}
 
     #[inline]
-    fn get_transform_translation(&self) -> (f64, f64) {
+    fn get_transform_translation(&self) -> (f32, f32) {
         let matrix = self.get_transform().unwrap();
-        (matrix.e(), matrix.f())
+        (matrix.e() as f32, matrix.f() as f32)
     }
 }
-

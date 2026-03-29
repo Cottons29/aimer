@@ -7,11 +7,6 @@ use widget::base::*;
 use widget::{base::Color, Constructor, Drawable, Element, LayoutCache, Widget};
 use canvas::CanvasRendering;
 
-#[cfg(target_arch = "wasm32")]
-type FLOAT = f64;
-#[cfg(not(target_arch = "wasm32"))]
-type FLOAT = f32;
-
 
 #[derive(WidgetConstructor)]
 pub struct SizedBox {
@@ -49,7 +44,7 @@ pub struct RawSizedBox<E: Element> {
     pub(crate) child: E,
     pub(crate) cache: LayoutCache,
     pub(crate) debug_name: &'static str,
-    pub(crate) bounds: std::cell::Cell<Option<(attribute::position::Vec2d, attribute::position::Vec2d)>>,
+    pub(crate) bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
 }
 
 impl<E: Element> Drawable for RawSizedBox<E> {
@@ -62,17 +57,17 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         {
             if widget::inspector_overlay::is_enabled() {
                 // TODO: expose transform position from AimerCanvas for inspector
-                let (start_x, start_y): (FLOAT, FLOAT) = (0.0, 0.0);
+                let (start_x, start_y): (f32, f32) = (0.0, 0.0);
                 let end_x = start_x + width;
                 let end_y = start_y + height;
 
                 let scale = ctx.scale;
-                let l_start = Vec2d { x: (start_x as f64 / scale as f64) as _, y: (start_y as f64 / scale as f64) as _ };
-                let l_end = Vec2d { x: (end_x as f64 / scale as f64) as _, y: (end_y as f64 / scale as f64) as _ };
+                let l_start = Vec2d { x: start_x/ scale, y: start_y  / scale };
+                let l_end = Vec2d { x: end_x  / scale, y: end_y  / scale };
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if (cp.x as FLOAT) >= start_x && (cp.x as FLOAT) <= end_x && (cp.y as FLOAT) >= start_y && (cp.y as FLOAT) <= end_y {
+                if (cp.x as f32) >= start_x && (cp.x as f32) <= end_x && (cp.y as f32) >= start_y && (cp.y as f32) <= end_y {
                     if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
                         *hovered = Some((self.debug_name, l_start, l_end));
                     }

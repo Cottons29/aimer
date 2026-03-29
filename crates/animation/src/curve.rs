@@ -8,7 +8,7 @@ pub enum Curve {
     EaseOut,
     EaseInOut,
     /// Cubic bezier defined by two control points (x1, y1, x2, y2).
-    CubicBezier(f64, f64, f64, f64),
+    CubicBezier(f32, f32, f32, f32),
     /// Decelerate curve (1 - (1-t)^2).
     Decelerate,
     /// Bounce at the end.
@@ -17,7 +17,7 @@ pub enum Curve {
 
 impl Curve {
     /// Transform a linear progress value `t` (0.0–1.0) through this curve.
-    pub fn transform(&self, t: f64) -> f64 {
+    pub fn transform(&self, t: f32) -> f32 {
         let t = t.clamp(0.0, 1.0);
         match self {
             Curve::Linear => t,
@@ -52,9 +52,9 @@ impl Default for Curve {
     }
 }
 
-fn bounce_out(t: f64) -> f64 {
-    const N1: f64 = 7.5625;
-    const D1: f64 = 2.75;
+fn bounce_out(t: f32) -> f32 {
+    const N1: f32 = 7.5625;
+    const D1: f32 = 2.75;
     if t < 1.0 / D1 {
         N1 * t * t
     } else if t < 2.0 / D1 {
@@ -70,7 +70,7 @@ fn bounce_out(t: f64) -> f64 {
 }
 
 /// Approximate cubic bezier: find y for a given x using Newton's method.
-fn cubic_bezier_y_for_x(x: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+fn cubic_bezier_y_for_x(x: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     // Find t such that bezier_x(t) ≈ x, then return bezier_y(t).
     let mut t = x; // initial guess
     for _ in 0..8 {
@@ -86,13 +86,13 @@ fn cubic_bezier_y_for_x(x: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
 }
 
 /// Evaluate cubic bezier at parameter t with control points p1, p2 (p0=0, p3=1).
-fn bezier(t: f64, p1: f64, p2: f64) -> f64 {
+fn bezier(t: f32, p1: f32, p2: f32) -> f32 {
     let inv = 1.0 - t;
     3.0 * inv * inv * t * p1 + 3.0 * inv * t * t * p2 + t * t * t
 }
 
 /// Derivative of the cubic bezier.
-fn bezier_derivative(t: f64, p1: f64, p2: f64) -> f64 {
+fn bezier_derivative(t: f32, p1: f32, p2: f32) -> f32 {
     let inv = 1.0 - t;
     3.0 * inv * inv * p1 + 6.0 * inv * t * (p2 - p1) + 3.0 * t * t * (1.0 - p2)
 }

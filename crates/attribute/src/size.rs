@@ -1,6 +1,5 @@
 use std::ops::Mul;
 use crate::dimension::Dimension;
-use crate::Float;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Size {
@@ -38,17 +37,8 @@ impl Size {
     pub fn is_auto_height(&self) -> bool {
         self.height == Dimension::Auto
     }
-
-    #[cfg(not(target_arch = "wasm32"))]
+    
     pub fn resolve(&self, parent: &ResolvedSize, scale: f32) -> ResolvedSize {
-        ResolvedSize {
-            width: self.width.resolve(parent.width, scale),
-            height: self.height.resolve(parent.height, scale),
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn resolve(&self, parent: &ResolvedSize, scale: f64) -> ResolvedSize {
         ResolvedSize {
             width: self.width.resolve(parent.width, scale),
             height: self.height.resolve(parent.height, scale),
@@ -64,8 +54,8 @@ impl Size {
 /// - f64 for wasm32
 #[derive(Copy, Clone, Default, Debug, PartialEq)]
 pub struct ResolvedSize {
-    pub width: Float,
-    pub height: Float,
+    pub width: f32,
+    pub height: f32,
 }
 
 
@@ -73,7 +63,7 @@ impl Mul<f32> for ResolvedSize {
     type Output = ResolvedSize;
     fn mul(self, rhs: f32) -> Self::Output {
         ResolvedSize {
-            width: self.width * rhs,
+            width: self.width  * rhs,
             height: self.height * rhs,
         }
     }

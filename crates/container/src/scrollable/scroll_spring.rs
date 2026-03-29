@@ -1,17 +1,17 @@
-use crate::scrollable::Float;
+
 
 pub struct ScrollSpring {
-    pub stiffness: Float,
+    pub stiffness: f32,
 }
 
 impl ScrollSpring {
-    pub fn new(stiffness: Float) -> Self {
+    pub fn new(stiffness: f32) -> Self {
         Self { stiffness }
     }
 
     /// Critically damped spring exact solution
     /// returns (new_x, new_v)
-    pub fn update(&self, x0: Float, v0: Float, dt: Float) -> (Float, Float) {
+    pub fn update(&self, x0: f32, v0: f32, dt: f32) -> (f32, f32) {
         let omega = self.stiffness.sqrt();
         let c1 = x0;
         let c2 = v0 + omega * x0;

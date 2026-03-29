@@ -1,12 +1,11 @@
 use std::ops::{Add, Mul, Sub, SubAssign};
-use crate::Float;
 use crate::size::ResolvedSize;
 
 macro_rules! impl_from_num {
     ($t:ty) => {
         impl From<$t> for Vec2d {
             fn from(x: $t) -> Self {
-                Self { x: x as Float, y: x as Float }
+                Self { x: x as f32, y: x as f32 }
             }
         }
     };
@@ -16,7 +15,7 @@ macro_rules! impl_from_tuple {
     ($t:ty) => {
         impl From<$t> for Vec2d {
             fn from((x, y): $t) -> Self {
-                Self { x: x as Float, y: y as Float }
+                Self { x: x as f32, y: y as f32 }
             }
         }
     };
@@ -24,21 +23,21 @@ macro_rules! impl_from_tuple {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Vec2d {
-    pub x: Float,
-    pub y: Float,
+    pub x: f32,
+    pub y: f32,
 }
 
 
-impl Mul<Vec2d> for Float {
+impl Mul<Vec2d> for f32 {
     type Output = Vec2d;
     fn mul(self, rhs: Vec2d) -> Self::Output {
         Self::Output { x: self * rhs.x, y: self * rhs.y }
     }
 }
 
-impl Mul<Float> for Vec2d {
+impl Mul<f32> for Vec2d {
     type Output = Vec2d;
-    fn mul(self, rhs: Float) -> Self::Output {
+    fn mul(self, rhs: f32) -> Self::Output {
         Self::Output { x: self.x * rhs, y: self.y * rhs }
     }
 }
@@ -50,22 +49,22 @@ impl Add<Vec2d> for Vec2d {
     }
 }
 
-impl Add<Float> for Vec2d {
+impl Add<f32> for Vec2d {
     type Output = Vec2d;
-    fn add(self, rhs: Float) -> Self::Output {
+    fn add(self, rhs: f32) -> Self::Output {
         Self::Output { x: self.x + rhs, y: self.y + rhs }
     }
 }
 
-impl Sub<(Float, Float)> for Vec2d {
+impl Sub<(f32, f32)> for Vec2d {
     type Output = Vec2d;
-    fn sub(self, rhs: (Float, Float)) -> Self::Output {
+    fn sub(self, rhs: (f32, f32)) -> Self::Output {
         Self::Output { x: self.x - rhs.0, y: self.y - rhs.1 }
     }
 }
 
-impl SubAssign<(Float, Float)> for Vec2d {
-    fn sub_assign(&mut self, rhs: (Float, Float)) {
+impl SubAssign<(f32, f32)> for Vec2d {
+    fn sub_assign(&mut self, rhs: (f32, f32)) {
         self.x -= rhs.0;
         self.y -= rhs.1;
     }
@@ -80,14 +79,14 @@ impl Vec2d {
     }
 }
 
-impl From<(Float, Float)> for Vec2d {
-    fn from((x, y): (Float, Float)) -> Self {
+impl From<(f32, f32)> for Vec2d {
+    fn from((x, y): (f32, f32)) -> Self {
         Self { x, y }
     }
 }
 
-impl From<Float> for Vec2d {
-    fn from(x: Float) -> Self {
+impl From<f32> for Vec2d {
+    fn from(x: f32) -> Self {
         Self { x, y: x }
     }
 }

@@ -1,4 +1,4 @@
-use crate::Float;
+
 use crate::position::Vec2d;
 use std::cell::Cell;
 use std::ops::{Div, Mul};
@@ -41,8 +41,8 @@ use crate::size::{ResolvedSize, Size};
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Dimension {
-    Px(Float),
-    Percent(Float),
+    Px(f32),
+    Percent(f32),
     Auto,
 }
 #[allow(clippy::derivable_impls)]
@@ -52,26 +52,26 @@ impl Default for Dimension {
     }
 }
 
-impl From<Float> for Dimension {
-    fn from(v: Float) -> Self {
-        Self::Px(v as Float)
+impl From<f32> for Dimension {
+    fn from(v: f32) -> Self {
+        Self::Px(v as f32)
     }
 }
 
 impl From<i32> for Dimension {
     fn from(v: i32) -> Self {
-        Self::Px(v as Float)
+        Self::Px(v as f32)
     }
 }
 
 impl From<u32> for Dimension {
     fn from(v: u32) -> Self {
-        Self::Px(v as Float)
+        Self::Px(v as f32)
     }
 }
 
 impl Dimension {
-    pub fn resolve(&self, parent_value: Float, scale: Float) -> Float {
+    pub fn resolve(&self, parent_value: f32, scale: f32) -> f32 {
         match self {
             Dimension::Px(v) => v * scale,
             Dimension::Percent(p) => parent_value * (p / 100.0),
@@ -82,28 +82,28 @@ impl Dimension {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bounds {
-    pub x: Float,
-    pub y: Float,
-    pub width: Float,
-    pub height: Float,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
-impl Mul<Float> for Bounds {
+impl Mul<f32> for Bounds {
     type Output = Self;
-    fn mul(self, rhs: Float) -> Self::Output {
+    fn mul(self, rhs: f32) -> Self::Output {
         Self { x: self.x * rhs, y: self.y * rhs, width: self.width * rhs, height: self.height * rhs }
     }
 }
 
-impl Div<Float> for Bounds {
+impl Div<f32> for Bounds {
     type Output = Self;
-    fn div(self, rhs: Float) -> Self::Output {
+    fn div(self, rhs: f32) -> Self::Output {
         Self { x: self.x / rhs, y: self.y / rhs, width: self.width / rhs, height: self.height / rhs }
     }
 }
 
 impl Bounds {
-    pub const fn new(x: Float, y: Float, width: Float, height: Float) -> Self {
+    pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
         Self { x, y, width, height }
     }
 }
@@ -152,17 +152,17 @@ impl CacheBounds {
         }
     }
 
-    pub const fn save(&self, scale: Float, x: Float, y: Float, width: Float, height: Float) {
-        let cache_x = x as Float / scale;
-        let cache_y = y as Float / scale;
-        let cache_w = width as Float / scale;
-        let cache_h = height as Float / scale;
+    pub const fn save(&self, scale: f32, x: f32, y: f32, width: f32, height: f32) {
+        let cache_x = x as f32 / scale;
+        let cache_y = y as f32 / scale;
+        let cache_w = width as f32 / scale;
+        let cache_h = height as f32 / scale;
         let bound = Bounds::new(cache_x, cache_y, cache_w, cache_h);
         self.set_bounds(bound);
     }
     
 
-    pub const fn is_inside(&self, x: Float, y: Float) -> bool {
+    pub const fn is_inside(&self, x: f32, y: f32) -> bool {
         let Some(bound) = self.bound else { return false };
         bound.x <= x && x <= bound.x + bound.width && bound.y <= y && y <= bound.y + bound.height
     }

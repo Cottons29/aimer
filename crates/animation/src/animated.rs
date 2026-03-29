@@ -1,8 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use crate::time::AnimInstant;
-
-use attribute::Float;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use constructor::{Constructor, WidgetConstructor};
@@ -17,22 +15,22 @@ use crate::controller::AnimationController;
 #[derive(Debug, Clone, Copy)]
 pub enum AnimationEffect {
     /// Animate opacity from `from` to `to` (0.0 = invisible, 1.0 = fully opaque).
-    Opacity { from: f64, to: f64 },
+    Opacity { from: f32, to: f32 },
     /// Animate uniform scale from `from` to `to` (1.0 = normal size).
-    Scale { from: f64, to: f64 },
+    Scale { from: f32, to: f32 },
     /// Animate translation offset in pixels.
-    Translate { from_x: f64, from_y: f64, to_x: f64, to_y: f64 },
+    Translate { from_x: f32, from_y: f32, to_x: f32, to_y: f32 },
     /// Animate rotation in radians.
-    Rotate { from: f64, to: f64 },
+    Rotate { from: f32, to: f32 },
     /// Animate a slide-in from a direction (0.0 = off-screen, 1.0 = in place).
-    SlideX { from: f64, to: f64 },
+    SlideX { from: f32, to: f32 },
     /// Animate a slide-in vertically.
-    SlideY { from: f64, to: f64 },
+    SlideY { from: f32, to: f32 },
 }
 
 impl AnimationEffect {
     /// Interpolate between `from` and `to` using progress `t` (0.0–1.0).
-    fn lerp(from: f64, to: f64, t: f64) -> f64 {
+    fn lerp(from: f32, to: f32, t: f32) -> f32 {
         from + (to - from) * t
     }
 }
@@ -137,19 +135,19 @@ impl AnimatedElement {
         let w = child_size.width;
         let h = child_size.height;
         ctx.canvas.set_clip(
-            (0.0 as Float, 0.0 as Float).into(),
+            (0.0, 0.0).into(),
             ResolvedSize { width: w, height: h },
         );
     }
 
-    fn apply_effect(&self, ctx: &BuildContext, t: f64) {
+    fn apply_effect(&self, ctx: &BuildContext, t: f32) {
         match self.effect {
             AnimationEffect::Opacity { from, to } => {
                 let alpha = AnimationEffect::lerp(from, to, t);
                 ctx.canvas.set_alpha(alpha as f32);
             }
             AnimationEffect::Scale { from, to } => {
-                let scale = AnimationEffect::lerp(from, to, t) as Float;
+                let scale = AnimationEffect::lerp(from, to, t);
                 let cx = ctx.box_constraint.max_width / 2.0;
                 let cy = ctx.box_constraint.max_height / 2.0;
                 ctx.canvas.translate((cx, cy).into());
@@ -157,9 +155,9 @@ impl AnimatedElement {
                 ctx.canvas.translate((-cx, -cy).into());
             }
             AnimationEffect::Translate { from_x, from_y, to_x, to_y } => {
-                let dx = AnimationEffect::lerp(from_x, to_x, t) as Float;
-                let dy = AnimationEffect::lerp(from_y, to_y, t) as Float;
-                ctx.canvas.translate((dx, dy).into());
+                let dx = AnimationEffect::lerp(from_x, to_x, t);
+                let dy = AnimationEffect::lerp(from_y, to_y, t);
+                ctx.canvas.translate((dx as f32, dy as f32).into());
             }
             AnimationEffect::Rotate { from, to } => {
                 let angle = AnimationEffect::lerp(from, to, t) as f32;
@@ -170,14 +168,14 @@ impl AnimatedElement {
                 ctx.canvas.translate((-cx, -cy).into());
             }
             AnimationEffect::SlideX { from, to } => {
-                let offset = AnimationEffect::lerp(from, to, t) as Float;
-                let dx = ctx.box_constraint.max_width * offset;
-                ctx.canvas.translate((dx, 0.0 as Float).into());
+                let offset = AnimationEffect::lerp(from, to, t);
+                let dx = ctx.box_constraint.max_width * offset as f32;
+                ctx.canvas.translate((dx, 0.0).into());
             }
             AnimationEffect::SlideY { from, to } => {
-                let offset = AnimationEffect::lerp(from, to, t) as Float;
+                let offset = AnimationEffect::lerp(from, to, t);
                 let dy = ctx.box_constraint.max_height * offset;
-                ctx.canvas.translate((0.0 as Float, dy).into());
+                ctx.canvas.translate((0.0, dy).into());
             }
         }
     }
