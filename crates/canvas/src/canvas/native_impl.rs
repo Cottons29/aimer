@@ -264,8 +264,8 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
-    fn get_transform_translation(&self) -> (f64, f64) {
+    fn get_transform_translation(&self) -> (f32, f32) {
         let (tx, ty) = CupidCanvas::get_transform_translation(self);
-        (tx as f64, ty as f64)
+        (tx, ty)
     }
 }
