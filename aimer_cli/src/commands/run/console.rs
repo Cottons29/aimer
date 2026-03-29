@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use arboard::Clipboard;
+use crossterm::style::Stylize;
 use inspector::{render_tree_lines_with_ids, InspectorServer, DEFAULT_INSPECTOR_PORT};
 use tokio::runtime::Runtime;
 use crate::commands::run::ios::spawn_ios_runner;
@@ -25,6 +26,7 @@ use crate::commands::run::ios_sim::spawn_ios_simulator_runner;
 use crate::commands::run::macos::spawn_macos_runner;
 use crate::commands::run::web::spawn_web_runner;
 use crate::commands::run::android::spawn_android_runner;
+use crate::commands::run::utilities::LogStyling;
 use crate::targets::Targets;
 use super::Device;
 
@@ -138,8 +140,8 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
 
     let (tx, rx) = std::sync::mpsc::channel();
 
-    let mut build_logs: Vec<String> = Vec::new();
-    let mut app_logs: Vec<String> = Vec::new();
+    let mut build_logs: Vec<String> = Vec::with_capacity(1000);
+    let mut app_logs: Vec<String> = Vec::with_capacity(1000);
     let mut current_status = Status::Compiling(0);
     let mut current_pane = ConsoleType::App;
     let mut build_pane = ScrollablePane::new();
@@ -148,7 +150,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
     let mut inspector_full_tree: bool = false;
     let mut inspector_cursor: usize = 0;
 
-    // CLI always hosts the inspector server; the app connects as a client.
+    // Starting inspector server
     let inspector_runtime = Runtime::new().expect("Failed to create inspector tokio runtime");
     let inspector_handle = InspectorServer::start(DEFAULT_INSPECTOR_PORT, inspector_runtime.handle());
 
@@ -175,7 +177,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 }
                 RunnerEvent::AppLog(msg) => {
                     let cleaned = msg.replace('\r', "");
-                    app_logs.push(cleaned);
+                    app_logs.push(cleaned.process_log());
                     if app_logs.len() > 1000 {
                         app_logs.remove(0);
                     }
