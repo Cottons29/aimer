@@ -17,11 +17,6 @@ use constructor::Constructor;
 use crate::base::BuildContext;
 use crate::Drawable;
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) type Float = f64;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) type Float = f32;
-
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy, PartialEq)]
 pub enum BorderStyle {
@@ -43,7 +38,7 @@ pub enum BorderMode {
 pub type Stroke = Dimension;
 
 #[allow(dead_code)]
-#[derive(Default, Clone, Copy, constructor::Constructor)]
+#[derive(Default, Clone, Copy, Constructor)]
 pub struct BorderSide {
     #[constructor(default)]
     pub style: BorderStyle,
@@ -55,7 +50,7 @@ pub struct BorderSide {
     pub color: Color,
 }
 
-pub fn resolve_dim(dim: Dimension, parent_val: Float, scale: Float) -> Float {
+pub fn resolve_dim(dim: Dimension, parent_val: f32, scale: f32) -> f32 {
     match dim {
         Dimension::Px(w) => w * scale,
         Dimension::Percent(p) => parent_val * (p / 100.0),
@@ -101,7 +96,8 @@ pub(crate) struct RawBoxBorder {
 }
 
 impl RawBoxBorder {
-    pub fn get_uniform_radius(&self, box_width: Float, box_height: Float, scale: Float) -> Option<Float> {
+    #[allow(dead_code)]
+    pub fn get_uniform_radius(&self, box_width: f32, box_height: f32, scale: f32) -> Option<f32> {
         let left_r = resolve_dim(self.left.radius, box_width, scale);
         let right_r = resolve_dim(self.right.radius, box_width, scale);
         let top_r = resolve_dim(self.top.radius, box_height, scale);
@@ -117,7 +113,8 @@ impl RawBoxBorder {
     /// Returns per-corner radii [top-left, top-right, bottom-right, bottom-left].
     /// Each corner radius is the minimum of its two adjacent side radii.
     /// Returns None if all radii are zero.
-    pub fn get_per_corner_radii(&self, box_width: Float, box_height: Float, scale: Float) -> Option<[f32; 4]> {
+    #[allow(dead_code)]
+    pub fn get_per_corner_radii(&self, box_width: f32, box_height: f32, scale: f32) -> Option<[f32; 4]> {
         let left_r = resolve_dim(self.left.radius, box_width, scale);
         let right_r = resolve_dim(self.right.radius, box_width, scale);
         let top_r = resolve_dim(self.top.radius, box_height, scale);
@@ -131,7 +128,7 @@ impl RawBoxBorder {
         if tl == 0.0 && tr == 0.0 && br == 0.0 && bl == 0.0 {
             None
         } else {
-            Some([tl as f32, tr as f32, br as f32, bl as f32])
+            Some([tl, tr, br, bl])
         }
     }
 }
@@ -142,7 +139,7 @@ impl BoxBorder {
     }
 
     /// Returns the resolved border stroke for each side: (left, top, right, bottom).
-    pub fn strokes(&self, box_width: Float, box_height: Float, scale: Float) -> (Float, Float, Float, Float) {
+    pub fn strokes(&self, box_width: f32, box_height: f32, scale: f32) -> (f32, f32, f32, f32) {
         (
             resolve_dim(self.left.stroke, box_width, scale),
             resolve_dim(self.top.stroke, box_height, scale),
@@ -152,7 +149,7 @@ impl BoxBorder {
     }
 
     /// Returns true if any side has a non-None style and non-zero stroke.
-    pub fn has_visible_border(&self, box_width: Float, box_height: Float, scale: Float) -> bool {
+    pub fn has_visible_border(&self, box_width: f32, box_height: f32, scale: f32) -> bool {
         let (l, t, r, b) = self.strokes(box_width, box_height, scale);
         (l > 0.0 && self.left.style != BorderStyle::None)
             || (t > 0.0 && self.top.style != BorderStyle::None)
@@ -168,7 +165,7 @@ impl BoxBorder {
         Self { left: border, right: border, ..Default::default() }
     }
 
-    pub fn get_uniform_radius(&self, box_width: Float, box_height: Float, scale: Float) -> Option<Float> {
+    pub fn get_uniform_radius(&self, box_width: f32, box_height: f32, scale: f32) -> Option<f32> {
         let left_r = resolve_dim(self.left.radius, box_width, scale);
         let right_r = resolve_dim(self.right.radius, box_width, scale);
         let top_r = resolve_dim(self.top.radius, box_height, scale);
@@ -184,7 +181,7 @@ impl BoxBorder {
     /// Returns per-corner radii [top-left, top-right, bottom-right, bottom-left].
     /// Each corner radius is the minimum of its two adjacent side radii.
     /// Returns None if all radii are zero.
-    pub fn get_per_corner_radii(&self, box_width: Float, box_height: Float, scale: Float) -> Option<[f32; 4]> {
+    pub fn get_per_corner_radii(&self, box_width: f32, box_height: f32, scale: f32) -> Option<[f32; 4]> {
         let left_r = resolve_dim(self.left.radius, box_width, scale);
         let right_r = resolve_dim(self.right.radius, box_width, scale);
         let top_r = resolve_dim(self.top.radius, box_height, scale);
@@ -198,7 +195,7 @@ impl BoxBorder {
         if tl == 0.0 && tr == 0.0 && br == 0.0 && bl == 0.0 {
             None
         } else {
-            Some([tl as f32, tr as f32, br as f32, bl as f32])
+            Some([tl, tr, br, bl])
         }
     }
 }
@@ -209,7 +206,7 @@ impl BoxOutline {
     }
 
     /// Returns true if any side has a non-None style and non-zero stroke.
-    pub fn has_visible_outline(&self, box_width: Float, box_height: Float, scale: Float) -> bool {
+    pub fn has_visible_outline(&self, box_width: f32, box_height: f32, scale: f32) -> bool {
         let (l, t, r, b) = self.strokes(box_width, box_height, scale);
         (l > 0.0 && self.left.style != BorderStyle::None)
             || (t > 0.0 && self.top.style != BorderStyle::None)
@@ -225,7 +222,7 @@ impl BoxOutline {
         Self { left: border, right: border, ..Default::default() }
     }
 
-    pub fn get_uniform_radius(&self, box_width: Float, box_height: Float, scale: Float) -> Option<Float> {
+    pub fn get_uniform_radius(&self, box_width: f32, box_height: f32, scale: f32) -> Option<f32> {
         let left_r = resolve_dim(self.left.radius, box_width, scale);
         let right_r = resolve_dim(self.right.radius, box_width, scale);
         let top_r = resolve_dim(self.top.radius, box_height, scale);
@@ -239,7 +236,7 @@ impl BoxOutline {
     }
 
     /// Returns the resolved outline stroke for each side: (left, top, right, bottom).
-    pub fn strokes(&self, box_width: Float, box_height: Float, scale: Float) -> (Float, Float, Float, Float) {
+    pub fn strokes(&self, box_width: f32, box_height: f32, scale: f32) -> (f32, f32, f32, f32) {
         (
             resolve_dim(self.left.stroke, box_width, scale),
             resolve_dim(self.top.stroke, box_height, scale),
