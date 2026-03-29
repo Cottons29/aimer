@@ -29,6 +29,7 @@ objc.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"]}
 raw-window-handle.workspace = true
 
+
 [dependencies.serde]
 version = "1"
 features = ["derive"]
@@ -43,6 +44,7 @@ path = "../cupid"
 jni.workspace = true
 ndk-glue.workspace = true
 ndk.workspace = true
+rustls-platform-verifier = "0.6.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
