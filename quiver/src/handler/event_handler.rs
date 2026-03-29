@@ -41,7 +41,7 @@ impl WindowEventHandler {
             WindowEvent::KeyboardInput { event, .. } => Self::handle_keyboard_input(event, app),
 
             WindowEvent::MouseWheel { delta, phase,.. } => {
-                debug!("Mouse wheel phase: {:?}", phase);
+                // debug!("Mouse wheel phase: {:?}", phase);
                 Self::handle_mouse_wheel(delta,phase, app)
             },
 
@@ -57,17 +57,17 @@ impl WindowEventHandler {
     }
 
     fn handle_touch(item: Touch, app: &mut AimerApplicationHandler, _id: WindowId, _event: WindowEvent) {
-        let scale = app.window_scale as crate::handler::Float;
+        let scale = app.window_scale;
         let pos = Vec2d {
-            x: item.location.x as crate::handler::Float / scale,
-            y: item.location.y as crate::handler::Float / scale,
+            x: (item.location.x / scale) as f32,
+            y: (item.location.y / scale) as f32,
         };
         // info!("Touch: {:?}", pos);
         let event = match item.phase {
-            winit::event::TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
-            winit::event::TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
-            winit::event::TouchPhase::Ended => Some(ElementEvent::PointerUp(pos)),
-            winit::event::TouchPhase::Cancelled => Some(ElementEvent::Cancel),
+            TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
+            TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
+            TouchPhase::Ended => Some(ElementEvent::PointerUp(pos)),
+            TouchPhase::Cancelled => Some(ElementEvent::Cancel),
         };
         #[allow(clippy::collapsible_if)]
         if let Some(event) = event {
@@ -90,9 +90,9 @@ impl WindowEventHandler {
     }
 
     fn handle_cursor_move(position: PhysicalPosition<f64>, app: &mut AimerApplicationHandler) {
-        let scale = app.window_scale as crate::handler::Float;
+        let scale = app.window_scale as f32;
         let new_pos =
-            Vec2d { x: position.x as crate::handler::Float / scale, y: position.y as crate::handler::Float / scale };
+            Vec2d { x: position.x as f32 / scale, y: position.y as f32 / scale };
         let dx = (new_pos.x - app.cursor_pos.x).abs();
         let dy = (new_pos.y - app.cursor_pos.y).abs();
         if dx < 1.0 && dy < 1.0 {
@@ -257,12 +257,14 @@ impl WindowEventHandler {
         // debug!("Mouse wheel delta: {:?}", delta);
         let scroll_delta = match delta {
             MouseScrollDelta::LineDelta(x, y) => {
-                Vec2d { x: x as crate::handler::Float * 20.0, y: y as crate::handler::Float * 20.0 }
+                Vec2d { x: x * 20.0, y: y  * 20.0 }
             }
             MouseScrollDelta::PixelDelta(pos) => {
-                Vec2d { x: pos.x as crate::handler::Float, y: pos.y as crate::handler::Float }
+                Vec2d { x: pos.x as f32, y: pos.y as f32 }
             }
         };
+
+
         let event = ElementEvent::Scroll{delta: scroll_delta, phase};
         if let Some(root) = &app.widget_root {
             let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
