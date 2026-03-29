@@ -128,7 +128,7 @@ impl ImageSource {
                         Ok(_) => {}
                         Err(err) => {
                             error!("Error to fetch network image : {}", err);
-                            error!("Image URL: {url}");
+                            // error!("Image URL: {url}");
                             let mut cache = NETWORK_CACHE.lock().unwrap();
                             cache.insert(url, NetworkImageState::Error(err.to_string()));
                             window.request_redraw();
@@ -248,6 +248,8 @@ impl ImageSource {
     fn create_client() -> Result<reqwest::Client, String> {
         reqwest::Client::builder()
             .user_agent("aimer/0.1.0")
+            .use_native_tls()
+            // .tls_built_in_root_certs(true)
             .build()
             .map_err(|e| format!("Failed to create client: {}", e))
     }
@@ -256,6 +258,7 @@ impl ImageSource {
     fn create_client() -> Result<reqwest::Client, String> {
         reqwest::Client::builder()
             .user_agent("aimer/0.1.0")
+            .use_rustls_tls()
             .build()
             .map_err(|e| format!("Failed to create client: {}", e))
     }
@@ -274,8 +277,8 @@ impl ImageSource {
         }
 
         let response = request_builder.send().await.map_err(|e| {
-            // error!("Network Error: {:?}, Source: {:?}", e, e.source());
-            format!("Failed to fetch image: {}", e)
+            format!("Network Error: {:?},  Source: {:?}", e, e.source())
+            // format!("Failed to fetch image: {}", e)
         })?;
 
         if !response.status().is_success() {
