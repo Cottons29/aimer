@@ -13,10 +13,6 @@ use widget::base::*;
 use widget::{Drawable, Element};
 use winit::window::Window;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) type Float = f32;
-#[cfg(target_arch = "wasm32")]
-pub(crate) type Float = f64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DragMode {
@@ -41,11 +37,11 @@ pub struct RawScrollableContainer<E: Element> {
     pub(crate) pointer_velocity: Cell<Vec2d>,
     pub(crate) last_event_time: Cell<Option<DateTime<Utc>>>,
     pub(crate) last_frame_time: Cell<Option<DateTime<Utc>>>,
-    pub(crate) v_thumb_rect: Cell<Option<(Float, Float, Float, Float)>>, // (x, y, w, h)
-    pub(crate) h_thumb_rect: Cell<Option<(Float, Float, Float, Float)>>, // (x, y, w, h)
-    pub(crate) v_scroll_multiplier: Cell<Float>,
-    pub(crate) h_scroll_multiplier: Cell<Float>,
-    pub(crate) last_scale: Cell<Float>,
+    pub(crate) v_thumb_rect: Cell<Option<(f32, f32, f32, f32)>>, // (x, y, w, h)
+    pub(crate) h_thumb_rect: Cell<Option<(f32, f32, f32, f32)>>, // (x, y, w, h)
+    pub(crate) v_scroll_multiplier: Cell<f32>,
+    pub(crate) h_scroll_multiplier: Cell<f32>,
+    pub(crate) last_scale: Cell<f32>,
     pub(crate) window: &'static Window,
     pub(crate) speed_multiplier: f32,
     pub(crate) bounds: CacheBounds,
@@ -54,7 +50,7 @@ pub struct RawScrollableContainer<E: Element> {
 
 impl<E: Element> RawScrollableContainer<E> {
     /// Compute the viewport size from the build context constraints.
-    pub(crate) fn viewport_size(&self, ctx: &BuildContext) -> (Float, Float) {
+    pub(crate) fn viewport_size(&self, ctx: &BuildContext) -> (f32, f32) {
         (ctx.box_constraint.max_width, ctx.box_constraint.max_height)
     }
 
@@ -69,7 +65,7 @@ impl<E: Element> RawScrollableContainer<E> {
     }
 
     #[inline(always)]
-    fn apply_bouncy(value: Float, min: Float, max: Float, resistance: Float) -> Float {
+    fn apply_bouncy(value: f32, min: f32, max: f32, resistance: f32) -> f32 {
         if value < min {
             let diff = min - value;
             // Chrome-like power-based resistance for rubber-banding (more stable than log)
@@ -93,7 +89,7 @@ impl<E: Element> RawScrollableContainer<E> {
         let max_y = -max.y;
 
         if self.scroll_behavior.bouncy {
-            let resistance = self.scroll_behavior.bouncy_resistance as Float;
+            let resistance = self.scroll_behavior.bouncy_resistance as f32;
 
             (
                 Self::apply_bouncy(offset.x, max_x, min_x, resistance),
@@ -109,8 +105,8 @@ impl<E: Element> RawScrollableContainer<E> {
         &self,
         ctx: &BuildContext,
         scroll_bar: &ScrollBar,
-        viewport_w: Float,
-        viewport_h: Float,
+        viewport_w: f32,
+        viewport_h: f32,
         is_vertical: bool,
     ) {
         let scale = ctx.scale;
@@ -143,7 +139,7 @@ impl<E: Element> RawScrollableContainer<E> {
         };
 
         let button_h = if is_vertical {
-            let resolve_btn_h = |btn: &crate::scrollable::scroll_bar::ScrollButton| -> Float {
+            let resolve_btn_h = |btn: &crate::scrollable::scroll_bar::ScrollButton| -> f32 {
                 match btn.height {
                     Dimension::Px(v) => v * scale,
                     Dimension::Percent(p) => track_length * (p / 100.0),
@@ -162,7 +158,7 @@ impl<E: Element> RawScrollableContainer<E> {
                 .unwrap_or(0.0);
             (up_h, down_h)
         } else {
-            let resolve_btn_w = |btn: &crate::scrollable::scroll_bar::ScrollButton| -> Float {
+            let resolve_btn_w = |btn: &crate::scrollable::scroll_bar::ScrollButton| -> f32 {
                 match btn.width {
                     Dimension::Px(v) => v * scale,
                     Dimension::Percent(p) => track_length * (p / 100.0),

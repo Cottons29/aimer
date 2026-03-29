@@ -12,11 +12,6 @@ pub struct LayoutSpacing {
     pub right: Spacing,
 }
 
-#[cfg(target_arch = "wasm32")]
-type Float = f64;
-#[cfg(not(target_arch = "wasm32"))]
-type Float = f32;
-
 impl LayoutSpacing {
     /// For Top and Bottom
     pub const fn vertical(space: Spacing) -> Self {
@@ -44,10 +39,10 @@ pub enum Spacing {
 impl Spacing {
     pub const DEFAULT_VALUE: Spacing = Spacing::None;
 
-    pub fn value(&self, total: Float, scale: Float) -> Float {
+    pub fn value(&self, total: f32, scale: f32) -> f32 {
         match self {
-            Spacing::Px(px) => *px as Float * scale,
-            Spacing::Percent(p) => total * (*p as Float / 100.0),
+            Spacing::Px(px) => *px as f32 * scale,
+            Spacing::Percent(p) => total * (*p as f32 / 100.0),
             Spacing::None => 0.0,
         }
     }

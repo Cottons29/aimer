@@ -1,17 +1,9 @@
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
-use attribute::size::{ResolvedSize, Size};
 use constructor::{Constructor, WidgetConstructor};
-use utils::debug;
 use widget::base::BuildContext;
 use widget::style::BoxConstraint;
 use widget::{BoxConstraint, Drawable, Element, Widget};
-use canvas::CanvasRendering;
-
-#[cfg(target_arch = "wasm32")]
-type Float = f64;
-#[cfg(not(target_arch = "wasm32"))]
-type Float = f32;
 
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
@@ -51,14 +43,14 @@ impl<W: Widget> Widget for Positioned<W> {
 
 #[derive(Debug, Clone, PartialEq, Default, Copy)]
 pub enum Transform {
-    Translate(Float, Float),
-    TranslateX(Float),
-    TranslateY(Float),
-    Scale(Float, Float),
-    ScaleX(Float),
-    ScaleY(Float),
-    // Matrix(Vec<Float>),
-    Rotate(Float), // radians
+    Translate(f32, f32),
+    TranslateX(f32),
+    TranslateY(f32),
+    Scale(f32, f32),
+    ScaleX(f32),
+    ScaleY(f32),
+    // Matrix(Vec<f32>),
+    Rotate(f32), // radians
     #[default]
     None,
 }
@@ -135,16 +127,16 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
                 ctx.canvas.translate(Vec2d { x: 0.0, y: *ty });
             }
             Transform::Scale(sx, sy) => {
-                ctx.canvas.scale(*sx as f32, *sy as f32);
+                ctx.canvas.scale(*sx , *sy );
             }
             Transform::ScaleX(sx) => {
-                ctx.canvas.scale(*sx as f32, 1.0);
+                ctx.canvas.scale(*sx , 1.0);
             }
             Transform::ScaleY(sy) => {
-                ctx.canvas.scale(1.0, *sy as f32);
+                ctx.canvas.scale(1.0, *sy );
             }
             Transform::Rotate(rad) => {
-                ctx.canvas.rotate(*rad as f32);
+                ctx.canvas.rotate(*rad );
             }
             Transform::None => {}
         }

@@ -28,7 +28,7 @@ pub struct AnimationController {
     #[constructor(default)]
     pub curve: Curve,
     #[constructor(default)]
-    pub value: f64,
+    pub value: f32,
     #[constructor(default)]
     pub status: AnimationStatus,
     #[constructor(default)]
@@ -97,7 +97,7 @@ impl AnimationController {
     ///
     /// Call this once per frame. When the animation completes, the status is
     /// updated to `Completed` or `Dismissed` and `is_animating()` returns false.
-    pub fn tick(&mut self, now: AnimInstant) -> f64 {
+    pub fn tick(&mut self, now: AnimInstant) -> f32 {
         let start = match self.start_time {
             Some(s) => s,
             None => return self.curve.transform(self.value),
@@ -111,7 +111,7 @@ impl AnimationController {
         let linear_t = if self.duration.as_nanos() == 0 {
             1.0
         } else {
-            elapsed.as_millis() as f64 / self.duration.as_millis() as f64
+            elapsed.as_millis() as f32 / self.duration.as_millis() as f32
         };
 
         match self.status {

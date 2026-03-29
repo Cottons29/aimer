@@ -31,6 +31,10 @@ impl<'w> GpuContext<'w> {
             {
                 wgpu::Backends::VULKAN
             }
+            #[cfg(target_arch = "wasm32")]
+            {
+                wgpu::Backends::BROWSER_WEBGPU
+            }
         };
 
         debug!("gpu backends: {:?}", backends);

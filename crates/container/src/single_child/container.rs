@@ -5,10 +5,6 @@ use constructor::{Constructor, WidgetConstructor};
 use widget::{Drawable, Element, LayoutCache, LayoutSpacing, Spacing, Widget, base::*, style::border::BoxBorder};
 use canvas::CanvasRendering;
 
-#[cfg(target_arch = "wasm32")]
-type FLOAT = f64;
-#[cfg(not(target_arch = "wasm32"))]
-type FLOAT = f32;
 #[derive(WidgetConstructor)]
 pub struct Container<T: Widget + 'static> {
     #[constructor(into, default)]
@@ -58,7 +54,7 @@ impl<W: Widget> Widget for Container<W> {
         let p_top = self.padding.top.value(box_height, scale);
         let p_bottom = self.padding.bottom.value(box_height, scale);
 
-        let get_stroke = |dim: Dimension, parent_val: FLOAT| -> FLOAT {
+        let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
             match dim {
                 Dimension::Px(w) => w * scale,
                 Dimension::Percent(p) => parent_val * (p / 100.0),
@@ -127,7 +123,7 @@ impl<E: Element > RawContainer<E> {
 }
 
 impl<T: Element> RawContainer<T> {
-    fn margin(&self, ctx: &BuildContext) -> (FLOAT, FLOAT, FLOAT, FLOAT) {
+    fn margin(&self, ctx: &BuildContext) -> (f32, f32, f32, f32) {
         let parent_width = ctx.box_constraint.max_width;
         let parent_height = ctx.box_constraint.max_height;
         let scale = ctx.scale;
@@ -221,7 +217,7 @@ impl<T: Element> Drawable for RawContainer<T> {
 
         let border = self.border;
 
-        let get_stroke = |dim: Dimension, parent_val: FLOAT| -> FLOAT {
+        let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
             match dim {
                 Dimension::Px(w) => w * scale,
                 Dimension::Percent(p) => parent_val * (p / 100.0),
@@ -285,7 +281,7 @@ impl<T: Element> Element for RawContainer<T> {
         let scale = ctx.scale;
         let p_w = ctx.box_constraint.max_width;
         let p_h = ctx.box_constraint.max_height;
-        let threshold = 1_000_000.0 as FLOAT;
+        let threshold = 1_000_000.0 as f32;
 
         let m_left = self.margin.left.value(p_w, scale);
         let m_right = self.margin.right.value(p_w, scale);
@@ -317,7 +313,7 @@ impl<T: Element> Element for RawContainer<T> {
             let p_top = self.padding.top.value(capped_h, scale);
             let p_bottom = self.padding.bottom.value(capped_h, scale);
 
-            let get_stroke = |dim: Dimension, parent_val: FLOAT| -> FLOAT {
+            let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
                 match dim {
                     Dimension::Px(w) => w * scale,
                     Dimension::Percent(p) => parent_val * (p / 100.0),
@@ -330,8 +326,8 @@ impl<T: Element> Element for RawContainer<T> {
             let bb = get_stroke(self.border.bottom.stroke, capped_h).max(0.0);
 
             let mut child_ctx = ctx.clone();
-            child_ctx.box_constraint.max_width = if width_unbounded { FLOAT::MAX } else { (box_width - p_left - bl - p_right - br).max(0.0) };
-            child_ctx.box_constraint.max_height = if height_unbounded { FLOAT::MAX } else { (box_height - p_top - bt - p_bottom - bb).max(0.0) };
+            child_ctx.box_constraint.max_width = if width_unbounded { f32::MAX } else { (box_width - p_left - bl - p_right - br).max(0.0) };
+            child_ctx.box_constraint.max_height = if height_unbounded { f32::MAX } else { (box_height - p_top - bt - p_bottom - bb).max(0.0) };
             let child_size = self.child.computed_size(&child_ctx);
 
             let final_w = if width_unbounded {
@@ -369,7 +365,7 @@ impl<T: Element> Element for RawContainer<T> {
         let scale = ctx.scale;
         let p_w = ctx.box_constraint.max_width;
         let p_h = ctx.box_constraint.max_height;
-        let threshold = 1_000_000.0 as FLOAT;
+        let threshold = 1_000_000.0 as f32;
 
         let m_left = self.margin.left.value(p_w, scale);
         let m_right = self.margin.right.value(p_w, scale);
@@ -400,7 +396,7 @@ impl<T: Element> Element for RawContainer<T> {
         let p_top = self.padding.top.value(capped_h, scale);
         let p_bottom = self.padding.bottom.value(capped_h, scale);
 
-        let get_stroke = |dim: Dimension, parent_val: FLOAT| -> FLOAT {
+        let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
             match dim {
                 Dimension::Px(w) => w * scale,
                 Dimension::Percent(p) => parent_val * (p / 100.0),
@@ -417,8 +413,8 @@ impl<T: Element> Element for RawContainer<T> {
 
         let result = if width_unbounded || height_unbounded {
             let mut child_ctx = ctx.clone();
-            child_ctx.box_constraint.max_width = if width_unbounded { FLOAT::MAX } else { (b_w - p_left - b_left - p_right - b_right).max(0.0) };
-            child_ctx.box_constraint.max_height = if height_unbounded { FLOAT::MAX } else { (b_h - p_top - b_top - p_bottom - b_bottom).max(0.0) };
+            child_ctx.box_constraint.max_width = if width_unbounded { f32::MAX } else { (b_w - p_left - b_left - p_right - b_right).max(0.0) };
+            child_ctx.box_constraint.max_height = if height_unbounded { f32::MAX } else { (b_h - p_top - b_top - p_bottom - b_bottom).max(0.0) };
             let child_size = self.child.computed_size(&child_ctx);
 
             ResolvedSize {
@@ -439,28 +435,28 @@ impl<T: Element> Element for RawContainer<T> {
     fn get_size_from_child(&self) -> Option<Size> {
         let mut size = self.child.get_size_from_child().unwrap_or_default();
 
-        let m_w: FLOAT = 0.0;
-        let m_h: FLOAT = 0.0;
-        let mut p_w: FLOAT = 0.0;
-        let mut p_h: FLOAT = 0.0;
-        let mut b_w: FLOAT = 0.0;
-        let mut b_h: FLOAT = 0.0;
+        let m_w: f32 = 0.0;
+        let m_h: f32 = 0.0;
+        let mut p_w: f32 = 0.0;
+        let mut p_h: f32 = 0.0;
+        let mut b_w: f32 = 0.0;
+        let mut b_h: f32 = 0.0;
 
         // Note: For get_size_from_child, we don't have a parent size to resolve percentages,
         // so we can only accurately add Px values. Percentages will be ignored or should be
         // handled by the layout system during actual resolution.
 
         if let Spacing::Px(v) = self.padding.left {
-            p_w += v as FLOAT;
+            p_w += v as f32;
         }
         if let Spacing::Px(v) = self.padding.right {
-            p_w += v as FLOAT;
+            p_w += v as f32;
         }
         if let Spacing::Px(v) = self.padding.top {
-            p_h += v as FLOAT;
+            p_h += v as f32;
         }
         if let Spacing::Px(v) = self.padding.bottom {
-            p_h += v as FLOAT;
+            p_h += v as f32;
         }
 
         if let Dimension::Px(v) = self.border.left.stroke {

@@ -7,6 +7,7 @@ edition = "2024"
 attribute.workspace = true
 utils.workspace = true
 color.workspace = true
+once_cell.workspace = true
 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -14,5 +15,6 @@ cupid.workspace = true
 
 
 [target.wasm32-unknown-unknown.dependencies]
-web-sys.workspace = true
+web-sys = { workspace = true, features = ["HtmlImageElement", "Blob", "Url"] }
 wasm-bindgen.workspace = true
+js-sys.workspace = true

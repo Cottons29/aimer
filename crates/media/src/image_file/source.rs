@@ -1,3 +1,4 @@
+use std::error::Error;
 use crate::ImageResult::Success;
 use crate::{ImageProvider, ImageResult};
 use once_cell::sync::Lazy;
@@ -126,33 +127,149 @@ impl ImageSource {
                     match Self::fetch_full_image_with_headers(&url, &headers, window).await {
                         Ok(_) => {}
                         Err(err) => {
-                            error!("Failed to fetch network image ({}): {}", url, err);
+                            error!("Error to fetch network image : {}", err);
+                            // error!("Image URL: {url}");
                             let mut cache = NETWORK_CACHE.lock().unwrap();
                             cache.insert(url, NetworkImageState::Error(err.to_string()));
                             window.request_redraw();
                         }
                     }
                 });
+
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let url_clone = url.clone();
+                    let window_clone = window;
+                    wasm_bindgen_futures::spawn_local(async move {
+                        match Self::fetch_web_image(&url_clone, window_clone).await {
+                            Ok(_) => {}
+                            Err(err) => {
+                                error!("Failed to fetch network image ({}): {}", url_clone, err);
+                                let mut cache = NETWORK_CACHE.lock().unwrap();
+                                cache.insert(url_clone, NetworkImageState::Error(err.to_string()));
+                                window_clone.request_redraw();
+                            }
+                        }
+                    });
+                }
                 ImageResult::Loading
             }
         }
     }
 
     #[allow(dead_code)]
-    async fn fetch_full_image(url: &str, window: &'static winit::window::Window) -> Result<(), &'static str> {
+    async fn fetch_full_image(url: &str, window: &'static winit::window::Window) -> Result<(), String> {
         Self::fetch_full_image_with_headers(url, &HashMap::new(), window).await
     }
 
+    #[cfg(target_arch = "wasm32")]
+    async fn fetch_web_image(url: &str, window: &'static winit::window::Window) -> Result<(), String> {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::prelude::*;
+
+        let web_window = web_sys::window().ok_or("No window found")?;
+        let resp_value = wasm_bindgen_futures::JsFuture::from(web_window.fetch_with_str(url))
+            .await
+            .map_err(|e| format!("{:?}", e))?;
+        let resp: web_sys::Response = resp_value.dyn_into().map_err(|e| format!("{:?}", e))?;
+
+        if !resp.ok() {
+            return Err(format!("HTTP error: {}", resp.status()));
+        }
+
+        let blob_value = wasm_bindgen_futures::JsFuture::from(resp.blob().map_err(|e| format!("{:?}", e))?)
+            .await
+            .map_err(|e| format!("{:?}", e))?;
+        let blob: web_sys::Blob = blob_value.dyn_into().map_err(|e| format!("{:?}", e))?;
+        let blob_url = web_sys::Url::create_object_url_with_blob(&blob).map_err(|e| format!("{:?}", e))?;
+
+        let img = web_sys::HtmlImageElement::new().map_err(|e| format!("{:?}", e))?;
+        img.set_src(&blob_url);
+
+        let promise = js_sys::Promise::new(&mut |resolve, reject| {
+            let onload = Closure::wrap(Box::new(move || {
+                let _ = resolve.call0(&JsValue::NULL);
+            }) as Box<dyn FnMut()>);
+            let on_error = Closure::wrap(Box::new(move |e| {
+                let _ = reject.call1(&JsValue::NULL, &e);
+            }) as Box<dyn FnMut(JsValue)>);
+
+            img.set_onload(Some(onload.as_ref().unchecked_ref()));
+            img.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+
+            onload.forget();
+            on_error.forget();
+        });
+
+        wasm_bindgen_futures::JsFuture::from(promise)
+            .await
+            .map_err(|e| format!("{:?}", e))?;
+
+        let width = img.natural_width();
+        let height = img.natural_height();
+
+        // On WASM, we don't need RGBA bytes, we use the HtmlImageElement directly.
+        // But the current cache expects Ready(Vec<u8>, u32, u32) which then calls load_image.
+        // We can pass empty bytes and use load_image to create a NEW HtmlImageElement,
+        // OR we can modify the cache/registry.
+        // To minimize changes to existing logic, we'll let load_image handle it by passing a special signal or just URL.
+        // Actually, let's just stick to the current Flow: we want an ID.
+        // We'll manually register it here if we are on WASM.
+
+        // However, media crate doesn't have direct access to the registry in canvas crate
+        // UNLESS we use the CanvasRendering trait's load_image.
+        // But load_image takes &[u8].
+
+        // Let's implement a way to "ready" it with an ID directly or something.
+        // For now, let's keep it simple: We'll re-fetch in load_image or pass the Blob URL.
+        // Wait, if we already have the `img` element here, we just need to get it into the registry.
+        // But registry is in `canvas` crate.
+
+        // Let's modify `load_image` in `wasm_impl.rs` to optionally take a URL? No, that's not in the trait.
+        // How about we pass the blob_url as bytes? No, that's hacky.
+
+        // Re-decoding in Rust (image crate) is slow but works.
+        // Let's see if we can get bytes from blob.
+        let array_buffer_value = wasm_bindgen_futures::JsFuture::from(blob.array_buffer())
+            .await
+            .map_err(|e| format!("{:?}", e))?;
+        let array_buffer = js_sys::Uint8Array::new(&array_buffer_value);
+        let bytes = array_buffer.to_vec();
+
+        let mut cache = NETWORK_CACHE.lock().unwrap();
+        cache.insert(url.to_string(), NetworkImageState::Ready(bytes, width, height));
+        drop(cache);
+        window.request_redraw();
+
+        Ok(())
+    }
+
+    #[cfg(target_os = "android")]
+    fn create_client() -> Result<reqwest::Client, String> {
+        reqwest::Client::builder()
+            .user_agent("aimer/0.1.0")
+            .use_native_tls()
+            // .tls_built_in_root_certs(true)
+            .build()
+            .map_err(|e| format!("Failed to create client: {}", e))
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn create_client() -> Result<reqwest::Client, String> {
+        reqwest::Client::builder()
+            .user_agent("aimer/0.1.0")
+            .use_rustls_tls()
+            .build()
+            .map_err(|e| format!("Failed to create client: {}", e))
+    }
+
+    // #[cfg(not(target_arch = "wasm32"))]
     async fn fetch_full_image_with_headers(
         url: &str,
         headers: &HashMap<String, String>,
         window: &'static winit::window::Window,
-    ) -> Result<(), &'static str> {
-        let client_builder = reqwest::Client::builder().user_agent("aimer/0.1.0");
-
-        let client = client_builder
-            .build()
-            .map_err(|_| "Failed to create client")?;
+    ) -> Result<(), String> {
+        let client = Self::create_client()?;
 
         let mut request_builder = client.get(url);
         for (key, value) in headers {
@@ -160,13 +277,12 @@ impl ImageSource {
         }
 
         let response = request_builder.send().await.map_err(|e| {
-            error!("Network error: {}", e);
-            "Network error"
+            format!("Network Error: {:?},  Source: {:?}", e, e.source())
+            // format!("Failed to fetch image: {}", e)
         })?;
 
         if !response.status().is_success() {
-            error!("HTTP error: {}", response.status());
-            return Err("HTTP error");
+            return Err(format!("HTTP error: {}", response.status()).into());
         }
 
         let all_bytes = response
@@ -182,15 +298,15 @@ impl ImageSource {
                 let height = image.height();
                 let rgba_bytes = image.into_raw();
 
-                let mut cache = NETWORK_CACHE.lock().unwrap();
+                let mut cache = NETWORK_CACHE.lock().map_err(|err| {format!("Failed to lock network cache: {}", err) })?;
                 cache.insert(url.to_string(), NetworkImageState::Ready(rgba_bytes, width, height));
                 drop(cache);
                 window.request_redraw();
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to decode image: {}", e);
-                Err("Failed to decode image")
+                // error!("Failed to decode image: {}", e);
+                Err("Failed to decode image".into())
             }
         }
     }

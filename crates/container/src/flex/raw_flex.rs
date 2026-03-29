@@ -2,14 +2,8 @@ use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use constructor::WidgetConstructor;
 use std::cell::Cell;
-use utils::debug;
-use widget::{Drawable, Element, LayoutCache, LayoutSpacing, Widget, base::BuildContext};
-use canvas::CanvasRendering;
+use widget::{base::BuildContext, Drawable, Element, LayoutCache, LayoutSpacing, Widget};
 
-#[cfg(target_arch = "wasm32")]
-type Float = f64;
-#[cfg(not(target_arch = "wasm32"))]
-type Float = f32;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 
 /// a flexible layout container
@@ -98,7 +92,7 @@ impl RawFlex {
 
 impl RawFlex {
     #[inline]
-    fn resole_gaps(&self, ctx: &BuildContext) -> (Float, Float) {
+    fn resole_gaps(&self, ctx: &BuildContext) -> (f32, f32) {
         let gap_x = self
             .gaps
             .left
@@ -159,7 +153,7 @@ impl Drawable for RawFlex {
         {
             if widget::inspector_overlay::is_enabled() {
                 // TODO: expose transform position from AimerCanvas for inspector
-                let (start_x, start_y): (Float, Float) = (0.0, 0.0);
+                let (start_x, start_y): (f32, f32) = (0.0, 0.0);
                 let end_x = start_x + size.width;
                 let end_y = start_y + size.height;
 
@@ -207,14 +201,14 @@ impl Drawable for RawFlex {
         let child_count = self.children.len();
         let total_gap = if child_count > 1 {
             match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => gap_x * (child_count - 1) as Float,
-                LayoutDirection::Column => gap_y * (child_count - 1) as Float,
+                LayoutDirection::Row | LayoutDirection::Inherit => gap_x * (child_count - 1) as f32,
+                LayoutDirection::Column => gap_y * (child_count - 1) as f32,
             }
         } else {
             0.0
         };
 
-        let mut sized_main: Float = 0.0;
+        let mut sized_main: f32 = 0.0;
         let mut unsized_count: usize = 0;
         let mut child_has_size: Vec<bool> = Vec::with_capacity(child_count);
 
@@ -236,11 +230,11 @@ impl Drawable for RawFlex {
             if has_explicit_main {
                 match self.direction {
                     LayoutDirection::Row | LayoutDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = Float::MAX;
+                        child_ctx.box_constraint.max_width = f32::MAX;
                         child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
                     }
                     LayoutDirection::Column => {
-                        child_ctx.box_constraint.max_height = Float::MAX;
+                        child_ctx.box_constraint.max_height = f32::MAX;
                         child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
                     }
                 }
@@ -258,7 +252,7 @@ impl Drawable for RawFlex {
             LayoutDirection::Row | LayoutDirection::Inherit => (max_w - sized_main - total_gap).max(0.0),
             LayoutDirection::Column => (max_h - sized_main - total_gap).max(0.0),
         };
-        let per_unsized = if unsized_count > 0 { remaining_main / unsized_count as Float } else { 0.0 };
+        let per_unsized = if unsized_count > 0 { remaining_main / unsized_count as f32 } else { 0.0 };
 
         let mut draw_commands = Vec::with_capacity(self.children.len());
 
@@ -266,11 +260,11 @@ impl Drawable for RawFlex {
             if child_has_size[i] {
                 match self.direction {
                     LayoutDirection::Row | LayoutDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = Float::MAX;
+                        child_ctx.box_constraint.max_width = f32::MAX;
                         child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
                     }
                     LayoutDirection::Column => {
-                        child_ctx.box_constraint.max_height = Float::MAX;
+                        child_ctx.box_constraint.max_height = f32::MAX;
                         child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
                     }
                 }
@@ -313,10 +307,10 @@ impl Drawable for RawFlex {
 
             let mut is_visible = true;
             if let Some((vx, vy, vw, vh)) = ctx.visible_rect {
-                if (offset_x as Float) + (c_w as Float) < vx
-                    || (offset_x as Float) > vx + vw
-                    || (offset_y as Float) + (c_h as Float) < vy
-                    || (offset_y as Float) > vy + vh
+                if (offset_x ) + (c_w ) < vx
+                    || (offset_x ) > vx + vw
+                    || (offset_y ) + (c_h ) < vy
+                    || (offset_y ) > vy + vh
                 {
                     is_visible = false;
                 }
@@ -337,7 +331,7 @@ impl Drawable for RawFlex {
                     },
                     visible_rect: ctx
                         .visible_rect
-                        .map(|(vx, vy, vw, vh)| (vx - offset_x as Float, vy - offset_y as Float, vw, vh)),
+                        .map(|(vx, vy, vw, vh)| (vx - offset_x , vy - offset_y , vw, vh)),
                     window: ctx.window,
                     #[cfg(not(target_arch = "wasm32"))]
                     async_handle: ctx.async_handle.clone(),
@@ -414,8 +408,8 @@ impl Element for RawFlex {
 
         let total_gap = if child_count > 1 {
             match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => gap_x * (child_count - 1) as Float,
-                LayoutDirection::Column => gap_y * (child_count - 1) as Float,
+                LayoutDirection::Row | LayoutDirection::Inherit => gap_x * (child_count - 1) as f32,
+                LayoutDirection::Column => gap_y * (child_count - 1) as f32,
             }
         } else {
             0.0
@@ -427,7 +421,7 @@ impl Element for RawFlex {
         };
 
         // Pass 1: measure sized children, count unsized
-        let mut sized_main: Float = 0.0;
+        let mut sized_main: f32 = 0.0;
         let mut unsized_count: usize = 0;
         let mut child_sizes: Vec<Option<ResolvedSize>> = Vec::with_capacity(child_count);
 
@@ -464,11 +458,11 @@ impl Element for RawFlex {
             if has_explicit_main {
                 match self.direction {
                     LayoutDirection::Row | LayoutDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = Float::MAX;
+                        child_ctx.box_constraint.max_width = f32::MAX;
                         child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
                     }
                     LayoutDirection::Column => {
-                        child_ctx.box_constraint.max_height = Float::MAX;
+                        child_ctx.box_constraint.max_height = f32::MAX;
                         child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
                     }
                 }
@@ -486,18 +480,18 @@ impl Element for RawFlex {
 
         // Pass 2: distribute remaining space to unsized children
         let per_unsized = if unsized_count > 0 {
-            if max_main == Float::MAX {
-                Float::MAX
+            if max_main == f32::MAX {
+                f32::MAX
             } else {
                 let remaining = (max_main - sized_main - total_gap).max(0.0);
-                remaining / unsized_count as Float
+                remaining / unsized_count as f32
             }
         } else {
             0.0
         };
 
-        let mut total_width: Float = 0.0;
-        let mut total_height: Float = 0.0;
+        let mut total_width: f32 = 0.0;
+        let mut total_height: f32 = 0.0;
 
         for (i, child) in self.children.iter().enumerate() {
             let s = if let Some(s) = child_sizes[i] {
@@ -530,10 +524,10 @@ impl Element for RawFlex {
         if child_count > 1 {
             match self.direction {
                 LayoutDirection::Row | LayoutDirection::Inherit => {
-                    total_width += gap_x * (child_count - 1) as Float;
+                    total_width += gap_x * (child_count - 1) as f32;
                 }
                 LayoutDirection::Column => {
-                    total_height += gap_y * (child_count - 1) as Float;
+                    total_height += gap_y * (child_count - 1) as f32;
                 }
             }
         }

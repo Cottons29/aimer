@@ -54,6 +54,7 @@ media = {path = "./crates/media"}
 
 
 web-sys = { version = "0.3.91", features = ["CanvasRenderingContext2d", "DomMatrix", "TextMetrics"] }
+wasm-bindgen-futures = "0.4.45"
 js-sys = "0.3.91"
 wasm-bindgen = "0.2.114"
 winit = { version = "0.30.12", features = ["android-native-activity"] }
@@ -85,7 +86,7 @@ smallvec = "1.13.2"
 url = "2.5.8"
 serde = {version = "1.0.228", features = ["default", "derive"]}
 serde_json = "1.0.149"
-jni = "0.22.4"
+jni = "0.21.1"
 ndk-glue = "0.7.0"
 ndk = "0.9.0"
 wgpu = "29.0.0"
@@ -95,9 +96,8 @@ fontdue = "0.9"
 image = { version = "0.25.10" }
 font-kit = "0.14"
 core-foundation-sys = "0.8.7"
-reqwest = {version = "0.13.2",default-features = false, features = ["rustls", "http2"] }
-
-
+reqwest = {version = "0.13.2",default-features = false, features = ["rustls", "native-tls", "http2"] }
+openssl = { version = "0.10", features = ["vendored"] }
 
 # Aimer cli dependencies
 crossterm = "0.29.0"

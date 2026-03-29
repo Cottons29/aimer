@@ -9,21 +9,15 @@ use tokio::runtime::Handle;
 use winit::window::Window;
 use canvas::{Canvas, CanvasRendering};
 
-
-#[cfg(target_arch = "wasm32")]
-type Float = f64;
-#[cfg(not(target_arch = "wasm32"))]
-type Float = f32;
-
 #[derive(Clone)]
 pub struct BuildContext<'a> {
     pub parent_size: ResolvedSize,
     pub canvas:  Canvas<'a>,
-    pub scale: Float,
+    pub scale: f32,
     pub parent_pos: Vec2d,
     pub cursor_pos: Vec2d,
     pub box_constraint: BoxConstraint,
-    pub visible_rect: Option<(Float, Float, Float, Float)>, // (x, y, width, height)
+    pub visible_rect: Option<(f32, f32, f32, f32)>, // (x, y, width, height)
     pub window: &'static Window,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_handle: Handle,
@@ -46,7 +40,7 @@ impl<'a> BuildContext<'a> {
     pub fn new(
         canvas: Canvas<'a>,
         size: ResolvedSize,
-        scale: Float,
+        scale: f32,
         parent_pos: Vec2d,
         cursor_pos: Vec2d,
         window: &'static Window,

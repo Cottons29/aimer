@@ -1,3 +1,4 @@
+pub use winit::event::TouchPhase;
 use attribute::position::Vec2d;
 
 /// Key actions for keyboard events.
@@ -38,7 +39,7 @@ pub enum ElementEvent {
     PointerDown(Vec2d),
     PointerUp(Vec2d),
     PointerMove(Vec2d),
-    Scroll(Vec2d),
+    Scroll{delta: Vec2d, phase: TouchPhase},
     /// A character was typed (text input).
     CharInput { ch: char, action: KeyAction, modifiers: Modifiers },
 

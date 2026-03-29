@@ -422,7 +422,7 @@ impl Element for StatefulElement {
                 ElementEvent::PointerDown(p) => *p,
                 ElementEvent::PointerUp(p) => *p,
                 ElementEvent::PointerMove(p) => *p,
-                ElementEvent::Scroll(_) => Vec2d::default(),
+                ElementEvent::Scroll{delta, phase} => Vec2d::default(),
                 ElementEvent::CharInput { .. } => Vec2d::default(),
                 ElementEvent::KeyInput { .. } => Vec2d::default(),
                 ElementEvent::Cancel => Vec2d::default(),

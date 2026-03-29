@@ -5,6 +5,7 @@ pub mod macos;
 pub mod web;
 pub mod android;
 pub mod android_sim;
+pub mod utilities;
 
 use crate::targets::Targets;
 use crate::targets::Targets::Terminated;

@@ -33,9 +33,9 @@ impl InspectorOverlay {
 
                     let label = format!("{name} {:.1}x{:.1}", w, h);
                     let font_size = 12.0_f32;
-                    let label_w_raw = canvas.measure_text(&label, font_size) as attribute::Float;
+                    let label_w_raw = canvas.measure_text(&label, font_size);
                     let label_w = label_w_raw + 8.0;
-                    let label_h = font_size as attribute::Float + 4.0;
+                    let label_h = font_size  + 4.0;
                     let lx = start.x;
                     let ly = (start.y - label_h).max(0.0);
 
@@ -50,7 +50,7 @@ impl InspectorOverlay {
                     // Label text
                     canvas.draw_text(
                         &label,
-                        Vec2d::from((lx + 4.0, ly + font_size as attribute::Float)),
+                        Vec2d::from((lx + 4.0, ly + font_size)),
                         font_size,
                         Color::Rgba(255, 255, 255, 255),
                     );

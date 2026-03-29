@@ -12,7 +12,6 @@ use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
-use events::window::get_window;
 use inspector::InspectorOverlay;
 #[cfg(not(target_arch = "wasm32"))]
 use inspector::InspectorServer;
@@ -32,20 +31,15 @@ use winit::monitor::MonitorHandle;
 #[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) type Float = f64;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) type Float = f32;
-
 /// Walk the snapshot tree and find a node matching the hovered widget by name and bounds.
 #[cfg(debug_assertions)]
 fn find_hovered_node(node: &inspector::WidgetNode, name: &str, start: Vec2d, end: Vec2d) -> Option<u64> {
     const EPS: f32 = 1.0;
-    let w = (end.x - start.x) as f32;
-    let h = (end.y - start.y) as f32;
+    let w = end.x - start.x;
+    let h = end.y - start.y;
     if node.name == name
-        && (node.x - start.x as f32).abs() < EPS
-        && (node.y - start.y as f32).abs() < EPS
+        && (node.x - start.x).abs() < EPS
+        && (node.y - start.y).abs() < EPS
         && (node.width - w).abs() < EPS
         && (node.height - h).abs() < EPS
     {
@@ -299,16 +293,16 @@ impl AimerApplicationHandler {
         let draw_widgets = |canvas: &canvas::InnerCanvas, width: u32, height: u32| {
             let canvas = canvas::Canvas::new(canvas);
             let build_ctx = BuildContext {
-                parent_size: ResolvedSize { width: width as Float, height: height as Float },
+                parent_size: ResolvedSize { width: width as f32, height: height as f32 },
                 canvas: canvas.clone(),
-                scale: window_scale as Float,
+                scale: window_scale as f32,
                 parent_pos: Default::default(),
                 cursor_pos,
                 box_constraint: widget::style::BoxConstraint {
                     min_width: 0.0,
                     min_height: 0.0,
-                    max_width: width as Float,
-                    max_height: height as Float,
+                    max_width: width as f32,
+                    max_height: height as f32,
                 },
                 visible_rect: None,
                 window,
@@ -328,7 +322,7 @@ impl AimerApplicationHandler {
                 Self::render_widget_tree(root.as_ref(), &build_ctx);
                 #[cfg(debug_assertions)]
                 if inspector_enabled {
-                    InspectorOverlay::draw(root.as_ref(), &build_ctx.canvas, cursor_pos, build_ctx.scale as f32);
+                    InspectorOverlay::draw(root.as_ref(), &build_ctx.canvas, cursor_pos, build_ctx.scale);
                 }
             }
         };

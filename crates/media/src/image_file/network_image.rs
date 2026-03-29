@@ -4,6 +4,7 @@ use crate::image_file::source::ImageSource;
 use attribute::Dimension;
 use attribute::size::Size;
 use std::collections::HashMap;
+use std::panic::Location;
 use widget::base::BuildContext;
 use widget::style::BoxFit;
 use widget::{Constructor, Element, LayoutCache, Widget};
@@ -32,11 +33,13 @@ pub struct NetworkImage {
 }
 
 impl Widget for NetworkImage {
+    #[track_caller]
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let source = match self.header.as_ref() {
             Some(header) => ImageSource::NetworkWithHeaders(self.url.clone(), header.clone()),
             None => ImageSource::Network(self.url.clone()),
         };
+
         Box::new(RawImageWidget {
             source,
             size: Size::new(self.width, self.height),

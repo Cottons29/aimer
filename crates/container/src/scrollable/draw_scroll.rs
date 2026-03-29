@@ -1,6 +1,5 @@
 use crate::ScrollAxis;
-use crate::raw_scroll::{DragMode, Float, RawScrollableContainer};
-use attribute::Bounds;
+use crate::raw_scroll::{DragMode, RawScrollableContainer};
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 use chrono::Utc;
@@ -11,8 +10,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
     fn draw(&self, ctx: &BuildContext) {
         let (raw_viewport_w, raw_viewport_h) = self.viewport_size(ctx);
         // debug!("View port size: {:?} x {:?}", raw_viewport_w, raw_viewport_h);
-        // Cap viewport size to avoid precision issues with Float::MAX in shaders/transforms
-        let max_dim = 1e7 as Float;
+        // Cap viewport size to avoid precision issues with f32::MAX in shaders/transforms
+        let max_dim = 1e7_f32;
         let viewport_w = raw_viewport_w.min(max_dim);
         let viewport_h = raw_viewport_h.min(max_dim);
         let content_size = self.content_size(ctx);
@@ -20,15 +19,15 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         let max_x = (content_size.width - viewport_w).max(0.0);
         let max_y = (content_size.height - viewport_h).max(0.0);
 
-        self.bounds.save(ctx.scale, transform.0 as Float, transform.1 as Float, viewport_w, viewport_h);
+        self.bounds.save(ctx.scale, transform.0, transform.1 , viewport_w, viewport_h);
         self.cursor_pos.set(Some(ctx.cursor_pos));
 
         let mut final_max = Vec2d { x: max_x, y: max_y };
         let user_max = self.scroll_behavior.max_scroll;
-        if user_max.x != Float::MAX {
+        if user_max.x != f32::MAX {
             final_max.x = final_max.x.max(user_max.x * ctx.scale);
         }
-        if user_max.y != Float::MAX {
+        if user_max.y != f32::MAX {
             final_max.y = final_max.y.max(user_max.y * ctx.scale);
         }
 
@@ -52,8 +51,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             let dt = self
                 .last_frame_time
                 .get()
-                .map(|t| (now - t).num_microseconds().unwrap_or(0) as f64 / 1_000_000.0)
-                .map(|dt| dt as Float)
+                .map(|t| (now - t).num_microseconds().unwrap_or(0) as f32 / 1_000_000.0)
                 .unwrap_or(1.0 / 120.0)
                 .min(0.05); // cap at 50ms to avoid huge jumps after stalls
             self.last_frame_time.set(Some(now));
@@ -63,9 +61,9 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             if velocity.x.abs() > 0.01 || velocity.y.abs() > 0.01 {
                 // Gradually reduce velocity when out of bounds (smooth deceleration)
                 #[cfg(target_os = "ios")]
-                let oob_damping_base: Float = 0.15;
+                let oob_damping_base: f32 = 0.15;
                 #[cfg(not(target_os = "ios"))]
-                let oob_damping_base: Float = 0.4;
+                let oob_damping_base: f32 = 0.4;
                 if offset.x != clamped.x {
                     let damping = oob_damping_base.powf(frame_ratio);
                     velocity.x *= damping;
@@ -87,7 +85,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
                 offset.x += velocity.x * frame_ratio;
                 offset.y += velocity.y * frame_ratio;
-                let friction_factor = (self.scroll_behavior.friction as Float).powf(frame_ratio);
+                let friction_factor = self.scroll_behavior.friction.powf(frame_ratio);
                 velocity.x *= friction_factor;
                 velocity.y *= friction_factor;
                 self.pointer_velocity.set(velocity);
@@ -104,7 +102,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
                 // Chrome-like bounce: use a slightly more "elastic" spring factor
                 // We use a square-root easing for the spring factor to make it feel more "Chrome-like" (snappy at first, then smooth)
-                let base_spring = 1.0 - (1.0 - self.scroll_behavior.bouncy_recovery as Float).powf(frame_ratio);
+                let base_spring = 1.0 - (1.0 - self.scroll_behavior.bouncy_recovery).powf(frame_ratio);
                 let spring_factor = base_spring.sqrt();
 
                 offset.x += dx * spring_factor;
@@ -113,8 +111,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 // Damp velocity during spring back to avoid oscillation
                 // Chrome's bounce is very damped.
                 let mut v = self.pointer_velocity.get();
-                v.x *= (0.7 as Float).powf(frame_ratio);
-                v.y *= (0.7 as Float).powf(frame_ratio);
+                v.x *= 0.7_f32.powf(frame_ratio);
+                v.y *= 0.7_f32.powf(frame_ratio);
                 self.pointer_velocity.set(v);
 
                 // Snap if close enough (sub-pixel threshold)
@@ -168,10 +166,10 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         let mut child_ctx = ctx.clone();
         match self.axis {
-            ScrollAxis::Vertical => child_ctx.box_constraint.max_height = Float::MAX,
-            ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = Float::MAX,
+            ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
+            ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
         }
-        child_ctx.visible_rect = Some((-offset_x as Float, -offset_y as Float, viewport_w, viewport_h));
+        child_ctx.visible_rect = Some((-offset_x , -offset_y , viewport_w, viewport_h));
 
         // Draw child content
         self.child.draw(&child_ctx);

@@ -1,6 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
-use colored::Colorize;
-
 #[cfg(target_arch = "wasm32")]
 mod console {
     use wasm_bindgen::prelude::*;
@@ -17,9 +14,7 @@ mod console {
 pub fn log(msg: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let label = "INFO".bold().blue();
-        let colored_msg = msg.bright_green();
-        println!("[{}] {}", label, colored_msg);
+        println!("[INFO]  {}", msg);
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -31,9 +26,8 @@ pub fn log(msg: &str) {
 pub fn warn(msg: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let label = "WARN".bold().yellow();
-        let colored_msg = msg.yellow();
-        println!("[{}] {}", label, colored_msg);
+
+        println!("[WARN]  {}", msg);
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -45,9 +39,7 @@ pub fn warn(msg: &str) {
 pub fn error(msg: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let label = "ERROR".bold().red();
-        let colored_msg = msg.red();
-        println!("[{}] {}", label, colored_msg);
+        println!("[ERROR] {}", msg);
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -59,9 +51,7 @@ pub fn error(msg: &str) {
 pub fn debug(msg: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let label = "DEBUG".bold().green();
-        let colored_msg = msg.bright_green();
-        println!("[{}] {}", label, colored_msg);
+        println!("[DEBUG] {}", msg);
     }
     #[cfg(target_arch = "wasm32")]
     {

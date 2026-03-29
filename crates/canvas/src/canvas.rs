@@ -89,7 +89,7 @@ pub trait CanvasRendering: Clone {
     fn load_image(&self, bytes: &[u8], width: u32, height: u32) -> u32;
     fn load_image_with_id(&self, image_id: u32, bytes: &[u8], width: u32, height: u32);
     fn set_texture_size(&self, image_id: u32, width: u32, height: u32);
-    fn get_transform_translation(&self) -> (f64, f64) {
+    fn get_transform_translation(&self) -> (f32, f32) {
         (0.0, 0.0)
     }
 }
@@ -352,7 +352,7 @@ impl<'a> AimerCanvas<'a> {
     /// Returns the current transform's translation (tx, ty) in physical pixels.
     #[allow(dead_code)]
     #[inline]
-    pub fn get_transform_translation(&self) -> (f64, f64) {
+    pub fn get_transform_translation(&self) -> (f32, f32) {
         CanvasRendering::get_transform_translation(self.inner)
     }
 
