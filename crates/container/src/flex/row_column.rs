@@ -1,15 +1,8 @@
 use crate::flex::raw_flex::RawFlex;
-use crate::flex::{BoxAlignment, Flex, LayoutDirection, OverflowBehavior};
-use constructor::{Constructor, WidgetConstructor};
+use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
+use constructor::WidgetConstructor;
 use widget::base::BuildContext;
 use widget::{Element, LayoutSpacing, Widget};
-
-
-#[cfg(not(target_arch = "wasm32"))]
-type Float = f32;
-#[cfg(target_arch = "wasm32")]
-type Float = f64;
-
 
 
 #[derive(WidgetConstructor)]
@@ -30,7 +23,7 @@ pub struct Column<W: Widget + 'static> {
 impl<W: Widget + 'static> Widget for Column<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let mut child_ctx = ctx.clone();
-        child_ctx.box_constraint.max_height = Float::MAX;
+        child_ctx.box_constraint.max_height = f32::MAX;
         let children = self.children.iter().map(|c| c.to_element(&child_ctx)).collect();
         Box::new(RawFlex {
             direction: LayoutDirection::Column,
@@ -64,7 +57,7 @@ pub struct Row<W: Widget + 'static> {
 impl<W: Widget + 'static> Widget for Row<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let mut child_ctx = ctx.clone();
-        child_ctx.box_constraint.max_width = Float::MAX;
+        child_ctx.box_constraint.max_width = f32::MAX;
         let children = self.children.iter().map(|c| c.to_element(&child_ctx)).collect();
         Box::new(RawFlex {
             direction: LayoutDirection::Row,
