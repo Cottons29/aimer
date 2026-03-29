@@ -1,6 +1,5 @@
 use color::prelude::{Color as AimerColor, ColorMixer};
-use std::ops::{Index, Mul};
-use utils::debug;
+use std::ops::{Mul};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Color {
@@ -69,7 +68,6 @@ impl From<AimerColor> for Color {
         let r = ((argb >> 16) & 0xFF) as f32 / 255.0;
         let g = ((argb >> 8) & 0xFF) as f32 / 255.0;
         let b = (argb & 0xFF) as f32 / 255.0;
-
         Self { r, g, b, a }
     }
 }
