@@ -115,12 +115,8 @@ where
 const DOUBLE_TAP_TIMEOUT: Duration = Duration::milliseconds(300);
 const LONG_PRESS_DURATION: Duration = Duration::milliseconds(500);
 
-#[cfg(not(target_arch = "wasm32"))]
-type Float = f32;
-#[cfg(target_arch = "wasm32")]
-type Float = f64;
 
-const TAP_SLOP: Float = 18.0;
+const TAP_SLOP: f32 = 18.0;
 
 #[derive(Clone, Debug)]
 pub enum GestureEvent {
@@ -247,7 +243,7 @@ impl GestureActions {
     }
 }
 
-fn distance(a: PointerPosition, b: PointerPosition) -> Float {
+fn distance(a: PointerPosition, b: PointerPosition) -> f32 {
     let dx = a.x - b.x;
     let dy = a.y - b.y;
     (dx * dx + dy * dy).sqrt()
