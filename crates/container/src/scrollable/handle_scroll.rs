@@ -1,6 +1,5 @@
 use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
-use attribute::Float;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 use chrono::Utc;
@@ -84,8 +83,8 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                 let dt = self
                     .last_event_time
                     .get()
-                    .map(|t| (now - t).num_microseconds().unwrap_or(0) as f64 / 1_000_000.0)
-                    .map(|dt| dt as crate::scrollable::raw_scroll::Float)
+                    .map(|t| (now - t).num_microseconds().unwrap_or(0) as f32 / 1_000_000.0)
+                    // .map(|dt| dt as crate::scrollable::raw_scroll::Float)
                     .unwrap_or(1.0 / 120.0)
                     .max(0.005);
                 self.last_event_time.set(Some(now));
@@ -117,8 +116,8 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                 target_vx = target_vx.clamp(-max_scroll_v, max_scroll_v);
                 target_vy = target_vy.clamp(-max_scroll_v, max_scroll_v);
 
-                v.x = v.x * 0.7 + target_vx;
-                v.y = v.y * 0.7 + target_vy;
+                v.x = v.x * 0.7 + target_vx * 0.8;
+                v.y = v.y * 0.7 + target_vy* 0.8;
 
                 self.pointer_velocity.set(v);
 
@@ -193,9 +192,9 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                 if mode != DragMode::None && mode != DragMode::Pending {
                     if let Some(last) = self.last_pointer_pos.get() {
                         let speed_multiplier = self.speed_multiplier;
-                        let dx = (p.x - last.x) * speed_multiplier as Float;
+                        let dx = (p.x - last.x) * speed_multiplier;
 
-                        let dy = (p.y - last.y) * speed_multiplier as Float;
+                        let dy = (p.y - last.y) * speed_multiplier;
 
                         let mut new_velocity = match mode {
                             DragMode::Content => match self.axis {
@@ -209,8 +208,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                         let dt = self
                             .last_event_time
                             .get()
-                            .map(|t| (now - t).num_microseconds().unwrap_or(0) as f64 / 1_000_000.0)
-                            .map(|dt| dt as crate::scrollable::raw_scroll::Float)
+                            .map(|t| (now - t).num_microseconds().unwrap_or(0) as f32 / 1_000_000.0)
                             .unwrap_or(1.0 / 60.0)
                             .max(0.001);
                         self.last_event_time.set(Some(now));
@@ -219,7 +217,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                         new_velocity.x = (new_velocity.x / dt) * frame_ref;
                         new_velocity.y = (new_velocity.y / dt) * frame_ref;
 
-                        let sensitivity_gain = 1.0 as crate::scrollable::raw_scroll::Float;
+                        let sensitivity_gain = 1.0;
                         new_velocity.x *= sensitivity_gain;
                         new_velocity.y *= sensitivity_gain;
 
@@ -312,8 +310,8 @@ impl<E: Element> Element for RawScrollableContainer<E> {
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let mut child_ctx = ctx.clone();
         match self.axis {
-            ScrollAxis::Vertical => child_ctx.box_constraint.max_height = crate::scrollable::raw_scroll::Float::MAX,
-            ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = crate::scrollable::raw_scroll::Float::MAX,
+            ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
+            ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
         }
         self.child.computed_size(&child_ctx)
     }
