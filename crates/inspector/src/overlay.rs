@@ -21,14 +21,14 @@ impl InspectorOverlay {
                         Vec2d::from((start.x, start.y)),
                         ResolvedSize { width: w, height: h },
                         Color::Rgba(0, 120, 255, 200),
-                        1.5, 0.0,
+                        1.5, [0.0; 4],
                     );
                     // Fill background
                     canvas.fill_color_rect(
                         Vec2d::from((start.x, start.y)),
                         ResolvedSize { width: w, height: h },
                         Color::Rgba(66, 135, 245, 46),
-                        0.0,
+                        [0.0; 4],
                     );
 
                     let label = format!("{name} {:.1}x{:.1}", w, h);
@@ -44,7 +44,7 @@ impl InspectorOverlay {
                         Vec2d::from((lx, ly)),
                         ResolvedSize { width: label_w, height: label_h },
                         Color::Rgba(66, 135, 245, 200),
-                        0.0,
+                        [0.0; 4],
                     );
 
                     // Label text
