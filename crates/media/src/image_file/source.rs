@@ -1,8 +1,8 @@
-use std::error::Error;
 use crate::ImageResult::Success;
 use crate::{ImageProvider, ImageResult};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use utils::error;
@@ -141,7 +141,7 @@ impl ImageSource {
                     let url_clone = url.clone();
                     let window_clone = window;
                     wasm_bindgen_futures::spawn_local(async move {
-                        match Self::fetch_web_image(&url_clone, window_clone).await {
+                        match Self::fetch_full_image_with_headers(&url_clone, &headers, window_clone).await {
                             Ok(_) => {}
                             Err(err) => {
                                 error!("Failed to fetch network image ({}): {}", url_clone, err);
@@ -163,12 +163,29 @@ impl ImageSource {
     }
 
     #[cfg(target_arch = "wasm32")]
-    async fn fetch_web_image(url: &str, window: &'static winit::window::Window) -> Result<(), String> {
+    async fn fetch_full_image_with_headers(
+        url: &str,
+        maps: &HashMap<String, String>,
+        window: &'static winit::window::Window,
+    ) -> Result<(), String> {
         use wasm_bindgen::JsCast;
         use wasm_bindgen::prelude::*;
+        use web_sys::Headers;
+
+        let headers = Headers::new().unwrap(); // Create empty JS Headers
+
+        for (key, value) in maps {
+            headers
+                .append(&key, &value)
+                .expect("Failed to append header");
+        }
 
         let web_window = web_sys::window().ok_or("No window found")?;
-        let resp_value = wasm_bindgen_futures::JsFuture::from(web_window.fetch_with_str(url))
+        let request_init = web_sys::RequestInit::new();
+        request_init.set_method("GET");
+        request_init.set_headers(&JsValue::from(headers));
+
+        let resp_value = wasm_bindgen_futures::JsFuture::from(web_window.fetch_with_str_and_init(url, &request_init))
             .await
             .map_err(|e| format!("{:?}", e))?;
         let resp: web_sys::Response = resp_value.dyn_into().map_err(|e| format!("{:?}", e))?;
@@ -254,7 +271,7 @@ impl ImageSource {
             .map_err(|e| format!("Failed to create client: {}", e))
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
     fn create_client() -> Result<reqwest::Client, String> {
         reqwest::Client::builder()
             .user_agent("aimer/0.1.0")
@@ -263,7 +280,7 @@ impl ImageSource {
             .map_err(|e| format!("Failed to create client: {}", e))
     }
 
-    // #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_arch = "wasm32"))]
     async fn fetch_full_image_with_headers(
         url: &str,
         headers: &HashMap<String, String>,
@@ -298,7 +315,9 @@ impl ImageSource {
                 let height = image.height();
                 let rgba_bytes = image.into_raw();
 
-                let mut cache = NETWORK_CACHE.lock().map_err(|err| {format!("Failed to lock network cache: {}", err) })?;
+                let mut cache = NETWORK_CACHE
+                    .lock()
+                    .map_err(|err| format!("Failed to lock network cache: {}", err))?;
                 cache.insert(url.to_string(), NetworkImageState::Ready(rgba_bytes, width, height));
                 drop(cache);
                 window.request_redraw();
