@@ -193,25 +193,12 @@ impl<T: Element> Drawable for RawContainer<T> {
             }
         }
 
-        // Draw background fill
-        let radii = self.box_decoration.border_radius.resolve(draw_width, draw_height, scale);
-        // We use the top-left radius for fill_color_rect as it only takes a single f32 radius for now.
-        // If the canvas supports per-corner radii for fills, it should be updated.
-        let radius = radii[0];
-        let background_color = self.box_decoration.background_color.unwrap_or(self.color.unwrap_or(Color::Transparent));
-        // utils::warn!("Overriding color with background_color");
-        ctx.canvas.fill_color_rect(
-            Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize { width: draw_width, height: draw_height },
-            background_color,
-            radius,
-        );
-
-        let border_ctx = BuildContext {
+        // Draw decoration (background, border, outline)
+        let decoration_ctx = BuildContext {
             parent_size: ResolvedSize { width: draw_width, height: draw_height },
             ..ctx.clone()
         };
-        self.box_decoration.border.draw(&border_ctx);
+        self.box_decoration.draw(&decoration_ctx);
 
         let p_left = self.padding.left.value(box_width, scale);
         let p_top = self.padding.top.value(box_height, scale);
