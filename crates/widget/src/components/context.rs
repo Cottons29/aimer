@@ -7,7 +7,7 @@ use attribute::size::ResolvedSize;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Handle;
 use winit::window::Window;
-use canvas::{Canvas, CanvasRendering};
+use canvas::{Canvas};
 
 #[derive(Clone)]
 pub struct BuildContext<'a> {
