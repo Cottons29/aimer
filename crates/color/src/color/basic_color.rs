@@ -1,4 +1,3 @@
-use std::ops::Index;
 use crate::prelude::ColorMixer;
 
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
