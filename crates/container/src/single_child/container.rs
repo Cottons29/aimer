@@ -1,9 +1,8 @@
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
-use constructor::{Constructor, WidgetConstructor};
-use widget::{Drawable, Element, LayoutCache, LayoutSpacing, Spacing, Widget, base::*, style::border::BoxBorder};
-use canvas::CanvasRendering;
+use constructor::WidgetConstructor;
+use widget::{base::*, style::box_decoration::BoxDecoration, Drawable, Element, LayoutCache, LayoutSpacing, Spacing, Widget};
 
 #[derive(WidgetConstructor)]
 pub struct Container<T: Widget + 'static> {
@@ -11,14 +10,14 @@ pub struct Container<T: Widget + 'static> {
     pub(crate) width: Dimension,
     #[constructor(into, default)]
     pub(crate) height: Dimension,
-    #[constructor(into, default )]
-    pub(crate) color: Color,
     #[constructor(default)]
     pub padding: LayoutSpacing,
     #[constructor(default)]
     pub margin: LayoutSpacing,
     #[constructor(default)]
-    pub border: BoxBorder,
+    pub box_decoration: BoxDecoration,
+    #[constructor(default, into)]
+    pub color: Option<Color>,
     pub(crate) child: T,
 }
 
@@ -62,10 +61,10 @@ impl<W: Widget> Widget for Container<W> {
             }
         };
 
-        let b_left = get_stroke(self.border.left.stroke, box_width).max(0.0);
-        let b_right = get_stroke(self.border.right.stroke, box_width).max(0.0);
-        let b_top = get_stroke(self.border.top.stroke, box_height).max(0.0);
-        let b_bottom = get_stroke(self.border.bottom.stroke, box_height).max(0.0);
+        let b_left = get_stroke(self.box_decoration.border.left.stroke, box_width).max(0.0);
+        let b_right = get_stroke(self.box_decoration.border.right.stroke, box_width).max(0.0);
+        let b_top = get_stroke(self.box_decoration.border.top.stroke, box_height).max(0.0);
+        let b_bottom = get_stroke(self.box_decoration.border.bottom.stroke, box_height).max(0.0);
 
         let mut child_ctx = ctx.clone();
         child_ctx.box_constraint.max_width = (box_width - p_left - b_left - p_right - b_right).max(0.0);
@@ -75,14 +74,14 @@ impl<W: Widget> Widget for Container<W> {
         Box::new(RawContainer {
             width: self.width,
             height: self.height,
-            color: self.color,
             child,
             padding: self.padding,
             margin: self.margin,
-            border: self.border,
+            box_decoration: self.box_decoration.clone(),
             cache: LayoutCache::new(),
             debug_name: "Container",
             bounds: std::cell::Cell::new(None),
+            color: self.color,
         })
     }
 }
@@ -97,12 +96,12 @@ pub struct RawContainer<T: Element> {
     pub margin: LayoutSpacing,
     pub width: Dimension,
     pub height: Dimension,
-    pub color: Color,
-    pub border: BoxBorder,
+    pub box_decoration: BoxDecoration,
     pub child: T,
     pub cache: LayoutCache,
     pub debug_name: &'static str,
-    pub bounds: std::cell::Cell<Option<(attribute::position::Vec2d, attribute::position::Vec2d)>>,
+    pub color: Option<Color>,
+    pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
 }
 
 impl<E: Element > RawContainer<E> {
@@ -113,11 +112,11 @@ impl<E: Element > RawContainer<E> {
             margin: Default::default(),
             width: Default::default(),
             height: Default::default(),
-            color: Default::default(),
-            border: Default::default(),
+            box_decoration: Default::default(),
             cache: LayoutCache::new(),
             debug_name: "Container",
             bounds: std::cell::Cell::new(None),
+            color: None,
         }
     }
 }
@@ -177,16 +176,16 @@ impl<T: Element> Drawable for RawContainer<T> {
             if widget::inspector_overlay::is_enabled() {
                 // TODO: expose transform position from AimerCanvas for inspector
                 let (start_x, start_y): (f32, f32) = (0.0, 0.0);
-                let end_x = start_x + box_width as f32;
-                let end_y = start_y + box_height as f32;
+                let end_x = start_x + box_width;
+                let end_y = start_y + box_height;
 
                 let scale = ctx.scale;
-                let l_start = attribute::position::Vec2d { x: (start_x as f64 / scale as f64) as _, y: (start_y as f64 / scale as f64) as _ };
-                let l_end = attribute::position::Vec2d { x: (end_x as f64 / scale as f64) as _, y: (end_y as f64 / scale as f64) as _ };
+                let l_start = Vec2d { x: (start_x as f64 / scale as f64) as _, y: (start_y as f64 / scale as f64) as _ };
+                let l_end = Vec2d { x: (end_x as f64 / scale as f64) as _, y: (end_y as f64 / scale as f64) as _ };
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if (cp.x as f32) >= start_x && (cp.x as f32) <= end_x && (cp.y as f32) >= start_y && (cp.y as f32) <= end_y {
+                if cp.x >= start_x && cp.x <= end_x && cp.y >= start_y && cp.y <= end_y {
                     if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
                         *hovered = Some((self.debug_name, l_start, l_end));
                     }
@@ -194,28 +193,19 @@ impl<T: Element> Drawable for RawContainer<T> {
             }
         }
 
-        // Draw background fill
-        let has_radius = self.border.get_uniform_radius(draw_width, draw_height, scale);
-        let radius = has_radius.unwrap_or(0.0);
-        ctx.canvas.fill_color_rect(
-            Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize { width: draw_width, height: draw_height },
-            self.color,
-            radius as f32,
-        );
-
-        let border_ctx = BuildContext {
+        // Draw decoration (background, border, outline)
+        let decoration_ctx = BuildContext {
             parent_size: ResolvedSize { width: draw_width, height: draw_height },
             ..ctx.clone()
         };
-        self.border.draw(&border_ctx);
+        self.box_decoration.draw(&decoration_ctx);
 
         let p_left = self.padding.left.value(box_width, scale);
         let p_top = self.padding.top.value(box_height, scale);
         let _p_right = self.padding.right.value(box_width, scale);
         let _p_bottom = self.padding.bottom.value(box_height, scale);
 
-        let border = self.border;
+        let border = self.box_decoration.border;
 
         let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
             match dim {
@@ -259,7 +249,7 @@ impl<T: Element> Element for RawContainer<T> {
         Some(Size { width: self.width, height: self.height })
     }
 
-    fn pos_start_end(&self) -> Option<(attribute::position::Vec2d, attribute::position::Vec2d)> {
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.bounds.get()
     }
 
@@ -281,7 +271,7 @@ impl<T: Element> Element for RawContainer<T> {
         let scale = ctx.scale;
         let p_w = ctx.box_constraint.max_width;
         let p_h = ctx.box_constraint.max_height;
-        let threshold = 1_000_000.0 as f32;
+        let threshold = 1_000_000.0f32;
 
         let m_left = self.margin.left.value(p_w, scale);
         let m_right = self.margin.right.value(p_w, scale);
@@ -320,10 +310,10 @@ impl<T: Element> Element for RawContainer<T> {
                     Dimension::Auto => 0.0,
                 }
             };
-            let bl = get_stroke(self.border.left.stroke, capped_w).max(0.0);
-            let br = get_stroke(self.border.right.stroke, capped_w).max(0.0);
-            let bt = get_stroke(self.border.top.stroke, capped_h).max(0.0);
-            let bb = get_stroke(self.border.bottom.stroke, capped_h).max(0.0);
+            let bl = get_stroke(self.box_decoration.border.left.stroke, capped_w).max(0.0);
+            let br = get_stroke(self.box_decoration.border.right.stroke, capped_w).max(0.0);
+            let bt = get_stroke(self.box_decoration.border.top.stroke, capped_h).max(0.0);
+            let bb = get_stroke(self.box_decoration.border.bottom.stroke, capped_h).max(0.0);
 
             let mut child_ctx = ctx.clone();
             child_ctx.box_constraint.max_width = if width_unbounded { f32::MAX } else { (box_width - p_left - bl - p_right - br).max(0.0) };
@@ -365,7 +355,7 @@ impl<T: Element> Element for RawContainer<T> {
         let scale = ctx.scale;
         let p_w = ctx.box_constraint.max_width;
         let p_h = ctx.box_constraint.max_height;
-        let threshold = 1_000_000.0 as f32;
+        let threshold = 1_000_000.0f32;
 
         let m_left = self.margin.left.value(p_w, scale);
         let m_right = self.margin.right.value(p_w, scale);
@@ -404,7 +394,7 @@ impl<T: Element> Element for RawContainer<T> {
             }
         };
 
-        let border = self.border;
+        let border = self.box_decoration.border;
 
         let b_left = get_stroke(border.left.stroke, capped_w).max(0.0);
         let b_right = get_stroke(border.right.stroke, capped_w).max(0.0);
@@ -459,16 +449,16 @@ impl<T: Element> Element for RawContainer<T> {
             p_h += v as f32;
         }
 
-        if let Dimension::Px(v) = self.border.left.stroke {
+        if let Dimension::Px(v) = self.box_decoration.border.left.stroke {
             b_w += v;
         }
-        if let Dimension::Px(v) = self.border.right.stroke {
+        if let Dimension::Px(v) = self.box_decoration.border.right.stroke {
             b_w += v;
         }
-        if let Dimension::Px(v) = self.border.top.stroke {
+        if let Dimension::Px(v) = self.box_decoration.border.top.stroke {
             b_h += v;
         }
-        if let Dimension::Px(v) = self.border.bottom.stroke {
+        if let Dimension::Px(v) = self.box_decoration.border.bottom.stroke {
             b_h += v;
         }
 

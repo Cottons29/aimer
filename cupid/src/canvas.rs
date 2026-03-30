@@ -25,11 +25,11 @@ impl CupidCanvas {
     }
     
 
-    pub fn fill_rect(&self, x: f32, y: f32, width: f32, height: f32, color: Color, border_radius: f32) {
+    pub fn fill_rect(&self, x: f32, y: f32, width: f32, height: f32, color: Color, border_radius: [f32; 4]) {
         self.draw_list.borrow_mut().fill_rect(
             Rect::new(x, y, width, height),
             color,
-            [border_radius; 4],
+            border_radius,
             [0.0; 4],
             Color::transparent(),
         );
@@ -39,14 +39,14 @@ impl CupidCanvas {
         &self,
         x: f32, y: f32, width: f32, height: f32,
         color: Color,
-        border_radius: f32,
+        border_radius: [f32; 4],
         border_width: f32,
         border_color: Color,
     ) {
         self.draw_list.borrow_mut().fill_rect(
             Rect::new(x, y, width, height),
             color,
-            [border_radius; 4],
+            border_radius,
             [border_width; 4],
             border_color,
         );
@@ -122,7 +122,7 @@ impl CupidCanvas {
         &self,
         x: f32, y: f32, width: f32, height: f32,
         color: Color,
-        border_radius: f32,
+        border_radius: [f32; 4],
         border_width: f32,
         border_color: Color,
         outline_width: f32,
@@ -131,7 +131,7 @@ impl CupidCanvas {
         self.draw_list.borrow_mut().fill_rect_with_outline(
             Rect::new(x, y, width, height),
             color,
-            [border_radius; 4],
+            border_radius,
             [border_width; 4],
             border_color,
             [outline_width; 4],
@@ -167,12 +167,12 @@ impl CupidCanvas {
         x: f32, y: f32, width: f32, height: f32,
         stroke_color: Color,
         stroke_width: f32,
-        border_radius: f32,
+        border_radius: [f32; 4],
     ) {
         self.draw_list.borrow_mut().fill_rect(
             Rect::new(x, y, width, height),
             Color::transparent(),
-            [border_radius; 4],
+            border_radius,
             [stroke_width; 4],
             stroke_color,
         );
@@ -202,12 +202,12 @@ impl CupidCanvas {
         &self,
         x: f32, y: f32, width: f32, height: f32,
         color: Color,
-        border_radius: f32,
+        border_radius: [f32; 4],
     ) {
         self.draw_list.borrow_mut().fill_rect(
             Rect::new(x, y, width, height),
             color,
-            [border_radius; 4],
+            border_radius,
             [0.0; 4],
             Color::transparent(),
         );
@@ -234,7 +234,7 @@ impl CupidCanvas {
         self.draw_list.borrow_mut().push_clip(Rect::new(x, y, width, height));
     }
 
-    pub fn set_clip_rounded(&self, x: f32, y: f32, width: f32, height: f32, border_radius: f32) {
+    pub fn set_clip_rounded(&self, x: f32, y: f32, width: f32, height: f32, border_radius: [f32; 4]) {
         self.draw_list.borrow_mut().push_clip_rounded(Rect::new(x, y, width, height), border_radius);
     }
 

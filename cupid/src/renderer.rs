@@ -10,7 +10,7 @@ use utils::debug;
 
 struct ClipState {
     rect: Rect,
-    border_radius: f32,
+    border_radius: [f32; 4],
 }
 
 fn clip_to_array(clip: Option<&ClipState>) -> [f32; 4] {
@@ -18,8 +18,8 @@ fn clip_to_array(clip: Option<&ClipState>) -> [f32; 4] {
         .unwrap_or([0.0, 0.0, -1.0, 0.0])
 }
 
-fn clip_border_radius(clip: Option<&ClipState>) -> f32 {
-    clip.map(|c| c.border_radius).unwrap_or(0.0)
+fn clip_border_radius(clip: Option<&ClipState>) -> [f32; 4] {
+    clip.map(|c| c.border_radius).unwrap_or([0.0; 4])
 }
 
 struct ResolvedCmd {
@@ -107,8 +107,13 @@ impl Renderer {
                         new_rect
                     };
 
+                    let mut scaled_br = *border_radius;
+                    for r in &mut scaled_br {
+                        *r *= sx;
+                    }
+
                     self.clip_stack
-                        .push(ClipState { rect: effective_clip, border_radius: *border_radius * sx });
+                        .push(ClipState { rect: effective_clip, border_radius: scaled_br });
                 }
                 DrawCommand::PopClip => {
                     self.clip_stack.pop();

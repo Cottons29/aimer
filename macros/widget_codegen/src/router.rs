@@ -1,8 +1,7 @@
-use proc_macro2::{Ident, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse2, ItemEnum, LitStr, Meta, Token, Expr, ExprArray, ExprLit, Lit, Fields};
 use syn::punctuated::Punctuated;
-
+use syn::{parse2, Expr, ExprArray, ExprLit, Fields, ItemEnum, Lit, LitStr, Meta, Token};
 
 
 pub struct RouterCodegen;
@@ -49,7 +48,7 @@ impl RouterCodegen {
                             }
                         }
                     } else if let Meta::List(ml) = &attr.meta {
-                        if let Ok(expr_array) = syn::parse2::<ExprArray>(ml.tokens.clone()) {
+                        if let Ok(expr_array) = parse2::<ExprArray>(ml.tokens.clone()) {
                             for elem in expr_array.elems {
                                 if let Expr::Lit(ExprLit { lit: Lit::Str(lit_str), .. }) = elem {
                                     routes.push(lit_str.value());

@@ -1,4 +1,3 @@
-use crate::gesture::button::ButtonStyle;
 use crate::gesture::GestureActions;
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
@@ -9,15 +8,18 @@ use events::pointer::{PointerEvent, PointerPosition};
 use std::cell::UnsafeCell;
 use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
+use widget::style::box_decoration::BoxDecoration;
 use widget::{Drawable, Element, LayoutCache};
 use winit::window::Window;
 
 #[allow(dead_code)]
 pub struct GestureDetectorElement<'a, E: Element> {
-    pub(crate) style: ButtonStyle,
-    pub(crate) hover_style: ButtonStyle,
-    pub(crate) pressed_style: ButtonStyle,
-    pub(crate) disabled_style: ButtonStyle,
+    pub(crate) width: Dimension,
+    pub(crate) height: Dimension,
+    pub(crate) decoration: BoxDecoration,
+    pub(crate) hover_decoration: BoxDecoration,
+    pub(crate) pressed_decoration: BoxDecoration,
+    pub(crate) disabled_decoration: BoxDecoration,
     pub(crate) is_disabled: bool,
     pub(crate) is_hovered: UnsafeCell<bool>,
     pub(crate) is_pressed: UnsafeCell<bool>,
@@ -105,30 +107,28 @@ impl<'a, E: Element> GestureDetectorElement<'a, E> {
     }
 
     #[inline]
-    fn active_style(&self) -> &ButtonStyle {
+    fn active_decoration(&self) -> &BoxDecoration {
         unsafe {
             if self.is_disabled {
-                &self.disabled_style
+                &self.disabled_decoration
             } else if *self.is_pressed.get() {
-                &self.pressed_style
+                &self.pressed_decoration
             } else if *self.is_hovered.get() {
-                &self.hover_style
+                &self.hover_decoration
             } else {
-                &self.style
+                &self.decoration
             }
         }
     }
 
     fn compute_dimensions(&self, ctx: &BuildContext) -> (f32, f32) {
-        let base_style = &self.style;
-
-        let box_width = match base_style.width {
+        let box_width = match self.width {
             Dimension::Px(w) => w * ctx.scale,
             Dimension::Percent(p) => ctx.box_constraint.max_width * (p / 100.0),
             Dimension::Auto => ctx.box_constraint.max_width,
         };
 
-        let box_height = match base_style.height {
+        let box_height = match self.height {
             Dimension::Px(h) => h * ctx.scale,
             Dimension::Percent(p) => ctx.box_constraint.max_height * (p / 100.0),
             Dimension::Auto => ctx.box_constraint.max_height,
@@ -141,8 +141,7 @@ impl<'a, E: Element> GestureDetectorElement<'a, E> {
 impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
     #[inline]
     fn size(&self) -> Option<Size> {
-        let style = self.active_style();
-        Some(Size { width: style.width, height: style.height })
+        Some(Size { width: self.width, height: self.height })
     }
 
     fn on_event(&self, event: &ElementEvent) -> bool {
@@ -227,15 +226,15 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale = ctx.scale;
         let constraint = ctx.box_constraint;
-        let style = self.active_style();
+        let decoration = self.active_decoration();
 
-        let width = match style.width {
+        let width = match self.width {
             Dimension::Px(w) => w * scale,
             Dimension::Percent(p) => constraint.max_width * (p / 100.0),
             Dimension::Auto => self.child.computed_size(ctx).width,
         };
 
-        let height = match style.height {
+        let height = match self.height {
             Dimension::Px(h) => h * scale,
             Dimension::Percent(p) => constraint.max_height * (p / 100.0),
             Dimension::Auto => self.child.computed_size(ctx).height,
@@ -243,7 +242,7 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
 
         let width = width.max(0.0);
         let height = height.max(0.0);
-        let (ol, ot, or, ob) = style.outline.strokes(width, height, scale);
+        let (ol, ot, or, ob) = decoration.outline.strokes(width, height, scale);
 
         let size = ResolvedSize { width: width + ol + or, height: height + ot + ob };
         size
@@ -260,102 +259,56 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
             *self.is_dirty.get() = false;
         }
         let (box_width, box_height) = self.compute_dimensions(ctx);
-        let style = self.active_style();
+        let decoration = self.active_decoration();
 
         ctx.canvas.save();
-        let (ol, ot, _or, _ob) = style.outline.strokes(box_width, box_height, ctx.scale);
+        let (ol, ot, _or, _ob) = decoration.outline.strokes(box_width, box_height, ctx.scale);
         ctx.canvas.translate((ol, ot).into());
 
         // Cache absolute bounds for hit-testing
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         self.cached_bounds.save(
             ctx.scale,
-            abs_x ,
-            abs_y ,
-            box_width ,
-            box_height ,
+            abs_x,
+            abs_y,
+            box_width,
+            box_height,
         );
 
-        // Draw background + border + outline in a single pass
-        let bg_color: Color = style.color.into();
-        let radius = style
-            .border
-            .get_uniform_radius(box_width, box_height, ctx.scale)
-            .unwrap_or(0.0);
-
-        let has_border = style.border.has_visible_border(box_width, box_height, ctx.scale);
-        let has_outline = style.outline.has_visible_outline(box_width, box_height, ctx.scale);
-
+        // Draw background + border + outline using BoxDecoration
         if self.is_disabled {
             ctx.canvas.set_alpha(0.5);
         }
 
-        let size = ResolvedSize { width: box_width, height: box_height };
-        let pos: Vec2d = (0.0, 0.0).into();
-
-        if has_border || has_outline {
-            // Resolve border strokes
-            let (bl, bt, br, bb) = if has_border {
-                style.border.strokes(box_width, box_height, ctx.scale)
-            } else {
-                (0.0, 0.0, 0.0, 0.0)
-            };
-            let border_width = [bt , br , bb , bl ];
-            let border_color = if has_border { style.border.left.color } else { Color::Transparent };
-
-            // Resolve outline strokes
-            let (ol_l, ol_t, ol_r, ol_b) = if has_outline {
-                style.outline.strokes(box_width, box_height, ctx.scale)
-            } else {
-                (0.0, 0.0, 0.0, 0.0)
-            };
-            let outline_width = [ol_t , ol_r , ol_b , ol_l ];
-            let outline_color = if has_outline { style.outline.left.color } else { Color::Transparent };
-
-            // Resolve per-corner radii
-            let border_radius = style.border.get_per_corner_radii(box_width, box_height, ctx.scale)
-                .unwrap_or([0.0; 4]);
-
-            ctx.canvas.fill_rect_with_border_and_outline_per_side(
-                pos,
-                size,
-                bg_color,
-                border_radius,
-                border_width,
-                border_color,
-                outline_width,
-                outline_color,
-            );
-        } else {
-            ctx.canvas.fill_color_rect(
-                pos,
-                size,
-                bg_color,
-                radius ,
-            );
-        }
+        let decoration_ctx = BuildContext {
+            parent_size: ResolvedSize { width: box_width, height: box_height },
+            ..ctx.clone()
+        };
+        decoration.draw(&decoration_ctx);
 
         if self.is_disabled {
             ctx.canvas.restore_alpha();
         }
 
+        let radii = decoration.border_radius.resolve(box_width, box_height, ctx.scale);
+
         // Draw pressed overlay for visual feedback
         if unsafe { *self.is_pressed.get() } && !self.is_disabled {
-            ctx.canvas.fill_color_rect(
+            ctx.canvas.fill_color_rect_per_corner(
                 (0.0, 0.0).into(),
                 ResolvedSize { width: box_width, height: box_height },
                 Color::Rgba(0, 0, 0, 40),
-                // Colors::Green.into(),
-                radius ,
+                radii,
             );
         }
 
         // Clip children to the rounded border so they don't leak outside
-        if radius > 0.0 {
+        let has_radius = radii.iter().any(|&r| r > 0.0);
+        if has_radius {
             ctx.canvas.set_clip_rounded(
                 (0.0, 0.0).into(),
                 ResolvedSize { width: box_width, height: box_height },
-                radius ,
+                radii,
             );
         }
 
@@ -390,7 +343,7 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         ctx.canvas.restore();
 
         // Clear the rounded clip if it was set
-        if radius > 0.0 {
+        if has_radius {
             ctx.canvas.clear_clip();
         }
 

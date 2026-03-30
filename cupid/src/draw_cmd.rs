@@ -27,7 +27,7 @@ pub enum DrawCommand {
     },
     PushClip {
         rect: Rect,
-        border_radius: f32,
+        border_radius: [f32; 4],
     },
     PopClip,
     PushTransform {
@@ -129,10 +129,10 @@ impl DrawList {
     }
 
     pub fn push_clip(&mut self, rect: Rect) {
-        self.commands.push(DrawCommand::PushClip { rect, border_radius: 0.0 });
+        self.commands.push(DrawCommand::PushClip { rect, border_radius: [0.0; 4] });
     }
 
-    pub fn push_clip_rounded(&mut self, rect: Rect, border_radius: f32) {
+    pub fn push_clip_rounded(&mut self, rect: Rect, border_radius: [f32; 4]) {
         self.commands.push(DrawCommand::PushClip { rect, border_radius });
     }
 

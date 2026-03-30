@@ -230,7 +230,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                             ResolvedSize { width: grid_size.min(size.width - pos.x), height: grid_size.min(size.height - pos.y) };
 
                         if rect_size.width > 0.0 && rect_size.height > 0.0 {
-                            ctx.canvas.fill_color_rect(pos, rect_size, color, 0.0);
+                            ctx.canvas.fill_color_rect(pos, rect_size, color, [0.0; 4]);
                         }
                     }
                 }
