@@ -1,43 +1,32 @@
 use attribute::dimension::Dimension;
 use std::cell::UnsafeCell;
 use attribute::CacheBounds;
-use widget::{Constructor, Element, LayoutCache, Widget, base::*, WidgetConstructor};
-use widget::style::border::{BorderStyle, BoxBorder, BoxOutline};
+use widget::{Element, LayoutCache, Widget, base::*, WidgetConstructor};
+use widget::style::box_decoration::BoxDecoration;
 use crate::gesture::gesture_detector::GestureDetectorElement;
 use crate::gesture::{CallbackHolder, GestureActions};
-
-#[allow(dead_code)]
-#[derive(Default, Clone, Copy, Constructor)]
-pub struct ButtonStyle {
-    #[constructor(default, into)]
-    pub color: Colors,
-    #[constructor(default, into)]
-    pub height: Dimension,
-    #[constructor(default, into)]
-    pub width: Dimension,
-    #[constructor(default)]
-    pub border: BoxBorder,
-    #[constructor(default)]
-    pub outline: BoxOutline
-}
 
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
 pub struct Button<W: Widget + 'static> {
     #[constructor(default, into)]
-    pub on_press: CallbackHolder<(),()>,
+    pub on_press: CallbackHolder<(), ()>,
     #[constructor(default, into)]
-    pub on_long_press: CallbackHolder<(),()>,
+    pub on_long_press: CallbackHolder<(), ()>,
+    #[constructor(default, into)]
+    pub width: Dimension,
+    #[constructor(default, into)]
+    pub height: Dimension,
     #[constructor(default)]
-    pub style: ButtonStyle,
+    pub decoration: BoxDecoration,
     #[constructor(default)]
-    pub hover_style: ButtonStyle,
+    pub hover_decoration: BoxDecoration,
     #[constructor(default)]
     pub is_disabled: bool,
     #[constructor(default)]
-    pub pressed_style: ButtonStyle,
+    pub pressed_decoration: BoxDecoration,
     #[constructor(default)]
-    pub disabled_style: ButtonStyle,
+    pub disabled_decoration: BoxDecoration,
     child: W,
 }
 
@@ -55,10 +44,12 @@ impl<W: Widget> Widget for Button<W> {
         }
 
         Box::new(GestureDetectorElement {
-            style: self.style,
-            hover_style: self.hover_style,
-            pressed_style: self.pressed_style,
-            disabled_style: self.disabled_style,
+            width: self.width,
+            height: self.height,
+            decoration: self.decoration.clone(),
+            hover_decoration: self.hover_decoration.clone(),
+            pressed_decoration: self.pressed_decoration.clone(),
+            disabled_decoration: self.disabled_decoration.clone(),
             is_disabled: self.is_disabled,
             is_hovered: UnsafeCell::new(false),
             is_pressed: UnsafeCell::new(false),
