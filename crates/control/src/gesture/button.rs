@@ -25,9 +25,9 @@ pub struct ButtonStyle {
 #[derive(WidgetConstructor)]
 pub struct Button<W: Widget + 'static> {
     #[constructor(default, into)]
-    pub on_press: CallbackHolder,
+    pub on_press: CallbackHolder<(),()>,
     #[constructor(default, into)]
-    pub on_long_press: CallbackHolder,
+    pub on_long_press: CallbackHolder<(),()>,
     #[constructor(default)]
     pub style: ButtonStyle,
     #[constructor(default)]
