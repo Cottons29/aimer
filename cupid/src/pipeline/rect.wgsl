@@ -190,6 +190,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // SDF for the original rect outer edge
     let d = sdf_rounded_rect(orig_centered, orig_half, in.border_radius);
+    // Anti-aliasing with a small margin to ensure no gap
     let outer_alpha = 1.0 - smoothstep(-0.5, 0.5, d);
 
     // Anti-aliased clip
@@ -250,8 +251,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let border_alpha = clamp(outer_alpha - inner_alpha, 0.0, 1.0);
         let bc = stroke_color;
         let fc = fill_color;
+        
+        // Ensure fill and border combined do not exceed outer_alpha
+        let final_inner_alpha = min(inner_alpha, outer_alpha);
+        
+        let fill_premul = vec4<f32>(fc.rgb * fc.a, fc.a) * final_inner_alpha;
         let border_premul = vec4<f32>(bc.rgb * bc.a, bc.a) * border_alpha;
-        let fill_premul = vec4<f32>(fc.rgb * fc.a, fc.a) * inner_alpha;
+        
+        // Combine layers. Since they are disjoint, addition is correct.
         var result = (outline_premul + border_premul + fill_premul) * ca;
         
         // If the surface is NOT sRGB, we must manually convert back to sRGB from linear
