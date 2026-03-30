@@ -6,7 +6,7 @@ use std::cell::UnsafeCell;
 use attribute::CacheBounds;
 use widget::base::{BuildContext, Colors};
 use widget::text::TextAlign;
-use widget::{Element, TextStyle, Widget, WidgetConstructor};
+use widget::{Element, LayoutSpacing, Spacing, TextStyle, Widget, WidgetConstructor};
 
 
 #[allow(dead_code)]
@@ -112,6 +112,8 @@ pub struct TextField {
     pub on_changed: TextFieldCallback,
     #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
     pub on_submitted: TextFieldCallback,
+    #[constructor(default = TextField::DEFAULT_PADDING)]
+    pub padding: LayoutSpacing,
 }
 
 impl Widget for TextField {
@@ -135,7 +137,6 @@ impl Widget for TextField {
             style: TextFieldStyle {
                 background_color: self.style.background_color,
                 border: self.style.border,
-                padding: self.style.padding,
                 outline: self.style.outline,
             },
             hover_style: self.hover_style.clone(),
@@ -146,6 +147,12 @@ impl Widget for TextField {
             cached_bounds: CacheBounds::new(),
             on_changed: self.on_changed.clone(),
             on_submitted: self.on_submitted.clone(),
+            padding: self.padding
         })
     }
+}
+
+
+impl TextField {
+    pub const DEFAULT_PADDING: LayoutSpacing = LayoutSpacing::all(Spacing::Px(4));
 }
