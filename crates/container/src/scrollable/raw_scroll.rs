@@ -217,7 +217,7 @@ impl<E: Element> RawScrollableContainer<E> {
             Vec2d { x: 0.0, y: 0.0 },
             ResolvedSize { width: track_w, height: track_h },
             track_color,
-            0.0,
+            [0.0; 4],
         );
 
         // Draw up/left button
@@ -228,7 +228,7 @@ impl<E: Element> RawScrollableContainer<E> {
                 Vec2d { x: 0.0, y: 0.0 },
                 ResolvedSize { width: bw, height: bh },
                 btn_color,
-                0.0,
+                [0.0; 4],
             );
         }
 
@@ -241,7 +241,7 @@ impl<E: Element> RawScrollableContainer<E> {
                 (track_length - button_h.1, 0.0, button_h.1, track_width)
             };
             ctx.canvas
-                .fill_color_rect(Vec2d { x: bx, y: by }, ResolvedSize { width: bw, height: bh }, btn_color, 0.0);
+                .fill_color_rect(Vec2d { x: bx, y: by }, ResolvedSize { width: bw, height: bh }, btn_color, [0.0; 4]);
         }
 
         // Draw thumb
@@ -269,7 +269,7 @@ impl<E: Element> RawScrollableContainer<E> {
             Vec2d { x: tx, y: ty },
             ResolvedSize { width: tw, height: th },
             thumb_color,
-            thumb_radius as f32,
+            [thumb_radius as f32; 4],
         );
 
         ctx.canvas.restore();

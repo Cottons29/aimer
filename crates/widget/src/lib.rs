@@ -41,3 +41,7 @@ pub use widget_attr;
 pub use constructor::*;
 pub use crate::layout_cache::LayoutCache;
 pub use components::drawable::Drawable;
+pub use style::box_decoration::BoxDecoration;
+pub use style::box_fit::BoxFit;
+pub use style::box_decoration::border_radius::BorderRadius;
+pub use style::box_decoration::box_shadow::{BoxShadow, BorderSide};

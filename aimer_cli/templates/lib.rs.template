@@ -86,8 +86,8 @@ impl State<CounterWidget> for CounterState {
                                     state.count += 1;
                                 });
                             },
-                            style: ButtonStyle!(color: Colors::Yellow),
-                            hover_style: ButtonStyle!(color: Colors::Green),
+                            decoration: BoxDecoration!(background_color: Colors::Yellow),
+                            hover_decoration: BoxDecoration!(background_color: Colors::Green),
                             child: Container!(
                                 child: Text!(
                                     "Increase",
@@ -111,8 +111,8 @@ impl State<CounterWidget> for CounterState {
                                     state.count -= 1;
                                 });
                             },
-                            style: ButtonStyle!(color: Colors::Yellow),
-                            hover_style: ButtonStyle!(color: Colors::Green),
+                            decoration: BoxDecoration!(background_color: Colors::Yellow),
+                            hover_decoration: BoxDecoration!(background_color: Colors::Green),
                             child: Container!(
                                 child: Text!(
                                     "Decrease",

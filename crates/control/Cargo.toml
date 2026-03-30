@@ -10,12 +10,12 @@ attribute.workspace =  true
 color.workspace = true
 events.workspace = true
 canvas.workspace = true
-
+animation.workspace = true
 #####################
 winit.workspace = true
 utils.workspace = true
 chrono.workspace = true
-animation.workspace = true
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
 

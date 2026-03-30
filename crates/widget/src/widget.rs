@@ -43,7 +43,7 @@ pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &
         ResolvedSize { width: w, height: h },
         stroke_color,
         1.5,
-        0.0,
+        [0.0; 4],
     );
 
     // Label
@@ -57,7 +57,7 @@ pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &
         (0.0_f32, 0.0_f32).into(),
         ResolvedSize { width: label_w, height: label_h },
         bg_color,
-        0.0,
+        [0.0; 4],
     );
 
     let text_color = Color::Rgba(255, 255, 255, 255);

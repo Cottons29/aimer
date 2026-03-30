@@ -15,7 +15,7 @@ pub trait CanvasRendering: Clone {
         pos: Vec2d,
         size: ResolvedSize,
         color: Color,
-        border_radius: f32,
+        border_radius: [f32; 4],
         border_width: f32,
         border_color: Color,
     );
@@ -41,10 +41,10 @@ pub trait CanvasRendering: Clone {
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize);
     fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)>;
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize);
-    fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: f32);
+    fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: [f32; 4]);
     fn clear_clip(&self);
     fn measure_text(&self, text: &str, font_size: f32) -> f32;
-    fn stroke_rect(&self, pos: Vec2d, size: ResolvedSize, stroke_color: Color, stroke_width: f32, border_radius: f32);
+    fn stroke_rect(&self, pos: Vec2d, size: ResolvedSize, stroke_color: Color, stroke_width: f32, border_radius: [f32; 4]);
     /// Draws a stroked rectangle with per-corner radii and per-side widths.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
     /// `stroke_width`: [top, right, bottom, left]
@@ -62,7 +62,7 @@ pub trait CanvasRendering: Clone {
         pos: Vec2d,
         size: ResolvedSize,
         color: Color,
-        border_radius: f32,
+        border_radius: [f32; 4],
         border_width: f32,
         border_color: Color,
         outline_width: f32,
@@ -80,7 +80,7 @@ pub trait CanvasRendering: Clone {
         outline_width: [f32; 4],
         outline_color: Color,
     );
-    fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: f32);
+    fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
     /// Draws a filled rectangle with per-corner border radii.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
     fn fill_color_rect_per_corner(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
@@ -165,7 +165,7 @@ impl<'a> AimerCanvas<'a> {
         pos: Vec2d,
         size: ResolvedSize,
         color: Color,
-        border_radius: f32,
+        border_radius: [f32; 4],
         border_width: f32,
         border_color: Color,
     ) {
@@ -287,7 +287,7 @@ impl<'a> AimerCanvas<'a> {
     /// Sets a rounded clipping rectangle. Drawing outside this rounded rect will be clipped.
     #[allow(dead_code)]
     #[inline]
-    pub fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: f32) {
+    pub fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: [f32; 4]) {
         CanvasRendering::set_clip_rounded(self.inner, pos, size, border_radius);
     }
 
@@ -314,7 +314,7 @@ impl<'a> AimerCanvas<'a> {
         size: ResolvedSize,
         stroke_color: Color,
         stroke_width: f32,
-        border_radius: f32,
+        border_radius: [f32; 4],
     ) {
         CanvasRendering::stroke_rect(self.inner, pos, size, stroke_color, stroke_width, border_radius);
     }
@@ -364,7 +364,7 @@ impl<'a> AimerCanvas<'a> {
         pos: Vec2d,
         size: ResolvedSize,
         color: Color,
-        border_radius: f32,
+        border_radius: [f32; 4],
         border_width: f32,
         border_color: Color,
         outline_width: f32,
@@ -413,7 +413,7 @@ impl<'a> AimerCanvas<'a> {
     /// Draws a filled rectangle with a specific color.
     #[allow(dead_code)]
     #[inline]
-    pub fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: f32) {
+    pub fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]) {
         CanvasRendering::fill_color_rect(self.inner, pos, size, color, border_radius);
     }
 

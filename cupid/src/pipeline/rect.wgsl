@@ -18,7 +18,7 @@ struct VertexOutput {
     @location(7) outline_color: vec4<f32>,
     @location(8) pixel_pos: vec2<f32>,
     @location(9) clip_rect: vec4<f32>,
-    @location(10) clip_border_radius: f32,
+    @location(10) clip_border_radius: vec4<f32>,
 };
 
 struct RectInstance {
@@ -31,7 +31,7 @@ struct RectInstance {
     @location(6) outline_width: vec4<f32>,
     @location(7) outline_color: vec4<f32>,
     @location(8) clip_rect: vec4<f32>,
-    @location(9) clip_border_radius: f32,
+    @location(9) clip_border_radius: vec4<f32>,
 };
 
 @vertex
@@ -96,7 +96,7 @@ fn sdf_rounded_rect(p: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>) -> f32
 
 /// Compute anti-aliased clip alpha from a clip rect in pixel coordinates.
 /// clip_rect = (x, y, width, height). If width <= 0, clipping is disabled (returns 1.0).
-fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radius: f32) -> f32 {
+fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radii: vec4<f32>) -> f32 {
     if clip_rect.z < 0.0 {
         return 1.0;
     }
@@ -105,13 +105,12 @@ fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radius: f32) -> f
         return 0.0;
     }
 
-    if clip_radius > 0.0 {
+    if clip_radii.x > 0.0 || clip_radii.y > 0.0 || clip_radii.z > 0.0 || clip_radii.w > 0.0 {
         // Rounded clip: use SDF
         let clip_center = clip_rect.xy + clip_rect.zw * 0.5;
         let clip_half = clip_rect.zw * 0.5;
         let p = pixel_pos - clip_center;
-        let radii = vec4<f32>(clip_radius, clip_radius, clip_radius, clip_radius);
-        let d = sdf_rounded_rect(p, clip_half, radii);
+        let d = sdf_rounded_rect(p, clip_half, clip_radii);
         return 1.0 - smoothstep(-0.5, 0.5, d);
     }
 

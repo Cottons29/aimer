@@ -16,8 +16,8 @@ pub struct RectInstance {
     pub outline_color: [f32; 4],
     /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
     pub clip_rect: [f32; 4],
-    /// Border radius for the clip rect. 0.0 means rectangular clip.
-    pub clip_border_radius: f32,
+    /// Border radius for the clip rect: [top-left, top-right, bottom-right, bottom-left].
+    pub clip_border_radius: [f32; 4],
 }
 
 impl RectInstance {
@@ -31,7 +31,7 @@ impl RectInstance {
         6 => Float32x4,
         7 => Float32x4,
         8 => Float32x4,
-        9 => Float32,
+        9 => Float32x4,
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {

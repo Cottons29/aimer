@@ -64,3 +64,9 @@ impl From<Colors> for Color {
         Self::Basic(value)
     }
 }
+
+impl From<Colors> for Option<Color> {
+    fn from(value: Colors) -> Self {
+        Some(value.into())
+    }
+}

@@ -4,6 +4,7 @@ pub mod constraints;
 mod alignment;
 pub mod layout_spacing;
 pub mod box_fit;
+pub mod box_decoration;
 
 pub mod text {
     pub use super::text_style::*;

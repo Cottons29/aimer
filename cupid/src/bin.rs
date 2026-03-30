@@ -106,28 +106,28 @@ impl<'w> ApplicationHandler for App<'w> {
                 self.canvas.fill_rect(
                     20.0, 20.0, 300.0, 200.0,
                     Color::new(0.2, 0.4, 0.8, 1.0),
-                    10.0,
+                    [10.0; 4],
                 );
 
                 // Draw a red rect
                 self.canvas.fill_rect(
                     50.0, 50.0, 150.0, 80.0,
                     Color::red(),
-                    20.0,
+                    [20.0; 4],
                 );
 
                 // Draw a green rounded rect
                 self.canvas.fill_rect(
                     200.0, 100.0, 180.0, 120.0,
                     Color::green(),
-                    20.0,
+                    [20.0; 4],
                 );
 
                 // Draw a rect with border
                 self.canvas.fill_rect_with_border(
                     420.0, 300.0, 160.0, 100.0,
                     Color::white(),
-                    12.0,
+                    [12.0; 4],
                     3.0,
                     Color::new(0.2, 0.2, 0.8, 1.0),
                 );
@@ -136,7 +136,7 @@ impl<'w> ApplicationHandler for App<'w> {
                 self.canvas.fill_rect_with_border(
                     420.0, 420.0, 160.0, 80.0,
                     Color::blue(),
-                    8.0,
+                    [8.0; 4],
                     2.0,
                     Color::red(),
                 );
@@ -146,7 +146,7 @@ impl<'w> ApplicationHandler for App<'w> {
                 self.canvas.fill_rect(
                     30.0, 380.0, 300.0, 150.0,
                     Color::red(),
-                    0.0,
+                    [0.0; 4],
                 );
 
                 // Test save/translate/restore
@@ -155,7 +155,7 @@ impl<'w> ApplicationHandler for App<'w> {
                 self.canvas.fill_rect(
                     0.0, 0.0, 500.0, 450.0,
                     Color::new(0.8, 0.2, 0.8, 1.0).set_alpha(128),
-                    5.0,
+                    [5.0; 4],
                 );
                 self.canvas.restore();
 

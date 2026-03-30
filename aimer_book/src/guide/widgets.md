@@ -42,22 +42,16 @@ The `Button` struct represents a clickable element.
 
 **Struct Fields:**
 ```rust
-pub struct ButtonStyle {
-    pub color: Colors,
-    pub height: Dimension,
-    pub width: Dimension,
-    pub border: BoxBorder,
-    pub outline: BoxOutline,
-}
-
 pub struct Button<W: Widget> {
     pub on_press: CallbackHolder,
     pub on_long_press: CallbackHolder,
-    pub style: ButtonStyle,
-    pub hover_style: ButtonStyle,
+    pub width: Dimension,
+    pub height: Dimension,
+    pub decoration: BoxDecoration,
+    pub hover_decoration: BoxDecoration,
     pub is_disabled: bool,
-    pub pressed_style: ButtonStyle,
-    pub disabled_style: ButtonStyle,
+    pub pressed_decoration: BoxDecoration,
+    pub disabled_decoration: BoxDecoration,
     pub child: W,
 }
 ```
@@ -104,10 +98,10 @@ pub struct TextField {
     pub max_length: Option<usize>,
     pub enable: bool,
     pub expand: ExpandDirection,
-    pub style: TextFieldStyle,
-    pub hover_style: Option<TextFieldStyle>,
-    pub focus_style: Option<TextFieldStyle>,
-    pub disabled_style: Option<TextFieldStyle>,
+    pub decoration: BoxDecoration,
+    pub hover_decoration: Option<BoxDecoration>,
+    pub focus_decoration: Option<BoxDecoration>,
+    pub disabled_decoration: Option<BoxDecoration>,
     pub cursor_color: Colors,
     pub on_changed: TextFieldCallback,
     pub on_submitted: TextFieldCallback,
@@ -177,7 +171,7 @@ TextField!(
 - `prompt`: Text displayed before the input area.
 - `auto_focus`: Whether the field is focused on mount.
 - `enable`: Whether the field accepts input (default: `true`).
-- `style` / `hover_style` / `focus_style` / `disabled_style`: Visual style variants.
+- `decoration` / `hover_decoration` / `focus_decoration` / `disabled_decoration`: Visual decoration variants.
 - `on_changed`: Callback invoked with the current text on every change.
 - `on_submitted`: Callback invoked with the current text when Enter is pressed.
 

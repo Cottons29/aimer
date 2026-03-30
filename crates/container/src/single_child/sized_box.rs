@@ -79,7 +79,7 @@ impl<E: Element> Drawable for RawSizedBox<E> {
             Vec2d { x: 0.0, y: 0.0 },
             ResolvedSize { width, height },
             self.color,
-            0.0,
+            [0.0; 4],
         );
     }
 }
