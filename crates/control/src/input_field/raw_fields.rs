@@ -3,6 +3,7 @@ use attribute::size::ResolvedSize;
 use std::cell::UnsafeCell;
 use widget::base::{BuildContext, Color, Colors};
 use widget::style::border::{BoxBorder, BoxOutline};
+use widget::style::box_decoration::BoxDecoration;
 use widget::text::TextAlign;
 use widget::{Constructor, Drawable, Element, LayoutSpacing, Spacing, TextStyle};
 
@@ -359,25 +360,6 @@ impl Default for ExpandDirection {
     }
 }
 
-#[derive(Clone, Constructor)]
-pub struct TextFieldStyle {
-    #[constructor(default)]
-    pub background_color: Colors,
-    #[constructor(default)]
-    pub border: BoxBorder,
-    #[constructor(default)]
-    pub outline: BoxOutline,
-}
-
-impl Default for TextFieldStyle {
-    fn default() -> Self {
-        Self {
-            background_color: Colors::White,
-            border: BoxBorder::default(),
-            outline: BoxOutline::default(),
-        }
-    }
-}
 
 pub(crate) struct RawTextField {
     pub input_type: InputType,
@@ -395,10 +377,10 @@ pub(crate) struct RawTextField {
     pub enable: bool,
     pub expand: ExpandDirection,
     pub cursor: Cursor,
-    pub style: TextFieldStyle,
-    pub hover_style: Option<TextFieldStyle>,
-    pub focus_style: Option<TextFieldStyle>,
-    pub disabled_style: Option<TextFieldStyle>,
+    pub decoration: BoxDecoration,
+    pub hover_decoration: Option<BoxDecoration>,
+    pub focus_decoration: Option<BoxDecoration>,
+    pub disabled_decoration: Option<BoxDecoration>,
     pub focused: UnsafeCell<bool>,
     pub hovered: UnsafeCell<bool>,
     pub cached_bounds: CacheBounds,
@@ -433,23 +415,23 @@ impl RawTextField {
         }
     }
 
-    fn active_style(&self) -> &TextFieldStyle {
+    fn active_decoration(&self) -> &BoxDecoration {
         if !self.enable {
-            if let Some(ref s) = self.disabled_style {
+            if let Some(ref s) = self.disabled_decoration {
                 return s;
             }
         }
         if self.is_focused() {
-            if let Some(ref s) = self.focus_style {
+            if let Some(ref s) = self.focus_decoration {
                 return s;
             }
         }
         if self.is_hovered() {
-            if let Some(ref s) = self.hover_style {
+            if let Some(ref s) = self.hover_decoration {
                 return s;
             }
         }
-        &self.style
+        &self.decoration
     }
 
     fn compute_dimensions(&self, ctx: &BuildContext) -> (f32, f32) {
@@ -459,7 +441,7 @@ impl RawTextField {
     }
 
     fn outline_strokes(&self, box_width: f32, box_height: f32, scale: f32) -> (f32, f32, f32, f32) {
-        self.active_style()
+        self.active_decoration()
             .outline
             .strokes(box_width, box_height, scale)
     }
@@ -951,59 +933,11 @@ impl Drawable for RawTextField {
         self.cached_bounds
             .save(scale, abs_x , abs_y , box_width, box_height);
 
-        // --- Resolve active style ---
-        let style = self.active_style();
+        // --- Resolve active decoration ---
+        let decoration = self.active_decoration();
 
         // --- Draw background + border + outline ---
-        let bg_color: Color = style.background_color.into();
-        let has_border = style
-            .border
-            .has_visible_border(box_width, box_height, scale);
-        let has_outline = style
-            .outline
-            .has_visible_outline(box_width, box_height, scale);
-        let radius = style
-            .border
-            .get_uniform_radius(box_width, box_height, scale)
-            .unwrap_or(0.0);
-
-        if has_border || has_outline {
-            // Resolve border strokes
-            let (bl, bt, br, bb) =
-                if has_border { style.border.strokes(box_width, box_height, scale) } else { (0.0, 0.0, 0.0, 0.0) };
-            let border_width = [bt , br , bb , bl ];
-            let border_color = if has_border { style.border.left.color } else { Color::Transparent };
-
-            // Resolve outline strokes
-            let (ol_l, ol_t, ol_r, ol_b) =
-                if has_outline { style.outline.strokes(box_width, box_height, scale) } else { (0.0, 0.0, 0.0, 0.0) };
-            let outline_width = [ol_t , ol_r , ol_b , ol_l ];
-            let outline_color = if has_outline { style.outline.left.color } else { Color::Transparent };
-
-            // Resolve per-corner radii
-            let border_radius = style
-                .border
-                .get_per_corner_radii(box_width, box_height, scale)
-                .unwrap_or([0.0; 4]);
-
-            ctx.canvas.fill_rect_with_border_and_outline_per_side(
-                (0.0, 0.0).into(),
-                ResolvedSize { width: box_width, height: box_height },
-                bg_color,
-                border_radius,
-                border_width,
-                border_color,
-                outline_width,
-                outline_color,
-            );
-        } else {
-            ctx.canvas.fill_color_rect(
-                (0.0, 0.0).into(),
-                ResolvedSize { width: box_width, height: box_height },
-                bg_color,
-                radius ,
-            );
-        }
+        decoration.draw(ctx);
 
         // --- Padding ---
         let pad_top = self.padding.top.value(box_height, scale);
@@ -1012,18 +946,20 @@ impl Drawable for RawTextField {
         let pad_right = self.padding.right.value(box_width, scale);
 
         ctx.canvas.save();
-        let clip_radius = if radius > 0.0 {
-            (radius - pad_left.max(pad_top).min(radius)).max(0.0)
-        } else {
-            0.0
-        };
+        let radii = decoration.border_radius.resolve(box_width, box_height, scale);
+        let clip_radii = [
+            if radii[0] > 0.0 { (radii[0] - pad_left.max(pad_top).min(radii[0])).max(0.0) } else { 0.0 },
+            if radii[1] > 0.0 { (radii[1] - pad_right.max(pad_top).min(radii[1])).max(0.0) } else { 0.0 },
+            if radii[2] > 0.0 { (radii[2] - pad_right.max(pad_bottom).min(radii[2])).max(0.0) } else { 0.0 },
+            if radii[3] > 0.0 { (radii[3] - pad_left.max(pad_bottom).min(radii[3])).max(0.0) } else { 0.0 },
+        ];
         ctx.canvas.set_clip_rounded(
             (pad_left, pad_top).into(),
             ResolvedSize {
                 width: (box_width - pad_left - pad_right).max(0.0),
                 height: (box_height - pad_top - pad_bottom).max(0.0),
             },
-            clip_radius,
+            clip_radii,
         );
         ctx.canvas.translate((pad_left, pad_top).into());
 
@@ -1073,7 +1009,7 @@ impl Drawable for RawTextField {
                     (cursor_x, cursor_top).into(),
                     ResolvedSize { width: stroke_w, height: cursor_height },
                     cursor_color,
-                    0.0,
+                    [0.0; 4],
                 );
             }
         } else {
@@ -1106,7 +1042,7 @@ impl Drawable for RawTextField {
                     (cursor_x, cursor_top).into(),
                     ResolvedSize { width: stroke_w, height: cursor_height },
                     cursor_color,
-                    0.0,
+                    [0.0; 4],
                 );
             }
         }
