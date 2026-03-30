@@ -9,7 +9,7 @@ pub use container::flex::row_column::*;
 pub use container::flex::*;
 pub use container::*;
 pub use control::gesture::button::{Button, ButtonStyle};
-pub use control::gesture::{AsyncCallback, Callback, CallbackHolder};
+pub use control::callback::{AsyncCallback, Callback, CallbackHolder};
 pub use control::input::*;
 pub use control::*;
 pub use quiver;
