@@ -367,8 +367,6 @@ pub struct TextFieldStyle {
     pub border: BoxBorder,
     #[constructor(default)]
     pub outline: BoxOutline,
-    #[constructor(default)]
-    pub padding: LayoutSpacing,
 }
 
 impl Default for TextFieldStyle {
@@ -376,7 +374,6 @@ impl Default for TextFieldStyle {
         Self {
             background_color: Colors::White,
             border: BoxBorder::default(),
-            padding: LayoutSpacing::all(Spacing::Px(4)),
             outline: BoxOutline::default(),
         }
     }
@@ -407,12 +404,13 @@ pub(crate) struct RawTextField {
     pub cached_bounds: CacheBounds,
     pub on_changed: TextFieldCallback,
     pub on_submitted: TextFieldCallback,
+    pub padding: LayoutSpacing
 }
 
 impl RawTextField {
     fn scaled_font_size(&self, style: &TextStyle, scale: f32) -> f32 {
-        let fs = if style.font_size == 0 { 14.0 } else { style.font_size as f32 };
-        fs * scale as f32
+        let fs = if style.font_size == 0 { 14.0 } else { style.font_size as f32  };
+        fs * scale
     }
 
     fn is_focused(&self) -> bool {
@@ -470,7 +468,7 @@ impl RawTextField {
         let text = self.controller.text();
         let offset = self.cursor.offset();
         let prefix: String = text.chars().take(offset).collect();
-        canvas.measure_text(&prefix, font_size) as f32
+        canvas.measure_text(&prefix, font_size)
     }
 
     fn ascent(&self, font_size: f32) -> f32 {
@@ -678,7 +676,7 @@ impl Element for RawTextField {
                     #[cfg(target_os = "android")]
                     android_keyboard::show_keyboard();
                     #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
-                    if let Some(w) = events::window::get_window() {
+                    if let Some(w) = get_window() {
                         w.set_ime_allowed(true);
                     }
                     #[cfg(target_arch = "wasm32")]
@@ -691,7 +689,7 @@ impl Element for RawTextField {
                     #[cfg(target_os = "android")]
                     android_keyboard::dismiss_keyboard();
                     #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
-                    if let Some(w) = events::window::get_window() {
+                    if let Some(w) = get_window() {
                         w.set_ime_allowed(false);
                     }
                     #[cfg(target_arch = "wasm32")]
@@ -699,7 +697,7 @@ impl Element for RawTextField {
                     false
                 }
             }
-            ElementEvent::CharInput { ch, action, modifiers } => {
+            ElementEvent::CharInput { ch, action,  .. } => {
                 if !self.is_focused() {
                     return false;
                 }
@@ -947,11 +945,11 @@ impl Drawable for RawTextField {
         // Cache absolute bounds for hit-testing
         let (abs_x, abs_y) = {
             let (tx, ty) = ctx.canvas.get_transform_translation();
-            (tx as f64, ty as f64)
+            (tx, ty)
         };
 
         self.cached_bounds
-            .save(scale, abs_x as f32, abs_y as f32, box_width, box_height);
+            .save(scale, abs_x , abs_y , box_width, box_height);
 
         // --- Resolve active style ---
         let style = self.active_style();
@@ -973,13 +971,13 @@ impl Drawable for RawTextField {
             // Resolve border strokes
             let (bl, bt, br, bb) =
                 if has_border { style.border.strokes(box_width, box_height, scale) } else { (0.0, 0.0, 0.0, 0.0) };
-            let border_width = [bt as f32, br as f32, bb as f32, bl as f32];
+            let border_width = [bt , br , bb , bl ];
             let border_color = if has_border { style.border.left.color } else { Color::Transparent };
 
             // Resolve outline strokes
             let (ol_l, ol_t, ol_r, ol_b) =
                 if has_outline { style.outline.strokes(box_width, box_height, scale) } else { (0.0, 0.0, 0.0, 0.0) };
-            let outline_width = [ol_t as f32, ol_r as f32, ol_b as f32, ol_l as f32];
+            let outline_width = [ol_t , ol_r , ol_b , ol_l ];
             let outline_color = if has_outline { style.outline.left.color } else { Color::Transparent };
 
             // Resolve per-corner radii
@@ -1003,15 +1001,15 @@ impl Drawable for RawTextField {
                 (0.0, 0.0).into(),
                 ResolvedSize { width: box_width, height: box_height },
                 bg_color,
-                radius as f32,
+                radius ,
             );
         }
 
         // --- Padding ---
-        let pad_top = style.padding.top.value(box_height, scale);
-        let pad_bottom = style.padding.bottom.value(box_height, scale);
-        let pad_left = style.padding.left.value(box_width, scale);
-        let pad_right = style.padding.right.value(box_width, scale);
+        let pad_top = self.padding.top.value(box_height, scale);
+        let pad_bottom = self.padding.bottom.value(box_height, scale);
+        let pad_left = self.padding.left.value(box_width, scale);
+        let pad_right = self.padding.right.value(box_width, scale);
 
         ctx.canvas.save();
         let clip_radius = if radius > 0.0 {
@@ -1041,25 +1039,25 @@ impl Drawable for RawTextField {
             // --- Draw prompt (visible when field is empty) ---
             if !self.prompt.is_empty() {
                 let prompt_fs = self.scaled_font_size(&self.prompt_style, scale);
-                let prompt_width = ctx.canvas.measure_text(&self.prompt, prompt_fs as f32);
-                let prompt_x = self.align_x(prompt_width as f32, content_width);
-                let prompt_y = self.align_y(prompt_fs as f32, content_height as f32);
-                let prompt_color: color::prelude::Color = self.prompt_style.color.into();
+                let prompt_width = ctx.canvas.measure_text(&self.prompt, prompt_fs );
+                let prompt_x = self.align_x(prompt_width , content_width);
+                let prompt_y = self.align_y(prompt_fs , content_height );
+                let prompt_color: Color = self.prompt_style.color.into();
                 ctx.canvas.draw_text(
                     &self.prompt,
-                    (prompt_x, prompt_y as f32).into(),
-                    prompt_fs as f32,
+                    (prompt_x, prompt_y ).into(),
+                    prompt_fs ,
                     prompt_color,
                 );
             } else if !self.hint.is_empty() {
                 // --- Draw hint text (visible when field is empty and no prompt) ---
                 let hint_fs = self.scaled_font_size(&self.hint_style, scale);
-                let hint_width = ctx.canvas.measure_text(&self.hint, hint_fs as f32);
-                let hint_x = self.align_x(hint_width as f32, content_width);
-                let hint_y = self.align_y(hint_fs as f32, content_height as f32);
-                let hint_color: color::prelude::Color = self.hint_style.color.into();
+                let hint_width = ctx.canvas.measure_text(&self.hint, hint_fs );
+                let hint_x = self.align_x(hint_width , content_width);
+                let hint_y = self.align_y(hint_fs , content_height );
+                let hint_color: Color = self.hint_style.color.into();
                 ctx.canvas
-                    .draw_text(&self.hint, (hint_x, hint_y as f32).into(), hint_fs as f32, hint_color);
+                    .draw_text(&self.hint, (hint_x, hint_y ).into(), hint_fs , hint_color);
             }
 
             // --- Draw cursor when field is empty but focused ---
@@ -1068,7 +1066,7 @@ impl Drawable for RawTextField {
                 let cursor_top = content_height * 0.15;
                 let cursor_bottom = content_height * 0.85;
                 let cursor_height = cursor_bottom - cursor_top;
-                let cursor_color: color::prelude::Color = self.cursor.color.into();
+                let cursor_color: Color = self.cursor.color.into();
                 let stroke_w = 1.5 * scale;
 
                 ctx.canvas.fill_color_rect(
@@ -1085,23 +1083,23 @@ impl Drawable for RawTextField {
                 _ => text.to_string(),
             };
 
-            let text_width = ctx.canvas.measure_text(&display, font_size as f32);
-            let text_x = self.align_x(text_width as f32, content_width);
-            let text_y = self.align_y(font_size as f32, content_height as f32);
+            let text_width = ctx.canvas.measure_text(&display, font_size );
+            let text_x = self.align_x(text_width , content_width);
+            let text_y = self.align_y(font_size , content_height );
 
             if !display.is_empty() {
-                let text_color: color::prelude::Color = self.text_style.color.into();
+                let text_color: Color = self.text_style.color.into();
                 ctx.canvas
-                    .draw_text(&display, (text_x, text_y as f32).into(), font_size as f32, text_color);
+                    .draw_text(&display, (text_x, text_y ).into(), font_size , text_color);
             }
 
             // --- Draw cursor ---
             if self.is_focused() && self.cursor.is_visible() {
-                let cursor_x = text_x + self.cursor_x_offset_canvas(&ctx.canvas, font_size as f32);
+                let cursor_x = text_x + self.cursor_x_offset_canvas(&ctx.canvas, font_size );
                 let cursor_top = content_height * 0.15;
                 let cursor_bottom = content_height * 0.85;
                 let cursor_height = cursor_bottom - cursor_top;
-                let cursor_color: color::prelude::Color = self.cursor.color.into();
+                let cursor_color: Color = self.cursor.color.into();
                 let stroke_w = 1.5 * scale;
 
                 ctx.canvas.fill_color_rect(
