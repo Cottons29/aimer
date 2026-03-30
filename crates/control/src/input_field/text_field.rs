@@ -1,7 +1,8 @@
 use crate::input_field::controller::TextFieldController;
 use crate::input_field::raw_fields::{
-    Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback, TextFieldStyle,
+    Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback,
 };
+use widget::style::box_decoration::BoxDecoration;
 use std::cell::UnsafeCell;
 use attribute::CacheBounds;
 use widget::base::{BuildContext, Colors};
@@ -52,13 +53,13 @@ use widget::{Element, LayoutSpacing, Spacing, TextStyle, Widget, WidgetConstruct
 /// * `expand` - Determines the expansion direction of the `TextField`.
 ///   Defaults to a default implementation of `ExpandDirection`.
 ///
-/// * `style` - The default style applied to the `TextField`. Defaults to `TextFieldStyle`.
+/// * `decoration` - The default decoration applied to the `TextField`. Defaults to `BoxDecoration`.
 ///
-/// * `hover_style` - The style applied to the `TextField` when hovered. Defaults to `None`.
+/// * `hover_decoration` - The decoration applied to the `TextField` when hovered. Defaults to `None`.
 ///
-/// * `focus_style` - The style applied to the `TextField` when it gains focus. Defaults to `None`.
+/// * `focus_decoration` - The decoration applied to the `TextField` when it gains focus. Defaults to `None`.
 ///
-/// * `disabled_style` - The style applied to the `TextField` when it is disabled. Defaults to `None`.
+/// * `disabled_decoration` - The decoration applied to the `TextField` when it is disabled. Defaults to `None`.
 ///
 /// * `cursor_color` - Color of the text cursor. Defaults to a default `Colors` implementation.
 ///
@@ -98,14 +99,14 @@ pub struct TextField {
     pub enable: bool,
     #[constructor(default)]
     pub expand: ExpandDirection,
+    #[constructor(default = BoxDecoration { background_color: Some(Colors::White.into()), ..Default::default() })]
+    pub decoration: BoxDecoration,
     #[constructor(default)]
-    pub style: TextFieldStyle,
+    pub hover_decoration: Option<BoxDecoration>,
     #[constructor(default)]
-    pub hover_style: Option<TextFieldStyle>,
+    pub focus_decoration: Option<BoxDecoration>,
     #[constructor(default)]
-    pub focus_style: Option<TextFieldStyle>,
-    #[constructor(default)]
-    pub disabled_style: Option<TextFieldStyle>,
+    pub disabled_decoration: Option<BoxDecoration>,
     #[constructor(default)]
     pub cursor_color: Colors,
     #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
@@ -134,14 +135,10 @@ impl Widget for TextField {
             enable: self.enable,
             expand: self.expand,
             cursor: Cursor::new(self.cursor_color),
-            style: TextFieldStyle {
-                background_color: self.style.background_color,
-                border: self.style.border,
-                outline: self.style.outline,
-            },
-            hover_style: self.hover_style.clone(),
-            focus_style: self.focus_style.clone(),
-            disabled_style: self.disabled_style.clone(),
+            decoration: self.decoration.clone(),
+            hover_decoration: self.hover_decoration.clone(),
+            focus_decoration: self.focus_decoration.clone(),
+            disabled_decoration: self.disabled_decoration.clone(),
             focused: UnsafeCell::new(self.auto_focus),
             hovered: UnsafeCell::new(false),
             cached_bounds: CacheBounds::new(),
