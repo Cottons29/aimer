@@ -13,7 +13,7 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) pixel_pos: vec2<f32>,
     @location(2) clip_rect: vec4<f32>,
-    @location(3) clip_border_radius: f32,
+    @location(3) clip_border_radius: vec4<f32>,
 };
 
 struct ImageInstance {
@@ -22,7 +22,7 @@ struct ImageInstance {
     @location(2) uv_offset: vec2<f32>,
     @location(3) uv_scale: vec2<f32>,
     @location(4) clip_rect: vec4<f32>,
-    @location(5) clip_border_radius: f32,
+    @location(5) clip_border_radius: vec4<f32>,
 };
 
 @vertex
@@ -76,7 +76,7 @@ fn sdf_rounded_rect(p: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>) -> f32
     return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
-fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radius: f32) -> f32 {
+fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radii: vec4<f32>) -> f32 {
     if clip_rect.z < 0.0 {
         return 1.0;
     }
@@ -85,12 +85,11 @@ fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radius: f32) -> f
         return 0.0;
     }
 
-    if clip_radius > 0.0 {
+    if clip_radii.x > 0.0 || clip_radii.y > 0.0 || clip_radii.z > 0.0 || clip_radii.w > 0.0 {
         let clip_center = clip_rect.xy + clip_rect.zw * 0.5;
         let clip_half = clip_rect.zw * 0.5;
         let p = pixel_pos - clip_center;
-        let radii = vec4<f32>(clip_radius, clip_radius, clip_radius, clip_radius);
-        let d = sdf_rounded_rect(p, clip_half, radii);
+        let d = sdf_rounded_rect(p, clip_half, clip_radii);
         return 1.0 - smoothstep(-0.5, 0.5, d);
     }
 
