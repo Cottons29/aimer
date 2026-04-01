@@ -180,8 +180,8 @@ impl<T: Element> Drawable for RawContainer<T> {
                 let end_y = start_y + box_height;
 
                 let scale = ctx.scale;
-                let l_start = Vec2d { x: (start_x as f64 / scale as f64) as _, y: (start_y as f64 / scale as f64) as _ };
-                let l_end = Vec2d { x: (end_x as f64 / scale as f64) as _, y: (end_y as f64 / scale as f64) as _ };
+                let l_start = Vec2d { x: (start_x  / scale ) , y: (start_y  / scale )  };
+                let l_end = Vec2d { x: (end_x  / scale ) , y: (end_y  / scale )  };
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
@@ -193,12 +193,13 @@ impl<T: Element> Drawable for RawContainer<T> {
             }
         }
 
-        // Draw decoration (background, border, outline)
         let decoration_ctx = BuildContext {
             parent_size: ResolvedSize { width: draw_width, height: draw_height },
             ..ctx.clone()
         };
+
         self.box_decoration.draw(&decoration_ctx);
+
 
         let p_left = self.padding.left.value(box_width, scale);
         let p_top = self.padding.top.value(box_height, scale);
@@ -206,6 +207,7 @@ impl<T: Element> Drawable for RawContainer<T> {
         let _p_bottom = self.padding.bottom.value(box_height, scale);
 
         let border = self.box_decoration.border;
+        let radii = self.box_decoration.border_radius.resolve(box_width, box_height, scale);
 
         let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
             match dim {
@@ -219,14 +221,26 @@ impl<T: Element> Drawable for RawContainer<T> {
         let b_top = get_stroke(border.top.stroke, box_height).max(0.0);
         let b_bottom = get_stroke(border.bottom.stroke, box_height).max(0.0);
 
+        // Draw decoration (background, border, outline)
+
+
         // Clip to inset rect (inside borders)
-        let clip_x = b_left / 2.0;
-        let clip_y = b_top / 2.0;
-        let clip_w = ((box_width - b_right / 2.0).max(0.0) - clip_x).max(0.0);
-        let clip_h = ((box_height - b_bottom / 2.0).max(0.0) - clip_y).max(0.0);
-        ctx.canvas.set_clip(
+        let clip_x = b_left;
+        let clip_y = b_top;
+        let clip_w = (box_width - b_right - clip_x).max(0.0);
+        let clip_h = (box_height - b_bottom - clip_y).max(0.0);
+        
+        let inner_radii = [
+            (radii[0] - b_top.max(b_left)).max(0.0),     // top-left
+            (radii[1] - b_top.max(b_right)).max(0.0),    // top-right
+            (radii[2] - b_bottom.max(b_right)).max(0.0), // bottom-right
+            (radii[3] - b_bottom.max(b_left)).max(0.0),  // bottom-left
+        ];
+
+        ctx.canvas.set_clip_rounded(
             Vec2d { x: clip_x, y: clip_y },
             ResolvedSize { width: clip_w, height: clip_h },
+            inner_radii,
         );
 
         ctx.canvas.translate(Vec2d { x: p_left + b_left, y: p_top + b_top });

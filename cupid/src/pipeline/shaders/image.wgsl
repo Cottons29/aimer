@@ -109,44 +109,35 @@ fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radii: vec4<f32>)
     return a_left * a_right * a_top * a_bottom;
 }
 
-// Convert a single sRGB channel to linear space.
-fn srgb_to_linear(c: f32) -> f32 {
-    if c <= 0.04045 {
-        return c / 12.92;
-    }
-    return pow((c + 0.055) / 1.055, 2.4);
-}
 
-// Convert a single linear channel back to sRGB.
-fn linear_to_srgb(c: f32) -> f32 {
-    if c <= 0.0031308 {
-        return c * 12.92;
-    }
-    return 1.055 * pow(c, 1.0 / 2.4) - 0.055;
-}
+
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = textureSample(t_diffuse, s_diffuse, in.uv);
     
-    // Convert from sRGB to Linear space manually for consistent blending.
-    color = vec4<f32>(
-        srgb_to_linear(color.r),
-        srgb_to_linear(color.g),
-        srgb_to_linear(color.b),
-        color.a
-    );
-    
-    // Premultiply alpha for correct blending
-    var result = vec4<f32>(color.rgb * color.a, color.a);
-    
-    // If the surface is NOT sRGB, we must manually convert back to sRGB.
-    if viewport.surface_is_srgb < 0.5 {
-        let a = result.a;
-        if a > 0.00001 {
-            let unpremul = result.rgb / a;
-            let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
-            result = vec4<f32>(srgb_rgb * a, a);
+    // On Android (surface_is_srgb >= 1.5), skip sRGB conversion entirely.
+    var result: vec4<f32>;
+    if viewport.surface_is_srgb >= 1.5 {
+        let a = color_offset(color.a);
+        result = vec4<f32>(color.rgb * a, a);
+    } else {
+        color = vec4<f32>(
+            srgb_to_linear(color.r),
+            srgb_to_linear(color.g),
+            srgb_to_linear(color.b),
+            color_offset(color.a)
+        );
+
+        result = vec4<f32>(color.rgb * color.a, color.a);
+
+        if viewport.surface_is_srgb < 0.5 {
+            let a = color.a;
+            if a > 0.00001 {
+                let unpremul = result.rgb / a;
+                let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
+                result = vec4<f32>(srgb_rgb * a, a);
+            }
         }
     }
     

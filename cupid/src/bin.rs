@@ -126,7 +126,7 @@ impl<'w> ApplicationHandler for App<'w> {
                 // Draw a rect with border
                 self.canvas.fill_rect_with_border(
                     420.0, 300.0, 160.0, 100.0,
-                    Color::white(),
+                    Color::red(),
                     [12.0; 4],
                     3.0,
                     Color::new(0.2, 0.2, 0.8, 1.0),
@@ -134,10 +134,10 @@ impl<'w> ApplicationHandler for App<'w> {
 
                 // Draw a border-only rect (transparent fill)
                 self.canvas.fill_rect_with_border(
-                    420.0, 420.0, 160.0, 80.0,
+                    420.0, 420.0, 460.0, 480.0,
                     Color::blue(),
-                    [8.0; 4],
-                    2.0,
+                    [28.0; 4],
+                    0.0,
                     Color::red(),
                 );
 

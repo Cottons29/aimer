@@ -1,5 +1,5 @@
 use color::prelude::{Color as AimerColor, ColorMixer};
-use std::ops::{Mul};
+use std::ops::Mul;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Color {

@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
+use wgpu::ShaderSource;
 use wgpu::util::DeviceExt;
 
 use crate::utilities::TextureId;
@@ -58,10 +59,30 @@ pub struct ImagePipeline {
 impl ImagePipeline {
     const INITIAL_CAPACITY: usize = 64;
 
+
+
+    #[inline]
+    const fn get_source() -> &'static str {
+        #[cfg(target_os = "android")]
+        {
+            concat!(
+                include_str!("./shaders/android_color.wgsl"),
+                include_str!("./shaders/image.wgsl")
+            )
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            concat!(
+                include_str!("./shaders/color.wgsl"),
+                include_str!("./shaders/image.wgsl")
+            )
+        }
+    }
+
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("image.wgsl").into()),
+            source: ShaderSource::Wgsl(Self::get_source().into()),
         });
 
         let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -308,7 +329,11 @@ impl ImagePipeline {
             });
         }
 
-        let is_srgb_f32 = if is_srgb { 1.0 } else { 0.0 };
+        // On Android, pass 2.0 to signal shaders to skip sRGB conversion entirely.
+        #[cfg(target_os = "android")]
+        let is_srgb_f32 = 2.0_f32;
+        #[cfg(not(target_os = "android"))]
+        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
         queue.write_buffer(
             &self.viewport_buffer,
             0,

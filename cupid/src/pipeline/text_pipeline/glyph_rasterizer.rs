@@ -5,9 +5,6 @@ use utils::log::debug;
 /// Embedded primary font (Roboto) — covers Latin and common scripts.
 const PRIMARY_FONT: &[u8] = include_bytes!("../../../fonts/Roboto.ttf");
 
-/// Embedded fallback font (Noto Sans SC) — covers CJK and extended Unicode.
-const FALLBACK_FONT: &[u8] = include_bytes!("../../../fonts/NotoSansSC-Regular.ttf");
-
 /// A rasterized glyph bitmap with its metrics.
 #[derive(Clone)]
 pub struct RasterizedGlyph {
@@ -191,16 +188,7 @@ fn build_fallback_chain() -> Vec<fontdue::Font> {
     let end_time = chrono::Utc::now().timestamp_millis();
 
     debug!("System fallback font loading took AAA: {} ms", end_time - start_time);
-
-    // Only load the heavy embedded NotoSansSC if no system CJK font was found.
-    // The variable font is ~17MB on disk and expands to hundreds of MB in memory
-    // due to fontdue expanding gvar/fvar variation tables.
-    if fallbacks.is_empty() {
-        if let Ok(noto) = fontdue::Font::from_bytes(FALLBACK_FONT, fontdue::FontSettings::default()) {
-            info!("No system CJK font found; loaded embedded NotoSansSC fallback");
-            fallbacks.push(noto);
-        }
-    }
+    
     fallbacks
 }
 

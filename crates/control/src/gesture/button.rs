@@ -1,5 +1,5 @@
 use attribute::dimension::Dimension;
-use std::cell::UnsafeCell;
+use std::cell::{Cell, UnsafeCell};
 use attribute::CacheBounds;
 use widget::{Element, LayoutCache, Widget, base::*, WidgetConstructor};
 use widget::style::box_decoration::BoxDecoration;
@@ -51,11 +51,11 @@ impl<W: Widget> Widget for Button<W> {
             pressed_decoration: self.pressed_decoration.clone(),
             disabled_decoration: self.disabled_decoration.clone(),
             is_disabled: self.is_disabled,
-            is_hovered: UnsafeCell::new(false),
-            is_pressed: UnsafeCell::new(false),
+            is_hovered: Cell::new(false),
+            is_pressed: Cell::new(false),
             gesture: UnsafeCell::new(gesture),
-            is_mouse_down: UnsafeCell::new(false),
-            is_dirty: UnsafeCell::new(true),
+            is_mouse_down: Cell::new(false),
+            is_dirty: Cell::new(true),
             child,
             cache: LayoutCache::new(),
             cached_bounds: CacheBounds::new(),

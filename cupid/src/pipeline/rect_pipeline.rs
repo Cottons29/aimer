@@ -58,7 +58,7 @@ impl RectPipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rect shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("rect.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/rect.wgsl").into()),
         });
 
         let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -159,7 +159,11 @@ impl RectPipeline {
         }
 
         // Update viewport uniform
-        let is_srgb_f32 = if is_srgb { 1.0 } else { 0.0 };
+        // On Android, pass 2.0 to signal shaders to skip sRGB conversion entirely.
+        #[cfg(target_os = "android")]
+        let is_srgb_f32 = 2.0_f32;
+        #[cfg(not(target_os = "android"))]
+        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
         queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
 
         // Grow instance buffer if needed

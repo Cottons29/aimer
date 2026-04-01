@@ -4,6 +4,7 @@ use attribute::size::ResolvedSize;
 use color::prelude::Color;
 use cupid::canvas::CupidCanvas;
 use cupid::utilities::Color as CupidColor;
+use utils::debug;
 
 #[allow(dead_code)]
 impl CanvasRendering for CupidCanvas {
