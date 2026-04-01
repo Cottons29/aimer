@@ -151,20 +151,24 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
     let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
     let a = in.color.a * alpha * ca;
     
-    // Always blend in linear space
-    let r_lin = srgb_to_linear(in.color.r);
-    let g_lin = srgb_to_linear(in.color.g);
-    let b_lin = srgb_to_linear(in.color.b);
-    
-    var result = vec4<f32>(r_lin * a, g_lin * a, b_lin * a, a);
+    // On Android (surface_is_srgb >= 1.5), skip sRGB conversion entirely.
+    var result: vec4<f32>;
+    if viewport.surface_is_srgb >= 1.5 {
+        result = vec4<f32>(in.color.rgb * a, a);
+    } else {
+        let r_lin = srgb_to_linear(in.color.r);
+        let g_lin = srgb_to_linear(in.color.g);
+        let b_lin = srgb_to_linear(in.color.b);
 
-    // If surface is not sRGB, convert back to sRGB for output
-    if viewport.surface_is_srgb < 0.5 {
-        if a > 0.00001 {
-            let srgb_r = linear_to_srgb(r_lin);
-            let srgb_g = linear_to_srgb(g_lin);
-            let srgb_b = linear_to_srgb(b_lin);
-            result = vec4<f32>(srgb_r * a, srgb_g * a, srgb_b * a, a);
+        result = vec4<f32>(r_lin * a, g_lin * a, b_lin * a, a);
+
+        if viewport.surface_is_srgb < 0.5 {
+            if a > 0.00001 {
+                let srgb_r = linear_to_srgb(r_lin);
+                let srgb_g = linear_to_srgb(g_lin);
+                let srgb_b = linear_to_srgb(b_lin);
+                result = vec4<f32>(srgb_r * a, srgb_g * a, srgb_b * a, a);
+            }
         }
     }
     
