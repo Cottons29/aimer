@@ -79,7 +79,7 @@ impl TextPipelineV2 {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("text shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("text.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/text.wgsl").into()),
         });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -266,7 +266,11 @@ impl TextPipelineV2 {
         }
 
         // Update viewport uniform only when dimensions or sRGB state change.
-        let is_srgb_f32 = if is_srgb { 1.0 } else { 0.0 };
+        // On Android, pass 2.0 to signal shaders to skip sRGB conversion entirely.
+        #[cfg(target_os = "android")]
+        let is_srgb_f32 = 2.0_f32;
+        #[cfg(not(target_os = "android"))]
+        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
         if self.last_viewport != (width, height) {
             self.last_viewport = (width, height);
             queue.write_buffer(
