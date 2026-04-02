@@ -1,104 +1,32 @@
+use crate::scrollable::controller::ScrollController;
 use crate::scrollable::scroll_bar::ScrollBar;
-use crate::scrollable::{ScrollAxis, ScrollBehavior};
+use crate::scrollable::ScrollAxis;
 use attribute::dimension::Dimension;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
 use attribute::{Bounds, CacheBounds};
 use canvas::CanvasRendering;
-use chrono::{DateTime, Utc};
 use events::element::ElementEvent;
-use std::cell::Cell;
 use utils::debug;
 use widget::base::*;
 use widget::{Drawable, Element};
 use winit::window::Window;
 
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DragMode {
-    None = 0,
-    Content = 1,
-    VerticalScrollbar = 2,
-    HorizontalScrollbar = 3,
-    Pending = 4,
-}
+pub use crate::scrollable::controller::DragMode;
 
 pub struct RawScrollableContainer<E: Element> {
     pub(crate) child: E,
-    pub(crate) scroll_behavior: ScrollBehavior,
-    pub(crate) axis: ScrollAxis,
+    pub(crate) ctrl: ScrollController,
     pub(crate) vertical_scroll_bar: Option<ScrollBar>,
     pub(crate) horizontal_scroll_bar: Option<ScrollBar>,
-    pub(crate) scroll_offset: Cell<Vec2d>,
-    pub(crate) last_pointer_pos: Cell<Option<Vec2d>>,
-    pub(crate) drag_mode: Cell<DragMode>, // 0=none, 1=content, 2=v_scrollbar, 3=h_scrollbar 4=pending
-    pub(crate) cached_max_scroll: Cell<Vec2d>,
-    pub(crate) cached_min_scroll: Cell<Vec2d>,
-    pub(crate) pointer_velocity: Cell<Vec2d>,
-    pub(crate) last_event_time: Cell<Option<DateTime<Utc>>>,
-    pub(crate) last_frame_time: Cell<Option<DateTime<Utc>>>,
-    pub(crate) v_thumb_rect: Cell<Option<(f32, f32, f32, f32)>>, // (x, y, w, h)
-    pub(crate) h_thumb_rect: Cell<Option<(f32, f32, f32, f32)>>, // (x, y, w, h)
-    pub(crate) v_scroll_multiplier: Cell<f32>,
-    pub(crate) h_scroll_multiplier: Cell<f32>,
-    pub(crate) last_scale: Cell<f32>,
     pub(crate) window: &'static Window,
-    pub(crate) speed_multiplier: f32,
     pub(crate) bounds: CacheBounds,
-    pub(crate) cursor_pos: Cell<Option<Vec2d>>,
 }
 
 impl<E: Element> RawScrollableContainer<E> {
     /// Compute the viewport size from the build context constraints.
     pub(crate) fn viewport_size(&self, ctx: &BuildContext) -> (f32, f32) {
         (ctx.box_constraint.max_width, ctx.box_constraint.max_height)
-    }
-
-    /// Clamp the scroll offset within the allowed range.
-    /// scroll_offset is negative (content moves up), so min_scroll <= offset <= 0 typically.
-    pub(crate) fn clamp_offset(&self, mut offset: Vec2d) -> Vec2d {
-        let min = self.cached_min_scroll.get();
-        let max = self.cached_max_scroll.get();
-        offset.x = offset.x.max(-max.x).min(-min.x);
-        offset.y = offset.y.max(-max.y).min(-min.y);
-        offset
-    }
-
-    #[inline(always)]
-    fn apply_bouncy(value: f32, min: f32, max: f32, resistance: f32) -> f32 {
-        if value < min {
-            let diff = min - value;
-            // Chrome-like power-based resistance for rubber-banding (more stable than log)
-            // d_visual = d_offset ^ 0.75 * factor
-            min - diff.powf(0.75) * (resistance * 2.0)
-        } else if value > max {
-            let diff = value - max;
-            max + diff.powf(0.75) * (resistance * 2.0)
-        } else {
-            value
-        }
-    }
-
-    pub(crate) fn visual_offset(&self, offset: Vec2d) -> Vec2d {
-        let min = self.cached_min_scroll.get();
-        let max = self.cached_max_scroll.get();
-
-        let min_x = -min.x;
-        let max_x = -max.x;
-        let min_y = -min.y;
-        let max_y = -max.y;
-
-        if self.scroll_behavior.bouncy {
-            let resistance = self.scroll_behavior.bouncy_resistance as f32;
-
-            (
-                Self::apply_bouncy(offset.x, max_x, min_x, resistance),
-                Self::apply_bouncy(offset.y, max_y, min_y, resistance),
-            )
-                .into()
-        } else {
-            (offset.x.clamp(max_x, min_x), offset.y.clamp(max_y, min_y)).into()
-        }
     }
 
     pub(crate) fn draw_scrollbar(
@@ -110,7 +38,7 @@ impl<E: Element> RawScrollableContainer<E> {
         is_vertical: bool,
     ) {
         let scale = ctx.scale;
-        let offset = self.visual_offset(self.scroll_offset.get());
+        let offset = self.ctrl.visual_offset(self.ctrl.scroll_offset.get());
 
         let track_width = match scroll_bar.track.width {
             Dimension::Px(v) => v * scale,
@@ -185,9 +113,9 @@ impl<E: Element> RawScrollableContainer<E> {
         let max_scroll = (content_extent - track_length).max(0.0);
         let multiplier = if max_thumb_move > 0.0 { max_scroll / max_thumb_move } else { 0.0 };
         if is_vertical {
-            self.v_scroll_multiplier.set(multiplier);
+            self.ctrl.v_scroll_multiplier.set(multiplier);
         } else {
-            self.h_scroll_multiplier.set(multiplier);
+            self.ctrl.h_scroll_multiplier.set(multiplier);
         }
 
         let scroll_ratio = if max_scroll > 0.0 { scroll_pos / max_scroll } else { 0.0 };
@@ -248,7 +176,7 @@ impl<E: Element> RawScrollableContainer<E> {
         let thumb_color: Color = scroll_bar.thumb.color.into();
         let thumb_x_offset = (track_width - thumb_width) / 2.0;
         let (tx, ty, tw, th) = if is_vertical {
-            self.v_thumb_rect.set(Some((
+            self.ctrl.v_thumb_rect.set(Some((
                 viewport_w - track_width + thumb_x_offset,
                 thumb_offset,
                 thumb_width,
@@ -256,7 +184,7 @@ impl<E: Element> RawScrollableContainer<E> {
             )));
             (thumb_x_offset, thumb_offset, thumb_width, thumb_length)
         } else {
-            self.h_thumb_rect.set(Some((
+            self.ctrl.h_thumb_rect.set(Some((
                 thumb_offset,
                 viewport_h - track_width + thumb_x_offset,
                 thumb_length,

@@ -1,5 +1,5 @@
 fn correct_alpha(input: f32) -> f32 {
-    return input ;
+    return input  ;
 }
 
 fn color_offset(input: f32) -> f32 {
