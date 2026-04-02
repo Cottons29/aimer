@@ -88,6 +88,7 @@ impl<'a, E: Element> GestureDetectorElement<'a, E> {
                 }
             }
         }
+        
         unsafe {
             (&mut *self.gesture.get()).handle_pointer_event(event);
         }
@@ -96,6 +97,8 @@ impl<'a, E: Element> GestureDetectorElement<'a, E> {
             self.is_dirty.set(true);
             self.window.request_redraw();
         }
+
+
     }
 
     #[inline]
@@ -234,9 +237,10 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
     fn draw(&self, ctx: &BuildContext<'_>) {
         self.is_dirty.set(false);
         let (box_width, box_height) = self.compute_dimensions(ctx);
-        let decoration = self.active_decoration();
 
         ctx.canvas.save();
+        // Compute outline strokes using the current decoration (before hover re-evaluation)
+        let decoration = self.active_decoration();
         let (ol, ot, _or, _ob) = decoration.outline.strokes(box_width, box_height, ctx.scale);
         ctx.canvas.translate((ol, ot).into());
 
@@ -244,6 +248,16 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         self.cached_bounds
             .save(ctx.scale, abs_x, abs_y, box_width, box_height);
+
+        // Re-evaluate hover state from the current cursor position so that
+        // newly-rebuilt elements (which start with is_hovered = false) still
+        // render the correct decoration when the pointer is over them.
+        if !self.is_disabled {
+            let hovering = self.cached_bounds.is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y);
+            self.is_hovered.set(hovering);
+        }
+
+        let decoration = self.active_decoration();
 
         // Draw background + border + outline using BoxDecoration
         if self.is_disabled {

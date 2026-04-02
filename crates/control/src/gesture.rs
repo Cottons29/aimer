@@ -1,18 +1,13 @@
-use events::pointer::{PointerEvent, PointerPosition};
+use crate::callback::{RawInnerCallback, CallbackInner, VoidCallback, CallbackExecutor};
 use chrono::{Duration, Local};
-use std::cell::UnsafeCell;
+use events::pointer::{PointerEvent, PointerPosition};
 use std::future::Future;
-use std::pin::Pin;
-use std::rc::Rc;
-use crate::callback::{Callback, CallbackHolder};
 
 pub mod button;
 pub mod gesture_detector;
 
-
 const DOUBLE_TAP_TIMEOUT: Duration = Duration::milliseconds(300);
 const LONG_PRESS_DURATION: Duration = Duration::milliseconds(500);
-
 
 const TAP_SLOP: f32 = 18.0;
 
@@ -25,9 +20,9 @@ pub enum GestureEvent {
 
 #[derive(Default, Debug)]
 pub struct GestureActions {
-    pub on_tap: CallbackHolder<(),()>,
-    pub on_double_tap: CallbackHolder<(),()>,
-    pub on_long_press: CallbackHolder<(),()>,
+    pub on_tap: VoidCallback,
+    pub on_double_tap: VoidCallback,
+    pub on_long_press: VoidCallback,
     #[cfg(not(target_arch = "wasm32"))]
     pub runtime_handle: Option<tokio::runtime::Handle>,
     state: GestureState,
@@ -45,29 +40,27 @@ impl GestureActions {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
-            on_tap: CallbackHolder::default(),
-            on_double_tap: CallbackHolder::default(),
-            on_long_press: CallbackHolder::default(),
+            on_tap: VoidCallback::default(),
+            on_double_tap: VoidCallback::default(),
+            on_long_press: VoidCallback::default(),
             #[cfg(not(target_arch = "wasm32"))]
             runtime_handle: None,
             state: GestureState::default(),
         }
     }
 
-    fn execute_callback(cb: &CallbackHolder<(),()>, #[cfg(not(target_arch = "wasm32"))] runtime_handle: &Option<tokio::runtime::Handle>) {
-        unsafe {
-            if let Some(callback) = (*cb.get()).as_ref() {
-                match callback {
-                    Callback::Sync(f) => f(()),
-                    Callback::Async(f) => {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        if let Some(handle) = runtime_handle {
-                            handle.spawn(f(()));
-                        }
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            wasm_bindgen_futures::spawn_local(f(()));
-                        }
+    fn execute_callback(cb: &VoidCallback, #[cfg(not(target_arch = "wasm32"))] runtime_handle: &Option<tokio::runtime::Handle>) {
+        if let Some(callback) = (*cb.get()).as_ref() {
+            match callback {
+                RawInnerCallback::Sync(f) => f(()),
+                RawInnerCallback::Async(f) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if let Some(handle) = runtime_handle {
+                        handle.spawn(f(()));
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        wasm_bindgen_futures::spawn_local(f(()));
                     }
                 }
             }
@@ -103,7 +96,11 @@ impl GestureActions {
                     self.state.last_tap_time = None;
                     self.state.last_tap_position = None;
                     utils::debug!("on_tab is called ");
-                    Self::execute_callback(&self.on_long_press,#[cfg(not(target_arch = "wasm32"))] &self.runtime_handle);
+                    Self::execute_callback(
+                        &self.on_long_press,
+                        #[cfg(not(target_arch = "wasm32"))]
+                        &self.runtime_handle,
+                    );
                     return Some(gesture);
                 }
 
@@ -115,7 +112,11 @@ impl GestureActions {
                         self.state.last_tap_position = None;
                         let gesture = GestureEvent::DoubleTap(*pos);
                         utils::debug!("on_double_tap is called ");
-                        Self::execute_callback(&self.on_double_tap,#[cfg(not(target_arch = "wasm32"))] &self.runtime_handle);
+                        Self::execute_callback(
+                            &self.on_double_tap,
+                            #[cfg(not(target_arch = "wasm32"))]
+                            &self.runtime_handle,
+                        );
                         return Some(gesture);
                     }
                 }
@@ -126,7 +127,11 @@ impl GestureActions {
                 self.state.last_tap_position = Some(*pos);
                 let gesture = GestureEvent::Tap(*pos);
                 // utils::debug!("on_tab is called ");
-                Self::execute_callback(&self.on_tap, #[cfg(not(target_arch = "wasm32"))] &self.runtime_handle);
+                Self::execute_callback(
+                    &self.on_tap,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    &self.runtime_handle,
+                );
                 Some(gesture)
             }
 
@@ -160,7 +165,7 @@ mod tests {
         let tap_called = Arc::new(AtomicBool::new(false));
         let tap_called_clone = tap_called.clone();
 
-        gesture.on_tap = CallbackHolder::<(),()>::from(move |_| {
+        gesture.on_tap = VoidCallback::from(move || {
             tap_called_clone.store(true, Ordering::SeqCst);
         });
 
@@ -177,16 +182,16 @@ mod tests {
         let tap_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let tap_count_clone = tap_count.clone();
 
-        gesture.on_tap = CallbackHolder::<(),()>::from(move |_| {
+        gesture.on_tap = VoidCallback::from(move || {
             tap_count_clone.fetch_add(1, Ordering::SeqCst);
         });
 
         let pos = PointerPosition { x: 10.0, y: 10.0 };
-        
+
         // First tap
         gesture.handle_pointer_event(&PointerEvent::Down(pos));
         gesture.handle_pointer_event(&PointerEvent::Up(pos));
-        
+
         // Second tap
         gesture.handle_pointer_event(&PointerEvent::Down(pos));
         gesture.handle_pointer_event(&PointerEvent::Up(pos));
@@ -200,7 +205,7 @@ mod tests {
         let long_press_called = Arc::new(AtomicBool::new(false));
         let long_press_called_clone = long_press_called.clone();
 
-        gesture.on_long_press = CallbackHolder::<(),()>::from(move |_| {
+        gesture.on_long_press = VoidCallback::from(move || {
             long_press_called_clone.store(true, Ordering::SeqCst);
         });
 
