@@ -3,16 +3,17 @@ use std::cell::{Cell, UnsafeCell};
 use attribute::CacheBounds;
 use widget::{Element, LayoutCache, Widget, base::*, WidgetConstructor};
 use widget::style::box_decoration::BoxDecoration;
+use crate::callback::VoidCallback;
 use crate::gesture::gesture_detector::GestureDetectorElement;
-use crate::gesture::{CallbackHolder, GestureActions};
+use crate::gesture::{CallbackInner, GestureActions};
 
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
 pub struct Button<W: Widget + 'static> {
     #[constructor(default, into)]
-    pub on_press: CallbackHolder<(), ()>,
+    pub on_press: VoidCallback,
     #[constructor(default, into)]
-    pub on_long_press: CallbackHolder<(), ()>,
+    pub on_long_press: VoidCallback,
     #[constructor(default, into)]
     pub width: Dimension,
     #[constructor(default, into)]
