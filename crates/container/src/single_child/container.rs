@@ -16,7 +16,7 @@ pub struct Container<T: Widget + 'static> {
     pub margin: LayoutSpacing,
     #[constructor(default)]
     pub box_decoration: BoxDecoration,
-    #[constructor(default, into)]
+    #[constructor(default = Option::None, into)]
     pub color: Option<Color>,
     pub(crate) child: T,
 }
@@ -197,6 +197,10 @@ impl<T: Element> Drawable for RawContainer<T> {
             parent_size: ResolvedSize { width: draw_width, height: draw_height },
             ..ctx.clone()
         };
+
+        if self.color.is_some() && self.box_decoration.background_color.is_none() {
+            self.box_decoration.update_color(self.color.unwrap())
+        }
 
         self.box_decoration.draw(&decoration_ctx);
 
