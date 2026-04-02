@@ -24,8 +24,18 @@ pub struct BoxDecoration {
     pub border_radius: BorderRadius,
     #[constructor(default,dyn_iter)]
     pub box_shadow: Vec<BoxShadow>,
-    #[constructor(default, into)]
+    #[constructor(default = Option::None, into)]
     pub background_color: Option<Color>,
+}
+
+
+impl BoxDecoration {
+    pub fn update_color(&self, new_color: impl Into<Color>)  {
+        let color_ptr = &self.background_color as *const _ as *mut Option<Color>;
+        unsafe  {
+            color_ptr.replace(Some(new_color.into()));
+        }
+    }
 }
 
 impl Drawable for BoxDecoration {
