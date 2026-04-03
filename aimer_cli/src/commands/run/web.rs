@@ -1,86 +1,34 @@
-use std::io::{BufRead, BufReader};
+use crate::commands::run::Device;
+use crate::commands::run::cargo_build::{
+    self, CargoBuildTarget, stream_stderr_as_app_log, stream_stderr_as_build_log, stream_stdout_as_app_log, stream_stdout_as_build_log,
+    wait_for_child,
+};
+use crate::commands::run::console::{RunnerEvent, Status};
+use crossbeam::channel::Sender;
+use std::net::IpAddr;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
-use crate::commands::run::console::{RunnerEvent, Status};
-use crate::commands::run::Device;
 
 pub fn spawn_web_runner(
     _: Device,
     _: String,
-    tx: std::sync::mpsc::Sender<RunnerEvent>,
-    current_child_clone:Arc<Mutex<Option<Child>>>,
-)  {
+    tx: Sender<RunnerEvent>,
+    current_child_clone: Arc<Mutex<Option<Child>>>,
+    inspector_address: IpAddr,
+    inspector_port: u16,
+) {
     let _ = tx.send(RunnerEvent::StatusChange(Status::Compiling(0)));
     let _ = tx.send(RunnerEvent::BuildLog("Running wasm-pack build...".to_string()));
 
-    let mut wasm_build = match Command::new("wasm-pack")
-        .arg("build")
-        .arg("--debug")
-        .arg("--target")
-        .arg("web")
-        .arg("--out-dir")
-        .arg("builds/web/pkg")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn(){
-        Ok(build) => build,
-        Err(e) => {
-            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run wasm-pack build: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
-            return;
-        }
-    };
-
-    let stdout = wasm_build.stdout.take().unwrap();
-    let stderr = wasm_build.stderr.take().unwrap();
-
-    *current_child_clone.lock().unwrap() = Some(wasm_build);
-
-    let tx_clone1 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                let _ = tx_clone1.send(RunnerEvent::BuildLog(l));
-            }
-        }
-    });
-
-    let tx_clone2 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        let mut compile_count = 0;
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                if l.contains("Compiling") {
-                    compile_count = (compile_count + 5).min(99);
-                    let _ = tx_clone2.send(RunnerEvent::StatusChange(Status::Compiling(compile_count)));
-                } else if l.contains("Finished") {
-                    let _ = tx_clone2.send(RunnerEvent::StatusChange(Status::Compiling(100)));
-                }
-                let _ = tx_clone2.send(RunnerEvent::BuildLog(l));
-            }
-        }
-    });
-
-    let status = loop {
-        let mut guard = current_child_clone.lock().unwrap();
-        if let Some(child) = guard.as_mut() {
-            if let Ok(Some(status)) = child.try_wait() {
-                break status;
-            }
-        } else {
-            return; // Child was removed (killed)
-        }
-        drop(guard);
-        thread::sleep(Duration::from_millis(100));
+    let status = match cargo_build::spawn_cargo_build(&CargoBuildTarget::Web, &tx, &current_child_clone, inspector_address, inspector_port)
+    {
+        Some(s) => s,
+        None => return,
     };
 
     if !status.success() {
         let _ = tx.send(RunnerEvent::BuildLog("wasm-pack build failed.".to_string()));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
         return;
     }
 
@@ -92,11 +40,12 @@ pub fn spawn_web_runner(
         .current_dir("builds/web")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn() {
+        .spawn()
+    {
         Ok(install) => install,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run npm install: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
             return;
         }
     };
@@ -106,42 +55,17 @@ pub fn spawn_web_runner(
 
     *current_child_clone.lock().unwrap() = Some(npm_install);
 
-    let tx_clone3 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                let _ = tx_clone3.send(RunnerEvent::BuildLog(l));
-            }
-        }
-    });
+    stream_stdout_as_build_log(stdout, tx.clone());
+    stream_stderr_as_build_log(stderr, tx.clone());
 
-    let tx_clone4 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                let _ = tx_clone4.send(RunnerEvent::BuildLog(l));
-            }
-        }
-    });
-
-    let status = loop {
-        let mut guard = current_child_clone.lock().unwrap();
-        if let Some(child) = guard.as_mut() {
-            if let Ok(Some(status)) = child.try_wait() {
-                break status;
-            }
-        } else {
-            return; // Child was removed (killed)
-        }
-        drop(guard);
-        thread::sleep(Duration::from_millis(100));
+    let status = match wait_for_child(&current_child_clone) {
+        Some(s) => s,
+        None => return,
     };
 
     if !status.success() {
         let _ = tx.send(RunnerEvent::BuildLog("npm install failed.".to_string()));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
         return;
     }
 
@@ -154,11 +78,12 @@ pub fn spawn_web_runner(
         .current_dir("builds/web")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn(){
+        .spawn()
+    {
         Ok(run) => run,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run npm run dev: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
             return;
         }
     };
@@ -168,40 +93,12 @@ pub fn spawn_web_runner(
 
     *current_child_clone.lock().unwrap() = Some(npm_run);
 
-    let tx_clone5 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                let _ = tx_clone5.send(RunnerEvent::AppLog(l));
-            }
-        }
-    });
-
-    let tx_clone6 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                let _ = tx_clone6.send(RunnerEvent::AppLog(l));
-            }
-        }
-    });
+    stream_stdout_as_app_log(stdout, tx.clone());
+    stream_stderr_as_app_log(stderr, tx.clone());
 
     let _ = tx.send(RunnerEvent::StatusChange(Status::Running));
 
-    loop {
-        let mut guard = current_child_clone.lock().unwrap();
-        if let Some(child) = guard.as_mut() {
-            if let Ok(Some(_)) = child.try_wait() {
-                break;
-            }
-        } else {
-            return;
-        }
-        drop(guard);
-        thread::sleep(Duration::from_millis(100));
-    }
+    wait_for_child(&current_child_clone);
 
     let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
 }
