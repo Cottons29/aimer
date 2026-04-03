@@ -6,13 +6,15 @@
 //! sends the JSON snapshot to the CLI server.
 
 #[cfg(not(target_arch = "wasm32"))]
-pub mod server  {
-    use crate::{InspectorMessage, InspectorState};
+pub mod server {
+    use crate::{InspectorClient, InspectorMessage, InspectorState};
     use futures_util::{SinkExt, StreamExt};
+    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::{
-        atomic::{AtomicBool, Ordering}, Arc,
-        Mutex,
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     };
+    use tokio::net::TcpListener;
     use tokio::sync::broadcast;
     use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::tungstenite::Utf8Bytes;
@@ -23,6 +25,8 @@ pub mod server  {
     pub struct InspectorHandle {
         pub enabled: Arc<AtomicBool>,
         tx: broadcast::Sender<String>,
+        pub port: u16,
+        pub address: IpAddr,
         /// Shared state for CLI consumers to read the latest tree / status.
         pub state: Arc<Mutex<InspectorState>>,
     }
@@ -31,6 +35,10 @@ pub mod server  {
         /// Returns `true` if the inspector is currently active.
         pub fn is_enabled(&self) -> bool {
             self.enabled.load(Ordering::Relaxed)
+        }
+
+        pub fn get_address(&self) -> String {
+            format!("{}:{}", self.address, self.port)
         }
 
         /// Toggle the inspector on/off and broadcast the new status.
@@ -91,29 +99,63 @@ pub mod server  {
     pub struct InspectorServer;
 
     impl InspectorServer {
+        async fn bind_port(address: &str) -> Result<TcpListener, std::io::Error> {
+            match TcpListener::bind(address).await {
+                Ok(l) => Ok(l),
+                Err(e) => {
+                    // info!("[inspector] failed to bind server: {}", e);
+                    Err(e)
+                }
+            }
+        }
+
         /// Start the WebSocket inspector server on the given port.
         /// Returns an `InspectorHandle` that the CLI uses to read state and send commands.
-        pub fn start(port: u16, runtime: &tokio::runtime::Handle) -> InspectorHandle {
+        pub fn start(
+            inspector_address: IpAddr,
+            inspector_port: u16,
+            runtime: &tokio::runtime::Handle,
+        ) -> Result<InspectorHandle, std::io::Error> {
             let (tx, _rx) = broadcast::channel::<String>(64);
             let enabled = Arc::new(AtomicBool::new(false));
 
             let state = Arc::new(Mutex::new(InspectorState::default()));
-            let handle = InspectorHandle { enabled: enabled.clone(), tx: tx.clone(), state: state.clone() };
 
             let tx_server = tx.clone();
             let enabled_server = enabled.clone();
             let state_server = state.clone();
-            runtime.spawn(async move {
-                let addr = format!("127.0.0.1:{}", port);
+            let mut inspector_port_draft = inspector_port;
+            let mut retry_count = 0;
 
-                let listener = match tokio::net::TcpListener::bind(&addr).await {
-                    Ok(l) => l,
-                    Err(e) => {
-                        println!("[inspector] failed to bind server: {}", e);
-                        return;
+            let (listener, handle): (TcpListener, InspectorHandle) = runtime.block_on(async move {
+                loop {
+                    let addr = format!("{inspector_address}:{inspector_port_draft}");
+                    if let Ok(listener) = Self::bind_port(&addr).await {
+                        let handle = InspectorHandle {
+                            enabled: enabled.clone(),
+                            tx: tx.clone(),
+                            state: state.clone(),
+                            address: inspector_address,
+                            port: inspector_port_draft,
+                        };
+                        break Ok((listener, handle));
+                    } else {
+                        // info!("[inspector] failed to bind server, retrying...");
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        inspector_port_draft += 1;
+                        retry_count += 1;
+                        if retry_count > 20 {
+                            // error!("Failed to bind to port after 20 retries, giving up");
+                            break Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to bind to port after 20 retries"));
+                        }
+                        continue;
                     }
-                };
+                }
+            })?;
 
+            // println!("[inspector] listening on {}:{}", inspector_address, inspector_port_draft);
+
+            runtime.spawn(async move {
                 loop {
                     let (stream, _) = match listener.accept().await {
                         Ok(res) => res,
@@ -143,54 +185,54 @@ pub mod server  {
 
                     loop {
                         tokio::select! {
-                        msg = rx.recv() => {
-                            match msg {
-                                Ok(json) => {
-                                    if write.send(Message::Text(Utf8Bytes::from(json.as_str()))).await.is_err() {
-                                        break;
-                                    }
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                        incoming = read.next() => {
-                            match incoming {
-                                Some(Ok(Message::Text(text))) => {
-                                    if let Ok(msg) = serde_json::from_str::<InspectorMessage>(&text) {
-                                        match msg {
-                                            InspectorMessage::Tree { root } => {
-                                                let mut s = state_server.lock().unwrap();
-                                                s.tree = root;
-                                            }
-                                            InspectorMessage::Status { enabled } => {
-                                                enabled_server.store(enabled, Ordering::Relaxed);
-                                                let mut s = state_server.lock().unwrap();
-                                                s.enabled = enabled;
-                                            }
-                                            InspectorMessage::Hovered { id } => {
-                                                let mut s = state_server.lock().unwrap();
-                                                s.hovered_widget_id = id;
-                                            }
-                                        }
-                                    } else if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(&text) {
-                                        if cmd.get("type").and_then(|v| v.as_str()) == Some("toggle") {
-                                            let new_val = !enabled_server.load(Ordering::Relaxed);
-                                            enabled_server.store(new_val, Ordering::Relaxed);
-                                            let mut s = state_server.lock().unwrap();
-                                            s.enabled = new_val;
-                                            drop(s);
-                                            let status_msg = InspectorMessage::Status { enabled: new_val };
-                                            if let Ok(json) = serde_json::to_string(&status_msg) {
-                                                let _ = tx_server.send(json);
-                                            }
+                            msg = rx.recv() => {
+                                match msg {
+                                    Ok(json) => {
+                                        if write.send(Message::Text(Utf8Bytes::from(json.as_str()))).await.is_err() {
+                                            break;
                                         }
                                     }
+                                    Err(_) => break,
                                 }
-                                Some(Ok(Message::Close(_))) | None => break,
-                                _ => {}
+                            }
+                            incoming = read.next() => {
+                                match incoming {
+                                    Some(Ok(Message::Text(text))) => {
+                                        if let Ok(msg) = serde_json::from_str::<InspectorMessage>(&text) {
+                                            match msg {
+                                                InspectorMessage::Tree { root } => {
+                                                    let mut s = state_server.lock().unwrap();
+                                                    s.tree = root;
+                                                }
+                                                InspectorMessage::Status { enabled } => {
+                                                    enabled_server.store(enabled, Ordering::Relaxed);
+                                                    let mut s = state_server.lock().unwrap();
+                                                    s.enabled = enabled;
+                                                }
+                                                InspectorMessage::Hovered { id } => {
+                                                    let mut s = state_server.lock().unwrap();
+                                                    s.hovered_widget_id = id;
+                                                }
+                                            }
+                                        } else if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(&text) {
+                                            if cmd.get("type").and_then(|v| v.as_str()) == Some("toggle") {
+                                                let new_val = !enabled_server.load(Ordering::Relaxed);
+                                                enabled_server.store(new_val, Ordering::Relaxed);
+                                                let mut s = state_server.lock().unwrap();
+                                                s.enabled = new_val;
+                                                drop(s);
+                                                let status_msg = InspectorMessage::Status { enabled: new_val };
+                                                if let Ok(json) = serde_json::to_string(&status_msg) {
+                                                    let _ = tx_server.send(json);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Some(Ok(Message::Close(_))) | None => break,
+                                    _ => {}
+                                }
                             }
                         }
-                    }
                     }
 
                     {
@@ -202,7 +244,7 @@ pub mod server  {
                 }
             });
 
-            handle
+            Ok(handle)
         }
 
         /// Recursively walk the element tree and build a `WidgetNode` snapshot.
@@ -228,7 +270,11 @@ pub mod server  {
                         .next()
                         .unwrap_or("Unknown")
                         .to_string(),
-                    x, y, width, height, children,
+                    x,
+                    y,
+                    width,
+                    height,
+                    children,
                 }
             }
             COUNTER.store(0, Ordering::Relaxed);
@@ -270,13 +316,14 @@ pub mod server  {
         }
 
         /// Connect to the CLI inspector server and return an `InspectorAppHandle`.
-        pub fn connect(port: u16, runtime: &tokio::runtime::Handle) -> Self {
+        pub fn connect(runtime: &tokio::runtime::Handle, address: IpAddr, port: u16) -> Self {
             let enabled = Arc::new(AtomicBool::new(false));
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
+            // debug!("Connecting to inspector server at {}:{}", address, port);
             let enabled_bg = enabled.clone();
             runtime.spawn(async move {
-                let url = format!("ws://127.0.0.1:{}", port);
+                let url = format!("ws://{}:{}", address, port);
 
                 loop {
                     let ws_stream = match tokio_tungstenite::connect_async(&url).await {
@@ -330,9 +377,12 @@ pub mod server {
     use crate::{InspectorMessage, WidgetNode};
     use serde::{Deserialize, Serialize};
     use std::cell::RefCell;
-    use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
-    use wasm_bindgen::prelude::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
     use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::*;
     use web_sys::{MessageEvent, WebSocket};
     use widget::Element;
 
@@ -367,7 +417,8 @@ pub mod server {
             let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
                 if let Some(ws) = self.ws.borrow().as_ref() {
-                    if ws.ready_state() == 1 { // WebSocket::OPEN
+                    if ws.ready_state() == 1 {
+                        // WebSocket::OPEN
                         let _ = ws.send_with_str(&json);
                     }
                 }
@@ -386,11 +437,10 @@ pub mod server {
         }
     }
 
-    pub fn start(port: u16) -> InspectorHandle {
+    pub fn start(inspector_port: u16) -> InspectorHandle {
         let enabled = Arc::new(AtomicBool::new(false));
         let ws_ref = Arc::new(RefCell::new(None));
-
-        let url = format!("ws://127.0.0.1:{}", port);
+        let url = format!("ws://127.0.0.1:{}", inspector_port);
 
         let ws = match WebSocket::new(&url) {
             Ok(ws) => ws,
@@ -445,7 +495,11 @@ pub mod server {
                     .next()
                     .unwrap_or("Unknown")
                     .to_string(),
-                x, y, width, height, children,
+                x,
+                y,
+                width,
+                height,
+                children,
             }
         }
         COUNTER.store(0, Ordering::Relaxed);

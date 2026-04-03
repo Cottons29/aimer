@@ -40,6 +40,26 @@ impl RawTextWidget {
 /// this is low level TextWidget that covert to element
 impl Drawable for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
+        #[cfg(debug_assertions)]
+        {
+            if crate::inspector_overlay::is_enabled() {
+                let (start_x, start_y) = ctx.canvas.get_transform_translation();
+                let size = self.content_size(ctx);
+                let end_x = start_x + size.width;
+                let end_y = start_y + size.height;
+
+                let scale = ctx.scale;
+                let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
+                let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
+
+                let cp = ctx.cursor_pos;
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
+                    if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
+                        *hovered = Some(("RawTextWidget", l_start, l_end));
+                    }
+                }
+            }
+        }
         let canvas = &ctx.canvas;
         let font_size = self.font_size(ctx.scale);
         let text_width = canvas.measure_text(&self.text, font_size);

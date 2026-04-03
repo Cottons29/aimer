@@ -73,6 +73,10 @@ impl<P: ImageProvider> Element for RawImageWidget<P> {
         result
     }
 
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.size.resolve(&ctx.parent_size, ctx.scale)
+    }
+
     fn invalidate_layout(&self) {
         self.cache.invalidate();
     }
@@ -83,7 +87,29 @@ impl<P: ImageProvider> Element for RawImageWidget<P> {
 }
 
 impl<P: ImageProvider> Drawable for RawImageWidget<P> {
+
+
     fn draw(&self, ctx: &BuildContext) {
+        #[cfg(debug_assertions)]
+        {
+            if widget::inspector_overlay::is_enabled() {
+                let (start_x, start_y) = ctx.canvas.get_transform_translation();
+                let size = self.content_size(ctx);
+                let end_x = start_x + size.width;
+                let end_y = start_y + size.height;
+
+                let scale = ctx.scale;
+                let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
+                let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
+
+                let cp = ctx.cursor_pos;
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
+                    if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
+                        *hovered = Some((self.debug_name(), l_start, l_end));
+                    }
+                }
+            }
+        }
         let size = self.computed_size(ctx);
         let image_result = if let Some(result) = unsafe { &*self.cached_id.get() } {
             if result == &ImageResult::Loading {

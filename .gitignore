@@ -5,3 +5,4 @@ target
 playground
 error.log
 s_data
+Cargo.lock

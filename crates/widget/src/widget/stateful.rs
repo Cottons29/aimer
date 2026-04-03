@@ -362,36 +362,27 @@ impl StatefulElement {
 
 impl Drawable for StatefulElement {
     fn draw(&self, ctx: &BuildContext) {
-        // #[cfg(debug_assertions)]
-        // {
-        //     if crate::inspector_overlay::is_enabled() {
-        //         #[cfg(not(target_arch = "wasm32"))]
-        //         let (start_x, start_y) = {
-        //             let matrix = ctx.canvas.local_to_device_as_3x3();
-        //             (matrix.translate_x() as f32, matrix.translate_y() as f32)
-        //         };
-        //         #[cfg(target_arch = "wasm32")]
-        //         let (start_x, start_y) = {
-        //             let matrix = ctx.canvas.get_transform().unwrap();
-        //             (matrix.e() as f32, matrix.f() as f32)
-        //         };
-        //         let size = self.content_size(ctx);
-        //         let end_x = start_x + size.width as f32;
-        //         let end_y = start_y + size.height as f32;
-        //
-        //         let scale = ctx.scale;
-        //         let l_start = crate::base::Vec2d { x: (start_x as f64 / scale as f64) as _, y: (start_y as f64 / scale as f64) as _ };
-        //         let l_end = crate::base::Vec2d { x: (end_x as f64 / scale as f64) as _, y: (end_y as f64 / scale as f64) as _ };
-        //         self.bounds.set(Some((l_start, l_end)));
-        //
-        //         let cp = ctx.cursor_pos;
-        //         if (cp.x as f32) >= start_x && (cp.x as f32) <= end_x && (cp.y as f32) >= start_y && (cp.y as f32) <= end_y {
-        //             if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
-        //                 *hovered = Some((self.debug_name, l_start, l_end));
-        //             }
-        //         }
-        //     }
-        // }
+        #[cfg(debug_assertions)]
+        {
+            if crate::inspector_overlay::is_enabled() {
+                let (start_x, start_y) = ctx.canvas.get_transform_translation();
+                let size = self.content_size(ctx);
+                let end_x = start_x + size.width;
+                let end_y = start_y + size.height;
+
+                let scale = ctx.scale;
+                let l_start = crate::base::Vec2d { x: start_x / scale, y: start_y / scale };
+                let l_end = crate::base::Vec2d { x: end_x / scale, y: end_y / scale };
+                self.bounds.set(Some((l_start, l_end)));
+
+                let cp = ctx.cursor_pos;
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
+                    if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
+                        *hovered = Some((self.debug_name, l_start, l_end));
+                    }
+                }
+            }
+        }
         self.rebuild_if_dirty(ctx);
         // Safety: single-threaded rendering pipeline
         let child = unsafe { &*self.child.0.get() };
@@ -400,17 +391,10 @@ impl Drawable for StatefulElement {
 }
 
 impl Element for StatefulElement {
-
-    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        if self.bounds.get().is_some() {
-            return self.bounds.get();
-        }
-        unsafe { &*self.child.0.get() }.pos_start_end()
-    }
-
     fn pos(&self) -> Option<Vec2d> {
         unsafe { &*self.child.0.get() }.pos()
     }
+
     fn size(&self) -> Option<Size> {
         unsafe { &*self.child.0.get() }.size()
     }
@@ -429,6 +413,12 @@ impl Element for StatefulElement {
             },
             event,
         )
+    }
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        if self.bounds.get().is_some() {
+            return self.bounds.get();
+        }
+        unsafe { &*self.child.0.get() }.pos_start_end()
     }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         // Safety: single-threaded rendering pipeline

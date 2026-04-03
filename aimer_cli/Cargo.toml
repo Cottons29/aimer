@@ -1,15 +1,30 @@
 [package]
 name = "aimer_cli"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2024"
+
+[[bin]]
+name = "aimer"
+path = "./src/bin.rs"
 
 [dependencies]
 inspector.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread"]}
-ansi-to-tui = "8.0.1"
+ansi-to-tui.workspace = true
 clap.workspace = true
 crossterm.workspace = true
 inquire.workspace = true
 ratatui.workspace = true
 arboard.workspace = true
 colored.workspace = true
+local-ip-address.workspace = true
+crossbeam.workspace = true
+
+[profile.release]
+opt-level = 3
+debug-assertions = false
+codegen-units = 1
+lto = true
+split-debuginfo="packed"
+panic = "abort"
+strip="symbols"
