@@ -1,3 +1,4 @@
+use attribute::CacheBounds;
 use crate::flex::raw_flex::RawFlex;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 use constructor::WidgetConstructor;
@@ -34,7 +35,7 @@ impl<W: Widget + 'static> Widget for Column<W> {
             children,
             cache: Default::default(),
             debug_name: "Column",
-            bounds: std::cell::Cell::new(None),
+            cache_bound: CacheBounds::new(),
         })
     }
 }
@@ -68,7 +69,7 @@ impl<W: Widget + 'static> Widget for Row<W> {
             children,
             cache: Default::default(),
             debug_name: "Row",
-            bounds: std::cell::Cell::new(None),
+            cache_bound: CacheBounds::new(),
         })
     }
 }
