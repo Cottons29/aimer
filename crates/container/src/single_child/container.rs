@@ -174,8 +174,7 @@ impl<T: Element> Drawable for RawContainer<T> {
         #[cfg(debug_assertions)]
         {
             if widget::inspector_overlay::is_enabled() {
-                // TODO: expose transform position from AimerCanvas for inspector
-                let (start_x, start_y): (f32, f32) = (0.0, 0.0);
+                let (start_x, start_y) = ctx.canvas.get_transform_translation();
                 let end_x = start_x + box_width;
                 let end_y = start_y + box_height;
 
@@ -185,7 +184,7 @@ impl<T: Element> Drawable for RawContainer<T> {
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if cp.x >= start_x && cp.x <= end_x && cp.y >= start_y && cp.y <= end_y {
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
                     if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
                         *hovered = Some((self.debug_name, l_start, l_end));
                     }
@@ -269,11 +268,6 @@ impl<T: Element> Element for RawContainer<T> {
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.bounds.get()
-    }
-
-    fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
-        // Container handles its own child rendering in draw() with proper offset,
-        // so we don't expose children here to avoid double-rendering.
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
