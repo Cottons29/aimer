@@ -39,16 +39,18 @@ pub fn log(msg: &str) {
         println!("[{}] {}", label, colored_msg);
     }
     #[cfg(target_arch = "wasm32")]
-    #[cfg(debug_assertions)]
     {
-        let fmt = format!("[INFO]  {}", msg);
-        let location = extract_location(Location::caller(), &fmt, "log");
-        console::eval(&location);
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        let fmt = format!("[INFO]  {}", msg);
-        console::log(&fmt);
+        #[cfg(debug_assertions)]
+        {
+            let fmt = format!("[INFO]  {}", msg);
+            let location = extract_location(Location::caller(), &fmt, "log");
+            console::eval(&location);
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let fmt = format!("[INFO]  {}", msg);
+            console::log(&fmt);
+        }
     }
 }
 
@@ -61,16 +63,18 @@ pub fn warn(msg: &str) {
         println!("[{}] {}", label, colored_msg);
     }
     #[cfg(target_arch = "wasm32")]
-    #[cfg(debug_assertions)]
     {
-        let fmt = format!("[WARN]  {}", msg);
-        let location = extract_location(Location::caller(), &fmt, "warn");
-        console::eval(&location);
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        let fmt = format!("[WARN]  {}", msg);
-        console::warn(&fmt);
+        #[cfg(debug_assertions)]
+        {
+            let fmt = format!("[WARN]  {}", msg);
+            let location = extract_location(Location::caller(), &fmt, "warn");
+            console::eval(&location);
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let fmt = format!("[WARN]  {}", msg);
+            console::warn(&fmt);
+        }
     }
 }
 
@@ -83,16 +87,18 @@ pub fn error(msg: &str) {
         println!("[{}] {}", label, colored_msg);
     }
     #[cfg(target_arch = "wasm32")]
-    #[cfg(debug_assertions)]
     {
-        let fmt = format!("[ERROR] {}", msg);
-        let location = extract_location(Location::caller(), &fmt, "error");
-        console::eval(&location);
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        let fmt = format!("[ERROR] {}", msg);
-        console::error(&fmt);
+        #[cfg(debug_assertions)]
+        {
+            let fmt = format!("[ERROR] {}", msg);
+            let location = extract_location(Location::caller(), &fmt, "error");
+            console::eval(&location);
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let fmt = format!("[ERROR] {}", msg);
+            console::error(&fmt);
+        }
     }
 }
 
@@ -105,16 +111,18 @@ pub fn debug(msg: &str) {
         println!("[{}] {}", label, colored_msg);
     }
     #[cfg(target_arch = "wasm32")]
-    #[cfg(debug_assertions)]
     {
-        let fmt = format!("[DEBUG] {}", msg);
-        let location = extract_location(Location::caller(), &fmt, "log");
-        console::eval(&location);
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        let fmt = format!("[DEBUG] {}", msg);
-        console::log(&fmt);
+        #[cfg(debug_assertions)]
+        {
+            let fmt = format!("[DEBUG] {}", msg);
+            let location = extract_location(Location::caller(), &fmt, "log");
+            console::eval(&location);
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let fmt = format!("[DEBUG] {}", msg);
+            console::log(&fmt);
+        }
     }
 }
 
