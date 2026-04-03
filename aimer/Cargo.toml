@@ -5,9 +5,7 @@ edition = "2024"
 resolver = "3"
 description = "The organized export of other Aimer project"
 
-[[bin]]
-name = "aimer"
-path = "src/bin.rs"
+
 
 
 [dependencies]
@@ -23,17 +21,4 @@ wasm-bindgen.workspace = true
 animation.workspace = true
 utils.workspace = true
 router.workspace = true
-media.workspace = true
-###############
-[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
-aimer_cli.workspace = true
-
-
-[profile.release]
-opt-level = 3
-debug-assertions = false
-codegen-units = 1
-lto = true
-split-debuginfo="packed"
-panic = "abort"
-strip="symbols"
+assets.workspace = true
