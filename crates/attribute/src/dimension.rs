@@ -1,8 +1,7 @@
-
 use crate::position::Vec2d;
+use crate::size::{ResolvedSize, Size};
 use std::cell::Cell;
 use std::ops::{Div, Mul};
-use crate::size::{ResolvedSize, Size};
 
 ///
 /// Represents a dimension type that can be used to define sizes in different units.
@@ -135,6 +134,10 @@ impl CacheBounds {
         self.bound
     }
 
+    pub fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.bound.map(|b| (Vec2d { x: b.x, y: b.y }, Vec2d { x: b.x + b.width, y: b.y + b.height }))
+    }
+
     pub const fn set_bounds(&self, bounds: Bounds) {
         let bound_ptr = &raw const self.bound as *mut Option<Bounds>;
         unsafe {
@@ -160,7 +163,6 @@ impl CacheBounds {
         let bound = Bounds::new(cache_x, cache_y, cache_w, cache_h);
         self.set_bounds(bound);
     }
-    
 
     pub const fn is_inside(&self, x: f32, y: f32) -> bool {
         let Some(bound) = self.bound else { return false };
