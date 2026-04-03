@@ -4,6 +4,7 @@ use attribute::position::Vec2d;
 #[cfg(not(target_arch = "wasm32"))]
 use inspector::InspectorAppHandle;
 use std::cell::Cell;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
@@ -11,13 +12,12 @@ use tokio::runtime::Runtime;
 use widget::Widget;
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
 
+use utils::{debug, info};
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
-use utils::debug;
 
 #[cfg(target_os = "android")]
-pub static ANDROID_APP: std::sync::OnceLock<AndroidApp> =
-    std::sync::OnceLock::new();
+pub static ANDROID_APP: std::sync::OnceLock<AndroidApp> = std::sync::OnceLock::new();
 
 static APP_STARTED: AtomicBool = AtomicBool::new(false);
 
@@ -54,10 +54,7 @@ pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
     let text = String::from_utf8_lossy(bytes).to_string();
 
     let Some(proxy) = EVENT_PROXY.get() else {
-        utils::debug!(
-            "trigger_rust_insert_text: EVENT_PROXY not initialized yet (len={})",
-            len
-        );
+        utils::debug!("trigger_rust_insert_text: EVENT_PROXY not initialized yet (len={})", len);
         return;
     };
 
@@ -147,6 +144,12 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     EVENT_PROXY.set(event_loop.create_proxy()).ok();
 
+    const DEFAULT_INSPECTOR_PORT: &str = env!("DEFAULT_INSPECTOR_PORT");
+    const DEFAULT_INSPECTOR_ADDRESS: &str = env!("DEFAULT_INSPECTOR_ADDRESS");
+
+    info!("DEFAULT_INSPECTOR_PORT : {}", DEFAULT_INSPECTOR_PORT);
+    info!("DEFAULT_INSPECTOR_ADDRESS : {}", DEFAULT_INSPECTOR_ADDRESS);
+
     event_loop.set_control_flow(ControlFlow::Wait);
 
     utils::debug!("Creating async runtime...");
@@ -154,9 +157,13 @@ fn start_event_loop(widget: impl Widget + 'static) {
     let async_runtime = Runtime::new().expect("Failed to create async runtime");
 
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-    let inspector = InspectorAppHandle::connect(inspector::DEFAULT_INSPECTOR_PORT, async_runtime.handle());
+    let inspector = InspectorAppHandle::connect(
+        async_runtime.handle(),
+        DEFAULT_INSPECTOR_ADDRESS.parse::<IpAddr>().unwrap(),
+        DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap(),
+    );
     #[cfg(all(debug_assertions, target_arch = "wasm32"))]
-    let inspector = inspector::start(inspector::DEFAULT_INSPECTOR_PORT);
+    let inspector = inspector::start(DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap());
 
     utils::info!("Creating App instance...");
     let mut app = AimerApplicationHandler {

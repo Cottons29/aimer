@@ -1,10 +1,12 @@
-use crate::VERSION;
+
 use colored::{Color, Colorize};
 use std::error::Error;
 use std::fmt::Debug;
 
 #[derive(Debug)]
 pub struct VersionCommand;
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 
 impl VersionCommand {
     pub(crate) fn execute() {
@@ -35,7 +37,7 @@ impl VersionCommand {
             String::new(),
             format!("Welcome to {}!", "Aimer 🎍".green().bold()),
             // format!("A {} cross-platform framework for building gui applications.","Rust".red().bold() ),
-            "A cross-platform framework for building gui applications.".into(),
+            "A cross-platform framework for building pretty gui applications.".into(),
             format!("Aimer are written in {} 🦀", "Rust".red().bold()),
             String::new(),
             formatted_version,

@@ -1,5 +1,5 @@
 use attribute::dimension::Dimension;
-use std::cell::{Cell, UnsafeCell};
+use std::cell::{Cell, RefCell};
 use attribute::CacheBounds;
 use widget::{Element, LayoutCache, Widget, base::*, WidgetConstructor};
 use widget::style::box_decoration::BoxDecoration;
@@ -15,6 +15,8 @@ pub struct Button<W: Widget + 'static> {
     #[constructor(default, into)]
     pub on_long_press: VoidCallback,
     #[constructor(default, into)]
+    pub on_double_press: VoidCallback,
+    #[constructor(default, into)]
     pub width: Dimension,
     #[constructor(default, into)]
     pub height: Dimension,
@@ -28,6 +30,8 @@ pub struct Button<W: Widget + 'static> {
     pub pressed_decoration: BoxDecoration,
     #[constructor(default)]
     pub disabled_decoration: BoxDecoration,
+    #[constructor(default, into)]
+    pressed_overlay_color: Option<Color>,
     child: W,
 }
 
@@ -39,6 +43,7 @@ impl<W: Widget> Widget for Button<W> {
         let mut gesture = GestureActions::new();
         gesture.on_tap = self.on_press.clone();
         gesture.on_long_press = self.on_long_press.clone();
+        gesture.on_double_press = self.on_double_press.clone();
         #[cfg(not(target_arch = "wasm32"))]
         {
             gesture.runtime_handle = Some(ctx.async_handle.clone());
@@ -54,7 +59,8 @@ impl<W: Widget> Widget for Button<W> {
             is_disabled: self.is_disabled,
             is_hovered: Cell::new(false),
             is_pressed: Cell::new(false),
-            gesture: UnsafeCell::new(gesture),
+            pressed_overlay_color: self.pressed_overlay_color,
+            gesture: RefCell::new(gesture),
             is_mouse_down: Cell::new(false),
             is_dirty: Cell::new(true),
             child,

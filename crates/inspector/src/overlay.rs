@@ -32,7 +32,10 @@ impl InspectorOverlay {
                     );
 
                     let label = format!("{name} {:.1}x{:.1}", w, h);
-                    let font_size = 12.0_f32;
+                    #[cfg(target_arch = "wasm32")]
+                    let font_size = 13.0_f32;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let font_size = 16.0_f32;
                     let label_w_raw = canvas.measure_text(&label, font_size);
                     let label_w = label_w_raw + 8.0;
                     let label_h = font_size  + 4.0;

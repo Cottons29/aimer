@@ -22,7 +22,7 @@ use std::rc::Rc;
 ///
 /// # Example
 /// ```rust
-/// use some_module::{CallbackExecutor, RawInnerCallback};
+/// use crate::control::callback::{CallbackExecutor, RawInnerCallback};
 ///
 /// struct MyCallbackExecutor {
 ///     callback: Option<RawInnerCallback<i32, String>>,

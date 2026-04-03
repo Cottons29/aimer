@@ -1,4 +1,4 @@
-pub mod console;
+
 pub mod ios;
 pub mod ios_sim;
 pub mod macos;
@@ -6,6 +6,7 @@ pub mod web;
 pub mod android;
 pub mod android_sim;
 pub mod utilities;
+pub(crate) mod cargo_build;
 
 use crate::targets::Targets;
 use crate::targets::Targets::Terminated;
@@ -23,6 +24,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use crate::commands::console;
 
 #[derive(Clone, Debug)]
 pub struct Device {

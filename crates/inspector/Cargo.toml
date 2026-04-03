@@ -12,7 +12,6 @@ tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
 [dependencies]
 canvas.workspace = true
 widget.workspace = true
-utils.workspace = true
 attribute.workspace = true
 color.workspace = true
 futures-util = "0.3"

@@ -272,6 +272,41 @@ impl Renderer {
                 multiview_mask: None,
             });
 
+            // Render images first so that rects and text (including inspector overlay) render on top
+            {
+                let mut current_texture_id = None;
+                let mut batch = Vec::new();
+
+                for rc in &self.resolved {
+                    if let ResolvedKind::Image { texture_id, instance } = &rc.kind {
+                        if current_texture_id.is_none() {
+                            current_texture_id = Some(*texture_id);
+                        }
+
+                        if Some(*texture_id) != current_texture_id {
+                            // Flush current batch
+                            if let Some(tid) = current_texture_id {
+                                if !batch.is_empty() {
+                                    self.image_pipeline
+                                        .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &batch);
+                                }
+                            }
+                            current_texture_id = Some(*texture_id);
+                            batch.clear();
+                        }
+                        batch.push(*instance);
+                    }
+                }
+
+                // Flush last batch
+                if let Some(tid) = current_texture_id {
+                    if !batch.is_empty() {
+                        self.image_pipeline
+                            .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &batch);
+                    }
+                }
+            }
+
             // Flush rects (AA clipping is handled per-instance in the shader)
             self.rect_pipeline
                 .flush(device, queue, &mut pass, width, height, is_srgb);
@@ -279,39 +314,6 @@ impl Renderer {
             // Render text
             if !self.text_requests.is_empty() {
                 self.text_pipeline.render(&mut pass);
-            }
-
-            // Render images (batched by texture_id)
-            let mut current_texture_id = None;
-            let mut batch = Vec::new();
-
-            for rc in &self.resolved {
-                if let ResolvedKind::Image { texture_id, instance } = &rc.kind {
-                    if current_texture_id.is_none() {
-                        current_texture_id = Some(*texture_id);
-                    }
-
-                    if Some(*texture_id) != current_texture_id {
-                        // Flush current batch
-                        if let Some(tid) = current_texture_id {
-                            if !batch.is_empty() {
-                                self.image_pipeline
-                                    .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &batch);
-                            }
-                        }
-                        current_texture_id = Some(*texture_id);
-                        batch.clear();
-                    }
-                    batch.push(*instance);
-                }
-            }
-
-            // Flush last batch
-            if let Some(tid) = current_texture_id {
-                if !batch.is_empty() {
-                    self.image_pipeline
-                        .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &batch);
-                }
             }
         }
 

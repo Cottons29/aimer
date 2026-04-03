@@ -14,6 +14,7 @@ pub struct InspectorClient {
 }
 
 impl InspectorClient {
+
     /// Spawn the background WebSocket client thread and return the handle.
     pub fn connect(port: u16) -> Self {
         let state = Arc::new(Mutex::new(InspectorState::default()));

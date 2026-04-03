@@ -22,7 +22,7 @@ members = [
     "crates/router",
     "crates/inspector",
     "cupid",
-    "crates/media"
+    "crates/assets"
 ]
 
 
@@ -46,7 +46,7 @@ events = { path = "crates/events" }
 router = {path = "crates/router" }
 inspector = {path = "./crates/inspector"}
 cupid = {path = "./cupid"}
-media = {path = "./crates/media"}
+assets = {path = "crates/assets" }
 
 
 
@@ -98,6 +98,9 @@ font-kit = "0.14"
 core-foundation-sys = "0.8.7"
 reqwest = {version = "0.13.2",default-features = false, features = ["rustls", "native-tls", "http2"] }
 openssl = { version = "0.10", features = ["vendored"] }
+local-ip-address = "0.6.11"
+
+
 
 # Aimer cli dependencies
 crossterm = "0.29.0"

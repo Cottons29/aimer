@@ -1,7 +1,12 @@
 use crate::commands::run::Device;
+use crate::commands::run::cargo_build::{
+    self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_build_log, stream_stdout_with_gradle_progress, wait_for_child,
+};
 use crate::commands::run::console::{RunnerEvent, Status};
+use crossbeam::channel::Sender;
 use std::env::current_dir;
 use std::io::{BufRead, BufReader};
+use std::net::IpAddr;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -29,8 +34,10 @@ fn resolve_compatible_java_home() -> Option<String> {
 pub fn spawn_android_runner(
     device: Device,
     pkg_name: String,
-    tx: std::sync::mpsc::Sender<RunnerEvent>,
+    tx: Sender<RunnerEvent>,
     current_child_clone: Arc<Mutex<Option<Child>>>,
+    inspector_address: IpAddr,
+    inspector_port: u16,
 ) {
     let abi_output = match Command::new("adb")
         .args(["-s", &device.id, "shell", "getprop", "ro.product.cpu.abi"])
@@ -58,76 +65,20 @@ pub fn spawn_android_runner(
     let _ = tx.send(RunnerEvent::StatusChange(Status::Compiling(0)));
     let _ = tx.send(RunnerEvent::BuildLog(format!("Compiling shared library for {}...", rust_target)));
 
-    let mut cargo_build = match Command::new("cargo")
-        .arg("ndk")
-        .arg("-t")
-        .arg(rust_target)
-        .arg("build")
-        .arg("--lib")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(status) => status,
-        Err(e) => {
-            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run cargo: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
-            return;
-        }
-    };
-
-    let stdout = cargo_build.stdout.take().unwrap();
-    let stderr = cargo_build.stderr.take().unwrap();
-
-    *current_child_clone.lock().unwrap() = Some(cargo_build);
-
-    let tx_clone1 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                let _ = tx_clone1.send(RunnerEvent::BuildLog(l));
-            }
-        }
-    });
-
-    let tx_clone2 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        let mut fetch_count = 0;
-        let mut compile_count = 0;
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                if l.contains("Fetching") || l.contains("Updating") || l.contains("Downloading") {
-                    fetch_count = (fetch_count + 1).min(99);
-                    let _ = tx_clone2.send(RunnerEvent::StatusChange(Status::Fetching(fetch_count)));
-                } else if l.contains("Compiling") {
-                    compile_count = (compile_count + 1).min(99);
-                    let _ = tx_clone2.send(RunnerEvent::StatusChange(Status::Compiling(compile_count)));
-                } else if l.contains("Finished") {
-                    let _ = tx_clone2.send(RunnerEvent::StatusChange(Status::Compiling(100)));
-                }
-                let _ = tx_clone2.send(RunnerEvent::BuildLog(l));
-            }
-        }
-    });
-
-    let status = loop {
-        let mut guard = current_child_clone.lock().unwrap();
-        if let Some(child) = guard.as_mut() {
-            if let Ok(Some(status)) = child.try_wait() {
-                break status;
-            }
-        } else {
-            return;
-        }
-        drop(guard);
-        thread::sleep(Duration::from_millis(100));
+    let status = match cargo_build::spawn_cargo_build(
+        &CargoBuildTarget::Android { rust_target: rust_target.to_string() },
+        &tx,
+        &current_child_clone,
+        inspector_address,
+        inspector_port,
+    ) {
+        Some(s) => s,
+        None => return,
     };
 
     if !status.success() {
         let _ = tx.send(RunnerEvent::BuildLog("Cargo build failed.".to_string()));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
         return;
     }
 
@@ -165,7 +116,7 @@ pub fn spawn_android_runner(
         Ok(status) => status,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run gradle: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
             return;
         }
     };
@@ -175,49 +126,17 @@ pub fn spawn_android_runner(
 
     *current_child_clone.lock().unwrap() = Some(gradle_build);
 
-    let tx_clone3 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        let mut build_count = 0;
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                if l.contains("Task :") {
-                    build_count = (build_count + 2).min(99);
-                    let _ = tx_clone3.send(RunnerEvent::StatusChange(Status::Building(build_count)));
-                } else if l.contains("BUILD SUCCESSFUL") {
-                    let _ = tx_clone3.send(RunnerEvent::StatusChange(Status::Building(100)));
-                }
-                let _ = tx_clone3.send(RunnerEvent::BuildLog(l));
-            }
-        }
-    });
+    stream_stdout_with_gradle_progress(stdout, tx.clone());
+    stream_stderr_as_build_log(stderr, tx.clone());
 
-    let tx_clone4 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                let _ = tx_clone4.send(RunnerEvent::BuildLog(l));
-            }
-        }
-    });
-
-    let status = loop {
-        let mut guard = current_child_clone.lock().unwrap();
-        if let Some(child) = guard.as_mut() {
-            if let Ok(Some(status)) = child.try_wait() {
-                break status;
-            }
-        } else {
-            return;
-        }
-        drop(guard);
-        thread::sleep(Duration::from_millis(100));
+    let status = match wait_for_child(&current_child_clone) {
+        Some(s) => s,
+        None => return,
     };
 
     if !status.success() {
         let _ = tx.send(RunnerEvent::BuildLog("Gradle build failed.".to_string()));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
         return;
     }
 
@@ -235,14 +154,14 @@ pub fn spawn_android_runner(
         Ok(status) => status,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to install: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
             return;
         }
     };
 
     if !install_status.success() {
         let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to install on {}", device_name)));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
         return;
     }
 
@@ -262,15 +181,7 @@ pub fn spawn_android_runner(
     }
 
     let mut app_run = match Command::new("adb")
-        .args([
-            "-s",
-            &device.id,
-            "shell",
-            "am",
-            "start",
-            "-n",
-            &format!("{}/android.app.NativeActivity", app_id),
-        ])
+        .args(["-s", &device.id, "shell", "am", "start", "-n", &format!("{}/android.app.NativeActivity", app_id)])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -288,49 +199,13 @@ pub fn spawn_android_runner(
 
     *current_child_clone.lock().unwrap() = Some(app_run);
 
-    let tx_clone5 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                for part in l.split('\r') {
-                    if !part.is_empty() {
-                        let _ = tx_clone5.send(RunnerEvent::AppLog(part.to_string()));
-                    }
-                }
-            }
-        }
-    });
-
-    let tx_clone6 = tx.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                for part in l.split('\r') {
-                    if !part.is_empty() {
-                        let _ = tx_clone6.send(RunnerEvent::AppLog(part.to_string()));
-                    }
-                }
-            }
-        }
-    });
+    stream_as_app_log_split_cr(stdout, tx.clone());
+    stream_as_app_log_split_cr(stderr, tx.clone());
 
     let _ = tx.send(RunnerEvent::StatusChange(Status::Running));
 
     // Wait for the launch command to finish
-    loop {
-        let mut guard = current_child_clone.lock().unwrap();
-        if let Some(child) = guard.as_mut() {
-            if let Ok(Some(_)) = child.try_wait() {
-                break;
-            }
-        } else {
-            return;
-        }
-        drop(guard);
-        thread::sleep(Duration::from_millis(100));
-    }
+    wait_for_child(&current_child_clone);
 
     // Wait for the app to start and get its PID
     let mut pid = String::new();
@@ -364,7 +239,7 @@ pub fn spawn_android_runner(
         Ok(status) => status,
         Err(e) => {
             let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run logcat: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
             return;
         }
     };
@@ -375,9 +250,8 @@ pub fn spawn_android_runner(
     *current_child_clone.lock().unwrap() = Some(logcat);
 
     let parse_log = move |l: String| -> String {
-
         if l.contains("I/RustStdoutStderr") {
-            if let Some(item) =  l.split_once("): ") {
+            if let Some(item) = l.split_once("): ") {
                 return format!("{}", item.1.replace("       ", " "));
             }
         }
@@ -410,18 +284,7 @@ pub fn spawn_android_runner(
         }
     });
 
-    loop {
-        let mut guard = current_child_clone.lock().unwrap();
-        if let Some(child) = guard.as_mut() {
-            if let Ok(Some(_)) = child.try_wait() {
-                break;
-            }
-        } else {
-            return;
-        }
-        drop(guard);
-        thread::sleep(Duration::from_millis(100));
-    }
+    wait_for_child(&current_child_clone);
 
     let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
 }

@@ -12,7 +12,7 @@ use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
 use attribute::position::Vec2d;
 use attribute::size::ResolvedSize;
-use inspector::InspectorOverlay;
+use inspector::{InspectorHandle, InspectorOverlay};
 #[cfg(not(target_arch = "wasm32"))]
 use inspector::InspectorServer;
 use std::cell::Cell;
@@ -214,29 +214,36 @@ impl AimerApplicationHandler {
         ctx.canvas.restore();
     }
 
-    // #[cfg(debug_assertions)]
+    #[cfg(debug_assertions)]
     fn broadcast_inspector_snapshot(&self) {
-        // if self.inspector.is_enabled() {
-        //     let snapshot = self
-        //         .widget_root
-        //         .as_ref()
-        //         .map(|root| inspector::InspectorServer::snapshot_tree(root.as_ref()));
-        //
-        //     let hovered_id = if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
-        //         if let Some((name, start, end)) = hovered.as_ref() {
-        //             snapshot
-        //                 .as_ref()
-        //                 .and_then(|s| find_hovered_node(s, name, *start, *end))
-        //         } else {
-        //             None
-        //         }
-        //     } else {
-        //         None
-        //     };
-        //
-        //     self.inspector.broadcast_tree(snapshot);
-        //     self.inspector.broadcast_hovered(hovered_id);
-        // }
+        if self.inspector.is_enabled() {
+            let snapshot = self
+                .widget_root
+                .as_ref()
+                .map(|root| {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    { inspector::InspectorServer::snapshot_tree(root.as_ref()) }
+                    #[cfg(target_arch = "wasm32")]
+                    { inspector::snapshot_tree(root.as_ref()) }
+                });
+
+
+
+            let hovered_id = if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
+                if let Some((name, start, end)) = hovered.as_ref() {
+                    snapshot
+                        .as_ref()
+                        .and_then(|s| find_hovered_node(s, name, *start, *end))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            self.inspector.broadcast_tree(snapshot);
+            self.inspector.broadcast_hovered(hovered_id);
+        }
     }
 
     #[allow(unused)]
@@ -322,7 +329,13 @@ impl AimerApplicationHandler {
                 Self::render_widget_tree(root.as_ref(), &build_ctx);
                 #[cfg(debug_assertions)]
                 if inspector_enabled {
+                    // Save and restore canvas state to ensure the inspector overlay
+                    // always renders at the top layer above all widgets,
+                    // unaffected by any residual transforms or clips.
+                    build_ctx.canvas.save();
+                    build_ctx.canvas.clear_clip();
                     InspectorOverlay::draw(root.as_ref(), &build_ctx.canvas, cursor_pos, build_ctx.scale);
+                    build_ctx.canvas.restore();
                 }
             }
         };

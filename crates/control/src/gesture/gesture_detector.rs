@@ -5,7 +5,7 @@ use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use events::element::ElementEvent;
 use events::pointer::{PointerEvent, PointerPosition};
-use std::cell::{Cell, UnsafeCell};
+use std::cell::{Cell, RefCell};
 use widget::base::{BuildContext, Color};
 use widget::style::BoxConstraint;
 use widget::style::box_decoration::BoxDecoration;
@@ -23,7 +23,8 @@ pub struct GestureDetectorElement<'a, E: Element> {
     pub(crate) is_disabled: bool,
     pub(crate) is_hovered: Cell<bool>,
     pub(crate) is_pressed: Cell<bool>,
-    pub(crate) gesture: UnsafeCell<GestureActions>,
+    pub(crate) pressed_overlay_color: Option<Color>,
+    pub(crate) gesture: RefCell<GestureActions>,
     pub(crate) is_mouse_down: Cell<bool>,
     pub(crate) is_dirty: Cell<bool>,
     pub(crate) child: E,
@@ -89,9 +90,7 @@ impl<'a, E: Element> GestureDetectorElement<'a, E> {
             }
         }
         
-        unsafe {
-            (&mut *self.gesture.get()).handle_pointer_event(event);
-        }
+        self.gesture.borrow_mut().handle_pointer_event(event);
 
         if changed {
             self.is_dirty.set(true);
@@ -164,15 +163,17 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
         let is_pressed = self.is_pressed.get();
 
         if !is_inside && !is_pressed {
+            let was_hovered = self.is_hovered.get();
             self.is_hovered.set(false);
-            self.is_dirty.set(true);
-            self.window.request_redraw();
+            if was_hovered {
+                self.is_dirty.set(true);
+                self.window.request_redraw();
+            }
             return false;
         }
         // debug!("Step 3");
 
         if matches!(event, ElementEvent::PointerMove(_)) && is_inside == self.is_hovered.get() {
-            self.window.request_redraw();
             return true;
         }
 
@@ -277,10 +278,11 @@ impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
 
         // Draw pressed overlay for visual feedback
         if self.is_pressed.get() && !self.is_disabled {
+            let overlay_color = self.pressed_overlay_color.unwrap_or(Color::Rgba(0, 0, 0, 40));
             ctx.canvas.fill_color_rect_per_corner(
                 (0.0, 0.0).into(),
                 ResolvedSize { width: box_width, height: box_height },
-                Color::Rgba(0, 0, 0, 40),
+                overlay_color,
                 radii,
             );
         }

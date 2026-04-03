@@ -1,4 +1,5 @@
 use std::env::{current_dir, set_current_dir};
+use std::sync::mpsc::Sender;
 use clap::{Parser, Subcommand};
 use crate::commands::version::VersionCommand;
 
@@ -18,7 +19,6 @@ struct Cli {
 }
 
 // pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const VERSION: &str = "0.1.2";
 
 #[derive(Subcommand)]
 enum Commands {

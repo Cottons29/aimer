@@ -2,6 +2,7 @@ use attribute::position::Vec2d;
 use attribute::size::{ResolvedSize, Size};
 use constructor::WidgetConstructor;
 use std::cell::Cell;
+use attribute::{Bounds, CacheBounds};
 use widget::{base::BuildContext, Drawable, Element, LayoutCache, LayoutSpacing, Widget};
 
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
@@ -36,7 +37,7 @@ impl<W: Widget + 'static> Widget for Flex<W> {
             cache: LayoutCache::new(),
             overflow_behavior: self.overflow,
             debug_name: "Flex",
-            bounds: Cell::new(None),
+            cache_bound: CacheBounds::new(),
         })
     }
 }
@@ -57,7 +58,7 @@ pub struct RawFlex {
     pub(crate) cache: LayoutCache,
     pub(crate) overflow_behavior: OverflowBehavior,
     pub(crate) debug_name: &'static str,
-    pub(crate) bounds: Cell<Option<(Vec2d, Vec2d)>>,
+    pub(crate) cache_bound: CacheBounds,
 }
 
 impl RawFlex {
@@ -152,27 +153,15 @@ impl Drawable for RawFlex {
         #[cfg(debug_assertions)]
         {
             if widget::inspector_overlay::is_enabled() {
-                // TODO: expose transform position from AimerCanvas for inspector
-                let (start_x, start_y): (f32, f32) = (0.0, 0.0);
-                let end_x = start_x + size.width;
-                let end_y = start_y + size.height;
 
-                let parent_pos = ctx.parent_pos;
-                let max_width = ctx.box_constraint.max_width;
-                let max_height = ctx.box_constraint.max_height;
+                let parent_pos : Vec2d= ctx.canvas.get_transform_translation().into();
 
-                let scale = ctx.scale;
 
-                let l_start = Vec2d { x: parent_pos.x + (start_x / scale), y: parent_pos.y + (start_y / scale) };
-                let l_end = Vec2d {
-                    x: parent_pos.x + (max_width / scale),
-                    y: parent_pos.y + (max_height / scale) + (start_y / scale),
-                };
-
-                self.bounds.set(Some((l_start, l_end)));
+                self.cache_bound.save(ctx.scale, parent_pos.x, parent_pos.y, ctx.box_constraint.max_width,  ctx.box_constraint.max_height);
 
                 let cp = ctx.cursor_pos;
-                if cp.x >= start_x && cp.x <= end_x && cp.y >= start_y && cp.y <= end_y {
+                if self.cache_bound.is_inside(cp.x, cp.y) {
+                    let (l_start, l_end) = self.cache_bound.pos_start_end().unwrap();
                     if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
                         *hovered = Some((self.debug_name, l_start, l_end));
                     }
@@ -372,7 +361,7 @@ impl Drawable for RawFlex {
 
 impl Element for RawFlex {
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bounds.get()
+        self.cache_bound.pos_start_end()
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {

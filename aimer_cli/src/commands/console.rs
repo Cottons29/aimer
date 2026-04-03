@@ -1,9 +1,19 @@
-use std::cmp::PartialEq;
+use crate::commands::run::Device;
+use crate::commands::run::android::spawn_android_runner;
+use crate::commands::run::ios::spawn_ios_runner;
+use crate::commands::run::ios_sim::spawn_ios_simulator_runner;
+use crate::commands::run::macos::spawn_macos_runner;
+use crate::commands::run::utilities::LogStyling;
+use crate::commands::run::web::spawn_web_runner;
+use crate::targets::Targets;
+use arboard::Clipboard;
+use crossbeam::channel::Sender;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use inspector::{ InspectorServer, render_tree_lines_with_ids};
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -12,23 +22,17 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
+use std::cmp::PartialEq;
 use std::io::{BufRead, BufReader, stdout};
+use std::net::{IpAddr, Ipv4Addr};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use arboard::Clipboard;
-use crossterm::style::Stylize;
-use inspector::{render_tree_lines_with_ids, InspectorServer, DEFAULT_INSPECTOR_PORT};
+use std::usize::MAX;
 use tokio::runtime::Runtime;
-use crate::commands::run::ios::spawn_ios_runner;
-use crate::commands::run::ios_sim::spawn_ios_simulator_runner;
-use crate::commands::run::macos::spawn_macos_runner;
-use crate::commands::run::web::spawn_web_runner;
-use crate::commands::run::android::spawn_android_runner;
-use crate::commands::run::utilities::LogStyling;
-use crate::targets::Targets;
-use super::Device;
+
+const MAX_LINES: usize = 32768;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum Status {
@@ -38,6 +42,7 @@ pub enum Status {
     Launching,
     Running,
     Idling,
+    Error,
 }
 
 pub enum RunnerEvent {
@@ -73,11 +78,11 @@ impl ScrollablePane {
     }
 
     fn scroll_up(&mut self, amount: u16) {
-        self.scroll = self.scroll.saturating_sub(amount);
+        self.scroll = self.scroll.saturating_add(amount);
     }
 
     fn scroll_down(&mut self, amount: u16) {
-        self.scroll = self.scroll.saturating_add(amount);
+        self.scroll = self.scroll.saturating_sub(amount);
     }
 
     fn reset(&mut self) {
@@ -88,26 +93,25 @@ impl ScrollablePane {
 fn spawn_runner(
     device: Device,
     pkg_name: String,
-    tx: std::sync::mpsc::Sender<RunnerEvent>,
+    tx: Sender<RunnerEvent>,
+    inspector_address: IpAddr,
+    inspector_port: u16,
 ) -> Arc<Mutex<Option<Child>>> {
     let current_child = Arc::new(Mutex::new(None));
     let current_child_clone = Arc::clone(&current_child);
 
-    thread::spawn(move || {
-        match device.target {
-            Targets::Macos => spawn_macos_runner(device, pkg_name, tx, current_child_clone),
-            Targets::IosSimulator => spawn_ios_simulator_runner(device, pkg_name, tx, current_child_clone),
-            Targets::Web => spawn_web_runner(device, pkg_name, tx, current_child_clone),
-            Targets::Ios => spawn_ios_runner(device, pkg_name, tx, current_child_clone),
-            Targets::Android | Targets::AndroidSimulator => spawn_android_runner(device, pkg_name, tx, current_child_clone),
-            _ => {
-                let _ = tx.send(RunnerEvent::BuildLog(format!(
-                    "Target {} is not yet supported for on-the-fly run.",
-                    device.target
-                )));
-                let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
-                return;
-            }
+    thread::spawn(move || match device.target {
+        Targets::Macos => spawn_macos_runner(device, pkg_name, tx, current_child_clone, inspector_address, inspector_port),
+        Targets::IosSimulator => spawn_ios_simulator_runner(device, pkg_name, tx, current_child_clone, inspector_address, inspector_port),
+        Targets::Web => spawn_web_runner(device, pkg_name, tx, current_child_clone, inspector_address, inspector_port),
+        Targets::Ios => spawn_ios_runner(device, pkg_name, tx, current_child_clone, inspector_address, inspector_port),
+        Targets::Android | Targets::AndroidSimulator => {
+            spawn_android_runner(device, pkg_name, tx, current_child_clone, inspector_address, inspector_port)
+        }
+        _ => {
+            let _ = tx.send(RunnerEvent::BuildLog(format!("Target {} is not yet supported for on-the-fly run.", device.target)));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+            return;
         }
     });
 
@@ -138,10 +142,12 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = crossbeam::channel::unbounded();
 
-    let mut build_logs: Vec<String> = Vec::with_capacity(1000);
-    let mut app_logs: Vec<String> = Vec::with_capacity(1000);
+    usize::MAX.checked_sub(MAX_LINES).unwrap_or(0);
+
+    let mut build_logs: Vec<String> = Vec::with_capacity(MAX_LINES);
+    let mut app_logs: Vec<String> = Vec::with_capacity(MAX_LINES);
     let mut current_status = Status::Compiling(0);
     let mut current_pane = ConsoleType::App;
     let mut build_pane = ScrollablePane::new();
@@ -151,18 +157,34 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
     let mut inspector_cursor: usize = 0;
 
     // Starting inspector server
-    let inspector_runtime = Runtime::new().expect("Failed to create inspector tokio runtime");
-    let inspector_handle = InspectorServer::start(DEFAULT_INSPECTOR_PORT, inspector_runtime.handle());
+    let Ok(inspector_runtime) = Runtime::new() else {
+        return Err("Failed to start inspector server".into());
+    };
+    let inspector_address = match device.target {
+        Targets::Ios | Targets::Android => local_ip_address::local_ip()?,
+        _ => IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+    };
 
-    // let frames = ["▁","▂","▃","▄","▅","▆","▇","█","▇","▆","▅","▄","▃","▂"];
-    // let frames = ["⠁","⠂","⠄","⡀","⢀","⠠","⠐","⠈"];
+    let inspector_server_address = match device.target {
+        Targets::Ios | Targets::Android => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+        _ => IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+    };
+
+    let inspector_handle = match InspectorServer::start(inspector_server_address, 9229, inspector_runtime.handle()) {
+        Ok(handle) => handle,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::AppLog(format!("Failed to start inspector server: {}", e)));
+            return Err(e.into());
+        }
+    };
+
     let frames = ["⠋", "⠙", "⠚", "⠞", "⠖", "⠦", "⠴", "⠲", "⠳", "⠓"];
     let running_frame = ["▣", "▤", "▥", "▦", "▧", "▨", "▣", "▤", "▥", "▦"];
     let mut frame_index = 0;
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = Instant::now();
 
-    let mut current_child = spawn_runner(device.clone(), pkg_name.clone(), tx.clone());
+    let mut current_child = spawn_runner(device.clone(), pkg_name.clone(), tx.clone(), inspector_handle.address, inspector_handle.port);
 
     loop {
         // Process all pending events
@@ -171,18 +193,23 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 RunnerEvent::BuildLog(msg) => {
                     let cleaned = msg.replace('\r', "");
                     build_logs.push(cleaned);
-                    if build_logs.len() > 1000 {
+                    if build_logs.len() > MAX_LINES {
                         build_logs.remove(0);
                     }
                 }
                 RunnerEvent::AppLog(msg) => {
                     let cleaned = msg.replace('\r', "");
                     app_logs.push(cleaned.process_log());
-                    if app_logs.len() > 1000 {
+                    if app_logs.len() > MAX_LINES {
                         app_logs.remove(0);
                     }
                 }
                 RunnerEvent::StatusChange(s) => {
+                    match s {
+                        Status::Error => current_pane = ConsoleType::Build,
+                        Status::Running => current_pane = ConsoleType::App,
+                        _ => {}
+                    }
                     current_status = s;
                 }
             }
@@ -197,11 +224,19 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
             use ansi_to_tui::IntoText;
             let build_text = build_logs
                 .iter()
-                .flat_map(|l| l.into_text().map(|t| t.lines).unwrap_or_else(|_| vec![Line::from(strip_ansi(l))]))
+                .flat_map(|l| {
+                    l.into_text()
+                        .map(|t| t.lines)
+                        .unwrap_or_else(|_| vec![Line::from(strip_ansi(l))])
+                })
                 .collect::<Vec<_>>();
             let app_text = app_logs
                 .iter()
-                .flat_map(|l| l.into_text().map(|t| t.lines).unwrap_or_else(|_| vec![Line::from(strip_ansi(l))]))
+                .flat_map(|l| {
+                    l.into_text()
+                        .map(|t| t.lines)
+                        .unwrap_or_else(|_| vec![Line::from(strip_ansi(l))])
+                })
                 .collect::<Vec<_>>();
 
             let inspector_state = inspector_handle.state.lock().unwrap().clone();
@@ -243,14 +278,14 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                     let w = (line_width + width - 1) / width;
                     total_wrapped += w.max(1);
                 }
-                
+
                 let max_scroll = total_wrapped.saturating_sub(height);
                 let actual_scroll = requested_scroll.min(max_scroll);
-                
+
                 let target_lines = height + actual_scroll;
                 let mut start = 0;
                 let mut wrapped_lines = 0;
-                
+
                 for (i, line) in logs.iter().enumerate().rev() {
                     let line_width = line.width();
                     let w = (line_width + width - 1) / width;
@@ -260,13 +295,9 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                         break;
                     }
                 }
-                
-                let skip_top = if wrapped_lines > target_lines {
-                    wrapped_lines - target_lines
-                } else {
-                    0
-                };
-                
+
+                let skip_top = if wrapped_lines > target_lines { wrapped_lines - target_lines } else { 0 };
+
                 (start, skip_top as u16, actual_scroll as u16)
             };
 
@@ -292,7 +323,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                     let mut tree_lines: Vec<String> = Vec::new();
                     if !inspector_state.connected {
                         tree_lines.push("Waiting for app to start...".to_string());
-                        tree_lines.push(format!("Connecting to ws://127.0.0.1:{}", DEFAULT_INSPECTOR_PORT));
+                        tree_lines.push(format!("Connecting to ws://{}", inspector_handle.get_address()));
                     } else if !inspector_state.enabled {
                         tree_lines.push("Inspector is OFF.".to_string());
                         tree_lines.push("Press F12 to enable.".to_string());
@@ -322,13 +353,17 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                         inspector_pane.scroll = (inspector_cursor as u16).saturating_sub(height as u16 - 1);
                     }
                     let highlight_style = Style::default().bg(Color::DarkGray).fg(Color::White);
-                    let inspector_text: Vec<Line> = tree_lines.iter().enumerate().map(|(i, l)| {
-                        if i == inspector_cursor {
-                            Line::from(Span::styled(l.as_str(), highlight_style))
-                        } else {
-                            Line::from(l.as_str())
-                        }
-                    }).collect();
+                    let inspector_text: Vec<Line> = tree_lines
+                        .iter()
+                        .enumerate()
+                        .map(|(i, l)| {
+                            if i == inspector_cursor {
+                                Line::from(Span::styled(l.as_str(), highlight_style))
+                            } else {
+                                Line::from(l.as_str())
+                            }
+                        })
+                        .collect();
                     let max_scroll = (inspector_text.len() as u16).saturating_sub(height as u16);
                     inspector_pane.scroll = inspector_pane.scroll.min(max_scroll);
                     let p = Paragraph::new(inspector_text)
@@ -345,6 +380,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 Status::Building(p) => (frames[frame_index], format!("Building {}%", p)),
                 Status::Launching => (frames[frame_index], "Launching...".to_string()),
                 Status::Running => (running_frame[frame_index], "Running".to_string()),
+                Status::Error => ("✗", "Error".to_string()),
                 Status::Idling => ("✓", "Idling".to_string()),
             };
 
@@ -360,6 +396,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                 Status::Launching => Color::Magenta,
                 Status::Running => Color::Green,
                 Status::Idling => Color::DarkGray,
+                Status::Error => Color::Red,
             };
 
             let status_line = Line::from(vec![
@@ -434,6 +471,9 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
             match event::read()? {
                 Event::Key(key) => {
                     match (key.code, key.modifiers) {
+                        (KeyCode::Char('1'), _) => current_pane = ConsoleType::App,
+                        (KeyCode::Char('2'), _) => current_pane = ConsoleType::Build,
+                        (KeyCode::Char('3'), _) => current_pane = ConsoleType::Inspector,
                         (KeyCode::Char('Q'), _) | (KeyCode::Char('q'), KeyModifiers::SHIFT) => {
                             // Kill child process if any
                             if let Some(mut child) = current_child.lock().unwrap().take() {
@@ -464,7 +504,7 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
 
                                     let stdout = wasm_build.stdout.take().unwrap();
                                     let stderr = wasm_build.stderr.take().unwrap();
-                                    
+
                                     let tx_c1 = tx_clone.clone();
                                     thread::spawn(move || {
                                         let reader = BufReader::new(stdout);
@@ -497,7 +537,8 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                                     if !status.success() {
                                         let _ = tx_clone.send(RunnerEvent::BuildLog("wasm-pack build failed.".to_string()));
                                     } else {
-                                        let _ = tx_clone.send(RunnerEvent::BuildLog("wasm-pack build successful. Vite will auto-reload.".to_string()));
+                                        let _ = tx_clone
+                                            .send(RunnerEvent::BuildLog("wasm-pack build successful. Vite will auto-reload.".to_string()));
                                     }
                                     let _ = tx_clone.send(RunnerEvent::StatusChange(Status::Running));
                                 });
@@ -511,22 +552,25 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                                 build_pane.reset();
                                 app_pane.reset();
                                 current_status = Status::Compiling(0);
-                                current_child = spawn_runner(device.clone(), pkg_name.clone(), tx.clone());
+                                current_child =
+                                    spawn_runner(device.clone(), pkg_name.clone(), tx.clone(), inspector_handle.address, inspector_handle.port);
                             }
                         }
+
+                        (KeyCode::Char('c'), KeyModifiers::SHIFT) | (KeyCode::Char('C'), KeyModifiers::SHIFT) => match current_pane {
+                            ConsoleType::App => app_logs.clear(),
+                            ConsoleType::Build => build_logs.clear(),
+                            _ => {}
+                        },
+
                         (KeyCode::Char('c'), _) | (KeyCode::Char('C'), _) => {
                             if let Ok(mut clipboard) = Clipboard::new() {
-                                let logs = if current_pane == ConsoleType::Build {
-                                    build_logs.join("\n")
-                                } else {
-                                    app_logs.join("\n")
-                                };
+                                let logs = if current_pane == ConsoleType::Build { build_logs.join("\n") } else { app_logs.join("\n") };
                                 let _ = clipboard.set_text(logs);
                             }
                         }
-                        (KeyCode::Tab, _) => {
-                            current_pane = current_pane.next()
-                        }
+
+                        (KeyCode::Tab, _) => current_pane = current_pane.next(),
                         (KeyCode::F(12), _) => {
                             inspector_handle.send_toggle();
                             current_pane = ConsoleType::Inspector;
@@ -536,70 +580,56 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                                 inspector_full_tree = !inspector_full_tree;
                             }
                         }
-                        (KeyCode::Up, _) => {
-                            match current_pane {
-                                ConsoleType::Build => build_pane.scroll_up(1),
-                                ConsoleType::App => app_pane.scroll_up(1),
-                                ConsoleType::Inspector => {
-                                    inspector_cursor = inspector_cursor.saturating_add(1);
-                                    if (inspector_cursor as u16) < inspector_pane.scroll {
-                                        inspector_pane.scroll = inspector_cursor as u16;
-                                    }
+                        (KeyCode::Up, _) => match current_pane {
+                            ConsoleType::Build => build_pane.scroll_up(1),
+                            ConsoleType::App => app_pane.scroll_up(1),
+                            ConsoleType::Inspector => {
+                                inspector_cursor = inspector_cursor.saturating_sub(1);
+                                if (inspector_cursor as u16) < inspector_pane.scroll {
+                                    inspector_pane.scroll = inspector_cursor as u16;
                                 }
                             }
-                        }
-                        (KeyCode::Down, _) => {
-                            match current_pane {
-                                ConsoleType::Build => build_pane.scroll_down(1),
-                                ConsoleType::App => app_pane.scroll_down(1),
-                                ConsoleType::Inspector => {
-                                    inspector_cursor = inspector_cursor.saturating_sub(1);
+                        },
+                        (KeyCode::Down, _) => match current_pane {
+                            ConsoleType::Build => build_pane.scroll_down(1),
+                            ConsoleType::App => app_pane.scroll_down(1),
+                            ConsoleType::Inspector => {
+                                inspector_cursor = inspector_cursor.saturating_add(1);
+                            }
+                        },
+                        (KeyCode::PageUp, _) => match current_pane {
+                            ConsoleType::Build => build_pane.scroll_up(10),
+                            ConsoleType::App => app_pane.scroll_up(10),
+                            ConsoleType::Inspector => {
+                                inspector_cursor = inspector_cursor.saturating_sub(10);
+                                if (inspector_cursor as u16) < inspector_pane.scroll {
+                                    inspector_pane.scroll = inspector_cursor as u16;
                                 }
                             }
-                        }
-                        (KeyCode::PageUp, _) => {
-                            match current_pane {
-                                ConsoleType::Build => build_pane.scroll_up(10),
-                                ConsoleType::App => app_pane.scroll_up(10),
-                                ConsoleType::Inspector => {
-                                    inspector_cursor = inspector_cursor.saturating_add(10);
-                                    if (inspector_cursor as u16) < inspector_pane.scroll {
-                                        inspector_pane.scroll = inspector_cursor as u16;
-                                    }
-                                }
+                        },
+                        (KeyCode::PageDown, _) => match current_pane {
+                            ConsoleType::Build => build_pane.scroll_down(10),
+                            ConsoleType::App => app_pane.scroll_down(10),
+                            ConsoleType::Inspector => {
+                                inspector_cursor = inspector_cursor.saturating_add(10);
                             }
-                        }
-                        (KeyCode::PageDown, _) => {
-                            match current_pane {
-                                ConsoleType::Build => build_pane.scroll_down(10),
-                                ConsoleType::App => app_pane.scroll_down(10),
-                                ConsoleType::Inspector => {
-                                    inspector_cursor = inspector_cursor.saturating_sub(10);
-                                }
-                            }
-                        }
+                        },
                         _ => {}
                     }
                 }
-                Event::Mouse(mouse_event) => {
-                    match mouse_event.kind {
-                        crossterm::event::MouseEventKind::ScrollUp => {
-                            match current_pane {
-                                ConsoleType::Build => build_pane.scroll_down(1),
-                                ConsoleType::App => app_pane.scroll_down(1),
-                                ConsoleType::Inspector => inspector_pane.scroll_down(1),
-                            }
-                        }
-                        crossterm::event::MouseEventKind::ScrollDown => {
-                            match current_pane {
-                                ConsoleType::Build => build_pane.scroll_up(1),
-                                ConsoleType::App => app_pane.scroll_up(1),
-                                ConsoleType::Inspector => inspector_pane.scroll_up(1),
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                Event::Mouse(mouse_event) => match mouse_event.kind {
+                    crossterm::event::MouseEventKind::ScrollUp => match current_pane {
+                        ConsoleType::Build => build_pane.scroll_up(2),
+                        ConsoleType::App => app_pane.scroll_up(2),
+                        ConsoleType::Inspector => inspector_pane.scroll_up(2),
+                    },
+                    crossterm::event::MouseEventKind::ScrollDown => match current_pane {
+                        ConsoleType::Build => build_pane.scroll_down(2),
+                        ConsoleType::App => app_pane.scroll_down(2),
+                        ConsoleType::Inspector => inspector_pane.scroll_down(2),
+                    },
+                    _ => {}
+                },
                 _ => {}
             }
         }

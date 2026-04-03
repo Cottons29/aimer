@@ -56,8 +56,7 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         #[cfg(debug_assertions)]
         {
             if widget::inspector_overlay::is_enabled() {
-                // TODO: expose transform position from AimerCanvas for inspector
-                let (start_x, start_y): (f32, f32) = (0.0, 0.0);
+                let (start_x, start_y) = ctx.canvas.get_transform_translation();
                 let end_x = start_x + width;
                 let end_y = start_y + height;
 
@@ -67,7 +66,7 @@ impl<E: Element> Drawable for RawSizedBox<E> {
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if (cp.x as f32) >= start_x && (cp.x as f32) <= end_x && (cp.y as f32) >= start_y && (cp.y as f32) <= end_y {
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
                     if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
                         *hovered = Some((self.debug_name, l_start, l_end));
                     }
