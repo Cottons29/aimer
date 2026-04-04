@@ -50,25 +50,85 @@ dependencies = [
 name = "aimer"
 version = "0.1.0"
 dependencies = [
- "aimer_main",
- "animation",
- "assets",
- "attribute",
- "color",
- "constructor",
- "container",
- "control",
- "quiver",
- "router",
- "utils",
+ "aimer_animation",
+ "aimer_assets",
+ "aimer_attribute",
+ "aimer_color",
+ "aimer_container",
+ "aimer_input",
+ "aimer_macro",
+ "aimer_quiver",
+ "aimer_router",
+ "aimer_style",
+ "aimer_text",
+ "aimer_utils",
+ "aimer_widget",
  "wasm-bindgen",
- "widget",
+]
+
+[[package]]
+name = "aimer_animation"
+version = "0.1.0"
+dependencies = [
+ "aimer_attribute",
+ "aimer_canvas",
+ "aimer_events",
+ "aimer_macro",
+ "aimer_utils",
+ "aimer_widget",
+ "chrono",
+ "winit",
+]
+
+[[package]]
+name = "aimer_assets"
+version = "0.1.0"
+dependencies = [
+ "aimer_attribute",
+ "aimer_canvas",
+ "aimer_color",
+ "aimer_container",
+ "aimer_style",
+ "aimer_utils",
+ "aimer_widget",
+ "image",
+ "js-sys",
+ "once_cell",
+ "openssl",
+ "reqwest",
+ "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "winit",
+]
+
+[[package]]
+name = "aimer_attribute"
+version = "0.1.0"
+dependencies = [
+ "aimer_macro",
+]
+
+[[package]]
+name = "aimer_canvas"
+version = "0.1.0"
+dependencies = [
+ "aimer_attribute",
+ "aimer_color",
+ "aimer_cupid",
+ "aimer_utils",
+ "js-sys",
+ "once_cell",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
 name = "aimer_cli"
 version = "0.1.2"
 dependencies = [
+ "aimer_inspector",
  "ansi-to-tui",
  "arboard",
  "clap",
@@ -76,20 +136,201 @@ dependencies = [
  "crossbeam",
  "crossterm",
  "inquire",
- "inspector",
  "local-ip-address",
  "ratatui",
  "tokio",
 ]
 
 [[package]]
-name = "aimer_main"
+name = "aimer_color"
+version = "0.1.0"
+
+[[package]]
+name = "aimer_container"
+version = "0.1.0"
+dependencies = [
+ "aimer_attribute",
+ "aimer_canvas",
+ "aimer_events",
+ "aimer_macro",
+ "aimer_style",
+ "aimer_utils",
+ "aimer_widget",
+ "chrono",
+ "objc",
+ "tokio",
+ "winit",
+]
+
+[[package]]
+name = "aimer_cupid"
+version = "0.1.0"
+dependencies = [
+ "aimer_color",
+ "aimer_utils",
+ "bytemuck",
+ "chrono",
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "font-kit",
+ "fontdue",
+ "fxhash",
+ "image",
+ "pollster",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "aimer_events"
+version = "0.1.0"
+dependencies = [
+ "aimer_attribute",
+ "winit",
+]
+
+[[package]]
+name = "aimer_input"
+version = "0.1.0"
+dependencies = [
+ "aimer_animation",
+ "aimer_attribute",
+ "aimer_canvas",
+ "aimer_color",
+ "aimer_events",
+ "aimer_style",
+ "aimer_utils",
+ "aimer_widget",
+ "arboard",
+ "chrono",
+ "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "winit",
+]
+
+[[package]]
+name = "aimer_inspector"
+version = "0.1.0"
+dependencies = [
+ "aimer_attribute",
+ "aimer_canvas",
+ "aimer_color",
+ "aimer_widget",
+ "futures-util",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "tungstenite",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "aimer_macro"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
- "widget_codegen",
+]
+
+[[package]]
+name = "aimer_quiver"
+version = "0.1.0"
+dependencies = [
+ "aimer_attribute",
+ "aimer_canvas",
+ "aimer_color",
+ "aimer_cupid",
+ "aimer_events",
+ "aimer_inspector",
+ "aimer_macro",
+ "aimer_router",
+ "aimer_utils",
+ "aimer_widget",
+ "chrono",
+ "jni",
+ "js-sys",
+ "ndk 0.9.0",
+ "ndk-glue",
+ "objc",
+ "raw-window-handle 0.6.2",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "tokio",
+ "wasm-bindgen",
+ "web-sys",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "aimer_router"
+version = "0.1.0"
+dependencies = [
+ "aimer_attribute",
+ "aimer_color",
+ "aimer_events",
+ "aimer_widget",
+ "url",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "aimer_style"
+version = "0.1.0"
+dependencies = [
+ "aimer_attribute",
+ "aimer_color",
+ "aimer_macro",
+ "aimer_widget",
+]
+
+[[package]]
+name = "aimer_text"
+version = "0.1.0"
+dependencies = [
+ "aimer_attribute",
+ "aimer_color",
+ "aimer_macro",
+ "aimer_style",
+ "aimer_widget",
+]
+
+[[package]]
+name = "aimer_utils"
+version = "0.1.0"
+dependencies = [
+ "colored",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "aimer_widget"
+version = "0.1.0"
+dependencies = [
+ "aimer_attribute",
+ "aimer_canvas",
+ "aimer_color",
+ "aimer_events",
+ "aimer_macro",
+ "aimer_utils",
+ "colored",
+ "crossbeam-channel",
+ "objc",
+ "once_cell",
+ "smallvec",
+ "tokio",
+ "wasm-bindgen",
+ "web-sys",
+ "winit",
 ]
 
 [[package]]
@@ -150,20 +391,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "animation"
-version = "0.1.0"
-dependencies = [
- "attribute",
- "canvas",
- "chrono",
- "constructor",
- "events",
- "utils",
- "widget",
- "winit",
 ]
 
 [[package]]
@@ -309,28 +536,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assets"
-version = "0.1.0"
-dependencies = [
- "attribute",
- "canvas",
- "color",
- "container",
- "image",
- "js-sys",
- "once_cell",
- "openssl",
- "reqwest",
- "tokio",
- "utils",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "widget",
- "winit",
-]
-
-[[package]]
 name = "atomic"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -344,10 +549,6 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
-
-[[package]]
-name = "attribute"
-version = "0.1.0"
 
 [[package]]
 name = "autocfg"
@@ -587,20 +788,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "canvas"
-version = "0.1.0"
-dependencies = [
- "attribute",
- "color",
- "cupid",
- "js-sys",
- "once_cell",
- "utils",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -722,10 +909,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "color"
-version = "0.1.0"
-
-[[package]]
 name = "color_quant"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -777,52 +960,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
-]
-
-[[package]]
-name = "constructor"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
- "widget_codegen",
-]
-
-[[package]]
-name = "container"
-version = "0.1.0"
-dependencies = [
- "attribute",
- "canvas",
- "chrono",
- "constructor",
- "events",
- "objc",
- "tokio",
- "utils",
- "widget",
- "winit",
-]
-
-[[package]]
-name = "control"
-version = "0.1.0"
-dependencies = [
- "animation",
- "arboard",
- "attribute",
- "canvas",
- "chrono",
- "color",
- "events",
- "tokio",
- "utils",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "widget",
- "winit",
 ]
 
 [[package]]
@@ -1030,25 +1167,6 @@ checksum = "eb2a7d3066da2de787b7f032c736763eb7ae5d355f81a68bab2675a96008b0bf"
 dependencies = [
  "lab",
  "phf",
-]
-
-[[package]]
-name = "cupid"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "chrono",
- "color",
- "core-foundation 0.10.1",
- "core-foundation-sys",
- "font-kit",
- "fontdue",
- "fxhash",
- "image",
- "pollster",
- "utils",
- "wgpu",
- "winit",
 ]
 
 [[package]]
@@ -1402,14 +1520,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df61bf483e837f88d5c2291dcf55c67be7e676b3a51acc48db3a7b163b91ed63"
 dependencies = [
  "num-traits",
-]
-
-[[package]]
-name = "events"
-version = "0.1.0"
-dependencies = [
- "attribute",
- "winit",
 ]
 
 [[package]]
@@ -2260,25 +2370,6 @@ dependencies = [
  "fuzzy-matcher",
  "unicode-segmentation",
  "unicode-width",
-]
-
-[[package]]
-name = "inspector"
-version = "0.1.0"
-dependencies = [
- "attribute",
- "canvas",
- "color",
- "futures-util",
- "js-sys",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite",
- "tungstenite",
- "wasm-bindgen",
- "web-sys",
- "widget",
 ]
 
 [[package]]
@@ -3809,38 +3900,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quiver"
-version = "0.1.0"
-dependencies = [
- "attribute",
- "canvas",
- "chrono",
- "color",
- "constructor",
- "cupid",
- "events",
- "inspector",
- "jni",
- "js-sys",
- "ndk 0.9.0",
- "ndk-glue",
- "objc",
- "raw-window-handle 0.6.2",
- "router",
- "rustls-platform-verifier",
- "serde",
- "serde_json",
- "smallvec",
- "tokio",
- "utils",
- "wasm-bindgen",
- "web-sys",
- "wgpu",
- "widget",
- "winit",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4214,19 +4273,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "router"
-version = "0.1.0"
-dependencies = [
- "attribute",
- "color",
- "events",
- "url",
- "wasm-bindgen",
- "web-sys",
- "widget",
 ]
 
 [[package]]
@@ -5257,14 +5303,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
-name = "utils"
-version = "0.1.0"
-dependencies = [
- "colored",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "uuid"
 version = "1.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5821,47 +5859,6 @@ dependencies = [
  "log",
  "raw-window-handle 0.6.2",
  "web-sys",
-]
-
-[[package]]
-name = "widget"
-version = "0.1.0"
-dependencies = [
- "attribute",
- "canvas",
- "color",
- "colored",
- "constructor",
- "crossbeam-channel",
- "events",
- "objc",
- "once_cell",
- "smallvec",
- "tokio",
- "utils",
- "wasm-bindgen",
- "web-sys",
- "widget_attr",
- "winit",
-]
-
-[[package]]
-name = "widget_attr"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
- "widget_codegen",
-]
-
-[[package]]
-name = "widget_codegen"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]

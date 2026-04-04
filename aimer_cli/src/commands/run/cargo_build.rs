@@ -54,8 +54,6 @@ pub fn spawn_cargo_build(
         }
     };
 
-    // println!("RUSTC ENV : {inspector_address}:{inspector_port}");
-
     cmd.env("DEFAULT_INSPECTOR_PORT", inspector_port.to_string());
     cmd.env("DEFAULT_INSPECTOR_ADDRESS", inspector_address.to_string());
 

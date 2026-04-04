@@ -1,0 +1,8 @@
+[package]
+name = "aimer_attribute"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+
+[dependencies]
+aimer_macro.workspace = true
