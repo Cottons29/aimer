@@ -16,12 +16,7 @@ impl AtlasRegion {
     pub fn uvs(&self, atlas_w: u32, atlas_h: u32) -> [f32; 4] {
         let aw = atlas_w as f32;
         let ah = atlas_h as f32;
-        [
-            self.x as f32 / aw,
-            self.y as f32 / ah,
-            (self.x + self.width) as f32 / aw,
-            (self.y + self.height) as f32 / ah,
-        ]
+        [self.x as f32 / aw, self.y as f32 / ah, (self.x + self.width) as f32 / aw, (self.y + self.height) as f32 / ah]
     }
 }
 
@@ -39,13 +34,7 @@ struct ShelfPacker {
 
 impl ShelfPacker {
     fn new(width: u32, height: u32) -> Self {
-        Self {
-            width,
-            height,
-            cursor_x: 0,
-            shelf_y: 0,
-            shelf_height: 0,
-        }
+        Self { width, height, cursor_x: 0, shelf_y: 0, shelf_height: 0 }
     }
 
     /// Try to allocate a region of `w × h`. Returns `None` if the atlas is full.
@@ -175,14 +164,7 @@ impl GlyphAtlas {
 
     /// Look up or insert a glyph into the atlas. Returns the atlas region.
     /// `bitmap` must be `width * height` bytes (grayscale alpha).
-    pub fn get_or_insert(
-        &mut self,
-        device: &wgpu::Device,
-        key: GlyphKey,
-        glyph_w: u32,
-        glyph_h: u32,
-        bitmap: &[u8],
-    ) -> AtlasRegion {
+    pub fn get_or_insert(&mut self, device: &wgpu::Device, key: GlyphKey, glyph_w: u32, glyph_h: u32, bitmap: &[u8]) -> AtlasRegion {
         if let Some(region) = self.cache.get(&key) {
             return *region;
         }
@@ -204,8 +186,7 @@ impl GlyphAtlas {
         for row in 0..glyph_h {
             let dst_start = ((y + row) * self.width + x) as usize;
             let src_start = (row * glyph_w) as usize;
-            self.pixels[dst_start..dst_start + glyph_w as usize]
-                .copy_from_slice(&bitmap[src_start..src_start + glyph_w as usize]);
+            self.pixels[dst_start..dst_start + glyph_w as usize].copy_from_slice(&bitmap[src_start..src_start + glyph_w as usize]);
         }
 
         match &mut self.dirty_region {
@@ -241,11 +222,7 @@ impl GlyphAtlas {
                 aspect: wgpu::TextureAspect::All,
             },
             &region_buf,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(dr.width),
-                rows_per_image: Some(dr.height),
-            },
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(dr.width), rows_per_image: Some(dr.height) },
             wgpu::Extent3d { width: dr.width, height: dr.height, depth_or_array_layers: 1 },
         );
     }

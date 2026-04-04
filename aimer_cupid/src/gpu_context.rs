@@ -1,4 +1,4 @@
-use utils::{debug, error, info};
+use aimer_utils::{debug, error, info};
 use wgpu::{Device, Instance, Limits, Queue, Surface, SurfaceConfiguration, TextureFormat};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;

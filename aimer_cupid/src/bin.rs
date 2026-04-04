@@ -1,7 +1,7 @@
-use cupid::canvas::CupidCanvas;
-use cupid::gpu_context::GpuContext;
-use cupid::renderer::Renderer;
-use cupid::utilities::Color;
+use aimer_cupid::canvas::CupidCanvas;
+use aimer_cupid::gpu_context::GpuContext;
+use aimer_cupid::renderer::Renderer;
+use aimer_cupid::utilities::Color;
 use std::path::PathBuf;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;

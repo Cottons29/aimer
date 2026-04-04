@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use utils::*;
-use utils::log::debug;
+use aimer_utils::*;
 
 /// Embedded primary font (Roboto) — covers Latin and common scripts.
 const PRIMARY_FONT: &[u8] = include_bytes!("../../../fonts/Roboto.ttf");

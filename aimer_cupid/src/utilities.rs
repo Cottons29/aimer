@@ -19,7 +19,6 @@ impl Rect {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Vec2d {
     pub x: f32,

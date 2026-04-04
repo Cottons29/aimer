@@ -1,5 +1,5 @@
 [package]
-name = "cupid"
+name = "aimer_cupid"
 version = "0.1.0"
 edition = "2024"
 description = "A rendering engine that optimized for the ui framework"
@@ -9,9 +9,13 @@ path = "src/bin.rs"
 name = "cupid"
 
 [dependencies]
+aimer_utils.workspace = true
+aimer_color.workspace = true
+
+
+#############
 wgpu.workspace = true
-utils.workspace = true
-color.workspace = true
+
 winit.workspace = true
 pollster.workspace = true
 bytemuck.workspace = true

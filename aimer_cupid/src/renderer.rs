@@ -6,7 +6,7 @@ use crate::text_pipeline::{TextDrawRequest, TextPipelineV2};
 use crate::utilities::{Mat3, Rect};
 use std::sync::Arc;
 use std::thread::spawn;
-use utils::debug;
+use aimer_utils::debug;
 
 struct ClipState {
     rect: Rect,
