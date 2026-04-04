@@ -1,7 +1,6 @@
-use std::env::{current_dir, set_current_dir};
-use std::sync::mpsc::Sender;
-use clap::{Parser, Subcommand};
 use crate::commands::version::VersionCommand;
+use clap::{Parser, Subcommand};
+use std::env::set_current_dir;
 
 pub mod commands;
 pub mod targets;
@@ -18,8 +17,6 @@ struct Cli {
     version: bool,
 }
 
-// pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 #[derive(Subcommand)]
 enum Commands {
     /// Create a new project
@@ -32,7 +29,9 @@ enum Commands {
     Run,
 }
 
-pub fn start_cli() {
+
+
+fn main() {
     #[cfg(debug_assertions)]
     set_current_dir("/Users/cottons/Documents/aimer-fw/playground/jaime").unwrap();
     let cli = Cli::parse();
