@@ -1,5 +1,5 @@
-use events::element::{ElementEvent, KeyAction, NamedKey};
-use widget::dispatch_event;
+use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
+use aimer_widget::dispatch_event;
 use crate::handler::AimerApplicationHandler;
 
 pub(crate) fn handle_user_event(app: &mut AimerApplicationHandler, event: crate::aimer_app::AimerCustomAppEvent) {

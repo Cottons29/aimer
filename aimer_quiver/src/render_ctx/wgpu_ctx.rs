@@ -1,12 +1,12 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod render_ctx {
     use wgpu::{TextureViewDescriptor, TextureViewDimension};
-    use cupid::canvas::CupidCanvas;
-    use cupid::gpu_context::GpuContext;
-    use cupid::renderer::Renderer;
+    use aimer_cupid::canvas::CupidCanvas;
+    use aimer_cupid::gpu_context::GpuContext;
+    use aimer_cupid::renderer::Renderer;
     use winit::dpi::PhysicalSize;
     use winit::window::Window;
-    use utils::debug;
+    use aimer_utils::debug;
 
     pub struct WgpuApi {
         gpu: Option<GpuContext<'static>>,

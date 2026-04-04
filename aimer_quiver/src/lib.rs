@@ -1,6 +1,6 @@
 #[allow(unused)]
 #[macro_use]
-extern crate widget;
+extern crate aimer_widget;
 mod ffi_utils;
 
 

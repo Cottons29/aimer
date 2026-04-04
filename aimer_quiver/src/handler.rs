@@ -10,17 +10,17 @@ use crate::handler;
 use crate::handler::event_handler::WindowEventHandler;
 use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
-use attribute::position::Vec2d;
-use attribute::size::ResolvedSize;
-use inspector::{InspectorHandle, InspectorOverlay};
+use aimer_attribute::position::Vec2d;
+use aimer_attribute::size::ResolvedSize;
+use aimer_inspector::{InspectorHandle, InspectorOverlay};
 #[cfg(not(target_arch = "wasm32"))]
-use inspector::InspectorServer;
+use aimer_inspector::InspectorServer;
 use std::cell::Cell;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
-use utils::{debug, info};
-use widget::base::BuildContext;
-use widget::{Element, Widget};
+use aimer_utils::{debug, info};
+use aimer_widget::base::BuildContext;
+use aimer_widget::{Element, Widget};
 use winit::application::ApplicationHandler;
 #[allow(unused)]
 use winit::dpi::{LogicalSize, PhysicalSize, Position};
@@ -30,10 +30,11 @@ use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
 #[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
+use aimer_attribute::BoxConstraint;
 
 /// Walk the snapshot tree and find a node matching the hovered widget by name and bounds.
 #[cfg(debug_assertions)]
-fn find_hovered_node(node: &inspector::WidgetNode, name: &str, start: Vec2d, end: Vec2d) -> Option<u64> {
+fn find_hovered_node(node: &aimer_inspector::WidgetNode, name: &str, start: Vec2d, end: Vec2d) -> Option<u64> {
     const EPS: f32 = 1.0;
     let w = end.x - start.x;
     let h = end.y - start.y;
@@ -70,7 +71,7 @@ pub struct AimerApplicationHandler {
     pub widget_root: Option<Box<dyn Element>>,
     pub pending_widget: Option<Box<dyn Widget>>,
     pub cursor_pos: Vec2d,
-    pub current_modifiers: events::element::Modifiers,
+    pub current_modifiers: aimer_events::element::Modifiers,
     pub window_scale: f64,
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
@@ -78,7 +79,7 @@ pub struct AimerApplicationHandler {
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-    pub inspector: inspector::InspectorAppHandle,
+    pub inspector: aimer_inspector::InspectorAppHandle,
     #[cfg(all(debug_assertions, target_arch = "wasm32"))]
     pub inspector: inspector::InspectorHandle,
     #[cfg(debug_assertions)]
@@ -133,7 +134,7 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
         if self.window.is_none() {
             let window = event_loop.create_window(window_attributes).unwrap();
             let window: &'static Window = Box::leak(Box::new(window)); // Leak to static ref
-            events::window::set_window(window);
+            aimer_events::window::set_window(window);
             self.window = Some(window);
         }
 
@@ -205,7 +206,7 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
 impl AimerApplicationHandler {
     fn render_widget_tree(widget: &dyn Element, ctx: &BuildContext) {
         #[cfg(debug_assertions)]
-        if let Ok(mut hovered) = widget::inspector_overlay::HOVERED_WIDGET.write() {
+        if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
             *hovered = None;
         }
 
@@ -222,14 +223,14 @@ impl AimerApplicationHandler {
                 .as_ref()
                 .map(|root| {
                     #[cfg(not(target_arch = "wasm32"))]
-                    { inspector::InspectorServer::snapshot_tree(root.as_ref()) }
+                    { aimer_inspector::InspectorServer::snapshot_tree(root.as_ref()) }
                     #[cfg(target_arch = "wasm32")]
-                    { inspector::snapshot_tree(root.as_ref()) }
+                    { aimer_inspector::snapshot_tree(root.as_ref()) }
                 });
 
 
 
-            let hovered_id = if let Ok(hovered) = widget::inspector_overlay::HOVERED_WIDGET.read() {
+            let hovered_id = if let Ok(hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.read() {
                 if let Some((name, start, end)) = hovered.as_ref() {
                     snapshot
                         .as_ref()
@@ -297,15 +298,15 @@ impl AimerApplicationHandler {
         #[cfg(debug_assertions)]
         let inspector_enabled = self.inspector.is_enabled();
 
-        let draw_widgets = |canvas: &canvas::InnerCanvas, width: u32, height: u32| {
-            let canvas = canvas::Canvas::new(canvas);
+        let draw_widgets = |canvas: &aimer_canvas::InnerCanvas, width: u32, height: u32| {
+            let canvas = aimer_canvas::Canvas::new(canvas);
             let build_ctx = BuildContext {
                 parent_size: ResolvedSize { width: width as f32, height: height as f32 },
                 canvas: canvas.clone(),
                 scale: window_scale as f32,
                 parent_pos: Default::default(),
                 cursor_pos,
-                box_constraint: widget::style::BoxConstraint {
+                box_constraint: BoxConstraint {
                     min_width: 0.0,
                     min_height: 0.0,
                     max_width: width as f32,
@@ -353,10 +354,10 @@ impl AimerApplicationHandler {
 
 #[cfg(test)]
 mod tests {
-    use attribute::position::Vec2d;
-    use attribute::size::Size;
-    use widget::base::BuildContext;
-    use widget::{Drawable, Element};
+    use aimer_attribute::position::Vec2d;
+    use aimer_attribute::size::Size;
+    use aimer_widget::base::BuildContext;
+    use aimer_widget::{Drawable, Element};
 
     #[allow(dead_code)]
     struct MockWidget {

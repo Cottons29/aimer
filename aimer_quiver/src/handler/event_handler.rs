@@ -1,9 +1,9 @@
 use crate::handler::AimerApplicationHandler;
-use attribute::position::Vec2d;
-use events::element::KeyAction;
-use events::element::{ElementEvent, Modifiers, NamedKey};
-use utils::{debug, info};
-use widget::{broadcast_event, dispatch_event};
+use aimer_attribute::position::Vec2d;
+use aimer_events::element::KeyAction;
+use aimer_events::element::{ElementEvent, Modifiers, NamedKey};
+use aimer_utils::{debug, info};
+use aimer_widget::{broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
