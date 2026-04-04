@@ -1,0 +1,29 @@
+[package]
+name = "aimer_input"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+
+[dependencies]
+aimer_widget.workspace = true
+aimer_attribute.workspace =  true
+aimer_color.workspace = true
+aimer_events.workspace = true
+aimer_canvas.workspace = true
+aimer_utils.workspace = true
+aimer_style.workspace = true
+aimer_animation.workspace = true
+#####################
+winit.workspace = true
+chrono.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
+
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]
+arboard.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4.50"
+wasm-bindgen = { workspace = true }
+web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlInputElement", "HtmlElement", "CssStyleDeclaration", "HtmlCollection", "KeyboardEvent", "KeyboardEventInit", "InputEvent", "EventTarget", "Navigator", "Clipboard"] }

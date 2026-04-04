@@ -1,0 +1,10 @@
+[package]
+name = "aimer_style"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aimer_macro.workspace = true
+aimer_attribute.workspace = true
+aimer_color.workspace = true
+aimer_widget.workspace = true

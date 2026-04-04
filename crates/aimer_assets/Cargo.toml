@@ -1,0 +1,34 @@
+[package]
+name = "aimer_assets"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aimer_utils.workspace = true
+aimer_canvas.workspace = true
+aimer_attribute.workspace = true
+aimer_widget.workspace = true
+aimer_container.workspace = true
+aimer_color.workspace = true
+aimer_style.workspace = true
+
+
+######
+
+
+image.workspace = true
+once_cell.workspace = true
+winit.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+openssl = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+reqwest = { workspace = true }
+
+[target.wasm32-unknown-unknown.dependencies]
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = [ "Response", "Window", "Blob", "Url", "HtmlImageElement","RequestInit","Headers"] }
