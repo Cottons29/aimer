@@ -1,18 +1,18 @@
 use crate::handler::AimerApplicationHandler;
 use crate::render_ctx::AimerRenderContext;
-use attribute::position::Vec2d;
+use aimer_attribute::position::Vec2d;
 #[cfg(not(target_arch = "wasm32"))]
-use inspector::InspectorAppHandle;
+use aimer_inspector::InspectorAppHandle;
 use std::cell::Cell;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
-use widget::Widget;
+use aimer_widget::Widget;
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
 
-use utils::{debug, info};
+use aimer_utils::{debug, info};
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
@@ -78,7 +78,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
         return;
     }
 
-    utils::info!("Initializing EventLoop...");
+    aimer_utils::info!("Initializing EventLoop...");
     #[cfg(not(target_os = "android"))]
     let event_loop = EventLoop::<AimerCustomAppEvent>::with_user_event()
         .build()
@@ -152,7 +152,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    utils::debug!("Creating async runtime...");
+    aimer_utils::debug!("Creating async runtime...");
     #[cfg(not(target_arch = "wasm32"))]
     let async_runtime = Runtime::new().expect("Failed to create async runtime");
 
@@ -165,7 +165,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
     #[cfg(all(debug_assertions, target_arch = "wasm32"))]
     let inspector = inspector::start(DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap());
 
-    utils::info!("Creating App instance...");
+    aimer_utils::info!("Creating App instance...");
     let mut app = AimerApplicationHandler {
         window: None,
         render_ctx: AimerRenderContext::default(),
@@ -191,8 +191,8 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     // On iOS, this function never returns.
     match event_loop.run_app(&mut app) {
-        Ok(_) => utils::info!("EventLoop finished successfully"),
-        Err(e) => utils::error!("EventLoop::run_app failed: {:?}", e),
+        Ok(_) => aimer_utils::info!("EventLoop finished successfully"),
+        Err(e) => aimer_utils::error!("EventLoop::run_app failed: {:?}", e),
     }
     #[cfg(not(target_arch = "wasm32"))]
     app.async_runtime.shutdown_background();
