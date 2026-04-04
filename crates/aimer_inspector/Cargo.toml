@@ -1,0 +1,24 @@
+[package]
+name = "aimer_inspector"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
+tokio = {workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"]}
+tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
+
+
+[dependencies]
+aimer_canvas.workspace = true
+aimer_widget.workspace = true
+aimer_attribute.workspace = true
+aimer_color.workspace = true
+futures-util = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "Node", "HtmlCanvasElement", "CanvasRenderingContext2d", "WebSocket", "MessageEvent", "ErrorEvent"] }

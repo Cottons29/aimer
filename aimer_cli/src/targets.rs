@@ -11,11 +11,10 @@ pub enum Targets {
     Ios,
     IosSimulator,
     Web,
-    Terminated
+    Terminated,
 }
 
 impl TryFrom<&str> for Targets {
-
     type Error = Box<dyn Error>;
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
@@ -34,8 +33,6 @@ impl TryFrom<&str> for Targets {
         Ok(res)
     }
 }
-
-
 
 impl TryFrom<String> for Targets {
     type Error = Box<dyn Error>;

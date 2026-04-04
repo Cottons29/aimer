@@ -1,0 +1,20 @@
+[package]
+name = "aimer_canvas"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aimer_attribute.workspace = true
+aimer_utils.workspace = true
+aimer_color.workspace = true
+once_cell.workspace = true
+
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+aimer_cupid.workspace = true
+
+
+[target.wasm32-unknown-unknown.dependencies]
+web-sys = { workspace = true, features = ["HtmlImageElement", "Blob", "Url"] }
+wasm-bindgen.workspace = true
+js-sys.workspace = true

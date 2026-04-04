@@ -3,6 +3,8 @@
 [env]
 ANDROID_NDK = "~/Library/Android/sdk/ndk/29.0.13113456"
 ANDROID_NDK_HOME = "~/Library/Android/sdk/ndk/29.0.13113456"
+DEFAULT_INSPECTOR_PORT = "2992"
+DEFAULT_INSPECTOR_ADDRESS = "127.0.0.1"
 
 [target.aarch64-linux-android]
 linker = "~/Library/Android/sdk/ndk/29.0.13113456/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android24-clang"

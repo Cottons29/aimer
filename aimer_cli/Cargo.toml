@@ -5,10 +5,10 @@ edition = "2024"
 
 [[bin]]
 name = "aimer"
-path = "./src/bin.rs"
+path = "src/main.rs"
 
 [dependencies]
-inspector.workspace = true
+aimer_inspector.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread"]}
 ansi-to-tui.workspace = true
 clap.workspace = true

@@ -18,11 +18,9 @@ pub fn create(dir: &PathBuf) {
   </trustInfo>
 </assembly>
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Default application icon
-    fs::write(
-        dir.join("builds/windows/app.ico"),
-        include_bytes!("../../../templates/icons/app.ico"),
-    ).unwrap();
+    fs::write(dir.join("builds/windows/app.ico"), include_bytes!("../../../templates/icons/app.ico")).unwrap();
 }

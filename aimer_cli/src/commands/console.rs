@@ -13,7 +13,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use inspector::{ InspectorServer, render_tree_lines_with_ids};
+use aimer_inspector::{ InspectorServer, render_tree_lines_with_ids};
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -29,7 +29,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use std::usize::MAX;
 use tokio::runtime::Runtime;
 
 const MAX_LINES: usize = 32768;
@@ -159,10 +158,6 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
     // Starting inspector server
     let Ok(inspector_runtime) = Runtime::new() else {
         return Err("Failed to start inspector server".into());
-    };
-    let inspector_address = match device.target {
-        Targets::Ios | Targets::Android => local_ip_address::local_ip()?,
-        _ => IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
     };
 
     let inspector_server_address = match device.target {

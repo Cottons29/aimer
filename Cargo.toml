@@ -1,53 +1,71 @@
+[package]
+name = "aimer"
+version = "0.1.0"
+edition = "2024"
+description = "The organized export of other Aimer project"
+
+
+[dependencies]
+aimer_attribute.workspace = true
+aimer_widget.workspace = true
+aimer_color.workspace = true
+aimer_container.workspace = true
+aimer_quiver.workspace = true
+aimer_input.workspace= true
+wasm-bindgen.workspace = true
+aimer_animation.workspace = true
+aimer_utils.workspace = true
+aimer_router.workspace = true
+aimer_assets.workspace = true
+aimer_style.workspace = true
+aimer_text.workspace = true
+aimer_macro.workspace = true
+
 [workspace]
 resolver = "3"
-
 members = [
     ".",
-    "quiver",
-    "crates/widget",
-    "macros/constructor",
-    "macros/widget_codegen",
-    "crates/container",
-    "crates/color",
-    "macros/widget_attr",
-    "aimer",
-    "crates/control",
-    "crates/canvas",
-    "crates/attribute",
-    "crates/utils",
-    "crates/animation",
-    "macros/aimer_main",
+    "aimer_quiver",
     "aimer_cli",
-    "crates/events",
-    "crates/router",
-    "crates/inspector",
-    "cupid",
-    "crates/assets"
+    "aimer_cupid",
+    "crates/aimer_widget",
+    "crates/aimer_container",
+    "crates/aimer_color",
+    "crates/aimer_input",
+    "crates/aimer_canvas",
+    "crates/aimer_attribute",
+    "crates/aimer_utils",
+    "crates/aimer_animation",
+    "crates/aimer_events",
+    "crates/aimer_router",
+    "crates/aimer_inspector",
+    "crates/aimer_assets",
+    "crates/aimer_style",
+    "crates/aimer_text",
+    "crates/aimer_macro"
 ]
 
 
 [workspace.dependencies]
 
-canvas = {path = "crates/canvas"}
-animation = { path = "crates/animation" }
-control = { path = "crates/control" }
-widget_codegen = { path = "macros/widget_codegen" }
-container = { path = "crates/container" }
-constructor = { path = "./macros/constructor" }
-quiver = { path = "quiver" }
-widget = { path = "crates/widget" }
-widget_attr = { path = "macros/widget_attr" }
-color = { path = "crates/color" }
-attribute = { path = "crates/attribute" }
-utils = { path = "crates/utils" }
-aimer_main = { path = "macros/aimer_main" }
+aimer_canvas = {path = "crates/aimer_canvas" }
+aimer_animation = { path = "crates/aimer_animation" }
+aimer_input = { path = "crates/aimer_input" }
+aimer_container = { path = "crates/aimer_container" }
+aimer_quiver = { path = "aimer_quiver" }
+aimer_widget = { path = "crates/aimer_widget" }
+aimer_color = { path = "crates/aimer_color" }
+aimer_attribute = { path = "crates/aimer_attribute" }
+aimer_utils = { path = "crates/aimer_utils" }
 aimer_cli = { path = "aimer_cli" }
-events = { path = "crates/events" }
-router = {path = "crates/router" }
-inspector = {path = "./crates/inspector"}
-cupid = {path = "./cupid"}
-assets = {path = "crates/assets" }
-
+aimer_events = { path = "crates/aimer_events" }
+aimer_router = {path = "crates/aimer_router" }
+aimer_inspector = {path = "crates/aimer_inspector" }
+aimer_cupid = {path = "aimer_cupid" }
+aimer_assets = {path = "crates/aimer_assets" }
+aimer_style = {path = "crates/aimer_style"}
+aimer_text = {path = "crates/aimer_text"}
+aimer_macro = {path = "crates/aimer_macro"}
 
 
 #############
@@ -99,6 +117,7 @@ core-foundation-sys = "0.8.7"
 reqwest = {version = "0.13.2",default-features = false, features = ["rustls", "native-tls", "http2"] }
 openssl = { version = "0.10", features = ["vendored"] }
 local-ip-address = "0.6.11"
+
 
 
 
