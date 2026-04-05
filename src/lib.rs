@@ -18,12 +18,19 @@ pub use aimer_macro::main;
 pub use aimer_widget;
 pub use aimer_widget::Widget;
 pub use aimer_widget::base::BuildContext;
-pub use aimer_text::Text;
 pub use aimer_widget::*;
 pub use aimer_widget::{State, StatefulWidget, StatelessWidget};
+pub use aimer_text::Text;
 pub use aimer_assets::*;
 pub use aimer_assets::image_file::image_widget::Image;
 pub use aimer_assets::image_file::source::ImageSource;
+
+pub mod widget {
+    pub use aimer_widget::Widget;
+    pub use aimer_widget::base::BuildContext;
+    pub use aimer_widget::*;
+    pub use aimer_widget::{State, StatefulWidget, StatelessWidget};
+}
 
 pub mod animation {
     pub use aimer_animation::*;
@@ -55,8 +62,14 @@ pub mod console {
 // wasm dependencies
 pub use wasm_bindgen;
 
-pub use aimer_router;
-pub use aimer_router::Navigator;
-pub use aimer_router::NavigatorController;
-pub use aimer_router::Route;
-pub use aimer_router::Router;
+pub mod router  {
+    pub use aimer_router::Navigator;
+    pub use aimer_router::NavigatorController;
+    pub use aimer_router::Route;
+    pub use aimer_router::Router;
+    pub use aimer_router::navigator::NavigatorState;
+    // pub use aimer_router::router::
+}
+
+
+
