@@ -1,7 +1,7 @@
 fn main() {
     let port = std::env::var("DEFAULT_INSPECTOR_PORT").unwrap_or_else(|err| {
         eprintln!("Failed to read DEFAULT_INSPECTOR_PORT: {}", err);
-        "2992".to_string()
+        "9229".to_string()
     });
     let address = std::env::var("DEFAULT_INSPECTOR_ADDRESS").unwrap_or_else(|err| {
         eprintln!("Failed to read DEFAULT_INSPECTOR_ADDRESS: {}", err);
