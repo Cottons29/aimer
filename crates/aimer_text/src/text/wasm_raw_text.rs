@@ -1,10 +1,9 @@
-use crate::base::BuildContext;
-use crate::style::text_style::TextStyle;
-use crate::text::TextAlign;
-use crate::{Drawable, Element, LayoutCache, TextOverflow};
-use attribute::position::Vec2d;
-use attribute::size::ResolvedSize;
+
 use std::sync::Mutex;
+use aimer_attribute::{ResolvedSize, Vec2d};
+use aimer_style::*;
+use aimer_widget::{inspector_overlay, Drawable, Element, LayoutCache};
+use aimer_widget::base::BuildContext;
 
 #[allow(dead_code)]
 pub struct RawTextWidget {
@@ -42,7 +41,7 @@ impl Drawable for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
         #[cfg(debug_assertions)]
         {
-            if crate::inspector_overlay::is_enabled() {
+            if inspector_overlay::is_enabled() {
                 let (start_x, start_y) = ctx.canvas.get_transform_translation();
                 let size = self.content_size(ctx);
                 let end_x = start_x + size.width;
@@ -54,7 +53,7 @@ impl Drawable for RawTextWidget {
 
                 let cp = ctx.cursor_pos;
                 if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
-                    if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
+                    if let Ok(mut hovered) = inspector_overlay::HOVERED_WIDGET.write() {
                         *hovered = Some(("RawTextWidget", l_start, l_end));
                     }
                 }

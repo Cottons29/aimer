@@ -1,24 +1,22 @@
 use crate::canvas::CanvasRendering;
-use attribute::position::Vec2d;
-use attribute::size::ResolvedSize;
-use color::prelude::{Color, ColorMixer};
-#[cfg(target_arch = "wasm32")]
+use aimer_attribute::position::Vec2d;
+use aimer_attribute::size::ResolvedSize;
+use aimer_color::prelude::{Color, ColorMixer};
 use once_cell::sync::Lazy;
-#[cfg(target_arch = "wasm32")]
 use std::collections::HashMap;
 use std::panic::Location;
-#[cfg(target_arch = "wasm32")]
+
 use std::sync::Mutex;
-use utils::{debug, error};
-#[cfg(target_arch = "wasm32")]
+use aimer_utils::{debug, error};
+
 use web_sys::{CanvasRenderingContext2d as H5Canvas, HtmlImageElement};
 
-#[cfg(target_arch = "wasm32")]
+
 static IMAGE_REGISTRY: Lazy<Mutex<HashMap<u32, HtmlImageElement>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-#[cfg(target_arch = "wasm32")]
+
 static NEXT_IMAGE_ID: Mutex<u32> = Mutex::new(1);
 
-#[cfg(target_arch = "wasm32")]
+
 #[allow(dead_code)]
 impl CanvasRendering for H5Canvas {
     #[inline]
@@ -470,6 +468,37 @@ impl CanvasRendering for H5Canvas {
         self.arc_to(x, y, x + tl, y, tl).unwrap_or(());
         self.close_path();
         self.fill();
+    }
+
+    #[inline]
+    fn draw_shadow_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        shadow_color: Color,
+        shadow_params: [f32; 4],
+        border_radius: [f32; 4],
+        inset: bool,
+    ) {
+        // WASM fallback: use Canvas2D shadowBlur/shadowOffset
+        let argb = shadow_color.to_u32();
+        let a = ((argb >> 24) & 0xFF) as f64 / 255.0;
+        let r = (argb >> 16) & 0xFF;
+        let g = (argb >> 8) & 0xFF;
+        let b = argb & 0xFF;
+        let color_str = format!("rgba({},{},{},{})", r, g, b, a);
+
+        self.save();
+        self.set_shadow_color(&color_str);
+        self.set_shadow_blur(shadow_params[2] as f64);
+        self.set_shadow_offset_x(shadow_params[0] as f64);
+        self.set_shadow_offset_y(shadow_params[1] as f64);
+
+        // Draw a filled rect to trigger the shadow
+        self.set_fill_style_str("rgba(0,0,0,0)");
+        H5Canvas::fill_rect(self, pos.x as f64, pos.y as f64, size.width as f64, size.height as f64);
+
+        self.restore();
     }
 
     #[inline]
