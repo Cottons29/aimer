@@ -115,7 +115,7 @@ pub struct BoxShadow {
     pub spread: f32,
 
     /// RGBA color
-    #[constructor(default = BoxShadow::DEFAULT_COLOR)]
+    #[constructor(default = BoxShadow::DEFAULT_COLOR, into)]
     pub color: Color,
 
     /// Inner shadow instead of outer

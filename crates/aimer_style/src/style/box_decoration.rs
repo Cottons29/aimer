@@ -6,7 +6,7 @@ use aimer_color::prelude::Color;
 use aimer_macro::Constructor;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use crate::style::border::{BoxBorder, BoxOutline, RawBoxBorder, BorderMode};
+use crate::style::border::{BoxBorder, BoxOutline};
 use crate::style::box_decoration::border_radius::BorderRadius;
 use crate::style::box_decoration::box_shadow::BoxShadow;
 
@@ -22,10 +22,16 @@ pub struct BoxDecoration {
     pub outline: BoxOutline,
     #[constructor(default, into)]
     pub border_radius: BorderRadius,
-    #[constructor(default,dyn_iter)]
+    #[constructor(default,dyn_iter, into)]
     pub box_shadow: Vec<BoxShadow>,
     #[constructor(default = Option::None, into)]
     pub background_color: Option<Color>,
+}
+
+impl From<BoxShadow> for Vec<BoxShadow> {
+    fn from(shadow: BoxShadow) -> Self {
+        vec![shadow]
+    }
 }
 
 
@@ -45,6 +51,14 @@ impl Drawable for BoxDecoration {
         let scale = ctx.scale;
 
         let radii = self.border_radius.resolve(box_width, box_height, scale);
+
+        // Draw box shadows (outer shadows drawn before background, inset shadows drawn after)
+        for shadow in &self.box_shadow {
+            if shadow.inset {
+                continue; // inset shadows are drawn after the background
+            }
+            Self::draw_shadow(ctx, shadow, box_width, box_height, &radii);
+        }
 
         // Draw combined background, border and outline if possible
         if self.border.has_visible_border(box_width, box_height, scale) || self.outline.has_visible_outline(box_width, box_height, scale) {
@@ -73,5 +87,36 @@ impl Drawable for BoxDecoration {
                 radii,
             );
         }
+
+        // Draw inset shadows after background
+        for shadow in &self.box_shadow {
+            if !shadow.inset {
+                continue;
+            }
+            Self::draw_shadow(ctx, shadow, box_width, box_height, &radii);
+        }
+    }
+}
+
+impl BoxDecoration {
+    /// Draws a box shadow using a single GPU draw call with SDF-based Gaussian blur.
+    fn draw_shadow(
+        ctx: &BuildContext,
+        shadow: &BoxShadow,
+        box_width: f32,
+        box_height: f32,
+        radii: &[f32; 4],
+    ) {
+        let blur = shadow.blur.max(0.0);
+        let spread = shadow.spread;
+
+        ctx.canvas.draw_shadow_rect(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width: box_width, height: box_height },
+            shadow.color,
+            [shadow.offset_x, shadow.offset_y, blur, spread],
+            *radii,
+            shadow.inset,
+        );
     }
 }
