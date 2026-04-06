@@ -19,6 +19,9 @@ struct VertexOutput {
     @location(8) pixel_pos: vec2<f32>,
     @location(9) clip_rect: vec4<f32>,
     @location(10) clip_border_radius: vec4<f32>,
+    @location(11) shadow_params: vec4<f32>,
+    @location(12) shadow_color: vec4<f32>,
+    @location(13) shadow_flags: vec4<f32>,
 };
 
 struct RectInstance {
@@ -32,6 +35,9 @@ struct RectInstance {
     @location(7) outline_color: vec4<f32>,
     @location(8) clip_rect: vec4<f32>,
     @location(9) clip_border_radius: vec4<f32>,
+    @location(10) shadow_params: vec4<f32>,
+    @location(11) shadow_color: vec4<f32>,
+    @location(12) shadow_flags: vec4<f32>,
 };
 
 @vertex
@@ -68,6 +74,9 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: RectInstance) -> VertexOutput {
     out.pixel_pos = pixel_pos;
     out.clip_rect = inst.clip_rect;
     out.clip_border_radius = inst.clip_border_radius;
+    out.shadow_params = inst.shadow_params;
+    out.shadow_color = inst.shadow_color;
+    out.shadow_flags = inst.shadow_flags;
     return out;
 }
 
@@ -92,6 +101,34 @@ fn sdf_rounded_rect(p: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>) -> f32
     r = min(r, min(half_size.x, half_size.y));
     let q = abs(p) - half_size + vec2<f32>(r, r);
     return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+/// Gaussian integral (erf-based) for smooth shadow falloff.
+fn gaussian_integral(x: f32, sigma: f32) -> f32 {
+    let normalized = x / (sigma * 1.4142135); // sqrt(2)
+    let t = 1.0 / (1.0 + 0.3275911 * abs(normalized));
+    let poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741
+               + t * (-1.453152027 + t * 1.061405429))));
+    let erf_val = 1.0 - poly * exp(-normalized * normalized);
+    return 0.5 + 0.5 * sign(normalized) * erf_val;
+}
+
+/// Compute shadow alpha from SDF distance and blur radius.
+fn shadow_alpha(sdf_dist: f32, blur: f32, is_inset: bool) -> f32 {
+    let sigma = blur * 0.5;
+    if sigma < 0.001 {
+        // Hard edge
+        if is_inset {
+            return select(1.0, 0.0, sdf_dist < 0.0);
+        } else {
+            return select(0.0, 1.0, sdf_dist < 0.0);
+        }
+    }
+    let a = gaussian_integral(-sdf_dist, sigma);
+    if is_inset {
+        return 1.0 - a;
+    }
+    return a;
 }
 
 /// Compute anti-aliased clip alpha from a clip rect in pixel coordinates.
@@ -171,6 +208,74 @@ fn linear_color_to_srgb(c: vec4<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // --- Shadow early path ---
+    if in.shadow_color.a > 0.0 {
+        let shadow_offset = in.shadow_params.xy;
+        let shadow_blur = in.shadow_params.z;
+        let shadow_spread = in.shadow_params.w;
+        let is_inset = in.shadow_flags.x > 0.5;
+
+        // The rect_size IS the expanded quad size; the original rect size is stored
+        // implicitly. We need to recover the original rect half-size.
+        // The quad was expanded by (blur + spread + |offset|) on each side.
+        let expand = shadow_blur + shadow_spread + abs(shadow_offset.x) + abs(shadow_offset.y);
+        let orig_size = in.rect_size - vec2<f32>(expand * 2.0);
+        let orig_half = orig_size * 0.5;
+
+        // local_pos is relative to the expanded quad; center it on the original rect
+        let centered = in.local_pos - in.rect_size * 0.5;
+
+        // Compute SDF at the shadow-offset position with spread-adjusted half-size
+        let shadow_half = orig_half + vec2<f32>(shadow_spread);
+        let shadow_p = centered - shadow_offset;
+        let shadow_d = sdf_rounded_rect(shadow_p, shadow_half, in.border_radius);
+
+        let sa = shadow_alpha(shadow_d, shadow_blur, is_inset);
+
+        // For inset shadows, clip to the original rect bounds
+        if is_inset {
+            let orig_d = sdf_rounded_rect(centered, orig_half, in.border_radius);
+            let inside = 1.0 - smoothstep(-0.5, 0.5, orig_d);
+            let final_a = sa * inside;
+
+            var sc: vec4<f32>;
+            if viewport.surface_is_srgb >= 1.5 {
+                sc = in.shadow_color;
+            } else {
+                sc = srgb_color_to_linear(in.shadow_color);
+            }
+            let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
+            var result = vec4<f32>(sc.rgb * sc.a, sc.a) * final_a * ca;
+            if viewport.surface_is_srgb < 0.5 {
+                let a = result.a;
+                if a > 0.00001 {
+                    let unpremul = result.rgb / a;
+                    let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
+                    result = vec4<f32>(srgb_rgb * a, a);
+                }
+            }
+            return result;
+        } else {
+            var sc: vec4<f32>;
+            if viewport.surface_is_srgb >= 1.5 {
+                sc = in.shadow_color;
+            } else {
+                sc = srgb_color_to_linear(in.shadow_color);
+            }
+            let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
+            var result = vec4<f32>(sc.rgb * sc.a, sc.a) * sa * ca;
+            if viewport.surface_is_srgb < 0.5 {
+                let a = result.a;
+                if a > 0.00001 {
+                    let unpremul = result.rgb / a;
+                    let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
+                    result = vec4<f32>(srgb_rgb * a, a);
+                }
+            }
+            return result;
+        }
+    }
+
     // The quad may have been expanded by outline_width on each side.
     let ow_top = in.outline_width.x;
     let ow_right = in.outline_width.y;

@@ -13,7 +13,14 @@ pub struct GpuContext<'w> {
 }
 
 impl<'w> GpuContext<'w> {
+    /// Synchronous initializer for non-wasm targets.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn initialize(window: &'w Window, size: PhysicalSize<u32>) -> Self {
+        pollster::block_on(Self::initialize_async(window, size))
+    }
+
+    /// Async initializer usable on all targets (required on wasm where blocking is not allowed).
+    pub async fn initialize_async(window: &'w Window, size: PhysicalSize<u32>) -> Self {
         let backends = {
             #[cfg(target_os = "android")]
             {
@@ -33,7 +40,7 @@ impl<'w> GpuContext<'w> {
             }
             #[cfg(target_arch = "wasm32")]
             {
-                wgpu::Backends::BROWSER_WEBGPU
+                wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL
             }
         };
 
@@ -51,22 +58,24 @@ impl<'w> GpuContext<'w> {
             .create_surface(window)
             .expect("failed to create surface");
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let adapter = match instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
-        }))
-        .or_else(|_| {
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: true,
-            }))
-        })
-        .map_err(|e| {
-            error!("Failed to find a suitable adapter: {}", e);
-        })
-        .unwrap();
+        }).await {
+            Ok(adapter) => adapter,
+            Err(_) => {
+                instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::default(),
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: true,
+                }).await
+                .map_err(|e| {
+                    error!("Failed to find a suitable adapter: {}", e);
+                })
+                .unwrap()
+            }
+        };
 
         info!("Creating the gpu device");
 
@@ -80,19 +89,24 @@ impl<'w> GpuContext<'w> {
 
         #[cfg(target_os = "android")]
         let limit = Limits::downlevel_webgl2_defaults().using_resolution(resolution);
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
         let limit = Limits::default();
+        #[cfg(target_arch = "wasm32")]
+        let limit = Limits::downlevel_webgl2_defaults();
 
-        let (device, queue) = match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = match adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("cupid gpu renderer device"),
             required_features: wgpu::Features::default(),
             required_limits: limit,
             ..Default::default()
-        })) {
+        }).await {
             Ok((device, queue)) => (device, queue),
             Err(e) => {
                 error!("Failed to create device: {}", e);
+                #[cfg(not(target_arch = "wasm32"))]
                 std::process::exit(1);
+                #[cfg(target_arch = "wasm32")]
+                panic!("Failed to create GPU device: {}", e);
             }
         };
 

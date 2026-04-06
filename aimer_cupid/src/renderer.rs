@@ -168,6 +168,9 @@ impl Renderer {
                             outline_color: outline_color.to_array(),
                             clip_rect: clip_to_array(self.clip_stack.last()),
                             clip_border_radius: clip_border_radius(self.clip_stack.last()),
+                            shadow_params: [0.0; 4],
+                            shadow_color: [0.0; 4],
+                            shadow_flags: [0.0; 4],
                         }),
                     });
                 }
@@ -186,6 +189,9 @@ impl Renderer {
                             outline_color: [0.0; 4],
                             clip_rect: clip_to_array(self.clip_stack.last()),
                             clip_border_radius: clip_border_radius(self.clip_stack.last()),
+                            shadow_params: [0.0; 4],
+                            shadow_color: [0.0; 4],
+                            shadow_flags: [0.0; 4],
                         }),
                     });
                 }
@@ -237,6 +243,46 @@ impl Renderer {
                 DrawCommand::LoadImageWithId { texture_id, bytes, width, height } => {
                     self.image_pipeline.upload_image_with_id(device, queue, *texture_id, *width, *height, &bytes);
                 }
+                DrawCommand::DrawShadowRect { rect, shadow_color, shadow_params, border_radius, inset } => {
+                    let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
+                    let sy = (current_transform.cols[1][0].powi(2) + current_transform.cols[1][1].powi(2)).sqrt();
+
+                    let offset_x = shadow_params[0];
+                    let offset_y = shadow_params[1];
+                    let blur = shadow_params[2];
+                    let spread = shadow_params[3];
+
+                    // Expand the rect to encompass the full shadow extent
+                    let expand = blur + spread + offset_x.abs() + offset_y.abs();
+
+                    let (p1x, p1y) = current_transform.transform_point(rect.x - expand, rect.y - expand);
+                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width + expand, rect.y + rect.height + expand);
+
+                    let mut scaled_br = *border_radius;
+                    for r in &mut scaled_br {
+                        *r *= sx;
+                    }
+
+                    let scaled_params = [offset_x * sx, offset_y * sy, blur * sx, spread * sx];
+
+                    self.resolved.push(ResolvedCmd {
+                        kind: ResolvedKind::Rect(RectInstance {
+                            position: [p1x.min(p2x), p1y.min(p2y)],
+                            size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
+                            color: [0.0, 0.0, 0.0, 0.0],
+                            border_radius: scaled_br,
+                            border_width: [0.0; 4],
+                            border_color: [0.0; 4],
+                            outline_width: [0.0; 4],
+                            outline_color: [0.0; 4],
+                            clip_rect: clip_to_array(self.clip_stack.last()),
+                            clip_border_radius: clip_border_radius(self.clip_stack.last()),
+                            shadow_params: scaled_params,
+                            shadow_color: shadow_color.to_array(),
+                            shadow_flags: [if *inset { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+                        }),
+                    });
+                }
             }
         }
 
@@ -244,14 +290,6 @@ impl Renderer {
         if !self.text_requests.is_empty() {
             self.text_pipeline
                 .prepare(device, queue, width, height, is_srgb, &self.text_requests);
-        }
-
-        // Batch rects
-        self.rect_pipeline.clear();
-        for rc in &self.resolved {
-            if let ResolvedKind::Rect(inst) = &rc.kind {
-                self.rect_pipeline.push(*inst);
-            }
         }
 
         // Create encoder and render pass
@@ -272,46 +310,62 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            // Render images first so that rects and text (including inspector overlay) render on top
-            {
-                let mut current_texture_id = None;
-                let mut batch = Vec::new();
+            // Render commands in draw order to preserve correct z-ordering
+            // between rects and images. Consecutive same-type commands are batched.
+            self.rect_pipeline.clear();
+            let mut image_batch: Vec<ImageInstance> = Vec::new();
+            let mut current_texture_id: Option<u32> = None;
 
-                for rc in &self.resolved {
-                    if let ResolvedKind::Image { texture_id, instance } = &rc.kind {
-                        if current_texture_id.is_none() {
-                            current_texture_id = Some(*texture_id);
+            for i in 0..self.resolved.len() {
+                match &self.resolved[i].kind {
+                    ResolvedKind::Rect(inst) => {
+                        // Flush any pending image batch before switching to rects
+                        if let Some(tid) = current_texture_id.take() {
+                            if !image_batch.is_empty() {
+                                self.image_pipeline
+                                    .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &image_batch);
+                                image_batch.clear();
+                            }
                         }
+                        self.rect_pipeline.push(*inst);
+                    }
+                    ResolvedKind::Image { texture_id, instance } => {
+                        // Flush any pending rects before switching to images
+                        self.rect_pipeline
+                            .flush(device, queue, &mut pass, width, height, is_srgb);
 
-                        if Some(*texture_id) != current_texture_id {
-                            // Flush current batch
-                            if let Some(tid) = current_texture_id {
-                                if !batch.is_empty() {
+                        if current_texture_id.is_some() && current_texture_id != Some(*texture_id) {
+                            // Flush current image batch for previous texture
+                            if let Some(tid) = current_texture_id.take() {
+                                if !image_batch.is_empty() {
                                     self.image_pipeline
-                                        .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &batch);
+                                        .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &image_batch);
+                                    image_batch.clear();
                                 }
                             }
-                            current_texture_id = Some(*texture_id);
-                            batch.clear();
                         }
-                        batch.push(*instance);
+                        current_texture_id = Some(*texture_id);
+                        image_batch.push(*instance);
                     }
-                }
-
-                // Flush last batch
-                if let Some(tid) = current_texture_id {
-                    if !batch.is_empty() {
-                        self.image_pipeline
-                            .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &batch);
+                    ResolvedKind::TextIndex(()) => {
+                        // Text is rendered after all other commands
                     }
                 }
             }
 
-            // Flush rects (AA clipping is handled per-instance in the shader)
+            // Flush remaining image batch
+            if let Some(tid) = current_texture_id {
+                if !image_batch.is_empty() {
+                    self.image_pipeline
+                        .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &image_batch);
+                }
+            }
+
+            // Flush remaining rects
             self.rect_pipeline
                 .flush(device, queue, &mut pass, width, height, is_srgb);
 
-            // Render text
+            // Render text last (including inspector overlay)
             if !self.text_requests.is_empty() {
                 self.text_pipeline.render(&mut pass);
             }

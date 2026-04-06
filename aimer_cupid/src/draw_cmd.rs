@@ -57,6 +57,14 @@ pub enum DrawCommand {
     SetTransform {
         matrix: Mat3,
     },
+    DrawShadowRect {
+        rect: Rect,
+        shadow_color: Color,
+        /// [offset_x, offset_y, blur, spread]
+        shadow_params: [f32; 4],
+        border_radius: [f32; 4],
+        inset: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -96,6 +104,23 @@ impl DrawList {
             border_color,
             outline_width: [0.0; 4],
             outline_color: Color::transparent(),
+        });
+    }
+
+    pub fn draw_shadow_rect(
+        &mut self,
+        rect: Rect,
+        shadow_color: Color,
+        shadow_params: [f32; 4],
+        border_radius: [f32; 4],
+        inset: bool,
+    ) {
+        self.commands.push(DrawCommand::DrawShadowRect {
+            rect,
+            shadow_color,
+            shadow_params,
+            border_radius,
+            inset,
         });
     }
 
