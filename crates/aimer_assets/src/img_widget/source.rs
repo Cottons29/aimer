@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use aimer_utils::error;
+use aimer_utils::{debug, error};
 use aimer_widget::base::BuildContext;
 
 static NETWORK_CACHE: Lazy<Mutex<HashMap<String, NetworkImageState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
@@ -194,64 +194,21 @@ impl ImageSource {
             return Err(format!("HTTP error: {}", resp.status()));
         }
 
-        let blob_value = wasm_bindgen_futures::JsFuture::from(resp.blob().map_err(|e| format!("{:?}", e))?)
-            .await
-            .map_err(|e| format!("{:?}", e))?;
-        let blob: web_sys::Blob = blob_value.dyn_into().map_err(|e| format!("{:?}", e))?;
-        let blob_url = web_sys::Url::create_object_url_with_blob(&blob).map_err(|e| format!("{:?}", e))?;
-
-        let img = web_sys::HtmlImageElement::new().map_err(|e| format!("{:?}", e))?;
-        img.set_src(&blob_url);
-
-        let promise = js_sys::Promise::new(&mut |resolve, reject| {
-            let onload = Closure::wrap(Box::new(move || {
-                let _ = resolve.call0(&JsValue::NULL);
-            }) as Box<dyn FnMut()>);
-            let on_error = Closure::wrap(Box::new(move |e| {
-                let _ = reject.call1(&JsValue::NULL, &e);
-            }) as Box<dyn FnMut(JsValue)>);
-
-            img.set_onload(Some(onload.as_ref().unchecked_ref()));
-            img.set_onerror(Some(on_error.as_ref().unchecked_ref()));
-
-            onload.forget();
-            on_error.forget();
-        });
-
-        wasm_bindgen_futures::JsFuture::from(promise)
-            .await
-            .map_err(|e| format!("{:?}", e))?;
-
-        let width = img.natural_width();
-        let height = img.natural_height();
-
-        // On WASM, we don't need RGBA bytes, we use the HtmlImageElement directly.
-        // But the current cache expects Ready(Vec<u8>, u32, u32) which then calls load_image.
-        // We can pass empty bytes and use load_image to create a NEW HtmlImageElement,
-        // OR we can modify the cache/registry.
-        // To minimize changes to existing logic, we'll let load_image handle it by passing a special signal or just URL.
-        // Actually, let's just stick to the current Flow: we want an ID.
-        // We'll manually register it here if we are on WASM.
-
-        // However, media crate doesn't have direct access to the registry in canvas crate
-        // UNLESS we use the CanvasRendering trait's load_image.
-        // But load_image takes &[u8].
-
-        // Let's implement a way to "ready" it with an ID directly or something.
-        // For now, let's keep it simple: We'll re-fetch in load_image or pass the Blob URL.
-        // Wait, if we already have the `img` element here, we just need to get it into the registry.
-        // But registry is in `canvas` crate.
-
-        // Let's modify `load_image` in `wasm_impl.rs` to optionally take a URL? No, that's not in the trait.
-        // How about we pass the blob_url as bytes? No, that's hacky.
-
-        // Re-decoding in Rust (image crate) is slow but works.
-        // Let's see if we can get bytes from blob.
-        let array_buffer_value = wasm_bindgen_futures::JsFuture::from(blob.array_buffer())
+        // Fetch the raw bytes and decode to RGBA for the GPU pipeline.
+        let array_buffer_value = wasm_bindgen_futures::JsFuture::from(
+            resp.array_buffer().map_err(|e| format!("{:?}", e))?
+        )
             .await
             .map_err(|e| format!("{:?}", e))?;
         let array_buffer = js_sys::Uint8Array::new(&array_buffer_value);
-        let bytes = array_buffer.to_vec();
+        let compressed_bytes = array_buffer.to_vec();
+
+        let decoded = image::load_from_memory(&compressed_bytes)
+            .map_err(|e| format!("Failed to decode image: {}", e))?;
+        let rgba = decoded.to_rgba8();
+        let width = decoded.width();
+        let height = decoded.height();
+        let bytes = rgba.into_raw();
 
         let mut cache = NETWORK_CACHE.lock().unwrap();
         cache.insert(url.to_string(), NetworkImageState::Ready(bytes, width, height));

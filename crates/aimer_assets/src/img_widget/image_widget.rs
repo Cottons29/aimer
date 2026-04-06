@@ -1,4 +1,4 @@
-use crate::image_file::source::ImageSource;
+use crate::img_widget::source::ImageSource;
 use crate::ImageResult::Success;
 use crate::{ImageProvider, ImageResult};
 use aimer_attribute::Dimension;
@@ -6,7 +6,7 @@ use aimer_container::ZeroSizedBox;
 use std::cell::{Cell, UnsafeCell};
 use std::path::PathBuf;
 use aimer_style::BoxFit;
-use aimer_utils::error;
+use aimer_utils::{debug, error};
 use aimer_widget::base::{BuildContext, Color, Colors, ResolvedSize, Size, Vec2d};
 use aimer_widget::{Constructor, Drawable, Element, LayoutCache, Widget};
 
@@ -241,7 +241,6 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                     error_element.draw(ctx);
                     return;
                 }
-                // error!("Failed to load image : {err}");
                 let grid_size = 32.0;
                 let rows = (size.height / grid_size).ceil() as i32;
                 let cols = (size.width / grid_size).ceil() as i32;

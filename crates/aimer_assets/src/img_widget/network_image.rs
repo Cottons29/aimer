@@ -1,11 +1,11 @@
 use std::cell::{Cell, UnsafeCell};
-use crate::image_file::image_widget::RawImageWidget;
-use crate::image_file::source::ImageSource;
+use crate::img_widget::image_widget::RawImageWidget;
+use crate::img_widget::source::ImageSource;
 use aimer_attribute::Dimension;
 use aimer_attribute::size::Size;
 use std::collections::HashMap;
-use std::panic::Location;
 use aimer_style::BoxFit;
+use aimer_utils::debug;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Constructor, Element, LayoutCache, Widget};
 
@@ -39,6 +39,9 @@ impl Widget for NetworkImage {
             Some(header) => ImageSource::NetworkWithHeaders(self.url.clone(), header.clone()),
             None => ImageSource::Network(self.url.clone()),
         };
+
+        // debug!("creating network image widget with url: {}", self.url);
+
 
         Box::new(RawImageWidget {
             source,
