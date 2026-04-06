@@ -1,8 +1,9 @@
 
-pub mod image_file;
+pub mod img_widget;
 
-pub use image_file::image_widget::Image;
-pub use image_file::network_image::NetworkImage;
+use std::fmt::{Debug, Display};
+pub use img_widget::image_widget::Image;
+pub use img_widget::network_image::NetworkImage;
 use aimer_widget::base::BuildContext;
 
 
@@ -52,6 +53,6 @@ pub type LoadingResult = Result<u32, &'static str>;
 /// - The `BuildContext` parameter represents the context used to determine the image
 ///   and is expected to be provided by the caller.
 ///
-pub trait ImageProvider: Clone {
+pub trait ImageProvider: Clone + Debug {
     fn get_image(&self, ctx: &BuildContext) -> ImageResult;
 }

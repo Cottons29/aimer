@@ -81,7 +81,7 @@ pub struct AimerApplicationHandler {
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     pub inspector: aimer_inspector::InspectorAppHandle,
     #[cfg(all(debug_assertions, target_arch = "wasm32"))]
-    pub inspector: inspector::InspectorHandle,
+    pub inspector: aimer_inspector::InspectorHandle,
     #[cfg(debug_assertions)]
     pub inspector_change: Cell<bool>,
     #[cfg(debug_assertions)]
@@ -279,11 +279,6 @@ impl AimerApplicationHandler {
 
         #[allow(clippy::collapsible_if)]
         if let Some(size) = self.pending_resize.take() {
-            #[cfg(target_arch = "wasm32")]
-            if let Some(window) = &self.window {
-                self.render_ctx.resize(window, size);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
             self.render_ctx.resize(size);
         }
 
@@ -341,11 +336,15 @@ impl AimerApplicationHandler {
             }
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        self.render_ctx.render_frame(draw_widgets);
+        let rendered = self.render_ctx.render_frame(draw_widgets);
 
-        #[cfg(target_arch = "wasm32")]
-        self.render_ctx.render_frame(window, draw_widgets);
+        // If the GPU context isn't ready yet (e.g. async init on WASM),
+        // request another redraw so we retry once it's available.
+        if !rendered {
+            if let Some(window) = self.window {
+                window.request_redraw();
+            }
+        }
 
         #[cfg(debug_assertions)]
         self.broadcast_inspector_snapshot();
