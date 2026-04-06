@@ -22,8 +22,8 @@ pub use aimer_widget::*;
 pub use aimer_widget::{State, StatefulWidget, StatelessWidget};
 pub use aimer_text::Text;
 pub use aimer_assets::*;
-pub use aimer_assets::image_file::image_widget::Image;
-pub use aimer_assets::image_file::source::ImageSource;
+pub use aimer_assets::img_widget::image_widget::Image;
+pub use aimer_assets::img_widget::source::ImageSource;
 
 pub mod widget {
     pub use aimer_widget::Widget;
