@@ -30,6 +30,9 @@ tokio = {workspace = true, features = ["rt-multi-thread", "macros", "net", "sync
 raw-window-handle.workspace = true
 aimer_cupid.workspace = true
 
+[target.'cfg(target_arch = "wasm32")'.dependencies.aimer_cupid]
+workspace = true
+
 [dependencies.serde]
 version = "1"
 features = ["derive"]
@@ -47,5 +50,8 @@ rustls-platform-verifier = {version = "0.6.2", features = ["jni"]}
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
-web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "Node", "HtmlCanvasElement", "CanvasRenderingContext2d", "WebSocket", "MessageEvent", "ErrorEvent"] }
+wgpu = "29.0.0"
+console_error_panic_hook.workspace = true
+web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "Node", "HtmlCanvasElement", "Element", "WebSocket", "MessageEvent", "ErrorEvent"] }

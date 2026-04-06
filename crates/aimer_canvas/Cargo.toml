@@ -13,8 +13,8 @@ once_cell.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 aimer_cupid.workspace = true
 
-
-[target.wasm32-unknown-unknown.dependencies]
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+aimer_cupid.workspace = true
 web-sys = { workspace = true, features = ["HtmlImageElement", "Blob", "Url"] }
 wasm-bindgen.workspace = true
 js-sys.workspace = true

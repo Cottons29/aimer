@@ -177,6 +177,7 @@ dependencies = [
  "fxhash",
  "image",
  "pollster",
+ "wasm-bindgen-futures",
  "wgpu",
  "winit",
 ]
@@ -253,6 +254,7 @@ dependencies = [
  "aimer_utils",
  "aimer_widget",
  "chrono",
+ "console_error_panic_hook",
  "jni",
  "js-sys",
  "ndk 0.9.0",
@@ -265,6 +267,7 @@ dependencies = [
  "smallvec",
  "tokio",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
  "wgpu",
  "winit",
@@ -960,6 +963,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
+]
+
+[[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
 ]
 
 [[package]]

@@ -78,6 +78,9 @@ fn start_event_loop(widget: impl Widget + 'static) {
         return;
     }
 
+    #[cfg(target_arch = "wasm32")]
+    console_error_panic_hook::set_once();
+
     aimer_utils::info!("Initializing EventLoop...");
     #[cfg(not(target_os = "android"))]
     let event_loop = EventLoop::<AimerCustomAppEvent>::with_user_event()
@@ -163,7 +166,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
         DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap(),
     );
     #[cfg(all(debug_assertions, target_arch = "wasm32"))]
-    let inspector = inspector::start(DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap());
+    let inspector = aimer_inspector::start(DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap());
 
     aimer_utils::info!("Creating App instance...");
     let mut app = AimerApplicationHandler {
