@@ -237,6 +237,7 @@ impl CupidCanvas {
         shadow_params: [f32; 4],
         border_radius: [f32; 4],
         inset: bool,
+        side_params: [f32; 3],
     ) {
         self.draw_list.borrow_mut().draw_shadow_rect(
             Rect::new(x, y, width, height),
@@ -244,6 +245,7 @@ impl CupidCanvas {
             shadow_params,
             border_radius,
             inset,
+            side_params,
         );
     }
 

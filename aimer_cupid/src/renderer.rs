@@ -1,11 +1,8 @@
 use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::rect_pipeline::{RectInstance, RectPipeline};
-use crate::renderer;
 use crate::text_pipeline::{TextDrawRequest, TextPipelineV2};
 use crate::utilities::{Mat3, Rect};
-use std::sync::Arc;
-use std::thread::spawn;
 use aimer_utils::debug;
 
 struct ClipState {
@@ -243,7 +240,7 @@ impl Renderer {
                 DrawCommand::LoadImageWithId { texture_id, bytes, width, height } => {
                     self.image_pipeline.upload_image_with_id(device, queue, *texture_id, *width, *height, &bytes);
                 }
-                DrawCommand::DrawShadowRect { rect, shadow_color, shadow_params, border_radius, inset } => {
+                DrawCommand::DrawShadowRect { rect, shadow_color, shadow_params, border_radius, inset, side_params } => {
                     let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
                     let sy = (current_transform.cols[1][0].powi(2) + current_transform.cols[1][1].powi(2)).sqrt();
 
@@ -252,11 +249,12 @@ impl Renderer {
                     let blur = shadow_params[2];
                     let spread = shadow_params[3];
 
-                    // Expand the rect to encompass the full shadow extent
-                    let expand = blur + spread + offset_x.abs() + offset_y.abs();
+                    // Expand the rect per-axis to encompass the full shadow extent
+                    let expand_x = blur + spread.abs() + offset_x.abs();
+                    let expand_y = blur + spread.abs() + offset_y.abs();
 
-                    let (p1x, p1y) = current_transform.transform_point(rect.x - expand, rect.y - expand);
-                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width + expand, rect.y + rect.height + expand);
+                    let (p1x, p1y) = current_transform.transform_point(rect.x - expand_x, rect.y - expand_y);
+                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width + expand_x, rect.y + rect.height + expand_y);
 
                     let mut scaled_br = *border_radius;
                     for r in &mut scaled_br {
@@ -279,7 +277,7 @@ impl Renderer {
                             clip_border_radius: clip_border_radius(self.clip_stack.last()),
                             shadow_params: scaled_params,
                             shadow_color: shadow_color.to_array(),
-                            shadow_flags: [if *inset { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+                            shadow_flags: [if *inset { 1.0 } else { 0.0 }, side_params[0], side_params[1], side_params[2]],
                         }),
                     });
                 }

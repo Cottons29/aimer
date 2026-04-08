@@ -40,7 +40,7 @@ impl<'w> GpuContext<'w> {
             }
             #[cfg(target_arch = "wasm32")]
             {
-                wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL
+                wgpu::Backends::BROWSER_WEBGPU
             }
         };
 

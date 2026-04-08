@@ -64,6 +64,8 @@ pub enum DrawCommand {
         shadow_params: [f32; 4],
         border_radius: [f32; 4],
         inset: bool,
+        /// [side_type, angle_start, angle_end]
+        side_params: [f32; 3],
     },
 }
 
@@ -114,6 +116,7 @@ impl DrawList {
         shadow_params: [f32; 4],
         border_radius: [f32; 4],
         inset: bool,
+        side_params: [f32; 3],
     ) {
         self.commands.push(DrawCommand::DrawShadowRect {
             rect,
@@ -121,6 +124,7 @@ impl DrawList {
             shadow_params,
             border_radius,
             inset,
+            side_params,
         });
     }
 

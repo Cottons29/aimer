@@ -114,6 +114,7 @@ fn gaussian_integral(x: f32, sigma: f32) -> f32 {
 }
 
 /// Compute shadow alpha from SDF distance and blur radius.
+/// Per CSS spec, the blur radius equals ~2σ of the Gaussian, so σ = blur / 2.
 fn shadow_alpha(sdf_dist: f32, blur: f32, is_inset: bool) -> f32 {
     let sigma = blur * 0.5;
     if sigma < 0.001 {
@@ -206,6 +207,125 @@ fn linear_color_to_srgb(c: vec4<f32>) -> vec4<f32> {
     );
 }
 
+/// Computes a side mask based on the fragment's position relative to the rect center.
+/// side_type: 0=All, 1=Top, 2=Right, 3=Bottom, 4=Left, 5=Vertical, 6=Horizontal, 7=Range,
+///            8=TopLeft, 9=TopRight, 10=BottomRight, 11=BottomLeft
+/// centered: fragment position relative to rect center
+/// half_size: half-size of the original (unexpanded) rect
+/// border_radius: corner radii (top-left, top-right, bottom-right, bottom-left)
+/// For Range, angle_start and angle_end are in radians.
+fn shadow_side_mask(centered: vec2<f32>, half_size: vec2<f32>, border_radius: vec4<f32>, side_type: f32, angle_start: f32, angle_end: f32) -> f32 {
+    if side_type < 0.5 {
+        // All
+        return 1.0;
+    }
+
+    // For cardinal sides, use edge-distance masking with smoothstep transition.
+    // When multiple sides are used (e.g., Top + Left), their shadows naturally
+    // overlap at shared corners, which is the correct behavior.
+    let edge = 2.0;
+
+    if side_type < 1.5 {
+        // Top: visible above the top edge
+        return 1.0 - smoothstep(-half_size.y - edge, -half_size.y + edge, centered.y);
+    }
+    if side_type < 2.5 {
+        // Right: visible beyond the right edge
+        return smoothstep(half_size.x - edge, half_size.x + edge, centered.x);
+    }
+    if side_type < 3.5 {
+        // Bottom: visible below the bottom edge
+        return smoothstep(half_size.y - edge, half_size.y + edge, centered.y);
+    }
+    if side_type < 4.5 {
+        // Left: visible beyond the left edge
+        return 1.0 - smoothstep(-half_size.x - edge, -half_size.x + edge, centered.x);
+    }
+    if side_type < 5.5 {
+        // Vertical: top + bottom
+        let dist_y = abs(centered.y) - half_size.y;
+        let dist_x = abs(centered.x) - half_size.x;
+        return smoothstep(-edge, edge, dist_y - dist_x);
+    }
+    if side_type < 6.5 {
+        // Horizontal: left + right
+        let dist_x = abs(centered.x) - half_size.x;
+        let dist_y = abs(centered.y) - half_size.y;
+        return smoothstep(-edge, edge, dist_x - dist_y);
+    }
+    if side_type < 7.5 {
+        // Range: angular mask (handled below)
+    } else if side_type < 8.5 {
+        // TopLeft: visible where fragment is closer to top or left edge than to bottom or right
+        let dist_top = -(centered.y + half_size.y);
+        let dist_left = -(centered.x + half_size.x);
+        let dist_bottom = centered.y - half_size.y;
+        let dist_right = centered.x - half_size.x;
+        let near = max(dist_top, dist_left);
+        let far = max(dist_bottom, dist_right);
+        return smoothstep(-edge, edge, near - far);
+    } else if side_type < 9.5 {
+        // TopRight: visible where fragment is closer to top or right edge than to bottom or left
+        let dist_top = -(centered.y + half_size.y);
+        let dist_right = centered.x - half_size.x;
+        let dist_bottom = centered.y - half_size.y;
+        let dist_left = -(centered.x + half_size.x);
+        let near = max(dist_top, dist_right);
+        let far = max(dist_bottom, dist_left);
+        return smoothstep(-edge, edge, near - far);
+    } else if side_type < 10.5 {
+        // BottomRight: visible where fragment is closer to bottom or right edge than to top or left
+        let dist_bottom = centered.y - half_size.y;
+        let dist_right = centered.x - half_size.x;
+        let dist_top = -(centered.y + half_size.y);
+        let dist_left = -(centered.x + half_size.x);
+        let near = max(dist_bottom, dist_right);
+        let far = max(dist_top, dist_left);
+        return smoothstep(-edge, edge, near - far);
+    } else if side_type < 11.5 {
+        // BottomLeft: visible where fragment is closer to bottom or left edge than to top or right
+        let dist_bottom = centered.y - half_size.y;
+        let dist_left = -(centered.x + half_size.x);
+        let dist_top = -(centered.y + half_size.y);
+        let dist_right = centered.x - half_size.x;
+        let near = max(dist_bottom, dist_left);
+        let far = max(dist_top, dist_right);
+        return smoothstep(-edge, edge, near - far);
+    }
+    // Range: angular mask
+    let angle = atan2(centered.y, centered.x);
+    var a = angle - angle_start;
+    let range = angle_end - angle_start;
+    let two_pi = 6.2831853;
+    a = a - floor(a / two_pi) * two_pi;
+    let r = range - floor(range / two_pi) * two_pi;
+    if a <= r {
+        return 1.0;
+    }
+    return 0.0;
+}
+
+/// Converts an sRGB input color to the correct color space, applies premultiplied alpha
+/// with the given alpha factor, and converts back to sRGB if needed.
+fn finalize_color(color: vec4<f32>, alpha: f32) -> vec4<f32> {
+    var sc: vec4<f32>;
+    if viewport.surface_is_srgb >= 1.5 {
+        sc = color;
+    } else {
+        sc = srgb_color_to_linear(color);
+    }
+    var result = vec4<f32>(sc.rgb * sc.a, sc.a) * alpha;
+    if viewport.surface_is_srgb < 0.5 {
+        let a = result.a;
+        if a > 0.00001 {
+            let unpremul = result.rgb / a;
+            let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
+            result = vec4<f32>(srgb_rgb * a, a);
+        }
+    }
+    return result;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // --- Shadow early path ---
@@ -217,62 +337,42 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         // The rect_size IS the expanded quad size; the original rect size is stored
         // implicitly. We need to recover the original rect half-size.
-        // The quad was expanded by (blur + spread + |offset|) on each side.
-        let expand = shadow_blur + shadow_spread + abs(shadow_offset.x) + abs(shadow_offset.y);
-        let orig_size = in.rect_size - vec2<f32>(expand * 2.0);
+        // The quad was expanded per-axis by (blur + |spread| + |offset|) on each side.
+        let expand_x = shadow_blur + abs(shadow_spread) + abs(shadow_offset.x);
+        let expand_y = shadow_blur + abs(shadow_spread) + abs(shadow_offset.y);
+        let orig_size = in.rect_size - vec2<f32>(expand_x * 2.0, expand_y * 2.0);
         let orig_half = orig_size * 0.5;
 
         // local_pos is relative to the expanded quad; center it on the original rect
         let centered = in.local_pos - in.rect_size * 0.5;
 
-        // Compute SDF at the shadow-offset position with spread-adjusted half-size
+        // Compute SDF at the shadow-offset position with spread-adjusted half-size and radii
         let shadow_half = orig_half + vec2<f32>(shadow_spread);
         let shadow_p = centered - shadow_offset;
-        let shadow_d = sdf_rounded_rect(shadow_p, shadow_half, in.border_radius);
+        let spread_radii = vec4<f32>(
+            max(in.border_radius.x + shadow_spread, 0.0),
+            max(in.border_radius.y + shadow_spread, 0.0),
+            max(in.border_radius.z + shadow_spread, 0.0),
+            max(in.border_radius.w + shadow_spread, 0.0),
+        );
+        let shadow_d = sdf_rounded_rect(shadow_p, shadow_half, spread_radii);
 
         let sa = shadow_alpha(shadow_d, shadow_blur, is_inset);
 
+        // Apply side mask
+        let side_type = in.shadow_flags.y;
+        let angle_start = in.shadow_flags.z;
+        let angle_end = in.shadow_flags.w;
+        let side_mask = shadow_side_mask(centered, orig_half, in.border_radius, side_type, angle_start, angle_end);
+
         // For inset shadows, clip to the original rect bounds
+        let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
         if is_inset {
             let orig_d = sdf_rounded_rect(centered, orig_half, in.border_radius);
             let inside = 1.0 - smoothstep(-0.5, 0.5, orig_d);
-            let final_a = sa * inside;
-
-            var sc: vec4<f32>;
-            if viewport.surface_is_srgb >= 1.5 {
-                sc = in.shadow_color;
-            } else {
-                sc = srgb_color_to_linear(in.shadow_color);
-            }
-            let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
-            var result = vec4<f32>(sc.rgb * sc.a, sc.a) * final_a * ca;
-            if viewport.surface_is_srgb < 0.5 {
-                let a = result.a;
-                if a > 0.00001 {
-                    let unpremul = result.rgb / a;
-                    let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
-                    result = vec4<f32>(srgb_rgb * a, a);
-                }
-            }
-            return result;
+            return finalize_color(in.shadow_color, sa * inside * ca * side_mask);
         } else {
-            var sc: vec4<f32>;
-            if viewport.surface_is_srgb >= 1.5 {
-                sc = in.shadow_color;
-            } else {
-                sc = srgb_color_to_linear(in.shadow_color);
-            }
-            let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
-            var result = vec4<f32>(sc.rgb * sc.a, sc.a) * sa * ca;
-            if viewport.surface_is_srgb < 0.5 {
-                let a = result.a;
-                if a > 0.00001 {
-                    let unpremul = result.rgb / a;
-                    let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
-                    result = vec4<f32>(srgb_rgb * a, a);
-                }
-            }
-            return result;
+            return finalize_color(in.shadow_color, sa * ca * side_mask);
         }
     }
 
@@ -375,29 +475,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let border_premul = vec4<f32>(bc.rgb * bc.a, bc.a) * border_alpha;
         
         // Combine layers. Since they are disjoint, addition is correct.
-        var result = (outline_premul + border_premul + fill_premul) * ca;
+        let combined = (outline_premul + border_premul + fill_premul) * ca;
         
         if viewport.surface_is_srgb < 0.5 {
-            let a = result.a;
+            let a = combined.a;
             if a > 0.00001 {
-                let unpremul = result.rgb / a;
+                let unpremul = combined.rgb / a;
                 let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
-                result = vec4<f32>(srgb_rgb * a, a);
+                return vec4<f32>(srgb_rgb * a, a);
             }
         }
-        return result;
+        return combined;
     } else {
         let fill_premul = vec4<f32>(fill_color.rgb * fill_color.a, fill_color.a) * outer_alpha;
-        var result = (outline_premul + fill_premul) * ca;
+        let combined = (outline_premul + fill_premul) * ca;
 
         if viewport.surface_is_srgb < 0.5 {
-            let a = result.a;
+            let a = combined.a;
             if a > 0.000001 {
-                let unpremul = result.rgb / a;
+                let unpremul = combined.rgb / a;
                 let srgb_rgb = vec3<f32>(linear_to_srgb(unpremul.r), linear_to_srgb(unpremul.g), linear_to_srgb(unpremul.b));
-                result = vec4<f32>(srgb_rgb * a, a);
+                return vec4<f32>(srgb_rgb * a, a);
             }
         }
-        return result;
+        return combined;
     }
 }
