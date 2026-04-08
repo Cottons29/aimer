@@ -249,6 +249,7 @@ impl CanvasRendering for CupidCanvas {
         shadow_params: [f32; 4],
         border_radius: [f32; 4],
         inset: bool,
+        side_params: [f32; 3],
     ) {
         CupidCanvas::draw_shadow_rect(
             self,
@@ -257,6 +258,7 @@ impl CanvasRendering for CupidCanvas {
             shadow_params,
             border_radius,
             inset,
+            side_params,
         );
     }
 
