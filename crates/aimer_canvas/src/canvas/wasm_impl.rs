@@ -6,16 +6,14 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::panic::Location;
 
-use std::sync::Mutex;
 use aimer_utils::{debug, error};
+use std::sync::Mutex;
 
 use web_sys::{CanvasRenderingContext2d as H5Canvas, HtmlImageElement};
-
 
 static IMAGE_REGISTRY: Lazy<Mutex<HashMap<u32, HtmlImageElement>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 static NEXT_IMAGE_ID: Mutex<u32> = Mutex::new(1);
-
 
 #[allow(dead_code)]
 impl CanvasRendering for H5Canvas {
@@ -107,7 +105,7 @@ impl CanvasRendering for H5Canvas {
 
         let x = pos.x as f64;
         let y = pos.y as f64;
-        let w = size.width  as f64;
+        let w = size.width as f64;
         let h = size.height as f64;
         let tl = border_radius[0] as f64;
         let tr = border_radius[1] as f64;
@@ -220,7 +218,13 @@ impl CanvasRendering for H5Canvas {
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize) {
         let registry = IMAGE_REGISTRY.lock().unwrap();
         if let Some(img) = registry.get(&image_id) {
-            let _ = self.draw_image_with_html_image_element_and_dw_and_dh(img, pos.x as f64, pos.y as f64, size.width as f64, size.height as f64);
+            let _ = self.draw_image_with_html_image_element_and_dw_and_dh(
+                img,
+                pos.x as f64,
+                pos.y as f64,
+                size.width as f64,
+                size.height as f64,
+            );
         }
     }
 
@@ -479,6 +483,7 @@ impl CanvasRendering for H5Canvas {
         shadow_params: [f32; 4],
         border_radius: [f32; 4],
         inset: bool,
+        _side_params: [f32; 3],
     ) {
         // WASM fallback: use Canvas2D shadowBlur/shadowOffset
         let argb = shadow_color.to_u32();

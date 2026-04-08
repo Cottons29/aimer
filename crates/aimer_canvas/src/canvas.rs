@@ -91,6 +91,7 @@ pub trait CanvasRendering: Clone {
         shadow_params: [f32; 4],
         border_radius: [f32; 4],
         inset: bool,
+        side_params: [f32; 3],
     );
     fn set_alpha(&self, alpha: f32);
     fn restore_alpha(&self);
@@ -426,8 +427,9 @@ impl<'a> AimerCanvas<'a> {
         shadow_params: [f32; 4],
         border_radius: [f32; 4],
         inset: bool,
+        side_params: [f32; 3],
     ) {
-        CanvasRendering::draw_shadow_rect(self.inner, pos, size, shadow_color, shadow_params, border_radius, inset);
+        CanvasRendering::draw_shadow_rect(self.inner, pos, size, shadow_color, shadow_params, border_radius, inset, side_params);
     }
 
     /// Draws a filled rectangle with a specific color.
