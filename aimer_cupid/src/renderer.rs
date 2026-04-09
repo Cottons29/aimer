@@ -1,5 +1,6 @@
 use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
+use crate::pipeline_cache;
 use crate::rect_pipeline::{RectInstance, RectPipeline};
 use crate::text_pipeline::{TextDrawRequest, TextPipelineV2};
 use crate::utilities::{Mat3, Rect};
@@ -33,6 +34,7 @@ pub struct Renderer {
     pub rect_pipeline: RectPipeline,
     pub text_pipeline: TextPipelineV2,
     pub image_pipeline: ImagePipeline,
+    pipeline_cache: Option<wgpu::PipelineCache>,
     // Reusable per-frame scratch buffers to avoid allocations.
     transform_stack: Vec<Mat3>,
     clip_stack: Vec<ClipState>,
@@ -44,10 +46,13 @@ impl Renderer {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let start = chrono::Utc::now().timestamp_millis();
 
+        let cache = pipeline_cache::create_pipeline_cache(device);
+
         let renderer = Self {
-            rect_pipeline: RectPipeline::new(device, format),
-            text_pipeline: TextPipelineV2::new(device, format),
-            image_pipeline: ImagePipeline::new(device, format),
+            rect_pipeline: RectPipeline::new(device, format, cache.as_ref()),
+            text_pipeline: TextPipelineV2::new(device, format, cache.as_ref()),
+            image_pipeline: ImagePipeline::new(device, format, cache.as_ref()),
+            pipeline_cache: cache,
             transform_stack: Vec::new(),
             clip_stack: Vec::new(),
             text_requests: Vec::new(),
@@ -57,6 +62,14 @@ impl Renderer {
         let end = chrono::Utc::now().timestamp_millis();
         debug!("Renderer initialization ready {}ms", end - start);
         renderer
+    }
+
+    /// Save the pipeline cache to disk for faster startup on next launch.
+    /// Called automatically on drop, or can be called manually on suspend.
+    pub fn save_pipeline_cache(&self) {
+        if let Some(ref cache) = self.pipeline_cache {
+            pipeline_cache::save_pipeline_cache(cache);
+        }
     }
 
     /// Process a DrawList into pipeline-specific batches and render in a single pass.
@@ -370,5 +383,11 @@ impl Renderer {
         }
 
         queue.submit(std::iter::once(encoder.finish()));
+    }
+}
+
+impl Drop for Renderer {
+    fn drop(&mut self) {
+        self.save_pipeline_cache();
     }
 }

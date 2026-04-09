@@ -94,9 +94,15 @@ impl<'w> GpuContext<'w> {
         #[cfg(target_arch = "wasm32")]
         let limit = Limits::downlevel_webgl2_defaults();
 
+        // Request PIPELINE_CACHE feature when available (Vulkan only).
+        let mut features = wgpu::Features::default();
+        if adapter.features().contains(wgpu::Features::PIPELINE_CACHE) {
+            features |= wgpu::Features::PIPELINE_CACHE;
+        }
+
         let (device, queue) = match adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("cupid gpu renderer device"),
-            required_features: wgpu::Features::default(),
+            required_features: features,
             required_limits: limit,
             ..Default::default()
         }).await {

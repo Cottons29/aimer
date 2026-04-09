@@ -64,7 +64,7 @@ pub struct RectPipeline {
 impl RectPipeline {
     const INITIAL_CAPACITY: usize = 256;
 
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, pipeline_cache: Option<&wgpu::PipelineCache>) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rect shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/rect.wgsl").into()),
@@ -122,7 +122,7 @@ impl RectPipeline {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
-            cache: None,
+            cache: pipeline_cache,
         });
 
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {

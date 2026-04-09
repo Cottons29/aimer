@@ -73,7 +73,7 @@ pub struct TextPipelineV2 {
 impl TextPipelineV2 {
     const INITIAL_CAPACITY: usize = 512;
 
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, pipeline_cache: Option<&wgpu::PipelineCache>) -> Self {
         let rasterizer = GlyphRasterizer::new();
         let atlas = GlyphAtlas::new(device);
 
@@ -162,7 +162,7 @@ impl TextPipelineV2 {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
-            cache: None,
+            cache: pipeline_cache,
         });
 
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
