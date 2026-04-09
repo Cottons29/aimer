@@ -1,3 +1,4 @@
+use crate::custom_pipeline::{CustomPipeline, CustomPipelineSlot, RenderContext};
 use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::pipeline_cache;
@@ -28,6 +29,7 @@ enum ResolvedKind {
     Rect(RectInstance),
     Image { texture_id: u32, instance: ImageInstance },
     TextIndex(()),
+    Custom { pipeline_index: usize },
 }
 
 pub struct Renderer {
@@ -35,6 +37,8 @@ pub struct Renderer {
     pub text_pipeline: TextPipelineV2,
     pub image_pipeline: ImagePipeline,
     pipeline_cache: Option<wgpu::PipelineCache>,
+    custom_pipelines: Vec<CustomPipelineSlot>,
+    surface_format: wgpu::TextureFormat,
     // Reusable per-frame scratch buffers to avoid allocations.
     transform_stack: Vec<Mat3>,
     clip_stack: Vec<ClipState>,
@@ -53,6 +57,8 @@ impl Renderer {
             text_pipeline: TextPipelineV2::new(device, format, cache.as_ref()),
             image_pipeline: ImagePipeline::new(device, format, cache.as_ref()),
             pipeline_cache: cache,
+            custom_pipelines: Vec::new(),
+            surface_format: format,
             transform_stack: Vec::new(),
             clip_stack: Vec::new(),
             text_requests: Vec::new(),
@@ -62,6 +68,18 @@ impl Renderer {
         let end = chrono::Utc::now().timestamp_millis();
         debug!("Renderer initialization ready {}ms", end - start);
         renderer
+    }
+
+    /// Register a user-defined custom pipeline.
+    /// The pipeline will participate in the render loop whenever
+    /// `DrawCommand::Custom` commands target it by name.
+    pub fn register_custom_pipeline(&mut self, pipeline: impl CustomPipeline) {
+        self.custom_pipelines.push(CustomPipelineSlot::new(pipeline));
+    }
+
+    /// Returns the surface texture format (useful for creating custom pipelines).
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.surface_format
     }
 
     /// Save the pipeline cache to disk for faster startup on next launch.
@@ -294,6 +312,30 @@ impl Renderer {
                         }),
                     });
                 }
+                DrawCommand::Custom { pipeline_name, data: _ } => {
+                    if let Some(idx) = self.custom_pipelines.iter().position(|s| s.pipeline.name() == pipeline_name.as_str()) {
+                        self.resolved.push(ResolvedCmd {
+                            kind: ResolvedKind::Custom { pipeline_index: idx },
+                        });
+                    }
+                }
+            }
+        }
+
+        // Prepare custom pipelines
+        {
+            let render_ctx = RenderContext {
+                device,
+                queue,
+                width,
+                height,
+                is_srgb,
+                format: self.surface_format,
+            };
+            for slot in &mut self.custom_pipelines {
+                if slot.pipeline.has_work() {
+                    slot.pipeline.prepare(&render_ctx);
+                }
             }
         }
 
@@ -360,6 +402,22 @@ impl Renderer {
                     }
                     ResolvedKind::TextIndex(()) => {
                         // Text is rendered after all other commands
+                    }
+                    ResolvedKind::Custom { pipeline_index } => {
+                        // Flush pending built-in batches to maintain z-order
+                        self.rect_pipeline
+                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        if let Some(tid) = current_texture_id.take() {
+                            if !image_batch.is_empty() {
+                                self.image_pipeline
+                                    .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &image_batch);
+                                image_batch.clear();
+                            }
+                        }
+                        // Render the custom pipeline
+                        if let Some(slot) = self.custom_pipelines.get(*pipeline_index) {
+                            slot.pipeline.render(&mut pass);
+                        }
                     }
                 }
             }

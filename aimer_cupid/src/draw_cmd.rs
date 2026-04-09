@@ -1,8 +1,8 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::io::Bytes;
 use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
 
-#[derive(Clone)]
 pub enum DrawCommand {
     FillRect {
         rect: Rect,
@@ -67,9 +67,15 @@ pub enum DrawCommand {
         /// [side_type, angle_start, angle_end]
         side_params: [f32; 3],
     },
+    /// Draw using a user-registered custom pipeline.
+    /// `pipeline_name` must match the name returned by `CustomPipeline::name()`.
+    /// `data` is an arbitrary payload forwarded to `CustomPipeline::prepare()`.
+    Custom {
+        pipeline_name: String,
+        data: Box<dyn Any + Send>,
+    },
 }
 
-#[derive(Clone)]
 pub struct DrawList {
     commands: Vec<DrawCommand>,
     transform_stack: Vec<Mat3>,
@@ -106,6 +112,16 @@ impl DrawList {
             border_color,
             outline_width: [0.0; 4],
             outline_color: Color::transparent(),
+        });
+    }
+
+    /// Enqueue a draw command for a user-registered custom pipeline.
+    /// `pipeline_name` must match `CustomPipeline::name()` of a registered pipeline.
+    /// `data` is an arbitrary payload that will be forwarded to `CustomPipeline::prepare()`.
+    pub fn draw_custom(&mut self, pipeline_name: impl Into<String>, data: impl Any + Send) {
+        self.commands.push(DrawCommand::Custom {
+            pipeline_name: pipeline_name.into(),
+            data: Box::new(data),
         });
     }
 
