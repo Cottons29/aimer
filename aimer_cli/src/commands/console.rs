@@ -29,6 +29,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+use notify::{RecursiveMode, Watcher, Event as NotifyEvent};
+use std::path::Path;
 use tokio::runtime::Runtime;
 
 const MAX_LINES: usize = 32768;
@@ -48,6 +50,7 @@ pub enum RunnerEvent {
     BuildLog(String),
     AppLog(String),
     StatusChange(Status),
+    HotReload,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -181,6 +184,40 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
 
     let mut current_child = spawn_runner(device.clone(), pkg_name.clone(), tx.clone(), inspector_handle.address, inspector_handle.port);
 
+    // Hot-reload file watcher
+    let _watcher = {
+        let tx_watch = tx.clone();
+        let mut debounce_last = Instant::now();
+        let mut watcher = notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
+            if let Ok(event) = res {
+                use notify::EventKind;
+                match event.kind {
+                    EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
+                        let dominated_by_rs = event.paths.iter().any(|p| {
+                            p.extension().map_or(false, |ext| ext == "rs")
+                        });
+                        if dominated_by_rs {
+                            let now = Instant::now();
+                            if now.duration_since(debounce_last) > Duration::from_millis(500) {
+                                debounce_last = now;
+                                let _ = tx_watch.send(RunnerEvent::HotReload);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }).ok();
+        if let Some(ref mut w) = watcher {
+            let _ = w.watch(Path::new("src"), RecursiveMode::Recursive);
+            // Also watch crates/ if it exists
+            if Path::new("crates").exists() {
+                let _ = w.watch(Path::new("crates"), RecursiveMode::Recursive);
+            }
+        }
+        watcher
+    };
+
     loop {
         // Process all pending events
         while let Ok(event) = rx.try_recv() {
@@ -206,6 +243,90 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                         _ => {}
                     }
                     current_status = s;
+                }
+                RunnerEvent::HotReload => {
+                    // Only trigger reload if app is currently running or idling
+                    match current_status {
+                        Status::Running | Status::Idling | Status::Error => {
+                            let _ = tx.send(RunnerEvent::AppLog("[hot-reload] File change detected, rebuilding...".to_string()));
+                            if device.target == Targets::Web {
+                                build_logs.clear();
+                                build_pane.reset();
+                                current_status = Status::Compiling(0);
+                                let tx_clone = tx.clone();
+                                thread::spawn(move || {
+                                    let _ = tx_clone.send(RunnerEvent::StatusChange(Status::Compiling(0)));
+                                    let _ = tx_clone.send(RunnerEvent::BuildLog("[hot-reload] Running wasm-pack build...".to_string()));
+                                    let mut wasm_build = Command::new("wasm-pack")
+                                        .arg("build")
+                                        .arg("--debug")
+                                        .arg("--target")
+                                        .arg("web")
+                                        .arg("--out-dir")
+                                        .arg("builds/web/pkg")
+                                        .stdout(Stdio::piped())
+                                        .stderr(Stdio::piped())
+                                        .spawn()
+                                        .expect("Failed to start wasm-pack");
+
+                                    let stdout = wasm_build.stdout.take().unwrap();
+                                    let stderr = wasm_build.stderr.take().unwrap();
+
+                                    let tx_c1 = tx_clone.clone();
+                                    thread::spawn(move || {
+                                        let reader = BufReader::new(stdout);
+                                        for line in reader.lines() {
+                                            if let Ok(l) = line {
+                                                let _ = tx_c1.send(RunnerEvent::BuildLog(l));
+                                            }
+                                        }
+                                    });
+
+                                    let tx_c2 = tx_clone.clone();
+                                    thread::spawn(move || {
+                                        let reader = BufReader::new(stderr);
+                                        let mut compile_count = 0;
+                                        for line in reader.lines() {
+                                            if let Ok(l) = line {
+                                                if l.contains("Compiling") {
+                                                    compile_count = (compile_count + 5).min(99);
+                                                    let _ = tx_c2.send(RunnerEvent::StatusChange(Status::Compiling(compile_count)));
+                                                } else if l.contains("Finished") {
+                                                    let _ = tx_c2.send(RunnerEvent::StatusChange(Status::Compiling(100)));
+                                                }
+                                                let _ = tx_c2.send(RunnerEvent::BuildLog(l));
+                                            }
+                                        }
+                                    });
+
+                                    let status = wasm_build.wait().unwrap();
+                                    if !status.success() {
+                                        let _ = tx_clone.send(RunnerEvent::BuildLog("wasm-pack build failed.".to_string()));
+                                    } else {
+                                        let _ = tx_clone.send(RunnerEvent::BuildLog("wasm-pack build successful. Vite will auto-reload.".to_string()));
+                                    }
+                                    let _ = tx_clone.send(RunnerEvent::StatusChange(Status::Running));
+                                });
+                            } else {
+                                if let Some(mut child) = current_child.lock().unwrap().take() {
+                                    let _ = child.kill();
+                                }
+                                build_logs.clear();
+                                app_logs.clear();
+                                build_pane.reset();
+                                app_pane.reset();
+                                current_status = Status::Compiling(0);
+                                current_child = spawn_runner(
+                                    device.clone(),
+                                    pkg_name.clone(),
+                                    tx.clone(),
+                                    inspector_handle.address,
+                                    inspector_handle.port,
+                                );
+                            }
+                        }
+                        _ => {} // Don't reload while already compiling/building
+                    }
                 }
             }
         }
@@ -447,6 +568,14 @@ pub fn start(device: Device, pkg_name: String) -> Result<(), Box<dyn std::error:
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(if inspector_full_tree { "full tree " } else { "widgets " }),
+                Span::raw("| "),
+                Span::styled(
+                    "●",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" hot-reload "),
             ]);
 
             let status_bar = Paragraph::new(status_line).style(Style::default());
