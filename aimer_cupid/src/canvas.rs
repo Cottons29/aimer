@@ -230,6 +230,25 @@ impl CupidCanvas {
         );
     }
 
+    pub fn draw_shadow_rect(
+        &self,
+        x: f32, y: f32, width: f32, height: f32,
+        shadow_color: Color,
+        shadow_params: [f32; 4],
+        border_radius: [f32; 4],
+        inset: bool,
+        side_params: [f32; 3],
+    ) {
+        self.draw_list.borrow_mut().draw_shadow_rect(
+            Rect::new(x, y, width, height),
+            shadow_color,
+            shadow_params,
+            border_radius,
+            inset,
+            side_params,
+        );
+    }
+
     pub fn set_clip(&self, x: f32, y: f32, width: f32, height: f32) {
         self.draw_list.borrow_mut().push_clip(Rect::new(x, y, width, height));
     }

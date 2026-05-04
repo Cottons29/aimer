@@ -241,6 +241,28 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
+    fn draw_shadow_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        shadow_color: Color,
+        shadow_params: [f32; 4],
+        border_radius: [f32; 4],
+        inset: bool,
+        side_params: [f32; 3],
+    ) {
+        CupidCanvas::draw_shadow_rect(
+            self,
+            pos.x, pos.y, size.width, size.height,
+            CupidColor::from(shadow_color),
+            shadow_params,
+            border_radius,
+            inset,
+            side_params,
+        );
+    }
+
+    #[inline]
     fn set_alpha(&self, alpha: f32) {
         CupidCanvas::set_alpha(self, alpha);
     }

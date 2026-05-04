@@ -4,9 +4,10 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::WidgetConstructor;
 use aimer_widget::{base::*, Drawable, Element, LayoutCache, Widget};
 pub use aimer_style::*;
+use crate::ZeroSizedBox;
 
 #[derive(WidgetConstructor)]
-pub struct Container<T: Widget + 'static> {
+pub struct Container<T = ZeroSizedBox> where T: Widget + 'static {
     #[constructor(into, default)]
     pub(crate) width: Dimension,
     #[constructor(into, default)]

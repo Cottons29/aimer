@@ -4,7 +4,7 @@ fn correct_alpha(input: f32) -> f32 {
 
 
 fn color_offset(input: f32) -> f32 {
-    return input * 1.1;
+    return input;
 }
 
 fn srgb_to_linear(c: f32) -> f32 {

@@ -1,14 +1,13 @@
-use crate::image_file::source::ImageSource;
+use crate::img_widget::source::ImageSource;
 use crate::ImageResult::Success;
 use crate::{ImageProvider, ImageResult};
 use aimer_attribute::Dimension;
 use aimer_container::ZeroSizedBox;
-use std::cell::{Cell, UnsafeCell};
-use std::path::PathBuf;
 use aimer_style::BoxFit;
-use aimer_utils::error;
 use aimer_widget::base::{BuildContext, Color, Colors, ResolvedSize, Size, Vec2d};
 use aimer_widget::{Constructor, Drawable, Element, LayoutCache, Widget};
+use std::cell::{Cell, UnsafeCell};
+use std::path::PathBuf;
 
 #[derive(Constructor)]
 pub struct Image{
@@ -139,6 +138,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                             let target_w = size.width.max(0.0);
                             let target_h = size.height.max(0.0);
                             let mut draw_pos = Vec2d { x: 0.0, y: 0.0 };
+                            #[allow(unused_assignments)]
                             let mut draw_size = size;
 
                             let scale_x = if iw > 0.0 { target_w / iw } else { 1.0 };
@@ -236,12 +236,11 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                     .draw(ctx);
             }
 
-            ImageResult::Error(err) => {
+            ImageResult::Error(_) => {
                 if let Some(error_element) = &self.error_element {
                     error_element.draw(ctx);
                     return;
                 }
-                // error!("Failed to load image : {err}");
                 let grid_size = 32.0;
                 let rows = (size.height / grid_size).ceil() as i32;
                 let cols = (size.width / grid_size).ceil() as i32;

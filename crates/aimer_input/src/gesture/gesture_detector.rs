@@ -12,7 +12,7 @@ use winit::window::Window;
 use aimer_style::BoxDecoration;
 
 #[allow(dead_code)]
-pub struct GestureDetectorElement<'a, E: Element> {
+pub struct GestureDetector<'a, E: Element> {
     pub(crate) width: Dimension,
     pub(crate) height: Dimension,
     pub(crate) decoration: BoxDecoration,
@@ -32,7 +32,7 @@ pub struct GestureDetectorElement<'a, E: Element> {
     pub(crate) window: &'a Window,
 }
 
-impl<'a, E: Element> GestureDetectorElement<'a, E> {
+impl<'a, E: Element> GestureDetector<'a, E> {
     /// Recursively render a child element and its descendants.
     fn render_child(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
@@ -129,7 +129,7 @@ impl<'a, E: Element> GestureDetectorElement<'a, E> {
     }
 }
 
-impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
+impl<'b, E: Element> Element for GestureDetector<'b, E> {
     #[inline]
     fn size(&self) -> Option<Size> {
         Some(Size { width: self.width, height: self.height })
@@ -233,7 +233,7 @@ impl<'b, E: Element> Element for GestureDetectorElement<'b, E> {
     }
 }
 
-impl<'w, E: Element> Drawable for GestureDetectorElement<'w, E> {
+impl<'w, E: Element> Drawable for GestureDetector<'w, E> {
     fn draw(&self, ctx: &BuildContext<'_>) {
         self.is_dirty.set(false);
         let (box_width, box_height) = self.compute_dimensions(ctx);

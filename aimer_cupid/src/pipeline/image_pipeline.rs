@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use wgpu::ShaderSource;
 use wgpu::util::DeviceExt;
-
+use aimer_utils::debug;
 use crate::utilities::TextureId;
 
 #[repr(C)]
@@ -79,7 +79,7 @@ impl ImagePipeline {
         }
     }
 
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, pipeline_cache: Option<&wgpu::PipelineCache>) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image shader"),
             source: ShaderSource::Wgsl(Self::get_source().into()),
@@ -171,7 +171,7 @@ impl ImagePipeline {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
-            cache: None,
+            cache: pipeline_cache,
         });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {

@@ -31,8 +31,7 @@ pub mod render_ctx {
                 return;
             }
 
-            // let gpu = GpuContext::initialize(window, size);
-            let gpu = GpuContext::initialize(window, (1344, 2833).into());
+            let gpu = GpuContext::initialize(window, size);
             let canvas = CupidCanvas::new();
             let renderer = Renderer::new(&gpu.device, gpu.format);
 
@@ -50,18 +49,18 @@ pub mod render_ctx {
 
         /// Create a CupidCanvas, call `draw_fn` with it and dimensions,
         /// then flush the draw list through the renderer and present.
-        pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) {
+        pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> bool {
 
             let (gpu, renderer, canvas) = match (&self.gpu, &mut self.renderer, &self.canvas) {
                 (Some(g), Some(r), Some(c)) => (g, r, c),
-                _ => return,
+                _ => return false,
             };
 
 
             let frame = match gpu.begin_frame() {
                 wgpu::CurrentSurfaceTexture::Success(texture)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-                _ => return,
+                _ => return false,
             };
 
 
@@ -81,6 +80,7 @@ pub mod render_ctx {
             renderer.render(&gpu.device, &gpu.queue, &view, width, height, gpu.is_srgb, &draw_list);
 
             gpu.end_frame(frame);
+            true
         }
     }
 }

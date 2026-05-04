@@ -19,6 +19,7 @@ arboard.workspace = true
 colored.workspace = true
 local-ip-address.workspace = true
 crossbeam.workspace = true
+notify = "8.2.0"
 
 [profile.release]
 opt-level = 3

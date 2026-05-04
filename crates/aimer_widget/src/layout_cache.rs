@@ -36,7 +36,7 @@ impl LayoutCache {
 
     /// Returns cached content_size if constraint and scale match, otherwise None.
     pub fn get_content(&self, constraint: BoxConstraint, scale_bits: u32) -> Option<ResolvedSize> {
-        let guard = unsafe { &*self.computed.get() };
+        let guard = unsafe { &*self.content.get() };
         match *guard {
             Some((c, s, size)) if c == constraint && s == scale_bits => Some(size),
             _ => None,
@@ -45,7 +45,7 @@ impl LayoutCache {
 
     /// Stores content_size result.
     pub fn set_content(&self, constraint: BoxConstraint, scale_bits: u32, size: ResolvedSize) {
-        let guard = unsafe { &mut *self.computed.get() };
+        let guard = unsafe { &mut *self.content.get() };
         *guard = Some((constraint, scale_bits, size));
     }
     

@@ -27,7 +27,7 @@ pub mod base {
     pub use crate::components::context::BuildContext;
     pub use aimer_color::prelude::*;
 }
-pub use crate::widget::Widget;
+pub use crate::widget::{Widget, WidgetTrait};
 pub use crate::components::element::Element;
 pub use crate::components::element::{dispatch_event, broadcast_event};
 pub use crate::widget::stateful::{StatefulElement, StatefulWidget, State, StateUpdater};
@@ -35,3 +35,4 @@ pub use crate::widget::stateless::{ StatelessElement, StatelessWidget, NamedWidg
 pub use aimer_macro::{widget, Constructor, main, WidgetConstructor};
 pub use crate::layout_cache::LayoutCache;
 pub use components::drawable::Drawable;
+
