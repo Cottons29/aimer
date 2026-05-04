@@ -21,6 +21,8 @@ aimer_style.workspace = true
 aimer_text.workspace = true
 aimer_macro.workspace = true
 
+
+
 [workspace]
 resolver = "3"
 members = [
@@ -118,9 +120,6 @@ core-foundation-sys = "0.8.7"
 reqwest = {version = "0.13.2",default-features = false, features = ["rustls", "native-tls", "http2"] }
 openssl = { version = "0.10", features = ["vendored"] }
 local-ip-address = "0.6.11"
-
-
-
 
 # Aimer cli dependencies
 crossterm = "0.29.0"

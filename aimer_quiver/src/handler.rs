@@ -327,9 +327,8 @@ impl AimerApplicationHandler {
                 if inspector_enabled {
                     // Save and restore canvas state to ensure the inspector overlay
                     // always renders at the top layer above all widgets,
-                    // unaffected by any residual transforms or clips.
+                    // unaffected by any residual transforms.
                     build_ctx.canvas.save();
-                    build_ctx.canvas.clear_clip();
                     InspectorOverlay::draw(root.as_ref(), &build_ctx.canvas, cursor_pos, build_ctx.scale);
                     build_ctx.canvas.restore();
                 }
