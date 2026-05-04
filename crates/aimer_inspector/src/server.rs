@@ -384,7 +384,7 @@ pub mod server {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::prelude::*;
     use web_sys::{MessageEvent, WebSocket};
-    use widget::Element;
+    use aimer_widget::{inspector_overlay, Element};
 
     #[derive(Clone)]
     pub struct InspectorHandle {
@@ -399,7 +399,7 @@ pub mod server {
 
         pub fn set_enabled(&self, enabled: bool) {
             self.enabled.store(enabled, Ordering::Relaxed);
-            widget::inspector_overlay::set_enabled(enabled);
+            inspector_overlay::set_enabled(enabled);
             let msg = InspectorMessage::Status { enabled };
             if let Ok(json) = serde_json::to_string(&msg) {
                 if let Some(ws) = self.ws.borrow().as_ref() {
@@ -459,7 +459,7 @@ pub mod server {
                     match msg {
                         InspectorMessage::Status { enabled } => {
                             enabled_msg.store(enabled, Ordering::Relaxed);
-                            widget::inspector_overlay::set_enabled(enabled);
+                            inspector_overlay::set_enabled(enabled);
                         }
                         _ => {}
                     }

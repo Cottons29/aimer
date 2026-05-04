@@ -1,25 +1,18 @@
-
-#[cfg(target_arch = "wasm32")]
-pub mod wasm_raw_text;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod raw_text;
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::text::raw_text::RawTextWidget;
-#[cfg(target_arch = "wasm32")]
-use crate::text::wasm_raw_text::RawTextWidget;
 use aimer_macro::WidgetConstructor;
-use std::sync::Mutex;
 use aimer_style::{TextAlign, TextStyle};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, LayoutCache, Widget};
+use std::sync::Mutex;
 
 /// this is a widget for creating the text
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
 pub struct Text {
     #[constructor(into, first)]
-    text: String, 
+    text: String,
     #[constructor(default)]
     text_align: TextAlign,
     #[constructor(default)]
@@ -37,4 +30,3 @@ impl Widget for Text {
         })
     }
 }
-

@@ -1,11 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
-
-#[cfg(not(target_arch = "wasm32"))]
 mod native_impl;
-#[cfg(target_arch = "wasm32")]
-mod wasm_impl;
 
 pub trait CanvasRendering: Clone {
     fn begin_frame(&self);
@@ -84,6 +80,16 @@ pub trait CanvasRendering: Clone {
     /// Draws a filled rectangle with per-corner border radii.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
     fn fill_color_rect_per_corner(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
+    fn draw_shadow_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        shadow_color: Color,
+        shadow_params: [f32; 4],
+        border_radius: [f32; 4],
+        inset: bool,
+        side_params: [f32; 3],
+    );
     fn set_alpha(&self, alpha: f32);
     fn restore_alpha(&self);
     fn load_image(&self, bytes: &[u8], width: u32, height: u32) -> u32;
@@ -94,10 +100,7 @@ pub trait CanvasRendering: Clone {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 use aimer_cupid::canvas::CupidCanvas as Canvas;
-#[cfg(target_arch = "wasm32")]
-use web_sys::CanvasRenderingContext2d as Canvas;
 
 pub type InnerCanvas = Canvas;
 
@@ -408,6 +411,22 @@ impl<'a> AimerCanvas<'a> {
             outline_width,
             outline_color,
         );
+    }
+
+    /// Draws a shadow rectangle using GPU-accelerated SDF shadow rendering.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn draw_shadow_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        shadow_color: Color,
+        shadow_params: [f32; 4],
+        border_radius: [f32; 4],
+        inset: bool,
+        side_params: [f32; 3],
+    ) {
+        CanvasRendering::draw_shadow_rect(self.inner, pos, size, shadow_color, shadow_params, border_radius, inset, side_params);
     }
 
     /// Draws a filled rectangle with a specific color.

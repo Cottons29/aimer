@@ -13,21 +13,43 @@ aimer_utils.workspace = true
 aimer_color.workspace = true
 
 
+
 #############
 wgpu.workspace = true
 
 winit.workspace = true
-pollster.workspace = true
 bytemuck.workspace = true
 fontdue.workspace = true
 image = {workspace = true, features = ["default"]}
 chrono.workspace = true
 fxhash = "0.2.1"
+dirs = "6.0.0"
 
-# System font loading: font-kit on Linux/Windows (not Android — no fontconfig), Core Text FFI on macOS/iOS
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster.workspace = true
+
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "macos", target_os = "android")))'.dependencies]
 font-kit.workspace = true
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 core-foundation = { workspace = true }
 core-foundation-sys.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures.workspace = true
+
+
+
+
+
+[target.'cfg(not(target_arch = "wasm32"))'.profile.dev.package."*"]
+opt-level = 3
+
+[target.'cfg(target_arch = "wasm32")'.profile.dev.package."*"]
+opt-level = 'z'
+
+[target.'cfg(not(target_arch = "wasm32"))'.profile.release.package."*"]
+opt-level = 3
+
+[target.'cfg(target_arch = "wasm32")'.profile.release.package."*"]
+opt-level = 'z'

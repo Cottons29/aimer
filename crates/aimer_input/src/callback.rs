@@ -72,6 +72,18 @@ pub struct Callback<Args = (), Return = ()> {
     inner: CallbackInner<Args, Return>,
 }
 
+unsafe impl<Args, Return> Send for Callback<Args, Return>
+where
+    Args: Send,
+    Return: Send,
+{
+}
+unsafe impl<Args, Return> Sync for Callback<Args, Return>
+where
+    Args: Sync,
+    Return: Sync,
+{
+}
 
 impl<Args, Return> Debug for Callback<Args, Return> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -97,15 +109,13 @@ where
     }
 }
 
-impl<P, R> CallbackExecutor for Callback<P,R> {
+impl<P, R> CallbackExecutor for Callback<P, R> {
     type Args = P;
     type Output = R;
     fn get(&self) -> &Option<RawInnerCallback<Self::Args, Self::Output>> {
         unsafe { &*self.inner.get() }
     }
 }
-
-
 
 ///
 /// A struct representing a callback with no input and no output (void callback).
@@ -134,6 +144,9 @@ pub struct VoidCallback {
     inner: CallbackInner<(), ()>,
 }
 
+unsafe impl Send for VoidCallback {}
+unsafe impl Sync for VoidCallback {}
+
 impl Debug for VoidCallback {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VoidCallback() -> ()").finish()
@@ -159,7 +172,7 @@ where
 impl CallbackExecutor for VoidCallback {
     type Args = ();
     type Output = ();
-     fn get(&self) -> &Option<RawInnerCallback<Self::Args, Self::Output>> {
+    fn get(&self) -> &Option<RawInnerCallback<Self::Args, Self::Output>> {
         unsafe { &*self.inner.get() }
     }
 }

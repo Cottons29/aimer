@@ -18,10 +18,16 @@ pub struct RectInstance {
     pub clip_rect: [f32; 4],
     /// Border radius for the clip rect: [top-left, top-right, bottom-right, bottom-left].
     pub clip_border_radius: [f32; 4],
+    /// Shadow parameters: [offset_x, offset_y, blur, spread]
+    pub shadow_params: [f32; 4],
+    /// Shadow color (RGBA, 0..1)
+    pub shadow_color: [f32; 4],
+    /// Shadow flags: [inset (0.0 or 1.0), 0, 0, 0]
+    pub shadow_flags: [f32; 4],
 }
 
 impl RectInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 13] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x4,
@@ -32,6 +38,9 @@ impl RectInstance {
         7 => Float32x4,
         8 => Float32x4,
         9 => Float32x4,
+        10 => Float32x4,
+        11 => Float32x4,
+        12 => Float32x4,
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
@@ -55,7 +64,7 @@ pub struct RectPipeline {
 impl RectPipeline {
     const INITIAL_CAPACITY: usize = 256;
 
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, pipeline_cache: Option<&wgpu::PipelineCache>) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rect shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/rect.wgsl").into()),
@@ -113,7 +122,7 @@ impl RectPipeline {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
-            cache: None,
+            cache: pipeline_cache,
         });
 
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {

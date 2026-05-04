@@ -4,7 +4,7 @@ use aimer_style::BoxDecoration;
 use aimer_attribute::CacheBounds;
 use aimer_widget::{Element, LayoutCache, Widget, base::*, WidgetConstructor};
 use crate::callback::VoidCallback;
-use crate::gesture::gesture_detector::GestureDetectorElement;
+use crate::gesture::gesture_detector::GestureDetector;
 use crate::gesture::{CallbackInner, GestureActions};
 
 #[allow(dead_code)]
@@ -49,7 +49,7 @@ impl<W: Widget> Widget for Button<W> {
             gesture.runtime_handle = Some(ctx.async_handle.clone());
         }
 
-        Box::new(GestureDetectorElement {
+        Box::new(GestureDetector {
             width: self.width,
             height: self.height,
             decoration: self.decoration.clone(),

@@ -11,7 +11,7 @@ impl LogStyling for String {
             self.red().to_string()
         } else if self.contains("[WARN]") {
             self.yellow().to_string()
-        } else if self.contains("[DEBUG]") {
+        } else if self.contains("[DEBUG]") || self.contains("hot-reload") {
             self.green().to_string()
         } else if self.contains("[INFO]") {
             self.bright_cyan().to_string()

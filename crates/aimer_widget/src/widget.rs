@@ -6,6 +6,8 @@ use aimer_attribute::size::ResolvedSize;
 pub mod stateful;
 pub mod stateless;
 
+pub trait WidgetTrait : Widget + 'static {}
+
 pub trait Widget {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element>;
     fn debug_name(&self) -> &'static str {

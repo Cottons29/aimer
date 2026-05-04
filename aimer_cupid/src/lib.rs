@@ -1,9 +1,11 @@
 pub mod utilities;
 pub mod draw_cmd;
 pub mod gpu_context;
+pub mod custom_pipeline;
 
 pub mod renderer;
 pub mod canvas;
+pub mod pipeline_cache;
 mod pipeline;
 
 pub use pipeline::rect_pipeline;

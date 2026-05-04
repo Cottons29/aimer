@@ -78,7 +78,10 @@ fn start_event_loop(widget: impl Widget + 'static) {
         return;
     }
 
-    aimer_utils::info!("Initializing EventLoop...");
+    #[cfg(target_arch = "wasm32")]
+    console_error_panic_hook::set_once();
+
+    info!("Initializing EventLoop...");
     #[cfg(not(target_os = "android"))]
     let event_loop = EventLoop::<AimerCustomAppEvent>::with_user_event()
         .build()
@@ -91,49 +94,6 @@ fn start_event_loop(widget: impl Widget + 'static) {
             .get()
             .expect("ANDROID_APP not set")
             .clone();
-
-        /*
-        // Initialize rustls-platform-verifier for Android
-        #[cfg(target_os = "android")]
-        {
-            use jni::objects::JObject;
-            use jni::JavaVM;
-            let vm_ptr = app.vm_as_ptr();
-            let context = app.activity_as_ptr();
-
-
-            if vm_ptr.is_null() {
-                utils::error!("Android JavaVM pointer is NULL!");
-            } else if context.is_null() {
-                utils::error!("Android Activity pointer is NULL!");
-            } else {
-                let res = unsafe {
-                    let vm = JavaVM::from_raw(vm_ptr as *mut _).expect("Failed to get JavaVM");
-                    let mut env = vm.attach_current_thread().expect("Failed to attach thread");
-                    debug!("rustls-platform-verifier: attaching thread to JavaVM");
-                    match rustls_platform_verifier::android::init_hosted(
-                        &mut env,
-                        JObject::from_raw(context as *mut _),
-                    ) {
-                        Ok(_) => {
-                            debug!("rustls-platform-verifier: initialized successfully");
-                            Ok(())
-                        },
-                        Err(e) => {
-                            utils::error!("rustls-platform-verifier: failed to initialize: {:?}", e);
-                            Err(e)
-                        },
-                    }
-                };
-                if let Err(e) = res {
-                    utils::error!("rustls-platform-verifier: failed to initialize: {:?}", e);
-                } else {
-                    utils::info!("rustls-platform-verifier initialized successfully");
-                }
-            }
-
-        }
-        */
 
         events::android_app::set_android_app(app.clone());
         EventLoop::<AimerCustomAppEvent>::with_user_event()
@@ -163,7 +123,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
         DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap(),
     );
     #[cfg(all(debug_assertions, target_arch = "wasm32"))]
-    let inspector = inspector::start(DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap());
+    let inspector = aimer_inspector::start(DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap());
 
     aimer_utils::info!("Creating App instance...");
     let mut app = AimerApplicationHandler {

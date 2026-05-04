@@ -14,6 +14,6 @@ pub use style::border::{BoxOutline, BoxBorder};
 pub use style::border::{BorderSlice, BorderStyle};
 pub use style::border::Stroke;
 pub use style::box_decoration::BoxDecoration;
-pub use style::box_decoration::box_shadow::{BoxShadow, BorderSide};
+pub use style::box_decoration::box_shadow::{BoxShadow, ShadowSide};
 pub use style::box_decoration::border_radius::BorderRadius;
 

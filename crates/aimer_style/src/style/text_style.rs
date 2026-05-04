@@ -51,16 +51,20 @@ pub enum TextAlign {
 #[allow(dead_code)]
 #[derive(aimer_macro::Constructor, Clone)]
 pub struct TextStyle  {
-    #[constructor(default)]
+    #[constructor(default = 13)]
     pub font_size: u32,
     #[constructor(default)]
     pub font_style : FontStyle,
     #[constructor(default)]
     pub font_weight: FontWeight,
-    #[constructor(default, into)]
+    #[constructor(default = TextStyle::DEFAULT_TEXT_COLOR, into)]
     pub color: Color,
     #[constructor(default)]
     pub text_overflow: TextOverflow,
+}
+
+impl TextStyle {
+    pub const DEFAULT_TEXT_COLOR: Color = Color::Basic(Colors::Black);
 }
 
 impl Default for TextStyle {
