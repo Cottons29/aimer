@@ -1,10 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
-
 mod native_impl;
-#[cfg(target_arch = "wasm32")]
-mod wasm_impl;
 
 pub trait CanvasRendering: Clone {
     fn begin_frame(&self);
