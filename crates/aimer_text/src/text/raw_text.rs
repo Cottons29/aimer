@@ -20,20 +20,6 @@ impl RawTextWidget {
         base * scale
     }
 
-    /// Approximate line height as 1.2 × font_size (standard heuristic).
-    fn line_height(&self, font_size: f32) -> f32 {
-        font_size * 1.2
-    }
-
-    /// Approximate ascent as 0.8 × font_size.
-    fn ascent(&self, font_size: f32) -> f32 {
-        font_size * 0.8
-    }
-
-    /// Approximate descent as 0.2 × font_size.
-    fn descent(&self, font_size: f32) -> f32 {
-        font_size * 0.2
-    }
 }
 
 impl Drawable for RawTextWidget {
@@ -59,13 +45,18 @@ impl Drawable for RawTextWidget {
             }
         }
         let font_size = self.font_size(ctx.scale);
-        let text_width = ctx.canvas.measure_text(&self.text, font_size);
-        let line_height = self.line_height(font_size);
-        let ascent = self.ascent(font_size);
-        let descent = self.descent(font_size);
-
         let width = ctx.parent_size.width;
         let height = ctx.parent_size.height;
+        let max_width = if matches!(self.text_style.text_overflow, TextOverflow::Wrap) {
+            width
+        } else {
+            0.0
+        };
+        let metrics = ctx.canvas.measure_text_metrics(&self.text, font_size, max_width);
+        let text_width = metrics.width;
+        let line_height = metrics.line_height;
+        let ascent = metrics.ascent;
+        let descent = -metrics.descent;
 
         let x = match self.text_align {
             TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
@@ -93,7 +84,7 @@ impl Drawable for RawTextWidget {
             }
             TextOverflow::Ellipsis => {
                 if text_width > width {
-                    let ellipsis = "...";
+                    let ellipsis = "…";
                     let ellipsis_width = ctx.canvas.measure_text(ellipsis, font_size);
                     let available_width = width - ellipsis_width;
 
@@ -101,12 +92,12 @@ impl Drawable for RawTextWidget {
                         let mut truncated = String::new();
                         let mut current_w = 0.0;
 
-                        for c in self.text.chars() {
-                            let char_w = ctx.canvas.measure_text(&c.to_string(), font_size);
+                        for cluster in unicode_segmentation::UnicodeSegmentation::graphemes(self.text.as_str(), true) {
+                            let char_w = ctx.canvas.measure_text(cluster, font_size);
                             if current_w + char_w > available_width {
                                 break;
                             }
-                            truncated.push(c);
+                            truncated.push_str(cluster);
                             current_w += char_w;
                         }
 
@@ -130,27 +121,28 @@ impl Drawable for RawTextWidget {
                 }
             }
             TextOverflow::Wrap => {
-                let space_width = ctx.canvas.measure_text(" ", font_size);
                 let mut lines: Vec<String> = Vec::new();
                 let mut current_line = String::new();
                 let mut current_line_width = 0.0;
 
-                for word in self.text.split_whitespace() {
-                    let word_width = ctx.canvas.measure_text(word, font_size);
+                for cluster in unicode_segmentation::UnicodeSegmentation::graphemes(self.text.as_str(), true) {
+                    if cluster == "\n" {
+                        lines.push(current_line);
+                        current_line = String::new();
+                        current_line_width = 0.0;
+                        continue;
+                    }
 
-                    if current_line_width + word_width > width && !current_line.is_empty() {
+                    let cluster_width = ctx.canvas.measure_text(cluster, font_size);
+
+                    if current_line_width + cluster_width > width && !current_line.is_empty() {
                         lines.push(current_line);
                         current_line = String::new();
                         current_line_width = 0.0;
                     }
 
-                    if !current_line.is_empty() {
-                        current_line.push(' ');
-                        current_line_width += space_width;
-                    }
-
-                    current_line.push_str(word);
-                    current_line_width += word_width;
+                    current_line.push_str(cluster);
+                    current_line_width += cluster_width;
                 }
 
                 if !current_line.is_empty() {
@@ -185,7 +177,6 @@ impl Element for RawTextWidget {
         }
 
         let font_size = self.font_size(ctx.scale);
-        let line_height = self.line_height(font_size);
 
         let result = match self.text_style.text_overflow {
             TextOverflow::Wrap => {
@@ -194,32 +185,13 @@ impl Element for RawTextWidget {
                 } else {
                     ctx.parent_size.width
                 };
-                let mut lines_count = 0;
-                let mut current_line_width = 0.0;
-                let space_width = ctx.canvas.measure_text(" ", font_size);
+                let metrics = ctx.canvas.measure_text_metrics(&self.text, font_size, width);
 
-                for word in self.text.split_whitespace() {
-                    let word_width = ctx.canvas.measure_text(word, font_size);
-
-                    if current_line_width + word_width > width && current_line_width > 0.0 {
-                        lines_count += 1;
-                        current_line_width = 0.0;
-                    }
-
-                    if current_line_width > 0.0 {
-                        current_line_width += space_width;
-                    }
-                    current_line_width += word_width;
-                }
-                if current_line_width > 0.0 {
-                    lines_count += 1;
-                }
-
-                ResolvedSize { width, height: (lines_count as f32 * line_height).ceil() }
+                ResolvedSize { width, height: metrics.height.ceil() }
             }
             _ => {
-                let text_width = ctx.canvas.measure_text(&self.text, font_size);
-                ResolvedSize { width: text_width.ceil(), height: line_height.ceil() }
+                let metrics = ctx.canvas.measure_text_metrics(&self.text, font_size, 0.0);
+                ResolvedSize { width: metrics.width.ceil(), height: metrics.height.ceil() }
             }
         };
 
