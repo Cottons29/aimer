@@ -447,16 +447,18 @@ impl RawTextField {
     fn cursor_x_offset_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32) -> f32 {
         let text = self.controller.text();
         let offset = self.cursor.offset();
-        let prefix: String = text.chars().take(offset).collect();
+        let prefix: String = unicode_segmentation::UnicodeSegmentation::graphemes(text, true)
+            .take(offset)
+            .collect();
         canvas.measure_text(&prefix, font_size)
     }
 
-    fn ascent(&self, font_size: f32) -> f32 {
-        font_size * 0.8
+    fn ascent_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32) -> f32 {
+        canvas.measure_text_metrics("M", font_size, 0.0).ascent
     }
 
-    fn descent(&self, font_size: f32) -> f32 {
-        font_size * 0.2
+    fn descent_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32) -> f32 {
+        -canvas.measure_text_metrics("M", font_size, 0.0).descent
     }
 
     fn align_x(&self, text_width: f32, content_width: f32) -> f32 {
@@ -467,9 +469,9 @@ impl RawTextField {
         }
     }
 
-    fn align_y(&self, font_size: f32, content_height: f32) -> f32 {
-        let ascent = self.ascent(font_size);
-        let descent = self.descent(font_size);
+    fn align_y_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32, content_height: f32) -> f32 {
+        let ascent = self.ascent_canvas(canvas, font_size);
+        let descent = self.descent_canvas(canvas, font_size);
         match self.text_align {
             TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => ascent,
             TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
@@ -975,7 +977,7 @@ impl Drawable for RawTextField {
                 let prompt_fs = self.scaled_font_size(&self.prompt_style, scale);
                 let prompt_width = ctx.canvas.measure_text(&self.prompt, prompt_fs );
                 let prompt_x = self.align_x(prompt_width , content_width);
-                let prompt_y = self.align_y(prompt_fs , content_height );
+                let prompt_y = self.align_y_canvas(&ctx.canvas, prompt_fs , content_height );
                 let prompt_color: Color = self.prompt_style.color.into();
                 ctx.canvas.draw_text(
                     &self.prompt,
@@ -988,7 +990,7 @@ impl Drawable for RawTextField {
                 let hint_fs = self.scaled_font_size(&self.hint_style, scale);
                 let hint_width = ctx.canvas.measure_text(&self.hint, hint_fs );
                 let hint_x = self.align_x(hint_width , content_width);
-                let hint_y = self.align_y(hint_fs , content_height );
+                let hint_y = self.align_y_canvas(&ctx.canvas, hint_fs , content_height );
                 let hint_color: Color = self.hint_style.color.into();
                 ctx.canvas
                     .draw_text(&self.hint, (hint_x, hint_y ).into(), hint_fs , hint_color);
@@ -1019,7 +1021,7 @@ impl Drawable for RawTextField {
 
             let text_width = ctx.canvas.measure_text(&display, font_size );
             let text_x = self.align_x(text_width , content_width);
-            let text_y = self.align_y(font_size , content_height );
+            let text_y = self.align_y_canvas(&ctx.canvas, font_size , content_height );
 
             if !display.is_empty() {
                 let text_color: Color = self.text_style.color.into();
