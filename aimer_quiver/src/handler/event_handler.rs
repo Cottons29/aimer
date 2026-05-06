@@ -8,6 +8,7 @@ use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
+use aimer_attribute::ResolvedSize;
 
 pub struct WindowEventHandler;
 
@@ -287,7 +288,7 @@ impl WindowEventHandler {
             match crate::ios_screen::get_screen_resolution_pixels() {
                 Some((width, height)) => {
                     app.native_window_size =
-                        Some(attribute::size::ResolvedSize { width: width as f32, height: height as f32 });
+                        Some(ResolvedSize { width: width as f32, height: height as f32 });
                     if is_portrait {
                         PhysicalSize::new(width as u32, height as u32)
                     } else {

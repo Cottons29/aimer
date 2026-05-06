@@ -33,12 +33,12 @@ pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerCustomAppEvent>> = OnceLock
 #[unsafe(no_mangle)]
 pub extern "C" fn trigger_rust_backspace() {
     let Some(proxy) = EVENT_PROXY.get() else {
-        utils::debug!("trigger_rust_backspace: EVENT_PROXY not initialized yet");
+        aimer_utils::debug!("trigger_rust_backspace: EVENT_PROXY not initialized yet");
         return;
     };
 
     if let Err(e) = proxy.send_event(AimerCustomAppEvent::ForceBackspace) {
-        utils::error!("trigger_rust_backspace: failed to send event: {:?}", e);
+        aimer_utils::error!("trigger_rust_backspace: failed to send event: {:?}", e);
     }
 }
 
@@ -54,12 +54,12 @@ pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
     let text = String::from_utf8_lossy(bytes).to_string();
 
     let Some(proxy) = EVENT_PROXY.get() else {
-        utils::debug!("trigger_rust_insert_text: EVENT_PROXY not initialized yet (len={})", len);
+        aimer_utils::debug!("trigger_rust_insert_text: EVENT_PROXY not initialized yet (len={})", len);
         return;
     };
 
     if let Err(e) = proxy.send_event(AimerCustomAppEvent::InsertText(text)) {
-        utils::error!("trigger_rust_insert_text: failed to send event: {:?}", e);
+        aimer_utils::error!("trigger_rust_insert_text: failed to send event: {:?}", e);
     }
 }
 
