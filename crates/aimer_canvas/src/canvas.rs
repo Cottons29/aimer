@@ -1,6 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
+pub use aimer_cupid::canvas::TextMetrics;
 mod native_impl;
 
 pub trait CanvasRendering: Clone {
@@ -40,6 +41,7 @@ pub trait CanvasRendering: Clone {
     fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: [f32; 4]);
     fn clear_clip(&self);
     fn measure_text(&self, text: &str, font_size: f32) -> f32;
+    fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics;
     fn stroke_rect(&self, pos: Vec2d, size: ResolvedSize, stroke_color: Color, stroke_width: f32, border_radius: [f32; 4]);
     /// Draws a stroked rectangle with per-corner radii and per-side widths.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
@@ -306,6 +308,13 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn measure_text(&self, text: &str, font_size: f32) -> f32 {
         CanvasRendering::measure_text(self.inner, text, font_size)
+    }
+
+    /// Measures paragraph text metrics at the given font size and optional max width.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics {
+        CanvasRendering::measure_text_metrics(self.inner, text, font_size, max_width)
     }
 
     /// Draws a stroked (outline-only) rectangle.

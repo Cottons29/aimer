@@ -125,6 +125,11 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
+    fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> crate::canvas::TextMetrics {
+        CupidCanvas::measure_text_metrics(self, text, font_size, max_width)
+    }
+
+    #[inline]
     fn stroke_rect(
         &self,
         pos: Vec2d,
