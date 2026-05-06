@@ -1,12 +1,21 @@
 use aimer_cupid::canvas::CupidCanvas;
+use aimer_cupid::glyph_rasterizer::warm_fallbacks;
 use aimer_cupid::gpu_context::GpuContext;
 use aimer_cupid::renderer::Renderer;
 use aimer_cupid::utilities::Color;
 use std::path::PathBuf;
+use std::time::Duration;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
+
+pub fn time_consume(func: impl FnOnce()) {
+    let start = std::time::Instant::now();
+    func();
+    let elapsed = start.elapsed();
+    println!("Time elapsed: {} ms", elapsed.as_millis());
+}
 
 struct App<'w> {
     gpu: Option<GpuContext<'w>>,
@@ -18,13 +27,7 @@ struct App<'w> {
 
 impl<'w> App<'w> {
     fn new() -> Self {
-        Self {
-            gpu: None,
-            renderer: None,
-            canvas: CupidCanvas::new(),
-            window: None,
-            texture_id: None,
-        }
+        Self { gpu: None, renderer: None, canvas: CupidCanvas::new(), window: None, texture_id: None }
     }
 }
 
@@ -46,20 +49,19 @@ impl<'w> ApplicationHandler for App<'w> {
         let window_ref: &'w Window = unsafe { &*(&window as *const Window) };
         let gpu = GpuContext::initialize(window_ref, size);
 
-        // Upload test image from cupid/image.png
+        // Upload test image from cupid/image.png.
+        // Glyphs are rasterized lazily on first use in TextPipelineV2::prepare,
+        // so we no longer call preload_text on the resume path — it serializes
+        // first-frame for ~5 ms of work that the lazy path already handles.
         let mut img_renderer = Renderer::new(&gpu.device, gpu.format);
         let image_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("image.png");
         let img = image::open(&image_path)
             .unwrap_or_else(|e| panic!("Failed to load {}: {e}", image_path.display()))
             .into_rgba8();
         let (img_w, img_h) = img.dimensions();
-        let tex_id = img_renderer.image_pipeline.upload_image(
-            &gpu.device,
-            &gpu.queue,
-            img_w,
-            img_h,
-            img.as_raw(),
-        );
+        let tex_id = img_renderer
+            .image_pipeline
+            .upload_image(&gpu.device, &gpu.queue, img_w, img_h, img.as_raw());
 
         self.texture_id = Some(tex_id);
         self.renderer = Some(img_renderer);
@@ -77,6 +79,13 @@ impl<'w> ApplicationHandler for App<'w> {
                     gpu.resize(new_size);
                 }
             }
+
+            WindowEvent::MouseInput { state, button, .. } => {
+                if let Some(window ) = self.window.as_ref() {
+                    window.request_redraw();
+                }
+            }
+
             WindowEvent::RedrawRequested => {
                 let gpu = match &self.gpu {
                     Some(g) => g,
@@ -102,109 +111,106 @@ impl<'w> ApplicationHandler for App<'w> {
                 // Build draw commands using CupidCanvas
                 self.canvas.begin_frame();
 
-                // Draw a blue background rect
-                self.canvas.fill_rect(
-                    20.0, 20.0, 300.0, 200.0,
-                    Color::new(0.2, 0.4, 0.8, 1.0),
-                    [10.0; 4],
-                );
-
-                // Draw a red rect
-                self.canvas.fill_rect(
-                    50.0, 50.0, 150.0, 80.0,
-                    Color::red(),
-                    [20.0; 4],
-                );
-
-                // Draw a green rounded rect
-                self.canvas.fill_rect(
-                    200.0, 100.0, 180.0, 120.0,
-                    Color::green(),
-                    [20.0; 4],
-                );
-
-                // Draw a rect with border
-                self.canvas.fill_rect_with_border(
-                    420.0, 300.0, 160.0, 100.0,
-                    Color::red(),
-                    [12.0; 4],
-                    3.0,
-                    Color::new(0.2, 0.2, 0.8, 1.0),
-                );
-
-                // Draw a border-only rect (transparent fill)
-                self.canvas.fill_rect_with_border(
-                    420.0, 420.0, 460.0, 480.0,
-                    Color::blue(),
-                    [28.0; 4],
-                    0.0,
-                    Color::red(),
-                );
-
-                // Test clipping
-                self.canvas.set_clip(50.0, 400.0, 200.0, 100.0);
-                self.canvas.fill_rect(
-                    30.0, 380.0, 300.0, 150.0,
-                    Color::red(),
-                    [0.0; 4],
-                );
-
-                // Test save/translate/restore
-                self.canvas.save();
-                self.canvas.translate(400.0, 50.0);
-                self.canvas.fill_rect(
-                    0.0, 0.0, 500.0, 450.0,
-                    Color::new(0.8, 0.2, 0.8, 1.0).set_alpha(128),
-                    [5.0; 4],
-                );
-                self.canvas.restore();
+                // // Draw a blue background rect
+                // self.canvas.fill_rect(
+                //     20.0, 20.0, 300.0, 200.0,
+                //     Color::new(0.2, 0.4, 0.8, 1.0),
+                //     [10.0; 4],
+                // );
+                //
+                // // Draw a red rect
+                // self.canvas.fill_rect(
+                //     50.0, 50.0, 150.0, 80.0,
+                //     Color::red(),
+                //     [20.0; 4],
+                // );
+                //
+                // // Draw a green rounded rect
+                // self.canvas.fill_rect(
+                //     200.0, 100.0, 180.0, 120.0,
+                //     Color::green(),
+                //     [20.0; 4],
+                // );
+                //
+                // // Draw a rect with border
+                // self.canvas.fill_rect_with_border(
+                //     420.0, 300.0, 160.0, 100.0,
+                //     Color::red(),
+                //     [12.0; 4],
+                //     3.0,
+                //     Color::new(0.2, 0.2, 0.8, 1.0),
+                // );
+                //
+                // // Draw a border-only rect (transparent fill)
+                // self.canvas.fill_rect_with_border(
+                //     420.0, 420.0, 460.0, 480.0,
+                //     Color::blue(),
+                //     [28.0; 4],
+                //     0.0,
+                //     Color::red(),
+                // );
+                //
+                // // Test clipping
+                // self.canvas.set_clip(50.0, 400.0, 200.0, 100.0);
+                // self.canvas.fill_rect(
+                //     30.0, 380.0, 300.0, 150.0,
+                //     Color::red(),
+                //     [0.0; 4],
+                // );
+                //
+                // // Test save/translate/restore
+                // self.canvas.save();
+                // self.canvas.translate(400.0, 50.0);
+                // self.canvas.fill_rect(
+                //     0.0, 0.0, 500.0, 450.0,
+                //     Color::new(0.8, 0.2, 0.8, 1.0).set_alpha(128),
+                //     [5.0; 4],
+                // );
+                // self.canvas.restore();
 
                 // Draw text
-                self.canvas.draw_text(
-                    30.0, 250.0,
-                    "Hello from Cupid!",
-                    32.0,
-                    Color::black(),
-                );
+                // self.canvas.draw_text(30.0, 250.0, "Hello from Cupid!", 32.0, Color::black());
+                //
+                // self.canvas
+                //     .draw_text(30.0, 300.0, "Wgpu-powered UI render engine", 20.0, Color::black());
 
-                self.canvas.draw_text(
-                    30.0, 300.0,
-                    "Wgpu-powered UI render engine",
-                    20.0,
-                    Color::new(0.3, 0.3, 0.3, 1.0),
-                );
+                // Mixed CJK + color emoji line — verifies fixes A (no first-frame
+                // stall on CJK) and B/C (Apple Color Emoji renders alongside CJK).
+                self.canvas
+                    .draw_text(30.0, 340.0, "你好,世界 😀 👍 🙂", 24.0, Color::black());
 
                 // Draw test image if available
-                if let Some(tex_id) = self.texture_id {
-                    self.canvas.draw_image(500.0, 200.0, 300.0, 300.0, tex_id);
-                }
+                // if let Some(tex_id) = self.texture_id {
+                //     self.canvas.draw_image(500.0, 200.0, 300.0, 300.0, tex_id);
+                // }
 
                 self.canvas.clear_clip();
 
-                renderer.render(
-                    &gpu.device,
-                    &gpu.queue,
-                    &view,
-                    width,
-                    height,
-                    gpu.is_srgb,
-                    &self.canvas.draw_list(),
-                );
+                time_consume(|| renderer.render(&gpu.device, &gpu.queue, &view, width, height, gpu.is_srgb, &self.canvas.draw_list()));
+
+
 
                 gpu.end_frame(frame);
             }
             _ => {}
         }
-
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
     }
 }
 
-
 fn main() {
+    // Pre-warm the CJK / emoji fallback chain on a background thread before the
+    // event loop starts. By the time the first non-Latin codepoint reaches the
+    // render thread, `shared_fallback_chain()` is populated and each fallback's
+    // `fontdue::Font` is parsed — eliminating the ~100-400 ms first-frame stall
+    // on PingFang / Hiragino.
+    std::thread::Builder::new()
+        .name("aimer-cupid-fallback-warm".into())
+        .spawn(warm_fallbacks)
+        .ok();
+
+
     let event_loop = EventLoop::new().unwrap();
+    // event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App::new();
     event_loop.run_app(&mut app).unwrap();
 }

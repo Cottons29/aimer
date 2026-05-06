@@ -1,14 +1,34 @@
 use std::cell::{Ref, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::draw_cmd::DrawList;
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
 use crate::utilities::{Color, Rect, TextureId, Vec2d};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TextMetrics {
+    pub width: f32,
+    pub height: f32,
+    pub ascent: f32,
+    pub descent: f32,
+    pub line_gap: f32,
+    pub line_height: f32,
+    pub line_count: usize,
+}
+
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+struct TextMetricsKey {
+    text: String,
+    font_size_tenths: u32,
+    max_width_tenths: u32,
+}
+
 #[derive(Clone)]
 pub struct CupidCanvas {
     draw_list: Rc<RefCell<DrawList>>,
     rasterizer: Rc<RefCell<GlyphRasterizer>>,
+    metrics_cache: Rc<RefCell<HashMap<TextMetricsKey, TextMetrics>>>,
 }
 
 
@@ -16,7 +36,8 @@ impl CupidCanvas {
     pub fn new() -> Self {
         Self {
             draw_list: Rc::new(RefCell::new(DrawList::new())),
-            rasterizer: Rc::new(RefCell::new(GlyphRasterizer::primary_only())),
+            rasterizer: Rc::new(RefCell::new(GlyphRasterizer::new())),
+            metrics_cache: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -115,6 +136,60 @@ impl CupidCanvas {
     /// Measure text width using the cached fontdue rasterizer.
     pub fn measure_text(&self, text: &str, font_size: f32) -> f32 {
         self.rasterizer.borrow_mut().measure_text(text, font_size)
+    }
+
+    pub fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics {
+        let key = TextMetricsKey {
+            text: text.to_string(),
+            font_size_tenths: (font_size * 10.0) as u32,
+            max_width_tenths: (max_width.max(0.0) * 10.0) as u32,
+        };
+        if let Some(metrics) = self.metrics_cache.borrow().get(&key) {
+            return *metrics;
+        }
+
+        let mut rasterizer = self.rasterizer.borrow_mut();
+        let (ascent, descent, line_gap) = rasterizer.line_metrics(font_size);
+        let line_height = ascent - descent + line_gap;
+        let mut width = 0.0_f32;
+        let mut current_width = 0.0_f32;
+        let mut line_count = 1_usize;
+
+        for c in text.chars() {
+            if c == '\n' {
+                width = width.max(current_width);
+                current_width = 0.0;
+                line_count += 1;
+                continue;
+            }
+
+            let glyph_width = rasterizer.advance_width(c, font_size);
+            if max_width > 0.0 && current_width > 0.0 && current_width + glyph_width > max_width {
+                width = width.max(current_width);
+                current_width = 0.0;
+                line_count += 1;
+            }
+            current_width += glyph_width;
+        }
+
+        width = width.max(current_width);
+
+        let metrics = TextMetrics {
+            width,
+            height: line_count as f32 * line_height,
+            ascent,
+            descent,
+            line_gap,
+            line_height,
+            line_count,
+        };
+
+        let mut cache = self.metrics_cache.borrow_mut();
+        if cache.len() > 1024 {
+            cache.clear();
+        }
+        cache.insert(key, metrics);
+        metrics
     }
 
     /// Draws a filled rectangle with border and outline in a single pass (no gap).
@@ -299,5 +374,21 @@ impl CupidCanvas {
 impl Default for CupidCanvas {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn measurement_uses_renderable_fallback_for_cjk_text() {
+        let canvas = CupidCanvas::new();
+        let mut rasterizer = canvas.rasterizer.borrow_mut();
+
+        let primary_font_id = rasterizer.primary_font_id();
+        let cjk_font_id = rasterizer.font_id_for_codepoint('你');
+
+        assert_ne!(cjk_font_id, primary_font_id);
     }
 }

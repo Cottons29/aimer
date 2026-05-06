@@ -3,7 +3,7 @@ use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::pipeline_cache;
 use crate::rect_pipeline::{RectInstance, RectPipeline};
-use crate::text_pipeline::{TextDrawRequest, TextPipelineV2};
+use crate::text_pipeline::{RichTextSpan, TextDrawRequest, TextOverflowMode, TextPipelineV2};
 use crate::utilities::{Mat3, Rect};
 use aimer_utils::debug;
 
@@ -74,12 +74,17 @@ impl Renderer {
     /// The pipeline will participate in the render loop whenever
     /// `DrawCommand::Custom` commands target it by name.
     pub fn register_custom_pipeline(&mut self, pipeline: impl CustomPipeline) {
-        self.custom_pipelines.push(CustomPipelineSlot::new(pipeline));
+        self.custom_pipelines
+            .push(CustomPipelineSlot::new(pipeline));
     }
 
     /// Returns the surface texture format (useful for creating custom pipelines).
     pub fn surface_format(&self) -> wgpu::TextureFormat {
         self.surface_format
+    }
+
+    pub fn preload_text(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32) {
+        self.text_pipeline.preload_text(device, queue, text, font_size);
     }
 
     /// Save the pipeline cache to disk for faster startup on next launch.
@@ -234,8 +239,46 @@ impl Renderer {
                         color: color.to_array(),
                         bounds_width: width as f32 - tx,
                         bounds_height: height as f32 - ty,
+                        overflow: TextOverflowMode::Clip,
+                        line_height: None,
+                        font_weight: None,
+                        italic: false,
                         clip_rect: clip_to_array(self.clip_stack.last()),
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),
+                        spans: Vec::new(),
+                    });
+                    self.resolved
+                        .push(ResolvedCmd { kind: ResolvedKind::TextIndex(()) });
+                }
+                DrawCommand::DrawRichText { position, spans, font_size, color } => {
+                    let (tx, ty) = current_transform.transform_point(position.x, position.y);
+                    self.text_requests.push(TextDrawRequest {
+                        x: tx,
+                        y: ty,
+                        text: spans
+                            .iter()
+                            .map(|span| span.text.as_str())
+                            .collect::<String>(),
+                        font_size: *font_size,
+                        color: color.to_array(),
+                        bounds_width: width as f32 - tx,
+                        bounds_height: height as f32 - ty,
+                        overflow: TextOverflowMode::Clip,
+                        line_height: None,
+                        font_weight: None,
+                        italic: false,
+                        clip_rect: clip_to_array(self.clip_stack.last()),
+                        clip_border_radius: clip_border_radius(self.clip_stack.last()),
+                        spans: spans
+                            .iter()
+                            .map(|span| RichTextSpan {
+                                text: span.text.clone(),
+                                font_size: span.font_size,
+                                color: span.color.map(|color| color.to_array()),
+                                font_weight: span.font_weight,
+                                italic: span.italic,
+                            })
+                            .collect(),
                     });
                     self.resolved
                         .push(ResolvedCmd { kind: ResolvedKind::TextIndex(()) });
@@ -265,11 +308,13 @@ impl Renderer {
                 }
                 DrawCommand::LoadImage { bytes, texture_id, width, height } => {
                     if !self.image_pipeline.has_texture(*texture_id) {
-                        self.image_pipeline.upload_image_with_id(device, queue, *texture_id, *width, *height, &bytes);
+                        self.image_pipeline
+                            .upload_image_with_id(device, queue, *texture_id, *width, *height, &bytes);
                     }
                 }
                 DrawCommand::LoadImageWithId { texture_id, bytes, width, height } => {
-                    self.image_pipeline.upload_image_with_id(device, queue, *texture_id, *width, *height, &bytes);
+                    self.image_pipeline
+                        .upload_image_with_id(device, queue, *texture_id, *width, *height, &bytes);
                 }
                 DrawCommand::DrawShadowRect { rect, shadow_color, shadow_params, border_radius, inset, side_params } => {
                     let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
@@ -313,10 +358,13 @@ impl Renderer {
                     });
                 }
                 DrawCommand::Custom { pipeline_name, data: _ } => {
-                    if let Some(idx) = self.custom_pipelines.iter().position(|s| s.pipeline.name() == pipeline_name.as_str()) {
-                        self.resolved.push(ResolvedCmd {
-                            kind: ResolvedKind::Custom { pipeline_index: idx },
-                        });
+                    if let Some(idx) = self
+                        .custom_pipelines
+                        .iter()
+                        .position(|s| s.pipeline.name() == pipeline_name.as_str())
+                    {
+                        self.resolved
+                            .push(ResolvedCmd { kind: ResolvedKind::Custom { pipeline_index: idx } });
                     }
                 }
             }
@@ -324,14 +372,7 @@ impl Renderer {
 
         // Prepare custom pipelines
         {
-            let render_ctx = RenderContext {
-                device,
-                queue,
-                width,
-                height,
-                is_srgb,
-                format: self.surface_format,
-            };
+            let render_ctx = RenderContext { device, queue, width, height, is_srgb, format: self.surface_format };
             for slot in &mut self.custom_pipelines {
                 if slot.pipeline.has_work() {
                     slot.pipeline.prepare(&render_ctx);
@@ -339,10 +380,8 @@ impl Renderer {
             }
         }
 
-        // Prepare text
         if !self.text_requests.is_empty() {
-            self.text_pipeline
-                .prepare(device, queue, width, height, is_srgb, &self.text_requests);
+            self.text_pipeline.prepare(device, queue, width, height, is_srgb, &self.text_requests);
         }
 
         // Create encoder and render pass
