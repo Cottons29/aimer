@@ -1,27 +1,16 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod render_ctx {
-    use wgpu::{TextureViewDescriptor, TextureViewDimension};
     use aimer_cupid::canvas::CupidCanvas;
     use aimer_cupid::gpu_context::GpuContext;
     use aimer_cupid::renderer::Renderer;
     use winit::dpi::PhysicalSize;
     use winit::window::Window;
-    use aimer_utils::debug;
 
+    #[derive(Default)]
     pub struct WgpuApi {
         gpu: Option<GpuContext<'static>>,
         renderer: Option<Renderer>,
         canvas: Option<CupidCanvas>,
-    }
-
-    impl Default for WgpuApi {
-        fn default() -> Self {
-            Self {
-                gpu: None,
-                renderer: None,
-                canvas: None,
-            }
-        }
     }
 
     impl WgpuApi {

@@ -4,7 +4,7 @@ use aimer_attribute::position::Vec2d;
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_inspector::InspectorAppHandle;
 use std::cell::Cell;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
@@ -12,7 +12,7 @@ use tokio::runtime::Runtime;
 use aimer_widget::Widget;
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
 
-use aimer_utils::{debug, info};
+use aimer_utils::{ info};
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
@@ -125,7 +125,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
     #[cfg(all(debug_assertions, target_arch = "wasm32"))]
     let inspector = aimer_inspector::start(DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap());
 
-    aimer_utils::info!("Creating App instance...");
+    info!("Creating App instance...");
     let mut app = AimerApplicationHandler {
         window: None,
         render_ctx: AimerRenderContext::default(),
@@ -151,7 +151,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     // On iOS, this function never returns.
     match event_loop.run_app(&mut app) {
-        Ok(_) => aimer_utils::info!("EventLoop finished successfully"),
+        Ok(_) => info!("EventLoop finished successfully"),
         Err(e) => aimer_utils::error!("EventLoop::run_app failed: {:?}", e),
     }
     #[cfg(not(target_arch = "wasm32"))]

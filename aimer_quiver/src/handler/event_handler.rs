@@ -2,13 +2,11 @@ use crate::handler::AimerApplicationHandler;
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::KeyAction;
 use aimer_events::element::{ElementEvent, Modifiers, NamedKey};
-use aimer_utils::{debug, info};
 use aimer_widget::{broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
-use aimer_attribute::ResolvedSize;
 
 pub struct WindowEventHandler;
 
@@ -107,10 +105,8 @@ impl WindowEventHandler {
             if app.inspector.is_enabled() {
                 handled = true;
             }
-            if handled {
-                if let Some(window) = &app.window {
-                    window.request_redraw();
-                }
+            if let Some(window) = &app.window && handled {
+                window.request_redraw();
             }
         }
     }
@@ -173,37 +169,31 @@ impl WindowEventHandler {
                     if app.inspector.is_enabled() {
                         handled = true;
                     }
-                    if handled {
-                        if let Some(window) = &app.window {
-                            window.request_redraw();
-                        }
+                    if let Some(window) = &app.window && handled {
+                        window.request_redraw();
                     }
                 }
                 return;
             }
         }
 
-        if let Key::Character(ref ch) = event.logical_key {
-            if !ch.is_empty() && ch.chars().all(|c| !c.is_control()) {
-                let ev = ElementEvent::CharInput {
-                    ch: ch.parse().unwrap(),
-                    action: action.clone(),
-                    modifiers: modifiers.clone(),
-                };
-                if let Some(root) = &app.widget_root {
-                    let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
-                    #[cfg(debug_assertions)]
-                    if app.inspector.is_enabled() {
-                        handled = true;
-                    }
-                    if handled {
-                        if let Some(window) = &app.window {
-                            window.request_redraw();
-                        }
-                    }
+        if let Key::Character(ref ch) = event.logical_key && !ch.is_empty() && ch.chars().all(|c| !c.is_control())  {
+            let ev = ElementEvent::CharInput {
+                ch: ch.parse().unwrap(),
+                action: action.clone(),
+                modifiers: modifiers.clone(),
+            };
+            if let Some(root) = &app.widget_root {
+                let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+                #[cfg(debug_assertions)]
+                if app.inspector.is_enabled() {
+                    handled = true;
                 }
-                return;
+                if let Some(window) = &app.window && handled {
+                    window.request_redraw();
+                }
             }
+            return;
         }
 
         // Handle space as text input when it arrives as a named key
@@ -215,10 +205,8 @@ impl WindowEventHandler {
                 if app.inspector.is_enabled() {
                     handled = true;
                 }
-                if handled {
-                    if let Some(window) = &app.window {
-                        window.request_redraw();
-                    }
+                if let Some(window) = &app.window && handled {
+                    window.request_redraw();
                 }
             }
             return;
@@ -245,10 +233,8 @@ impl WindowEventHandler {
                 if app.inspector.is_enabled() {
                     handled = true;
                 }
-                if handled {
-                    if let Some(window) = &app.window {
-                        window.request_redraw();
-                    }
+                if let Some(window) = &app.window && handled {
+                    window.request_redraw();
                 }
             }
         }
@@ -273,10 +259,9 @@ impl WindowEventHandler {
             if app.inspector.is_enabled() {
                 handled = true;
             }
-            if handled {
-                if let Some(window) = &app.window {
-                    window.request_redraw();
-                }
+
+            if let Some(window) = &app.window && handled{
+                window.request_redraw();
             }
         }
     }

@@ -1,5 +1,3 @@
-#[allow(unused)]
-#[macro_use]
 extern crate aimer_widget;
 mod ffi_utils;
 
