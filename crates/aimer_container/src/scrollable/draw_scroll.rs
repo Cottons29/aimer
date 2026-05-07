@@ -18,7 +18,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         let max_x = (content_size.width - viewport_w).max(0.0);
         let max_y = (content_size.height - viewport_h).max(0.0);
 
-        self.bounds.save(ctx.scale, transform.0, transform.1 , viewport_w, viewport_h);
+        self.bounds
+            .save(ctx.scale, transform.0, transform.1, viewport_w, viewport_h);
         self.ctrl.cursor_pos.set(Some(ctx.cursor_pos));
 
         let mut final_max = Vec2d { x: max_x, y: max_y };
@@ -33,7 +34,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         self.ctrl.cached_max_scroll.set(final_max);
 
         let user_min = self.ctrl.scroll_behavior.min_scroll;
-        self.ctrl.cached_min_scroll
+        self.ctrl
+            .cached_min_scroll
             .set(Vec2d { x: user_min.x * ctx.scale, y: user_min.y * ctx.scale });
 
         self.ctrl.last_scale.set(ctx.scale);
@@ -70,8 +72,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         // Translate by scroll offset
         // On high-DPI displays (e.g. iOS retina), avoid rounding to preserve smooth sub-pixel scrolling
-        let (offset_x, offset_y) =
-            if ctx.scale > 1.5 { (offset.x, offset.y) } else { (offset.x.round(), offset.y.round()) };
+        let (offset_x, offset_y) = if ctx.scale > 1.5 { (offset.x, offset.y) } else { (offset.x.round(), offset.y.round()) };
 
         ctx.canvas.translate(Vec2d { x: offset_x, y: offset_y });
 
@@ -80,7 +81,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
         }
-        child_ctx.visible_rect = Some((-offset_x , -offset_y , viewport_w, viewport_h));
+        child_ctx.visible_rect = Some((-offset_x, -offset_y, viewport_w, viewport_h));
 
         // Draw child content
         self.child.draw(&child_ctx);
@@ -94,15 +95,15 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         ctx.canvas
             .set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
         {
-            if let Some(ref vertical_bar) = self.vertical_scroll_bar {
-                if matches!(self.ctrl.axis, ScrollAxis::Vertical) {
-                    self.draw_scrollbar(ctx, vertical_bar, viewport_w, viewport_h, true);
-                }
+            if let Some(ref vertical_bar) = self.vertical_scroll_bar
+                && matches!(self.ctrl.axis, ScrollAxis::Vertical)
+            {
+                self.draw_scrollbar(ctx, vertical_bar, viewport_w, viewport_h, true);
             }
-            if let Some(ref horizontal_bar) = self.horizontal_scroll_bar {
-                if matches!(self.ctrl.axis, ScrollAxis::Horizontal) {
-                    self.draw_scrollbar(ctx, horizontal_bar, viewport_w, viewport_h, false);
-                }
+            if let Some(ref horizontal_bar) = self.horizontal_scroll_bar
+                && matches!(self.ctrl.axis, ScrollAxis::Horizontal)
+            {
+                self.draw_scrollbar(ctx, horizontal_bar, viewport_w, viewport_h, false);
             }
         }
         ctx.canvas.clear_clip();
