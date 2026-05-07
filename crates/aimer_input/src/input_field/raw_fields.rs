@@ -2,7 +2,7 @@ use aimer_animation::AnimInstant;
 use aimer_attribute::size::ResolvedSize;
 use std::cell::UnsafeCell;
 use aimer_widget::base::{BuildContext, Color, Colors};
-use aimer_widget::{Constructor, Drawable, Element};
+use aimer_widget::{ Drawable, Element};
 
 use crate::input_field::controller::TextFieldController;
 use aimer_attribute::CacheBounds;
@@ -59,12 +59,13 @@ fn clipboard_read() -> Option<String> {
     let val = input.value();
     if val.is_empty() { None } else { Some(val) }
 }
+type BoxedTextFieldFuture =Box<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
 /// Inner enum distinguishing sync vs async text-field callbacks.
 #[cfg(not(target_arch = "wasm32"))]
 enum TextFieldCb {
     Sync(Box<dyn Fn(String)>),
-    Async(Box<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>),
+    Async(BoxedTextFieldFuture),
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -106,14 +107,10 @@ pub struct TextFieldCallback(Option<Rc<TextFieldCb>>);
 ///     .on_changed(AsyncTextFieldCallback(|text| async move {
 ///         println!("async changed: {text}");
 ///     }))
-/// ```
+///```
+#[derive(Default)]
 pub struct AsyncTextFieldCallback<F>(pub F);
 
-impl Default for TextFieldCallback {
-    fn default() -> Self {
-        Self(None)
-    }
-}
 
 impl TextFieldCallback {
     /// Invoke the callback if one is set.
@@ -235,19 +232,15 @@ mod android_keyboard {
 }
 
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InputType {
+    #[default]
     Text,
     Number,
     Obscure,
 }
 
-impl Default for InputType {
-    fn default() -> Self {
-        Self::Text
-    }
-}
-
+#[allow(dead_code)]
 pub struct Cursor {
     cursor: String,
     offset: UnsafeCell<usize>,
@@ -344,21 +337,17 @@ impl Cursor {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExpandDirection {
     Horizontal,
     Vertical,
     Both,
+    #[default]
     None,
 }
 
-impl Default for ExpandDirection {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
-
+#[allow(dead_code)]
 pub(crate) struct RawTextField {
     pub input_type: InputType,
     pub controller: TextFieldController,
@@ -414,21 +403,18 @@ impl RawTextField {
     }
 
     fn active_decoration(&self) -> &BoxDecoration {
-        if !self.enable {
-            if let Some(ref s) = self.disabled_decoration {
-                return s;
-            }
+        if let Some(ref s) = self.disabled_decoration && !self.enable  {
+            return s;
         }
-        if self.is_focused() {
-            if let Some(ref s) = self.focus_decoration {
-                return s;
-            }
+
+        if let Some(ref s) = self.focus_decoration && self.is_focused() {
+            return s;
         }
-        if self.is_hovered() {
-            if let Some(ref s) = self.hover_decoration {
-                return s;
-            }
+
+        if let Some(ref s) = self.hover_decoration && self.is_hovered() {
+            return s;
         }
+
         &self.decoration
     }
 
@@ -700,7 +686,7 @@ impl Element for RawTextField {
                 }
                 self.cursor.set_offset(offset + 1);
                 self.cursor.reset_blink();
-                self.on_changed.call(&self.controller.text());
+                self.on_changed.call(self.controller.text());
                 true
             }
             ElementEvent::KeyInput { key, action, modifiers } => {
@@ -737,7 +723,7 @@ impl Element for RawTextField {
                                 clipboard_write(&selected);
                                 self.cursor.set_offset(start);
                                 self.cursor.clear_selection();
-                                self.on_changed.call(&self.controller.text());
+                                self.on_changed.call(self.controller.text());
                             }
                             true
                         }
@@ -754,7 +740,7 @@ impl Element for RawTextField {
                                 let char_count = text.chars().count();
                                 self.controller.insert_str(&text, offset);
                                 self.cursor.set_offset(offset + char_count);
-                                self.on_changed.call(&self.controller.text());
+                                self.on_changed.call(self.controller.text());
                             }
                             true
                         }
@@ -772,13 +758,13 @@ impl Element for RawTextField {
                             self.controller.delete_range(start, end);
                             self.cursor.set_offset(start);
                             self.cursor.clear_selection();
-                            self.on_changed.call(&self.controller.text());
+                            self.on_changed.call(self.controller.text());
                         } else {
                             let offset = self.cursor.offset();
                             if offset > 0 {
                                 self.controller.delete_char(offset - 1);
                                 self.cursor.set_offset(offset - 1);
-                                self.on_changed.call(&self.controller.text());
+                                self.on_changed.call(self.controller.text());
                             }
                         }
                         true
@@ -788,19 +774,19 @@ impl Element for RawTextField {
                             self.controller.delete_range(start, end);
                             self.cursor.set_offset(start);
                             self.cursor.clear_selection();
-                            self.on_changed.call(&self.controller.text());
+                            self.on_changed.call(self.controller.text());
                         } else {
                             let offset = self.cursor.offset();
                             if offset < self.controller.char_count() {
                                 self.controller.delete_char(offset);
-                                self.on_changed.call(&self.controller.text());
+                                self.on_changed.call(self.controller.text());
                             }
                         }
                         true
                     }
                     NamedKey::Enter => {
                         self.cursor.clear_selection();
-                        self.on_submitted.call(&self.controller.text());
+                        self.on_submitted.call(self.controller.text());
                         true
                     }
                     NamedKey::ArrowLeft => {
@@ -978,7 +964,7 @@ impl Drawable for RawTextField {
                 let prompt_width = ctx.canvas.measure_text(&self.prompt, prompt_fs );
                 let prompt_x = self.align_x(prompt_width , content_width);
                 let prompt_y = self.align_y_canvas(&ctx.canvas, prompt_fs , content_height );
-                let prompt_color: Color = self.prompt_style.color.into();
+                let prompt_color: Color = self.prompt_style.color;
                 ctx.canvas.draw_text(
                     &self.prompt,
                     (prompt_x, prompt_y ).into(),
@@ -991,7 +977,7 @@ impl Drawable for RawTextField {
                 let hint_width = ctx.canvas.measure_text(&self.hint, hint_fs );
                 let hint_x = self.align_x(hint_width , content_width);
                 let hint_y = self.align_y_canvas(&ctx.canvas, hint_fs , content_height );
-                let hint_color: Color = self.hint_style.color.into();
+                let hint_color: Color = self.hint_style.color;
                 ctx.canvas
                     .draw_text(&self.hint, (hint_x, hint_y ).into(), hint_fs , hint_color);
             }
@@ -1024,7 +1010,7 @@ impl Drawable for RawTextField {
             let text_y = self.align_y_canvas(&ctx.canvas, font_size , content_height );
 
             if !display.is_empty() {
-                let text_color: Color = self.text_style.color.into();
+                let text_color: Color = self.text_style.color;
                 ctx.canvas
                     .draw_text(&display, (text_x, text_y ).into(), font_size , text_color);
             }

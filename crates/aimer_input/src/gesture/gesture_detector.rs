@@ -224,8 +224,7 @@ impl<'b, E: Element> Element for GestureDetector<'b, E> {
         let height = height.max(0.0);
         let (ol, ot, or, ob) = decoration.outline.strokes(width, height, scale);
 
-        let size = ResolvedSize { width: width + ol + or, height: height + ot + ob };
-        size
+        ResolvedSize { width: width + ol + or, height: height + ot + ob }
     }
 
     fn debug_name(&self) -> &'static str {
