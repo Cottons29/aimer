@@ -19,7 +19,7 @@ mod console {
     }
 }
 
-
+#[allow(dead_code)]
 fn extract_location(locat: &Location, log: &str, namespace: &str) -> String {
     let file_line  = format!("{}:{}", locat.file(), locat.line());
     format!(r#"
