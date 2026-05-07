@@ -2,9 +2,7 @@ pub mod color_trait;
 pub mod color_impl;
 pub mod basic_color;
 
-use std::ops::Index;
 use basic_color::Colors;
-use crate::prelude::ColorMixer;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Color {
