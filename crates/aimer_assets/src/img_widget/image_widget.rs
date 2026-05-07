@@ -1,5 +1,5 @@
-use crate::img_widget::source::ImageSource;
 use crate::ImageResult::Success;
+use crate::img_widget::source::ImageSource;
 use crate::{ImageProvider, ImageResult};
 use aimer_attribute::Dimension;
 use aimer_container::ZeroSizedBox;
@@ -10,7 +10,7 @@ use std::cell::{Cell, UnsafeCell};
 use std::path::PathBuf;
 
 #[derive(Constructor)]
-pub struct Image{
+pub struct Image {
     #[constructor(first, into)]
     pub path: PathBuf,
     #[constructor(default, into)]
@@ -20,10 +20,10 @@ pub struct Image{
     #[constructor(default)]
     pub fit: BoxFit,
     #[constructor(default = 1.0, into)]
-    pub scale: f32
+    pub scale: f32,
 }
 
-impl Widget for Image{
+impl Widget for Image {
     fn to_element(&self, _: &BuildContext) -> Box<dyn Element> {
         Box::new(RawImageWidget {
             source: ImageSource::File(self.path.clone()),
@@ -35,7 +35,7 @@ impl Widget for Image{
             error_element: None,
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),
-            scale: self.scale
+            scale: self.scale,
         })
     }
 
@@ -54,7 +54,7 @@ pub struct RawImageWidget<P: ImageProvider> {
     pub loading_element: Option<Box<dyn Element>>,
     pub error_element: Option<Box<dyn Element>>,
     pub cached_id: UnsafeCell<Option<ImageResult>>,
-    pub scale: f32
+    pub scale: f32,
 }
 
 impl<P: ImageProvider> Element for RawImageWidget<P> {
@@ -86,8 +86,6 @@ impl<P: ImageProvider> Element for RawImageWidget<P> {
 }
 
 impl<P: ImageProvider> Drawable for RawImageWidget<P> {
-
-
     fn draw(&self, ctx: &BuildContext) {
         #[cfg(debug_assertions)]
         {
@@ -100,19 +98,21 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                 let scale = ctx.scale;
                 let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
                 let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
-
                 let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
-                    if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
-                        *hovered = Some((self.debug_name(), l_start, l_end));
-                    }
-                }
+                let is_hovered = cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y;
+                if !is_hovered {
+                    return;
+                };
+                let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() else {
+                    return;
+                };
+                *hovered = Some((self.debug_name(), l_start, l_end));
             }
         }
         let size = self.computed_size(ctx);
         let image_result = if let Some(result) = unsafe { &*self.cached_id.get() } {
             if result == &ImageResult::Loading {
-                let r = self.source.get_image(&ctx);
+                let r = self.source.get_image(ctx);
                 if r != ImageResult::Loading {
                     unsafe { *self.cached_id.get() = Some(r.clone()) };
                 }
@@ -121,7 +121,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                 result.clone()
             }
         } else {
-            let result = self.source.get_image(&ctx);
+            let result = self.source.get_image(ctx);
             if result != ImageResult::Loading {
                 unsafe { *self.cached_id.get() = Some(result.clone()) };
             }
@@ -130,7 +130,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
 
         match image_result {
             Success(id) => {
-                if self.keep_aspect_ratio{
+                if self.keep_aspect_ratio {
                     if let Some((iw, ih)) = ctx.canvas.get_image_size(id) {
                         let iw = iw as f32;
                         let ih = ih as f32;
@@ -198,10 +198,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                             // Fallback: invalid intrinsic size
                             let final_w = size.width * self.scale;
                             let final_h = size.height * self.scale;
-                            let draw_pos = Vec2d {
-                                x: (size.width - final_w) * 0.5,
-                                y: (size.height - final_h) * 0.5,
-                            };
+                            let draw_pos = Vec2d { x: (size.width - final_w) * 0.5, y: (size.height - final_h) * 0.5 };
                             let draw_size = ResolvedSize { width: final_w, height: final_h };
                             ctx.canvas.draw_image(id, draw_pos, draw_size)
                         }
@@ -209,10 +206,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                         // Fallback when intrinsic size is unknown
                         let final_w = size.width * self.scale;
                         let final_h = size.height * self.scale;
-                        let draw_pos = Vec2d {
-                            x: (size.width - final_w) * 0.5,
-                            y: (size.height - final_h) * 0.5,
-                        };
+                        let draw_pos = Vec2d { x: (size.width - final_w) * 0.5, y: (size.height - final_h) * 0.5 };
                         let draw_size = ResolvedSize { width: final_w, height: final_h };
                         ctx.canvas.draw_image(id, draw_pos, draw_size)
                     }
@@ -220,10 +214,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                     // Not preserving aspect ratio: fill allocated box
                     let final_w = size.width * self.scale;
                     let final_h = size.height * self.scale;
-                    let draw_pos = Vec2d {
-                        x: (size.width - final_w) * 0.5,
-                        y: (size.height - final_h) * 0.5,
-                    };
+                    let draw_pos = Vec2d { x: (size.width - final_w) * 0.5, y: (size.height - final_h) * 0.5 };
                     let draw_size = ResolvedSize { width: final_w, height: final_h };
                     ctx.canvas.draw_image(id, draw_pos, draw_size)
                 }

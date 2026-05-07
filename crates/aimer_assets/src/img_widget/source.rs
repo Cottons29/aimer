@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use aimer_utils::{debug, error};
+use aimer_utils::{ error};
 use aimer_widget::base::BuildContext;
-
+type FileCacheMap = Mutex<HashMap<PathBuf, (u32, u32, u32)>>;
 static NETWORK_CACHE: Lazy<Mutex<HashMap<String, NetworkImageState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-pub static FILE_CACHE: Lazy<Mutex<HashMap<PathBuf, (u32, u32, u32)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+pub static FILE_CACHE: Lazy<FileCacheMap> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Clone, Debug)]
 enum NetworkImageState {
@@ -256,7 +256,7 @@ impl ImageSource {
         })?;
 
         if !response.status().is_success() {
-            return Err(format!("HTTP error: {}", response.status()).into());
+            return Err(format!("HTTP error: {}", response.status()));
         }
 
         let all_bytes = response
@@ -280,7 +280,7 @@ impl ImageSource {
                 window.request_redraw();
                 Ok(())
             }
-            Err(e) => {
+            Err(_) => {
                 // error!("Failed to decode image: {}", e);
                 Err("Failed to decode image".into())
             }
