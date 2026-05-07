@@ -54,6 +54,7 @@ pub trait CanvasRendering: Clone {
         stroke_width: [f32; 4],
         border_radius: [f32; 4],
     );
+    #[allow(clippy::too_many_arguments)]
     /// Draws a filled rectangle with border and outline in a single pass.
     fn fill_rect_with_border_and_outline(
         &self,
@@ -66,6 +67,7 @@ pub trait CanvasRendering: Clone {
         outline_width: f32,
         outline_color: Color,
     );
+    #[allow(clippy::too_many_arguments)]
     /// Draws a filled rectangle with border and outline with per-corner/per-side control.
     fn fill_rect_with_border_and_outline_per_side(
         &self,
@@ -78,10 +80,12 @@ pub trait CanvasRendering: Clone {
         outline_width: [f32; 4],
         outline_color: Color,
     );
+
     fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
     /// Draws a filled rectangle with per-corner border radii.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
     fn fill_color_rect_per_corner(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
+    #[allow(clippy::too_many_arguments)]
     fn draw_shadow_rect(
         &self,
         pos: Vec2d,
@@ -369,7 +373,7 @@ impl<'a> AimerCanvas<'a> {
     }
 
     /// Draws a filled rectangle with border and outline in a single pass (no gap).
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     #[inline]
     pub fn fill_rect_with_border_and_outline(
         &self,
@@ -396,7 +400,7 @@ impl<'a> AimerCanvas<'a> {
     }
 
     /// Draws a filled rectangle with border and outline with per-corner/per-side control.
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     #[inline]
     pub fn fill_rect_with_border_and_outline_per_side(
         &self,
@@ -423,7 +427,7 @@ impl<'a> AimerCanvas<'a> {
     }
 
     /// Draws a shadow rectangle using GPU-accelerated SDF shadow rendering.
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     #[inline]
     pub fn draw_shadow_rect(
         &self,
