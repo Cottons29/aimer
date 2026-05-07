@@ -35,6 +35,7 @@ impl From<BoxShadow> for Vec<BoxShadow> {
 
 impl BoxDecoration {
     pub fn update_color(&self, new_color: impl Into<Color>) {
+        #[allow(unused_mut)]
         let mut bg_ptr = &self.background_color as *const Option<Color> as *mut Option<Color>;
         unsafe {
             *bg_ptr = Some(new_color.into());
