@@ -56,6 +56,7 @@ impl CupidCanvas {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn fill_rect_with_border(
         &self,
         x: f32, y: f32, width: f32, height: f32,
@@ -76,6 +77,7 @@ impl CupidCanvas {
     /// Draws a filled rectangle with per-corner border radii and per-side border widths.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
     /// `border_width`: [top, right, bottom, left]
+    #[allow(clippy::too_many_arguments)]
     pub fn fill_rect_with_per_side_border(
         &self,
         x: f32, y: f32, width: f32, height: f32,
@@ -193,6 +195,7 @@ impl CupidCanvas {
     }
 
     /// Draws a filled rectangle with border and outline in a single pass (no gap).
+    #[allow(clippy::too_many_arguments)]
     pub fn fill_rect_with_border_and_outline(
         &self,
         x: f32, y: f32, width: f32, height: f32,
@@ -215,6 +218,7 @@ impl CupidCanvas {
     }
 
     /// Draws a filled rectangle with border and outline with per-corner/per-side control.
+    #[allow(clippy::too_many_arguments)]
     pub fn fill_rect_with_border_and_outline_per_side(
         &self,
         x: f32, y: f32, width: f32, height: f32,
@@ -237,6 +241,7 @@ impl CupidCanvas {
     }
 
     /// Draws a stroked (outline-only) rectangle.
+    #[allow(clippy::too_many_arguments)]
     pub fn stroke_rect(
         &self,
         x: f32, y: f32, width: f32, height: f32,
@@ -256,6 +261,7 @@ impl CupidCanvas {
     /// Draws a stroked (outline-only) rectangle with per-corner radii and per-side widths.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
     /// `stroke_width`: [top, right, bottom, left]
+    #[allow(clippy::too_many_arguments)]
     pub fn stroke_rect_per_side(
         &self,
         x: f32, y: f32, width: f32, height: f32,
@@ -305,6 +311,7 @@ impl CupidCanvas {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_shadow_rect(
         &self,
         x: f32, y: f32, width: f32, height: f32,

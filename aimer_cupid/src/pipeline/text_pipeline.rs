@@ -6,7 +6,6 @@ use crate::text_pipeline::glyph_atlas::{ColorGlyphAtlas, GlyphAtlas};
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
 use crate::text_pipeline::text_layout::layout_text;
 use bytemuck::{Pod, Zeroable};
-use aimer_utils::{debug, time_consume};
 
 /// Per-instance data for one glyph quad.
 #[repr(C)]
@@ -34,7 +33,7 @@ impl GlyphInstance {
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<GlyphInstance>() as wgpu::BufferAddress,
+            array_stride: size_of::<GlyphInstance>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &Self::ATTRIBS,
         }
@@ -245,14 +244,14 @@ impl TextPipelineV2 {
 
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("text instance buffer"),
-            size: (Self::INITIAL_CAPACITY * std::mem::size_of::<GlyphInstance>()) as u64,
+            size: (Self::INITIAL_CAPACITY * size_of::<GlyphInstance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let color_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("text color instance buffer"),
-            size: (Self::INITIAL_CAPACITY * std::mem::size_of::<GlyphInstance>()) as u64,
+            size: (Self::INITIAL_CAPACITY * size_of::<GlyphInstance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -469,7 +468,7 @@ impl TextPipelineV2 {
             self.instance_capacity = self.instances.len().next_power_of_two();
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("text instance buffer"),
-                size: (self.instance_capacity * std::mem::size_of::<GlyphInstance>()) as u64,
+                size: (self.instance_capacity * size_of::<GlyphInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -480,7 +479,7 @@ impl TextPipelineV2 {
             self.color_instance_capacity = self.color_instances.len().next_power_of_two();
             self.color_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("text color instance buffer"),
-                size: (self.color_instance_capacity * std::mem::size_of::<GlyphInstance>()) as u64,
+                size: (self.color_instance_capacity * size_of::<GlyphInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });

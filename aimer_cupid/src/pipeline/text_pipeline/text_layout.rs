@@ -1,8 +1,7 @@
 use super::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
 use unicode_bidi::BidiInfo;
-use unicode_linebreak::{BreakOpportunity, linebreaks};
+use unicode_linebreak::{linebreaks, BreakOpportunity};
 use unicode_segmentation::UnicodeSegmentation;
-use aimer_utils::{debug, time_consume};
 
 pub type FontId = u32;
 
@@ -138,6 +137,7 @@ where
     let levels = paragraph
         .map(|paragraph| bidi.visual_runs(paragraph, paragraph.range.clone()).1)
         .unwrap_or_default();
+    #[allow(clippy::unnecessary_filter_map)]
     let mut break_offsets: Vec<usize> = linebreaks(text)
         .filter_map(|(offset, opportunity)| match opportunity {
             BreakOpportunity::Mandatory | BreakOpportunity::Allowed => Some(offset),
@@ -192,8 +192,8 @@ where
 
         let glyph_start = glyphs.len();
         for glyph in &mut shaped {
-            glyph.x = options.origin_x + line_width + glyph.x;
-            glyph.y = baseline + glyph.y;
+            glyph.x += options.origin_x + line_width;
+            glyph.y += baseline;
         }
         line_width += cluster_width;
         glyphs.extend(shaped);

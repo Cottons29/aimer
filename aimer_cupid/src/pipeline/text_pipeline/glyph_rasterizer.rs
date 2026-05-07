@@ -324,8 +324,8 @@ fn rasterize_outline_glyph(record: &FontRecord, glyph_id: u16, font_size: f32) -
     let scale = font_size / units_per_em;
     let offset_x = f32::from(bbox.x_min) * scale;
     let offset_y = f32::from(bbox.y_min) * scale;
-    let width = ((f32::from(bbox.x_max - bbox.x_min) * scale).ceil().max(1.0)) as u32;
-    let height = ((f32::from(bbox.y_max - bbox.y_min) * scale).ceil().max(1.0)) as u32;
+    let width = (f32::from(bbox.x_max - bbox.x_min) * scale).ceil().max(1.0) as u32;
+    let height = (f32::from(bbox.y_max - bbox.y_min) * scale).ceil().max(1.0) as u32;
 
     let mut outline = GlyphOutline::new(scale, offset_x, offset_y);
     face.outline_glyph(glyph, &mut outline)?;
@@ -566,11 +566,11 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
         let id = next_id + fallbacks.len() as FontId;
         let Some(font) = try_load_system_font_record(id, *fb_spec) else { continue };
 
-        if let Some(path) = font.path.as_deref() {
-            if !seen_paths.insert(path.clone()) {
-                debug!("Skipping duplicate fallback for '{}' at {:?}", fb_spec.family, path);
-                continue;
-            }
+        let Some(path) = font.path.as_deref() else { continue };
+
+        if !seen_paths.insert(path.clone()) {
+            debug!("Skipping duplicate fallback for '{}' at {:?}", fb_spec.family, path);
+            continue;
         }
 
         fallbacks.push(font);
@@ -693,6 +693,7 @@ pub struct GlyphRasterizer {
 }
 
 impl GlyphRasterizer {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let primary = primary_font_record();
 
@@ -732,9 +733,6 @@ impl GlyphRasterizer {
         self.primary.id
     }
 
-    pub fn primary_font_bytes(&self) -> &[u8] {
-        self.primary.bytes.as_deref().unwrap_or(PRIMARY_FONT)
-    }
 
     pub fn glyph_key_for_codepoint(&mut self, codepoint: char, font_size: f32) -> GlyphKey {
         let primary = self.primary.font.as_ref().expect("primary font is loaded");

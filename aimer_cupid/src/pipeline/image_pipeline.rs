@@ -1,9 +1,8 @@
+use crate::utilities::TextureId;
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
-use wgpu::ShaderSource;
 use wgpu::util::DeviceExt;
-use aimer_utils::debug;
-use crate::utilities::TextureId;
+use wgpu::ShaderSource;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -298,6 +297,7 @@ impl ImagePipeline {
     }
 
     /// Draw a batch of instances with the same texture_id.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_batch(
         &mut self,
         device: &wgpu::Device,

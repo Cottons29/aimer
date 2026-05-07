@@ -67,6 +67,7 @@ impl ShelfPacker {
         Some((x, y))
     }
 
+    #[allow(dead_code)]
     fn reset(&mut self) {
         self.cursor_x = 0;
         self.shelf_y = 0;

@@ -162,6 +162,7 @@ impl DrawList {
             .push(DrawCommand::DrawShadowRect { rect, shadow_color, shadow_params, border_radius, inset, side_params });
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn fill_rect_with_outline(
         &mut self,
         rect: Rect,
