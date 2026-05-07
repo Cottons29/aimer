@@ -11,7 +11,7 @@ pub struct RawTextWidget {
     pub text_style: TextStyle,
     pub text_align: TextAlign,
     pub cache: LayoutCache,
-    pub typeface: Mutex<Option<()>>,
+    pub _typeface: Mutex<Option<()>>,
 }
 
 impl RawTextWidget {
@@ -35,12 +35,12 @@ impl Drawable for RawTextWidget {
                 let scale = ctx.scale;
                 let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
                 let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
-
                 let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
-                    if let Ok(mut hovered) = inspector_overlay::HOVERED_WIDGET.write() {
-                        *hovered = Some((self.debug_name(), l_start, l_end));
-                    }
+                if !(cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y) {
+                    return;
+                }
+                if let Ok(mut hovered) = inspector_overlay::HOVERED_WIDGET.write() {
+                    *hovered = Some((self.debug_name(), l_start, l_end));
                 }
             }
         }
@@ -102,23 +102,20 @@ impl Drawable for RawTextWidget {
                         }
 
                         truncated.push_str(ellipsis);
-                        let display_width = ctx.canvas.measure_text(&truncated, font_size);
-                        let display_x = match self.text_align {
-                            TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
-                            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
-                                (width - display_width) / 2.0
-                            }
-                            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => {
-                                width - display_width
-                            }
-                        };
-                        ctx.canvas.draw_text(&truncated, (display_x, y).into(), font_size, color);
-                    } else {
-                        ctx.canvas.draw_text(ellipsis, (0.0, y).into(), font_size, color);
+                        // let display_width = ctx.canvas.measure_text(&truncated, font_size);
+                        // let display_x = match self.text_align {
+                        //     TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
+                        //     TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
+                        //         (width - display_width) / 2.0
+                        //     }
+                        //     TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => {
+                        //         width - display_width
+                        //     }
+                        // };
                     }
-                } else {
-                    ctx.canvas.draw_text(&self.text, (x, y).into(), font_size, color);
                 }
+
+                ctx.canvas.draw_text(&self.text, (x, y).into(), font_size, color);
             }
             TextOverflow::Wrap => {
                 let mut lines: Vec<String> = Vec::new();
