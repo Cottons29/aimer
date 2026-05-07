@@ -27,6 +27,7 @@ impl Widget for Box<dyn Widget> {
 /// Draw a colored bounding box + label at the current canvas transform origin.
 /// Called during the draw pass when the widget inspector is enabled.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &'static str) {
     use aimer_color::prelude::Color;
 

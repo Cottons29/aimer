@@ -7,7 +7,6 @@ use aimer_attribute::BoxConstraint;
 /// The cache is keyed by `(BoxConstraint, scale)` so that if the same element
 /// is queried multiple times with the same inputs, the result is returned instantly.
 /// yeah it saves the CPU and GPU and reduces power consuming :))
-
 pub struct LayoutCache {
     computed: UnsafeCell<Option<(BoxConstraint, u32, ResolvedSize)>>,
     content: UnsafeCell<Option<(BoxConstraint, u32, ResolvedSize)>>,
