@@ -25,6 +25,7 @@ static APP_STARTED: AtomicBool = AtomicBool::new(false);
 pub enum AimerCustomAppEvent {
     ForceBackspace,
     InsertText(String),
+    FrameReady,
 }
 
 pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerCustomAppEvent>> = OnceLock::new();

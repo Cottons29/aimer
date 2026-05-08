@@ -1,10 +1,11 @@
 use crate::handler::AimerApplicationHandler;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_widget::dispatch_event;
+use crate::aimer_app::AimerCustomAppEvent;
 
 pub(crate) fn handle_user_event(app: &mut AimerApplicationHandler, event: crate::aimer_app::AimerCustomAppEvent) {
     match event {
-        crate::aimer_app::AimerCustomAppEvent::ForceBackspace => {
+        AimerCustomAppEvent::ForceBackspace => {
             if let Some(root) = &app.widget_root {
                 let ev = ElementEvent::KeyInput { key: NamedKey::Backspace, action: KeyAction::Pressed, modifiers: Default::default() };
                 let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
@@ -19,7 +20,7 @@ pub(crate) fn handle_user_event(app: &mut AimerApplicationHandler, event: crate:
                 }
             }
         }
-        crate::aimer_app::AimerCustomAppEvent::InsertText(text) => {
+        AimerCustomAppEvent::InsertText(text) => {
             if let Some(root) = &app.widget_root {
                 let mut handled_any = false;
                 for ch in text.chars() {
@@ -36,6 +37,11 @@ pub(crate) fn handle_user_event(app: &mut AimerApplicationHandler, event: crate:
                 {
                     window.request_redraw();
                 }
+            }
+        }
+        AimerCustomAppEvent::FrameReady => {
+            if let Some(window) = &app.window {
+                window.request_redraw();
             }
         }
     }

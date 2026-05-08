@@ -269,6 +269,7 @@ impl WindowEventHandler {
     fn handle_resize(size: PhysicalSize<u32>, app: &mut AimerApplicationHandler) {
         #[cfg(target_os = "ios")]
         let size = {
+            use aimer_attribute::ResolvedSize;
             let is_portrait = size.width < size.height;
             match crate::ios_screen::get_screen_resolution_pixels() {
                 Some((width, height)) => {
