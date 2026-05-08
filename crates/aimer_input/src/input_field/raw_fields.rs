@@ -93,7 +93,7 @@ enum TextFieldCb {
 ///         println!("changed: {text}");
 ///     }))
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TextFieldCallback(Option<Rc<TextFieldCb>>);
 
 /// Wrapper to convert an async closure that takes a `String` into a
