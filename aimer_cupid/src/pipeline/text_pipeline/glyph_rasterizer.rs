@@ -13,7 +13,7 @@ const PRIMARY_FONT: &[u8] = include_bytes!("../../../fonts/Roboto.ttf");
 ///   * `is_color == false` — `width * height` bytes, single-channel coverage
 ///     (8-bit alpha), as produced by `fontdue`.
 ///   * `is_color == true`  — `width * height * 4` bytes, RGBA8 (non-premultiplied),
-///     as produced from `sbix` PNG strikes (Apple Color Emoji, etc.).
+///     as produced from `sbix` PNG strikes (AppleColorEmoji, etc.).
 ///
 /// The text pipeline routes color glyphs to a separate RGBA8 atlas + shader.
 #[derive(Clone)]
@@ -32,7 +32,7 @@ pub struct RasterizedGlyph {
     pub is_color: bool,
 }
 
-/// Key for caching rasterized shaped glyphs.
+/// Key for caching rasterized-shaped glyphs.
 #[derive(Hash, Eq, PartialEq, Clone, Copy)]
 pub struct GlyphKey {
     pub font_id: FontId,
@@ -64,20 +64,13 @@ pub struct FontRecord {
 impl FontRecord {
     fn from_static_bytes(id: FontId, bytes: &'static [u8]) -> Option<Self> {
         let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()?;
-        Some(Self {
-            id,
-            bytes: Some(Arc::from(bytes)),
-            font: Some(Arc::new(font)),
-            collection_index: 0,
-            path: None,
-            is_color: false,
-        })
+        Some(Self { id, bytes: Some(Arc::from(bytes)), font: Some(Arc::new(font)), collection_index: 0, path: None, is_color: false })
     }
 
     /// Returns true if this collection_index of `data` contains any color glyph
     /// table that we know how to render (currently only `sbix`).
     fn face_is_color(face: &ttf_parser::Face<'_>) -> bool {
-        // `Face::tables().sbix` is `Option<sbix::Table>`. Apple Color Emoji is the
+        // `Face::tables().sbix` is `Option<sbix::Table>`. AppleColorEmoji is the
         // canonical user. We don't yet decode CBDT/COLR but they're easy to add later.
         face.tables().sbix.is_some()
     }
@@ -106,14 +99,7 @@ impl FontRecord {
             }
 
             let is_color = hint_color || Self::face_is_color(&face);
-            return Some(Self {
-                id,
-                bytes: Some(Arc::from(bytes)),
-                font: None,
-                collection_index,
-                path: None,
-                is_color,
-            });
+            return Some(Self { id, bytes: Some(Arc::from(bytes)), font: None, collection_index, path: None, is_color });
         }
 
         None
@@ -136,14 +122,7 @@ impl FontRecord {
             }
 
             let is_color = hint_color || Self::face_is_color(&face);
-            return Some(Self {
-                id,
-                bytes: None,
-                font: None,
-                collection_index,
-                path: Some(Arc::new(path)),
-                is_color,
-            });
+            return Some(Self { id, bytes: None, font: None, collection_index, path: Some(Arc::new(path)), is_color });
         }
 
         None
@@ -190,7 +169,9 @@ impl FontRecord {
 
     fn glyph_index(&self, codepoint: char) -> Option<u16> {
         if let Some(font) = self.font.as_ref() {
-            return font.has_glyph(codepoint).then(|| font.lookup_glyph_index(codepoint));
+            return font
+                .has_glyph(codepoint)
+                .then(|| font.lookup_glyph_index(codepoint));
         }
 
         if let Some(bytes) = self.bytes.as_ref() {
@@ -243,7 +224,8 @@ impl GlyphOutline {
     }
 
     fn push_point(&mut self, x: f32, y: f32) {
-        self.current.push((x * self.scale - self.offset_x, y * self.scale - self.offset_y));
+        self.current
+            .push((x * self.scale - self.offset_x, y * self.scale - self.offset_y));
     }
 
     fn finish_contour(&mut self) {
@@ -274,7 +256,8 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
         for step in 1..=12 {
             let t = step as f32 / 12.0;
             let mt = 1.0 - t;
-            self.current.push((mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2, mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2));
+            self.current
+                .push((mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2, mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2));
         }
     }
 
@@ -483,7 +466,7 @@ fn load_system_font(_family: &str) -> Option<Vec<u8>> {
 /// `probes` are the codepoints we use to verify the family actually covers
 /// content we care about (CJK / Hangul / emoji). `hint_color` lets the caller
 /// declare a family as a color font *before* we have the parsed face — useful
-/// for "Apple Color Emoji" whose probe is itself an emoji codepoint.
+/// for "AppleColorEmoji" whose probe is itself an emoji codepoint.
 #[derive(Clone, Copy)]
 struct FallbackSpec {
     family: &'static str,
@@ -522,18 +505,17 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
     const HANGUL_PROBES: &[char] = &['가'];
     const EMOJI_PROBES: &[char] = &['😀', '👍'];
 
-
     // Platform-appropriate fallback specs. Order is preference order: the first
     // family that supports a given codepoint wins in `font_and_glyph_for_codepoint`.
     let system_specs: &[FallbackSpec] = if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
         &[
-            spec("Apple Color Emoji", EMOJI_PROBES, true),
-            spec("Hiragino Sans GB", CJK_PROBES, false),
-            spec("Hiragino Sans", CJK_PROBES, false),
-            spec("PingFang SC", CJK_PROBES, false),
-            spec("Apple SD Gothic Neo", HANGUL_PROBES, false),
-            spec("Arial Unicode MS", CJK_PROBES, false),
-            spec("Noto Sans SC", CJK_PROBES, false),
+            spec("AppleColorEmoji", EMOJI_PROBES, true),
+            spec("HiraginoSansGB-W3", CJK_PROBES, false),
+            spec("HiraginoSans-W3", CJK_PROBES, false),
+            spec("PingFangSC-Regular", CJK_PROBES, false),
+            spec("AppleSDGothicNeo-Regular", HANGUL_PROBES, false),
+            spec("ArialUnicodeMS", CJK_PROBES, false),
+            spec("NotoSansSC-Regular", CJK_PROBES, false),
         ]
     } else if cfg!(target_os = "windows") {
         &[
@@ -733,7 +715,6 @@ impl GlyphRasterizer {
         self.primary.id
     }
 
-
     pub fn glyph_key_for_codepoint(&mut self, codepoint: char, font_size: f32) -> GlyphKey {
         let primary = self.primary.font.as_ref().expect("primary font is loaded");
         if !primary.has_glyph(codepoint) && !self.unsupported_codepoints.contains(&codepoint) {
@@ -765,15 +746,11 @@ impl GlyphRasterizer {
         if primary.has_glyph(codepoint) {
             (self.primary.id, primary.lookup_glyph_index(codepoint), true)
         } else {
-            let fallback = self
-                .fallbacks
-                .as_ref()
-                .and_then(|fbs| fbs.iter().find_map(|fb| fb.glyph_index(codepoint).map(|glyph_id| (fb.id, glyph_id))));
-            if let Some(font) = fallback {
-                (font.0, font.1, true)
-            } else {
-                (self.primary.id, primary.lookup_glyph_index(codepoint), false)
-            }
+            let fallback = self.fallbacks.as_ref().and_then(|fbs| {
+                fbs.iter()
+                    .find_map(|fb| fb.glyph_index(codepoint).map(|glyph_id| (fb.id, glyph_id)))
+            });
+            if let Some(font) = fallback { (font.0, font.1, true) } else { (self.primary.id, primary.lookup_glyph_index(codepoint), false) }
         }
     }
 
@@ -805,16 +782,14 @@ impl GlyphRasterizer {
 
             let glyph = if is_color {
                 let record_snapshot = self.select_font_for_key(key).clone();
-                rasterize_color_glyph(&record_snapshot, key.glyph_id, font_size).unwrap_or_else(|| {
-                    RasterizedGlyph {
-                        bitmap: Vec::new(),
-                        width: 0,
-                        height: 0,
-                        offset_x: 0.0,
-                        offset_y: 0.0,
-                        advance_width: font_size * 0.5,
-                        is_color: true,
-                    }
+                rasterize_color_glyph(&record_snapshot, key.glyph_id, font_size).unwrap_or_else(|| RasterizedGlyph {
+                    bitmap: Vec::new(),
+                    width: 0,
+                    height: 0,
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    advance_width: font_size * 0.5,
+                    is_color: true,
                 })
             } else if key.font_id == self.primary.id {
                 let font = self
@@ -839,7 +814,9 @@ impl GlyphRasterizer {
                     height: 0,
                     offset_x: 0.0,
                     offset_y: 0.0,
-                    advance_width: record_snapshot.advance_width_for_glyph(key.glyph_id, font_size).unwrap_or(0.0),
+                    advance_width: record_snapshot
+                        .advance_width_for_glyph(key.glyph_id, font_size)
+                        .unwrap_or(0.0),
                     is_color: false,
                 })
             };
@@ -944,7 +921,11 @@ mod tests {
         ));
         assert!(Arc::ptr_eq(
             first.primary.bytes.as_ref().expect("primary bytes missing"),
-            second.primary.bytes.as_ref().expect("primary bytes missing")
+            second
+                .primary
+                .bytes
+                .as_ref()
+                .expect("primary bytes missing")
         ));
     }
 
@@ -981,8 +962,14 @@ mod tests {
 
         let key = rasterizer.glyph_key_for_codepoint('你', 16.0);
 
-        let fallbacks = rasterizer.fallbacks.as_ref().expect("fallbacks should be discovered");
-        let fallback = fallbacks.iter().find(|font| font.id == key.font_id).expect("selected fallback missing");
+        let fallbacks = rasterizer
+            .fallbacks
+            .as_ref()
+            .expect("fallbacks should be discovered");
+        let fallback = fallbacks
+            .iter()
+            .find(|font| font.id == key.font_id)
+            .expect("selected fallback missing");
         assert!(fallback.font.is_none(), "fallback font should stay unloaded until glyph metrics/bitmap are demanded");
     }
 
@@ -1002,7 +989,7 @@ mod tests {
         }
     }
 
-    /// macOS ships Apple Color Emoji at /System/Library/Fonts/Apple Color Emoji.ttc.
+    /// macOS ships AppleColorEmoji at /System/Library/Fonts/AppleColorEmoji.ttc.
     /// On a system without that font (or in CI containers), the chain just won't
     /// contain it; the test stays informative either way by asserting *if* the
     /// font was loaded, the record is correctly tagged as color.
@@ -1014,9 +1001,9 @@ mod tests {
         let has_emoji = chain.iter().any(|fb| fb.is_color);
         let has_cjk = chain.iter().any(|fb| !fb.is_color);
 
-        // We don't hard-fail when the system lacks Apple Color Emoji — just log.
+        // We don't hard-fail when the system lacks AppleColorEmoji — just log.
         if !has_emoji {
-            eprintln!("[note] no color font loaded — Apple Color Emoji missing from this macOS build");
+            eprintln!("[note] no color font loaded — AppleColorEmoji missing from this macOS build");
         }
         // CJK *should* be present on any modern macOS install.
         assert!(has_cjk, "no CJK fallback was loaded — chain: {} entries", chain.len());
@@ -1037,7 +1024,7 @@ mod tests {
         let key = rasterizer.glyph_key_for_codepoint('😀', 32.0);
         if key.font_id == rasterizer.primary_font_id() {
             // No emoji fallback available — Roboto can't render '😀'. Skip.
-            eprintln!("[note] '😀' resolved to primary; Apple Color Emoji not on this macOS install");
+            eprintln!("[note] '😀' resolved to primary; AppleColorEmoji not on this macOS install");
             return;
         }
 
@@ -1048,11 +1035,7 @@ mod tests {
         // strike was missing/unsupported (we'd hit the placeholder branch in
         // rasterize_key), so guard the size check on the bitmap being present.
         if !glyph.bitmap.is_empty() {
-            assert_eq!(
-                glyph.bitmap.len(),
-                (glyph.width * glyph.height * 4) as usize,
-                "'😀' bitmap must be RGBA8 (4 bytes per pixel)"
-            );
+            assert_eq!(glyph.bitmap.len(), (glyph.width * glyph.height * 4) as usize, "'😀' bitmap must be RGBA8 (4 bytes per pixel)");
         }
     }
 }

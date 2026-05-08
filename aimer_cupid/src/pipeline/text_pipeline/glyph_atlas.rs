@@ -333,14 +333,7 @@ impl ColorGlyphAtlas {
     }
 
     /// `bitmap` must be `width * height * 4` bytes (non-premultiplied RGBA8).
-    pub fn get_or_insert(
-        &mut self,
-        device: &wgpu::Device,
-        key: GlyphKey,
-        glyph_w: u32,
-        glyph_h: u32,
-        bitmap: &[u8],
-    ) -> AtlasRegion {
+    pub fn get_or_insert(&mut self, device: &wgpu::Device, key: GlyphKey, glyph_w: u32, glyph_h: u32, bitmap: &[u8]) -> AtlasRegion {
         if let Some(region) = self.cache.get(&key) {
             return *region;
         }
@@ -363,8 +356,7 @@ impl ColorGlyphAtlas {
         for row in 0..glyph_h {
             let dst_start = (y as usize + row as usize) * row_bytes_atlas + (x as usize) * bpp;
             let src_start = (row as usize) * row_bytes_glyph;
-            self.pixels[dst_start..dst_start + row_bytes_glyph]
-                .copy_from_slice(&bitmap[src_start..src_start + row_bytes_glyph]);
+            self.pixels[dst_start..dst_start + row_bytes_glyph].copy_from_slice(&bitmap[src_start..src_start + row_bytes_glyph]);
         }
 
         match &mut self.dirty_region {
@@ -421,8 +413,7 @@ impl ColorGlyphAtlas {
         for row in 0..self.height as usize {
             let src_start = row * old_row;
             let dst_start = row * new_row;
-            new_pixels[dst_start..dst_start + old_row]
-                .copy_from_slice(&self.pixels[src_start..src_start + old_row]);
+            new_pixels[dst_start..dst_start + old_row].copy_from_slice(&self.pixels[src_start..src_start + old_row]);
         }
 
         self.texture = texture;

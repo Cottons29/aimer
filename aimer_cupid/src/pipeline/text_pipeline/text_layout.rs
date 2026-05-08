@@ -1,6 +1,6 @@
 use super::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
 use unicode_bidi::BidiInfo;
-use unicode_linebreak::{linebreaks, BreakOpportunity};
+use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
 pub type FontId = u32;

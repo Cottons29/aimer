@@ -181,8 +181,7 @@ impl TextPipelineV2 {
         });
 
         let bind_group = Self::create_bind_group(device, &bind_group_layout, &viewport_buffer, &atlas.view, &sampler);
-        let color_bind_group =
-            Self::create_bind_group(device, &bind_group_layout, &viewport_buffer, &color_atlas.view, &sampler);
+        let color_bind_group = Self::create_bind_group(device, &bind_group_layout, &viewport_buffer, &color_atlas.view, &sampler);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("text pipeline layout"),
@@ -323,13 +322,8 @@ impl TextPipelineV2 {
         let color_gen = self.color_atlas.generation();
         if color_gen != self.color_atlas_generation {
             self.color_atlas_generation = color_gen;
-            self.color_bind_group = Self::create_bind_group(
-                device,
-                &self.bind_group_layout,
-                &self.viewport_buffer,
-                &self.color_atlas.view,
-                &self.sampler,
-            );
+            self.color_bind_group =
+                Self::create_bind_group(device, &self.bind_group_layout, &self.viewport_buffer, &self.color_atlas.view, &self.sampler);
         }
     }
 
@@ -352,11 +346,10 @@ impl TextPipelineV2 {
             let mut cursor_y = req.y;
 
             for span in spans {
-
                 let font_size = span.font_size.unwrap_or(req.font_size);
                 let color = span.color.unwrap_or(req.color);
                 let positioned = layout_text(&mut self.rasterizer, &span.text, font_size, cursor_x, cursor_y, req.bounds_width);
-                
+
                 for pg in &positioned {
                     let key = pg.glyph_key;
 
@@ -386,7 +379,8 @@ impl TextPipelineV2 {
                             region
                         } else {
                             let rg = self.rasterizer.rasterize_key(key, pg.font_size);
-                            self.atlas.get_or_insert(device, key, rg.width, rg.height, &rg.bitmap)
+                            self.atlas
+                                .get_or_insert(device, key, rg.width, rg.height, &rg.bitmap)
                         };
                         (region.uvs(self.atlas.width, self.atlas.height), false)
                     };
@@ -396,11 +390,7 @@ impl TextPipelineV2 {
                     // in `rasterize_color_glyph`). For alpha glyphs we keep the
                     // historical `pg.width / pg.height` (which equals `rg_width /
                     // rg_height` when the layout came from the same rasterizer).
-                    let size = if is_color {
-                        [rg_width as f32, rg_height as f32]
-                    } else {
-                        [pg.width as f32, pg.height as f32]
-                    };
+                    let size = if is_color { [rg_width as f32, rg_height as f32] } else { [pg.width as f32, pg.height as f32] };
                     let instance = GlyphInstance {
                         position: [pg.x, pg.y],
                         size,
@@ -415,19 +405,14 @@ impl TextPipelineV2 {
                     } else {
                         self.instances.push(instance);
                     }
-
                 }
-
 
                 if let Some(last) = positioned.last() {
                     cursor_x = last.x + last.width as f32;
                     cursor_y = last.y;
                 }
-
-
             }
         }
-
 
         // Upload both atlases if new glyphs were added.
         self.atlas.upload(queue);
@@ -443,13 +428,8 @@ impl TextPipelineV2 {
         let color_gen = self.color_atlas.generation();
         if color_gen != self.color_atlas_generation {
             self.color_atlas_generation = color_gen;
-            self.color_bind_group = Self::create_bind_group(
-                device,
-                &self.bind_group_layout,
-                &self.viewport_buffer,
-                &self.color_atlas.view,
-                &self.sampler,
-            );
+            self.color_bind_group =
+                Self::create_bind_group(device, &self.bind_group_layout, &self.viewport_buffer, &self.color_atlas.view, &self.sampler);
         }
 
         // Update viewport uniform only when dimensions or sRGB state change.
@@ -490,11 +470,7 @@ impl TextPipelineV2 {
             queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances));
         }
         if !self.color_instances.is_empty() {
-            queue.write_buffer(
-                &self.color_instance_buffer,
-                0,
-                bytemuck::cast_slice(&self.color_instances),
-            );
+            queue.write_buffer(&self.color_instance_buffer, 0, bytemuck::cast_slice(&self.color_instances));
         }
     }
 

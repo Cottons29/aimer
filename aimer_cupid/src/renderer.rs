@@ -415,8 +415,9 @@ impl Renderer {
                 match &self.resolved[i].kind {
                     ResolvedKind::Rect(inst) => {
                         // Flush any pending image batch before switching to rects
-                        let Some(tid) = current_texture_id.take() else { continue };
-                        if !image_batch.is_empty() {
+                        if let Some(tid) = current_texture_id.take()
+                            && !image_batch.is_empty()
+                        {
                             self.image_pipeline
                                 .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &image_batch);
                             image_batch.clear();
@@ -447,8 +448,9 @@ impl Renderer {
                         // Flush pending built-in batches to maintain z-order
                         self.rect_pipeline
                             .flush(device, queue, &mut pass, width, height, is_srgb);
-                        let Some(tid) = current_texture_id.take() else { continue };
-                        if !image_batch.is_empty() {
+                        if let Some(tid) = current_texture_id.take()
+                            && !image_batch.is_empty()
+                        {
                             self.image_pipeline
                                 .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &image_batch);
                             image_batch.clear();
@@ -462,8 +464,9 @@ impl Renderer {
             }
 
             // Flush remaining image batch
-            let Some(tid) = current_texture_id else { return; };
-            if !image_batch.is_empty() {
+            if let Some(tid) = current_texture_id
+                && !image_batch.is_empty()
+            {
                 self.image_pipeline
                     .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &image_batch);
             }

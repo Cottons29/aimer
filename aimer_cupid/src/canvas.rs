@@ -31,7 +31,6 @@ pub struct CupidCanvas {
     metrics_cache: Rc<RefCell<HashMap<TextMetricsKey, TextMetrics>>>,
 }
 
-
 impl CupidCanvas {
     pub fn new() -> Self {
         Self {
@@ -44,34 +43,28 @@ impl CupidCanvas {
     pub fn begin_frame(&self) {
         self.draw_list.borrow_mut().clear();
     }
-    
 
     pub fn fill_rect(&self, x: f32, y: f32, width: f32, height: f32, color: Color, border_radius: [f32; 4]) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            [0.0; 4],
-            Color::transparent(),
-        );
+        self.draw_list
+            .borrow_mut()
+            .fill_rect(Rect::new(x, y, width, height), color, border_radius, [0.0; 4], Color::transparent());
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn fill_rect_with_border(
         &self,
-        x: f32, y: f32, width: f32, height: f32,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
         color: Color,
         border_radius: [f32; 4],
         border_width: f32,
         border_color: Color,
     ) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            [border_width; 4],
-            border_color,
-        );
+        self.draw_list
+            .borrow_mut()
+            .fill_rect(Rect::new(x, y, width, height), color, border_radius, [border_width; 4], border_color);
     }
 
     /// Draws a filled rectangle with per-corner border radii and per-side border widths.
@@ -80,23 +73,24 @@ impl CupidCanvas {
     #[allow(clippy::too_many_arguments)]
     pub fn fill_rect_with_per_side_border(
         &self,
-        x: f32, y: f32, width: f32, height: f32,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
         color: Color,
         border_radius: [f32; 4],
         border_width: [f32; 4],
         border_color: Color,
     ) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            border_width,
-            border_color,
-        );
+        self.draw_list
+            .borrow_mut()
+            .fill_rect(Rect::new(x, y, width, height), color, border_radius, border_width, border_color);
     }
 
     pub fn clear_rect(&self, x: f32, y: f32, width: f32, height: f32) {
-        self.draw_list.borrow_mut().clear_rect(Rect::new(x, y, width, height));
+        self.draw_list
+            .borrow_mut()
+            .clear_rect(Rect::new(x, y, width, height));
     }
 
     pub fn translate(&self, x: f32, y: f32) {
@@ -120,19 +114,15 @@ impl CupidCanvas {
     }
 
     pub fn draw_text(&self, x: f32, y: f32, text: &str, font_size: f32, color: Color) {
-        self.draw_list.borrow_mut().draw_text(
-            Vec2d::new(x, y),
-            text.to_string(),
-            font_size,
-            color,
-        );
+        self.draw_list
+            .borrow_mut()
+            .draw_text(Vec2d::new(x, y), text.to_string(), font_size, color);
     }
 
     pub fn draw_image(&self, x: f32, y: f32, width: f32, height: f32, texture_id: TextureId) {
-        self.draw_list.borrow_mut().draw_image(
-            Rect::new(x, y, width, height),
-            texture_id,
-        );
+        self.draw_list
+            .borrow_mut()
+            .draw_image(Rect::new(x, y, width, height), texture_id);
     }
 
     /// Measure text width using the cached fontdue rasterizer.
@@ -176,15 +166,7 @@ impl CupidCanvas {
 
         width = width.max(current_width);
 
-        let metrics = TextMetrics {
-            width,
-            height: line_count as f32 * line_height,
-            ascent,
-            descent,
-            line_gap,
-            line_height,
-            line_count,
-        };
+        let metrics = TextMetrics { width, height: line_count as f32 * line_height, ascent, descent, line_gap, line_height, line_count };
 
         let mut cache = self.metrics_cache.borrow_mut();
         if cache.len() > 1024 {
@@ -198,7 +180,10 @@ impl CupidCanvas {
     #[allow(clippy::too_many_arguments)]
     pub fn fill_rect_with_border_and_outline(
         &self,
-        x: f32, y: f32, width: f32, height: f32,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
         color: Color,
         border_radius: [f32; 4],
         border_width: f32,
@@ -221,7 +206,10 @@ impl CupidCanvas {
     #[allow(clippy::too_many_arguments)]
     pub fn fill_rect_with_border_and_outline_per_side(
         &self,
-        x: f32, y: f32, width: f32, height: f32,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
         color: Color,
         border_radius: [f32; 4],
         border_width: [f32; 4],
@@ -242,13 +230,7 @@ impl CupidCanvas {
 
     /// Draws a stroked (outline-only) rectangle.
     #[allow(clippy::too_many_arguments)]
-    pub fn stroke_rect(
-        &self,
-        x: f32, y: f32, width: f32, height: f32,
-        stroke_color: Color,
-        stroke_width: f32,
-        border_radius: [f32; 4],
-    ) {
+    pub fn stroke_rect(&self, x: f32, y: f32, width: f32, height: f32, stroke_color: Color, stroke_width: f32, border_radius: [f32; 4]) {
         self.draw_list.borrow_mut().fill_rect(
             Rect::new(x, y, width, height),
             Color::transparent(),
@@ -264,7 +246,10 @@ impl CupidCanvas {
     #[allow(clippy::too_many_arguments)]
     pub fn stroke_rect_per_side(
         &self,
-        x: f32, y: f32, width: f32, height: f32,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
         stroke_color: Color,
         stroke_width: [f32; 4],
         border_radius: [f32; 4],
@@ -279,42 +264,27 @@ impl CupidCanvas {
     }
 
     /// Draws a filled rectangle with a specific color (convenience method).
-    pub fn fill_color_rect(
-        &self,
-        x: f32, y: f32, width: f32, height: f32,
-        color: Color,
-        border_radius: [f32; 4],
-    ) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            [0.0; 4],
-            Color::transparent(),
-        );
+    pub fn fill_color_rect(&self, x: f32, y: f32, width: f32, height: f32, color: Color, border_radius: [f32; 4]) {
+        self.draw_list
+            .borrow_mut()
+            .fill_rect(Rect::new(x, y, width, height), color, border_radius, [0.0; 4], Color::transparent());
     }
 
     /// Draws a filled rectangle with per-corner border radii.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
-    pub fn fill_color_rect_per_corner(
-        &self,
-        x: f32, y: f32, width: f32, height: f32,
-        color: Color,
-        border_radius: [f32; 4],
-    ) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            [0.0; 4],
-            Color::transparent(),
-        );
+    pub fn fill_color_rect_per_corner(&self, x: f32, y: f32, width: f32, height: f32, color: Color, border_radius: [f32; 4]) {
+        self.draw_list
+            .borrow_mut()
+            .fill_rect(Rect::new(x, y, width, height), color, border_radius, [0.0; 4], Color::transparent());
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn draw_shadow_rect(
         &self,
-        x: f32, y: f32, width: f32, height: f32,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
         shadow_color: Color,
         shadow_params: [f32; 4],
         border_radius: [f32; 4],
@@ -332,11 +302,15 @@ impl CupidCanvas {
     }
 
     pub fn set_clip(&self, x: f32, y: f32, width: f32, height: f32) {
-        self.draw_list.borrow_mut().push_clip(Rect::new(x, y, width, height));
+        self.draw_list
+            .borrow_mut()
+            .push_clip(Rect::new(x, y, width, height));
     }
 
     pub fn set_clip_rounded(&self, x: f32, y: f32, width: f32, height: f32, border_radius: [f32; 4]) {
-        self.draw_list.borrow_mut().push_clip_rounded(Rect::new(x, y, width, height), border_radius);
+        self.draw_list
+            .borrow_mut()
+            .push_clip_rounded(Rect::new(x, y, width, height), border_radius);
     }
 
     pub fn clear_clip(&self) {
@@ -362,11 +336,15 @@ impl CupidCanvas {
     }
 
     pub fn load_image_with_id(&self, texture_id: TextureId, bytes: &[u8], width: u32, height: u32) {
-        self.draw_list.borrow_mut().load_image_with_id(texture_id, bytes, width, height)
+        self.draw_list
+            .borrow_mut()
+            .load_image_with_id(texture_id, bytes, width, height)
     }
 
     pub fn set_texture_size(&self, texture_id: TextureId, width: u32, height: u32) {
-        self.draw_list.borrow_mut().set_texture_size(texture_id, width, height);
+        self.draw_list
+            .borrow_mut()
+            .set_texture_size(texture_id, width, height);
     }
 
     pub fn draw_list(&self) -> Ref<'_, DrawList> {
