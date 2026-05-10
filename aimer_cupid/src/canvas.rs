@@ -125,7 +125,7 @@ impl CupidCanvas {
             .draw_image(Rect::new(x, y, width, height), texture_id);
     }
 
-    /// Measure text width using the cached fontdue rasterizer.
+    /// Measure text width using the cached text rasterizer.
     pub fn measure_text(&self, text: &str, font_size: f32) -> f32 {
         self.rasterizer.borrow_mut().measure_text(text, font_size)
     }

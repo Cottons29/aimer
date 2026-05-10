@@ -2,11 +2,11 @@ use aimer_cupid::canvas::CupidCanvas;
 use aimer_cupid::gpu_context::GpuContext;
 use aimer_cupid::renderer::Renderer;
 use aimer_cupid::utilities::Color;
-use aimer_utils::{debug, ExecTimes};
+use aimer_utils::{ExecTimes, debug};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
 
@@ -61,6 +61,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 .with_fullsize_content_view(false)
         };
         let window = event_loop.create_window(attrs).unwrap();
+        // window.set_min_inner_size(Some(winit::dpi::LogicalSize::new(1500, 700)));
         window.set_title(title);
 
         let size = window.inner_size();
@@ -123,7 +124,9 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
-                if let Some(window) = self.window.as_ref() {
+                if ElementState::Pressed == state
+                    && let Some(window) = self.window.as_ref()
+                {
                     window.request_redraw();
                 }
             }
@@ -154,16 +157,16 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 self.canvas.begin_frame();
 
                 // Draw a blue background rect
-                self.canvas
-                    .fill_rect(20.0, 20.0, 300.0, 200.0, Color::new(0.2, 0.4, 0.8, 1.0), [10.0; 4]);
-
-                // Draw a red rect
-                self.canvas
-                    .fill_rect(50.0, 50.0, 150.0, 80.0, Color::red(), [20.0; 4]);
-
-                // Draw a green rounded rect
-                self.canvas
-                    .fill_rect(200.0, 100.0, 180.0, 120.0, Color::green(), [20.0; 4]);
+                // self.canvas
+                //     .fill_rect(20.0, 20.0, 300.0, 200.0, Color::new(0.2, 0.4, 0.8, 1.0), [10.0; 4]);
+                //
+                // // Draw a red rect
+                // self.canvas
+                //     .fill_rect(50.0, 50.0, 150.0, 80.0, Color::red(), [20.0; 4]);
+                //
+                // // Draw a green rounded rect
+                // self.canvas
+                //     .fill_rect(200.0, 100.0, 180.0, 120.0, Color::green(), [20.0; 4]);
                 //
                 // // Draw a rect with border
                 // self.canvas.fill_rect_with_border(
@@ -209,33 +212,65 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
 
                 // Mixed CJK + color emoji line — verifies fixes A (no first-frame
                 // stall on CJK) and B/C (AppleColorEmoji renders alongside CJK).
-                self.canvas
-                    .draw_text(30.0, 340.0, "你好,世界 😀 👍 🙂", 24.0, Color::black());
+                self.canvas.draw_text(30.0, 340.0, "អរគុណ 你哈皮  With State 你好 きみなと  👉", 44.0, Color::black());
+                // self.canvas
+                //     .draw_text(30.0, 740.0, "هَمْزَة عَلَى الأَلِفْ	", 44.0, Color::black());
+                //                 self.canvas.draw_text(
+                //                     30.0,
+                //                     30.0,
+                //                     r#"
+                // English — Hello / Hi               Khmer — សួស្តី (Suosdei)               French — BonjourEnglish — Hello / Hi
+                // Spanish — Hola                            Portuguese — Olá                          Italian — Ciao
+                // German — Hallo                            Dutch — Hallo                             Swedish — Hej
+                // Norwegian — Hei                           Danish — Hej                              Finnish — Hei
+                // Icelandic — Halló                         Russian — Привет (Privet)                 Ukrainian — Привіт (Pryvit)
+                // Polish — Cześć                            Czech — Ahoj                              Slovak — Ahoj
+                // Hungarian — Szia                          Romanian — Salut                          Greek — Γεια σου (Yia sou)
+                // Turkish — Merhaba                         Arabic — مرحبا (Marhaban)                 Hebrew — שלום (Shalom)
+                // Persian — سلام (Salam)                    Hindi — नमस्ते (Namaste)                  Bengali — হ্যালো / নমস্কার
+                // Punjabi — ਸਤ ਸ੍ਰੀ ਅਕਾਲ                    Urdu — السلام علیکم                       Tamil — வணக்கம்
+                // Telugu — నమస్తే                           Kannada — ನಮಸ್ಕಾರ                         Malayalam — നമസ്കാരം
+                // Thai — สวัสดี                             Lao — ສະບາຍດີ                             Vietnamese — Xin chào
+                // Indonesian — Halo                         Malay — Hai / Halo                        Filipino — Kumusta
+                // Chinese (Mandarin) — 你好 (Nǐ hǎo)          Cantonese — 你好 (Néih hóu)                 Japanese — こんにちは (Konnichiwa)
+                // Korean — 안녕하세요 (Annyeonghaseyo)           Mongolian — Сайн байна уу                 Swahili — Jambo
+                // Zulu — Sawubona                           Afrikaans — Hallo                         Esperanto — Saluton
+                // Latin — Salve                             Hawaiian — Aloha                          Māori — Kia ora
+                //                     "#,
+                //                     44.0,
+                //                     Color::black(),
+                //                 );
 
                 // Draw test image if available
                 // if let Some(tex_id) = self.texture_id {
                 //     self.canvas.draw_image(500.0, 200.0, 300.0, 300.0, tex_id);
                 // }
 
-                debug!("I Should be stop here");
-
                 self.canvas.clear_clip();
 
-                renderer.render(&gpu.device, &gpu.queue, &view, width, height, gpu.is_srgb, &self.canvas.draw_list());
+                ExecTimes::print_time( || {
+                    renderer.render(&gpu.device, &gpu.queue, &view, width, height, gpu.is_srgb, &self.canvas.draw_list())
+                });
 
-                ExecTimes::no_param("Render FirstFrame", || gpu.end_frame(frame));
+                gpu.end_frame(frame);
+                #[cfg(debug_assertions)]
+                {
+                    debug!("################################################################################");
+                    ExecTimes::cost_grouping();
+                    debug!("################################################################################")
+                }
             }
             _ => {}
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.frame_count > 0 {
-            self.frame_count -= 1;
-            debug!("Render Frame: {}", self.frame_count);
-            self.window.as_ref().unwrap().request_redraw();
-        }
-    }
+    // fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    //     if self.frame_count > 0 {
+    //         self.frame_count -= 1;
+    //         debug!("Render Frame: {}", self.frame_count);
+    //         self.window.as_ref().unwrap().request_redraw();
+    //     }
+    // }
 }
 
 fn main() {

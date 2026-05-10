@@ -84,8 +84,7 @@ impl Renderer {
     }
 
     pub fn preload_text(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32) {
-        self.text_pipeline
-            .preload_text(device, queue, text, font_size);
+        self.text_pipeline.preload_text(device, queue, text, font_size);
     }
 
     /// Save the pipeline cache to disk for faster startup on next launch.
@@ -249,8 +248,7 @@ impl Renderer {
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),
                         spans: Vec::new(),
                     });
-                    self.resolved
-                        .push(ResolvedCmd { kind: ResolvedKind::TextIndex(()) });
+                    self.resolved.push(ResolvedCmd { kind: ResolvedKind::TextIndex(()) });
                 }
                 DrawCommand::DrawRichText { position, spans, font_size, color } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
@@ -383,8 +381,7 @@ impl Renderer {
         }
 
         if !self.text_requests.is_empty() {
-            self.text_pipeline
-                .prepare(device, queue, width, height, is_srgb, &self.text_requests);
+            self.text_pipeline.prepare(device, queue, width, height, is_srgb, &self.text_requests);
         }
 
         // Create encoder and render pass
@@ -480,7 +477,6 @@ impl Renderer {
                 self.text_pipeline.render(&mut pass);
             }
         }
-
         queue.submit(std::iter::once(encoder.finish()));
     }
 }
