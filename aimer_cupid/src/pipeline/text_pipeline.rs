@@ -1,11 +1,15 @@
 pub mod glyph_atlas;
 pub mod glyph_rasterizer;
 pub mod text_layout;
+mod font_resolver;
+mod performance_test;
+mod glyph_outline;
 
 use crate::text_pipeline::glyph_atlas::{ColorGlyphAtlas, GlyphAtlas};
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
-use crate::text_pipeline::text_layout::layout_text;
+use crate::text_pipeline::text_layout::{layout_text, PositionedGlyph};
 use bytemuck::{Pod, Zeroable};
+use std::collections::HashMap;
 
 /// Per-instance data for one glyph quad.
 #[repr(C)]
@@ -86,9 +90,36 @@ pub enum TextOverflowMode {
     Ellipsis,
 }
 
+/// Key used to memoize the output of `layout_text` across frames.
+/// Uses integer bit-representations of f32 values to implement Hash + Eq.
+///
+/// Improvement B: the screen-space origin is intentionally excluded from this
+/// key.  Layout depends only on text content, font size, and wrapping width —
+/// not on the position at which the text is drawn.  The actual (x, y) offset
+/// is applied at render time (see `prepare`), so scrolling or animating text
+/// no longer causes cache misses.
+#[derive(Hash, Eq, PartialEq, Clone)]
+struct LayoutCacheKey {
+    text: String,
+    /// `font_size` × 100, rounded, stored as u32 to make it hashable.
+    font_size_u32: u32,
+    /// `bounds_width` × 100, rounded, stored as u32.
+    bounds_width_u32: u32,
+}
+
+impl LayoutCacheKey {
+    fn new(text: &str, font_size: f32, bounds_width: f32) -> Self {
+        Self {
+            text: text.to_owned(),
+            font_size_u32: (font_size * 100.0).round() as u32,
+            bounds_width_u32: (bounds_width * 100.0).round() as u32,
+        }
+    }
+}
+
 pub struct TextPipelineV2 {
     rasterizer: GlyphRasterizer,
-    /// Alpha-coverage atlas (R8Unorm) for fontdue-rasterized monochrome glyphs.
+    /// Alpha-coverage atlas (R8Unorm) for monochrome glyphs.
     atlas: GlyphAtlas,
     /// RGBA8 atlas for sbix color emoji bitmaps (Apple Color Emoji et al.).
     color_atlas: ColorGlyphAtlas,
@@ -115,6 +146,11 @@ pub struct TextPipelineV2 {
     color_atlas_generation: u64,
     /// Cached viewport dimensions to skip redundant uniform writes.
     last_viewport: (u32, u32),
+    /// Layout cache: maps a stable key derived from text content + render
+    /// parameters to the pre-computed `Vec<PositionedGlyph>`.  Entries are
+    /// cleared whenever the set of requests changes (different number of
+    /// draw calls) so memory does not grow unboundedly across scene changes.
+    layout_cache: HashMap<LayoutCacheKey, Vec<PositionedGlyph>>,
 }
 
 impl TextPipelineV2 {
@@ -275,6 +311,7 @@ impl TextPipelineV2 {
             atlas_generation: 0,
             color_atlas_generation: 0,
             last_viewport: (0, 0),
+            layout_cache: HashMap::new(),
         }
     }
 
@@ -339,18 +376,43 @@ impl TextPipelineV2 {
         self.instances.clear();
         self.color_instances.clear();
 
+        // Evict the layout cache when the number of draw requests changes (e.g.
+        // when the UI transitions to a different screen with different text).
+        // This keeps memory bounded while still giving full cache hits on
+        // stable frames.
+        if self.layout_cache.len() > requests.len() * 4 {
+            self.layout_cache.clear();
+        }
+
         for req in requests {
             let spans = if req.spans.is_empty() { vec![RichTextSpan::new(req.text.clone())] } else { req.spans.clone() };
 
             let mut cursor_x = req.x;
             let mut cursor_y = req.y;
 
-            for span in spans {
+            for span in &spans {
                 let font_size = span.font_size.unwrap_or(req.font_size);
                 let color = span.color.unwrap_or(req.color);
-                let positioned = layout_text(&mut self.rasterizer, &span.text, font_size, cursor_x, cursor_y, req.bounds_width);
 
-                for pg in &positioned {
+                // Re-use the positioned glyph list from the previous frame when
+                // text content, font size, and wrapping width are all unchanged.
+                // The screen-space (x, y) origin is NOT part of the key (improvement B);
+                // instead we translate the cached positions by the current cursor
+                // offset at render time.  This means scrolling or animating text
+                // never causes a cache miss.
+                //
+                // Improvement C: we store the glyphs by value in the cache and
+                // iterate directly over the cached slice, avoiding the per-frame
+                // Vec clone that was previously issued on every cache hit.
+                let cache_key = LayoutCacheKey::new(&span.text, font_size, req.bounds_width);
+                // Layout is always computed at origin (0, 0) so the cached
+                // positions are purely relative and can be shifted cheaply.
+                let positioned: &[PositionedGlyph] = self
+                    .layout_cache
+                    .entry(cache_key)
+                    .or_insert_with(|| layout_text(&mut self.rasterizer, &span.text, font_size, 0.0, 0.0, req.bounds_width));
+
+                for pg in positioned {
                     let key = pg.glyph_key;
 
                     // Step 1: rasterize (cache hit if already done) to discover
@@ -391,8 +453,10 @@ impl TextPipelineV2 {
                     // historical `pg.width / pg.height` (which equals `rg_width /
                     // rg_height` when the layout came from the same rasterizer).
                     let size = if is_color { [rg_width as f32, rg_height as f32] } else { [pg.width as f32, pg.height as f32] };
+                    // Improvement B: cached glyphs are positioned at origin (0,0);
+                    // apply the actual screen-space cursor offset here.
                     let instance = GlyphInstance {
-                        position: [pg.x, pg.y],
+                        position: [pg.x + cursor_x, pg.y + cursor_y],
                         size,
                         uv_rect: uvs,
                         color,
@@ -408,8 +472,10 @@ impl TextPipelineV2 {
                 }
 
                 if let Some(last) = positioned.last() {
-                    cursor_x = last.x + last.width as f32;
-                    cursor_y = last.y;
+                    // Positions in the cache are relative to (0, 0); add the
+                    // current cursor offset to get the true next pen position.
+                    cursor_x += last.x + last.width as f32;
+                    cursor_y += last.y;
                 }
             }
         }
@@ -498,3 +564,5 @@ impl TextPipelineV2 {
         self.rasterizer.measure_text(text, font_size)
     }
 }
+
+

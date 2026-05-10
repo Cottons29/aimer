@@ -1,6 +1,7 @@
 use super::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
+use aimer_utils::time_cost;
 use unicode_bidi::BidiInfo;
-use unicode_linebreak::{BreakOpportunity, linebreaks};
+use unicode_linebreak::{linebreaks, BreakOpportunity};
 use unicode_segmentation::UnicodeSegmentation;
 
 pub type FontId = u32;
@@ -96,6 +97,7 @@ pub struct ParagraphLayout {
 }
 
 /// A positioned glyph ready for rendering.
+#[derive(Clone)]
 pub struct PositionedGlyph {
     pub codepoint: char,
     pub glyph_key: GlyphKey,
@@ -128,15 +130,67 @@ pub fn layout_paragraph_with_shaper(
     }
 }
 
+/// A contiguous run of text that shares the same BiDi level and can be shaped as a unit.
+struct ShapingRun<'a> {
+    text: &'a str,
+    start: usize,
+    level: unicode_bidi::Level,
+}
+
+/// Collect grapheme clusters into shaping runs: contiguous clusters that share
+/// the same BiDi level are merged into a single run so that complex-script
+/// shaping (Arabic, Devanagari, etc.) operates on the full context instead of
+/// individual clusters.
+fn collect_shaping_runs<'a>(
+    text: &'a str,
+    bidi: &BidiInfo,
+    visual_runs: &[(std::ops::Range<usize>, unicode_bidi::Level)],
+) -> Vec<ShapingRun<'a>> {
+    let mut result: Vec<ShapingRun<'a>> = Vec::new();
+
+    for (cluster, cluster_start) in text.grapheme_indices(true).map(|(i, s)| (s, i)) {
+        // Find the BiDi level for this cluster.
+        let level = visual_runs
+            .iter()
+            .find(|(range, _)| range.start <= cluster_start && cluster_start < range.end)
+            .map(|(_, lvl)| *lvl)
+            .or_else(|| bidi.levels.get(cluster_start).copied())
+            .unwrap_or_else(unicode_bidi::Level::ltr);
+
+        let merge = result
+            .last()
+            .is_some_and(|last| last.level == level && cluster != "\n" && !last.text.ends_with('\n'));
+
+        if merge {
+            // Extend the last run to include this cluster.  Because both slices
+            // are sub-slices of `text` we can reconstruct a single slice from
+            // the original pointer.
+            let last = result.last_mut().unwrap();
+            let new_end = cluster_start + cluster.len();
+            // Safety: both are valid sub-slices of the same UTF-8 `text`.
+            last.text = &text[last.start..new_end];
+        } else {
+            result.push(ShapingRun { text: cluster, start: cluster_start, level });
+        }
+    }
+    result
+}
+
 fn layout_paragraph<F>(text: &str, font_id: FontId, metrics: &FontMetrics, options: &TextLayoutOptions, mut shape: F) -> ParagraphLayout
 where
     F: FnMut(&str, usize) -> Vec<PositionedShapedGlyph>,
 {
     let bidi = BidiInfo::new(text, None);
     let paragraph = bidi.paragraphs.first();
-    let levels = paragraph
-        .map(|paragraph| bidi.visual_runs(paragraph, paragraph.range.clone()).1)
+    // `visual_runs` returns (Vec<Level>, Vec<Range<usize>>); we zip them into
+    // (Range, Level) pairs for use in `collect_shaping_runs`.
+    let visual_run_ranges: Vec<(std::ops::Range<usize>, unicode_bidi::Level)> = paragraph
+        .map(|para| {
+            let (levels, ranges) = bidi.visual_runs(para, para.range.clone());
+            ranges.into_iter().zip(levels).collect()
+        })
         .unwrap_or_default();
+
     #[allow(clippy::unnecessary_filter_map)]
     let mut break_offsets: Vec<usize> = linebreaks(text)
         .filter_map(|(offset, opportunity)| match opportunity {
@@ -146,6 +200,9 @@ where
     break_offsets.push(text.len());
     break_offsets.sort_unstable();
     break_offsets.dedup();
+
+    // Collect shaping runs (merged by BiDi level) before the layout loop.
+    let shaping_runs = collect_shaping_runs(text, &bidi, &visual_run_ranges);
 
     let mut glyphs = Vec::new();
     let mut runs = Vec::new();
@@ -157,11 +214,17 @@ where
     let max_width = options.max_width.max(0.0);
     let max_height = options.max_height.max(0.0);
 
-    for (cluster_text, cluster_start) in text.grapheme_indices(true).map(|(i, s)| (s, i)) {
-        let cluster_end = cluster_start + cluster_text.len();
-        if cluster_text == "\n" {
-            finish_line(&mut lines, line_start_text..cluster_start, line_start_glyph..glyphs.len(), baseline, line_width, metrics, true);
-            line_start_text = cluster_end;
+    for shaping_run in &shaping_runs {
+        let run_start = shaping_run.start;
+        let run_text = shaping_run.text;
+        let run_end = run_start + run_text.len();
+        let level = shaping_run.level;
+        let is_rtl = level.is_rtl();
+
+        // Handle newline runs.
+        if run_text == "\n" {
+            finish_line(&mut lines, line_start_text..run_start, line_start_glyph..glyphs.len(), baseline, line_width, metrics, true);
+            line_start_text = run_end;
             line_start_glyph = glyphs.len();
             line_width = 0.0;
             baseline += metrics.line_height;
@@ -171,38 +234,120 @@ where
             continue;
         }
 
-        let mut shaped = shape(cluster_text, cluster_start);
-        let cluster_width = shaped.iter().map(|glyph| glyph.advance).sum::<f32>();
-        let break_allowed = break_offsets.binary_search(&cluster_end).is_ok();
+        // Shape the entire run at once (correct for Arabic, Devanagari, etc.).
+        let mut shaped = shape(run_text, run_start);
 
-        if max_width > 0.0
-            && line_width > 0.0
-            && line_width + cluster_width > max_width
-            && (break_allowed || !cluster_text.chars().all(char::is_whitespace))
-        {
-            finish_line(&mut lines, line_start_text..cluster_start, line_start_glyph..glyphs.len(), baseline, line_width, metrics, false);
-            line_start_text = cluster_start;
-            line_start_glyph = glyphs.len();
-            line_width = 0.0;
-            baseline += metrics.line_height;
-            if should_stop_for_height(options.origin_y, baseline, metrics.line_height, max_height) {
-                break;
+        // For RTL runs, reverse the glyph order so they render right-to-left.
+        if is_rtl {
+            shaped.reverse();
+        }
+
+        // Determine total advance for this shaped run.
+        let run_width: f32 = shaped.iter().map(|g| g.advance).sum();
+
+        // Check whether a line break is allowed at the run boundary.
+        let break_allowed = break_offsets.binary_search(&run_end).is_ok();
+
+        if max_width > 0.0 && line_width + run_width > max_width && (break_allowed || !run_text.chars().all(char::is_whitespace)) {
+            // Try to break the run at grapheme-cluster boundaries to avoid
+            // splitting across lines at awkward positions.  We walk clusters
+            // and emit them onto the current line until we'd overflow, then
+            // start a new line for the remainder.
+            //
+            // `sub_x > options.origin_x` ensures we never split before placing
+            // at least one cluster (avoids an infinite wrapping loop on a single
+            // wide cluster that can never fit).
+            let mut sub_x = options.origin_x + line_width;
+            let mut remainder_start: Option<usize> = None;
+            let mut cluster_offset = 0usize;
+            for (_, cluster_str) in run_text.grapheme_indices(true) {
+                // Each cluster contributes its share of the total advance.
+                // We can't re-shape individual clusters without losing context,
+                // so we approximate by summing the shaped glyphs whose cluster
+                // index falls inside this cluster's byte range.
+                let cluster_byte_start = run_start + cluster_offset;
+                let cluster_byte_end = cluster_byte_start + cluster_str.len();
+                let cluster_advance: f32 = shaped
+                    .iter()
+                    .filter(|g| g.cluster >= cluster_byte_start && g.cluster < cluster_byte_end)
+                    .map(|g| g.advance)
+                    .sum();
+
+                if sub_x + cluster_advance > options.origin_x + max_width && sub_x > options.origin_x {
+                    remainder_start = Some(cluster_byte_start);
+                    break;
+                }
+                sub_x += cluster_advance;
+                cluster_offset += cluster_str.len();
+            }
+
+            if let Some(break_point) = remainder_start {
+                // Emit glyphs before break_point onto the current line.
+                let glyph_start = glyphs.len();
+                let line_glyphs: Vec<_> = shaped
+                    .iter()
+                    .filter(|g| g.cluster < break_point)
+                    .cloned()
+                    .collect();
+                let line_run_width: f32 = line_glyphs.iter().map(|g| g.advance).sum();
+                for mut glyph in line_glyphs {
+                    glyph.x += options.origin_x + line_width;
+                    glyph.y += baseline;
+                    glyphs.push(glyph);
+                }
+                runs.push(TextRun { text_range: run_start..break_point, level, font_id, glyph_range: glyph_start..glyphs.len() });
+                finish_line(
+                    &mut lines,
+                    line_start_text..break_point,
+                    line_start_glyph..glyphs.len(),
+                    baseline,
+                    line_run_width + line_width,
+                    metrics,
+                    false,
+                );
+
+                // Start a new line with the remainder.
+                line_start_text = break_point;
+                line_start_glyph = glyphs.len();
+                line_width = 0.0;
+                baseline += metrics.line_height;
+                if should_stop_for_height(options.origin_y, baseline, metrics.line_height, max_height) {
+                    break;
+                }
+
+                // Emit remaining glyphs onto the new line.
+                let glyph_start2 = glyphs.len();
+                let mut remainder_width = 0.0f32;
+                for mut glyph in shaped.iter().filter(|g| g.cluster >= break_point).cloned() {
+                    glyph.x = options.origin_x + remainder_width;
+                    glyph.y = baseline;
+                    remainder_width += glyph.advance;
+                    glyphs.push(glyph);
+                }
+                line_width = remainder_width;
+                runs.push(TextRun { text_range: break_point..run_end, level, font_id, glyph_range: glyph_start2..glyphs.len() });
+                continue;
+            } else {
+                // Couldn't split — emit whole run on a new line.
+                finish_line(&mut lines, line_start_text..run_start, line_start_glyph..glyphs.len(), baseline, line_width, metrics, false);
+                line_start_text = run_start;
+                line_start_glyph = glyphs.len();
+                line_width = 0.0;
+                baseline += metrics.line_height;
+                if should_stop_for_height(options.origin_y, baseline, metrics.line_height, max_height) {
+                    break;
+                }
             }
         }
 
         let glyph_start = glyphs.len();
-        for glyph in &mut shaped {
+        for mut glyph in shaped {
             glyph.x += options.origin_x + line_width;
             glyph.y += baseline;
+            glyphs.push(glyph);
         }
-        line_width += cluster_width;
-        glyphs.extend(shaped);
-        let level = levels
-            .iter()
-            .find(|run| run.start <= cluster_start && cluster_start < run.end)
-            .and_then(|run| bidi.levels.get(run.start).copied())
-            .unwrap_or_else(unicode_bidi::Level::ltr);
-        runs.push(TextRun { text_range: cluster_start..cluster_end, level, font_id, glyph_range: glyph_start..glyphs.len() });
+        line_width += run_width;
+        runs.push(TextRun { text_range: run_start..run_end, level, font_id, glyph_range: glyph_start..glyphs.len() });
     }
 
     if line_start_text <= text.len() && (lines.is_empty() || line_start_text < text.len()) {
@@ -264,20 +409,28 @@ fn shape_segment(face: &rustybuzz::Face, segment: &str, text_offset: usize, font
 }
 
 fn fallback_shape_segment(segment: &str, text_offset: usize, font_id: FontId, font_size: f32) -> Vec<PositionedShapedGlyph> {
+    // Group by grapheme cluster so that combining marks (e.g. "e\u{301}")
+    // are emitted as a single glyph with the cluster's full byte range.
     segment
-        .chars()
-        .map(|c| PositionedShapedGlyph {
-            font_id,
-            glyph_id: c as u32 as u16,
-            cluster: text_offset,
-            text_range: text_offset..text_offset + segment.len(),
-            x: 0.0,
-            y: 0.0,
-            x_offset: 0.0,
-            y_offset: 0.0,
-            advance: font_size * 0.5,
-            font_size,
-            source: c.to_string(),
+        .grapheme_indices(true)
+        .map(|(cluster_byte_offset, cluster_str)| {
+            let cluster_start = text_offset + cluster_byte_offset;
+            let cluster_end = cluster_start + cluster_str.len();
+            // Use the first (base) codepoint as the representative glyph id.
+            let glyph_char = cluster_str.chars().next().unwrap_or('\0');
+            PositionedShapedGlyph {
+                font_id,
+                glyph_id: glyph_char as u32 as u16,
+                cluster: cluster_start,
+                text_range: cluster_start..cluster_end,
+                x: 0.0,
+                y: 0.0,
+                x_offset: 0.0,
+                y_offset: 0.0,
+                advance: font_size * 0.5,
+                font_size,
+                source: cluster_str.to_string(),
+            }
         })
         .collect()
 }
@@ -367,22 +520,19 @@ pub fn layout_text(
             pen_y += line_height;
             continue;
         }
-        let mut shaped = Vec::new();
-        let mut cluster_width = 0.0;
-        for c in cluster.chars() {
-            if c.is_control() {
-                continue;
-            }
 
-            let key = rasterizer.glyph_key_for_codepoint(c, font_size);
-            let rg = rasterizer.glyph_metrics_for_key(key, font_size);
-            cluster_width += rg.advance_width;
-            shaped.push((c, key, rg));
-        }
+        // Shape the entire grapheme cluster as a unit using rustybuzz with the
+        // appropriate font (primary or fallback).  This is essential for complex
+        // scripts like Khmer where a base consonant + COENG + subscript consonant
+        // must be shaped together to produce the correct ligature glyph — processing
+        // each codepoint independently would emit separate mispositioned glyphs.
+        let shaped_glyphs = rasterizer.shape_cluster(cluster, font_size);
 
-        if shaped.is_empty() {
+        if shaped_glyphs.is_empty() {
             continue;
         }
+
+        let cluster_width: f32 = shaped_glyphs.iter().map(|(_, adv, _, _)| adv).sum();
 
         // Simple word-wrap: wrap only between grapheme clusters so UTF-8 text,
         // combining marks, and emoji sequences are never split mid-cluster.
@@ -391,15 +541,27 @@ pub fn layout_text(
             pen_y += line_height;
         }
 
-        for (c, glyph_key, rg) in shaped {
-            let advance = rg.advance_width;
+        // Use the first codepoint of the cluster as the representative codepoint
+        // for the PositionedGlyph (used for hit-testing, not rendering).
+        let base_codepoint = cluster.chars().next().unwrap_or('\0');
+
+        for (glyph_key, advance, x_offset, y_offset) in shaped_glyphs {
+            let rg = time_cost!("RasterizeKey", || { rasterizer.rasterize_key(glyph_key, font_size) });
             if rg.width > 0 && rg.height > 0 {
-                let gx = pen_x + rg.offset_x;
+                let gx = pen_x + rg.offset_x + x_offset;
                 // pen_y is the baseline; offset_y (ymin) is distance from baseline to
                 // bottom of the glyph bitmap, so top of bitmap = baseline - offset_y - height.
-                let gy = pen_y - rg.offset_y - rg.height as f32;
+                let gy = pen_y - rg.offset_y - rg.height as f32 + y_offset;
 
-                glyphs.push(PositionedGlyph { codepoint: c, glyph_key, x: gx, y: gy, width: rg.width, height: rg.height, font_size });
+                glyphs.push(PositionedGlyph {
+                    codepoint: base_codepoint,
+                    glyph_key,
+                    x: gx,
+                    y: gy,
+                    width: rg.width,
+                    height: rg.height,
+                    font_size,
+                });
             }
 
             pen_x += advance;
