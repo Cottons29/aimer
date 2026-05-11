@@ -1,7 +1,7 @@
 
 pub mod img_widget;
 
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug};
 pub use img_widget::image_widget::Image;
 pub use img_widget::network_image::NetworkImage;
 use aimer_widget::base::BuildContext;

@@ -67,6 +67,7 @@ impl ShelfPacker {
         Some((x, y))
     }
 
+    #[allow(dead_code)]
     fn reset(&mut self) {
         self.cursor_x = 0;
         self.shelf_y = 0;
@@ -253,6 +254,173 @@ impl GlyphAtlas {
         // Since we only expanded, old positions are still valid. Just advance the packer
         // past the old content by replaying allocations.
         // Simpler: reset packer and re-allocate all cached entries in order.
+        let old_cache: Vec<(GlyphKey, AtlasRegion)> = self.cache.drain().collect();
+        for (key, region) in &old_cache {
+            let _ = self.packer.allocate(region.width, region.height);
+            self.cache.insert(*key, *region);
+        }
+
+        self.width = new_w;
+        self.height = new_h;
+        self.dirty_region = Some(DirtyRegion::new(0, 0, new_w, new_h));
+        self.generation += 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Color glyph atlas (RGBA8, for sbix PNG strikes)
+// ---------------------------------------------------------------------------
+
+/// Sibling to [`GlyphAtlas`] that stores RGBA8 color glyphs (Apple Color
+/// Emoji, etc.). The shape and behavior are intentionally near-identical: a
+/// shelf packer, lazy re-upload of a dirty rectangle, and 2× growth on
+/// overflow. Only the per-pixel size and texture format differ.
+pub struct ColorGlyphAtlas {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub width: u32,
+    pub height: u32,
+    packer: ShelfPacker,
+    cache: HashMap<GlyphKey, AtlasRegion>,
+    /// CPU-side pixel data for re-upload on grow. RGBA8 → 4 bytes per pixel.
+    pixels: Vec<u8>,
+    dirty_region: Option<DirtyRegion>,
+    generation: u64,
+}
+
+impl ColorGlyphAtlas {
+    const INITIAL_SIZE: u32 = 512;
+    const BYTES_PER_PIXEL: u32 = 4;
+
+    pub fn new(device: &wgpu::Device) -> Self {
+        let width = Self::INITIAL_SIZE;
+        let height = Self::INITIAL_SIZE;
+        let (texture, view) = Self::create_texture(device, width, height);
+        Self {
+            texture,
+            view,
+            width,
+            height,
+            packer: ShelfPacker::new(width, height),
+            cache: HashMap::new(),
+            pixels: vec![0u8; (width * height * Self::BYTES_PER_PIXEL) as usize],
+            dirty_region: None,
+            generation: 0,
+        }
+    }
+
+    fn create_texture(device: &wgpu::Device, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("color glyph atlas"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        (texture, view)
+    }
+
+    pub fn get(&self, key: &GlyphKey) -> Option<AtlasRegion> {
+        self.cache.get(key).copied()
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// `bitmap` must be `width * height * 4` bytes (non-premultiplied RGBA8).
+    pub fn get_or_insert(&mut self, device: &wgpu::Device, key: GlyphKey, glyph_w: u32, glyph_h: u32, bitmap: &[u8]) -> AtlasRegion {
+        if let Some(region) = self.cache.get(&key) {
+            return *region;
+        }
+
+        let pos = self.packer.allocate(glyph_w, glyph_h);
+        let (x, y) = match pos {
+            Some(p) => p,
+            None => {
+                self.grow(device);
+                self.packer
+                    .allocate(glyph_w, glyph_h)
+                    .expect("color glyph too large for atlas even after grow")
+            }
+        };
+
+        // Copy RGBA8 rows from `bitmap` into the CPU pixel buffer.
+        let bpp = Self::BYTES_PER_PIXEL as usize;
+        let row_bytes_glyph = (glyph_w as usize) * bpp;
+        let row_bytes_atlas = (self.width as usize) * bpp;
+        for row in 0..glyph_h {
+            let dst_start = (y as usize + row as usize) * row_bytes_atlas + (x as usize) * bpp;
+            let src_start = (row as usize) * row_bytes_glyph;
+            self.pixels[dst_start..dst_start + row_bytes_glyph].copy_from_slice(&bitmap[src_start..src_start + row_bytes_glyph]);
+        }
+
+        match &mut self.dirty_region {
+            Some(dr) => dr.union(x, y, glyph_w, glyph_h),
+            None => self.dirty_region = Some(DirtyRegion::new(x, y, glyph_w, glyph_h)),
+        }
+
+        let region = AtlasRegion { x, y, width: glyph_w, height: glyph_h };
+        self.cache.insert(key, region);
+        region
+    }
+
+    pub fn upload(&mut self, queue: &wgpu::Queue) {
+        let dr = match self.dirty_region.take() {
+            Some(dr) => dr,
+            None => return,
+        };
+
+        let bpp = Self::BYTES_PER_PIXEL as usize;
+        let row_bytes_atlas = (self.width as usize) * bpp;
+        let row_bytes_region = (dr.width as usize) * bpp;
+        let mut region_buf = Vec::with_capacity(row_bytes_region * dr.height as usize);
+        for row in 0..dr.height {
+            let start = (dr.y as usize + row as usize) * row_bytes_atlas + (dr.x as usize) * bpp;
+            region_buf.extend_from_slice(&self.pixels[start..start + row_bytes_region]);
+        }
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: dr.x, y: dr.y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &region_buf,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(dr.width * Self::BYTES_PER_PIXEL),
+                rows_per_image: Some(dr.height),
+            },
+            wgpu::Extent3d { width: dr.width, height: dr.height, depth_or_array_layers: 1 },
+        );
+    }
+
+    fn grow(&mut self, device: &wgpu::Device) {
+        let new_w = self.width * 2;
+        let new_h = self.height * 2;
+        let (texture, view) = Self::create_texture(device, new_w, new_h);
+
+        let bpp = Self::BYTES_PER_PIXEL as usize;
+        let mut new_pixels = vec![0u8; (new_w * new_h) as usize * bpp];
+        let old_row = (self.width as usize) * bpp;
+        let new_row = (new_w as usize) * bpp;
+        for row in 0..self.height as usize {
+            let src_start = row * old_row;
+            let dst_start = row * new_row;
+            new_pixels[dst_start..dst_start + old_row].copy_from_slice(&self.pixels[src_start..src_start + old_row]);
+        }
+
+        self.texture = texture;
+        self.view = view;
+        self.pixels = new_pixels;
+        self.packer = ShelfPacker::new(new_w, new_h);
+
         let old_cache: Vec<(GlyphKey, AtlasRegion)> = self.cache.drain().collect();
         for (key, region) in &old_cache {
             let _ = self.packer.allocate(region.width, region.height);

@@ -1,27 +1,18 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod render_ctx {
-    use wgpu::{TextureViewDescriptor, TextureViewDimension};
+    use crate::aimer_app::{AimerCustomAppEvent, EVENT_PROXY};
     use aimer_cupid::canvas::CupidCanvas;
     use aimer_cupid::gpu_context::GpuContext;
     use aimer_cupid::renderer::Renderer;
+    use aimer_utils::info;
     use winit::dpi::PhysicalSize;
     use winit::window::Window;
-    use aimer_utils::debug;
 
+    #[derive(Default)]
     pub struct WgpuApi {
         gpu: Option<GpuContext<'static>>,
         renderer: Option<Renderer>,
         canvas: Option<CupidCanvas>,
-    }
-
-    impl Default for WgpuApi {
-        fn default() -> Self {
-            Self {
-                gpu: None,
-                renderer: None,
-                canvas: None,
-            }
-        }
     }
 
     impl WgpuApi {
@@ -50,28 +41,20 @@ pub mod render_ctx {
         /// Create a CupidCanvas, call `draw_fn` with it and dimensions,
         /// then flush the draw list through the renderer and present.
         pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> bool {
-
             let (gpu, renderer, canvas) = match (&self.gpu, &mut self.renderer, &self.canvas) {
                 (Some(g), Some(r), Some(c)) => (g, r, c),
                 _ => return false,
             };
 
-
             let frame = match gpu.begin_frame() {
-                wgpu::CurrentSurfaceTexture::Success(texture)
-                | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+                wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
                 _ => return false,
             };
 
-
-            let view = frame
-                .texture
-                .create_view(&Default::default());
-
+            let view = frame.texture.create_view(&Default::default());
 
             let width = gpu.width();
             let height = gpu.height();
-
 
             canvas.begin_frame();
             draw_fn(canvas, width, height);

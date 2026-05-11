@@ -4,7 +4,7 @@ use aimer_attribute::position::Vec2d;
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_inspector::InspectorAppHandle;
 use std::cell::Cell;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
@@ -12,7 +12,7 @@ use tokio::runtime::Runtime;
 use aimer_widget::Widget;
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
 
-use aimer_utils::{debug, info};
+use aimer_utils::{ info};
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
@@ -25,6 +25,7 @@ static APP_STARTED: AtomicBool = AtomicBool::new(false);
 pub enum AimerCustomAppEvent {
     ForceBackspace,
     InsertText(String),
+    FrameReady,
 }
 
 pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerCustomAppEvent>> = OnceLock::new();
@@ -33,12 +34,12 @@ pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerCustomAppEvent>> = OnceLock
 #[unsafe(no_mangle)]
 pub extern "C" fn trigger_rust_backspace() {
     let Some(proxy) = EVENT_PROXY.get() else {
-        utils::debug!("trigger_rust_backspace: EVENT_PROXY not initialized yet");
+        aimer_utils::debug!("trigger_rust_backspace: EVENT_PROXY not initialized yet");
         return;
     };
 
     if let Err(e) = proxy.send_event(AimerCustomAppEvent::ForceBackspace) {
-        utils::error!("trigger_rust_backspace: failed to send event: {:?}", e);
+        aimer_utils::error!("trigger_rust_backspace: failed to send event: {:?}", e);
     }
 }
 
@@ -54,12 +55,12 @@ pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
     let text = String::from_utf8_lossy(bytes).to_string();
 
     let Some(proxy) = EVENT_PROXY.get() else {
-        utils::debug!("trigger_rust_insert_text: EVENT_PROXY not initialized yet (len={})", len);
+        aimer_utils::debug!("trigger_rust_insert_text: EVENT_PROXY not initialized yet (len={})", len);
         return;
     };
 
     if let Err(e) = proxy.send_event(AimerCustomAppEvent::InsertText(text)) {
-        utils::error!("trigger_rust_insert_text: failed to send event: {:?}", e);
+        aimer_utils::error!("trigger_rust_insert_text: failed to send event: {:?}", e);
     }
 }
 
@@ -125,7 +126,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
     #[cfg(all(debug_assertions, target_arch = "wasm32"))]
     let inspector = aimer_inspector::start(DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap());
 
-    aimer_utils::info!("Creating App instance...");
+    info!("Creating App instance...");
     let mut app = AimerApplicationHandler {
         window: None,
         render_ctx: AimerRenderContext::default(),
@@ -151,7 +152,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     // On iOS, this function never returns.
     match event_loop.run_app(&mut app) {
-        Ok(_) => aimer_utils::info!("EventLoop finished successfully"),
+        Ok(_) => info!("EventLoop finished successfully"),
         Err(e) => aimer_utils::error!("EventLoop::run_app failed: {:?}", e),
     }
     #[cfg(not(target_arch = "wasm32"))]

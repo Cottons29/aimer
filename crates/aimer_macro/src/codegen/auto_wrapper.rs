@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Type, TypePath, GenericArgument, PathArguments, TypeTraitObject, TraitBound, TraitBoundModifier};
+use syn::{GenericArgument, PathArguments, TraitBound, TraitBoundModifier, Type, TypePath, TypeTraitObject};
 
 #[allow(clippy::large_enum_variant)]
 pub enum AutoWrapper {
@@ -21,7 +21,6 @@ impl AutoWrapper {
         }
 
         if let Some(inner) = get_type_inner(ty, "Box") {
-            return Self::Box(Box::new(Self::new(inner)));
             return Self::Box(Box::new(Self::new(inner)));
         }
 
@@ -48,6 +47,7 @@ impl AutoWrapper {
         AutoWrapper::Terminal(ty.clone())
     }
 
+    #[allow(dead_code)]
     pub fn get_type(&self) -> TokenStream {
         match self {
             AutoWrapper::Box(inner) => {
@@ -111,7 +111,7 @@ impl AutoWrapper {
             AutoWrapper::Vec(inner) => {
                 // Vec is a bit special in how it was handled before (BoxCollection)
                 // If it's the outermost, it usually expects an iterator or array in the macro.
-                // But if we are wrapping a single element into a Vec? 
+                // But if we are wrapping a single element into a Vec?
                 // Previous BoxCollection was specifically Vec<Box<dyn Widget>>.
                 let inner_expr = inner.wrap_expr(expr);
                 quote! { vec![#inner_expr] }
@@ -124,38 +124,25 @@ impl AutoWrapper {
     /// meaning items of this type should NOT be wrapped in `Box::new(...)` in the array rule.
     pub fn is_widget_boxed(ty: &Type) -> bool {
         // Check for Box<dyn Widget> or Box<dyn Widget + 'static>
-        if let Some(inner) = get_type_inner(ty, "Box") {
-            if let Type::TraitObject(TypeTraitObject { bounds, .. }) = inner {
-                return bounds.iter().any(|b| {
-                    if let syn::TypeParamBound::Trait(TraitBound { path, modifier, .. }) = b {
-                        if matches!(modifier, TraitBoundModifier::None) {
-                            if let Some(seg) = path.segments.last() {
-                                return seg.ident == "Widget";
-                            }
-                        }
-                    }
-                    false
-                });
+        let Some(inner) = get_type_inner(ty, "Box") else { return false };
+        let Type::TraitObject(TypeTraitObject { bounds, .. }) = inner else { return false };
+
+        bounds.iter().any(|b| {
+            let syn::TypeParamBound::Trait(TraitBound { path, modifier, .. }) = b else { return false };
+
+            if !matches!(modifier, TraitBoundModifier::None) {
+                return false;
             }
-        }
-        // Check for generic type param bound like `T: Widget + 'static`
-        if let Type::Path(TypePath { path, .. }) = ty {
-            if path.segments.len() == 1 {
-                // Single-segment path — likely a generic type param, treat as widget-boxed
-                // if the field is annotated with dyn_iter (handled at call site)
-            }
-        }
-        false
+            let Some(seg) = path.segments.last() else { return false };
+            seg.ident == "Widget"
+        })
     }
 
     /// Returns true if the type is a single-segment path (i.e., a generic type param like `T`),
     /// which indicates `Vec<T>` where `T: Widget + 'static` — items should not be wrapped in `Box::new`.
+    #[allow(dead_code)]
     pub fn is_generic_widget_param(ty: &Type) -> bool {
-        if let Type::Path(TypePath { qself: None, path }) = ty {
-            path.leading_colon.is_none() && path.segments.len() == 1
-        } else {
-            false
-        }
+        if let Type::Path(TypePath { qself: _, path }) = ty { path.leading_colon.is_none() && path.segments.len() == 1 } else { false }
     }
 
     pub fn is_option(&self) -> bool {
@@ -187,7 +174,7 @@ fn get_option_inner(ty: &Type) -> Option<&Type> {
     }
     None
 }
-#[allow(clippy::collapsible_if)]
+#[allow(clippy::collapsible_if, dead_code)]
 fn get_box_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(TypePath { path, .. }) = ty {
         if let Some(segment) = path.segments.last() {
@@ -202,8 +189,6 @@ fn get_box_inner(ty: &Type) -> Option<&Type> {
     }
     None
 }
-
-
 
 fn get_type_inner<'a>(ty: &'a Type, name: &str) -> Option<&'a Type> {
     #[allow(clippy::collapsible_if)]
@@ -220,7 +205,7 @@ fn get_type_inner<'a>(ty: &'a Type, name: &str) -> Option<&'a Type> {
     }
     None
 }
-#[allow(clippy::collapsible_if)]
+#[allow(clippy::collapsible_if,dead_code)]
 fn get_arc_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(TypePath { path, .. }) = ty {
         if let Some(segment) = path.segments.last() {
@@ -235,7 +220,7 @@ fn get_arc_inner(ty: &Type) -> Option<&Type> {
     }
     None
 }
-#[allow(clippy::collapsible_if)]
+#[allow(clippy::collapsible_if,dead_code)]
 fn get_rc_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(TypePath { path, .. }) = ty {
         if let Some(segment) = path.segments.last() {
@@ -250,7 +235,7 @@ fn get_rc_inner(ty: &Type) -> Option<&Type> {
     }
     None
 }
-#[allow(clippy::collapsible_if)]
+#[allow(clippy::collapsible_if,dead_code)]
 fn get_refcell_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(TypePath { path, .. }) = ty {
         if let Some(segment) = path.segments.last() {

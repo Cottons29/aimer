@@ -40,11 +40,7 @@ pub fn create_pipeline_cache(device: &wgpu::Device) -> Option<wgpu::PipelineCach
 
     let data = load_cache_data();
 
-    let descriptor = wgpu::PipelineCacheDescriptor {
-        label: Some("aimer pipeline cache"),
-        data: data.as_deref(),
-        fallback: true,
-    };
+    let descriptor = wgpu::PipelineCacheDescriptor { label: Some("aimer pipeline cache"), data: data.as_deref(), fallback: true };
 
     // SAFETY: If `data` is Some, it was previously returned from `PipelineCache::get_data`.
     let cache = unsafe { device.create_pipeline_cache(&descriptor) };

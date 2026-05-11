@@ -26,7 +26,7 @@ impl Widget for Text {
             text_style: self.text_style.clone(),
             text_align: self.text_align,
             cache: LayoutCache::new(),
-            typeface: Mutex::new(None),
+            _typeface: Mutex::new(None),
         })
     }
 }

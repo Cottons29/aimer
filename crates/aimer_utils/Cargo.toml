@@ -9,3 +9,7 @@ colored.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = {workspace = true}
+
+
+[dependencies]
+chrono.workspace = true

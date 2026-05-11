@@ -18,7 +18,7 @@ use std::rc::Rc;
 ///
 /// # Required Methods
 /// - `get(&self) -> &Option<RawInnerCallback<Self::Args, Self::Output>>`:
-/// Returns a reference to the optional callback function.
+///   Returns a reference to the optional callback function.
 ///
 /// # Example
 /// ```rust
@@ -95,7 +95,7 @@ impl<Args, Return> Debug for Callback<Args, Return> {
 
 impl<Args, Return, F: Fn(Args) -> Return + 'static> From<F> for Callback<Args, Return> {
     fn from(f: F) -> Self {
-        Self { inner: CallbackInner::from(move |args| f(args)) }
+        Self { inner: CallbackInner::from(f) }
     }
 }
 
@@ -117,7 +117,9 @@ impl<P, R> CallbackExecutor for Callback<P, R> {
     }
 }
 
-///
+pub type VoidParamedFunction<R> = Callback<R, ()>;
+
+
 /// A struct representing a callback with no input and no output (void callback).
 ///
 /// `VoidCallback` is a wrapper around `CallbackInner<(), ()>` that provides

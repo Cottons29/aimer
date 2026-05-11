@@ -5,7 +5,7 @@ use aimer_attribute::CacheBounds;
 use aimer_widget::{Element, LayoutCache, Widget, base::*, WidgetConstructor};
 use crate::callback::VoidCallback;
 use crate::gesture::gesture_detector::GestureDetector;
-use crate::gesture::{CallbackInner, GestureActions};
+use crate::gesture::{ GestureActions};
 
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]

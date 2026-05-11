@@ -1,6 +1,5 @@
 use crate::position::Vec2d;
-use crate::size::{ResolvedSize, Size};
-use std::cell::Cell;
+use crate::size::ResolvedSize;
 use std::ops::{Div, Mul};
 
 ///
@@ -53,7 +52,7 @@ impl Default for Dimension {
 
 impl From<f32> for Dimension {
     fn from(v: f32) -> Self {
-        Self::Px(v as f32)
+        Self::Px(v)
     }
 }
 
@@ -118,6 +117,7 @@ pub struct CacheBounds {
 }
 
 impl CacheBounds {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self { bound: None }
     }
@@ -156,10 +156,10 @@ impl CacheBounds {
     }
 
     pub const fn save(&self, scale: f32, x: f32, y: f32, width: f32, height: f32) {
-        let cache_x = x as f32 / scale;
-        let cache_y = y as f32 / scale;
-        let cache_w = width as f32 / scale;
-        let cache_h = height as f32 / scale;
+        let cache_x = x / scale;
+        let cache_y = y / scale;
+        let cache_w = width / scale;
+        let cache_h = height / scale;
         let bound = Bounds::new(cache_x, cache_y, cache_w, cache_h);
         self.set_bounds(bound);
     }
