@@ -3,6 +3,11 @@ name = "aimer"
 version = "0.1.0"
 edition = "2024"
 description = "The organized export of other Aimer project"
+repository = "https://github.com/Cottons29/aimer"
+license = "MIT"
+readme = "README.md"
+keywords = ["gui", "rust"]
+categories = ["development-tools", "gui"]
 
 
 [dependencies]
@@ -108,7 +113,6 @@ unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.12.0"
 image = { version = "0.25.10" }
 font-kit = "0.14"
-cosmic-text = "0.12.1"
 core-foundation-sys = "0.8.7"
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "native-tls", "http2"] }
 openssl = { version = "0.10", features = ["vendored"] }

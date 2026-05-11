@@ -1,6 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
+pub use aimer_cupid::text_pipeline::TextOverflowMode;
 pub use aimer_cupid::canvas::TextMetrics;
 mod native_impl;
 
@@ -35,6 +36,17 @@ pub trait CanvasRendering: Clone {
     fn save(&self);
     fn restore(&self);
     fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color);
+    fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32);
+    fn draw_text_with_overflow(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+    );
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize);
     fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)>;
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize);
@@ -253,6 +265,30 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color) {
         CanvasRendering::draw_text(self.inner, text, pos, font_size, color);
+    }
+
+    /// Draws wrapped text constrained to `max_width`.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32) {
+        CanvasRendering::draw_text_wrapped(self.inner, text, pos, font_size, color, max_width);
+    }
+
+    /// Draws text with explicit bounds and overflow behavior.
+    #[allow(dead_code)]
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_with_overflow(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+    ) {
+        CanvasRendering::draw_text_with_overflow(self.inner, text, pos, font_size, color, bounds_width, bounds_height, overflow);
     }
 
     /// Draws an image identified by `image_id` at the specified position and size.
