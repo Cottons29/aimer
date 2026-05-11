@@ -45,7 +45,7 @@ impl Curve {
         }
     }
 }
-
+#[allow(clippy::derivable_impls)]
 impl Default for Curve {
     fn default() -> Self {
         Curve::Linear

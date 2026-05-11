@@ -6,19 +6,20 @@
 //! sends the JSON snapshot to the CLI server.
 
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::module_inception)]
 pub mod server {
-    use crate::{InspectorClient, InspectorMessage, InspectorState};
+    use crate::{InspectorMessage, InspectorState};
+    use aimer_widget::Element;
     use futures_util::{SinkExt, StreamExt};
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::IpAddr;
     use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, Ordering}, Arc,
+        Mutex,
     };
     use tokio::net::TcpListener;
     use tokio::sync::broadcast;
     use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::tungstenite::Utf8Bytes;
-    use aimer_widget::Element;
 
     /// Shared inspector state accessible from the CLI server.
     #[derive(Clone)]
@@ -145,8 +146,7 @@ pub mod server {
                         inspector_port_draft += 1;
                         retry_count += 1;
                         if retry_count > 20 {
-                            // error!("Failed to bind to port after 20 retries, giving up");
-                            break Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to bind to port after 20 retries"));
+                            break Err(std::io::Error::other("Failed to bind to port after 20 retries"));
                         }
                         continue;
                     }
@@ -214,7 +214,10 @@ pub mod server {
                                                     s.hovered_widget_id = id;
                                                 }
                                             }
-                                        } else if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(&text) {
+                                        } else {
+                                            let Ok(cmd) = serde_json::from_str::<serde_json::Value>(&text) else {
+                                                continue;
+                                            };
                                             if cmd.get("type").and_then(|v| v.as_str()) == Some("toggle") {
                                                 let new_val = !enabled_server.load(Ordering::Relaxed);
                                                 enabled_server.store(new_val, Ordering::Relaxed);
@@ -346,14 +349,9 @@ pub mod server {
                             incoming = read.next() => {
                                 match incoming {
                                     Some(Ok(Message::Text(text))) => {
-                                        if let Ok(msg) = serde_json::from_str::<InspectorMessage>(&text) {
-                                            match msg {
-                                                InspectorMessage::Status { enabled } => {
-                                                    enabled_bg.store(enabled, Ordering::Relaxed);
-                                                    aimer_widget::inspector_overlay::set_enabled(enabled);
-                                                }
-                                                _ => {}
-                                            }
+                                        let Ok(msg) = serde_json::from_str::<InspectorMessage>(&text) else {continue};
+                                        if let InspectorMessage::Status { enabled } =  msg {
+                                            enabled_bg.store(enabled, Ordering::Relaxed);aimer_widget::inspector_overlay::set_enabled(enabled);
                                         }
                                     }
                                     Some(Ok(Message::Close(_))) | None => break,
@@ -375,16 +373,16 @@ pub mod server {
 #[cfg(target_arch = "wasm32")]
 pub mod server {
     use crate::{InspectorMessage, WidgetNode};
+    use aimer_widget::{inspector_overlay, Element};
     use serde::{Deserialize, Serialize};
     use std::cell::RefCell;
     use std::sync::{
-        Arc,
         atomic::{AtomicBool, Ordering},
+        Arc,
     };
-    use wasm_bindgen::JsCast;
     use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsCast;
     use web_sys::{MessageEvent, WebSocket};
-    use aimer_widget::{inspector_overlay, Element};
 
     #[derive(Clone)]
     pub struct InspectorHandle {

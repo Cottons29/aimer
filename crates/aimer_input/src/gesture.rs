@@ -1,4 +1,4 @@
-use crate::callback::{RawInnerCallback, CallbackInner, VoidCallback, CallbackExecutor};
+use crate::callback::{RawInnerCallback, VoidCallback, CallbackExecutor};
 use aimer_animation::time::AnimInstant;
 use aimer_events::pointer::{PointerEvent, PointerPosition};
 use std::time::Duration;
@@ -274,7 +274,7 @@ mod tests {
         gesture.handle_pointer_event(&PointerEvent::Down(pos));
 
         // Wait for long press duration
-        std::thread::sleep(std::time::Duration::from_millis(550));
+        std::thread::sleep(Duration::from_millis(550));
 
         gesture.handle_pointer_event(&PointerEvent::Up(pos));
 

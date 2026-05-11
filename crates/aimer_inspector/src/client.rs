@@ -1,11 +1,7 @@
-
-use std::error::Error;
-use std::net::TcpListener;
+use crate::{InspectorMessage, InspectorState, WidgetNode};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tungstenite::Message;
-use serde::{Deserialize, Serialize};
-use crate::{InspectorMessage, InspectorState, WidgetNode};
 
 /// Handle to the inspector background thread and shared state.
 pub struct InspectorClient {

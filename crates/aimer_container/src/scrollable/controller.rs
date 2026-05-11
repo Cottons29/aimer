@@ -67,7 +67,7 @@ impl ScrollController {
         let max_y = -max.y;
 
         if self.scroll_behavior.bouncy {
-            let resistance = self.scroll_behavior.bouncy_resistance as f32;
+            let resistance = self.scroll_behavior.bouncy_resistance;
 
             (
                 Self::apply_bouncy(offset.x, max_x, min_x, resistance),

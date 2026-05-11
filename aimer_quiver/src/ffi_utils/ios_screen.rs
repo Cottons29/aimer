@@ -7,7 +7,7 @@ use objc::msg_send;
 use objc::sel;
 
 use objc::sel_impl;
-use utils::info;
+use aimer_utils::info;
 
 pub fn get_screen_resolution_pixels() -> Option<(f64, f64)> {
     let screen_class = Class::get("UIScreen")?;

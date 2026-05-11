@@ -172,6 +172,7 @@ fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream,
         quote! {
             impl #impl_generics #name #ty_generics #where_clause {
                 #[doc(hidden)]
+                #[allow(clippy::too_many_arguments, dead_code)]
                 pub fn create_new(#(#public_params),*) -> Box<dyn aimer_widget::Widget> {
                     Box::new(aimer_widget::NamedWidget::new(Box::new(Self {
                         #(#public_assigns,)*
@@ -184,6 +185,7 @@ fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream,
         quote! {
             impl #impl_generics #name #ty_generics #where_clause {
                 #[doc(hidden)]
+                #[allow(clippy::too_many_arguments, dead_code)]
                 pub fn create_new(#(#public_params),*) -> Self {
                     Self {
                         #(#public_assigns,)*
@@ -268,6 +270,7 @@ fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream,
             } else {
                 None
             };
+            #[allow(clippy::unnecessary_map_or)]
             let skip_box_wrap = target.dyn_iter || vec_inner_ty.as_ref().map_or(false, |inner| {
                 if let AutoWrapper::Terminal(ty) = inner.as_ref() {
                     AutoWrapper::is_widget_boxed(ty) || AutoWrapper::is_generic_widget_param(ty)

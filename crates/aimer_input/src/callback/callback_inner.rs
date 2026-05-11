@@ -2,10 +2,12 @@ use std::cell::UnsafeCell;
 use std::pin::Pin;
 use std::rc::Rc;
 
+type BoxedFuture<P, R> = Box<dyn Fn(P) -> Pin<Box<dyn Future<Output = R> + Send>> + Send>;
+
 /// A callback that can be either synchronous or asynchronous.
 pub enum RawInnerCallback<P, R> {
     Sync(Box<dyn Fn(P) -> R>),
-    Async(Box<dyn Fn(P) -> Pin<Box<dyn Future<Output = R> + Send>> + Send>),
+    Async(BoxedFuture<P, R>),
 }
 
 impl<P, R> std::fmt::Debug for RawInnerCallback<P, R> {

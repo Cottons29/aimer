@@ -1,6 +1,5 @@
 use std::cell::UnsafeCell;
 use std::sync::Arc;
-use aimer_utils::debug;
 ///
 /// A controller for managing and interacting with a text field's content.
 ///
@@ -39,6 +38,12 @@ impl Clone for TextFieldController {
 //     }
 // }
 
+impl Default for TextFieldController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TextFieldController {
     ///
     /// Creates a new instance of the TextFieldController.
@@ -58,6 +63,7 @@ impl TextFieldController {
     /// let controller = TextFieldController::new();
     /// ```
     ///
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Self {
         Self { text: Arc::new(UnsafeCell::new(String::new())) }
     }
@@ -83,6 +89,7 @@ impl TextFieldController {
     /// assert_eq!(instance.text(), "Hello, world!");
     /// ```
     ///
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn with_initial(text: impl Into<String>) -> Self {
         Self { text: Arc::new(UnsafeCell::new(text.into())) }
     }
@@ -164,9 +171,11 @@ impl TextFieldController {
     /// text.push_str("Hello, world!");
     /// assert_eq!(my_object.text(), "Hello, world!")
     /// ```
-    ///
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn text_mut(&self) -> &mut String {
-        unsafe { &mut *self.text.get() }
+        unsafe {
+            &mut *self.text.get()
+        }
     }
 
     ///
@@ -231,6 +240,8 @@ impl TextFieldController {
     /// assert_eq!(editor.text(), " h🌟ello!");
     /// ```
     ///
+    /// # Safety
+    /// be careful about the index out of bounds or invalid utf-8 char.
     pub unsafe fn insert_char(&self, ch: impl Into<char>, offset: usize) {
         let s = unsafe { self.text_mut() };
         let byte_offset = s
@@ -247,7 +258,7 @@ impl TextFieldController {
     /// # Arguments
     ///
     /// * `offset` - The character index (0-based) at which the character should be removed.
-    ///              This is based on character (not byte) indices in the string.
+    ///   This is based on character (not byte) indices in the string.
     ///
     /// # Behavior
     ///

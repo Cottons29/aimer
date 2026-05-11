@@ -4,7 +4,6 @@ use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 use aimer_cupid::canvas::CupidCanvas;
 use aimer_cupid::utilities::Color as CupidColor;
-use aimer_utils::debug;
 
 #[allow(dead_code)]
 impl CanvasRendering for CupidCanvas {
@@ -122,6 +121,11 @@ impl CanvasRendering for CupidCanvas {
     #[inline]
     fn measure_text(&self, text: &str, font_size: f32) -> f32 {
         CupidCanvas::measure_text(self, text, font_size)
+    }
+
+    #[inline]
+    fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> crate::canvas::TextMetrics {
+        CupidCanvas::measure_text_metrics(self, text, font_size, max_width)
     }
 
     #[inline]

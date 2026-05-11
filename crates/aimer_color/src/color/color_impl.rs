@@ -1,4 +1,4 @@
-use crate::color::{Colors, Color, color_trait::ColorMixer};
+use crate::color::{color_trait::ColorMixer, Color};
 
 impl ColorMixer for Color {
     fn to_u32(&self) -> u32 {

@@ -1,5 +1,4 @@
 use crate::base::BuildContext;
-use crate::Element;
 
 pub trait Drawable {
     fn draw(&self, ctx: &BuildContext);

@@ -1,6 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
+pub use aimer_cupid::canvas::TextMetrics;
 mod native_impl;
 
 pub trait CanvasRendering: Clone {
@@ -40,6 +41,7 @@ pub trait CanvasRendering: Clone {
     fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: [f32; 4]);
     fn clear_clip(&self);
     fn measure_text(&self, text: &str, font_size: f32) -> f32;
+    fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics;
     fn stroke_rect(&self, pos: Vec2d, size: ResolvedSize, stroke_color: Color, stroke_width: f32, border_radius: [f32; 4]);
     /// Draws a stroked rectangle with per-corner radii and per-side widths.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
@@ -52,6 +54,7 @@ pub trait CanvasRendering: Clone {
         stroke_width: [f32; 4],
         border_radius: [f32; 4],
     );
+    #[allow(clippy::too_many_arguments)]
     /// Draws a filled rectangle with border and outline in a single pass.
     fn fill_rect_with_border_and_outline(
         &self,
@@ -64,6 +67,7 @@ pub trait CanvasRendering: Clone {
         outline_width: f32,
         outline_color: Color,
     );
+    #[allow(clippy::too_many_arguments)]
     /// Draws a filled rectangle with border and outline with per-corner/per-side control.
     fn fill_rect_with_border_and_outline_per_side(
         &self,
@@ -76,10 +80,12 @@ pub trait CanvasRendering: Clone {
         outline_width: [f32; 4],
         outline_color: Color,
     );
+
     fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
     /// Draws a filled rectangle with per-corner border radii.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
     fn fill_color_rect_per_corner(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
+    #[allow(clippy::too_many_arguments)]
     fn draw_shadow_rect(
         &self,
         pos: Vec2d,
@@ -308,6 +314,13 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::measure_text(self.inner, text, font_size)
     }
 
+    /// Measures paragraph text metrics at the given font size and optional max width.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics {
+        CanvasRendering::measure_text_metrics(self.inner, text, font_size, max_width)
+    }
+
     /// Draws a stroked (outline-only) rectangle.
     #[allow(dead_code)]
     #[inline]
@@ -360,7 +373,7 @@ impl<'a> AimerCanvas<'a> {
     }
 
     /// Draws a filled rectangle with border and outline in a single pass (no gap).
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     #[inline]
     pub fn fill_rect_with_border_and_outline(
         &self,
@@ -387,7 +400,7 @@ impl<'a> AimerCanvas<'a> {
     }
 
     /// Draws a filled rectangle with border and outline with per-corner/per-side control.
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     #[inline]
     pub fn fill_rect_with_border_and_outline_per_side(
         &self,
@@ -414,7 +427,7 @@ impl<'a> AimerCanvas<'a> {
     }
 
     /// Draws a shadow rectangle using GPU-accelerated SDF shadow rendering.
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     #[inline]
     pub fn draw_shadow_rect(
         &self,

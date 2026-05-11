@@ -3,6 +3,7 @@ use aimer_macro::WidgetConstructor;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, Widget};
 
+#[allow(dead_code)]
 #[derive(WidgetConstructor)]
 pub struct AspectRatio<W: Widget + 'static> {
     #[constructor(default, into)]

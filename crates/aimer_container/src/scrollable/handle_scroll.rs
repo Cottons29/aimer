@@ -1,24 +1,24 @@
-use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
+use crate::ScrollAxis;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use chrono::Utc;
 use aimer_events::element::ElementEvent;
-use aimer_utils::debug;
-use aimer_widget::Element;
 use aimer_widget::base::BuildContext;
+use aimer_widget::Element;
+use chrono::Utc;
 
 impl<E: Element> Element for RawScrollableContainer<E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
         if let Some(cursor_pos) = event.get_pointer_pos() {
             self.ctrl.cursor_pos.set(Some(cursor_pos));
         }
+        let Some(cursor) = self.ctrl.cursor_pos.get() else {
+            return false;
+        };
 
-        if let Some(cursor) = self.ctrl.cursor_pos.get() {
-            if !self.bounds.is_inside(cursor.x, cursor.y) {
-                self.ctrl.drag_mode.set(DragMode::None);
-                return false;
-            }
+        if !self.bounds.is_inside(cursor.x, cursor.y) {
+            self.ctrl.drag_mode.set(DragMode::None);
+            return false;
         }
 
         let pos = match event {
@@ -36,7 +36,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
         }
 
         let we_consumed = match event {
-            ElementEvent::Scroll{delta, phase} => {
+            ElementEvent::Scroll{delta, ..} => {
                 let mut offset = self.ctrl.scroll_offset.get();
                 let clamped = self.ctrl.clamp_offset(offset);
 
@@ -48,7 +48,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                 if self.ctrl.scroll_behavior.bouncy {
                     match self.ctrl.axis {
                         ScrollAxis::Vertical => {
-                            if offset.y > clamped.y || offset.y < clamped.y {
+                            if offset.y != clamped.y {
                                 let oob_dist = (offset.y - clamped.y).abs();
                                 let viewport_h = self.ctrl.cached_max_scroll.get().y.max(100.0);
                                 let resistance = (1.0 - (oob_dist / viewport_h).min(0.75)).powi(2) * 0.3;
@@ -56,7 +56,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                             }
                         }
                         ScrollAxis::Horizontal => {
-                            if offset.x > clamped.x || offset.x < clamped.x {
+                            if offset.x != clamped.x {
                                 let oob_dist = (offset.x - clamped.x).abs();
                                 let viewport_w = self.ctrl.cached_max_scroll.get().x.max(100.0);
                                 let resistance = (1.0 - (oob_dist / viewport_w).min(0.75)).powi(2) * 0.3;
@@ -142,8 +142,8 @@ impl<E: Element> Element for RawScrollableContainer<E> {
             }
             ElementEvent::PointerMove(p) => {
                 let mut mode = self.ctrl.drag_mode.get();
-
-                if mode == DragMode::Pending {
+                #[allow(clippy::collapsible_if)]
+                if mode  == DragMode::Pending {
                     if let Some(start) = self.ctrl.last_pointer_pos.get() {
                         let dx = p.x - start.x;
                         let dy = p.y - start.y;
@@ -234,7 +234,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                                 ScrollAxis::Vertical => {
                                     let mut actual_dy = dy;
 
-                                    if offset.y > clamped.y || offset.y < clamped.y {
+                                    if offset.y != clamped.y {
                                         let oob_dist = (offset.y - clamped.y).abs();
 
                                         let viewport_h = self.ctrl.cached_max_scroll.get().y.max(100.0);
@@ -245,7 +245,7 @@ impl<E: Element> Element for RawScrollableContainer<E> {
                                 }
                                 ScrollAxis::Horizontal => {
                                     let mut actual_dx = dx;
-                                    if offset.x > clamped.x || offset.x < clamped.x {
+                                    if offset.x != clamped.x {
                                         let oob_dist = (offset.x - clamped.x).abs();
                                         let viewport_w = self.ctrl.cached_max_scroll.get().x.max(100.0);
                                         let resistance = (1.0 - (oob_dist / viewport_w).min(0.75)).powi(2) * 0.3;

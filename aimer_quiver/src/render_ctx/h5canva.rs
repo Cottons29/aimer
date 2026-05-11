@@ -1,14 +1,16 @@
 #[cfg(target_arch = "wasm32")]
 pub mod render_ctx {
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use crate::aimer_app::{AimerCustomAppEvent, EVENT_PROXY};
     use aimer_cupid::canvas::CupidCanvas;
     use aimer_cupid::gpu_context::GpuContext;
     use aimer_cupid::renderer::Renderer;
+    use aimer_utils::info;
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use winit::dpi::PhysicalSize;
+    use winit::event_loop::EventLoop;
     use winit::platform::web::WindowExtWebSys;
     use winit::window::Window;
-    use aimer_utils::info;
 
     struct GpuState {
         gpu: GpuContext<'static>,
@@ -22,9 +24,7 @@ pub mod render_ctx {
 
     impl Default for H5CanvasApi {
         fn default() -> Self {
-            Self {
-                state: Rc::new(RefCell::new(None)),
-            }
+            Self { state: Rc::new(RefCell::new(None)) }
         }
     }
 
@@ -70,14 +70,11 @@ pub mod render_ctx {
             };
 
             let frame = match state.gpu.begin_frame() {
-                wgpu::CurrentSurfaceTexture::Success(texture)
-                | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+                wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
                 _ => return false,
             };
 
-            let view = frame
-                .texture
-                .create_view(&Default::default());
+            let view = frame.texture.create_view(&Default::default());
 
             let width = state.gpu.width();
             let height = state.gpu.height();
@@ -86,10 +83,17 @@ pub mod render_ctx {
             draw_fn(&state.canvas, width, height);
 
             let draw_list = state.canvas.draw_list();
-            state.renderer.render(
-                &state.gpu.device, &state.gpu.queue, &view,
-                width, height, state.gpu.is_srgb, &draw_list,
-            );
+            state
+                .renderer
+                .render(&state.gpu.device, &state.gpu.queue, &view, width, height, state.gpu.is_srgb, &draw_list, || {
+                    let Some(event_proxy) = EVENT_PROXY.get() else {
+                        return;
+                    };
+                    match event_proxy.send_event(AimerCustomAppEvent::FrameReady) {
+                        Ok(()) => {}
+                        Err(e) => info!("Error sending frame ready event: {}", e),
+                    }
+                });
 
             state.gpu.end_frame(frame);
             true

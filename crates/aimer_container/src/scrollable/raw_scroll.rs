@@ -1,6 +1,5 @@
 use crate::scrollable::controller::ScrollController;
 use crate::scrollable::scroll_bar::ScrollBar;
-use aimer_canvas::CanvasRendering;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
@@ -74,12 +73,12 @@ impl<E: Element> RawScrollableContainer<E> {
             let up_h = scroll_bar
                 .up_button
                 .as_ref()
-                .map(|b| resolve_btn_h(b))
+                .map(&resolve_btn_h)
                 .unwrap_or(0.0);
             let down_h = scroll_bar
                 .down_button
                 .as_ref()
-                .map(|b| resolve_btn_h(b))
+                .map(resolve_btn_h)
                 .unwrap_or(0.0);
             (up_h, down_h)
         } else {
@@ -93,12 +92,12 @@ impl<E: Element> RawScrollableContainer<E> {
             let left_w = scroll_bar
                 .up_button
                 .as_ref()
-                .map(|b| resolve_btn_w(b))
+                .map(&resolve_btn_w)
                 .unwrap_or(0.0);
             let right_w = scroll_bar
                 .down_button
                 .as_ref()
-                .map(|b| resolve_btn_w(b))
+                .map(resolve_btn_w)
                 .unwrap_or(0.0);
             (left_w, right_w)
         };
@@ -194,7 +193,7 @@ impl<E: Element> RawScrollableContainer<E> {
             Vec2d { x: tx, y: ty },
             ResolvedSize { width: tw, height: th },
             thumb_color,
-            [thumb_radius as f32; 4],
+            [thumb_radius; 4],
         );
 
         ctx.canvas.restore();

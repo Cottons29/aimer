@@ -12,15 +12,14 @@ use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_inspector::{InspectorHandle, InspectorOverlay};
-#[cfg(not(target_arch = "wasm32"))]
-use aimer_inspector::InspectorServer;
+use aimer_attribute::BoxConstraint;
+use aimer_inspector::InspectorOverlay;
+use aimer_utils::debug;
+use aimer_widget::base::BuildContext;
+use aimer_widget::{Element, Widget};
 use std::cell::Cell;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
-use aimer_utils::{debug, info};
-use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, Widget};
 use winit::application::ApplicationHandler;
 #[allow(unused)]
 use winit::dpi::{LogicalSize, PhysicalSize, Position};
@@ -30,7 +29,6 @@ use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
 #[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
-use aimer_attribute::BoxConstraint;
 
 /// Walk the snapshot tree and find a node matching the hovered widget by name and bounds.
 #[cfg(debug_assertions)]
@@ -52,17 +50,6 @@ fn find_hovered_node(node: &aimer_inspector::WidgetNode, name: &str, start: Vec2
         }
     }
     None
-}
-
-fn frame_time (func: impl FnOnce() -> ())  {
-    let start = chrono::Utc::now().timestamp_micros();
-    func();
-    let end = chrono::Utc::now().timestamp_micros();
-    let duration = end - start;
-    if duration == 0 {
-        return;
-    }
-    info!("FPS: {} | Frame time: {} ns", 1_000_000 / duration, duration);
 }
 
 pub struct AimerApplicationHandler {
@@ -335,14 +322,14 @@ impl AimerApplicationHandler {
             }
         };
 
-        let rendered = self.render_ctx.render_frame(draw_widgets);
+        if !self.render_ctx.render_frame(draw_widgets) {
+            return;
+        }
 
         // If the GPU context isn't ready yet (e.g. async init on WASM),
         // request another redraw so we retry once it's available.
-        if !rendered {
-            if let Some(window) = self.window {
-                window.request_redraw();
-            }
+        if let Some(window) = self.window {
+            window.request_redraw();
         }
 
         #[cfg(debug_assertions)]

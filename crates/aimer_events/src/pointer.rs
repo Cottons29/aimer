@@ -1,5 +1,3 @@
-use winit::event::{ElementState, MouseButton, Touch, TouchPhase, WindowEvent};
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PointerPosition {
     pub x: f32,

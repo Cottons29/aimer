@@ -80,6 +80,7 @@ pub struct RawBoxBorder {
 }
 
 impl RawBoxBorder {
+    #[allow(dead_code)]
     pub(crate) fn new(
         left: BorderSlice,
         right: BorderSlice,
@@ -94,7 +95,7 @@ impl RawBoxBorder {
 
 impl BoxBorder {
     pub fn all(border: BorderSlice) -> Self {
-        Self { left: border, right: border, top: border, bottom: border, ..Default::default() }
+        Self { left: border, right: border, top: border, bottom: border }
     }
 
     /// Returns the resolved border stroke for each side: (left, top, right, bottom).
@@ -127,7 +128,7 @@ impl BoxBorder {
 
 impl BoxOutline {
     pub fn all(border: BorderSlice) -> Self {
-        Self { left: border, right: border, top: border, bottom: border, ..Default::default() }
+        Self { left: border, right: border, top: border, bottom: border }
     }
 
     /// Returns true if any side has a non-None style and non-zero stroke.

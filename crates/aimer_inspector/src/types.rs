@@ -1,4 +1,3 @@
-use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 /// Mirror of the engine's WidgetNode for deserialisation.

@@ -23,10 +23,12 @@ impl RouterCodegen {
 
             // Extract routes and remove the attributes from the AST
             let mut new_attrs = Vec::new();
+            #[allow(clippy::collapsible_if)]
             for attr in &variant.attrs {
                 if attr.path().is_ident("route") {
                     if let Ok(meta) = attr.parse_args::<LitStr>() {
                         routes.push(meta.value());
+
                     } else if let Meta::NameValue(mnv) = &attr.meta {
                         if let Expr::Lit(expr_lit) = &mnv.value {
                             if let Lit::Str(lit_str) = &expr_lit.lit {

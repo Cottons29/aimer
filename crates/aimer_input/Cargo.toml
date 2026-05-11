@@ -13,6 +13,7 @@ aimer_canvas.workspace = true
 aimer_utils.workspace = true
 aimer_style.workspace = true
 aimer_animation.workspace = true
+unicode-segmentation.workspace = true
 #####################
 winit.workspace = true
 chrono.workspace = true

@@ -33,7 +33,7 @@ pub enum ShadowSide {
     /// The range is specified as (start_angle, end_angle).
     Range(f32, f32),
 }
-
+#[allow(clippy::derivable_impls)]
 impl Default for ShadowSide {
     fn default() -> Self {
         ShadowSide::All
@@ -43,11 +43,11 @@ impl Default for ShadowSide {
 impl ShadowSide {
     /// Encodes the side as two f32 values for the GPU shader.
     /// Returns (side_type, side_param):
-    /// - side_type: 0.0 = All, 1.0 = Top, 2.0 = Right, 3.0 = Bottom, 4.0 = Left,
-    ///              5.0 = Vertical, 6.0 = Horizontal, 7.0 = Range,
-    ///              8.0 = TopLeft, 9.0 = TopRight, 10.0 = BottomRight, 11.0 = BottomLeft
-    /// - side_param: unused for most variants; for Range, encodes start angle
-    /// - side_param2: unused for most variants; for Range, encodes end angle
+    /// - Side_type: 0.0 = All, 1.0 = Top, 2.0 = Right, 3.0 = Bottom, 4.0 = Left,
+    ///   5.0 = Vertical, 6.0 = Horizontal, 7.0 = Range,
+    ///   8.0 = TopLeft, 9.0 = TopRight, 10.0 = BottomRight, 11.0 = BottomLeft
+    /// - Side_param: unused for most variants; for Range, encodes start angle
+    /// - Side_param2: unused for most variants; for Range, encodes end angle
     pub fn to_shader_params(&self) -> (f32, f32, f32) {
         match self {
             ShadowSide::All => (0.0, 0.0, 0.0),

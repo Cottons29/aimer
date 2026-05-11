@@ -58,23 +58,26 @@ impl<'w> GpuContext<'w> {
             .create_surface(window)
             .expect("failed to create surface");
 
-        let adapter = match instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }).await {
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+        {
             Ok(adapter) => adapter,
-            Err(_) => {
-                instance.request_adapter(&wgpu::RequestAdapterOptions {
+            Err(_) => instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::default(),
                     compatible_surface: Some(&surface),
                     force_fallback_adapter: true,
-                }).await
+                })
+                .await
                 .map_err(|e| {
                     error!("Failed to find a suitable adapter: {}", e);
                 })
-                .unwrap()
-            }
+                .unwrap(),
         };
 
         info!("Creating the gpu device");
@@ -100,12 +103,15 @@ impl<'w> GpuContext<'w> {
             features |= wgpu::Features::PIPELINE_CACHE;
         }
 
-        let (device, queue) = match adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("cupid gpu renderer device"),
-            required_features: features,
-            required_limits: limit,
-            ..Default::default()
-        }).await {
+        let (device, queue) = match adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("cupid gpu renderer device"),
+                required_features: features,
+                required_limits: limit,
+                ..Default::default()
+            })
+            .await
+        {
             Ok((device, queue)) => (device, queue),
             Err(e) => {
                 error!("Failed to create device: {}", e);

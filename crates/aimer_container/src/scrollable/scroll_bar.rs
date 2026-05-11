@@ -1,6 +1,5 @@
 use aimer_attribute::dimension::Dimension;
 use aimer_widget::base::Colors;
-use aimer_widget::Widget;
 
 
 #[derive(Clone)]
@@ -51,21 +50,10 @@ pub struct ScrollButton {
     pub active_color: Colors,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ScrollBar {
     pub track: ScrollTrack,
     pub thumb: ScrollThumb,
     pub up_button: Option<ScrollButton>,
     pub down_button: Option<ScrollButton>,
-}
-
-impl Default for ScrollBar {
-    fn default() -> Self {
-        Self {
-            track: ScrollTrack::default(),
-            thumb: ScrollThumb::default(),
-            up_button: None,
-            down_button: None,
-        }
-    }
 }

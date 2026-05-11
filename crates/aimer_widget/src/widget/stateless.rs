@@ -62,10 +62,9 @@ impl Drawable for StatelessElement {
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
-                    if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
-                        *hovered = Some((self.debug_name, l_start, l_end));
-                    }
+                if !(cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y)  {return;}
+                if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
+                    *hovered = Some((self.debug_name, l_start, l_end));
                 }
             }
         }

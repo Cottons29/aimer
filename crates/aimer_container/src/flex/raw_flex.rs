@@ -295,6 +295,7 @@ impl Drawable for RawFlex {
             }
 
             let mut is_visible = true;
+            #[allow(clippy::collapsible_if)]
             if let Some((vx, vy, vw, vh)) = ctx.visible_rect {
                 if (offset_x ) + (c_w ) < vx
                     || (offset_x ) > vx + vw

@@ -1,9 +1,8 @@
+use crate::utilities::TextureId;
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use wgpu::ShaderSource;
 use wgpu::util::DeviceExt;
-use aimer_utils::debug;
-use crate::utilities::TextureId;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -59,23 +58,15 @@ pub struct ImagePipeline {
 impl ImagePipeline {
     const INITIAL_CAPACITY: usize = 64;
 
-
-
     #[inline]
     const fn get_source() -> &'static str {
         #[cfg(target_os = "android")]
         {
-            concat!(
-                include_str!("./shaders/android_color.wgsl"),
-                include_str!("./shaders/image.wgsl")
-            )
+            concat!(include_str!("./shaders/android_color.wgsl"), include_str!("./shaders/image.wgsl"))
         }
         #[cfg(not(target_os = "android"))]
         {
-            concat!(
-                include_str!("./shaders/color.wgsl"),
-                include_str!("./shaders/image.wgsl")
-            )
+            concat!(include_str!("./shaders/color.wgsl"), include_str!("./shaders/image.wgsl"))
         }
     }
 
@@ -92,52 +83,43 @@ impl ImagePipeline {
             mapped_at_creation: false,
         });
 
-        let viewport_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("image viewport layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let viewport_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("image viewport layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                count: None,
+            }],
+        });
 
         let viewport_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("image viewport bind group"),
             layout: &viewport_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: viewport_buffer.as_entire_binding(),
-            }],
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: viewport_buffer.as_entire_binding() }],
         });
 
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("image texture layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
+        let texture_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("image texture layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("image pipeline layout"),
@@ -164,10 +146,7 @@ impl ImagePipeline {
                 })],
                 compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
@@ -204,14 +183,7 @@ impl ImagePipeline {
     }
 
     /// Upload RGBA8 image data and return a TextureId.
-    pub fn upload_image(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
-        data: &[u8],
-    ) -> TextureId {
+    pub fn upload_image(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32, data: &[u8]) -> TextureId {
         let id = self.next_id;
         self.next_id += 1;
         self.upload_image_with_id(device, queue, id, width, height, data);
@@ -243,16 +215,8 @@ impl ImagePipeline {
                         aspect: wgpu::TextureAspect::All,
                     },
                     data,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(4 * width),
-                        rows_per_image: Some(height),
-                    },
-                    wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
+                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * width), rows_per_image: Some(height) },
+                    wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
                 );
                 return;
             }
@@ -262,11 +226,7 @@ impl ImagePipeline {
             queue,
             &wgpu::TextureDescriptor {
                 label: Some("uploaded image"),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
+                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -283,21 +243,17 @@ impl ImagePipeline {
             label: Some("image bind group"),
             layout: &self.texture_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
             ],
         });
 
-        self.textures.insert(id, TextureEntry { bind_group, texture });
+        self.textures
+            .insert(id, TextureEntry { bind_group, texture });
     }
 
     /// Draw a batch of instances with the same texture_id.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_batch(
         &mut self,
         device: &wgpu::Device,
@@ -334,17 +290,9 @@ impl ImagePipeline {
         let is_srgb_f32 = 2.0_f32;
         #[cfg(not(target_os = "android"))]
         let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
-        queue.write_buffer(
-            &self.viewport_buffer,
-            0,
-            bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
-        );
+        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
 
-        queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(instances),
-        );
+        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);

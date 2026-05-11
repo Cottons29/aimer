@@ -243,7 +243,7 @@ pub struct StatefulElement {
     last_rebuilt_generation: AtomicU64,
     // #[cfg(debug_assertions)]
     pub debug_name: &'static str,
-    pub bounds: std::cell::Cell<Option<(crate::base::Vec2d, crate::base::Vec2d)>>,
+    pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
 }
 
 impl StatefulElement {
@@ -266,6 +266,7 @@ impl StatefulElement {
         let dirty = Arc::new(AtomicBool::new(false));
 
         // Create the channel for state mutations.
+        #[allow(clippy::type_complexity)]
         let (tx, rx): (Sender<StateMutation<W::State>>, Receiver<StateMutation<W::State>>) = unbounded();
 
         let state_cell = Arc::new(SyncState(UnsafeCell::new(state)));
@@ -371,15 +372,14 @@ impl Drawable for StatefulElement {
                 let end_y = start_y + size.height;
 
                 let scale = ctx.scale;
-                let l_start = crate::base::Vec2d { x: start_x / scale, y: start_y / scale };
-                let l_end = crate::base::Vec2d { x: end_x / scale, y: end_y / scale };
+                let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
+                let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
-                    if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
-                        *hovered = Some((self.debug_name, l_start, l_end));
-                    }
+                if !(cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y) {return;}
+                if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
+                    *hovered = Some((self.debug_name, l_start, l_end));
                 }
             }
         }
@@ -406,7 +406,7 @@ impl Element for StatefulElement {
                 ElementEvent::PointerDown(p) => *p,
                 ElementEvent::PointerUp(p) => *p,
                 ElementEvent::PointerMove(p) => *p,
-                ElementEvent::Scroll{delta, phase} => Vec2d::default(),
+                ElementEvent::Scroll{..} => Vec2d::default(),
                 ElementEvent::CharInput { .. } => Vec2d::default(),
                 ElementEvent::KeyInput { .. } => Vec2d::default(),
                 ElementEvent::Cancel => Vec2d::default(),

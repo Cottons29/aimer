@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use crate::time::AnimInstant;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_macro::{Constructor, WidgetConstructor};
+use aimer_macro::{ WidgetConstructor};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{Drawable, Element, Widget};
@@ -144,23 +144,23 @@ impl AnimatedElement {
         match self.effect {
             AnimationEffect::Opacity { from, to } => {
                 let alpha = AnimationEffect::lerp(from, to, t);
-                ctx.canvas.set_alpha(alpha as f32);
+                ctx.canvas.set_alpha(alpha);
             }
             AnimationEffect::Scale { from, to } => {
                 let scale = AnimationEffect::lerp(from, to, t);
                 let cx = ctx.box_constraint.max_width / 2.0;
                 let cy = ctx.box_constraint.max_height / 2.0;
                 ctx.canvas.translate((cx, cy).into());
-                ctx.canvas.scale(scale as f32, scale as f32);
+                ctx.canvas.scale(scale, scale);
                 ctx.canvas.translate((-cx, -cy).into());
             }
             AnimationEffect::Translate { from_x, from_y, to_x, to_y } => {
                 let dx = AnimationEffect::lerp(from_x, to_x, t);
                 let dy = AnimationEffect::lerp(from_y, to_y, t);
-                ctx.canvas.translate((dx as f32, dy as f32).into());
+                ctx.canvas.translate((dx, dy).into());
             }
             AnimationEffect::Rotate { from, to } => {
-                let angle = AnimationEffect::lerp(from, to, t) as f32;
+                let angle = AnimationEffect::lerp(from, to, t);
                 let cx = ctx.box_constraint.max_width / 2.0;
                 let cy = ctx.box_constraint.max_height / 2.0;
                 ctx.canvas.translate((cx, cy).into());
@@ -169,7 +169,7 @@ impl AnimatedElement {
             }
             AnimationEffect::SlideX { from, to } => {
                 let offset = AnimationEffect::lerp(from, to, t);
-                let dx = ctx.box_constraint.max_width * offset as f32;
+                let dx = ctx.box_constraint.max_width * offset;
                 ctx.canvas.translate((dx, 0.0).into());
             }
             AnimationEffect::SlideY { from, to } => {
