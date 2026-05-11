@@ -2,6 +2,7 @@ use crate::handler::AimerApplicationHandler;
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::KeyAction;
 use aimer_events::element::{ElementEvent, Modifiers, NamedKey};
+use aimer_utils::ExecTimes;
 use aimer_widget::{broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent};
@@ -10,14 +11,8 @@ use winit::window::WindowId;
 
 pub struct WindowEventHandler;
 
-
 impl WindowEventHandler {
-    pub(crate) fn handle_events(
-        app: &mut AimerApplicationHandler,
-        event_loop: &ActiveEventLoop,
-        _id: WindowId,
-        event: WindowEvent,
-    ) {
+    pub(crate) fn handle_events(app: &mut AimerApplicationHandler, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
 
@@ -29,25 +24,23 @@ impl WindowEventHandler {
 
             WindowEvent::ModifiersChanged(mods) => {
                 let state = mods.state();
-                app.current_modifiers = Modifiers {
-                    ctrl: state.control_key(),
-                    shift: state.shift_key(),
-                    alt: state.alt_key(),
-                    meta: state.super_key(),
-                };
+                app.current_modifiers =
+                    Modifiers { ctrl: state.control_key(), shift: state.shift_key(), alt: state.alt_key(), meta: state.super_key() };
             }
 
             WindowEvent::KeyboardInput { event, .. } => Self::handle_keyboard_input(event, app),
 
-            WindowEvent::MouseWheel { delta, phase,.. } => {
+            WindowEvent::MouseWheel { delta, phase, .. } => {
                 // debug!("Mouse wheel phase: {:?}", phase);
-                Self::handle_mouse_wheel(delta,phase, app)
-            },
-
+                Self::handle_mouse_wheel(delta, phase, app)
+            }
 
             WindowEvent::RedrawRequested => {
-             app.render(event_loop)
-            },
+                #[cfg(debug_assertions)]
+                ExecTimes::no_param("MainAppRenderer", || app.render(event_loop));
+                #[cfg(not(debug_assertions))]
+                app.render(event_loop);
+            }
 
             WindowEvent::Resized(size) => Self::handle_resize(size, app),
 
@@ -57,10 +50,7 @@ impl WindowEventHandler {
 
     fn handle_touch(item: Touch, app: &mut AimerApplicationHandler, _id: WindowId, _event: WindowEvent) {
         let scale = app.window_scale;
-        let pos = Vec2d {
-            x: (item.location.x / scale) as f32,
-            y: (item.location.y / scale) as f32,
-        };
+        let pos = Vec2d { x: (item.location.x / scale) as f32, y: (item.location.y / scale) as f32 };
         // info!("Touch: {:?}", pos);
         let event = match item.phase {
             TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
@@ -90,8 +80,7 @@ impl WindowEventHandler {
 
     fn handle_cursor_move(position: PhysicalPosition<f64>, app: &mut AimerApplicationHandler) {
         let scale = app.window_scale as f32;
-        let new_pos =
-            Vec2d { x: position.x as f32 / scale, y: position.y as f32 / scale };
+        let new_pos = Vec2d { x: position.x as f32 / scale, y: position.y as f32 / scale };
         let dx = (new_pos.x - app.cursor_pos.x).abs();
         let dy = (new_pos.y - app.cursor_pos.y).abs();
         if dx < 1.0 && dy < 1.0 {
@@ -105,7 +94,9 @@ impl WindowEventHandler {
             if app.inspector.is_enabled() {
                 handled = true;
             }
-            if let Some(window) = &app.window && handled {
+            if let Some(window) = &app.window
+                && handled
+            {
                 window.request_redraw();
             }
         }
@@ -139,7 +130,7 @@ impl WindowEventHandler {
     fn handle_keyboard_input(event: KeyEvent, app: &mut AimerApplicationHandler) {
         use winit::event::ElementState;
         use winit::keyboard::{Key, NamedKey as WinitNamedKey};
-        
+
         let action = if event.repeat {
             KeyAction::Repeat
         } else {
@@ -169,7 +160,9 @@ impl WindowEventHandler {
                     if app.inspector.is_enabled() {
                         handled = true;
                     }
-                    if let Some(window) = &app.window && handled {
+                    if let Some(window) = &app.window
+                        && handled
+                    {
                         window.request_redraw();
                     }
                 }
@@ -177,19 +170,20 @@ impl WindowEventHandler {
             }
         }
 
-        if let Key::Character(ref ch) = event.logical_key && !ch.is_empty() && ch.chars().all(|c| !c.is_control())  {
-            let ev = ElementEvent::CharInput {
-                ch: ch.parse().unwrap(),
-                action: action.clone(),
-                modifiers: modifiers.clone(),
-            };
+        if let Key::Character(ref ch) = event.logical_key
+            && !ch.is_empty()
+            && ch.chars().all(|c| !c.is_control())
+        {
+            let ev = ElementEvent::CharInput { ch: ch.parse().unwrap(), action: action.clone(), modifiers: modifiers.clone() };
             if let Some(root) = &app.widget_root {
                 let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                 #[cfg(debug_assertions)]
                 if app.inspector.is_enabled() {
                     handled = true;
                 }
-                if let Some(window) = &app.window && handled {
+                if let Some(window) = &app.window
+                    && handled
+                {
                     window.request_redraw();
                 }
             }
@@ -205,7 +199,9 @@ impl WindowEventHandler {
                 if app.inspector.is_enabled() {
                     handled = true;
                 }
-                if let Some(window) = &app.window && handled {
+                if let Some(window) = &app.window
+                    && handled
+                {
                     window.request_redraw();
                 }
             }
@@ -233,7 +229,9 @@ impl WindowEventHandler {
                 if app.inspector.is_enabled() {
                     handled = true;
                 }
-                if let Some(window) = &app.window && handled {
+                if let Some(window) = &app.window
+                    && handled
+                {
                     window.request_redraw();
                 }
             }
@@ -243,16 +241,11 @@ impl WindowEventHandler {
     fn handle_mouse_wheel(delta: MouseScrollDelta, phase: TouchPhase, app: &mut AimerApplicationHandler) {
         // debug!("Mouse wheel delta: {:?}", delta);
         let scroll_delta = match delta {
-            MouseScrollDelta::LineDelta(x, y) => {
-                Vec2d { x: x * 20.0, y: y  * 20.0 }
-            }
-            MouseScrollDelta::PixelDelta(pos) => {
-                Vec2d { x: pos.x as f32, y: pos.y as f32 }
-            }
+            MouseScrollDelta::LineDelta(x, y) => Vec2d { x: x * 20.0, y: y * 20.0 },
+            MouseScrollDelta::PixelDelta(pos) => Vec2d { x: pos.x as f32, y: pos.y as f32 },
         };
 
-
-        let event = ElementEvent::Scroll{delta: scroll_delta, phase};
+        let event = ElementEvent::Scroll { delta: scroll_delta, phase };
         if let Some(root) = &app.widget_root {
             let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
             #[cfg(debug_assertions)]
@@ -260,7 +253,9 @@ impl WindowEventHandler {
                 handled = true;
             }
 
-            if let Some(window) = &app.window && handled{
+            if let Some(window) = &app.window
+                && handled
+            {
                 window.request_redraw();
             }
         }
@@ -273,8 +268,7 @@ impl WindowEventHandler {
             let is_portrait = size.width < size.height;
             match crate::ios_screen::get_screen_resolution_pixels() {
                 Some((width, height)) => {
-                    app.native_window_size =
-                        Some(ResolvedSize { width: width as f32, height: height as f32 });
+                    app.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 });
                     if is_portrait {
                         PhysicalSize::new(width as u32, height as u32)
                     } else {
@@ -317,6 +311,5 @@ impl WindowEventHandler {
         }
 
         // debug!("Rendered a frame");
-
     }
 }

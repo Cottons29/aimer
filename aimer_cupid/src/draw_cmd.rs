@@ -1,3 +1,4 @@
+use crate::text_pipeline::TextOverflowMode;
 use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
 use std::any::Any;
 use std::collections::HashMap;
@@ -44,12 +45,18 @@ pub enum DrawCommand {
         text: String,
         font_size: f32,
         color: Color,
+        bounds_width: Option<f32>,
+        bounds_height: Option<f32>,
+        overflow: TextOverflowMode,
     },
     DrawRichText {
         position: Vec2d,
         spans: Vec<RichTextSegment>,
         font_size: f32,
         color: Color,
+        bounds_width: Option<f32>,
+        bounds_height: Option<f32>,
+        overflow: TextOverflowMode,
     },
     PushClip {
         rect: Rect,
@@ -187,13 +194,40 @@ impl DrawList {
     }
 
     pub fn draw_text(&mut self, position: Vec2d, text: String, font_size: f32, color: Color) {
+        self.draw_text_with_overflow(position, text, font_size, color, None, None, TextOverflowMode::Clip);
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_with_overflow(
+        &mut self,
+        position: Vec2d,
+        text: String,
+        font_size: f32,
+        color: Color,
+        bounds_width: Option<f32>,
+        bounds_height: Option<f32>,
+        overflow: TextOverflowMode,
+    ) {
         self.commands
-            .push(DrawCommand::DrawText { position, text, font_size, color });
+            .push(DrawCommand::DrawText { position, text, font_size, color, bounds_width, bounds_height, overflow });
     }
 
     pub fn draw_rich_text(&mut self, position: Vec2d, spans: Vec<RichTextSegment>, font_size: f32, color: Color) {
+        self.draw_rich_text_with_overflow(position, spans, font_size, color, None, None, TextOverflowMode::Clip);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_rich_text_with_overflow(
+        &mut self,
+        position: Vec2d,
+        spans: Vec<RichTextSegment>,
+        font_size: f32,
+        color: Color,
+        bounds_width: Option<f32>,
+        bounds_height: Option<f32>,
+        overflow: TextOverflowMode,
+    ) {
         self.commands
-            .push(DrawCommand::DrawRichText { position, spans, font_size, color });
+            .push(DrawCommand::DrawRichText { position, spans, font_size, color, bounds_width, bounds_height, overflow });
     }
 
     pub fn push_clip(&mut self, rect: Rect) {

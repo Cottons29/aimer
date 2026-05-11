@@ -3,6 +3,11 @@ name = "aimer"
 version = "0.1.0"
 edition = "2024"
 description = "The organized export of other Aimer project"
+repository = "https://github.com/Cottons29/aimer"
+license = "MIT"
+readme = "README.md"
+keywords = ["gui", "rust"]
+categories = ["development-tools", "gui"]
 
 
 [dependencies]

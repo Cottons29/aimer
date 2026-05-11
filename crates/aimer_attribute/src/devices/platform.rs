@@ -24,7 +24,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     Android,
-    IOS,
+    Ios,
     Windows,
     MacOS,
     Linux,

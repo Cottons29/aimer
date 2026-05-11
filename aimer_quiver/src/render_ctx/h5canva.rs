@@ -85,15 +85,7 @@ pub mod render_ctx {
             let draw_list = state.canvas.draw_list();
             state
                 .renderer
-                .render(&state.gpu.device, &state.gpu.queue, &view, width, height, state.gpu.is_srgb, &draw_list, || {
-                    let Some(event_proxy) = EVENT_PROXY.get() else {
-                        return;
-                    };
-                    match event_proxy.send_event(AimerCustomAppEvent::FrameReady) {
-                        Ok(()) => {}
-                        Err(e) => info!("Error sending frame ready event: {}", e),
-                    }
-                });
+                .render(&state.gpu.device, &state.gpu.queue, &view, width, height, state.gpu.is_srgb, &draw_list);
 
             state.gpu.end_frame(frame);
             true

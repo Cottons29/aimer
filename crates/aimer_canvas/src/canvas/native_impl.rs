@@ -3,6 +3,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 use aimer_cupid::canvas::CupidCanvas;
+use aimer_cupid::text_pipeline::TextOverflowMode;
 use aimer_cupid::utilities::Color as CupidColor;
 
 #[allow(dead_code)]
@@ -91,6 +92,35 @@ impl CanvasRendering for CupidCanvas {
     #[inline]
     fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color) {
         CupidCanvas::draw_text(self, pos.x, pos.y, text, font_size, CupidColor::from(color));
+    }
+
+    #[inline]
+    fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32) {
+        CupidCanvas::draw_text_wrapped(self, pos.x, pos.y, text, font_size, CupidColor::from(color), max_width);
+    }
+
+    #[inline]
+    fn draw_text_with_overflow(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+    ) {
+        CupidCanvas::draw_text_with_overflow(
+            self,
+            pos.x,
+            pos.y,
+            text,
+            font_size,
+            CupidColor::from(color),
+            bounds_width,
+            bounds_height,
+            overflow,
+        );
     }
 
     #[inline]

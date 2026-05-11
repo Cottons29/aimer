@@ -13,3 +13,8 @@ wasm-bindgen = {workspace = true}
 
 [dependencies]
 chrono.workspace = true
+
+
+
+[features]
+time-cost = []

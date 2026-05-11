@@ -3,7 +3,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use std::sync::Mutex;
 use aimer_style::*;
-use aimer_widget::*;
+use aimer_widget::{*, TextOverflowMode};
 use aimer_widget::base::BuildContext;
 
 pub struct RawTextWidget {
@@ -54,7 +54,6 @@ impl Drawable for RawTextWidget {
         };
         let metrics = ctx.canvas.measure_text_metrics(&self.text, font_size, max_width);
         let text_width = metrics.width;
-        let line_height = metrics.line_height;
         let ascent = metrics.ascent;
         let descent = -metrics.descent;
 
@@ -77,87 +76,31 @@ impl Drawable for RawTextWidget {
         match self.text_style.text_overflow {
             TextOverflow::Clip => {
                 ctx.canvas.save();
+                let width = ctx.parent_size.width;
                 ctx.canvas.set_clip((0.0, 0.0).into(), ResolvedSize { width, height });
-                ctx.canvas.draw_text(&self.text, (x, y).into(), font_size, color);
+                ctx.canvas.draw_text_wrapped(
+                    &self.text,
+                    (x, y).into(),
+                    font_size,
+                    color,
+                    width,
+                );
                 ctx.canvas.clear_clip();
                 ctx.canvas.restore();
             }
             TextOverflow::Ellipsis => {
-                if text_width > width {
-                    let ellipsis = "…";
-                    let ellipsis_width = ctx.canvas.measure_text(ellipsis, font_size);
-                    let available_width = width - ellipsis_width;
-
-                    if available_width > 0.0 {
-                        let mut truncated = String::new();
-                        let mut current_w = 0.0;
-
-                        for cluster in unicode_segmentation::UnicodeSegmentation::graphemes(self.text.as_str(), true) {
-                            let char_w = ctx.canvas.measure_text(cluster, font_size);
-                            if current_w + char_w > available_width {
-                                break;
-                            }
-                            truncated.push_str(cluster);
-                            current_w += char_w;
-                        }
-
-                        truncated.push_str(ellipsis);
-                        // let display_width = ctx.canvas.measure_text(&truncated, font_size);
-                        // let display_x = match self.text_align {
-                        //     TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
-                        //     TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
-                        //         (width - display_width) / 2.0
-                        //     }
-                        //     TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => {
-                        //         width - display_width
-                        //     }
-                        // };
-                    }
-                }
-
-                ctx.canvas.draw_text(&self.text, (x, y).into(), font_size, color);
+                ctx.canvas.draw_text_with_overflow(
+                    &self.text,
+                    (x, y).into(),
+                    font_size,
+                    color,
+                    width,
+                    height,
+                    TextOverflowMode::Ellipsis,
+                );
             }
             TextOverflow::Wrap => {
-                let mut lines: Vec<String> = Vec::new();
-                let mut current_line = String::new();
-                let mut current_line_width = 0.0;
-
-                for cluster in unicode_segmentation::UnicodeSegmentation::graphemes(self.text.as_str(), true) {
-                    if cluster == "\n" {
-                        lines.push(current_line);
-                        current_line = String::new();
-                        current_line_width = 0.0;
-                        continue;
-                    }
-
-                    let cluster_width = ctx.canvas.measure_text(cluster, font_size);
-
-                    if current_line_width + cluster_width > width && !current_line.is_empty() {
-                        lines.push(current_line);
-                        current_line = String::new();
-                        current_line_width = 0.0;
-                    }
-
-                    current_line.push_str(cluster);
-                    current_line_width += cluster_width;
-                }
-
-                if !current_line.is_empty() {
-                    lines.push(current_line);
-                }
-
-                for (i, line) in lines.iter().enumerate() {
-                    let line_width = ctx.canvas.measure_text(line, font_size);
-                    let line_x = match self.text_align {
-                        TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
-                        TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
-                            (width - line_width) / 2.0
-                        }
-                        TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => width - line_width,
-                    };
-                    let line_y = y + i as f32 * line_height;
-                    ctx.canvas.draw_text(line, (line_x, line_y).into(), font_size, color);
-                }
+                ctx.canvas.draw_text_wrapped(&self.text, (x, y).into(), font_size, color, width);
             }
             _ => {
                 ctx.canvas.draw_text(&self.text, (x, y).into(), font_size, color);

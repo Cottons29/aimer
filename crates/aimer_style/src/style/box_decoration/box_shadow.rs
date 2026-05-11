@@ -48,7 +48,7 @@ impl ShadowSide {
     ///   8.0 = TopLeft, 9.0 = TopRight, 10.0 = BottomRight, 11.0 = BottomLeft
     /// - Side_param: unused for most variants; for Range, encodes start angle
     /// - Side_param2: unused for most variants; for Range, encodes end angle
-    pub fn to_shader_params(&self) -> (f32, f32, f32) {
+    pub fn to_shader_params(self) -> (f32, f32, f32) {
         match self {
             ShadowSide::All => (0.0, 0.0, 0.0),
             ShadowSide::Top => (1.0, 0.0, 0.0),
@@ -61,7 +61,7 @@ impl ShadowSide {
             ShadowSide::TopRight => (9.0, 0.0, 0.0),
             ShadowSide::BottomRight => (10.0, 0.0, 0.0),
             ShadowSide::BottomLeft => (11.0, 0.0, 0.0),
-            ShadowSide::Range(start, end) => (7.0, *start, *end),
+            ShadowSide::Range(start, end) => (7.0, start, end),
         }
     }
 }

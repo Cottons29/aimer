@@ -33,6 +33,7 @@ pub use crate::components::element::{dispatch_event, broadcast_event};
 pub use crate::widget::stateful::{StatefulElement, StatefulWidget, State, StateUpdater};
 pub use crate::widget::stateless::{ StatelessElement, StatelessWidget, NamedWidget};
 pub use aimer_macro::{widget, Constructor, main, WidgetConstructor};
+pub use aimer_canvas::TextOverflowMode;
 pub use crate::layout_cache::LayoutCache;
 pub use components::drawable::Drawable;
 

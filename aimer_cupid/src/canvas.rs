@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::draw_cmd::DrawList;
+use crate::text_pipeline::TextOverflowMode;
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
 use crate::utilities::{Color, Rect, TextureId, Vec2d};
 
@@ -42,6 +43,12 @@ impl CupidCanvas {
 
     pub fn begin_frame(&self) {
         self.draw_list.borrow_mut().clear();
+    }
+
+    pub fn register_font_bytes(&self, bytes: Vec<u8>) -> Option<crate::text_layout::FontId> {
+        let font_id = self.rasterizer.borrow_mut().register_font_bytes(bytes)?;
+        self.metrics_cache.borrow_mut().clear();
+        Some(font_id)
     }
 
     pub fn fill_rect(&self, x: f32, y: f32, width: f32, height: f32, color: Color, border_radius: [f32; 4]) {
@@ -119,13 +126,48 @@ impl CupidCanvas {
             .draw_text(Vec2d::new(x, y), text.to_string(), font_size, color);
     }
 
+    pub fn draw_text_wrapped(&self, x: f32, y: f32, text: &str, font_size: f32, color: Color, max_width: f32) {
+        self.draw_list.borrow_mut().draw_text_with_overflow(
+            Vec2d::new(x, y),
+            text.to_string(),
+            font_size,
+            color,
+            Some(max_width),
+            None,
+            TextOverflowMode::Wrap,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_with_overflow(
+        &self,
+        x: f32,
+        y: f32,
+        text: &str,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+    ) {
+        self.draw_list.borrow_mut().draw_text_with_overflow(
+            Vec2d::new(x, y),
+            text.to_string(),
+            font_size,
+            color,
+            Some(bounds_width),
+            Some(bounds_height),
+            overflow,
+        );
+    }
+
     pub fn draw_image(&self, x: f32, y: f32, width: f32, height: f32, texture_id: TextureId) {
         self.draw_list
             .borrow_mut()
             .draw_image(Rect::new(x, y, width, height), texture_id);
     }
 
-    /// Measure text width using the cached fontdue rasterizer.
+    /// Measure text width using the cached text rasterizer.
     pub fn measure_text(&self, text: &str, font_size: f32) -> f32 {
         self.rasterizer.borrow_mut().measure_text(text, font_size)
     }
