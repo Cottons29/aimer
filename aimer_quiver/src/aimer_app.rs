@@ -3,16 +3,16 @@ use crate::render_ctx::AimerRenderContext;
 use aimer_attribute::position::Vec2d;
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_inspector::InspectorAppHandle;
+use aimer_widget::Widget;
 use std::cell::Cell;
-use std::net::{IpAddr};
+use std::net::IpAddr;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
-use aimer_widget::Widget;
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
 
-use aimer_utils::{ info};
+use aimer_utils::info;
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
@@ -44,14 +44,18 @@ pub extern "C" fn trigger_rust_backspace() {
 }
 
 #[cfg(target_os = "ios")]
+fn dereference_ptr<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
+    unsafe { std::slice::from_raw_parts(ptr, len) }
+}
+
+#[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
 pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
     if ptr.is_null() || len == 0 {
         return;
     }
 
-    // SAFETY: caller guarantees `ptr..ptr+len` is valid for reads.
-    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let bytes = dereference_ptr(ptr, len);
     let text = String::from_utf8_lossy(bytes).to_string();
 
     let Some(proxy) = EVENT_PROXY.get() else {
@@ -147,7 +151,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
         inspector_prev_enabled: Cell::new(false),
         #[cfg(debug_assertions)]
         inspector_redraw_frames: Cell::new(0),
-        start_up_frames: Cell::new(100),
+        start_up_frames: Cell::new(24),
     };
 
     // On iOS, this function never returns.

@@ -16,8 +16,8 @@ pub enum Colors {
     Purple,
     Brown,
     Transparent,
-    RGBA(u8, u8, u8, u8),
-    RGB(u8, u8, u8),
+    Rgba(u8, u8, u8, u8),
+    Rgb(u8, u8, u8),
     Custom(u32),
 }
 
@@ -68,10 +68,10 @@ impl ColorMixer for Colors {
             Colors::Brown => 0xFFA52A2A,
             Colors::Transparent => 0x00000000,
             Colors::Custom(c) => *c,
-            Colors::RGBA(r, g, b, a) => {
+            Colors::Rgba(r, g, b, a) => {
                 ((*a as u32) << 24) | ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32)
             }
-            Colors::RGB(r, g, b) => {
+            Colors::Rgb(r, g, b) => {
                 (0xFF << 24) | ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32)
             }
         }

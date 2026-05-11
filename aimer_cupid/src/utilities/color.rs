@@ -51,7 +51,7 @@ impl Mul<u8> for Color {
 }
 
 impl Color {
-    pub const fn to_array(&self) -> [f32; 4] {
+    pub const fn to_array(self) -> [f32; 4] {
         [self.r, self.g, self.b, self.a]
     }
 

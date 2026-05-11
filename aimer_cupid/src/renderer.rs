@@ -3,9 +3,9 @@ use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::pipeline_cache;
 use crate::rect_pipeline::{RectInstance, RectPipeline};
-use crate::text_pipeline::{RichTextSpan, TextDrawRequest, TextOverflowMode, TextPipelineV2};
+use crate::text_pipeline::{RichTextSpan, TextDrawRequest, TextPipelineV2};
 use crate::utilities::{Mat3, Rect};
-use aimer_utils::debug;
+use aimer_utils::{debug, time_cost};
 
 struct ClipState {
     rect: Rect,
@@ -230,7 +230,7 @@ impl Renderer {
                         }),
                     });
                 }
-                DrawCommand::DrawText { position, text, font_size, color } => {
+                DrawCommand::DrawText { position, text, font_size, color, bounds_width, bounds_height, overflow } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
                     let _idx = self.text_requests.len();
                     self.text_requests.push(TextDrawRequest {
@@ -239,9 +239,9 @@ impl Renderer {
                         text: text.clone(),
                         font_size: *font_size,
                         color: color.to_array(),
-                        bounds_width: width as f32 - tx,
-                        bounds_height: height as f32 - ty,
-                        overflow: TextOverflowMode::Clip,
+                        bounds_width: bounds_width.unwrap_or(width as f32 - tx),
+                        bounds_height: bounds_height.unwrap_or(height as f32 - ty),
+                        overflow: *overflow,
                         line_height: None,
                         font_weight: None,
                         italic: false,
@@ -252,7 +252,7 @@ impl Renderer {
                     self.resolved
                         .push(ResolvedCmd { kind: ResolvedKind::TextIndex(()) });
                 }
-                DrawCommand::DrawRichText { position, spans, font_size, color } => {
+                DrawCommand::DrawRichText { position, spans, font_size, color, bounds_width, bounds_height, overflow } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
                     self.text_requests.push(TextDrawRequest {
                         x: tx,
@@ -263,9 +263,9 @@ impl Renderer {
                             .collect::<String>(),
                         font_size: *font_size,
                         color: color.to_array(),
-                        bounds_width: width as f32 - tx,
-                        bounds_height: height as f32 - ty,
-                        overflow: TextOverflowMode::Clip,
+                        bounds_width: bounds_width.unwrap_or(width as f32 - tx),
+                        bounds_height: bounds_height.unwrap_or(height as f32 - ty),
+                        overflow: *overflow,
                         line_height: None,
                         font_weight: None,
                         italic: false,
@@ -383,8 +383,9 @@ impl Renderer {
         }
 
         if !self.text_requests.is_empty() {
-            self.text_pipeline
-                .prepare(device, queue, width, height, is_srgb, &self.text_requests);
+            time_cost!("TextRenderRequest", || self
+                .text_pipeline
+                .prepare(device, queue, width, height, is_srgb, &self.text_requests))
         }
 
         // Create encoder and render pass
@@ -480,7 +481,6 @@ impl Renderer {
                 self.text_pipeline.render(&mut pass);
             }
         }
-
         queue.submit(std::iter::once(encoder.finish()));
     }
 }

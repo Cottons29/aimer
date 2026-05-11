@@ -1,26 +1,21 @@
 pub mod log;
+mod time_cost;
 
-pub struct ExecTimes;
+pub use time_cost::ExecTimes;
 
-impl ExecTimes {
+#[cfg(test)]
+mod tests {
+    use crate::time_cost;
 
-    pub fn no_param<T>(label: &str, f: impl FnOnce() -> T) -> T {
-        let start = chrono::Local::now();
-        let res = f();
-        let delta = chrono::Local::now().signed_duration_since(start);
-        debug!("<{label}> time consume: {:?}", delta);
-        res
+    #[test]
+    fn test_time_cost() {
+        let res = time_cost!("test_op", || {
+            let mut sum = 0;
+            for i in 0..1000 {
+                sum += i;
+            }
+            sum
+        });
+        assert_eq!(res, 499500);
     }
-
-    pub fn with_param<T, P>(label: &str, param: P, f: impl FnOnce(P) -> T) -> T {
-        let start = chrono::Local::now();
-        let res = f(param);
-        let delta = chrono::Local::now().signed_duration_since(start);
-        debug!("<{label}> time consume: {:?}", delta);
-        res
-    }
-    
 }
-
-
-

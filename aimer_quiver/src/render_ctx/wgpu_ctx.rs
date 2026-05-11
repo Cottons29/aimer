@@ -1,10 +1,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod render_ctx {
-    use crate::aimer_app::{AimerCustomAppEvent, EVENT_PROXY};
     use aimer_cupid::canvas::CupidCanvas;
     use aimer_cupid::gpu_context::GpuContext;
     use aimer_cupid::renderer::Renderer;
-    use aimer_utils::info;
     use winit::dpi::PhysicalSize;
     use winit::window::Window;
 

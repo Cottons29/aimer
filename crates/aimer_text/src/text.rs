@@ -2,7 +2,7 @@ pub mod raw_text;
 
 use crate::text::raw_text::RawTextWidget;
 use aimer_macro::WidgetConstructor;
-use aimer_style::{TextAlign, TextStyle};
+use aimer_style::{TextAlign, TextOverflow, TextStyle};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, LayoutCache, Widget};
 use std::sync::Mutex;
@@ -17,6 +17,21 @@ pub struct Text {
     text_align: TextAlign,
     #[constructor(default)]
     text_style: TextStyle,
+}
+
+impl Text {
+    pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
+        self.text_style.text_overflow = text_overflow;
+        self
+    }
+
+    pub fn wrapped(self) -> Self {
+        self.text_overflow(TextOverflow::Wrap)
+    }
+
+    pub fn ellipsis(self) -> Self {
+        self.text_overflow(TextOverflow::Ellipsis)
+    }
 }
 
 impl Widget for Text {

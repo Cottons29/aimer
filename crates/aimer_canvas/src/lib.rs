@@ -2,4 +2,4 @@ mod canvas;
 
 
 
-pub use canvas::{CanvasRendering, AimerCanvas as Canvas, InnerCanvas};
+pub use canvas::{CanvasRendering, AimerCanvas as Canvas, InnerCanvas, TextOverflowMode};

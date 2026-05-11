@@ -10,9 +10,9 @@ use crate::handler;
 use crate::handler::event_handler::WindowEventHandler;
 use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
+use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_attribute::BoxConstraint;
 use aimer_inspector::InspectorOverlay;
 use aimer_utils::debug;
 use aimer_widget::base::BuildContext;
@@ -87,14 +87,9 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
         }
 
         #[cfg(target_os = "ios")]
-        {
-            match crate::ios_screen::get_screen_resolution_pixels() {
-                Some((width, height)) => {
-                    self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 })
-                }
-                None => (),
-            };
-        }
+        if let Some((width, height)) = crate::ios_screen::get_screen_resolution_pixels() {
+            self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 })
+        };
 
         let window_attributes = {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -159,7 +154,6 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-
         WindowEventHandler::handle_events(self, event_loop, _id, event);
     }
 
@@ -205,17 +199,16 @@ impl AimerApplicationHandler {
     #[cfg(debug_assertions)]
     fn broadcast_inspector_snapshot(&self) {
         if self.inspector.is_enabled() {
-            let snapshot = self
-                .widget_root
-                .as_ref()
-                .map(|root| {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    { aimer_inspector::InspectorServer::snapshot_tree(root.as_ref()) }
-                    #[cfg(target_arch = "wasm32")]
-                    { aimer_inspector::snapshot_tree(root.as_ref()) }
-                });
-
-
+            let snapshot = self.widget_root.as_ref().map(|root| {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    aimer_inspector::InspectorServer::snapshot_tree(root.as_ref())
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    aimer_inspector::snapshot_tree(root.as_ref())
+                }
+            });
 
             let hovered_id = if let Ok(hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.read() {
                 if let Some((name, start, end)) = hovered.as_ref() {
@@ -288,12 +281,7 @@ impl AimerApplicationHandler {
                 scale: window_scale as f32,
                 parent_pos: Default::default(),
                 cursor_pos,
-                box_constraint: BoxConstraint {
-                    min_width: 0.0,
-                    min_height: 0.0,
-                    max_width: width as f32,
-                    max_height: height as f32,
-                },
+                box_constraint: BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: width as f32, max_height: height as f32 },
                 visible_rect: None,
                 window,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -324,12 +312,6 @@ impl AimerApplicationHandler {
 
         if !self.render_ctx.render_frame(draw_widgets) {
             return;
-        }
-
-        // If the GPU context isn't ready yet (e.g. async init on WASM),
-        // request another redraw so we retry once it's available.
-        if let Some(window) = self.window {
-            window.request_redraw();
         }
 
         #[cfg(debug_assertions)]

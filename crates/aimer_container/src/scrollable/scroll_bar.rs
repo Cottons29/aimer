@@ -33,9 +33,9 @@ impl Default for ScrollThumb {
         Self {
             width: Dimension::Auto,
             radius: Dimension::Px(4.0),
-            color: Colors::RGBA(150, 150, 150, 150),
-            hover_color: Colors::RGBA(100, 100, 100, 200),
-            active_color: Colors::RGBA(80, 80, 80, 255),
+            color: Colors::Rgba(150, 150, 150, 150),
+            hover_color: Colors::Rgba(100, 100, 100, 200),
+            active_color: Colors::Rgba(80, 80, 80, 255),
         }
     }
 }
