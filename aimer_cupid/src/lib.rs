@@ -7,6 +7,8 @@ pub mod canvas;
 mod pipeline;
 pub mod pipeline_cache;
 pub mod renderer;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_fonts;
 
 pub use crate::text_pipeline::glyph_atlas;
 pub use crate::text_pipeline::glyph_rasterizer;
