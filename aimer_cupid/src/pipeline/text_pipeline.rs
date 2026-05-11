@@ -1,13 +1,13 @@
+mod font_resolver;
 pub mod glyph_atlas;
+mod glyph_outline;
 pub mod glyph_rasterizer;
 pub mod text_layout;
-mod font_resolver;
-mod performance_test;
-mod glyph_outline;
 
 use crate::text_pipeline::glyph_atlas::{ColorGlyphAtlas, GlyphAtlas};
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
-use crate::text_pipeline::text_layout::{layout_text, PositionedGlyph};
+use crate::text_pipeline::text_layout::{PositionedGlyph, ShapedText, layout_shaped_text, shape_text};
+use aimer_utils::time_cost;
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 
@@ -107,6 +107,19 @@ struct LayoutCacheKey {
     bounds_width_u32: u32,
 }
 
+#[derive(Hash, Eq, PartialEq, Clone)]
+struct ShapingCacheKey {
+    text: String,
+    /// `font_size` × 100, rounded, stored as u32 to make it hashable.
+    font_size_u32: u32,
+}
+
+impl ShapingCacheKey {
+    fn new(text: &str, font_size: f32) -> Self {
+        Self { text: text.to_owned(), font_size_u32: (font_size * 100.0).round() as u32 }
+    }
+}
+
 impl LayoutCacheKey {
     fn new(text: &str, font_size: f32, bounds_width: f32) -> Self {
         Self {
@@ -151,6 +164,10 @@ pub struct TextPipelineV2 {
     /// cleared whenever the set of requests changes (different number of
     /// draw calls) so memory does not grow unboundedly across scene changes.
     layout_cache: HashMap<LayoutCacheKey, Vec<PositionedGlyph>>,
+    /// Width-independent shaping cache.  Resize may invalidate final positions
+    /// for wrapping/ellipsis text, but shaped glyph ids and advances only depend
+    /// on text content and font size.
+    shaping_cache: HashMap<ShapingCacheKey, ShapedText>,
 }
 
 impl TextPipelineV2 {
@@ -312,6 +329,7 @@ impl TextPipelineV2 {
             color_atlas_generation: 0,
             last_viewport: (0, 0),
             layout_cache: HashMap::new(),
+            shaping_cache: HashMap::new(),
         }
     }
 
@@ -384,100 +402,117 @@ impl TextPipelineV2 {
             self.layout_cache.clear();
         }
 
+        if self.shaping_cache.len() > requests.len() * 4 {
+            self.shaping_cache.clear();
+        }
+
         for req in requests {
             let spans = if req.spans.is_empty() { vec![RichTextSpan::new(req.text.clone())] } else { req.spans.clone() };
 
             let mut cursor_x = req.x;
             let mut cursor_y = req.y;
 
-            for span in &spans {
-                let font_size = span.font_size.unwrap_or(req.font_size);
-                let color = span.color.unwrap_or(req.color);
+            time_cost!("RichTextSpanLoops", {
+                for span in &spans {
+                    let font_size = span.font_size.unwrap_or(req.font_size);
+                    let color = span.color.unwrap_or(req.color);
 
-                // Re-use the positioned glyph list from the previous frame when
-                // text content, font size, and wrapping width are all unchanged.
-                // The screen-space (x, y) origin is NOT part of the key (improvement B);
-                // instead we translate the cached positions by the current cursor
-                // offset at render time.  This means scrolling or animating text
-                // never causes a cache miss.
-                //
-                // Improvement C: we store the glyphs by value in the cache and
-                // iterate directly over the cached slice, avoiding the per-frame
-                // Vec clone that was previously issued on every cache hit.
-                let cache_key = LayoutCacheKey::new(&span.text, font_size, req.bounds_width);
-                // Layout is always computed at origin (0, 0) so the cached
-                // positions are purely relative and can be shifted cheaply.
-                let positioned: &[PositionedGlyph] = self
-                    .layout_cache
-                    .entry(cache_key)
-                    .or_insert_with(|| layout_text(&mut self.rasterizer, &span.text, font_size, 0.0, 0.0, req.bounds_width));
-
-                for pg in positioned {
-                    let key = pg.glyph_key;
-
-                    // Step 1: rasterize (cache hit if already done) to discover
-                    // whether the glyph is color or alpha. We only need three
-                    // scalar fields here, so the immutable borrow ends quickly.
-
-                    let (is_color, rg_width, rg_height) = {
-                        let rg = self.rasterizer.rasterize_key(key, pg.font_size);
-                        (rg.is_color, rg.width, rg.height)
+                    // Re-use the positioned glyph list from the previous frame when
+                    // text content, font size, and wrapping width are all unchanged.
+                    // The screen-space (x, y) origin is NOT part of the key (improvement B);
+                    // instead we translate the cached positions by the current cursor
+                    // offset at render time.  This means scrolling or animating text
+                    // never causes a cache miss.
+                    //
+                    // Improvement C: we store the glyphs by value in the cache and
+                    // iterate directly over the cached slice, avoiding the per-frame
+                    // Vec clone that was previously issued on every cache hit.
+                    let layout_width = match req.overflow {
+                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
+                        TextOverflowMode::Clip => 0.0,
                     };
+                    let cache_key = LayoutCacheKey::new(&span.text, font_size, layout_width);
+                    // Layout is always computed at origin (0, 0) so the cached
+                    // positions are purely relative and can be shifted cheaply.
+                    let positioned: &[PositionedGlyph] = time_cost!("TextPipelineV2::prepare - LayoutText", {
+                        let shaping_cache = &mut self.shaping_cache;
+                        let rasterizer = &mut self.rasterizer;
+                        self.layout_cache.entry(cache_key).or_insert_with(|| {
+                            let shaped_key = ShapingCacheKey::new(&span.text, font_size);
+                            let shaped_text = shaping_cache.entry(shaped_key).or_insert_with(|| {
+                                time_cost!("TextPipelineV2::prepare - ShapeText", || shape_text(rasterizer, &span.text, font_size))
+                            });
+                            layout_shaped_text(rasterizer, shaped_text, 0.0, 0.0, layout_width)
+                        })
+                    });
 
-                    // Step 2: route the bitmap into the appropriate atlas, then
-                    // build a `GlyphInstance` and push it to the matching list.
-                    let (uvs, target_color_list) = if is_color {
-                        let region = if let Some(region) = self.color_atlas.get(&key) {
-                            region
-                        } else {
-                            // Cache hit on the rasterizer side — instant.
+                    for pg in positioned {
+                        let key = pg.glyph_key;
+
+                        // Step 1: rasterize (cache hit if already done) to discover
+                        // whether the glyph is color or alpha. We only need three
+                        // scalar fields here, so the immutable borrow ends quickly.
+
+                        let (is_color, rg_width, rg_height) = {
                             let rg = self.rasterizer.rasterize_key(key, pg.font_size);
-                            self.color_atlas
-                                .get_or_insert(device, key, rg.width, rg.height, &rg.bitmap)
+                            (rg.is_color, rg.width, rg.height)
                         };
-                        (region.uvs(self.color_atlas.width, self.color_atlas.height), true)
-                    } else {
-                        let region = if let Some(region) = self.atlas.get(&key) {
-                            region
+
+                        // Step 2: route the bitmap into the appropriate atlas, then
+                        // build a `GlyphInstance` and push it to the matching list.
+                        let (uvs, target_color_list) = if is_color {
+                            let region = if let Some(region) = self.color_atlas.get(&key) {
+                                region
+                            } else {
+                                // Cache hit on the rasterizer side — instant.
+                                let rg = self.rasterizer.rasterize_key(key, pg.font_size);
+                                self.color_atlas
+                                    .get_or_insert(device, key, rg.width, rg.height, &rg.bitmap)
+                            };
+                            (region.uvs(self.color_atlas.width, self.color_atlas.height), true)
                         } else {
-                            let rg = self.rasterizer.rasterize_key(key, pg.font_size);
-                            self.atlas
-                                .get_or_insert(device, key, rg.width, rg.height, &rg.bitmap)
+                            let region = if let Some(region) = self.atlas.get(&key) {
+                                region
+                            } else {
+                                let rg = self.rasterizer.rasterize_key(key, pg.font_size);
+                                self.atlas
+                                    .get_or_insert(device, key, rg.width, rg.height, &rg.bitmap)
+                            };
+                            (region.uvs(self.atlas.width, self.atlas.height), false)
                         };
-                        (region.uvs(self.atlas.width, self.atlas.height), false)
-                    };
 
-                    // For color emoji we render at the rasterized size (which is
-                    // already at `font_size` resolution thanks to the resampler
-                    // in `rasterize_color_glyph`). For alpha glyphs we keep the
-                    // historical `pg.width / pg.height` (which equals `rg_width /
-                    // rg_height` when the layout came from the same rasterizer).
-                    let size = if is_color { [rg_width as f32, rg_height as f32] } else { [pg.width as f32, pg.height as f32] };
-                    // Improvement B: cached glyphs are positioned at origin (0,0);
-                    // apply the actual screen-space cursor offset here.
-                    let instance = GlyphInstance {
-                        position: [pg.x + cursor_x, pg.y + cursor_y],
-                        size,
-                        uv_rect: uvs,
-                        color,
-                        clip_rect: req.clip_rect,
-                        clip_border_radius: req.clip_border_radius,
-                    };
+                        // For color emoji we render at the rasterized size (which is
+                        // already at `font_size` resolution thanks to the resampler
+                        // in `rasterize_color_glyph`). For alpha glyphs we keep the
+                        // historical `pg.width / pg.height` (which equals `rg_width /
+                        // rg_height` when the layout came from the same rasterizer).
+                        let size = if is_color { [rg_width as f32, rg_height as f32] } else { [pg.width as f32, pg.height as f32] };
+                        // Improvement B: cached glyphs are positioned at origin (0,0);
+                        // apply the actual screen-space cursor offset here.
+                        let instance = GlyphInstance {
+                            position: [pg.x + cursor_x, pg.y + cursor_y],
+                            size,
+                            uv_rect: uvs,
+                            color,
+                            clip_rect: req.clip_rect,
+                            clip_border_radius: req.clip_border_radius,
+                        };
 
-                    if target_color_list {
-                        self.color_instances.push(instance);
-                    } else {
-                        self.instances.push(instance);
+                        if target_color_list {
+                            self.color_instances.push(instance);
+                        } else {
+                            self.instances.push(instance);
+                        }
+                    }
+
+                    if let Some(last) = positioned.last() {
+                        // Positions in the cache are relative to (0, 0); add the
+                        // current cursor offset to get the true next pen position.
+                        cursor_x += last.x + last.width as f32;
+                        cursor_y += last.y;
                     }
                 }
-
-                if let Some(last) = positioned.last() {
-                    // Positions in the cache are relative to (0, 0); add the
-                    // current cursor offset to get the true next pen position.
-                    cursor_x += last.x + last.width as f32;
-                    cursor_y += last.y;
-                }
-            }
+            })
         }
 
         // Upload both atlases if new glyphs were added.
@@ -564,5 +599,3 @@ impl TextPipelineV2 {
         self.rasterizer.measure_text(text, font_size)
     }
 }
-
-

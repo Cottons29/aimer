@@ -1,6 +1,6 @@
+use crate::glyph_rasterizer::{RasterizedGlyph, point_inside};
+use crate::text_pipeline::font_resolver::{FontRecord, advance_width_from_face};
 use aimer_utils::time_cost;
-use crate::glyph_rasterizer::{point_inside, RasterizedGlyph};
-use crate::text_pipeline::font_resolver::{advance_width_from_face, FontRecord};
 
 #[derive(Default)]
 struct GlyphOutline {
@@ -77,8 +77,6 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
     }
 }
 
-
-
 pub(crate) fn rasterize_outline_glyph(record: &FontRecord, glyph_id: u16, font_size: f32) -> Option<RasterizedGlyph> {
     let data = time_cost!("   |-ReadFontData", || record.read_data())?;
     let face = time_cost!("   |-ParseFontFace", || ttf_parser::Face::parse(&data, record.collection_index).ok())?;
@@ -124,8 +122,6 @@ pub(crate) fn rasterize_outline_glyph(record: &FontRecord, glyph_id: u16, font_s
         is_color: false,
     })
 }
-
-
 
 /// A minimal outline builder that converts a glyph outline into a list of
 /// closed polygons, which `ColrPainter` can then scan-fill.

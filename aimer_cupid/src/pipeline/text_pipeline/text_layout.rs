@@ -1,7 +1,7 @@
 use super::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
 use aimer_utils::time_cost;
 use unicode_bidi::BidiInfo;
-use unicode_linebreak::{linebreaks, BreakOpportunity};
+use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
 pub type FontId = u32;
@@ -108,6 +108,21 @@ pub struct PositionedGlyph {
     pub width: u32,
     pub height: u32,
     pub font_size: f32,
+}
+
+#[derive(Clone)]
+pub struct ShapedCluster {
+    pub text: String,
+    pub base_codepoint: char,
+    pub glyphs: Vec<(GlyphKey, f32, f32, f32)>,
+    pub width: f32,
+}
+
+#[derive(Clone)]
+pub struct ShapedText {
+    pub font_size: f32,
+    pub line_height: f32,
+    pub clusters: Vec<ShapedCluster>,
 }
 
 pub fn layout_paragraph_with_shaper(
@@ -498,6 +513,96 @@ fn apply_ellipsis(
     }
 }
 
+pub fn shape_text(rasterizer: &mut GlyphRasterizer, text: &str, font_size: f32) -> ShapedText {
+    let (ascent, _descent, line_gap) = time_cost!("text_layout::LayoutText - line_metrics", { rasterizer.line_metrics(font_size) });
+    let line_height = ascent - _descent + line_gap;
+
+    let clusters = time_cost!("text_layout::LayoutText - text.graphemes", { text.graphemes(true) });
+    let chars: Vec<&str> = clusters.into_iter().collect();
+
+    let clusters = time_cost!("text_layout::LayoutText - text.graphemes loops", {
+        chars
+            .into_iter()
+            .filter_map(|cluster| {
+                if cluster == "\n" {
+                    return Some(ShapedCluster { text: cluster.to_string(), base_codepoint: '\n', glyphs: Vec::new(), width: 0.0 });
+                }
+
+                // Shape each grapheme cluster once.  The resulting advances and
+                // glyph keys are independent from wrapping width, so resize can
+                // reuse them and only recompute positions.
+                let glyphs = rasterizer.shape_cluster(cluster, font_size);
+                if glyphs.is_empty() {
+                    return None;
+                }
+
+                let width = glyphs.iter().map(|(_, adv, _, _)| adv).sum();
+                let base_codepoint = cluster.chars().next().unwrap_or('\0');
+                Some(ShapedCluster { text: cluster.to_string(), base_codepoint, glyphs, width })
+            })
+            .collect()
+    });
+
+    ShapedText { font_size, line_height, clusters }
+}
+
+pub fn layout_shaped_text(
+    rasterizer: &mut GlyphRasterizer,
+    shaped_text: &ShapedText,
+    origin_x: f32,
+    origin_y: f32,
+    max_width: f32,
+) -> Vec<PositionedGlyph> {
+    let font_size = shaped_text.font_size;
+    let line_height = shaped_text.line_height;
+
+    let mut glyphs = Vec::new();
+    let mut pen_x = origin_x;
+    let mut pen_y = origin_y;
+
+    time_cost!("text_layout::LayoutText - positioned shaped clusters", {
+        for cluster in &shaped_text.clusters {
+            if cluster.text == "\n" {
+                pen_x = origin_x;
+                pen_y += line_height;
+                continue;
+            }
+
+            // Simple word-wrap: wrap only between grapheme clusters so UTF-8 text,
+            // combining marks, and emoji sequences are never split mid-cluster.
+            if max_width > 0.0 && pen_x + cluster.width > origin_x + max_width && pen_x > origin_x {
+                pen_x = origin_x;
+                pen_y += line_height;
+            }
+
+            // time_cost!("text_layout::LayoutText - shaped_glyphs.iter().for_each", {
+            for &(glyph_key, advance, x_offset, y_offset) in &cluster.glyphs {
+                let rg = time_cost!("RasterizeKey", || rasterizer.rasterize_key(glyph_key, font_size));
+                if rg.width > 0 && rg.height > 0 {
+                    let gx = pen_x + rg.offset_x + x_offset;
+                    // pen_y is the baseline; offset_y (ymin) is distance from baseline to
+                    // bottom of the glyph bitmap, so top of bitmap = baseline - offset_y - height.
+                    let gy = pen_y - rg.offset_y - rg.height as f32 + y_offset;
+
+                    glyphs.push(PositionedGlyph {
+                        codepoint: cluster.base_codepoint,
+                        glyph_key,
+                        x: gx,
+                        y: gy,
+                        width: rg.width,
+                        height: rg.height,
+                        font_size,
+                    });
+                }
+
+                pen_x += advance;
+            }
+            // })
+        }
+    });
+    glyphs
+}
+
 /// Simple horizontal text layout with basic line breaking.
 pub fn layout_text(
     rasterizer: &mut GlyphRasterizer,
@@ -507,67 +612,8 @@ pub fn layout_text(
     origin_y: f32,
     max_width: f32,
 ) -> Vec<PositionedGlyph> {
-    let (ascent, _descent, line_gap) = rasterizer.line_metrics(font_size);
-    let line_height = ascent - _descent + line_gap;
-
-    let mut glyphs = Vec::new();
-    let mut pen_x = origin_x;
-    let mut pen_y = origin_y;
-
-    for cluster in text.graphemes(true) {
-        if cluster == "\n" {
-            pen_x = origin_x;
-            pen_y += line_height;
-            continue;
-        }
-
-        // Shape the entire grapheme cluster as a unit using rustybuzz with the
-        // appropriate font (primary or fallback).  This is essential for complex
-        // scripts like Khmer where a base consonant + COENG + subscript consonant
-        // must be shaped together to produce the correct ligature glyph — processing
-        // each codepoint independently would emit separate mispositioned glyphs.
-        let shaped_glyphs = rasterizer.shape_cluster(cluster, font_size);
-
-        if shaped_glyphs.is_empty() {
-            continue;
-        }
-
-        let cluster_width: f32 = shaped_glyphs.iter().map(|(_, adv, _, _)| adv).sum();
-
-        // Simple word-wrap: wrap only between grapheme clusters so UTF-8 text,
-        // combining marks, and emoji sequences are never split mid-cluster.
-        if max_width > 0.0 && pen_x + cluster_width > origin_x + max_width && pen_x > origin_x {
-            pen_x = origin_x;
-            pen_y += line_height;
-        }
-
-        // Use the first codepoint of the cluster as the representative codepoint
-        // for the PositionedGlyph (used for hit-testing, not rendering).
-        let base_codepoint = cluster.chars().next().unwrap_or('\0');
-
-        for (glyph_key, advance, x_offset, y_offset) in shaped_glyphs {
-            let rg = time_cost!("RasterizeKey", || { rasterizer.rasterize_key(glyph_key, font_size) });
-            if rg.width > 0 && rg.height > 0 {
-                let gx = pen_x + rg.offset_x + x_offset;
-                // pen_y is the baseline; offset_y (ymin) is distance from baseline to
-                // bottom of the glyph bitmap, so top of bitmap = baseline - offset_y - height.
-                let gy = pen_y - rg.offset_y - rg.height as f32 + y_offset;
-
-                glyphs.push(PositionedGlyph {
-                    codepoint: base_codepoint,
-                    glyph_key,
-                    x: gx,
-                    y: gy,
-                    width: rg.width,
-                    height: rg.height,
-                    font_size,
-                });
-            }
-
-            pen_x += advance;
-        }
-    }
-    glyphs
+    let shaped_text = shape_text(rasterizer, text, font_size);
+    layout_shaped_text(rasterizer, &shaped_text, origin_x, origin_y, max_width)
 }
 
 #[cfg(test)]

@@ -1,26 +1,23 @@
 use crate::text_layout::FontId;
 use aimer_utils::info;
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
-use aimer_utils::time_cost;
-#[cfg(not(any(target_os = "ios", target_os = "macos")))]
 use fontdb::Database as FontDatabase;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
 use std::sync::LazyLock;
-
+use std::sync::{Arc, OnceLock};
 
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
 static FONT_DB: LazyLock<FontDatabase> = LazyLock::new(|| {
-    let mut db = FontDatabase::new();
+    let db = FontDatabase::new();
     // `load_system_fonts` scans every installed font, which is expensive on
     // startup.  Apple platforms use CoreText per-script fallback resolution
     // instead; other desktop platforms keep the fontdb system scan for now.
     // On WASM there is no filesystem, so we leave the database empty (only the
     // embedded primary font / Roboto is available on that platform).
     #[cfg(not(target_arch = "wasm32"))]
-    time_cost!("LoadFont", ||db.load_system_fonts());
+    time_cost!("LoadFontWasm", || db.load_system_fonts());
 
     db
 });
@@ -32,7 +29,7 @@ pub struct FontRecord {
     pub font: Option<Arc<fontdue::Font>>,
     pub(crate) byte_len: Option<u64>,
     pub(crate) collection_index: u32,
-    pub(crate) path: Option<Arc<PathBuf>>,
+    pub(crate) _path: Option<Arc<PathBuf>>,
     /// True when the font carries color glyph data (`sbix` / `CBDT` / `COLR`)
     /// and should be rasterized via color-glyph tables instead of `fontdue`.
     pub is_color: bool,
@@ -43,12 +40,35 @@ impl FontRecord {
 
     pub(crate) fn from_static_bytes(id: FontId, bytes: &'static [u8]) -> Option<Self> {
         let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()?;
-        Some(Self { id, bytes: Some(Arc::from(bytes)), font: Some(Arc::new(font)), byte_len: Some(bytes.len() as u64), collection_index: 0, path: None, is_color: false })
+        Some(Self {
+            id,
+            bytes: Some(Arc::from(bytes)),
+            font: Some(Arc::new(font)),
+            byte_len: Some(bytes.len() as u64),
+            collection_index: 0,
+            _path: None,
+            is_color: false,
+        })
+    }
+
+    pub fn from_bytes(id: FontId, bytes: Vec<u8>) -> Option<Self> {
+        let face = ttf_parser::Face::parse(&bytes, 0).ok()?;
+        let is_color = Self::face_is_color(&face);
+        let font = if !is_color && bytes.len() as u64 <= Self::FONTDUE_MAX_BYTES {
+            fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
+                .ok()
+                .map(Arc::new)
+        } else {
+            None
+        };
+
+        let byte_len = bytes.len() as u64;
+        Some(Self { id, bytes: Some(Arc::from(bytes)), font, byte_len: Some(byte_len), collection_index: 0, _path: None, is_color })
     }
 
     pub(crate) fn should_use_fontdue(&self) -> bool {
         #[cfg(any(target_os = "ios", target_os = "macos"))]
-        if self.path.is_some() {
+        if self._path.is_some() {
             return false;
         }
 
@@ -75,7 +95,6 @@ impl FontRecord {
         probes.iter().any(|&c| face.glyph_index(c).is_some())
     }
 
-
     /// Borrow the underlying font data either from the in-memory `bytes` or by
     /// reading the on-disk path. Returns `None` if neither source is available.
     pub(crate) fn read_data(&self) -> Option<Vec<u8>> {
@@ -84,7 +103,7 @@ impl FontRecord {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let path = self.path.as_ref()?;
+            let path = self._path.as_ref()?;
             std::fs::read(path.as_ref()).ok()
         }
         #[cfg(target_arch = "wasm32")]
@@ -95,11 +114,11 @@ impl FontRecord {
     pub(crate) fn ensure_face(&self) -> Option<()> {
         if let Some(bytes) = self.bytes.as_ref() {
             ttf_parser::Face::parse(bytes.as_ref(), self.collection_index).ok()?;
-            return Some(())
+            return Some(());
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let path = self.path.as_ref()?;
+            let path = self._path.as_ref()?;
             let file = std::fs::File::open(path.as_ref()).ok()?;
             let map = unsafe { memmap2::Mmap::map(&file).ok()? };
             ttf_parser::Face::parse(&map, self.collection_index).ok()?;
@@ -121,12 +140,12 @@ impl FontRecord {
             } else {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let path = self.path.as_ref()?;
+                    let path = self._path.as_ref()?;
                     let data = std::fs::read(path.as_ref()).ok()?;
                     fontdue::Font::from_bytes(data, settings).ok()?
                 }
                 #[cfg(target_arch = "wasm32")]
-                return None
+                return None;
             };
             self.font = Some(Arc::new(font));
         }
@@ -148,7 +167,7 @@ impl FontRecord {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let path = self.path.as_ref()?;
+            let path = self._path.as_ref()?;
             let file = std::fs::File::open(path.as_ref()).ok()?;
             let map = unsafe { memmap2::Mmap::map(&file).ok()? };
             let face = ttf_parser::Face::parse(&map, self.collection_index).ok()?;
@@ -169,7 +188,7 @@ impl FontRecord {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let path = self.path.as_ref()?;
+            let path = self._path.as_ref()?;
             let file = std::fs::File::open(path.as_ref()).ok()?;
             let map = unsafe { memmap2::Mmap::map(&file).ok()? };
             advance_width_from_face(&map, self.collection_index, glyph_id, font_size)
@@ -205,32 +224,32 @@ const fn probe_group(label: &'static str, probes: &'static [char], hint_color: b
 /// single font file covers multiple scripts (the first probe group that matches
 /// controls whether the font is added to the chain for that group).
 static PROBE_GROUPS: &[ProbeGroup] = &[
-    probe_group("emoji",      &['😀', '👍'],              true),
-    probe_group("cjk",        &['你', '漢', '한'],          false),
-    probe_group("hangul",     &['가', '나', '다'],          false),
-    probe_group("arabic",     &['\u{0639}', '\u{0627}'],  false), // ع ا
-    probe_group("hebrew",     &['\u{05D0}', '\u{05D1}'],  false), // א ב
-    probe_group("devanagari", &['\u{0915}', '\u{0930}'],  false), // क र
-    probe_group("tamil",      &['\u{0B95}', '\u{0BB5}'],  false), // க வ
-    probe_group("thai",       &['\u{0E01}', '\u{0E02}'],  false), // ก ข
-    probe_group("armenian",   &['\u{0531}', '\u{0532}'],  false), // Ա Բ
-    probe_group("georgian",   &['\u{10D0}', '\u{10D1}'],  false), // ა ბ
-    probe_group("ethiopic",   &['\u{1200}', '\u{1201}'],  false), // ሀ ሁ
-    probe_group("myanmar",    &['\u{1000}', '\u{1001}'],  false), // က ခ
-    probe_group("khmer",      &['\u{1780}', '\u{1781}'],  false), // ក ខ
-    probe_group("tibetan",    &['\u{0F00}'],               false), // ༀ
-    probe_group("sinhala",    &['\u{0D9A}'],               false), // ක
-    probe_group("telugu",     &['\u{0C15}'],               false), // క
-    probe_group("kannada",    &['\u{0C95}'],               false), // ಕ
-    probe_group("malayalam",  &['\u{0D15}'],               false), // ക
-    probe_group("gujarati",   &['\u{0A95}'],               false), // ક
-    probe_group("gurmukhi",   &['\u{0A15}'],               false), // ਕ
-    probe_group("bengali",    &['\u{0995}'],               false), // ক
-    probe_group("oriya",      &['\u{0B15}'],               false), // କ
-    probe_group("lao",        &['\u{0E81}'],               false), // ກ
-    probe_group("mongolian",  &['\u{1820}'],               false), // ᠠ
-    probe_group("cherokee",   &['\u{13A0}'],               false), // Ꭰ
-    probe_group("yi",         &['\u{A000}'],               false), // ꀀ
+    probe_group("emoji", &['😀', '👍'], true),
+    probe_group("cjk", &['你', '漢', '한'], false),
+    probe_group("hangul", &['가', '나', '다'], false),
+    probe_group("arabic", &['\u{0639}', '\u{0627}'], false),     // ع ا
+    probe_group("hebrew", &['\u{05D0}', '\u{05D1}'], false),     // א ב
+    probe_group("devanagari", &['\u{0915}', '\u{0930}'], false), // क र
+    probe_group("tamil", &['\u{0B95}', '\u{0BB5}'], false),      // க வ
+    probe_group("thai", &['\u{0E01}', '\u{0E02}'], false),       // ก ข
+    probe_group("armenian", &['\u{0531}', '\u{0532}'], false),   // Ա Բ
+    probe_group("georgian", &['\u{10D0}', '\u{10D1}'], false),   // ა ბ
+    probe_group("ethiopic", &['\u{1200}', '\u{1201}'], false),   // ሀ ሁ
+    probe_group("myanmar", &['\u{1000}', '\u{1001}'], false),    // က ခ
+    probe_group("khmer", &['\u{1780}', '\u{1781}'], false),      // ក ខ
+    probe_group("tibetan", &['\u{0F00}'], false),                // ༀ
+    probe_group("sinhala", &['\u{0D9A}'], false),                // ක
+    probe_group("telugu", &['\u{0C15}'], false),                 // క
+    probe_group("kannada", &['\u{0C95}'], false),                // ಕ
+    probe_group("malayalam", &['\u{0D15}'], false),              // ക
+    probe_group("gujarati", &['\u{0A95}'], false),               // ક
+    probe_group("gurmukhi", &['\u{0A15}'], false),               // ਕ
+    probe_group("bengali", &['\u{0995}'], false),                // ক
+    probe_group("oriya", &['\u{0B15}'], false),                  // କ
+    probe_group("lao", &['\u{0E81}'], false),                    // ກ
+    probe_group("mongolian", &['\u{1820}'], false),              // ᠠ
+    probe_group("cherokee", &['\u{13A0}'], false),               // Ꭰ
+    probe_group("yi", &['\u{A000}'], false),                     // ꀀ
 ];
 
 /// Check whether font data (passed as a byte slice) satisfies `probes`.
@@ -361,11 +380,8 @@ fn core_text_fallback_path_for_probes(probes: &[char]) -> Option<PathBuf> {
             return None;
         }
 
-        let fallback_font = CTFontCreateForString(
-            base_font,
-            sample.as_concrete_TypeRef() as _,
-            CFRange { location: 0, length: sample_len },
-        );
+        let fallback_font =
+            CTFontCreateForString(base_font, sample.as_concrete_TypeRef() as _, CFRange { location: 0, length: sample_len });
         CFRelease(base_font);
 
         if fallback_font.is_null() {
@@ -417,14 +433,17 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
             };
 
             let id = next_id + fallbacks.len() as FontId;
-            let byte_len = std::fs::metadata(&path).ok().map(|m| m.len()).or(Some(data.len() as u64));
+            let byte_len = std::fs::metadata(&path)
+                .ok()
+                .map(|m| m.len())
+                .or(Some(data.len() as u64));
             fallbacks.push(FontRecord {
                 id,
                 bytes: None,
                 font: None,
                 byte_len,
                 collection_index: ci,
-                path: Some(Arc::new(path.clone())),
+                _path: Some(Arc::new(path.clone())),
                 is_color,
             });
             seen.insert((path.clone(), ci));
@@ -455,9 +474,7 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
             // Use `with_face_data` so we never manually open files — fontdb
             // already handles file mapping, binary sources, etc.  This makes
             // the code safe on WASM (no `std::fs`) and on iOS (sandboxed FS).
-            let result = db.with_face_data(face_id, |data, _ci| {
-                font_data_matches_probes(data, ci, group.probes, group.hint_color)
-            });
+            let result = db.with_face_data(face_id, |data, _ci| font_data_matches_probes(data, ci, group.probes, group.hint_color));
 
             let Some(Some(is_color)) = result else {
                 continue;
@@ -488,15 +505,7 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
             //     .unwrap_or_else(|| format!("<binary id={:?}>", face_id));
 
             let id = next_id + fallbacks.len() as FontId;
-            let record = FontRecord {
-                id,
-                bytes: record_bytes,
-                font: None,
-                byte_len,
-                collection_index: ci,
-                path: record_path,
-                is_color,
-            };
+            let record = FontRecord { id, bytes: record_bytes, font: None, byte_len, collection_index: ci, _path: record_path, is_color };
 
             seen_ids.insert(face_id);
             // info!("Dynamic fallback [{}]: {} (ci={}, color={})", group.label, display_name, ci, is_color);
