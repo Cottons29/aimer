@@ -19,6 +19,13 @@ pub mod inspector_overlay {
     }
 }
 
+pub use crate::components::element::Element;
+pub use crate::components::visitor_element::VisitorElement;
+pub use crate::components::event_element::EventElement;
+pub use crate::components::layout_element::LayoutElement;
+pub use crate::components::drawable::Drawable;
+pub use crate::components::rebuildable::Rebuildable;
+
 
 pub mod base {
     pub use aimer_attribute::position::Vec2d;
@@ -28,12 +35,12 @@ pub mod base {
     pub use aimer_color::prelude::*;
 }
 pub use crate::widget::{Widget, WidgetTrait};
-pub use crate::components::element::Element;
+
 pub use crate::components::element::{dispatch_event, broadcast_event};
 pub use crate::widget::stateful::{StatefulElement, StatefulWidget, State, StateUpdater};
 pub use crate::widget::stateless::{ StatelessElement, StatelessWidget, NamedWidget};
 pub use aimer_macro::{widget, Constructor, main, WidgetConstructor};
 pub use aimer_canvas::TextOverflowMode;
 pub use crate::layout_cache::LayoutCache;
-pub use components::drawable::Drawable;
+
 
