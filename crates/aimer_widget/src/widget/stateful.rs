@@ -1,14 +1,14 @@
+use crate::{Drawable, Element, LayoutElement, VisitorElement, Widget, base::*, EventElement, Rebuildable};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use aimer_events::element::ElementEvent;
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::cell::UnsafeCell;
 use std::panic::Location;
 use std::process::exit;
 use std::sync::Arc;
-use crossbeam_channel::{Sender, Receiver, unbounded};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use winit::window::Window;
-use aimer_events::element::ElementEvent;
-use crate::{base::*, Drawable, Element, Widget};
 
 /// A `Send + Sync` wrapper around `UnsafeCell<Box<dyn Element>>`.
 /// Safety: the rendering pipeline is single-threaded, so concurrent access does not occur.
@@ -62,12 +62,7 @@ impl<S> Clone for StateUpdater<S> {
 impl<S: Send + 'static> StateUpdater<S> {
     /// Create a new `StateUpdater` from a channel sender, shared state, and a dirty flag.
     #[inline]
-    fn new(
-        tx: Sender<StateMutation<S>>,
-        state: Arc<SyncState<S>>,
-        dirty: Arc<AtomicBool>,
-        window: &'static Window,
-    ) -> Self {
+    fn new(tx: Sender<StateMutation<S>>, state: Arc<SyncState<S>>, dirty: Arc<AtomicBool>, window: &'static Window) -> Self {
         Self { inner: Some(StateUpdaterInner { tx, state, dirty, window }) }
     }
 
@@ -108,11 +103,7 @@ impl<S: Send + 'static> StateUpdater<S> {
     /// }
     /// ```
     #[track_caller]
-    pub fn set_state_with<V: Clone + Send + 'static>(
-        &self,
-        value: &V,
-        f: impl FnOnce(&mut S, V) + Send + 'static,
-    ) {
+    pub fn set_state_with<V: Clone + Send + 'static>(&self, value: &V, f: impl FnOnce(&mut S, V) + Send + 'static) {
         let owned = value.clone();
         self.set_state(move |s| f(s, owned));
     }
@@ -151,9 +142,7 @@ impl<S: Send + 'static> StateUpdater<S> {
     /// `rebuild_if_dirty`.
     #[track_caller]
     pub fn read<R>(&self, f: impl FnOnce(&S) -> R) -> R {
-        let inner = match  self
-            .inner
-            .as_ref() {
+        let inner = match self.inner.as_ref() {
             Some(inner) => inner,
             None => {
                 let loc = Location::caller();
@@ -168,7 +157,7 @@ impl<S: Send + 'static> StateUpdater<S> {
     }
 
     #[inline]
-    fn beautiful_error(&self, loc:  &Location) {
+    fn beautiful_error(&self, loc: &Location) {
         #[cfg(not(target_os = "ios"))]
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -249,7 +238,11 @@ pub struct StatefulElement {
 impl StatefulElement {
     /// Create a new StatefulElement from a StatefulWidget.
     /// Returns the element and a StateUpdater that can be used in callbacks.
-    pub fn new_with_name<W: StatefulWidget + 'static>(widget: &W, ctx: &BuildContext, debug_name: &'static str) -> (Self, StateUpdater<W::State>)
+    pub fn new_with_name<W: StatefulWidget + 'static>(
+        widget: &W,
+        ctx: &BuildContext,
+        debug_name: &'static str,
+    ) -> (Self, StateUpdater<W::State>)
     where
         W::State: Send + Sync + 'static,
     {
@@ -342,10 +335,8 @@ impl StatefulElement {
         }
         self.dirty.store(false, Ordering::Release);
         self.rebuild_generation.fetch_add(1, Ordering::Relaxed);
-        self.last_rebuilt_generation.store(
-            self.rebuild_generation.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
+        self.last_rebuilt_generation
+            .store(self.rebuild_generation.load(Ordering::Relaxed), Ordering::Relaxed);
     }
 
     /// Walk the element tree and rebuild any nested dirty `StatefulElement`s.
@@ -377,7 +368,9 @@ impl Drawable for StatefulElement {
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if !(cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y) {return;}
+                if !(cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y) {
+                    return;
+                }
                 if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
                     *hovered = Some((self.debug_name, l_start, l_end));
                 }
@@ -390,14 +383,20 @@ impl Drawable for StatefulElement {
     }
 }
 
-impl Element for StatefulElement {
-    fn pos(&self) -> Option<Vec2d> {
-        unsafe { &*self.child.0.get() }.pos()
+impl VisitorElement for StatefulElement {
+    fn visit_children<'a>(&self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        // Safety: single-threaded rendering pipeline
+        let child = unsafe { &*self.child.0.get() };
+        visitor(child.as_ref());
     }
 
-    fn size(&self) -> Option<Size> {
-        unsafe { &*self.child.0.get() }.size()
+    fn debug_name(&self) -> &'static str {
+        self.debug_name
     }
+}
+
+
+impl EventElement for StatefulElement {
     fn on_event(&self, event: &ElementEvent) -> bool {
         let child = unsafe { &*self.child.0.get() };
         crate::components::element::dispatch_event(
@@ -406,7 +405,7 @@ impl Element for StatefulElement {
                 ElementEvent::PointerDown(p) => *p,
                 ElementEvent::PointerUp(p) => *p,
                 ElementEvent::PointerMove(p) => *p,
-                ElementEvent::Scroll{..} => Vec2d::default(),
+                ElementEvent::Scroll { .. } => Vec2d::default(),
                 ElementEvent::CharInput { .. } => Vec2d::default(),
                 ElementEvent::KeyInput { .. } => Vec2d::default(),
                 ElementEvent::Cancel => Vec2d::default(),
@@ -414,25 +413,28 @@ impl Element for StatefulElement {
             event,
         )
     }
-    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        if self.bounds.get().is_some() {
-            return self.bounds.get();
-        }
-        unsafe { &*self.child.0.get() }.pos_start_end()
-    }
-    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        // Safety: single-threaded rendering pipeline
-        let child = unsafe { &*self.child.0.get() };
-        visitor(child.as_ref());
-    }
+
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         // Safety: single-threaded rendering pipeline
         let child = unsafe { &*self.child.0.get() };
         visitor(child.as_ref());
     }
+}
+
+impl LayoutElement for StatefulElement {
+    fn pos(&self) -> Option<Vec2d> {
+        unsafe { &*self.child.0.get() }.pos()
+    }
+
+    fn size(&self) -> Option<Size> {
+        unsafe { &*self.child.0.get() }.size()
+    }
+
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         unsafe { &*self.child.0.get() }.computed_size(ctx)
     }
+
+
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         unsafe { &*self.child.0.get() }.content_size(ctx)
     }
@@ -442,11 +444,17 @@ impl Element for StatefulElement {
     fn invalidate_layout(&self) {
         unsafe { &*self.child.0.get() }.invalidate_layout();
     }
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        if self.bounds.get().is_some() {
+            return self.bounds.get();
+        }
+        unsafe { &*self.child.0.get() }.pos_start_end()
+    }
+}
+
+impl Rebuildable for StatefulElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         StatefulElement::rebuild_if_dirty(self, ctx);
-    }
-    fn debug_name(&self) -> &'static str {
-        self.debug_name
     }
 }
 
