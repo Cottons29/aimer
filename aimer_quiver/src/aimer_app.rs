@@ -16,6 +16,7 @@ use aimer_utils::info;
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
+
 #[cfg(target_os = "android")]
 pub static ANDROID_APP: std::sync::OnceLock<AndroidApp> = std::sync::OnceLock::new();
 
@@ -94,13 +95,14 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     #[cfg(target_os = "android")]
     let event_loop = {
+        use aimer_events::android_app;
         use winit::platform::android::EventLoopBuilderExtAndroid;
         let app = crate::aimer_app::ANDROID_APP
             .get()
             .expect("ANDROID_APP not set")
             .clone();
 
-        events::android_app::set_android_app(app.clone());
+        android_app::set_android_app(app.clone());
         EventLoop::<AimerCustomAppEvent>::with_user_event()
             .with_android_app(app)
             .build()
