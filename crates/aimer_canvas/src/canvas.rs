@@ -37,6 +37,7 @@ pub trait CanvasRendering: Clone {
     fn restore(&self);
     fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color);
     fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32);
+    #[allow(clippy::too_many_arguments)]
     fn draw_text_with_overflow(
         &self,
         text: &str,

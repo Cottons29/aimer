@@ -269,7 +269,7 @@
 				INFOPLIST_FILE = "${project_name}/Info.plist";
 				COMBINE_HIDPI_IMAGES = YES;
 				OTHER_LDFLAGS = (
-					"-L$(SRCROOT)/../staticlib/macos",
+					"-L$(SRCROOT)/Libraries",
 					"-l${project_name_lib}",
 					"-lc++",
 					"-framework",
@@ -305,7 +305,7 @@
 				INFOPLIST_FILE = "${project_name}/Info.plist";
 				COMBINE_HIDPI_IMAGES = YES;
 				OTHER_LDFLAGS = (
-					"-L$(SRCROOT)/../staticlib/macos",
+					"-L$(SRCROOT)/Libraries",
 					"-l${project_name_lib}",
 					"-lc++",
 					"-framework",

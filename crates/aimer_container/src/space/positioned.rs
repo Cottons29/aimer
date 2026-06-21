@@ -1,9 +1,9 @@
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
-use aimer_macro::{Constructor, WidgetConstructor};
+use aimer_macro::{Constructor, Rebuildable, WidgetConstructor};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{ Drawable, Element, Widget};
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget};
 
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
@@ -66,7 +66,7 @@ pub enum Position {
 }
 
 #[allow(dead_code)]
-#[derive(Constructor)]
+#[derive(Constructor, Rebuildable)]
 pub struct RawPositionedElement<E: Element> {
     pub(crate) child: E,
     pub(crate) position: Position,
@@ -178,17 +178,27 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
     }
 }
 
-impl<E: Element> Element for RawPositionedElement<E> {
-
-
+impl<E: Element> VisitorElement for RawPositionedElement<E> {
     fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
         // Positioned handles its own child rendering in draw() with proper offset,
         // so we don't expose children here to avoid double-rendering at (0,0).
     }
 
+    fn debug_name(&self) -> &'static str {
+        "RawPositionedElement"
+    }
+}
+
+impl<E: Element> EventElement for RawPositionedElement<E> {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(&self.child);
     }
+}
+
+impl<E: Element> LayoutElement for RawPositionedElement<E> {
+
+
+
 
     fn layer(&self) -> u32 {
         self.layer

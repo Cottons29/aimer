@@ -10,14 +10,14 @@ use std::sync::{Arc, OnceLock};
 
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
 static FONT_DB: LazyLock<FontDatabase> = LazyLock::new(|| {
-    let db = FontDatabase::new();
+    let mut db = FontDatabase::new();
     // `load_system_fonts` scans every installed font, which is expensive on
     // startup.  Apple platforms use CoreText per-script fallback resolution
     // instead; other desktop platforms keep the fontdb system scan for now.
     // On WASM there is no filesystem, so we leave the database empty (only the
     // embedded primary font / Roboto is available on that platform).
     #[cfg(not(target_arch = "wasm32"))]
-    time_cost!("LoadFontWasm", || db.load_system_fonts());
+    db.load_system_fonts();
 
     db
 });

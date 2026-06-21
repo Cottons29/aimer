@@ -12,6 +12,7 @@ pub use aimer_input::gesture::button::Button;
 pub use aimer_input::callback::{AsyncCallback, RawInnerCallback, CallbackInner};
 pub use aimer_input::input::*;
 pub use aimer_input::*;
+pub use aimer_quiver as quiver;
 pub use aimer_quiver;
 pub use aimer_quiver::AimerApp;
 pub use aimer_macro::main;

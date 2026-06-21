@@ -1,4 +1,4 @@
-use crate::{base::*, Drawable, Element, Widget};
+use crate::{base::*, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 // StatelessWidget is effectively just a Widget.
@@ -40,6 +40,10 @@ impl Widget for NamedWidget {
     }
 }
 
+impl EventElement for StatelessElement {}
+
+impl Rebuildable for StatelessElement {}
+
 pub struct StatelessElement {
     pub child: Box<dyn Element>,
     pub debug_name: &'static str,
@@ -72,7 +76,7 @@ impl Drawable for StatelessElement {
     }
 }
 
-impl Element for StatelessElement {
+impl LayoutElement for StatelessElement {
     fn pos(&self) -> Option<Vec2d> {
         self.child.pos()
     }
@@ -80,29 +84,36 @@ impl Element for StatelessElement {
     fn size(&self) -> Option<Size> {
         self.child.size()
     }
-    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        if self.bounds.get().is_some() {
-            return self.bounds.get();
-        }
-        self.child.pos_start_end()
-    }
-    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
-    }
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.child.computed_size(ctx)
     }
+
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.child.content_size(ctx)
     }
     fn get_size_from_child(&self) -> Option<Size> {
         self.child.get_size_from_child()
     }
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        if self.bounds.get().is_some() {
+            return self.bounds.get();
+        }
+        self.child.pos_start_end()
+    }
+
+}
+
+
+impl VisitorElement for StatelessElement {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+
     fn debug_name(&self) -> &'static str {
         self.debug_name
     }
-}
 
+}
 
 
 

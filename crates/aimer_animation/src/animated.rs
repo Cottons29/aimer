@@ -1,15 +1,14 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use crate::time::AnimInstant;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_macro::{ WidgetConstructor};
 use aimer_events::element::ElementEvent;
+use aimer_macro::WidgetConstructor;
 use aimer_widget::base::*;
-use aimer_widget::{Drawable, Element, Widget};
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::controller::AnimationController;
-
 
 /// Describes what visual property the `Animated` widget should animate.
 #[derive(Debug, Clone, Copy)]
@@ -73,13 +72,7 @@ impl<T: Widget + 'static> Widget for Animated<T> {
         // Create a StateUpdater-like mechanism: we use a shared dirty flag + window ref
         // to request redraws while the animation is running.
         let window: &'static winit::window::Window = ctx.window;
-        Box::new(AnimatedElement {
-            child: child_element,
-            controller,
-            effect: self.effect,
-            animating,
-            window,
-        })
+        Box::new(AnimatedElement { child: child_element, controller, effect: self.effect, animating, window })
     }
 }
 
@@ -134,10 +127,8 @@ impl AnimatedElement {
         let child_size = self.child.computed_size(ctx);
         let w = child_size.width;
         let h = child_size.height;
-        ctx.canvas.set_clip(
-            (0.0, 0.0).into(),
-            ResolvedSize { width: w, height: h },
-        );
+        ctx.canvas
+            .set_clip((0.0, 0.0).into(), ResolvedSize { width: w, height: h });
     }
 
     fn apply_effect(&self, ctx: &BuildContext, t: f32) {
@@ -181,26 +172,35 @@ impl AnimatedElement {
     }
 }
 
-impl Element for AnimatedElement {
+impl VisitorElement for AnimatedElement {
+    fn debug_name(&self) -> &'static str {
+        "AnimatedElement"
+    }
+}
+
+impl EventElement for AnimatedElement {
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        self.child.on_event(event)
+    }
+
+    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+}
+
+impl Rebuildable for AnimatedElement {
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.child.rebuild_if_dirty(ctx);
+    }
+}
+
+impl LayoutElement for AnimatedElement {
     fn pos(&self) -> Option<Vec2d> {
         self.child.pos()
     }
 
     fn size(&self) -> Option<Size> {
         self.child.size()
-    }
-
-    fn on_event(&self, event: &ElementEvent) -> bool {
-        self.child.on_event(event)
-    }
-
-    fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
-        // Animated handles its own child rendering in draw() with proper transforms,
-        // so we don't expose children here to avoid double-rendering.
-    }
-
-    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -217,9 +217,5 @@ impl Element for AnimatedElement {
 
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
-    }
-
-    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.child.rebuild_if_dirty(ctx);
     }
 }

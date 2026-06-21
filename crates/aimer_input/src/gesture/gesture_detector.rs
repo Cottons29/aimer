@@ -7,11 +7,13 @@ use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerEvent, PointerPosition};
 use std::cell::{Cell, RefCell};
 use aimer_widget::base::{BuildContext, Color};
-use aimer_widget::{Drawable, Element, LayoutCache};
+use aimer_widget::{Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement};
 use winit::window::Window;
 use aimer_style::BoxDecoration;
+use aimer_macro::Rebuildable;
 
 #[allow(dead_code)]
+#[derive(Rebuildable)]
 pub struct GestureDetector<'a, E: Element> {
     pub(crate) width: Dimension,
     pub(crate) height: Dimension,
@@ -129,12 +131,13 @@ impl<'a, E: Element> GestureDetector<'a, E> {
     }
 }
 
-impl<'b, E: Element> Element for GestureDetector<'b, E> {
-    #[inline]
-    fn size(&self) -> Option<Size> {
-        Some(Size { width: self.width, height: self.height })
+impl<'b, E: Element> VisitorElement for GestureDetector<'b, E> {
+    fn debug_name(&self) -> &'static str {
+        "GestureDetector"
     }
+}
 
+impl<'b, E: Element> EventElement for GestureDetector<'b, E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
         // debug!("GestureDetectorElement::on_event: {:?}", event);
         // debug!("GestureDetectorElement::caches_bound: {:?}", self.cached_bounds);
@@ -199,6 +202,16 @@ impl<'b, E: Element> Element for GestureDetector<'b, E> {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(&self.child);
     }
+}
+
+
+impl<'b, E: Element> LayoutElement for GestureDetector<'b, E> {
+    #[inline]
+    fn size(&self) -> Option<Size> {
+        Some(Size { width: self.width, height: self.height })
+    }
+
+
 
     /// Compute box dimensions using the non-hover style first (dimensions
     /// should be the same for both styles, but we need them to calculate
@@ -225,10 +238,6 @@ impl<'b, E: Element> Element for GestureDetector<'b, E> {
         let (ol, ot, or, ob) = decoration.outline.strokes(width, height, scale);
 
         ResolvedSize { width: width + ol + or, height: height + ot + ob }
-    }
-
-    fn debug_name(&self) -> &'static str {
-        "GestureDetector"
     }
 }
 

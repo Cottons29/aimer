@@ -1,12 +1,22 @@
 use crate::commands::run::Device;
 use crate::commands::run::cargo_build::{
-    self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_build_log, stream_stdout_with_xcode_progress, wait_for_child,
+    self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_app_log, stream_stderr_as_build_log, stream_stdout_as_app_log,
+    stream_stdout_with_xcode_progress, wait_for_child,
 };
 use crate::commands::run::console::{RunnerEvent, Status};
+use crate::commands::run::helpers::{build_log, build_streamed, fail, host_arch, run_to_completion, set_status, spawn_streamed};
 use crossbeam::channel::Sender;
 use std::net::IpAddr;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use crate::commands::run::utilities::resolve_lib_path;
+
+/// The two flavours of the otherwise-identical iOS build/launch flow.
+#[derive(Clone, Copy)]
+pub(crate) enum IosVariant {
+    Device,
+    Simulator,
+}
 
 pub fn spawn_ios_runner(
     device: Device,
@@ -16,52 +26,64 @@ pub fn spawn_ios_runner(
     inspector_address: IpAddr,
     inspector_port: u16,
 ) {
-    let host_arch = match std::env::consts::ARCH {
-        "aarch64" => "arm64",
-        "x86_64" => "x86_64",
-        _ => "arm64",
+    run_ios(IosVariant::Device, device, pkg_name, tx, current_child_clone, inspector_address, inspector_port);
+}
+
+/// Shared iOS build → package → launch pipeline used by both the physical
+/// device and the simulator runners. Everything that differs between the two is
+/// selected from `variant`.
+pub(crate) fn run_ios(
+    variant: IosVariant,
+    device: Device,
+    pkg_name: String,
+    tx: Sender<RunnerEvent>,
+    current_child_clone: Arc<Mutex<Option<Child>>>,
+    inspector_address: IpAddr,
+    inspector_port: u16,
+) {
+    let xcode_arch = host_arch();
+    let (rust_target, sdk, build_target, debug_subdir) = match variant {
+        IosVariant::Device => {
+            let rust_target = "aarch64-apple-ios";
+            (rust_target, "iphoneos", CargoBuildTarget::Ios { rust_target: rust_target.to_string() }, "Debug-iphoneos")
+        }
+        IosVariant::Simulator => {
+            let rust_target = if xcode_arch == "x86_64" { "x86_64-apple-ios" } else { "aarch64-apple-ios-sim" };
+            (rust_target, "iphonesimulator", CargoBuildTarget::IosSim { rust_target: rust_target.to_string() }, "Debug-iphonesimulator")
+        }
     };
-    let rust_target = "aarch64-apple-ios";
-    let xcode_arch = host_arch;
-    let sdk = "iphoneos";
 
-    let _ = tx.send(RunnerEvent::StatusChange(Status::Compiling(0)));
-    let _ = tx.send(RunnerEvent::BuildLog(format!("Compiling static library for {}...", rust_target)));
+    set_status(&tx, Status::Compiling(0));
+    build_log(&tx, format!("Compiling static library for {}...", rust_target));
 
-    let status = match cargo_build::spawn_cargo_build(
-        &CargoBuildTarget::Ios { rust_target: rust_target.to_string() },
-        &tx,
-        &current_child_clone,
-        inspector_address,
-        inspector_port,
-    ) {
+    let status = match cargo_build::spawn_cargo_build(&build_target, &tx, &current_child_clone, inspector_address, inspector_port) {
         Some(s) => s,
         None => return,
     };
 
     if !status.success() {
-        let _ = tx.send(RunnerEvent::BuildLog("Cargo build failed.".to_string()));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
+        fail(&tx, "Cargo build failed.");
         return;
     }
 
     let lib_name = pkg_name.replace("-", "_");
-    let src_lib = format!("target/{}/debug/lib{}.a", rust_target, lib_name);
-    let dest_dir = "builds/staticlib/ios";
+    // let src_lib = format!("target/{}/debug/lib{}.a", rust_target, lib_name);
+    let src_lib =  resolve_lib_path(&lib_name, rust_target, CargoBuildTarget::Ios {rust_target: rust_target.to_string()});
+    let dest_dir = "builds/ios/Libraries";
     let dest_lib = format!("{}/lib{}.a", dest_dir, lib_name);
 
     std::fs::create_dir_all(dest_dir).unwrap();
     if let Err(e) = std::fs::copy(&src_lib, &dest_lib) {
-        let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to copy static library: {}", e)));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
+        fail(&tx, format!("Failed to copy static library: {}", e));
         return;
     } else {
-        let _ = tx.send(RunnerEvent::BuildLog(format!("Copied static library to {}", dest_lib)));
+        build_log(&tx, format!("Copied static library to {}", dest_lib));
     }
 
-    let _ = tx.send(RunnerEvent::BuildLog("Building Xcode project for iOS...".to_string()));
+    build_log(&tx, "Building Xcode project for iOS...");
 
-    let mut xcode_build = match Command::new("xcodebuild")
+    let mut xcode_build = Command::new("xcodebuild");
+    xcode_build
         .arg("-project")
         .arg(format!("{}.xcodeproj", pkg_name))
         .arg("-target")
@@ -73,65 +95,26 @@ pub fn spawn_ios_runner(
         .arg("SYMROOT=build")
         .arg("-arch")
         .arg(xcode_arch)
-        .current_dir("builds/ios")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(build) => build,
-        Err(e) => {
-            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to build Xcode project: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
-            return;
-        }
-    };
+        .current_dir("builds/ios");
 
-    let stdout = xcode_build.stdout.take().unwrap();
-    let stderr = xcode_build.stderr.take().unwrap();
-
-    *current_child_clone.lock().unwrap() = Some(xcode_build);
-
-    stream_stdout_with_xcode_progress(stdout, tx.clone());
-    stream_stderr_as_build_log(stderr, tx.clone());
-
-    let status = match wait_for_child(&current_child_clone) {
-        Some(s) => s,
-        None => return,
-    };
-
-    if !status.success() {
-        let _ = tx.send(RunnerEvent::BuildLog("Xcodebuild failed.".to_string()));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
+    if !build_streamed(
+        xcode_build,
+        &tx,
+        &current_child_clone,
+        "Failed to build Xcode project",
+        "Xcodebuild failed.",
+        stream_stdout_with_xcode_progress,
+        stream_stderr_as_build_log,
+    ) {
         return;
     }
 
-    let _ = tx.send(RunnerEvent::StatusChange(Status::Launching));
-    let device_name = &device.name;
-    let _ = tx.send(RunnerEvent::BuildLog(format!("Installing app on {} ...", device_name)));
-    let app_path = format!("builds/ios/build/Debug-iphoneos/{}.app", pkg_name);
+    set_status(&tx, Status::Launching);
+    let app_path = format!("builds/ios/build/{}/{}.app", debug_subdir, pkg_name);
 
-    let install_status = match Command::new("xcrun")
-        .args(["devicectl", "device", "install", "app", "--device", &device.id, &app_path])
-        .env("TERM", "dumb")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .status()
-    {
-        Ok(status) => status,
-        Err(e) => {
-            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to install on {}: {}", device_name, e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
-            return;
-        }
-    };
-
-    if !install_status.success() {
-        let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to install on {}", device_name)));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
+    if !install_app(variant, &device, &app_path, &tx) {
         return;
     }
-
-    let _ = tx.send(RunnerEvent::BuildLog("Launching app on iOS Device...".to_string()));
 
     let plist_path = format!("{}/Info.plist", app_path);
     let bundle_id_output = match Command::new("plutil")
@@ -143,8 +126,7 @@ pub fn spawn_ios_runner(
     {
         Ok(output) => output,
         Err(e) => {
-            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to get bundle id: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
+            fail(&tx, format!("Failed to get bundle id: {}", e));
             return;
         }
     };
@@ -153,32 +135,91 @@ pub fn spawn_ios_runner(
         .trim()
         .to_string();
 
-    let mut app_run = match Command::new("xcrun")
-        .args(["devicectl", "device", "process", "launch", "--terminate-existing", "--console", "--device", &device.id, &bundle_id])
-        .env("TERM", "dumb")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(run) => run,
-        Err(e) => {
-            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to launch app: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
-            return;
-        }
-    };
+    if !launch_app(variant, &device, &bundle_id, &tx, &current_child_clone) {
+        return;
+    }
 
-    let stdout = app_run.stdout.take().unwrap();
-    let stderr = app_run.stderr.take().unwrap();
-
-    *current_child_clone.lock().unwrap() = Some(app_run);
-
-    stream_as_app_log_split_cr(stdout, tx.clone());
-    stream_as_app_log_split_cr(stderr, tx.clone());
-
-    let _ = tx.send(RunnerEvent::StatusChange(Status::Running));
+    set_status(&tx, Status::Running);
 
     wait_for_child(&current_child_clone);
 
-    let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+    set_status(&tx, Status::Idling);
+}
+
+/// Install the freshly built `.app` onto the device or simulator.
+fn install_app(variant: IosVariant, device: &Device, app_path: &str, tx: &Sender<RunnerEvent>) -> bool {
+    match variant {
+        IosVariant::Device => {
+            let device_name = &device.name;
+            build_log(tx, format!("Installing app on {} ...", device_name));
+
+            let mut install = Command::new("xcrun");
+            install
+                .args(["devicectl", "device", "install", "app", "--device", &device.id, app_path])
+                .env("TERM", "dumb")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            run_to_completion(
+                install,
+                tx,
+                &format!("Failed to install on {}", device_name),
+                &format!("Failed to install on {}", device_name),
+            )
+        }
+        IosVariant::Simulator => {
+            build_log(tx, "Installing app on iOS Simulator...");
+
+            let mut install = Command::new("xcrun");
+            install.args(["simctl", "install", &device.id, app_path]);
+
+            run_to_completion(install, tx, "Failed to install app", "Failed to install on Simulator.")
+        }
+    }
+}
+
+/// Launch the installed app, streaming its console output back as app logs.
+fn launch_app(
+    variant: IosVariant,
+    device: &Device,
+    bundle_id: &str,
+    tx: &Sender<RunnerEvent>,
+    current_child_clone: &Arc<Mutex<Option<Child>>>,
+) -> bool {
+    match variant {
+        IosVariant::Device => {
+            build_log(tx, "Launching app on iOS Device...");
+
+            let mut launch = Command::new("xcrun");
+            launch
+                .args(["devicectl", "device", "process", "launch", "--terminate-existing", "--console", "--device", &device.id, bundle_id])
+                .env("TERM", "dumb");
+
+            spawn_streamed(
+                launch,
+                tx,
+                current_child_clone,
+                "Failed to launch app",
+                Status::Idling,
+                stream_as_app_log_split_cr,
+                stream_as_app_log_split_cr,
+            )
+        }
+        IosVariant::Simulator => {
+            build_log(tx, "Launching app on iOS Simulator...");
+
+            let mut launch = Command::new("xcrun");
+            launch.args(["simctl", "launch", "--console-pty", &device.id, bundle_id]);
+
+            spawn_streamed(
+                launch,
+                tx,
+                current_child_clone,
+                "Failed to launch app",
+                Status::Error,
+                stream_stdout_as_app_log,
+                stream_stderr_as_app_log,
+            )
+        }
+    }
 }

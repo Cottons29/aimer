@@ -4,57 +4,56 @@ use crate::commands::run::cargo_build::{
     stream_stdout_with_xcode_progress, wait_for_child,
 };
 use crate::commands::run::console::{RunnerEvent, Status};
+use crate::commands::run::helpers::{build_log, build_streamed, fail, host_arch, set_status, spawn_streamed};
+use crate::commands::run::utilities::resolve_lib_path;
 use crossbeam::channel::Sender;
 use std::net::IpAddr;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 pub fn spawn_macos_runner(
-    device: Device,
+    _device: Device,
     pkg_name: String,
     tx: Sender<RunnerEvent>,
     current_child_clone: Arc<Mutex<Option<std::process::Child>>>,
     inspector_address: IpAddr,
     inspector_port: u16,
 ) {
-    let _ = tx.send(RunnerEvent::StatusChange(Status::Compiling(0)));
-    let _ = tx.send(RunnerEvent::BuildLog("Compiling static library...".to_string()));
+    set_status(&tx, Status::Compiling(0));
+    build_log(&tx, "Compiling static library...");
 
     let status =
-        match cargo_build::spawn_cargo_build(&CargoBuildTarget::Macos, &tx, &current_child_clone, inspector_address, inspector_port) {
+        match cargo_build::spawn_cargo_build(&CargoBuildTarget::Darwin, &tx, &current_child_clone, inspector_address, inspector_port) {
             Some(s) => s,
             None => return,
         };
 
     if !status.success() {
-        let _ = tx.send(RunnerEvent::BuildLog("Cargo build failed.".to_string()));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
+        fail(&tx, "Cargo build failed.");
         return;
     }
 
     let lib_name = pkg_name.replace("-", "_");
-    let src_lib = format!("target/debug/lib{}.a", lib_name);
-    let dest_dir = "builds/staticlib/macos";
+    let src_lib = resolve_lib_path(&lib_name, "aarch64-apple-darwin", CargoBuildTarget::Darwin);
+    let dest_dir = "builds/macos/Libraries";
     let dest_lib = format!("{}/lib{}.a", dest_dir, lib_name);
 
     std::fs::create_dir_all(dest_dir).unwrap();
     if let Err(e) = std::fs::copy(&src_lib, &dest_lib) {
-        let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to copy static library: {}", e)));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
+        build_log(&tx, format!("Failed to copy static library: src_lib = {}", src_lib));
+        build_log(&tx, format!("Failed to copy static library: dest_lib = {}", dest_lib));
+        fail(&tx, format!("Failed to copy static library: {}", e));
         return;
     } else {
-        let _ = tx.send(RunnerEvent::BuildLog(format!("Copied static library to {}", dest_lib)));
+        build_log(&tx, format!("Copied static library to {}", dest_lib));
     }
 
-    let arch = match std::env::consts::ARCH {
-        "aarch64" => "arm64",
-        "x86_64" => "x86_64",
-        _ => "arm64",
-    };
+    let arch = host_arch();
 
-    let _ = tx.send(RunnerEvent::BuildLog(format!("Building Xcode project for {}...", arch)));
+    build_log(&tx, format!("Building Xcode project for {}...", arch));
 
-    let mut xcode_build = match Command::new("xcodebuild")
+    let mut xcode_build = Command::new("xcodebuild");
+    xcode_build
         .arg("-project")
         .arg(format!("{}.xcodeproj", pkg_name))
         .arg("-target")
@@ -64,67 +63,43 @@ pub fn spawn_macos_runner(
         .arg("SYMROOT=build")
         .arg("-arch")
         .arg(arch)
-        .current_dir("builds/macos")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(build) => build,
-        Err(e) => {
-            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to build Xcode project: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
-            return;
-        }
-    };
+        .current_dir("builds/macos");
 
-    let stdout = xcode_build.stdout.take().unwrap();
-    let stderr = xcode_build.stderr.take().unwrap();
-
-    *current_child_clone.lock().unwrap() = Some(xcode_build);
-
-    stream_stdout_with_xcode_progress(stdout, tx.clone());
-    stream_stderr_as_build_log(stderr, tx.clone());
-
-    let status = match wait_for_child(&current_child_clone) {
-        Some(s) => s,
-        None => return,
-    };
-
-    if !status.success() {
-        let _ = tx.send(RunnerEvent::BuildLog("Xcodebuild failed.".to_string()));
-        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
+    if !build_streamed(
+        xcode_build,
+        &tx,
+        &current_child_clone,
+        &format!("Failed to build Xcode project, pkg_name = {}", pkg_name),
+        "Xcodebuild failed.",
+        stream_stdout_with_xcode_progress,
+        stream_stderr_as_build_log,
+    ) {
         return;
     }
 
-    let _ = tx.send(RunnerEvent::StatusChange(Status::Launching));
-    let _ = tx.send(RunnerEvent::BuildLog("Launching macOS app...".to_string()));
+    set_status(&tx, Status::Launching);
+    build_log(&tx, "Launching macOS app...");
 
     let app_exec_path = format!("builds/macos/build/Debug/{}.app/Contents/MacOS/{}", pkg_name, pkg_name);
 
-    let mut app_run = match Command::new(&app_exec_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(run) => run,
-        Err(e) => {
-            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to launch macOS app: {}", e)));
-            let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
-            return;
-        }
-    };
+    let mut app_run = Command::new(&app_exec_path);
+    app_run.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let stdout = app_run.stdout.take().unwrap();
-    let stderr = app_run.stderr.take().unwrap();
+    if !spawn_streamed(
+        app_run,
+        &tx,
+        &current_child_clone,
+        "Failed to launch macOS app",
+        Status::Error,
+        stream_stdout_as_app_log,
+        stream_stderr_as_app_log,
+    ) {
+        return;
+    }
 
-    *current_child_clone.lock().unwrap() = Some(app_run);
-
-    stream_stdout_as_app_log(stdout, tx.clone());
-    stream_stderr_as_app_log(stderr, tx.clone());
-
-    let _ = tx.send(RunnerEvent::StatusChange(Status::Running));
+    set_status(&tx, Status::Running);
 
     wait_for_child(&current_child_clone);
 
-    let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
+    set_status(&tx, Status::Idling);
 }

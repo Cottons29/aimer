@@ -2,9 +2,9 @@ use crate::ZeroSizedBox;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_macro::WidgetConstructor;
+use aimer_macro::{Rebuildable, WidgetConstructor};
 pub use aimer_style::*;
-use aimer_widget::{Drawable, Element, LayoutCache, Widget, base::*};
+use aimer_widget::{Drawable, Element, LayoutCache, Widget, base::*, LayoutElement, VisitorElement, EventElement};
 
 #[derive(WidgetConstructor)]
 pub struct Container<T = ZeroSizedBox>
@@ -94,7 +94,7 @@ impl<W: Widget> Widget for Container<W> {
 /// - **Container**: safe wrapper for RawContainer
 ///
 /// - **SizedBox**: fixed size container or place holder
-#[derive(Default)]
+#[derive(Default, Rebuildable)]
 pub struct RawContainer<T: Element> {
     pub padding: LayoutSpacing,
     pub margin: LayoutSpacing,
@@ -262,17 +262,21 @@ impl<T: Element> Drawable for RawContainer<T> {
     }
 }
 
-impl<T: Element> Element for RawContainer<T> {
-    fn size(&self) -> Option<Size> {
-        Some(Size { width: self.width, height: self.height })
+impl<T: Element> VisitorElement for RawContainer<T> {
+    fn debug_name(&self) -> &'static str {
+        self.debug_name
     }
+}
 
-    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bounds.get()
-    }
-
+impl<T: Element> EventElement for RawContainer<T> {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(&self.child);
+    }
+}
+
+impl<T: Element> LayoutElement for RawContainer<T> {
+    fn size(&self) -> Option<Size> {
+        Some(Size { width: self.width, height: self.height })
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -353,6 +357,7 @@ impl<T: Element> Element for RawContainer<T> {
             .set_computed(ctx.box_constraint, scale_bits, result);
         result
     }
+
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
@@ -498,7 +503,9 @@ impl<T: Element> Element for RawContainer<T> {
         self.child.invalidate_layout();
     }
 
-    fn debug_name(&self) -> &'static str {
-        self.debug_name
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.bounds.get()
     }
+
+
 }
