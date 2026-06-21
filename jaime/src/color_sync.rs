@@ -1,0 +1,54 @@
+use aimer::console::debug;
+use aimer::style::{LayoutSpacing, Spacing};
+use aimer::{AimerApp, BuildContext, Color, Container, Dimension, Element, Row, SizedBox, StatelessWidget, Widget};
+
+pub struct ColorSync;
+
+
+pub fn start_color_sync() {
+    AimerApp::start(ColorSync)
+}
+
+
+
+impl Widget for ColorSync {
+    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+        self.build(ctx).to_element(ctx)
+    }
+}
+
+impl StatelessWidget for ColorSync {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let colors = [
+            Color::Rgb(255, 0, 0),
+            Color::Rgb(255, 255, 0),
+            Color::Rgb(255, 255, 255),
+            Color::Rgb(0, 0, 255),
+            Color::Rgb(0, 255, 0),
+            Color::Rgb(0, 255, 255),
+            Color::Rgb(255, 0, 255),
+            Color::Rgb(255, 128, 0),
+            Color::Rgb(255, 255, 128),
+            Color::Rgb(128, 255, 0),
+            Color::Rgb(128, 255, 128),
+            Color::Rgb(0, 128, 255),
+            Color::Rgb(128, 0, 255),
+        ];
+        debug!("Loading the colors:");
+        let children : Vec<Box<dyn Widget>> = colors.iter().map(|color| {
+            SizedBox!(
+                width: Dimension::Percent(100.0),
+                color: color.clone(),
+            )
+        }).collect();
+        Container!(
+            padding: LayoutSpacing::all(Spacing::Px(10)),
+            child: Row!(
+                children: children,
+            )
+        )
+        // Row!(
+        //     children: children,
+        // )
+    }
+}

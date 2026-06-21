@@ -1,0 +1,14 @@
+[package]
+name = "jaime"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+aimer = {path  = ".."}
+uuid = {version = "1.22.0", features = ["js", "v4"]}
+dhat = "0.3"
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4.50"
