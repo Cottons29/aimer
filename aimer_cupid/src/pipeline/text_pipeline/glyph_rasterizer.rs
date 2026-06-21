@@ -14,7 +14,7 @@ use swash::{
 
 /// Embedded primary font (Roboto) — covers Latin and common scripts.
 const PRIMARY_FONT: &[u8] = include_bytes!("../../../fonts/GoogleSans-Regular.ttf");
-const JAPANESE_FONT: &[u8] = include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf");
+// const JAPANESE_FONT: &[u8] = include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf");
 /// A rasterized glyph bitmap with its metrics.
 ///
 /// `bitmap` layout depends on `is_color`:
