@@ -1,14 +1,14 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
-pub fn create(dir: &PathBuf) {
+pub fn create(dir: &Path) {
     let project_name = dir.file_name().unwrap().to_str().unwrap();
     let project_name_lib = project_name.replace("-", "_");
     let ios_dir = dir.join("builds/ios");
     fs::create_dir_all(&ios_dir).unwrap();
     fs::create_dir_all(ios_dir.join(format!("{}.xcodeproj", project_name))).unwrap();
     
-    let xcode_proj_template: &str = &*include_str!("../../../templates/ios/project.pbxproj.template")
+    let xcode_proj_template = include_str!("../../../templates/ios/project.pbxproj.template")
         .replace("${project_name}", project_name)
         .replace("${project_name_lib}", &project_name_lib);
     

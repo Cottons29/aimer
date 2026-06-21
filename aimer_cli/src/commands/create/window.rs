@@ -1,7 +1,7 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
-pub fn create(dir: &PathBuf) {
+pub fn create(dir: &Path) {
     fs::create_dir_all(dir.join("builds/windows")).unwrap();
     fs::write(
         dir.join("builds/windows/app.manifest"),
