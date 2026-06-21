@@ -2,9 +2,9 @@ use crate::ZeroSizedBox;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_macro::WidgetConstructor;
+use aimer_macro::{EventElement, Rebuildable, WidgetConstructor};
 use aimer_widget::base::*;
-use aimer_widget::{base::Color, Drawable, Element, LayoutCache, Widget};
+use aimer_widget::{base::Color, Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget};
 
 
 #[derive(WidgetConstructor)]
@@ -35,7 +35,7 @@ impl Widget for SizedBox {
         })
     }
 }
-
+#[derive(Rebuildable, EventElement)]
 pub struct RawSizedBox<E: Element> {
     pub(crate) width: Dimension,
     pub(crate) height: Dimension,
@@ -81,20 +81,22 @@ impl<E: Element> Drawable for RawSizedBox<E> {
     }
 }
 
-impl<E: Element> Element for RawSizedBox<E> {
+impl<E: Element> VisitorElement for RawSizedBox<E> {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(&self.child);
+    }
+
+    fn debug_name(&self) -> &'static str {
+        self.debug_name
+    }
+}
+
+impl<E: Element> LayoutElement for RawSizedBox<E> {
     fn size(&self) -> Option<Size> {
         match (self.width, self.height) {
             (Dimension::Px(w), Dimension::Px(h)) => Some(Size { width: Dimension::Px(w), height: Dimension::Px(h) }),
             _ => None,
         }
-    }
-
-    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bounds.get()
-    }
-
-    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(&self.child);
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -140,6 +142,7 @@ impl<E: Element> Element for RawSizedBox<E> {
         result
     }
 
+
     fn get_size_from_child(&self) -> Option<Size> {
         let mut size = self.child.get_size_from_child().unwrap_or_default();
         if let Dimension::Px(_) = self.width {
@@ -156,7 +159,9 @@ impl<E: Element> Element for RawSizedBox<E> {
         self.child.invalidate_layout();
     }
 
-    fn debug_name(&self) -> &'static str {
-        self.debug_name
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.bounds.get()
     }
+
+
 }

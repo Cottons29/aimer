@@ -1,7 +1,7 @@
 use aimer_attribute::BoxConstraint;
-use aimer_macro::WidgetConstructor;
+use aimer_macro::{EventElement, LayoutElement, Rebuildable, WidgetConstructor};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, Widget};
+use aimer_widget::{Drawable, Element, LayoutElement, VisitorElement, Widget};
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum StackDirection {
@@ -24,6 +24,7 @@ impl Widget for Stack {
     }
 }
 
+#[derive(Rebuildable, LayoutElement,EventElement )]
 pub struct RawStackElement {
     pub children: Vec<Box<dyn Element>>,
     pub direction: StackDirection,
@@ -67,10 +68,14 @@ impl Drawable for RawStackElement {
     }
 }
 
-impl Element for RawStackElement {
+impl VisitorElement for RawStackElement {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for child in &self.children {
             visitor(child.as_ref());
         }
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "RawStackElement"
     }
 }
