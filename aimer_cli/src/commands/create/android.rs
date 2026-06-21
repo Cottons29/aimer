@@ -1,10 +1,10 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-pub fn create(dir: &PathBuf) {
+pub fn create(dir: &Path) {
     fs::create_dir_all(dir.join("builds/android/app/src/main/java/com/example/app")).unwrap();
     fs::create_dir_all(dir.join("builds/android/app/src/main/res/values")).unwrap();
     fs::create_dir_all(dir.join("builds/android/gradle/wrapper")).unwrap();

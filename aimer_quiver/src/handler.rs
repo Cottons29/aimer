@@ -318,36 +318,3 @@ impl AimerApplicationHandler {
         self.broadcast_inspector_snapshot();
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use aimer_attribute::position::Vec2d;
-    use aimer_attribute::size::Size;
-    use aimer_widget::base::BuildContext;
-    use aimer_widget::{Drawable, Element};
-
-    #[allow(dead_code)]
-    struct MockWidget {
-        pos: Option<Vec2d>,
-        size: Option<Size>,
-        children: Vec<Box<dyn Element>>,
-    }
-
-    impl Drawable for MockWidget {
-        fn draw(&self, _ctx: &BuildContext) {}
-    }
-
-    impl Element for MockWidget {
-        fn pos(&self) -> Option<Vec2d> {
-            self.pos
-        }
-        fn size(&self) -> Option<Size> {
-            self.size
-        }
-        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-            for child in &self.children {
-                visitor(child.as_ref());
-            }
-        }
-    }
-}

@@ -1,9 +1,9 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_attribute::{BoxConstraint, CacheBounds};
-use aimer_macro::WidgetConstructor;
+use aimer_macro::{Rebuildable, WidgetConstructor};
 use aimer_style::LayoutSpacing;
-use aimer_widget::{base::BuildContext, Drawable, Element, LayoutCache, Widget};
+use aimer_widget::{base::BuildContext, Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement, Widget};
 
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 
@@ -49,6 +49,7 @@ impl<W: Widget + 'static> Widget for Flex<W> {
 ///
 /// - Row: layout that always aligns children in a horizontal direction
 #[allow(dead_code)]
+#[derive(Rebuildable)]
 pub struct RawFlex {
     pub(crate) direction: LayoutDirection,
     pub(crate) vertical_alignment: BoxAlignment,
@@ -360,17 +361,20 @@ impl Drawable for RawFlex {
     }
 }
 
-impl Element for RawFlex {
-    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.cache_bound.pos_start_end()
+impl VisitorElement for RawFlex {
+    fn debug_name(&self) -> &'static str {
+        self.debug_name
     }
+}
 
+impl EventElement for RawFlex {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for child in &self.children {
             visitor(child.as_ref());
         }
     }
-
+}
+impl LayoutElement for RawFlex {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
@@ -528,6 +532,7 @@ impl Element for RawFlex {
         result
     }
 
+
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.computed_size(ctx)
     }
@@ -539,7 +544,9 @@ impl Element for RawFlex {
         }
     }
 
-    fn debug_name(&self) -> &'static str {
-        self.debug_name
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.cache_bound.pos_start_end()
     }
+
+
 }

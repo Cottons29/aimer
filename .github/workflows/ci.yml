@@ -1,0 +1,32 @@
+name: aimer_cli CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint-and-test:
+    name: clippy + tests (aimer_cli)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (deny warnings)
+        # --no-deps so -D warnings applies only to aimer_cli, not to the
+        # workspace-member dependencies (which are outside this CI's scope).
+        run: cargo clippy --no-deps -p aimer_cli --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test -p aimer_cli

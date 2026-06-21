@@ -1,17 +1,18 @@
 use aimer_animation::AnimInstant;
 use aimer_attribute::size::ResolvedSize;
-use std::cell::UnsafeCell;
 use aimer_widget::base::{BuildContext, Color, Colors};
-use aimer_widget::{ Drawable, Element};
+use aimer_widget::{Drawable, EventElement, LayoutElement, VisitorElement};
+use std::cell::UnsafeCell;
 
 use crate::input_field::controller::TextFieldController;
 use aimer_attribute::CacheBounds;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
+use aimer_events::window::get_window;
+use aimer_macro::Rebuildable;
+use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
-use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
-use aimer_events::window::get_window;
 
 /// Write text to the system clipboard.
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
@@ -180,7 +181,7 @@ impl std::fmt::Debug for TextFieldCallback {
 
 #[cfg(target_os = "ios")]
 mod ios_keyboard {
-    use std::ffi::{CStr, c_char, c_void};
+    use std::ffi::{c_char, c_void, CStr};
     use std::sync::OnceLock;
 
     const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
@@ -218,14 +219,16 @@ mod ios_keyboard {
 
 #[cfg(target_os = "android")]
 mod android_keyboard {
+    use aimer_events::android_app;
+
     pub fn show_keyboard() {
-        if let Some(app) = events::android_app::get_android_app() {
+        if let Some(app) = android_app::get_android_app() {
             app.show_soft_input(false);
         }
     }
 
     pub fn dismiss_keyboard() {
-        if let Some(app) = events::android_app::get_android_app() {
+        if let Some(app) = android_app::get_android_app() {
             app.hide_soft_input(false);
         }
     }
@@ -348,6 +351,7 @@ pub enum ExpandDirection {
 
 
 #[allow(dead_code)]
+#[derive(Rebuildable)]
 pub(crate) struct RawTextField {
     pub input_type: InputType,
     pub controller: TextFieldController,
@@ -621,7 +625,13 @@ fn wasm_request_keyboard(show: bool) {
     }
 }
 
-impl Element for RawTextField {
+impl VisitorElement for RawTextField {
+    fn debug_name(&self) -> &'static str {
+        "TextField"
+    }
+}
+
+impl EventElement for RawTextField {
     fn on_event(&self, event: &ElementEvent) -> bool {
         if !self.enable {
             return false;
@@ -890,6 +900,10 @@ impl Element for RawTextField {
             _ => false,
         }
     }
+
+}
+
+impl LayoutElement for RawTextField {
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let (w, h) = self.compute_dimensions(ctx);

@@ -5,11 +5,12 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_attribute::CacheBounds;
 use aimer_widget::base::*;
-use aimer_widget::Element;
+use aimer_widget::{Element, LayoutElement};
 use winit::window::Window;
-
+use aimer_macro::Rebuildable;
 pub use crate::scrollable::controller::DragMode;
 
+#[derive(Rebuildable)]
 pub struct RawScrollableContainer<E: Element> {
     pub(crate) child: E,
     pub(crate) ctrl: ScrollController,

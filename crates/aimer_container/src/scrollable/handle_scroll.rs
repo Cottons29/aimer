@@ -4,10 +4,10 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::BuildContext;
-use aimer_widget::Element;
+use aimer_widget::{Element, EventElement, LayoutElement, VisitorElement};
 use chrono::Utc;
 
-impl<E: Element> Element for RawScrollableContainer<E> {
+impl<E: Element> EventElement for RawScrollableContainer<E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
         if let Some(cursor_pos) = event.get_pointer_pos() {
             self.ctrl.cursor_pos.set(Some(cursor_pos));
@@ -298,16 +298,26 @@ impl<E: Element> Element for RawScrollableContainer<E> {
 
     fn event_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
 
-    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        ResolvedSize { width: ctx.box_constraint.max_width, height: ctx.box_constraint.max_height }
-    }
 
-    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let mut child_ctx = ctx.clone();
-        match self.ctrl.axis {
-            ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
-            ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
-        }
-        self.child.computed_size(&child_ctx)
+}
+
+impl<E: Element> VisitorElement for RawScrollableContainer<E> {
+    fn debug_name(&self) -> &'static str {
+        "RawScrollableContainer"
     }
 }
+
+impl<E: Element> LayoutElement for RawScrollableContainer<E> {
+     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+         ResolvedSize { width: ctx.box_constraint.max_width, height: ctx.box_constraint.max_height }
+     }
+
+     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+         let mut child_ctx = ctx.clone();
+         match self.ctrl.axis {
+             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
+             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
+         }
+         self.child.computed_size(&child_ctx)
+     }
+ }

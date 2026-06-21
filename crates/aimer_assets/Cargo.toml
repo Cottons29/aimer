@@ -11,7 +11,7 @@ aimer_widget.workspace = true
 aimer_container.workspace = true
 aimer_color.workspace = true
 aimer_style.workspace = true
-
+aimer_macro.workspace = true
 
 ######
 

@@ -1,7 +1,7 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
-pub fn create(dir: &PathBuf) {
+pub fn create(dir: &Path) {
     let project_name = dir.file_name().unwrap().to_str().unwrap();
     let project_name_lib = project_name.replace("-", "_");
     let macos_dir = dir.join("builds/macos");

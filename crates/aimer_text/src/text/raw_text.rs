@@ -2,10 +2,15 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use std::sync::Mutex;
+use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::*;
 use aimer_widget::{*, TextOverflowMode};
 use aimer_widget::base::BuildContext;
 
+
+
+
+#[derive(Rebuildable, EventElement)]
 pub struct RawTextWidget {
     pub text: String,
     pub text_style: TextStyle,
@@ -109,7 +114,13 @@ impl Drawable for RawTextWidget {
     }
 }
 
-impl Element for RawTextWidget {
+impl VisitorElement for RawTextWidget {
+    fn debug_name(&self) -> &'static str {
+        "RawTextWidget"
+    }
+}
+
+impl LayoutElement for RawTextWidget {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
@@ -141,9 +152,5 @@ impl Element for RawTextWidget {
     }
     fn invalidate_layout(&self) {
         self.cache.invalidate();
-    }
-
-    fn debug_name(&self) -> &'static str {
-        "RawTextWidget"
     }
 }

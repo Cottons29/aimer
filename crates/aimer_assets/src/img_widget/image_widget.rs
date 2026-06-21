@@ -5,9 +5,10 @@ use aimer_attribute::Dimension;
 use aimer_container::ZeroSizedBox;
 use aimer_style::BoxFit;
 use aimer_widget::base::{BuildContext, Color, Colors, ResolvedSize, Size, Vec2d};
-use aimer_widget::{Constructor, Drawable, Element, LayoutCache, Widget};
+use aimer_widget::{Constructor, Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget};
 use std::cell::{Cell, UnsafeCell};
 use std::path::PathBuf;
+use aimer_macro::{EventElement, Rebuildable};
 
 #[derive(Constructor)]
 pub struct Image {
@@ -44,6 +45,7 @@ impl Widget for Image {
     }
 }
 
+#[derive(Rebuildable, EventElement)]
 pub struct RawImageWidget<P: ImageProvider> {
     pub source: P,
     pub size: Size,
@@ -57,7 +59,13 @@ pub struct RawImageWidget<P: ImageProvider> {
     pub scale: f32,
 }
 
-impl<P: ImageProvider> Element for RawImageWidget<P> {
+impl<P: ImageProvider> VisitorElement for RawImageWidget<P> {
+    fn debug_name(&self) -> &'static str {
+        "RawImageElement"
+    }
+}
+
+impl<P: ImageProvider> LayoutElement for RawImageWidget<P> {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
@@ -80,9 +88,7 @@ impl<P: ImageProvider> Element for RawImageWidget<P> {
         self.cache.invalidate();
     }
 
-    fn debug_name(&self) -> &'static str {
-        "RawImageElement"
-    }
+
 }
 
 impl<P: ImageProvider> Drawable for RawImageWidget<P> {
