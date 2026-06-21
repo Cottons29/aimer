@@ -8,7 +8,8 @@ builds/ios/build
 builds/macos/build
 
 # staticlib builds
-staticlib
+builds/macos/Libraries
+builds/ios/Libraries
 
 # web
 builds/web/node_modules

@@ -1,7 +1,7 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
-pub fn create(dir: &PathBuf) {
+pub fn create(dir: &Path) {
     let project_name = dir.file_name().unwrap().to_str().unwrap();
     let web_dir = dir.join("builds/web");
     fs::create_dir_all(&web_dir).unwrap();
@@ -22,7 +22,7 @@ pub fn create(dir: &PathBuf) {
 
     let wasm_name = project_name.replace("-", "_");
     // Generate main.ts
-    fs::write(web_dir.join("main.ts"), include_str!("../../../templates/web/main.ts.template").replace("${wasm_name}", &*wasm_name))
+    fs::write(web_dir.join("main.ts"), include_str!("../../../templates/web/main.ts.template").replace("${wasm_name}", &wasm_name))
         .unwrap();
 
     // Default favicon and icons

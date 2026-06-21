@@ -153,7 +153,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "${project_name}/Info.plist";
 				OTHER_LDFLAGS = (
-					"-L$(SRCROOT)/../staticlib/ios",
+					"-L$(SRCROOT)/Libraries",
 					"-l${project_name_lib}",
 					"-lc++",
 					"-framework",
@@ -304,7 +304,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "${project_name}/Info.plist";
 				OTHER_LDFLAGS = (
-					"-L$(SRCROOT)/../staticlib/ios",
+					"-L$(SRCROOT)/Libraries",
 					"-l${project_name_lib}",
 					"-lc++",
 					"-framework",
