@@ -1,11 +1,14 @@
 mod codegen;
+mod field_info;
+mod auto_trait_impl;
 
+use crate::auto_trait_impl::auto_impl;
+use crate::codegen::router::RouterCodegen;
+use crate::codegen::{ConstructorCodegen, RawWidgetCodegen, StatefulWidgetCodegen, StatelessWidgetCodegen};
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Item, ItemFn, Path, Token};
 use syn::punctuated::Punctuated;
-use crate::codegen::{ConstructorCodegen, RawWidgetCodegen, StatefulWidgetCodegen, StatelessWidgetCodegen};
-use crate::codegen::router::RouterCodegen;
+use syn::{parse_macro_input, Item, ItemFn, Path, Token};
 
 /// Attribute macro that marks the Aimer application entry point.
 ///
@@ -105,7 +108,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Cannot be combined with `#[derive(WidgetConstructor)]` on the same struct.
 #[proc_macro_derive(Constructor, attributes(constructor))]
 pub fn constructor_derive(input: TokenStream) -> TokenStream {
-    let input : proc_macro2::TokenStream = proc_macro2::TokenStream::from(input);
+    let input: proc_macro2::TokenStream = proc_macro2::TokenStream::from(input);
     ConstructorCodegen::generate(input).into()
 }
 
@@ -140,7 +143,7 @@ pub fn constructor_derive(input: TokenStream) -> TokenStream {
 /// Cannot be combined with `#[derive(Constructor)]` on the same struct.
 #[proc_macro_derive(WidgetConstructor, attributes(constructor))]
 pub fn widget_constructor_derive(input: TokenStream) -> TokenStream {
-    let input : proc_macro2::TokenStream = proc_macro2::TokenStream::from(input);
+    let input: proc_macro2::TokenStream = proc_macro2::TokenStream::from(input);
     ConstructorCodegen::generate_boxed(input).into()
 }
 
@@ -164,7 +167,6 @@ impl TryFrom<&str> for AttributeKind {
         }
     }
 }
-
 
 /// Attribute macro that wires up a struct (or enum for `Router`) as a Widget.
 ///
@@ -210,7 +212,7 @@ impl TryFrom<&str> for AttributeKind {
 /// Panics at compile time if no argument is provided.
 #[proc_macro_attribute]
 pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
-    if args.is_empty()  {
+    if args.is_empty() {
         panic!("Missing the widget kind : Stateless, Stateful, Router or RawWidget");
     }
 
@@ -231,7 +233,7 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
             syn::Error::new_spanned(item, "Router widget can only be applied to enums")
                 .to_compile_error()
                 .into()
-        }
+        };
     }
 
     let mut item_struct = match item {
@@ -247,13 +249,8 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     let has_constructor = item_struct.attrs.iter().any(|attr| {
         if attr.path().is_ident("derive") {
             if let Ok(list) = attr.parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated) {
-                list.iter().any(|path| {
-                    if let Some(segment) = path.segments.last() {
-                        segment.ident == "Constructor"
-                    } else {
-                        false
-                    }
-                })
+                list.iter()
+                    .any(|path| if let Some(segment) = path.segments.last() { segment.ident == "Constructor" } else { false })
             } else {
                 false
             }
@@ -273,11 +270,15 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     if !has_constructor {
         // Remove constructor attributes from the struct to avoid compilation errors
         // since we are not adding #[derive(Constructor)] which would handle them
-        item_struct.attrs.retain(|attr| !attr.path().is_ident("constructor"));
+        item_struct
+            .attrs
+            .retain(|attr| !attr.path().is_ident("constructor"));
 
         if let syn::Fields::Named(fields) = &mut item_struct.fields {
             for field in &mut fields.named {
-                field.attrs.retain(|attr| !attr.path().is_ident("constructor"));
+                field
+                    .attrs
+                    .retain(|attr| !attr.path().is_ident("constructor"));
             }
         }
     }
@@ -301,5 +302,28 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     TokenStream::from(final_output)
 }
 
+#[proc_macro_derive(VisitorElement)]
+pub fn visitor_element_derive(input: TokenStream) -> TokenStream {
+    auto_impl("aimer_widget::VisitorElement", input)
+}
+#[proc_macro_derive(EventElement)]
+pub fn event_element_derive(input: TokenStream) -> TokenStream {
+    auto_impl("aimer_widget::EventElement", input)
+}
+
+#[proc_macro_derive(LayoutElement)]
+pub fn layout_element_derive(input: TokenStream) -> TokenStream {
+    auto_impl("aimer_widget::LayoutElement", input)
+}
+
+#[proc_macro_derive(Rebuildable)]
+pub fn rebuildable_element_derive(input: TokenStream) -> TokenStream {
+    auto_impl("aimer_widget::Rebuildable", input)
+}
+
+#[proc_macro_derive(Drawable)]
+pub fn drawable_element_derive(input: TokenStream) -> TokenStream {
+    auto_impl("aimer_widget::Drawable", input)
+}
 
 
