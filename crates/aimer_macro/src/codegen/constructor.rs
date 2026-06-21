@@ -1,7 +1,8 @@
+use crate::codegen::auto_wrapper::AutoWrapper;
+use crate::field_info::FieldInfo;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DataStruct, DeriveInput, Error, Expr, Field, Fields, Ident, Meta, Type, spanned::Spanned};
-use crate::codegen::auto_wrapper::AutoWrapper;
+use syn::{spanned::Spanned, Data, DataStruct, DeriveInput, Error, Fields, Ident};
 
 pub fn constructor_derive(input: TokenStream, box_widget: bool) -> TokenStream {
     let input = match syn::parse2::<DeriveInput>(input) {
@@ -12,92 +13,6 @@ pub fn constructor_derive(input: TokenStream, box_widget: bool) -> TokenStream {
     create_constructor(input, box_widget).unwrap_or_else(|err| err.to_compile_error())
 }
 
-struct FieldInfo<'a> {
-    ident: &'a Ident,
-    ty: &'a Type,
-    skip: bool,
-    default: Option<TokenStream>,
-    into: bool,
-    first: bool,
-    dyn_iter: bool,
-    async_wrapper: Option<String>,
-    docs: Vec<String>,
-}
-
-fn parse_field_info(field: &Field) -> Result<FieldInfo<'_>, Error> {
-    let ident = field
-        .ident
-        .as_ref()
-        .ok_or_else(|| Error::new(field.span(), "Constructor can only be derived for structs with named fields"))?;
-    let ty = &field.ty;
-    let mut skip = false;
-    let mut default = None;
-    let mut into = false;
-    let mut first = false;
-    let mut dyn_iter = false;
-    let mut async_wrapper: Option<String> = None;
-    let mut docs = Vec::new();
-
-    for attr in &field.attrs {
-        #[allow(clippy::collapsible_if)]
-        if attr.path().is_ident("doc") {
-            if let Meta::NameValue(meta) = &attr.meta {
-                if let Expr::Lit(expr_lit) = &meta.value {
-                    if let syn::Lit::Str(lit_str) = &expr_lit.lit {
-                        docs.push(lit_str.value().trim().to_string());
-                    }
-                }
-            }
-        }
-
-        if attr.path().is_ident("constructor") {
-            attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("skip") {
-                    skip = true;
-                    Ok(())
-                } else if meta.path.is_ident("default") {
-                    if meta.input.peek(syn::Token![=]) {
-                        let value: Expr = meta.value()?.parse()?;
-                        default = Some(quote! { #value });
-                    } else {
-                        default = Some(quote! { Default::default() });
-                    }
-                    Ok(())
-                } else if meta.path.is_ident("into") {
-                    into = true;
-                    Ok(())
-                } else if meta.path.is_ident("first") {
-                    first = true;
-                    Ok(())
-                } else if meta.path.is_ident("dyn_iter") {
-                    dyn_iter = true;
-                    Ok(())
-                } else if meta.path.is_ident("async_wrapper") {
-                    let value: syn::LitStr = meta.value()?.parse()?;
-                    async_wrapper = Some(value.value());
-                    Ok(())
-                } else if meta.path.is_ident("visibility") {
-                    let value: syn::LitStr = meta.value()?.parse()?;
-                    if value.value() == "private" {
-                        skip = true;
-                    }
-                    Ok(())
-                } else {
-                    Err(meta.error("unsupported constructor attribute"))
-                }
-            })?;
-        }
-    }
-
-    #[allow(clippy::collapsible_if)]
-    if default.is_none() {
-        if AutoWrapper::new(ty).is_option() {
-            default = Some(quote! { None });
-        }
-    }
-
-    Ok(FieldInfo { ident, ty, skip, default, into, first, dyn_iter, async_wrapper, docs })
-}
 
 fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream, Error> {
     let name = &ast.ident;
@@ -137,7 +52,7 @@ fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream,
 
     let mut parsed_fields = Vec::new();
     for field in fields_named {
-        parsed_fields.push(parse_field_info(field)?);
+        parsed_fields.push(FieldInfo::parse_field_info(field)?);
     }
 
     let public_fields: Vec<&FieldInfo> = parsed_fields.iter().filter(|f| !f.skip).collect();
@@ -265,19 +180,16 @@ fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream,
         let array_rule = if target.dyn_iter || matches!(AutoWrapper::new(target.ty), AutoWrapper::Vec(_)) {
             // Determine the inner element type of the Vec (or dyn_iter field) to decide
             // whether items should be wrapped in Box::new(...) or passed through as-is.
-            let vec_inner_ty = if let AutoWrapper::Vec(inner) = AutoWrapper::new(target.ty) {
-                Some(inner)
-            } else {
-                None
-            };
+            let vec_inner_ty = if let AutoWrapper::Vec(inner) = AutoWrapper::new(target.ty) { Some(inner) } else { None };
             #[allow(clippy::unnecessary_map_or)]
-            let skip_box_wrap = target.dyn_iter || vec_inner_ty.as_ref().map_or(false, |inner| {
-                if let AutoWrapper::Terminal(ty) = inner.as_ref() {
-                    AutoWrapper::is_widget_boxed(ty) || AutoWrapper::is_generic_widget_param(ty)
-                } else {
-                    false
-                }
-            });
+            let skip_box_wrap = target.dyn_iter
+                || vec_inner_ty.as_ref().map_or(false, |inner| {
+                    if let AutoWrapper::Terminal(ty) = inner.as_ref() {
+                        AutoWrapper::is_widget_boxed(ty) || AutoWrapper::is_generic_widget_param(ty)
+                    } else {
+                        false
+                    }
+                });
 
             let state_update_array = public_fields.iter().map(|f| {
                 let f_ident = f.ident;
