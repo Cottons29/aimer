@@ -1,4 +1,5 @@
 use crate::debug;
+#[cfg(feature = "time-cost")]
 use std::cell::LazyCell;
 #[cfg(feature = "time-cost")]
 use std::sync::LazyLock;
