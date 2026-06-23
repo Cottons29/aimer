@@ -73,6 +73,17 @@ impl ShelfPacker {
         self.shelf_y = 0;
         self.shelf_height = 0;
     }
+
+    /// Position the packer so the next allocation starts a brand-new, empty shelf
+    /// whose top edge is at `y`. Used after the atlas grows: existing glyphs keep
+    /// their positions in the (now larger) atlas, and the packer resumes in the
+    /// free space directly below them so newly inserted glyphs can never collide
+    /// with the preserved content.
+    fn start_fresh_shelf_at(&mut self, y: u32) {
+        self.cursor_x = 0;
+        self.shelf_y = y;
+        self.shelf_height = 0;
+    }
 }
 
 /// Tracks the rectangular region of the atlas that has been modified.
@@ -228,16 +239,19 @@ impl GlyphAtlas {
         );
     }
 
-    /// Double the atlas size and re-pack all cached glyphs.
+    /// Double the atlas size, preserving every cached glyph at its current
+    /// position in the enlarged texture.
     fn grow(&mut self, device: &wgpu::Device) {
+        let old_h = self.height;
         let new_w = self.width * 2;
         let new_h = self.height * 2;
         let (texture, view) = Self::create_texture(device, new_w, new_h);
 
-        // Allocate new pixel buffer and reset packer — we don't re-pack here,
-        // we just expand. Old data is preserved by re-uploading.
+        // Allocate new pixel buffer and copy old rows into it. Existing glyphs keep
+        // their exact (x, y) positions in the (now larger) atlas, so their cached
+        // `AtlasRegion`s — and any UVs captured for them earlier this frame — stay
+        // valid once re-resolved against the final dimensions.
         let mut new_pixels = vec![0u8; (new_w * new_h) as usize];
-        // Copy old rows into new buffer.
         for row in 0..self.height {
             let src_start = (row * self.width) as usize;
             let dst_start = (row * new_w) as usize;
@@ -248,17 +262,20 @@ impl GlyphAtlas {
         self.texture = texture;
         self.view = view;
         self.pixels = new_pixels;
-        self.packer = ShelfPacker::new(new_w, new_h);
 
-        // Re-insert existing regions into the new packer (they keep their positions).
-        // Since we only expanded, old positions are still valid. Just advance the packer
-        // past the old content by replaying allocations.
-        // Simpler: reset packer and re-allocate all cached entries in order.
-        let old_cache: Vec<(GlyphKey, AtlasRegion)> = self.cache.drain().collect();
-        for (key, region) in &old_cache {
-            let _ = self.packer.allocate(region.width, region.height);
-            self.cache.insert(*key, *region);
-        }
+        // Resume packing on a fresh shelf directly below the preserved content.
+        //
+        // We deliberately do NOT reset the packer and replay the old allocations:
+        // the atlas width has doubled, so the shelf packer would wrap rows
+        // differently than the preserved layout and could hand out positions that
+        // overlap existing glyphs. New glyphs would then be written on top of old
+        // ones, producing the overlapping/garbled text seen after resizing the
+        // window down and back up (which reflows text and inserts many glyphs at
+        // once, triggering a grow). Starting the next shelf at the old height keeps
+        // all cached positions valid while guaranteeing new glyphs land in free
+        // space.
+        self.packer = ShelfPacker::new(new_w, new_h);
+        self.packer.start_fresh_shelf_at(old_h);
 
         self.width = new_w;
         self.height = new_h;
@@ -402,6 +419,7 @@ impl ColorGlyphAtlas {
     }
 
     fn grow(&mut self, device: &wgpu::Device) {
+        let old_h = self.height;
         let new_w = self.width * 2;
         let new_h = self.height * 2;
         let (texture, view) = Self::create_texture(device, new_w, new_h);
@@ -419,17 +437,110 @@ impl ColorGlyphAtlas {
         self.texture = texture;
         self.view = view;
         self.pixels = new_pixels;
-        self.packer = ShelfPacker::new(new_w, new_h);
 
-        let old_cache: Vec<(GlyphKey, AtlasRegion)> = self.cache.drain().collect();
-        for (key, region) in &old_cache {
-            let _ = self.packer.allocate(region.width, region.height);
-            self.cache.insert(*key, *region);
-        }
+        // Existing glyphs keep their positions in the enlarged atlas; resume packing
+        // on a fresh shelf below them. Replaying the old allocations would be wrong
+        // because the atlas width doubled, so the packer would wrap differently and
+        // could place new glyphs over existing ones (overlapping/garbled text after
+        // a resize-triggered reflow). See `GlyphAtlas::grow` for the full rationale.
+        self.packer = ShelfPacker::new(new_w, new_h);
+        self.packer.start_fresh_shelf_at(old_h);
 
         self.width = new_w;
         self.height = new_h;
         self.dirty_region = Some(DirtyRegion::new(0, 0, new_w, new_h));
         self.generation += 1;
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn overlaps(a: &AtlasRegion, b: &AtlasRegion) -> bool {
+        let ax2 = a.x + a.width;
+        let ay2 = a.y + a.height;
+        let bx2 = b.x + b.width;
+        let by2 = b.y + b.height;
+        a.x < bx2 && b.x < ax2 && a.y < by2 && b.y < ay2
+    }
+
+    /// A representative spread of glyph sizes that produces several shelves on a
+    /// 512-wide atlas, mirroring what happens when many glyphs are rasterized.
+    fn sample_glyphs() -> Vec<(u32, u32)> {
+        let mut v = Vec::new();
+        for i in 0..120u32 {
+            let w = 8 + (i * 7) % 40;
+            let h = 10 + (i * 5) % 30;
+            v.push((w, h));
+        }
+        v
+    }
+
+    /// Pack a representative set of glyphs into a `size`×`size` packer and return
+    /// the resulting regions (in allocation order, which is what `grow()`
+    /// preserves) plus the live packer.
+    fn pack_initial(size: u32) -> (ShelfPacker, Vec<AtlasRegion>) {
+        let mut packer = ShelfPacker::new(size, size);
+        let mut regions: Vec<AtlasRegion> = Vec::new();
+        for &(w, h) in &sample_glyphs() {
+            if let Some((x, y)) = packer.allocate(w, h) {
+                regions.push(AtlasRegion { x, y, width: w, height: h });
+            }
+        }
+        (packer, regions)
+    }
+
+    /// The previous `grow()` strategy: reset the packer to the *doubled* size and
+    /// replay the old allocations. Because the width changed, the packer wraps
+    /// rows differently than the preserved layout, so this is unsafe.
+    fn old_grow_next_allocation(regions: &[AtlasRegion], new_w: u32, new_h: u32, next: (u32, u32)) -> (u32, u32) {
+        let mut packer = ShelfPacker::new(new_w, new_h);
+        let mut sorted = regions.to_vec();
+        sorted.sort_by_key(|r| (r.y, r.x));
+        for r in &sorted {
+            let _ = packer.allocate(r.width, r.height);
+        }
+        packer.allocate(next.0, next.1).unwrap()
+    }
+
+    /// The new `grow()` strategy: keep the packer at the doubled size but resume on
+    /// a fresh shelf directly below the preserved content (`start_fresh_shelf_at`).
+    fn new_grow_next_allocation(old_h: u32, new_w: u32, new_h: u32, next: (u32, u32)) -> (u32, u32) {
+        let mut packer = ShelfPacker::new(new_w, new_h);
+        packer.start_fresh_shelf_at(old_h);
+        packer.allocate(next.0, next.1).unwrap()
+    }
+
+    #[test]
+    fn replaying_allocations_after_a_width_changing_grow_overlaps_existing_glyphs() {
+        // Regression guard: prove the old approach is genuinely broken so the
+        // positive test below is not vacuous. Replaying allocations into a
+        // doubled-width packer hands out a position that collides with preserved
+        // glyphs.
+        let (_packer, regions) = pack_initial(512);
+        let next = (40, 30);
+        let pos = old_grow_next_allocation(&regions, 1024, 1024, next);
+        let new_region = AtlasRegion { x: pos.0, y: pos.1, width: next.0, height: next.1 };
+        let overlap = regions.iter().any(|r| overlaps(r, &new_region));
+        assert!(overlap, "expected replay-after-grow to overlap existing glyphs; got {:?}", new_region);
+    }
+
+    #[test]
+    fn fresh_shelf_after_grow_never_overlaps_existing_glyphs() {
+        // The fix: after growing, all preserved glyphs live within y < old_height,
+        // and the packer resumes at y == old_height, so any newly allocated glyph
+        // is strictly below the preserved content and cannot overlap it.
+        let (_packer, regions) = pack_initial(512);
+        let old_h = 512;
+        for &next in &[(40u32, 30u32), (1u32, 1u32), (300u32, 200u32)] {
+            let pos = new_grow_next_allocation(old_h, 1024, 1024, next);
+            let new_region = AtlasRegion { x: pos.0, y: pos.1, width: next.0, height: next.1 };
+            assert!(new_region.y >= old_h, "new glyph must start below preserved content: {:?}", new_region);
+            for r in &regions {
+                assert!(!overlaps(r, &new_region), "new glyph overlapped a preserved glyph: {:?} vs {:?}", r, new_region);
+            }
+        }
     }
 }

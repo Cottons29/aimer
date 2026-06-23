@@ -4,8 +4,8 @@ mod glyph_outline;
 pub mod glyph_rasterizer;
 pub mod text_layout;
 
-use crate::text_pipeline::glyph_atlas::{ColorGlyphAtlas, GlyphAtlas};
-use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
+use crate::text_pipeline::glyph_atlas::{AtlasRegion, ColorGlyphAtlas, GlyphAtlas};
+use crate::text_pipeline::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
 use crate::text_pipeline::text_layout::{PositionedGlyph, ShapedText, layout_shaped_text, shape_text};
 use aimer_utils::time_cost;
 use bytemuck::{Pod, Zeroable};
@@ -172,6 +172,14 @@ pub struct TextPipelineV2 {
 
 impl TextPipelineV2 {
     const INITIAL_CAPACITY: usize = 512;
+    /// Absolute upper bound on the number of cached positioned-glyph layouts.
+    /// The caches are kept persistent across frames/screens (see `prepare`) and
+    /// only flushed when this hard cap is exceeded, so shaping/layout work is
+    /// reused instead of being thrown away on every screen transition.
+    const LAYOUT_CACHE_CAPACITY: usize = 4096;
+    /// Absolute upper bound on the number of cached shaped strings. Shaped
+    /// results are width-independent and tiny, so this can be generous.
+    const SHAPING_CACHE_CAPACITY: usize = 4096;
 
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, pipeline_cache: Option<&wgpu::PipelineCache>) -> Self {
         let rasterizer = GlyphRasterizer::new();
@@ -353,17 +361,39 @@ impl TextPipelineV2 {
 
     pub fn preload_text(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32) {
         for (key, glyph) in self.rasterizer.preload_text(text, font_size) {
-            if glyph.is_color {
-                if self.color_atlas.get(&key).is_none() {
-                    self.color_atlas
-                        .get_or_insert(device, key, glyph.width, glyph.height, &glyph.bitmap);
-                }
-            } else if self.atlas.get(&key).is_none() {
-                self.atlas
-                    .get_or_insert(device, key, glyph.width, glyph.height, &glyph.bitmap);
-            }
+            self.insert_rasterized_glyph(device, key, glyph.is_color, glyph.width, glyph.height, &glyph.bitmap);
         }
 
+        self.flush_atlas(device, queue);
+    }
+
+    /// Common glyph set warmed by [`warm_glyph_set`](Self::warm_glyph_set):
+    /// the space, digits, lowercase and uppercase ASCII letters, and the
+    /// printable ASCII punctuation. Rasterizing this set fills the glyph atlas
+    /// (the heavier of the two per-glyph costs) so even brand-new, never-seen
+    /// strings only pay `rustybuzz` shaping and never glyph rasterization.
+    const COMMON_GLYPH_SET: &'static str =
+        " 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+
+    /// Insert a single rasterized glyph bitmap into the matching atlas, skipping
+    /// empty (zero-area) glyphs and glyphs already present.
+    fn insert_rasterized_glyph(&mut self, device: &wgpu::Device, key: GlyphKey, is_color: bool, width: u32, height: u32, bitmap: &[u8]) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        if is_color {
+            if self.color_atlas.get(&key).is_none() {
+                self.color_atlas.get_or_insert(device, key, width, height, bitmap);
+            }
+        } else if self.atlas.get(&key).is_none() {
+            self.atlas.get_or_insert(device, key, width, height, bitmap);
+        }
+    }
+
+    /// Upload any pending atlas changes to the GPU and rebuild the bind groups
+    /// if either atlas texture was reallocated (generation changed). Shared by
+    /// the warm-up paths and `preload_text`.
+    fn flush_atlas(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.atlas.upload(queue);
         self.color_atlas.upload(queue);
 
@@ -382,6 +412,77 @@ impl TextPipelineV2 {
         }
     }
 
+    /// Level 2 warm-up — pre-rasterize the common ASCII glyph set at each of the
+    /// supplied font sizes so the glyph atlas is already populated before the
+    /// first frame is drawn. Because rasterization (not shaping) is the heavier
+    /// per-glyph cost, this keeps even brand-new strings (numbers, usernames,
+    /// live text) cheap: they only pay shaping, never glyph rasterization.
+    pub fn warm_glyph_set(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, font_sizes: &[f32]) {
+        for &font_size in font_sizes {
+            for (key, glyph) in self.rasterizer.preload_text(Self::COMMON_GLYPH_SET, font_size) {
+                self.insert_rasterized_glyph(device, key, glyph.is_color, glyph.width, glyph.height, &glyph.bitmap);
+            }
+        }
+
+        self.flush_atlas(device, queue);
+    }
+
+    /// Level 1 warm-up — pre-shape and lay out a known static string at the
+    /// given font size, populating the shaping cache, the layout cache, and the
+    /// glyph atlas. After this, the string renders on the ~1 ms cache-hit path
+    /// from the very first frame instead of paying the cold `rustybuzz`
+    /// shaping + rasterization cost (the 27–86 ms spikes) on first paint.
+    ///
+    /// `layout_width` must match the wrapping width the string will be drawn
+    /// with (0.0 for non-wrapping `Clip` text) for the layout cache to hit; even
+    /// if it differs the width-independent shaping cache still hits, so the
+    /// expensive shaping work is warmed regardless.
+    pub fn warm_text(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32, layout_width: f32) {
+        self.warm_layout(device, text, font_size, layout_width);
+        self.flush_atlas(device, queue);
+    }
+
+    /// Shared core of [`warm_text`](Self::warm_text): shape + lay out `text`,
+    /// populating both caches exactly like `prepare` does, then rasterize every
+    /// positioned glyph into the atlas. Does not upload/flush the atlas (callers
+    /// batch a single `flush_atlas` afterwards).
+    fn warm_layout(&mut self, device: &wgpu::Device, text: &str, font_size: f32, layout_width: f32) {
+        let cache_key = LayoutCacheKey::new(text, font_size, layout_width);
+
+        // Populate (or reuse) the layout/shaping caches, mirroring the hot path
+        // in `prepare`, then snapshot the glyph keys so the cache borrow ends
+        // before we touch the rasterizer/atlas again.
+        let glyphs: Vec<(GlyphKey, f32)> = {
+            let shaping_cache = &mut self.shaping_cache;
+            let rasterizer = &mut self.rasterizer;
+            let positioned = self.layout_cache.entry(cache_key).or_insert_with(|| {
+                let shaped_key = ShapingCacheKey::new(text, font_size);
+                let shaped_text = shaping_cache.entry(shaped_key).or_insert_with(|| shape_text(rasterizer, text, font_size));
+                layout_shaped_text(rasterizer, shaped_text, 0.0, 0.0, layout_width)
+            });
+            positioned.iter().map(|pg| (pg.glyph_key, pg.font_size)).collect()
+        };
+
+        for (key, glyph_font_size) in glyphs {
+            let (is_color, width, height) = {
+                let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
+                (rg.is_color, rg.width, rg.height)
+            };
+            if width == 0 || height == 0 {
+                continue;
+            }
+            if is_color {
+                if self.color_atlas.get(&key).is_none() {
+                    let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
+                    self.color_atlas.get_or_insert(device, key, rg.width, rg.height, &rg.bitmap);
+                }
+            } else if self.atlas.get(&key).is_none() {
+                let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
+                self.atlas.get_or_insert(device, key, rg.width, rg.height, &rg.bitmap);
+            }
+        }
+    }
+
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -394,26 +495,56 @@ impl TextPipelineV2 {
         self.instances.clear();
         self.color_instances.clear();
 
-        // Evict the layout cache when the number of draw requests changes (e.g.
-        // when the UI transitions to a different screen with different text).
-        // This keeps memory bounded while still giving full cache hits on
-        // stable frames.
-        if self.layout_cache.len() > requests.len() * 4 {
+        // Atlas regions recorded in lock-step with `self.instances` /
+        // `self.color_instances`. UVs depend on the atlas dimensions, which can
+        // change mid-frame if inserting a glyph triggers a `grow()` (the atlas
+        // doubles in size). Computing UVs inline would leave glyphs processed
+        // *before* the grow with stale UVs that reference the old, smaller
+        // dimensions while the bind group now points at the larger texture —
+        // producing garbled/overlapping text (notably after resizing the
+        // window down and back up, which reflows text and inserts many new
+        // glyphs at once). We therefore record the regions here and resolve
+        // their UVs once, after all insertions, using the final dimensions.
+        let mut alpha_regions: Vec<AtlasRegion> = Vec::new();
+        let mut color_regions: Vec<AtlasRegion> = Vec::new();
+
+        // Cache lifetime (perf): previously both caches were wiped whenever the
+        // number of draw requests changed (e.g. on every screen transition or
+        // whenever a different count of text nodes was visible). That threw away
+        // all shaping/layout work and forced a full, frame-stalling re-shape
+        // through rustybuzz (the 27–86 ms spikes seen in the render trace).
+        //
+        // Shaping is width-independent and layout is origin-independent, so once
+        // a string has been seen its entry stays valid across screens, scrolling
+        // and animation. We therefore keep the caches *persistent* and only bound
+        // them by an absolute capacity, evicting wholesale just when the hard cap
+        // is exceeded (rare) instead of on every request-count change. This keeps
+        // steady-state frames on the ~1 ms full-hit path needed for 120+ fps.
+        if self.layout_cache.len() > Self::LAYOUT_CACHE_CAPACITY {
             self.layout_cache.clear();
         }
 
-        if self.shaping_cache.len() > requests.len() * 4 {
+        if self.shaping_cache.len() > Self::SHAPING_CACHE_CAPACITY {
             self.shaping_cache.clear();
         }
 
         for req in requests {
-            let spans = if req.spans.is_empty() { vec![RichTextSpan::new(req.text.clone())] } else { req.spans.clone() };
+            // Avoid cloning the span list on every frame (it ran even on a pure
+            // cache hit). Borrow `req.spans` directly when present and only
+            // allocate a one-element fallback when the request has no spans.
+            let synthesized: [RichTextSpan; 1];
+            let spans: &[RichTextSpan] = if req.spans.is_empty() {
+                synthesized = [RichTextSpan::new(req.text.clone())];
+                &synthesized
+            } else {
+                &req.spans
+            };
 
             let mut cursor_x = req.x;
             let mut cursor_y = req.y;
 
             time_cost!("RichTextSpanLoops", {
-                for span in &spans {
+                for span in spans {
                     let font_size = span.font_size.unwrap_or(req.font_size);
                     let color = span.color.unwrap_or(req.color);
 
@@ -460,7 +591,11 @@ impl TextPipelineV2 {
 
                         // Step 2: route the bitmap into the appropriate atlas, then
                         // build a `GlyphInstance` and push it to the matching list.
-                        let (uvs, target_color_list) = if is_color {
+                        // We keep the resolved `AtlasRegion` (rather than UVs) so the
+                        // UVs can be computed after the loop against the final atlas
+                        // size — inserting a glyph here may `grow()` the atlas, which
+                        // would invalidate UVs computed for earlier glyphs.
+                        let (region, target_color_list) = if is_color {
                             let region = if let Some(region) = self.color_atlas.get(&key) {
                                 region
                             } else {
@@ -469,7 +604,7 @@ impl TextPipelineV2 {
                                 self.color_atlas
                                     .get_or_insert(device, key, rg.width, rg.height, &rg.bitmap)
                             };
-                            (region.uvs(self.color_atlas.width, self.color_atlas.height), true)
+                            (region, true)
                         } else {
                             let region = if let Some(region) = self.atlas.get(&key) {
                                 region
@@ -478,7 +613,7 @@ impl TextPipelineV2 {
                                 self.atlas
                                     .get_or_insert(device, key, rg.width, rg.height, &rg.bitmap)
                             };
-                            (region.uvs(self.atlas.width, self.atlas.height), false)
+                            (region, false)
                         };
 
                         // For color emoji we render at the rasterized size (which is
@@ -489,10 +624,14 @@ impl TextPipelineV2 {
                         let size = if is_color { [rg_width as f32, rg_height as f32] } else { [pg.width as f32, pg.height as f32] };
                         // Improvement B: cached glyphs are positioned at origin (0,0);
                         // apply the actual screen-space cursor offset here.
+                        //
+                        // `uv_rect` is left as a placeholder; the final UVs are
+                        // resolved after the loop once the atlas has reached its
+                        // final size (see `alpha_regions` / `color_regions`).
                         let instance = GlyphInstance {
                             position: [pg.x + cursor_x, pg.y + cursor_y],
                             size,
-                            uv_rect: uvs,
+                            uv_rect: [0.0, 0.0, 0.0, 0.0],
                             color,
                             clip_rect: req.clip_rect,
                             clip_border_radius: req.clip_border_radius,
@@ -500,8 +639,10 @@ impl TextPipelineV2 {
 
                         if target_color_list {
                             self.color_instances.push(instance);
+                            color_regions.push(region);
                         } else {
                             self.instances.push(instance);
+                            alpha_regions.push(region);
                         }
                     }
 
@@ -513,6 +654,19 @@ impl TextPipelineV2 {
                     }
                 }
             })
+        }
+
+        // Now that every glyph has been inserted, the atlases have reached
+        // their final dimensions for this frame. Resolve UVs against those
+        // final dimensions so glyphs inserted before a mid-frame `grow()` are
+        // not left referencing stale (smaller) atlas sizes.
+        let (aw, ah) = (self.atlas.width, self.atlas.height);
+        for (instance, region) in self.instances.iter_mut().zip(alpha_regions.iter()) {
+            instance.uv_rect = region.uvs(aw, ah);
+        }
+        let (cw, ch) = (self.color_atlas.width, self.color_atlas.height);
+        for (instance, region) in self.color_instances.iter_mut().zip(color_regions.iter()) {
+            instance.uv_rect = region.uvs(cw, ch);
         }
 
         // Upload both atlases if new glyphs were added.
