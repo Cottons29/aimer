@@ -97,7 +97,8 @@ fn copy_lib(src: &str, dest_dir: &str, lib_file: &str) -> anyhow::Result<()> {
 /// Delegates to [`crate::commands::assets::copy_assets_into`], which only
 /// re-copies files that are new or have changed; here we just surface what
 /// happened via plain `println!`/`eprintln!` suitable for CI logs.
-fn copy_assets_into(dest_root: &str) -> anyhow::Result<()> {
+pub(crate) fn copy_assets_into(dest_root: &str) -> anyhow::Result<()> {
+    println!("Copying assets into {dest_root}");
     let report = crate::commands::assets::copy_assets_into(dest_root)?;
     for rel in &report.copied {
         println!("Copied asset {rel} -> {}", Path::new(dest_root).join(rel).display());
@@ -255,7 +256,11 @@ fn assemble_web(release: bool) -> anyhow::Result<String> {
     // Tell trunk about registered assets so it copies them into dist/ as part
     // of its build. Trunk cleans dist/ first, so manual pre-staging would be
     // wiped — the `[[copy]]` directive is the native mechanism.
-    crate::commands::assets::sync_trunk_copy_entries()?;
+
+    // copy_assets_into(&format!("/assets"))?;
+
+    let artifact = "builds/web/assets";
+    copy_assets_into(artifact)?;
 
     let mut trunk = Command::new("trunk");
     trunk.arg("build").current_dir("builds/web");
