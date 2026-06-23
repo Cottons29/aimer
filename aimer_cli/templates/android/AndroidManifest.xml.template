@@ -9,7 +9,7 @@
         android:supportsRtl="true"
         android:theme="@style/AimerFullscreenTheme">
         <activity
-            android:name="android.app.NativeActivity"
+            android:name="com.aimer.AimerActivity"
             android:exported="true"
             android:configChanges="orientation|keyboardHidden|screenSize"
             android:windowSoftInputMode="stateHidden|adjustResize">

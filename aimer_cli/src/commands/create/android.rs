@@ -9,6 +9,19 @@ pub fn create(dir: &Path) {
     fs::create_dir_all(dir.join("builds/android/app/src/main/res/values")).unwrap();
     fs::create_dir_all(dir.join("builds/android/gradle/wrapper")).unwrap();
 
+    // Custom `NativeActivity` subclass that adds a hidden `EditText` so the system
+    // IME has a real `InputConnection` to compose into. This is what makes
+    // CJK / emoji / autocorrect input work on Android (a bare `NativeActivity`
+    // surface cannot receive composed text). It forwards committed text into Rust
+    // through the `nativeInsertText` / `nativeBackspace` JNI bridge.
+    let aimer_activity_dir = dir.join("builds/android/app/src/main/java/com/aimer");
+    fs::create_dir_all(&aimer_activity_dir).unwrap();
+    fs::write(
+        aimer_activity_dir.join("AimerActivity.java"),
+        include_str!("../../../templates/android/AimerActivity.java.template"),
+    )
+    .unwrap();
+
     let gradlew_path = dir.join("builds/android/gradlew");
     fs::write(&gradlew_path, include_str!("../../../templates/android/dot_gradle/gradlew")).unwrap();
 
