@@ -92,12 +92,6 @@ pub enum TextOverflowMode {
 
 /// Key used to memoize the output of `layout_text` across frames.
 /// Uses integer bit-representations of f32 values to implement Hash + Eq.
-///
-/// Improvement B: the screen-space origin is intentionally excluded from this
-/// key.  Layout depends only on text content, font size, and wrapping width —
-/// not on the position at which the text is drawn.  The actual (x, y) offset
-/// is applied at render time (see `prepare`), so scrolling or animating text
-/// no longer causes cache misses.
 #[derive(Hash, Eq, PartialEq, Clone)]
 struct LayoutCacheKey {
     text: String,
