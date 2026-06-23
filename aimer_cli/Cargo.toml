@@ -1,6 +1,6 @@
 [package]
 name = "aimer_cli"
-version = "0.1.4"
+version = "0.1.5+2"
 edition = "2024"
 resolver = "3"
 
@@ -30,7 +30,8 @@ serde.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 log = "0.4.29"
-
+sha2.workspace = true
+hex.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
