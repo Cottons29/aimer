@@ -7,24 +7,19 @@ resolver = "3"
 
 [dependencies]
 
-aimer_macro.workspace  = true
 aimer_widget.workspace = true
-aimer_color.workspace = true
 aimer_attribute.workspace = true
-aimer_utils.workspace = true
+aimer_utils = {workspace = true, features = []}
 aimer_events.workspace = true
-aimer_router.workspace = true
 aimer_inspector.workspace = true
 aimer_canvas.workspace = true
-chrono.workspace = true
-
+wgpu.workspace = true
 #################
 
 
-smallvec.workspace = true
-winit.workspace = true
+winit = {workspace = true}
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wgpu = "29.0.0"
+wgpu.workspace = true
 objc.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"]}
 raw-window-handle.workspace = true
@@ -33,25 +28,16 @@ aimer_cupid.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies.aimer_cupid]
 workspace = true
 
-[dependencies.serde]
-version = "1"
-features = ["derive"]
-
-[dependencies.serde_json]
-version = "1"
-
-
-
 [target.'cfg(target_os = "android")'.dependencies]
 jni.workspace = true
 ndk-glue.workspace = true
 ndk.workspace = true
-rustls-platform-verifier = {version = "0.6.2", features = ["jni"]}
+rustls-platform-verifier .workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
-wgpu = "29.0.0"
+
 console_error_panic_hook.workspace = true
 web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "Node", "HtmlCanvasElement", "Element", "WebSocket", "MessageEvent", "ErrorEvent"] }
