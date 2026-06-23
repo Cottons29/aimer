@@ -92,7 +92,13 @@ impl<'w> GpuContext<'w> {
 
         #[cfg(target_os = "android")]
         let limit = Limits::downlevel_webgl2_defaults().using_resolution(resolution);
-        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        // iOS/Metal exposes stricter device limits than the desktop defaults
+        // (e.g. `max_inter_stage_shader_variables` is 15, while `Limits::default()`
+        // requests 16). Requesting the adapter's own limits keeps the request
+        // within what the device actually supports so `request_device` succeeds.
+        #[cfg(target_os = "ios")]
+        let limit = adapter.limits();
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
         let limit = Limits::default();
         #[cfg(target_arch = "wasm32")]
         let limit = Limits::downlevel_webgl2_defaults();
@@ -137,13 +143,29 @@ impl<'w> GpuContext<'w> {
 
         let max_dim = device.limits().max_texture_dimension_2d;
 
-        debug!("Gpu Context : Initialized with max texture dimension: {} and is_srgb: {}", max_dim, is_srgb);
+        // Pick the lowest-latency present mode the surface supports so the frame
+        // rate is not hard-capped to the display refresh by classic v-sync.
+        // `Fifo` (v-sync) caps at the panel refresh (~60 fps on a 60 Hz screen);
+        // `Mailbox` lets the GPU render ahead and present the newest frame
+        // (smooth, no tearing) and `Immediate` is fully uncapped (allows
+        // tearing). We prefer Mailbox, then Immediate, and fall back to Fifo
+        // (the only mode guaranteed to always be available) so we can reach the
+        // 120+ fps target on high-refresh displays.
+        let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+            wgpu::PresentMode::Mailbox
+        } else if caps.present_modes.contains(&wgpu::PresentMode::Immediate) {
+            wgpu::PresentMode::Immediate
+        } else {
+            wgpu::PresentMode::Fifo
+        };
+
+        debug!("Gpu Context : Initialized with max texture dimension: {} and is_srgb: {} present_mode: {:?}", max_dim, is_srgb, present_mode);
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: selected_format,
             width: size.width.max(1).min(max_dim),
             height: size.height.max(1).min(max_dim),
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
