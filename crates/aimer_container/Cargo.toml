@@ -15,7 +15,7 @@ aimer_style.workspace = true
 
 aimer_utils.workspace = true
 winit.workspace = true
-chrono.workspace = true
+web-time.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 objc.workspace = true
