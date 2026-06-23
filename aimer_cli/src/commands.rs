@@ -1,4 +1,5 @@
 pub mod assemble;
+pub mod assets;
 pub mod build;
 pub mod clean;
 pub mod completions;
