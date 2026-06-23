@@ -23,6 +23,32 @@ use winit::window::{Window, WindowId};
 
 static MY_EVENT_PROXY: OnceLock<EventLoopProxy<MyWindowEvent>> = OnceLock::new();
 
+/// Known static text rendered every frame. Kept as a single source of truth so
+/// it can be pre-shaped during init (Level 1 warm-up) and drawn from the warm
+/// cache on the very first frame, avoiding the cold first-paint shaping stall.
+const WELCOME_TEXT: &str = r#"
+                English — Hello / Hi               Khmer — សួស្តី (Suosdei)               French — BonjourEnglish — Hello / Hi
+                Spanish — Hola                            Portuguese — Olá                          Italian — Ciao
+                German — Hallo                            Dutch — Hallo                             Swedish — Hej
+                Norwegian — Hei                           Danish — Hej                              Finnish — Hei
+                Icelandic — Halló                         Russian — Привет (Privet)                 Ukrainian — Привіт (Pryvit)
+                Polish — Cześć                            Czech — Ahoj                              Slovak — Ahoj
+                Hungarian — Szia                          Romanian — Salut                          Greek — Γεια σου (Yia sou)
+                Turkish — Merhaba                         Arabic — مرحبا (Marhaban)                 Hebrew — שלום (Shalom)
+                Persian — سلام (Salam)                    Hindi — नमस्ते (Namaste)                  Bengali — হ্যালো / নমস্কার
+                Punjabi — ਸਤ ਸ੍ਰੀ ਅਕਾਲ                    Urdu — السلام علیکم                       Tamil — வணக்கம்
+                Telugu — నమస్తే                           Kannada — ನಮಸ್ಕಾರ                         Malayalam — നമസ്കാരം
+                Thai — สวัสดี                             Lao — ສະບາຍດີ                             Vietnamese — Xin chào
+                Indonesian — Halo                         Malay — Hai / Halo                        Filipino — Kumusta
+                Chinese (Mandarin) — 你好 (Nǐ hǎo)          Cantonese — 你好 (Néih hóu)                 Japanese — こんにちは (Konnichiwa)
+                Korean — 안녕하세요 (Annyeonghaseyo)           Mongolian — Сайн байна уу                 Swahili — Jambo
+                Zulu — Sawubona                           Afrikaans — Hallo                         Esperanto — Saluton
+                Latin — Salve                             Hawaiian — Aloha                          Māori — Kia ora
+                                    "#;
+
+/// Font sizes warmed at startup (Level 2 glyph-set pre-rasterization).
+const WARM_FONT_SIZES: [f32; 3] = [20.0, 32.0, 44.0];
+
 pub fn time_consume(func: impl FnOnce()) {
     let start = std::time::Instant::now();
     func();
@@ -83,14 +109,25 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
         let window_ref: &'w Window = unsafe { &*(&window as *const Window) };
         let gpu = GpuContext::initialize(window_ref, size);
 
-        // Upload test image from cupid/image.png.
-        // Glyphs are rasterized lazily on first use in TextPipelineV2::prepare,
-        // so we no longer call preload_text on the resume path — it serializes
-        // first-frame for ~5 ms of work that the lazy path already handles.
-
         debug!("Initializing GPU context and loading test image");
         let mut img_renderer = Renderer::new(&gpu.device, gpu.format);
         debug!("Initialized GPU context");
+
+        // AOT-style warm-up: move the expensive text shaping/rasterization off
+        // the first visible frame and behind init, so startup is "fast like a
+        // compiled language" instead of paying the cold-cache 27–86 ms stall on
+        // first paint.
+        //
+        // Level 2 — pre-rasterize the common ASCII glyph set at the font sizes
+        // the app uses, filling the glyph atlas so even brand-new strings only
+        // pay shaping (never glyph rasterization).
+        img_renderer.warm_glyph_set(&gpu.device, &gpu.queue, &WARM_FONT_SIZES);
+        // Level 1 — pre-shape and lay out the known static text at the size and
+        // wrapping width it is drawn with, so it renders from the warm cache on
+        // the very first frame. The wrap width mirrors the draw call below
+        // (`inner_size().width - 60.0`).
+        img_renderer.warm_text(&gpu.device, &gpu.queue, WELCOME_TEXT, 44.0, size.width as f32 - 60.0);
+        debug!("Text warm-up complete");
         let image_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("image.png");
         debug!("Loading test image from {}", image_path.display());
         let img = image::open(&image_path)
@@ -230,25 +267,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 self.canvas.draw_text_wrapped(
                     30.0,
                     30.0,
-                    r#"
-                English — Hello / Hi               Khmer — សួស្តី (Suosdei)               French — BonjourEnglish — Hello / Hi
-                Spanish — Hola                            Portuguese — Olá                          Italian — Ciao
-                German — Hallo                            Dutch — Hallo                             Swedish — Hej
-                Norwegian — Hei                           Danish — Hej                              Finnish — Hei
-                Icelandic — Halló                         Russian — Привет (Privet)                 Ukrainian — Привіт (Pryvit)
-                Polish — Cześć                            Czech — Ahoj                              Slovak — Ahoj
-                Hungarian — Szia                          Romanian — Salut                          Greek — Γεια σου (Yia sou)
-                Turkish — Merhaba                         Arabic — مرحبا (Marhaban)                 Hebrew — שלום (Shalom)
-                Persian — سلام (Salam)                    Hindi — नमस्ते (Namaste)                  Bengali — হ্যালো / নমস্কার
-                Punjabi — ਸਤ ਸ੍ਰੀ ਅਕਾਲ                    Urdu — السلام علیکم                       Tamil — வணக்கம்
-                Telugu — నమస్తే                           Kannada — ನಮಸ್ಕಾರ                         Malayalam — നമസ്കാരം
-                Thai — สวัสดี                             Lao — ສະບາຍດີ                             Vietnamese — Xin chào
-                Indonesian — Halo                         Malay — Hai / Halo                        Filipino — Kumusta
-                Chinese (Mandarin) — 你好 (Nǐ hǎo)          Cantonese — 你好 (Néih hóu)                 Japanese — こんにちは (Konnichiwa)
-                Korean — 안녕하세요 (Annyeonghaseyo)           Mongolian — Сайн байна уу                 Swahili — Jambo
-                Zulu — Sawubona                           Afrikaans — Hallo                         Esperanto — Saluton
-                Latin — Salve                             Hawaiian — Aloha                          Māori — Kia ora
-                                    "#,
+                    WELCOME_TEXT,
                     44.0,
                     Color::black(),
                     self.window.as_ref().unwrap().inner_size().width as f32 - 60.0,
