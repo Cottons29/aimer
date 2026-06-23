@@ -1,11 +1,12 @@
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
+use crate::scrollable::constants::*;
 use crate::ScrollAxis;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, EventElement, LayoutElement, VisitorElement};
-use chrono::Utc;
+use web_time::Instant;
 
 impl<E: Element> EventElement for RawScrollableContainer<E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
@@ -50,16 +51,16 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         ScrollAxis::Vertical => {
                             if offset.y != clamped.y {
                                 let oob_dist = (offset.y - clamped.y).abs();
-                                let viewport_h = self.ctrl.cached_max_scroll.get().y.max(100.0);
-                                let resistance = (1.0 - (oob_dist / viewport_h).min(0.75)).powi(2) * 0.3;
+                                let viewport_h = self.ctrl.cached_max_scroll.get().y.max(MIN_VIEWPORT);
+                                let resistance = (1.0 - (oob_dist / viewport_h).min(OOB_RESISTANCE_CLAMP)).powi(2) * OOB_RESISTANCE_SCALE;
                                 scroll_delta.y *= resistance;
                             }
                         }
                         ScrollAxis::Horizontal => {
                             if offset.x != clamped.x {
                                 let oob_dist = (offset.x - clamped.x).abs();
-                                let viewport_w = self.ctrl.cached_max_scroll.get().x.max(100.0);
-                                let resistance = (1.0 - (oob_dist / viewport_w).min(0.75)).powi(2) * 0.3;
+                                let viewport_w = self.ctrl.cached_max_scroll.get().x.max(MIN_VIEWPORT);
+                                let resistance = (1.0 - (oob_dist / viewport_w).min(OOB_RESISTANCE_CLAMP)).powi(2) * OOB_RESISTANCE_SCALE;
                                 scroll_delta.x *= resistance;
                             }
                         }
@@ -79,18 +80,17 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 offset.y += scroll_delta.y;
                 self.ctrl.scroll_offset.set(offset);
 
-                let now = Utc::now();
+                let now = Instant::now();
                 let dt = self
                     .ctrl
                     .last_event_time
                     .get()
-                    .map(|t| (now - t).num_microseconds().unwrap_or(0) as f32 / 1_000_000.0)
-                    // .map(|dt| dt as crate::scrollable::raw_scroll::Float)
-                    .unwrap_or(1.0 / 120.0)
-                    .max(0.005);
+                    .map(|t| now.duration_since(t).as_secs_f32())
+                    .unwrap_or(FRAME_REF_60)
+                    .max(MIN_EVENT_DT);
                 self.ctrl.last_event_time.set(Some(now));
 
-                let frame_ref = 1.0 / 120.0;
+                let frame_ref = FRAME_REF_60;
                 let mut v = self.ctrl.pointer_velocity.get();
 
                 let mut target_vx = (scroll_delta.x / dt) * frame_ref;
@@ -102,23 +102,23 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     match self.ctrl.axis {
                         ScrollAxis::Vertical => {
                             if (offset.y > clamped.y && scroll_delta.y > 0.0) || (offset.y < clamped.y && scroll_delta.y < 0.0) {
-                                target_vy *= 0.5;
+                                target_vy *= OOB_OVERSHOOT_DAMPING;
                             }
                         }
                         ScrollAxis::Horizontal => {
                             if (offset.x > clamped.x && scroll_delta.x > 0.0) || (offset.x < clamped.x && scroll_delta.x < 0.0) {
-                                target_vx *= 0.5;
+                                target_vx *= OOB_OVERSHOOT_DAMPING;
                             }
                         }
                     }
                 }
 
-                let max_scroll_v = 15000.0 * self.ctrl.last_scale.get();
+                let max_scroll_v = MAX_SCROLL_VELOCITY * self.ctrl.last_scale.get();
                 target_vx = target_vx.clamp(-max_scroll_v, max_scroll_v);
                 target_vy = target_vy.clamp(-max_scroll_v, max_scroll_v);
 
-                v.x = v.x * 0.7 + target_vx * 0.8;
-                v.y = v.y * 0.7 + target_vy* 0.8;
+                v.x = v.x * WHEEL_BLEND_OLD + target_vx * WHEEL_BLEND_NEW;
+                v.y = v.y * WHEEL_BLEND_OLD + target_vy * WHEEL_BLEND_NEW;
 
                 self.ctrl.pointer_velocity.set(v);
 
@@ -148,7 +148,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         let dx = p.x - start.x;
                         let dy = p.y - start.y;
 
-                        let threshold = 10.0 * self.ctrl.last_scale.get();
+                        let threshold = DRAG_START_THRESHOLD_DP * self.ctrl.last_scale.get();
                         let exceeds_threshold = match self.ctrl.axis {
                             ScrollAxis::Vertical => dy.abs() > threshold && dy.abs() > dx.abs(),
                             ScrollAxis::Horizontal => dx.abs() > threshold && dx.abs() > dy.abs(),
@@ -199,16 +199,16 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             _ => Vec2d { x: 0.0, y: 0.0 },
                         };
 
-                        let now = Utc::now();
+                        let now = Instant::now();
                         let dt = self.ctrl
                             .last_event_time
                             .get()
-                            .map(|t| (now - t).num_microseconds().unwrap_or(0) as f32 / 1_000_000.0)
-                            .unwrap_or(1.0 / 60.0)
-                            .max(0.001);
+                            .map(|t| now.duration_since(t).as_secs_f32())
+                            .unwrap_or(FRAME_REF_120)
+                            .max(MIN_MOVE_DT);
                         self.ctrl.last_event_time.set(Some(now));
 
-                        let frame_ref = 1.0 / 60.0;
+                        let frame_ref = FRAME_REF_120;
                         new_velocity.x = (new_velocity.x / dt) * frame_ref;
                         new_velocity.y = (new_velocity.y / dt) * frame_ref;
 
@@ -217,8 +217,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         new_velocity.y *= sensitivity_gain;
 
                         let old_velocity = self.ctrl.pointer_velocity.get();
-                        let blend_factor = (dt / 0.1).min(1.0);
-                        let blend_new = (0.4 * (1.0 - blend_factor) + blend_factor).min(1.0);
+                        let blend_factor = (dt / DRAG_BLEND_WINDOW).min(1.0);
+                        let blend_new = (DRAG_BLEND_BASE * (1.0 - blend_factor) + blend_factor).min(1.0);
                         let blend_old = 1.0 - blend_new;
 
                         new_velocity.x = old_velocity.x * blend_old + new_velocity.x * blend_new;
@@ -237,8 +237,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                                     if offset.y != clamped.y {
                                         let oob_dist = (offset.y - clamped.y).abs();
 
-                                        let viewport_h = self.ctrl.cached_max_scroll.get().y.max(100.0);
-                                        let resistance = (1.0 - (oob_dist / viewport_h).min(0.75)).powi(2) * 0.3;
+                                        let viewport_h = self.ctrl.cached_max_scroll.get().y.max(MIN_VIEWPORT);
+                                        let resistance = (1.0 - (oob_dist / viewport_h).min(OOB_RESISTANCE_CLAMP)).powi(2) * OOB_RESISTANCE_SCALE;
                                         actual_dy *= resistance;
                                     }
                                     offset.y += actual_dy;
@@ -247,8 +247,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                                     let mut actual_dx = dx;
                                     if offset.x != clamped.x {
                                         let oob_dist = (offset.x - clamped.x).abs();
-                                        let viewport_w = self.ctrl.cached_max_scroll.get().x.max(100.0);
-                                        let resistance = (1.0 - (oob_dist / viewport_w).min(0.75)).powi(2) * 0.3;
+                                        let viewport_w = self.ctrl.cached_max_scroll.get().x.max(MIN_VIEWPORT);
+                                        let resistance = (1.0 - (oob_dist / viewport_w).min(OOB_RESISTANCE_CLAMP)).powi(2) * OOB_RESISTANCE_SCALE;
                                         actual_dx *= resistance;
                                     }
                                     offset.x += actual_dx;
@@ -256,11 +256,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             },
                             DragMode::VerticalScrollbar => {
                                 let target_y = offset.y - dy * self.ctrl.v_scroll_multiplier.get();
-                                offset.y = offset.y * 0.4 + target_y * 0.6;
+                                offset.y = offset.y * SCROLLBAR_DRAG_SMOOTH_OLD + target_y * SCROLLBAR_DRAG_SMOOTH_NEW;
                             }
                             DragMode::HorizontalScrollbar => {
                                 let target_x = offset.x - dx * self.ctrl.h_scroll_multiplier.get();
-                                offset.x = offset.x * 0.4 + target_x * 0.6;
+                                offset.x = offset.x * SCROLLBAR_DRAG_SMOOTH_OLD + target_x * SCROLLBAR_DRAG_SMOOTH_NEW;
                             }
                             _ => {}
                         }
@@ -278,10 +278,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             }
             ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } => child_consumed,
             ElementEvent::PointerUp(_) | ElementEvent::Cancel => {
-                let now = Utc::now();
+                let now = Instant::now();
                 if let Some(last_time) = self.ctrl.last_event_time.get() {
-                    let elapsed = (now - last_time).num_milliseconds();
-                    if elapsed > 100 {
+                    let elapsed = now.duration_since(last_time).as_millis();
+                    if elapsed > VELOCITY_RESET_IDLE_MS {
                         self.ctrl.pointer_velocity.set(Vec2d::default());
                     }
                 }

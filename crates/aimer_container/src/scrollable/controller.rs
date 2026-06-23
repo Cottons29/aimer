@@ -1,8 +1,9 @@
+use crate::scrollable::constants::*;
 use crate::scrollable::scroll_behavior::ScrollBehavior;
 use crate::scrollable::ScrollAxis;
 use aimer_attribute::position::Vec2d;
-use chrono::{DateTime, Utc};
 use std::cell::Cell;
+use web_time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DragMode {
@@ -22,8 +23,8 @@ pub struct ScrollController {
     pub(crate) cached_max_scroll: Cell<Vec2d>,
     pub(crate) cached_min_scroll: Cell<Vec2d>,
     pub(crate) pointer_velocity: Cell<Vec2d>,
-    pub(crate) last_event_time: Cell<Option<DateTime<Utc>>>,
-    pub(crate) last_frame_time: Cell<Option<DateTime<Utc>>>,
+    pub(crate) last_event_time: Cell<Option<Instant>>,
+    pub(crate) last_frame_time: Cell<Option<Instant>>,
     pub(crate) v_thumb_rect: Cell<Option<(f32, f32, f32, f32)>>,
     pub(crate) h_thumb_rect: Cell<Option<(f32, f32, f32, f32)>>,
     pub(crate) v_scroll_multiplier: Cell<f32>,
@@ -48,10 +49,10 @@ impl ScrollController {
     fn apply_bouncy(value: f32, min: f32, max: f32, resistance: f32) -> f32 {
         if value < min {
             let diff = min - value;
-            min - diff.powf(0.75) * (resistance * 2.0)
+            min - diff.powf(BOUNCY_STRETCH_EXPONENT) * (resistance * BOUNCY_RESISTANCE_SCALE)
         } else if value > max {
             let diff = value - max;
-            max + diff.powf(0.75) * (resistance * 2.0)
+            max + diff.powf(BOUNCY_STRETCH_EXPONENT) * (resistance * BOUNCY_RESISTANCE_SCALE)
         } else {
             value
         }
@@ -104,34 +105,34 @@ impl ScrollController {
         let mut velocity = self.pointer_velocity.get();
         let mut needs_redraw = false;
 
-        let now = Utc::now();
+        let now = Instant::now();
         let dt = self
             .last_frame_time
             .get()
-            .map(|t| (now - t).num_microseconds().unwrap_or(0) as f32 / 1_000_000.0)
-            .unwrap_or(1.0 / 120.0)
-            .min(0.05);
+            .map(|t| now.duration_since(t).as_secs_f32())
+            .unwrap_or(FRAME_REF_120)
+            .min(MAX_FRAME_DT);
         self.last_frame_time.set(Some(now));
 
-        let frame_ratio = dt / (1.0 / 120.0);
+        let frame_ratio = dt / FRAME_REF_120;
 
-        if velocity.x.abs() > 0.01 || velocity.y.abs() > 0.01 {
+        if velocity.x.abs() > VELOCITY_EPSILON || velocity.y.abs() > VELOCITY_EPSILON {
             #[cfg(target_os = "ios")]
-            let oob_damping_base: f32 = 0.15;
+            let oob_damping_base: f32 = OOB_DAMPING_BASE_IOS;
             #[cfg(not(target_os = "ios"))]
-            let oob_damping_base: f32 = 0.4;
+            let oob_damping_base: f32 = OOB_DAMPING_BASE_DEFAULT;
             if offset.x != clamped.x {
                 let damping = oob_damping_base.powf(frame_ratio);
                 velocity.x *= damping;
                 if (offset.x > clamped.x && velocity.x > 0.0) || (offset.x < clamped.x && velocity.x < 0.0) {
-                    velocity.x *= 0.5;
+                    velocity.x *= OOB_OVERSHOOT_DAMPING;
                 }
             }
             if offset.y != clamped.y {
                 let damping = oob_damping_base.powf(frame_ratio);
                 velocity.y *= damping;
                 if (offset.y > clamped.y && velocity.y > 0.0) || (offset.y < clamped.y && velocity.y < 0.0) {
-                    velocity.y *= 0.5;
+                    velocity.y *= OOB_OVERSHOOT_DAMPING;
                 }
             }
 
@@ -158,17 +159,17 @@ impl ScrollController {
             offset.y += dy * spring_factor;
 
             let mut v = self.pointer_velocity.get();
-            v.x *= 0.7_f32.powf(frame_ratio);
-            v.y *= 0.7_f32.powf(frame_ratio);
+            v.x *= SPRING_VELOCITY_DAMPING.powf(frame_ratio);
+            v.y *= SPRING_VELOCITY_DAMPING.powf(frame_ratio);
             self.pointer_velocity.set(v);
 
-            if (offset.x - clamped.x).abs() < 0.25 {
+            if (offset.x - clamped.x).abs() < SNAP_EPSILON {
                 offset.x = clamped.x;
                 let mut v = self.pointer_velocity.get();
                 v.x = 0.0;
                 self.pointer_velocity.set(v);
             }
-            if (offset.y - clamped.y).abs() < 0.25 {
+            if (offset.y - clamped.y).abs() < SNAP_EPSILON {
                 offset.y = clamped.y;
                 let mut v = self.pointer_velocity.get();
                 v.y = 0.0;
