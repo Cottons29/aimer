@@ -91,6 +91,23 @@ fn copy_lib(src: &str, dest_dir: &str, lib_file: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Stage every file registered under `[assets]` in `aimer.toml` into
+/// `dest_root` (incrementally) and report the result to stdout.
+///
+/// Delegates to [`crate::commands::assets::copy_assets_into`], which only
+/// re-copies files that are new or have changed; here we just surface what
+/// happened via plain `println!`/`eprintln!` suitable for CI logs.
+fn copy_assets_into(dest_root: &str) -> anyhow::Result<()> {
+    let report = crate::commands::assets::copy_assets_into(dest_root)?;
+    for rel in &report.copied {
+        println!("Copied asset {rel} -> {}", Path::new(dest_root).join(rel).display());
+    }
+    for rel in &report.missing {
+        eprintln!("warning: registered asset '{rel}' not found; skipping");
+    }
+    Ok(())
+}
+
 /// Build the macOS `.app` bundle via `cargo` + `xcodebuild`.
 fn assemble_macos(pkg_name: &str, release: bool) -> anyhow::Result<String> {
     let rust_target = "aarch64-apple-darwin";
@@ -121,7 +138,9 @@ fn assemble_macos(pkg_name: &str, release: bool) -> anyhow::Result<String> {
         .current_dir("builds/macos");
     run_step(xcode, "xcodebuild for macOS")?;
 
-    Ok(format!("builds/macos/build/{configuration}/{pkg_name}.app"))
+    let artifact = format!("builds/macos/build/{configuration}/{pkg_name}.app");
+    copy_assets_into(&format!("{artifact}/Contents/Resources"))?;
+    Ok(artifact)
 }
 
 /// Build the iOS `.app` bundle (device or simulator) via `cargo` + `xcodebuild`.
@@ -167,9 +186,9 @@ fn assemble_ios(pkg_name: &str, target: Targets, release: bool) -> anyhow::Resul
         .current_dir("builds/ios");
     run_step(xcode, "xcodebuild for iOS")?;
 
-    Ok(format!(
-        "builds/ios/build/{configuration}-{subdir_suffix}/{pkg_name}.app"
-    ))
+    let artifact = format!("builds/ios/build/{configuration}-{subdir_suffix}/{pkg_name}.app");
+    copy_assets_into(&artifact)?;
+    Ok(artifact)
 }
 
 /// Build the Android `.apk` via `cargo ndk` + Gradle.
@@ -196,6 +215,9 @@ fn assemble_android(pkg_name: &str, release: bool) -> anyhow::Result<String> {
         &format!("builds/android/app/src/main/jniLibs/{jni_dir}"),
         &format!("lib{lib_name}.so"),
     )?;
+
+    // Stage assets into the APK's `assets/` source set before Gradle packs it.
+    copy_assets_into("builds/android/app/src/main/assets")?;
 
     let android_dir = current_dir()
         .context("resolving current directory")?
@@ -243,6 +265,10 @@ fn assemble_web(release: bool) -> anyhow::Result<String> {
     npm_install.arg("install").current_dir("builds/web");
     run_step(npm_install, "npm install for web")?;
 
+    // Stage assets into Vite's `public/` dir so they are served at the site
+    // root and copied verbatim into `dist/` (fetched at runtime via web-sys).
+    copy_assets_into("builds/web/public")?;
+
     let mut npm_build = Command::new("npm");
     npm_build.arg("run").arg("build").current_dir("builds/web");
     run_step(npm_build, "npm run build for web")?;
@@ -260,7 +286,9 @@ fn assemble_desktop(target: Targets, release: bool) -> anyhow::Result<String> {
     }
     run_step(cargo, &format!("cargo build for {target}"))?;
 
-    Ok(format!("target/{}", profile_name(release)))
+    let artifact = format!("target/{}", profile_name(release));
+    copy_assets_into(&format!("{artifact}/assets"))?;
+    Ok(artifact)
 }
 
 /// Locate a Gradle-compatible `JAVA_HOME` on macOS, preferring LTS releases.
