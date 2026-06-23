@@ -47,10 +47,8 @@ pub const OOB_RESISTANCE_SCALE: f32 = 0.3;
 /// Maximum fling velocity (px/frame at scale 1.0) from a scroll-wheel event.
 pub const MAX_SCROLL_VELOCITY: f32 = 15000.0;
 
-/// Weight kept from the previous velocity when blending a wheel fling.
-pub const WHEEL_BLEND_OLD: f32 = 0.7;
-/// Weight given to the new target velocity when blending a wheel fling.
-pub const WHEEL_BLEND_NEW: f32 = 0.8;
+/// Size of the ring buffer used for trackpad velocity smoothing.
+pub const VELOCITY_HISTORY_SIZE: usize = 5;
 
 /// Drag activation threshold in device-independent pixels.
 pub const DRAG_START_THRESHOLD_DP: f32 = 10.0;
@@ -65,3 +63,15 @@ pub const SCROLLBAR_DRAG_SMOOTH_NEW: f32 = 0.6;
 
 /// Idle time (ms) after the last event past which residual velocity is cleared.
 pub const VELOCITY_RESET_IDLE_MS: u128 = 100;
+
+/// Cubic ease-out coefficient for spring-back (1 − t³).
+pub const EASE_OUT_CUBIC: f32 = 3.0;
+
+/// Keyboard scroll step (logical px per keypress).
+pub const KEYBOARD_SCROLL_STEP: f32 = 40.0;
+/// Keyboard page-scroll fraction of viewport (0.0–1.0).
+pub const KEYBOARD_PAGE_FRACTION: f32 = 0.85;
+
+/// Duration (ms) for scrollbar fade-in / fade-out transitions.
+pub const SCROLLBAR_SHOW_DURATION_MS: u64 = 200;
+pub const SCROLLBAR_HIDE_DURATION_MS: u64 = 400;
