@@ -11,6 +11,7 @@ use aimer_widget::{Drawable, Element, EventElement, LayoutCache, LayoutElement, 
 use winit::window::Window;
 use aimer_style::BoxDecoration;
 use aimer_macro::Rebuildable;
+use aimer_utils::info;
 
 #[allow(dead_code)]
 #[derive(Rebuildable)]
@@ -140,7 +141,7 @@ impl<'b, E: Element> VisitorElement for GestureDetector<'b, E> {
 impl<'b, E: Element> EventElement for GestureDetector<'b, E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
         // debug!("GestureDetectorElement::on_event: {:?}", event);
-        // debug!("GestureDetectorElement::caches_bound: {:?}", self.cached_bounds);
+        // info!("GestureDetectorElement::caches_bound: {:?}", self.cached_bounds);
 
 
         if self.is_disabled {

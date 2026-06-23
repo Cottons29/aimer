@@ -222,15 +222,17 @@ mod android_keyboard {
     use aimer_events::android_app;
 
     pub fn show_keyboard() {
-        if let Some(app) = android_app::get_android_app() {
-            app.show_soft_input(false);
-        }
+        // Focus the hidden `EditText` owned by `com.aimer.AimerActivity` and raise
+        // the soft keyboard. Composed (CJK) text is captured there and forwarded
+        // back into Rust via the `nativeInsertText` JNI bridge. The previous
+        // `AndroidApp::show_soft_input` only raised the keyboard against the bare
+        // native surface, which has no `InputConnection`, so IME-composed text was
+        // silently dropped.
+        android_app::show_keyboard();
     }
 
     pub fn dismiss_keyboard() {
-        if let Some(app) = android_app::get_android_app() {
-            app.hide_soft_input(false);
-        }
+        android_app::hide_keyboard();
     }
 }
 
@@ -578,7 +580,11 @@ fn wasm_request_keyboard(show: bool) {
             // that may not fire keydown for each character.
             {
                 let cb = Closure::<dyn FnMut(web_sys::InputEvent)>::new(move |evt: web_sys::InputEvent| {
-                    if evt.is_composing() {
+                    // IME-composed text (Chinese/Japanese/Korean, ...) is committed
+                    // through the `compositionend` handler below. Skip every
+                    // composition-related `input` event here so the composed result
+                    // is never inserted twice.
+                    if evt.is_composing() || evt.input_type() == "insertCompositionText" {
                         return;
                     }
                     let Some(data) = evt.data() else { return };
@@ -609,6 +615,45 @@ fn wasm_request_keyboard(show: bool) {
                     }
                 });
                 el.add_event_listener_with_callback("input", cb.as_ref().unchecked_ref())
+                    .ok();
+                cb.forget();
+            }
+
+            // Commit IME-composed text (Chinese / Japanese / Korean, ...). The
+            // browser fires `compositionend` with the final string once the user
+            // accepts a candidate. This is the authoritative commit signal and is
+            // forwarded as synthesized key events, mirroring the plain `input`
+            // path so the framework inserts the composed characters exactly once.
+            {
+                let cb = Closure::<dyn FnMut(web_sys::CompositionEvent)>::new(move |evt: web_sys::CompositionEvent| {
+                    let Some(data) = evt.data() else { return };
+                    if data.is_empty() {
+                        return;
+                    }
+                    let Some(w) = web_sys::window() else { return };
+                    let Some(doc) = w.document() else { return };
+                    let Some(canvas) = doc.get_element_by_id("aimer_app") else { return };
+                    for ch in data.chars() {
+                        let key = ch.to_string();
+                        for event_type in &["keydown", "keyup"] {
+                            let synth = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(
+                                event_type,
+                                web_sys::KeyboardEventInit::new()
+                                    .key(&key)
+                                    .bubbles(true)
+                                    .cancelable(true),
+                            )
+                            .unwrap();
+                            canvas.dispatch_event(&synth).ok();
+                        }
+                    }
+                    // Clear the hidden input so the next composition starts clean.
+                    if let Some(el) = doc.get_element_by_id("__aimer_hidden_input") {
+                        let el: web_sys::HtmlInputElement = el.unchecked_into();
+                        el.set_value("");
+                    }
+                });
+                el.add_event_listener_with_callback("compositionend", cb.as_ref().unchecked_ref())
                     .ok();
                 cb.forget();
             }
@@ -656,6 +701,18 @@ impl EventElement for RawTextField {
                     #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
                     if let Some(w) = get_window() {
                         w.set_ime_allowed(true);
+                        // Position the IME candidate / pre-edit window at the text
+                        // field so composed input (Chinese/Japanese/Korean, ...) is
+                        // shown next to the cursor instead of the screen corner.
+                        if let Some((start, end)) = self.cached_bounds.pos_start_end() {
+                            use winit::dpi::{LogicalPosition, LogicalSize};
+                            let pos = LogicalPosition::new(start.x as f64, start.y as f64);
+                            let size = LogicalSize::new(
+                                (end.x - start.x).max(1.0) as f64,
+                                (end.y - start.y).max(1.0) as f64,
+                            );
+                            w.set_ime_cursor_area(pos, size);
+                        }
                     }
                     #[cfg(target_arch = "wasm32")]
                     wasm_request_keyboard(true);
@@ -666,7 +723,6 @@ impl EventElement for RawTextField {
                     ios_keyboard::dismiss_keyboard();
                     #[cfg(target_os = "android")]
                     android_keyboard::dismiss_keyboard();
-                    #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
                     if let Some(w) = get_window() {
                         w.set_ime_allowed(false);
                     }
