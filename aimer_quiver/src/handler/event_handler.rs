@@ -2,10 +2,10 @@ use crate::handler::AimerApplicationHandler;
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::KeyAction;
 use aimer_events::element::{ElementEvent, Modifiers, NamedKey};
-use aimer_utils::ExecTimes;
+use aimer_utils::{info, ExecTimes};
 use aimer_widget::{broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent};
+use winit::event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 
@@ -30,6 +30,8 @@ impl WindowEventHandler {
 
             WindowEvent::KeyboardInput { event, .. } => Self::handle_keyboard_input(event, app),
 
+            WindowEvent::Ime(ime) => Self::handle_ime(ime, app),
+
             WindowEvent::MouseWheel { delta, phase, .. } => {
                 // debug!("Mouse wheel phase: {:?}", phase);
                 Self::handle_mouse_wheel(delta, phase, app)
@@ -42,7 +44,11 @@ impl WindowEventHandler {
                 app.render(event_loop);
             }
 
-            WindowEvent::Resized(size) => Self::handle_resize(size, app),
+            WindowEvent::Resized(size) =>
+            {
+                #[cfg(not(target_os = "ios"))]
+                Self::handle_resize(size, app)
+            }
 
             _ => (),
         }
@@ -50,7 +56,9 @@ impl WindowEventHandler {
 
     fn handle_touch(item: Touch, app: &mut AimerApplicationHandler, _id: WindowId, _event: WindowEvent) {
         let scale = app.window_scale;
+        // info!("Scale: {:?}", scale);
         let pos = Vec2d { x: (item.location.x / scale) as f32, y: (item.location.y / scale) as f32 };
+        // info!("Touch position: {:?}", pos );
         // info!("Touch: {:?}", pos);
         let event = match item.phase {
             TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
@@ -170,41 +178,54 @@ impl WindowEventHandler {
             }
         }
 
-        if let Key::Character(ref ch) = event.logical_key
-            && !ch.is_empty()
-            && ch.chars().all(|c| !c.is_control())
-        {
-            let ev = ElementEvent::CharInput { ch: ch.parse().unwrap(), action: action.clone(), modifiers: modifiers.clone() };
-            if let Some(root) = &app.widget_root {
-                let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
-                #[cfg(debug_assertions)]
-                if app.inspector.is_enabled() {
-                    handled = true;
-                }
-                if let Some(window) = &app.window
-                    && handled
-                {
-                    window.request_redraw();
-                }
-            }
+        // While an IME composition is in progress the raw key strokes belong to
+        // the input method (e.g. pinyin/romaji letters building up a candidate).
+        // The composed result is delivered separately via `WindowEvent::Ime`, so
+        // we must not also treat these keys as text or navigation input.
+        if app.ime_composing {
             return;
         }
 
-        // Handle space as text input when it arrives as a named key
+        // Resolve the textual payload of this key, if any.
+        //
+        // `event.text` is the source of truth for committed text on every native
+        // winit backend. Crucially winit leaves it `None` for keystrokes that the
+        // IME consumed — composition letters, candidate-confirm keys, and (on
+        // macOS) even plain characters while IME is enabled, which instead arrive
+        // via `WindowEvent::Ime(Ime::Commit(..))`. Relying solely on `event.text`
+        // therefore guarantees each character is inserted exactly once, with no
+        // double-typing and no stray space after confirming a CJK candidate.
+        //
+        // The web backend has no winit IME events; its synthetic key events carry
+        // the character only in `logical_key`, so fall back to that there.
+        // Multi-codepoint payloads (e.g. a committed CJK phrase) are dispatched
+        // one `char` at a time instead of panicking on `parse::<char>()`.
+        let text_input: Option<String> = match &event.text {
+            Some(t) => Some(t.to_string()),
+            #[cfg(target_arch = "wasm32")]
+            None => match &event.logical_key {
+                Key::Character(ch) => Some(ch.to_string()),
+                _ => None,
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            None => None,
+        };
+
+        if let Some(text) = text_input
+            && !text.is_empty()
+            && text.chars().all(|c| !c.is_control())
+        {
+            Self::dispatch_text(&text, &action, &modifiers, app);
+            return;
+        }
+
+        // On the web backend, space is delivered as a named key without any
+        // `event.text`, so handle it explicitly. On native platforms a real
+        // space arrives through `event.text` above; the named `Space` here only
+        // appears as an IME confirm key, which must NOT insert a space.
+        #[cfg(target_arch = "wasm32")]
         if let Key::Named(WinitNamedKey::Space) = event.logical_key {
-            let ev = ElementEvent::CharInput { ch: ' ', action: action.clone(), modifiers: modifiers.clone() };
-            if let Some(root) = &app.widget_root {
-                let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
-                #[cfg(debug_assertions)]
-                if app.inspector.is_enabled() {
-                    handled = true;
-                }
-                if let Some(window) = &app.window
-                    && handled
-                {
-                    window.request_redraw();
-                }
-            }
+            Self::dispatch_text(" ", &action, &modifiers, app);
             return;
         }
 
@@ -238,6 +259,58 @@ impl WindowEventHandler {
         }
     }
 
+    /// Dispatches a (possibly multi-character) text payload to the widget tree
+    /// as a sequence of `CharInput` events — one per `char`. This is the single
+    /// path used for plain typed characters, web text input, and committed IME
+    /// text, so CJK phrases and emoji are inserted correctly.
+    fn dispatch_text(text: &str, action: &KeyAction, modifiers: &Modifiers, app: &mut AimerApplicationHandler) {
+        let Some(root) = &app.widget_root else { return };
+        let mut handled = false;
+        for ch in text.chars() {
+            let ev = ElementEvent::CharInput { ch, action: action.clone(), modifiers: modifiers.clone() };
+            handled |= dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+        }
+        #[cfg(debug_assertions)]
+        if app.inspector.is_enabled() {
+            handled = true;
+        }
+        if let Some(window) = &app.window
+            && handled
+        {
+            window.request_redraw();
+        }
+    }
+
+    /// Handles input-method (IME) events so that languages requiring
+    /// composition — Chinese, Japanese, Korean, etc. — can be typed.
+    ///
+    /// While a composition is active (`Ime::Preedit`) raw key strokes are
+    /// suppressed in `handle_keyboard_input`; the finished text arrives through
+    /// `Ime::Commit` and is inserted via the normal text path.
+    fn handle_ime(ime: Ime, app: &mut AimerApplicationHandler) {
+        info!("IME : {ime:?}");
+        match ime {
+            Ime::Enabled => {
+                app.ime_composing = false;
+            }
+            Ime::Preedit(text, _cursor) => {
+                app.ime_composing = !text.is_empty();
+                // Redraw so a focused field can reflect composition state.
+                if let Some(window) = &app.window {
+                    window.request_redraw();
+                }
+            }
+            Ime::Commit(text) => {
+                app.ime_composing = false;
+                let modifiers = app.current_modifiers.clone();
+                Self::dispatch_text(&text, &KeyAction::Pressed, &modifiers, app);
+            }
+            Ime::Disabled => {
+                app.ime_composing = false;
+            }
+        }
+    }
+
     fn handle_mouse_wheel(delta: MouseScrollDelta, phase: TouchPhase, app: &mut AimerApplicationHandler) {
         // debug!("Mouse wheel delta: {:?}", delta);
         let scroll_delta = match delta {
@@ -263,6 +336,8 @@ impl WindowEventHandler {
 
     fn handle_resize(size: PhysicalSize<u32>, app: &mut AimerApplicationHandler) {
         #[cfg(target_os = "ios")]
+        aimer_utils::debug!("iOS handle_resize raw size: {size:?}");
+        #[cfg(target_os = "ios")]
         let size = {
             use aimer_attribute::ResolvedSize;
             let is_portrait = size.width < size.height;
@@ -281,8 +356,12 @@ impl WindowEventHandler {
                     }
                     app.window.unwrap().inner_size()
                 }
-            }
+            };
+            PhysicalSize::new(1200, 2000)
         };
+
+        #[cfg(target_os = "ios")]
+        aimer_utils::debug!("iOS handle_resize modified size: {size:?}");
 
         #[cfg(target_os = "android")]
         let size = {
