@@ -53,6 +53,11 @@ pub struct ImagePipeline {
     instance_buffer: wgpu::Buffer,
     #[allow(dead_code)]
     instance_capacity: usize,
+    /// Running write offset (in instances) into `instance_buffer` for the
+    /// current frame. Reset by `begin_frame`. Each `draw_batch` writes its
+    /// instances to a distinct region so that multiple image batches within a
+    /// single render pass do not alias the same buffer memory.
+    frame_instance_offset: usize,
 }
 
 impl ImagePipeline {
@@ -179,6 +184,7 @@ impl ImagePipeline {
             next_id: 1,
             instance_buffer,
             instance_capacity: Self::INITIAL_CAPACITY,
+            frame_instance_offset: 0,
         }
     }
 
@@ -192,6 +198,26 @@ impl ImagePipeline {
 
     pub fn has_texture(&self, id: TextureId) -> bool {
         self.textures.contains_key(&id)
+    }
+
+    /// Prepare the pipeline for a new frame's image batches.
+    ///
+    /// Resets the per-frame instance write offset and ensures the shared
+    /// instance buffer is large enough to hold *all* image instances of the
+    /// frame at once. Sizing up-front (instead of inside `draw_batch`) avoids
+    /// recreating the buffer mid-frame, which would orphan instance data that
+    /// earlier `draw_batch` calls already recorded draws against.
+    pub fn begin_frame(&mut self, device: &wgpu::Device, total_instances: usize) {
+        self.frame_instance_offset = 0;
+        if total_instances > self.instance_capacity {
+            self.instance_capacity = total_instances.next_power_of_two();
+            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("image instance buffer (resized)"),
+                size: (self.instance_capacity * size_of::<ImageInstance>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
     }
 
     pub fn upload_image_with_id(
@@ -274,16 +300,28 @@ impl ImagePipeline {
             None => return,
         };
 
-        // Resize instance buffer if needed
-        if instances.len() > self.instance_capacity {
-            self.instance_capacity = instances.len().next_power_of_two();
+        // Each batch occupies a distinct region of the shared instance buffer so
+        // that multiple image batches recorded into the same render pass do not
+        // overwrite one another. `queue.write_buffer` calls are all applied on
+        // the queue timeline *before* the pass executes, so writing every batch
+        // at offset 0 would make every draw read only the last batch's data.
+        let end = self.frame_instance_offset + instances.len();
+        if end > self.instance_capacity {
+            // Fallback safety net: `begin_frame` should have sized the buffer for
+            // the whole frame, but if it was not called, grow without dropping
+            // already-written data by copying nothing (prior draws keep the old
+            // buffer alive via the encoder) and restarting the offset.
+            self.instance_capacity = end.next_power_of_two();
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("image instance buffer (resized)"),
                 size: (self.instance_capacity * size_of::<ImageInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            self.frame_instance_offset = 0;
         }
+
+        let byte_offset = (self.frame_instance_offset * size_of::<ImageInstance>()) as u64;
 
         // On Android, pass 2.0 to signal shaders to skip sRGB conversion entirely.
         #[cfg(target_os = "android")]
@@ -292,12 +330,14 @@ impl ImagePipeline {
         let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
         queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
 
-        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
+        queue.write_buffer(&self.instance_buffer, byte_offset, bytemuck::cast_slice(instances));
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_bind_group(1, &entry.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+        pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
         pass.draw(0..6, 0..instances.len() as u32);
+
+        self.frame_instance_offset = end;
     }
 }
