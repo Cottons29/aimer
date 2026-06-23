@@ -24,9 +24,10 @@ impl StatelessWidget for HomePage {
                     children: [
                         hero_section(ctx),
                         why_aimer_section(ctx),
-                        polished_tooling_section(ctx),
-                        same_looking_section(ctx),
-                        SizedBox!(height: 500)
+                        // polished_tooling_section(ctx),
+                        // same_looking_section(ctx),
+                        SizedBox!(height: 1500),
+                        hero_section(ctx),
                     ]
                 )
             )
