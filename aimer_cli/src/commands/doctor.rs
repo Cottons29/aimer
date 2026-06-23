@@ -15,7 +15,7 @@ struct Tool {
 const TOOLS: &[Tool] = &[
     Tool { bin: "rustc", probe: &["--version"], purpose: "Rust compiler" },
     Tool { bin: "cargo", probe: &["--version"], purpose: "Rust package manager" },
-    Tool { bin: "wasm-pack", probe: &["--version"], purpose: "Web (wasm) builds" },
+    Tool { bin: "trunk", probe: &["--version"], purpose: "Web (wasm) dev server & bundler" },
     Tool { bin: "xcrun", probe: &["--version"], purpose: "iOS/macOS toolchain (Xcode)" },
     Tool { bin: "adb", probe: &["--version"], purpose: "Android device bridge" },
     Tool { bin: "gradle", probe: &["--version"], purpose: "Android project builds" },

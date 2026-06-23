@@ -1,10 +1,7 @@
 use crate::commands::run::Device;
-use crate::commands::run::cargo_build::{
-    self, CargoBuildTarget, stream_stderr_as_app_log, stream_stderr_as_build_log, stream_stdout_as_app_log, stream_stdout_as_build_log,
-    wait_for_child,
-};
+use crate::commands::run::cargo_build::{stream_stderr_as_app_log, stream_stdout_as_app_log, wait_for_child};
 use crate::commands::run::console::{RunnerEvent, Status};
-use crate::commands::run::helpers::{build_log, build_streamed, fail, set_status, spawn_streamed, stage_assets};
+use crate::commands::run::helpers::{build_log, fail, set_status, spawn_streamed};
 use crossbeam::channel::Sender;
 use std::net::IpAddr;
 use std::process::{Child, Command};
@@ -15,57 +12,29 @@ pub fn spawn_web_runner(
     _: String,
     tx: Sender<RunnerEvent>,
     current_child_clone: Arc<Mutex<Option<Child>>>,
-    inspector_address: IpAddr,
-    inspector_port: u16,
+    _: IpAddr,
+    _: u16,
 ) {
-    set_status(&tx, Status::Compiling(0));
-    build_log(&tx, "Running wasm-pack build...");
-
-    let status = match cargo_build::spawn_cargo_build(&CargoBuildTarget::Web, &tx, &current_child_clone, inspector_address, inspector_port)
-    {
-        Some(s) => s,
-        None => return,
-    };
-
-    if !status.success() {
-        fail(&tx, "wasm-pack build failed.");
-        return;
-    }
-
+    // Write [[copy]] entries into Trunk.toml so that trunk itself copies
+    // registered assets into dist/ during its build. Trunk cleans dist/
+    // before building, so manual pre-staging would be wiped.
     set_status(&tx, Status::Building(0));
-    build_log(&tx, "Running npm install...");
-
-    let mut npm_install = Command::new("npm");
-    npm_install.arg("install").current_dir("builds/web");
-
-    if !build_streamed(
-        npm_install,
-        &tx,
-        &current_child_clone,
-        "Failed to run npm install",
-        "npm install failed.",
-        stream_stdout_as_build_log,
-        stream_stderr_as_build_log,
-    ) {
+    if let Err(e) = crate::commands::assets::sync_trunk_copy_entries() {
+        fail(&tx, format!("Warning: failed to sync trunk asset entries: {e}"));
         return;
     }
-
-    // Stage registered assets into Vite's `public/` dir (incrementally) so they
-    // are served at the site root and fetched at runtime via web-sys. Without
-    // this, `aimer run` (web) would serve the SPA fallback for `/assets/...`.
-    stage_assets(&tx, "builds/web/public");
 
     set_status(&tx, Status::Launching);
-    build_log(&tx, "Starting vite server...");
+    build_log(&tx, "Starting trunk server...");
 
-    let mut npm_run = Command::new("npm");
-    npm_run.arg("run").arg("dev").current_dir("builds/web");
+    let mut trunk = Command::new("trunk");
+    trunk.arg("serve").current_dir("builds/web");
 
     if !spawn_streamed(
-        npm_run,
+        trunk,
         &tx,
         &current_child_clone,
-        "Failed to run npm run dev",
+        "Failed to run trunk serve",
         Status::Error,
         stream_stdout_as_app_log,
         stream_stderr_as_app_log,

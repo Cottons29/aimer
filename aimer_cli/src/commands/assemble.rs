@@ -250,28 +250,19 @@ fn assemble_android(pkg_name: &str, release: bool) -> anyhow::Result<String> {
         .unwrap_or_else(|| format!("builds/android/app/build/outputs/apk/{dir}/")))
 }
 
-/// Build the static web bundle via `wasm-pack` + Vite.
+/// Build the static web bundle via `trunk`.
 fn assemble_web(release: bool) -> anyhow::Result<String> {
-    let mut wasm = Command::new("wasm-pack");
-    wasm.arg("build")
-        .arg(if release { "--release" } else { "--debug" })
-        .arg("--target")
-        .arg("web")
-        .arg("--out-dir")
-        .arg("builds/web/pkg");
-    run_step(wasm, "wasm-pack build for web")?;
+    // Tell trunk about registered assets so it copies them into dist/ as part
+    // of its build. Trunk cleans dist/ first, so manual pre-staging would be
+    // wiped — the `[[copy]]` directive is the native mechanism.
+    crate::commands::assets::sync_trunk_copy_entries()?;
 
-    let mut npm_install = Command::new("npm");
-    npm_install.arg("install").current_dir("builds/web");
-    run_step(npm_install, "npm install for web")?;
-
-    // Stage assets into Vite's `public/` dir so they are served at the site
-    // root and copied verbatim into `dist/` (fetched at runtime via web-sys).
-    copy_assets_into("builds/web/public")?;
-
-    let mut npm_build = Command::new("npm");
-    npm_build.arg("run").arg("build").current_dir("builds/web");
-    run_step(npm_build, "npm run build for web")?;
+    let mut trunk = Command::new("trunk");
+    trunk.arg("build").current_dir("builds/web");
+    if release {
+        trunk.arg("--release");
+    }
+    run_step(trunk, "trunk build for web")?;
 
     Ok("builds/web/dist".to_string())
 }

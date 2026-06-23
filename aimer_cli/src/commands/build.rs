@@ -57,13 +57,11 @@ fn resolve_target(target: Option<String>) -> anyhow::Result<Targets> {
 fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
     let mut cmd = match target {
         Targets::Web => {
-            let mut c = Command::new("wasm-pack");
-            c.arg("build")
-                .arg(if release { "--release" } else { "--debug" })
-                .arg("--target")
-                .arg("web")
-                .arg("--out-dir")
-                .arg("builds/web/pkg");
+            let mut c = Command::new("trunk");
+            c.arg("build").current_dir("builds/web");
+            if release {
+                c.arg("--release");
+            }
             c
         }
         Targets::Android | Targets::AndroidSimulator => {
