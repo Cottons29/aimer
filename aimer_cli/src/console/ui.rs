@@ -228,7 +228,7 @@ pub fn render(
 
     let bottom_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(120)].as_ref())
+        .constraints([Constraint::Length(30), Constraint::Min(0)].as_ref())
         .split(chunks[1]);
 
     let status_color = match state.status {
@@ -265,12 +265,12 @@ pub fn render(
         Span::styled("[Tab] ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
         Span::raw("switch pane | "),
         Span::styled("[F12] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::raw("inspector | "),
+        Span::raw("inspector"),
         // Span::styled("[t] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         // Span::raw(if state.inspector_full_tree { "full tree " } else { "widgets " }),
-        Span::raw("| "),
-        Span::styled("●", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::raw(" hot-reload "),
+        // Span::raw("| "),
+        // Span::styled("●", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        // Span::raw(" hot-reload "),
     ]);
 
     let status_bar = Paragraph::new(status_line).style(Style::default());
