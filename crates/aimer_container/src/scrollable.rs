@@ -1,23 +1,22 @@
+pub mod constants;
+pub mod controller;
+pub mod draw_scroll;
+pub mod handle_scroll;
 pub mod raw_scroll;
 pub mod scroll_bar;
 pub mod scroll_behavior;
-pub mod scroll_spring;
-pub mod draw_scroll;
-pub mod handle_scroll;
-pub mod controller;
 
-pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
 pub use controller::{DragMode, ScrollController};
+pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
 
 use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
-use crate::single_child::container::RawContainer;
+use aimer_attribute::CacheBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_macro::WidgetConstructor;
-use std::cell::Cell;
-use aimer_attribute::CacheBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, Widget};
+use std::cell::Cell;
 
 #[derive(WidgetConstructor)]
 pub struct Scrollable<W: Widget + 'static> {
@@ -42,7 +41,7 @@ impl<W: Widget> Widget for Scrollable<W> {
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
         }
 
-        let raw_container = RawContainer::new(RawScrollableContainer {
+        Box::new(RawScrollableContainer {
             child: self.child.to_element(&child_ctx),
             ctrl: ScrollController {
                 speed_multiplier: ctx.scale,
@@ -85,7 +84,6 @@ impl<W: Widget> Widget for Scrollable<W> {
             horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
             window: ctx.window,
             bounds: CacheBounds::with_vec2d(child_ctx.parent_pos),
-        });
-        Box::new(raw_container)
+        })
     }
 }
