@@ -19,13 +19,21 @@ pub fn spawn_web_runner(
     // registered assets into dist/ during its build. Trunk cleans dist/
     // before building, so manual pre-staging would be wiped.
     set_status(&tx, Status::Building(0));
-    if let Err(e) = crate::commands::assets::sync_trunk_copy_entries() {
-        fail(&tx, format!("Warning: failed to sync trunk asset entries: {e}"));
+    // if let Err(e) = crate::commands::assets::sync_trunk_copy_entries() {
+    //     fail(&tx, format!("Warning: failed to sync trunk asset entries: {e}"));
+    //     return;
+    // }
+
+    let artifact = "builds/web/assets";
+    let Ok(_) = crate::commands::assemble::copy_assets_into(artifact) else  {
+        println!("Failed to copy assets into {artifact}");
         return;
-    }
+    };
 
     set_status(&tx, Status::Launching);
     build_log(&tx, "Starting trunk server...");
+
+
 
     let mut trunk = Command::new("trunk");
     trunk.arg("serve").current_dir("builds/web");
