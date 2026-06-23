@@ -62,7 +62,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #[cfg(target_arch = "wasm32")]
-        #[wasm_bindgen]
+        #[wasm_bindgen(start)]
         pub fn __generated_entrance_point(){
             #fn_name()
         }
