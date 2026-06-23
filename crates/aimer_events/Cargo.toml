@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 winit.workspace = true
 aimer_attribute.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni.workspace = true
+ndk-context.workspace = true
