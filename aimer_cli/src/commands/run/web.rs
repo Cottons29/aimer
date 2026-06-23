@@ -4,7 +4,7 @@ use crate::commands::run::cargo_build::{
     wait_for_child,
 };
 use crate::commands::run::console::{RunnerEvent, Status};
-use crate::commands::run::helpers::{build_log, build_streamed, fail, set_status, spawn_streamed};
+use crate::commands::run::helpers::{build_log, build_streamed, fail, set_status, spawn_streamed, stage_assets};
 use crossbeam::channel::Sender;
 use std::net::IpAddr;
 use std::process::{Child, Command};
@@ -49,6 +49,11 @@ pub fn spawn_web_runner(
     ) {
         return;
     }
+
+    // Stage registered assets into Vite's `public/` dir (incrementally) so they
+    // are served at the site root and fetched at runtime via web-sys. Without
+    // this, `aimer run` (web) would serve the SPA fallback for `/assets/...`.
+    stage_assets(&tx, "builds/web/public");
 
     set_status(&tx, Status::Launching);
     build_log(&tx, "Starting vite server...");

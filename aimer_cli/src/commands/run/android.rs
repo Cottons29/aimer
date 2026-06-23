@@ -3,7 +3,7 @@ use crate::commands::run::cargo_build::{
     self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_build_log, stream_stdout_with_gradle_progress, wait_for_child,
 };
 use crate::commands::run::console::{RunnerEvent, Status};
-use crate::commands::run::helpers::{build_log, build_streamed, fail, run_to_completion, set_status, spawn_streamed};
+use crate::commands::run::helpers::{build_log, build_streamed, fail, run_to_completion, set_status, spawn_streamed, stage_assets};
 use crate::commands::run::utilities::resolve_lib_path;
 use crossbeam::channel::Sender;
 use std::env::current_dir;
@@ -112,6 +112,10 @@ pub fn spawn_android_runner(
         build_log(&tx, format!("Copied library to {}", dest_lib));
     }
 
+    // Stage registered assets into the APK's `assets/` source set (incrementally)
+    // before Gradle packs it, so they are readable at runtime via AssetManager.
+    stage_assets(&tx, "builds/android/app/src/main/assets");
+
     build_log(&tx, "Building Android project via Gradle...");
 
     let gradlew = if cfg!(windows) { "gradlew.bat" } else { "gradlew" };
@@ -169,7 +173,7 @@ pub fn spawn_android_runner(
     }
 
     let mut app_run = Command::new("adb");
-    app_run.args(["-s", &device.id, "shell", "am", "start", "-n", &format!("{}/android.app.NativeActivity", app_id)]);
+    app_run.args(["-s", &device.id, "shell", "am", "start", "-n", &format!("{}/com.aimer.AimerActivity", app_id)]);
 
     if !spawn_streamed(
         app_run,
