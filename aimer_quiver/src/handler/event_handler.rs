@@ -234,8 +234,12 @@ impl WindowEventHandler {
             let key = match named {
                 WinitNamedKey::Backspace => NamedKey::Backspace,
                 WinitNamedKey::Delete => NamedKey::Delete,
+                WinitNamedKey::ArrowUp => NamedKey::ArrowUp,
+                WinitNamedKey::ArrowDown => NamedKey::ArrowDown,
                 WinitNamedKey::ArrowLeft => NamedKey::ArrowLeft,
                 WinitNamedKey::ArrowRight => NamedKey::ArrowRight,
+                WinitNamedKey::PageUp => NamedKey::PageUp,
+                WinitNamedKey::PageDown => NamedKey::PageDown,
                 WinitNamedKey::Home => NamedKey::Home,
                 WinitNamedKey::End => NamedKey::End,
                 WinitNamedKey::Enter => NamedKey::Enter,
