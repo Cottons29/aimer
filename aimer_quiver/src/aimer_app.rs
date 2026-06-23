@@ -69,6 +69,60 @@ pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
     }
 }
 
+// Android software-keyboard forwarding into Rust.
+//
+// These are the JNI entry points invoked by the Java `com.aimer.AimerActivity`
+// helper (see the Android build template). The hidden `EditText` managed by that
+// activity captures everything the soft keyboard produces — including IME-composed
+// CJK text once a candidate is committed — and forwards it here. The text is then
+// pushed through the same platform-agnostic `AimerCustomAppEvent` path used by iOS,
+// so the focused text field inserts the characters exactly once.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_aimer_AimerActivity_nativeInsertText<'caller>(
+    mut env: jni::EnvUnowned<'caller>,
+    _class: jni::objects::JClass<'caller>,
+    text: jni::objects::JString<'caller>,
+) {
+    env.with_env(|env| -> Result<(), jni::errors::Error> {
+        let text = String::from(text.mutf8_chars(env)?);
+        if text.is_empty() {
+            return Ok(());
+        }
+
+        let Some(proxy) = EVENT_PROXY.get() else {
+            aimer_utils::debug!("nativeInsertText: EVENT_PROXY not initialized yet");
+            return Ok(());
+        };
+
+        if let Err(e) = proxy.send_event(AimerCustomAppEvent::InsertText(text)) {
+            aimer_utils::error!("nativeInsertText: failed to send event: {:?}", e);
+        }
+        Ok(())
+    })
+    .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_aimer_AimerActivity_nativeBackspace<'caller>(
+    mut env: jni::EnvUnowned<'caller>,
+    _class: jni::objects::JClass<'caller>,
+) {
+    env.with_env(|_env| -> Result<(), jni::errors::Error> {
+        let Some(proxy) = EVENT_PROXY.get() else {
+            aimer_utils::debug!("nativeBackspace: EVENT_PROXY not initialized yet");
+            return Ok(());
+        };
+
+        if let Err(e) = proxy.send_event(AimerCustomAppEvent::ForceBackspace) {
+            aimer_utils::error!("nativeBackspace: failed to send event: {:?}", e);
+        }
+        Ok(())
+    })
+    .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
+}
+
 pub struct AimerApp<T> {
     _marker: std::marker::PhantomData<T>,
 }
@@ -103,6 +157,18 @@ fn start_event_loop(widget: impl Widget + 'static) {
             .clone();
 
         android_app::set_android_app(app.clone());
+
+        // Keep the JNI entry points used by `com.aimer.AimerActivity` reachable.
+        // They are only ever called by the JVM at runtime (never from Rust), so
+        // without an explicit reference the linker may garbage-collect them out of
+        // the final `cdylib`, which would make the soft-keyboard text bridge fail
+        // with `UnsatisfiedLinkError`.
+        let _keep_jni: [*const (); 2] = [
+            Java_com_aimer_AimerActivity_nativeInsertText as *const (),
+            Java_com_aimer_AimerActivity_nativeBackspace as *const (),
+        ];
+        std::hint::black_box(_keep_jni);
+
         EventLoop::<AimerCustomAppEvent>::with_user_event()
             .with_android_app(app)
             .build()
@@ -140,9 +206,16 @@ fn start_event_loop(widget: impl Widget + 'static) {
         pending_widget: Some(Box::new(widget)),
         cursor_pos: Vec2d { x: 0.0, y: 0.0 },
         current_modifiers: Default::default(),
+        ime_composing: false,
         window_scale: 1.0,
         native_window_size: None,
         pending_resize: None,
+        #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
+        last_frame_time: Cell::new(None),
+        #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
+        frame_interval: Cell::new(None),
+        #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
+        pending_redraw: Cell::new(false),
         #[cfg(not(target_arch = "wasm32"))]
         async_runtime,
         #[cfg(debug_assertions)]
@@ -155,6 +228,8 @@ fn start_event_loop(widget: impl Widget + 'static) {
         inspector_redraw_frames: Cell::new(0),
         start_up_frames: Cell::new(24),
     };
+
+    info!("Started main event loop");
 
     // On iOS, this function never returns.
     match event_loop.run_app(&mut app) {
