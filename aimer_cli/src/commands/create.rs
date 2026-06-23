@@ -61,11 +61,12 @@ pub fn execute(project_name: &str) -> anyhow::Result<()> {
     let description = prompt_abortable!(Text::new("Description:"));
     let version = prompt_abortable!(Text::new("Version:").with_default("0.1.0"));
     let author = prompt_abortable!(Text::new("Author:"));
+    let group = prompt_abortable!(Text::new("Group (e.g. com.example.app):").with_default("com.example.app"));
     let targets = prompt_abortable!(MultiSelect::new("Targets:", vec!["macos", "windows", "linux", "android", "ios", "web"]));
 
     println!(
-        "\nProject config:\n- Name: {}\n- Version: {}\n- Description: {}\n- Author: {}\n- Targets: {:?}",
-        project_name, version, description, author, targets
+        "\nProject config:\n- Name: {}\n- Version: {}\n- Description: {}\n- Author: {}\n- Group: {}\n- Targets: {:?}",
+        project_name, version, description, author, group, targets
     );
 
     if !prompt_abortable!(Confirm::new("Is this okay?").with_default(true)) {
@@ -81,7 +82,7 @@ pub fn execute(project_name: &str) -> anyhow::Result<()> {
 
     // Run the scaffold inside a helper so that any failure cleans up the
     // partially created directory instead of leaving it behind.
-    if let Err(err) = scaffold(&dir, project_name, &version, &description, &author, &targets) {
+    if let Err(err) = scaffold(&dir, project_name, &version, &description, &author, &group, &targets) {
         let _ = fs::remove_dir_all(&dir);
         return Err(err).with_context(|| format!("failed to create project '{project_name}'"));
     }
@@ -98,6 +99,7 @@ fn scaffold(
     version: &str,
     description: &str,
     author: &str,
+    group: &str,
     targets: &[&str],
 ) -> anyhow::Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("creating directory {}", dir.display()))?;
@@ -107,22 +109,22 @@ fn scaffold(
     // fs::create_dir_all(dir.join("builds/build_src/src")).context("creating builds/build_src/src directory")?;
 
     if targets.contains(&"android") {
-        android::create(dir);
+        android::create(dir, project_name, group);
     }
     if targets.contains(&"ios") {
-        ios::create(dir);
+        ios::create(dir, project_name, group);
     }
     if targets.contains(&"macos") {
-        macos::create(dir);
+        macos::create(dir, project_name, group);
     }
     if targets.contains(&"windows") {
-        window::create(dir);
+        window::create(dir, project_name, group);
     }
     if targets.contains(&"linux") {
-        linux::create(dir);
+        linux::create(dir, project_name, group);
     }
     if targets.contains(&"web") {
-        web::create(dir);
+        web::create(dir, project_name, group);
     }
 
     fs::write(dir.join(".gitignore"), include_str!("../../templates/.gitignore.template"))
@@ -146,7 +148,7 @@ fn scaffold(
 
     // Persist project metadata so run/build can read it back instead of
     // re-parsing Cargo.toml.
-    AimerManifest::new(project_name, version, description, author)
+    AimerManifest::new(project_name, version, description, author, group)
         .write_to(dir)
         .context("writing aimer.toml")?;
 
@@ -228,7 +230,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("myapp");
 
-        scaffold(&dir, "myapp", "0.2.0", "a test app", "tester", &["web"]).unwrap();
+        scaffold(&dir, "myapp", "0.2.0", "a test app", "tester", "com.example.myapp", &["web"]).unwrap();
 
         // Core files and directories are present.
         assert!(dir.join("src/lib.rs").exists(), "missing src/lib.rs");
@@ -250,6 +252,7 @@ mod tests {
         assert_eq!(manifest.package.version, "0.2.0");
         assert_eq!(manifest.package.description, "a test app");
         assert_eq!(manifest.package.author, "tester");
+        assert_eq!(manifest.package.group, "com.example.myapp");
     }
 
     #[test]
@@ -258,7 +261,7 @@ mod tests {
         // remove. Here we just verify scaffolding then removing leaves nothing.
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("throwaway");
-        scaffold(&dir, "throwaway", "0.1.0", "", "", &[]).unwrap();
+        scaffold(&dir, "throwaway", "0.1.0", "", "", "com.example.throwaway", &[]).unwrap();
         assert!(dir.exists());
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(!dir.exists());

@@ -1,17 +1,48 @@
+use clap::ValueEnum;
 use std::error::Error;
 use std::fmt::Display;
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, ValueEnum)]
 pub enum Targets {
     Macos,
     Windows,
     Linux,
     Android,
+    #[value(skip)]
     AndroidSimulator,
     Ios,
+    #[value(skip)]
     IosSimulator,
     Web,
+    #[value(skip)]
     Terminated,
+}
+
+/// Target argument for the `migrate` command, which additionally accepts "all".
+#[derive(Debug, PartialEq, Eq, Copy, Clone, ValueEnum)]
+pub enum MigrateTarget {
+    Macos,
+    Windows,
+    Linux,
+    Android,
+    Ios,
+    Web,
+    All,
+}
+
+impl MigrateTarget {
+    /// The string representation used in CLI output and matching.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MigrateTarget::Macos => "macos",
+            MigrateTarget::Windows => "windows",
+            MigrateTarget::Linux => "linux",
+            MigrateTarget::Android => "android",
+            MigrateTarget::Ios => "ios",
+            MigrateTarget::Web => "web",
+            MigrateTarget::All => "all",
+        }
+    }
 }
 
 impl TryFrom<&str> for Targets {
@@ -163,5 +194,47 @@ mod tests {
         assert_eq!(Targets::Ios, Targets::Ios);
         assert_ne!(Targets::Ios, Targets::IosSimulator);
         assert_ne!(Targets::Macos, Targets::Windows);
+    }
+
+    // ── MigrateTarget ────────────────────────────────────────────────
+
+    #[test]
+    fn migrate_target_as_str_round_trip() {
+        use std::str::FromStr;
+        let variants = [
+            MigrateTarget::Macos,
+            MigrateTarget::Windows,
+            MigrateTarget::Linux,
+            MigrateTarget::Android,
+            MigrateTarget::Ios,
+            MigrateTarget::Web,
+            MigrateTarget::All,
+        ];
+        for variant in variants {
+            let s = variant.as_str();
+            let round_tripped = MigrateTarget::from_str(s, true).unwrap();
+            assert_eq!(variant, round_tripped);
+        }
+    }
+
+    #[test]
+    fn migrate_target_as_str_values() {
+        assert_eq!(MigrateTarget::Macos.as_str(), "macos");
+        assert_eq!(MigrateTarget::Windows.as_str(), "windows");
+        assert_eq!(MigrateTarget::Linux.as_str(), "linux");
+        assert_eq!(MigrateTarget::Android.as_str(), "android");
+        assert_eq!(MigrateTarget::Ios.as_str(), "ios");
+        assert_eq!(MigrateTarget::Web.as_str(), "web");
+        assert_eq!(MigrateTarget::All.as_str(), "all");
+    }
+
+    #[test]
+    fn value_enum_targets_excludes_hidden_variants() {
+        use std::str::FromStr;
+        // These should parse fine via ValueEnum
+        assert!(Targets::from_str("macos", true).is_ok());
+        assert!(Targets::from_str("web", true).is_ok());
+        // Terminated is skipped from ValueEnum
+        assert!(Targets::from_str("terminated", true).is_err());
     }
 }

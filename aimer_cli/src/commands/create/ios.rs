@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::Path;
 
-pub fn create(dir: &Path) {
-    let project_name = dir.file_name().unwrap().to_str().unwrap();
+pub fn create(dir: &Path, name: &str, group: &str) {
+    let project_name = name;
     let project_name_lib = project_name.replace("-", "_");
     let ios_dir = dir.join("builds/ios");
     fs::create_dir_all(&ios_dir).unwrap();
@@ -23,7 +23,9 @@ pub fn create(dir: &Path) {
     
     fs::write(
         app_dir.join("Info.plist"),
-        include_str!("../../../templates/ios/Info.plist.template").replace("${project_name}", project_name)
+        include_str!("../../../templates/ios/Info.plist.template")
+            .replace("${project_name}", project_name)
+            .replace("${group}", group)
     ).unwrap();
 
     fs::write(
