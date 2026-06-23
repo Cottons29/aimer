@@ -7,6 +7,7 @@ pub mod scroll_bar;
 pub mod scroll_behavior;
 
 pub use controller::{DragMode, ScrollController};
+use controller::VelocityHistory;
 pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
 
 use crate::scrollable::raw_scroll::RawScrollableContainer;
@@ -79,6 +80,10 @@ impl<W: Widget> Widget for Scrollable<W> {
                     ScrollAxis::Horizontal => ScrollAxis::Horizontal,
                 },
                 cursor_pos: Cell::new(None),
+                velocity_history: std::cell::RefCell::new(VelocityHistory::new()),
+                cached_viewport: Cell::new((0.0, 0.0)),
+                cached_v_track_width: Cell::new(0.0),
+                cached_h_track_width: Cell::new(0.0),
             },
             vertical_scroll_bar: self.vertical_scroll_bar.clone(),
             horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),

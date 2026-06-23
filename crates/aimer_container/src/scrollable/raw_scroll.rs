@@ -42,6 +42,13 @@ impl<E: Element> RawScrollableContainer<E> {
             Dimension::Auto => 12.0 * scale,
         };
 
+        // Cache track width for hit-testing track clicks.
+        if is_vertical {
+            self.ctrl.cached_v_track_width.set(track_width);
+        } else {
+            self.ctrl.cached_h_track_width.set(track_width);
+        }
+
         let thumb_width = match scroll_bar.thumb.width {
             Dimension::Px(v) => v * scale,
             Dimension::Percent(p) => track_width * (p / 100.0),

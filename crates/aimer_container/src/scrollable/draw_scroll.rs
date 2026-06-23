@@ -19,6 +19,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         let max_y = (content_size.height - viewport_h).max(0.0);
 
         self.bounds.save(ctx.scale, transform.0, transform.1, viewport_w, viewport_h);
+        self.ctrl.cached_viewport.set((viewport_w, viewport_h));
         self.ctrl.cursor_pos.set(Some(ctx.cursor_pos));
 
         let mut final_max = Vec2d { x: max_x, y: max_y };
