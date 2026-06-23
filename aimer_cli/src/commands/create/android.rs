@@ -4,7 +4,7 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-pub fn create(dir: &Path) {
+pub fn create(dir: &Path, name: &str, group: &str) {
     fs::create_dir_all(dir.join("builds/android/app/src/main/java/com/example/app")).unwrap();
     fs::create_dir_all(dir.join("builds/android/app/src/main/res/values")).unwrap();
     fs::create_dir_all(dir.join("builds/android/gradle/wrapper")).unwrap();
@@ -66,18 +66,20 @@ plugins {
     )
     .unwrap();
 
-    let project_name = dir.file_name().unwrap().to_str().unwrap();
+    let project_name = name;
     let lib_name = project_name.replace("-", "_");
 
     fs::write(
         dir.join("builds/android/app/build.gradle.kts"),
-        include_str!("../../../templates/android/build.gradle.kts.template"),
+        include_str!("../../../templates/android/build.gradle.kts.template").replace("${group}", group),
     )
     .unwrap();
 
     fs::write(
         dir.join("builds/android/app/src/main/AndroidManifest.xml"),
-        include_str!("../../../templates/android/AndroidManifest.xml.template").replace("${app_name}", &lib_name),
+        include_str!("../../../templates/android/AndroidManifest.xml.template")
+            .replace("${app_name}", &lib_name)
+            .replace("${group}", group),
     )
     .unwrap();
 

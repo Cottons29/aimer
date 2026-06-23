@@ -30,6 +30,8 @@ pub struct PackageMeta {
     pub description: String,
     #[serde(default)]
     pub author: String,
+    #[serde(default)]
+    pub group: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -54,13 +56,14 @@ pub struct AssetsMeta {
 
 impl AimerManifest {
     /// Build a manifest from the metadata collected during `create`.
-    pub fn new(name: &str, version: &str, description: &str, author: &str) -> Self {
+    pub fn new(name: &str, version: &str, description: &str, author: &str, group: &str) -> Self {
         Self {
             package: PackageMeta {
                 name: name.to_string(),
                 version: version.to_string(),
                 description: description.to_string(),
                 author: author.to_string(),
+                group: group.to_string(),
             },
             build: None,
             assets: None,
@@ -146,7 +149,7 @@ mod tests {
     #[test]
     fn manifest_round_trips() {
         let dir = tempfile::tempdir().unwrap();
-        let manifest = AimerManifest::new("my_app", "0.2.0", "a cool app", "alice");
+        let manifest = AimerManifest::new("my_app", "0.2.0", "a cool app", "alice", "com.example.myapp");
         manifest.write_to(dir.path()).unwrap();
 
         let loaded = AimerManifest::load_from(dir.path()).unwrap().unwrap();
@@ -154,6 +157,7 @@ mod tests {
         assert_eq!(loaded.package.version, "0.2.0");
         assert_eq!(loaded.package.description, "a cool app");
         assert_eq!(loaded.package.author, "alice");
+        assert_eq!(loaded.package.group, "com.example.myapp");
     }
 
     #[test]
@@ -164,7 +168,7 @@ mod tests {
 
     #[test]
     fn default_target_is_read() {
-        let mut manifest = AimerManifest::new("app", "0.1.0", "", "");
+        let mut manifest = AimerManifest::new("app", "0.1.0", "", "", "com.example.app");
         manifest.build = Some(BuildMeta { default_target: Some("web".to_string()) });
         let dir = tempfile::tempdir().unwrap();
         manifest.write_to(dir.path()).unwrap();
@@ -175,7 +179,7 @@ mod tests {
     #[test]
     fn resolve_package_name_prefers_manifest() {
         let dir = tempfile::tempdir().unwrap();
-        AimerManifest::new("from_manifest", "0.1.0", "", "")
+        AimerManifest::new("from_manifest", "0.1.0", "", "", "com.example.from_manifest")
             .write_to(dir.path())
             .unwrap();
         assert_eq!(resolve_package_name(dir.path()), "from_manifest");
@@ -218,7 +222,7 @@ mod tests {
 
     #[test]
     fn asset_files_empty_without_section() {
-        let manifest = AimerManifest::new("app", "0.1.0", "", "");
+        let manifest = AimerManifest::new("app", "0.1.0", "", "", "com.example.app");
         assert!(manifest.asset_files().is_empty());
     }
 

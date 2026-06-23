@@ -1,19 +1,21 @@
 use std::fs;
 use std::path::Path;
 
-pub fn create(dir: &Path) {
+pub fn create(dir: &Path, name: &str, _group: &str) {
     fs::create_dir_all(dir.join("builds/linux")).unwrap();
     fs::write(
         dir.join("builds/linux/app.desktop"),
-        r#"[Desktop Entry]
-Name=AimerApp
-Comment=Aimer Application
+        format!(
+            r#"[Desktop Entry]
+Name={name}
+Comment={name}
 Exec=aimer_app
 Icon=aimer
 Terminal=false
 Type=Application
 Categories=Utility;
-"#,
+"#
+        ),
     ).unwrap();
 
     // Default application icon

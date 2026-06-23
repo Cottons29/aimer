@@ -1,6 +1,7 @@
 use crate::commands::version::VersionCommand;
+use crate::targets::{MigrateTarget, Targets};
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::env::set_current_dir;
 
 pub mod commands;
@@ -48,8 +49,8 @@ enum Commands {
     /// Run the project (interactive picker, or scriptable with --target/--device)
     Run {
         /// Build/run for this target without showing the picker
-        #[arg(short, long)]
-        target: Option<String>,
+        #[arg(short, long, value_enum)]
+        target: Option<Targets>,
         /// Run on the device with this id without showing the picker
         #[arg(short, long)]
         device: Option<String>,
@@ -58,8 +59,8 @@ enum Commands {
     /// Build the project for a target without launching it
     Build {
         /// Target to build for (defaults to aimer.toml's default_target)
-        #[arg(short, long)]
-        target: Option<String>,
+        #[arg(short, long, value_enum)]
+        target: Option<Targets>,
         /// Build in release mode
         #[arg(short, long)]
         release: bool,
@@ -68,7 +69,8 @@ enum Commands {
     /// Assemble the distributable platform bundle (.app, .apk, .ipa, ...)
     Assemble {
         /// Target platform to bundle for (macos, android, ios, web, ...)
-        platform: String,
+        #[arg(value_enum)]
+        platform: Targets,
         /// Assemble in release mode
         #[arg(short, long)]
         release: bool,
@@ -89,11 +91,24 @@ enum Commands {
         #[arg(long)]
         install: bool,
     },
+
+    /// Migrate platform build scaffolds to the latest version
+    Migrate {
+        /// Target to migrate (macos, windows, linux, android, ios, web, all)
+        #[arg(value_enum)]
+        target: MigrateTarget,
+    },
 }
 
 
 
 fn main() -> anyhow::Result<()> {
+    // Dynamic, self-updating shell completions. When the shell invokes the
+    // binary with `COMPLETE=<shell>` set, this generates completions from the
+    // *current* command tree (so newly added subcommands appear automatically)
+    // and exits. Must run before anything writes to stdout.
+    clap_complete::env::CompleteEnv::with_factory(Cli::command).complete();
+
     let cli = Cli::parse();
     init_logging(cli.verbose);
 
@@ -121,13 +136,13 @@ fn main() -> anyhow::Result<()> {
             commands::create::execute(project_name)?;
         }
         Some(Commands::Run { target, device }) => {
-            commands::run::execute(target.clone(), device.clone())?;
+            commands::run::execute(target.map(|t| t.to_string()), device.clone())?;
         }
         Some(Commands::Build { target, release }) => {
-            commands::build::execute(target.clone(), *release)?;
+            commands::build::execute(target.map(|t| t.to_string()), *release)?;
         }
         Some(Commands::Assemble { platform, release }) => {
-            commands::assemble::execute(platform.clone(), *release)?;
+            commands::assemble::execute(platform.to_string(), *release)?;
         }
         Some(Commands::Doctor) => {
             commands::doctor::execute()?;
@@ -137,6 +152,9 @@ fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Completions { shell, install }) => {
             commands::completions::execute(*shell, *install)?;
+        }
+        Some(Commands::Migrate { target }) => {
+            commands::migrate::execute(target.as_str().to_string())?;
         }
         None => {
             Cli::parse_from(["aimer", "--help"]);

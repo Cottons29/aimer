@@ -1,33 +1,58 @@
 use crate::Cli;
 use anyhow::{Context, anyhow};
 use clap::CommandFactory;
-use clap_complete::{Shell, generate};
-use std::io;
+use clap_complete::Shell;
+use clap_complete::env::Shells;
+use std::io::{self, Write};
 use std::path::PathBuf;
+
+/// Environment variable the generated scripts use to ask the binary for
+/// completions at completion time. Must match the variable inspected by
+/// `CompleteEnv` in `main`.
+const COMPLETE_VAR: &str = "COMPLETE";
 
 /// Generate a shell completion script for the requested shell.
 ///
+/// The generated script is *dynamic*: instead of a static snapshot of the
+/// command tree, it delegates back to the running binary every time the shell
+/// asks for completions. That means newly added subcommands show up
+/// automatically after a rebuild, without re-running this command.
+///
 /// When `install` is false the script is written to stdout (so it can be
-/// redirected or `eval`'d). When `install` is true the script is written to
-/// the shell's conventional per-user completion directory and an activation
-/// hint is printed.
+/// `source`d). When `install` is true the script is written to the shell's
+/// conventional per-user completion directory and an activation hint is printed.
 pub fn execute(shell: Shell, install: bool) -> anyhow::Result<()> {
-    let mut cmd = Cli::command();
+    let cmd = Cli::command();
     let bin_name = cmd.get_name().to_string();
 
+    // Map the requested shell to its dynamic-completion adapter.
+    let shell_name = shell.to_string();
+    let shells = Shells::builtins();
+    let completer = shells
+        .completer(&shell_name)
+        .ok_or_else(|| anyhow!("dynamic completions are not supported for {shell}"))?;
+
+    // Invoke the bare binary name so the shell resolves it via `$PATH` at
+    // completion time — that way a freshly rebuilt binary is always used.
+    let completer_bin = &bin_name;
+
     if !install {
-        generate(shell, &mut cmd, bin_name, &mut io::stdout());
+        let mut buf = Vec::new();
+        completer
+            .write_registration(COMPLETE_VAR, &bin_name, &bin_name, completer_bin, &mut buf)
+            .context("generating completion registration script")?;
+        io::stdout().write_all(&buf)?;
         return Ok(());
     }
 
     let target = install_target(shell, &bin_name)?;
-    std::fs::create_dir_all(&target.dir)
-        .with_context(|| format!("creating completion directory {}", target.dir.display()))?;
+    std::fs::create_dir_all(&target.dir).with_context(|| format!("creating completion directory {}", target.dir.display()))?;
 
     let path = target.dir.join(&target.file_name);
-    let mut file = std::fs::File::create(&path)
+    let mut file = std::fs::File::create(&path).with_context(|| format!("writing completion script to {}", path.display()))?;
+    completer
+        .write_registration(COMPLETE_VAR, &bin_name, &bin_name, completer_bin, &mut file)
         .with_context(|| format!("writing completion script to {}", path.display()))?;
-    generate(shell, &mut cmd, bin_name, &mut file);
 
     println!("Installed {shell} completions to {}", path.display());
     if let Some(hint) = target.hint {
@@ -77,7 +102,10 @@ fn data_dir() -> anyhow::Result<PathBuf> {
 fn install_target(shell: Shell, bin: &str) -> anyhow::Result<InstallTarget> {
     match shell {
         Shell::Fish => Ok(InstallTarget {
-            dir: config_dir()?.join("fish").join("completions"),
+            dir: {
+                println!("Fish config dir: {}", config_dir()?.join("fish").join("completions").display());
+                config_dir()?.join("fish").join("completions")
+            },
             file_name: format!("{bin}.fish"),
             // fish autoloads from this directory; just start a new shell.
             hint: Some("Restart your shell (or run `exec fish`) to load completions.".into()),
@@ -95,10 +123,7 @@ fn install_target(shell: Shell, bin: &str) -> anyhow::Result<InstallTarget> {
         Shell::Bash => Ok(InstallTarget {
             dir: data_dir()?.join("bash-completion").join("completions"),
             file_name: bin.to_string(),
-            hint: Some(
-                "Requires the `bash-completion` package. Restart your shell to load completions."
-                    .into(),
-            ),
+            hint: Some("Requires the `bash-completion` package. Restart your shell to load completions.".into()),
         }),
         other => Err(anyhow!(
             "--install is not supported for {other}; pipe the output to the right location, e.g. \
