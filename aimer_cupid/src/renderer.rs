@@ -88,6 +88,23 @@ impl Renderer {
             .preload_text(device, queue, text, font_size);
     }
 
+    /// Level 2 warm-up — pre-rasterize the common ASCII glyph set at the given
+    /// font sizes so the glyph atlas is populated before the first frame. This
+    /// keeps even brand-new strings cheap (shaping only, no rasterization).
+    pub fn warm_glyph_set(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, font_sizes: &[f32]) {
+        self.text_pipeline
+            .warm_glyph_set(device, queue, font_sizes);
+    }
+
+    /// Level 1 warm-up — pre-shape and lay out a known static string so the
+    /// shaping/layout caches and atlas are warm, and the string renders on the
+    /// fast cache-hit path from the very first frame. `layout_width` is the wrap
+    /// width it will be drawn with (0.0 for non-wrapping text).
+    pub fn warm_text(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32, layout_width: f32) {
+        self.text_pipeline
+            .warm_text(device, queue, text, font_size, layout_width);
+    }
+
     /// Save the pipeline cache to disk for faster startup on next launch.
     /// Called automatically on drop, or can be called manually on suspend.
     pub fn save_pipeline_cache(&self) {
@@ -397,7 +414,7 @@ impl Renderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::WHITE), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
@@ -409,6 +426,18 @@ impl Renderer {
             // Render commands in draw order to preserve correct z-ordering
             // between rects and images. Consecutive same-type commands are batched.
             self.rect_pipeline.clear();
+
+            // Size the image instance buffer for *all* image instances of this
+            // frame up-front and reset its per-frame write offset, so that each
+            // `draw_batch` writes to a distinct region (multiple image batches in
+            // one pass must not alias the same buffer memory).
+            let total_image_instances = self
+                .resolved
+                .iter()
+                .filter(|cmd| matches!(cmd.kind, ResolvedKind::Image { .. }))
+                .count();
+            self.image_pipeline.begin_frame(device, total_image_instances);
+
             let mut image_batch: Vec<ImageInstance> = Vec::new();
             let mut current_texture_id: Option<u32> = None;
 
