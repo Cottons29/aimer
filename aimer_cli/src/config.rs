@@ -13,9 +13,12 @@ pub const DEFAULT_PACKAGE_NAME: &str = "aimer_template";
 /// `run`/`build` so they don't have to re-parse `Cargo.toml` ad hoc.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AimerManifest {
+    #[serde(alias = "application")]
     pub package: PackageMeta,
     #[serde(default)]
     pub build: Option<BuildMeta>,
+    #[serde(default)]
+    pub assets: Option<AssetsMeta>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +38,20 @@ pub struct BuildMeta {
     pub default_target: Option<String>,
 }
 
+/// The `[assets]` section of `aimer.toml`. Lists the files that should be
+/// bundled into each platform package and made available to the running app
+/// through [`ImageSource::Asset`](../../aimer_assets) and friends.
+///
+/// Paths are relative to the project root and are preserved verbatim when the
+/// files are copied into a platform's asset root, so the same string used here
+/// is also the runtime lookup key.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AssetsMeta {
+    /// Files to bundle, e.g. `"assets/logo.png"`.
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
 impl AimerManifest {
     /// Build a manifest from the metadata collected during `create`.
     pub fn new(name: &str, version: &str, description: &str, author: &str) -> Self {
@@ -46,7 +63,14 @@ impl AimerManifest {
                 author: author.to_string(),
             },
             build: None,
+            assets: None,
         }
+    }
+
+    /// The list of registered asset files, or an empty slice when the
+    /// `[assets]` section is missing or empty.
+    pub fn asset_files(&self) -> &[String] {
+        self.assets.as_ref().map(|a| a.files.as_slice()).unwrap_or(&[])
     }
 
     /// Load the manifest from `<dir>/aimer.toml`. Returns `Ok(None)` when the
@@ -172,6 +196,30 @@ mod tests {
     fn resolve_package_name_defaults_when_absent() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(resolve_package_name(dir.path()), DEFAULT_PACKAGE_NAME);
+    }
+
+    #[test]
+    fn parses_application_alias_and_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(MANIFEST_FILE),
+            "[application]\nname = \"Jaime\"\nversion = \"0.0.1\"\ngroup = \"com.example.jaime\"\n\n[assets]\nfiles = [\"assets/logo.png\", \"assets/fonts/Inter.ttf\"]\n",
+        )
+        .unwrap();
+
+        let loaded = AimerManifest::load_from(dir.path()).unwrap().unwrap();
+        assert_eq!(loaded.package.name, "Jaime");
+        assert_eq!(loaded.package.version, "0.0.1");
+        assert_eq!(
+            loaded.asset_files(),
+            ["assets/logo.png".to_string(), "assets/fonts/Inter.ttf".to_string()]
+        );
+    }
+
+    #[test]
+    fn asset_files_empty_without_section() {
+        let manifest = AimerManifest::new("app", "0.1.0", "", "");
+        assert!(manifest.asset_files().is_empty());
     }
 
     #[test]

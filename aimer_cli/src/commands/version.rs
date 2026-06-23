@@ -1,5 +1,9 @@
+use ansi_to_tui::IntoText;
 use colored::{Color, Colorize};
+use sha2::{Digest, Sha256};
 use std::fmt::Debug;
+use std::hash::Hash;
+use std::{env, fs};
 // use crossterm::style::Stylize;
 
 #[derive(Debug)]
@@ -8,16 +12,20 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl VersionCommand {
     pub(crate) fn execute() {
-
-
-
         use std::thread;
 
         let cargo_handle = thread::spawn(|| Self::get_cargo_version());
         let rust_handle = thread::spawn(|| Self::get_rust_version());
+        let binary_hash_handle = thread::spawn(|| {
+            let exe = env::current_exe().unwrap();
+            let bytes = fs::read(exe).unwrap();
+            let hash = Sha256::digest(bytes);
+            hex::encode(hash)
+        });
 
         let cargo_version = cargo_handle.join().unwrap();
         let rust_version = rust_handle.join().unwrap();
+        let binary_hash = binary_hash_handle.join().unwrap();
 
         // Rainbow gradient 🌈
         let gradient = [Color::Green, Color::Yellow, Color::Red, Color::Magenta, Color::Blue];
@@ -53,18 +61,19 @@ impl VersionCommand {
             formatted_version,
             cargo_version_line,
             formatted_buildtime,
+            format!("sha256: {}", binary_hash.green().bold()),
         ];
 
         let lines = [
-            r#"            #▄▄▄▄#        "#,
-            r#"      x     ▄▌   █        "#,
-            r#"     #▄▄#   █ xx █x       "#,
-            r#"    ▄█▀▀█▄  █ x░ █        "#,
-            r#"   x█ x  ▀▀▀ ░   █        "#,
-            r#"    █▄ x  x  x ░x█        "#,
-            r#"     █  x    x ░ █        "#,
-            r#"   xx▀██▄  xx▒  ▐▀        "#,
-            r#"        ▀█  ▒x █▀         "#,
+            r#"            #▄▄▄▄# x      "#,
+            r#"      x     ▄▌    █ x      "#,
+            r#"     #▄▄#   █ xx  █x       "#,
+            r#"  x ▄█▀▀█▄  █ x░  █        "#,
+            r#"   x█ x  ▀▀▀ ░    █x       "#,
+            r#"   x█▄ x  x  x ░ x█        "#,
+            r#"     █  x    x ░  █        "#,
+            r#"   xx▀██▄  xx▒   ▐▀x       "#,
+            r#"        ▀█  ▒x █▀▀x        "#,
             r#"         █ ▓ ▓ █          "#,
             r#"▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"#,
             "\n",
