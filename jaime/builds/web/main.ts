@@ -1,4 +1,4 @@
-import init, { __generated_entrance_point } from './pkg/jaime.js';
+import init, { __generated_entrance_point } from './pkg/Jaime.js';
 // @ts-ignore
 async function main() {
   await init();
