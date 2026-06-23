@@ -59,6 +59,14 @@ pub struct RectPipeline {
     instance_buffer: wgpu::Buffer,
     instance_capacity: usize,
     instances: Vec<RectInstance>,
+    /// Number of instances already written to `instance_buffer` during the
+    /// current frame. The pipeline may be flushed multiple times per frame
+    /// (e.g. when an image or custom-pipeline command splits the rect stream),
+    /// so each flush must write to a distinct region of the buffer. Otherwise
+    /// every flush would overwrite offset 0 and, because all `write_buffer`
+    /// uploads are applied before the single queue submit executes, every draw
+    /// call would read the last batch's data — making earlier batches vanish.
+    frame_instance_offset: usize,
 }
 
 impl RectPipeline {
@@ -139,6 +147,7 @@ impl RectPipeline {
             instance_buffer,
             instance_capacity: Self::INITIAL_CAPACITY,
             instances: Vec::new(),
+            frame_instance_offset: 0,
         }
     }
 
@@ -148,6 +157,8 @@ impl RectPipeline {
 
     pub fn clear(&mut self) {
         self.instances.clear();
+        // A fresh frame starts writing at the beginning of the instance buffer.
+        self.frame_instance_offset = 0;
     }
 
     pub fn flush(
@@ -171,24 +182,38 @@ impl RectPipeline {
         let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
         queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
 
-        // Grow instance buffer if needed
-        if self.instances.len() > self.instance_capacity {
-            self.instance_capacity = self.instances.len().next_power_of_two();
+        let instance_count = self.instances.len();
+        let stride = std::mem::size_of::<RectInstance>();
+        // Write this batch *after* any batches already flushed this frame so that
+        // earlier draw calls keep reading their own data. Reusing offset 0 for
+        // every flush would let the last batch's upload overwrite all earlier
+        // batches before the single queue submit executes.
+        let start_instance = self.frame_instance_offset;
+        let required = start_instance + instance_count;
+
+        // Grow the instance buffer if this frame's accumulated batches no longer
+        // fit. Allocating a new buffer is safe mid-frame: previously recorded
+        // draws keep a reference to the old buffer (with their data intact),
+        // while this and subsequent batches use the new one.
+        if required > self.instance_capacity {
+            self.instance_capacity = required.next_power_of_two();
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("rect instance buffer"),
-                size: (self.instance_capacity * std::mem::size_of::<RectInstance>()) as u64,
+                size: (self.instance_capacity * stride) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
 
-        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances));
+        let byte_offset = (start_instance * stride) as u64;
+        queue.write_buffer(&self.instance_buffer, byte_offset, bytemuck::cast_slice(&self.instances));
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-        pass.draw(0..6, 0..self.instances.len() as u32);
+        pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
+        pass.draw(0..6, 0..instance_count as u32);
 
+        self.frame_instance_offset += instance_count;
         self.instances.clear();
     }
 }
