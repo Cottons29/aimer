@@ -32,6 +32,7 @@ aimer_macro.workspace = true
 resolver = "3"
 members = [
     ".",
+    "website",
     "aimer_quiver",
     "aimer_cli",
     "aimer_cupid",
@@ -76,7 +77,6 @@ aimer_macro = { path = "crates/aimer_macro" }
 
 #############
 
-
 web-sys = { version = "0.3.102", features = ["CanvasRenderingContext2d", "DomMatrix", "TextMetrics"] }
 wasm-bindgen-futures = "0.4.75"
 js-sys = "0.3.102"
@@ -88,6 +88,7 @@ syn = { version = "2.0.117", features = ["full"] }
 proc-macro2 = { version = "1.0.106" }
 quote = "1.0.45"
 chrono = "0.4.45"
+web-time = "1.1.0"
 objc = { version = "0.2.7" }
 core-foundation = { version = "0.10.1" }
 fxhash = "0.2.1"
@@ -103,7 +104,8 @@ serde_json = "1.0.150"
 jni = "0.22.4"
 ndk-glue = "0.7.0"
 ndk = "0.9.0"
-wgpu = "29.0.0"
+ndk-context = "0.1.1"
+wgpu = "29.0.3"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 fontdue = "0.9"
@@ -114,7 +116,7 @@ unicode-segmentation = "1.12.0"
 image = { version = "0.25.10" }
 font-kit = "0.14"
 core-foundation-sys = "0.8.7"
-reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "native-tls", "http2"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["native-tls", "http2"] }
 openssl = { version = "0.10", features = ["vendored"] }
 local-ip-address = "0.6.11"
 ttf-parser = "0.25.1"
@@ -134,7 +136,9 @@ toml = "1.1"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3.27.0"
-
+sha2 = "0.11.0"
+hex = "0.4.3"
+rustls-platform-verifier = {version = "0.7.0", features = ["jni"]}
 [build-dependencies]
 chrono.workspace = true
 
