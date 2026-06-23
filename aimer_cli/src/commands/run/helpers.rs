@@ -22,6 +22,27 @@ pub fn fail(tx: &Sender<RunnerEvent>, msg: impl Into<String>) {
     set_status(tx, Status::Error);
 }
 
+/// Stage the registered `[assets]` into `dest_root` for a live `run`,
+/// reporting the outcome through the TUI console.
+///
+/// Copying is incremental — only new or changed files are written — so hot
+/// reloads don't re-copy unchanged assets. Failures and missing files are
+/// logged as build-log warnings rather than aborting the run, mirroring how
+/// `assemble` treats them.
+pub fn stage_assets(tx: &Sender<RunnerEvent>, dest_root: &str) {
+    match crate::commands::assets::copy_assets_into(dest_root) {
+        Ok(report) => {
+            for rel in &report.copied {
+                build_log(tx, format!("Staged asset {rel} -> {dest_root}/{rel}"));
+            }
+            for rel in &report.missing {
+                build_log(tx, format!("Warning: registered asset '{rel}' not found; skipping"));
+            }
+        }
+        Err(e) => build_log(tx, format!("Warning: failed to stage assets into {dest_root}: {e}")),
+    }
+}
+
 /// Host CPU mapped to the Apple/Xcode architecture name (`arm64` / `x86_64`).
 pub fn host_arch() -> &'static str {
     match std::env::consts::ARCH {
