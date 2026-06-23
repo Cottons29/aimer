@@ -25,14 +25,14 @@ func aimer_ios_dismiss_keyboard() {
     }
 }
 
-final class KeyboardForwardingTextView: UITextView {
+final class KeyboardForwardingTextView: UITextView, UITextViewDelegate {
     override var canBecomeFirstResponder: Bool { true }
 
     // Keep a placeholder so the backspace key stays enabled.
     private let placeholder = " "
 
     func ensurePlaceholder() {
-        if text.isEmpty {
+        if (text ?? "").isEmpty {
             text = placeholder
             selectedRange = NSRange(location: placeholder.utf16.count, length: 0)
         }
@@ -41,8 +41,9 @@ final class KeyboardForwardingTextView: UITextView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         // NOTE: `isHidden = true` disables first-responder interaction and prevents
-        // software keyboard callbacks like `insertText`/`deleteBackward`.
-        // Keep the view effectively invisible via `alpha`/size instead.
+        // software keyboard callbacks. Keep the view effectively invisible via
+        // `alpha`/size instead.
+        delegate = self
         isHidden = false
         isScrollEnabled = false
         autocorrectionType = .no
@@ -54,7 +55,7 @@ final class KeyboardForwardingTextView: UITextView {
         ensurePlaceholder()
     }
 
-    override func insertText(_ text: String) {
+    private func forward(_ text: String) {
         if let data = text.data(using: .utf8) {
             data.withUnsafeBytes { rawBuf in
                 if let base = rawBuf.bindMemory(to: UInt8.self).baseAddress {
@@ -62,14 +63,37 @@ final class KeyboardForwardingTextView: UITextView {
                 }
             }
         }
-        super.insertText(text)
-        ensurePlaceholder()
     }
 
-    override func deleteBackward() {
-        trigger_rust_backspace()
-        super.deleteBackward()
-        ensurePlaceholder()
+    // IMPORTANT: do NOT forward text from `shouldChangeTextIn` / `insertText`.
+    // While a multistage input method is composing "marked text" (Chinese Pinyin,
+    // Japanese Kana, Korean Hangul, ...) UIKit reports every provisional keystroke
+    // through those hooks too, so forwarding there leaks the raw Latin pinyin (e.g.
+    // "nihao") into the field alongside the committed characters ("你好").
+    //
+    // Instead we forward only from `textViewDidChange`, and only once the IME has
+    // finished composing (`markedTextRange == nil`). At that point the buffer holds
+    // the sentinel placeholder followed by the freshly committed text (a finalized
+    // IME candidate, or a plainly typed character).
+    func textViewDidChange(_ textView: UITextView) {
+        // Still composing marked text: the content is provisional, never forward it.
+        if textView.markedTextRange != nil { return }
+
+        let full = textView.text ?? ""
+        if full.isEmpty {
+            // The sentinel placeholder itself was deleted -> backspace.
+            trigger_rust_backspace()
+        } else if full.hasPrefix(placeholder) && full.count > placeholder.count {
+            // Everything past the sentinel is freshly committed text.
+            let committed = String(full.dropFirst(placeholder.count))
+            forward(committed)
+        }
+
+        // Collapse the hidden buffer back to the placeholder so it never grows and
+        // the backspace key always has something to delete. Setting `text`
+        // programmatically does not re-trigger `textViewDidChange`.
+        textView.text = placeholder
+        textView.selectedRange = NSRange(location: placeholder.utf16.count, length: 0)
     }
 }
 
