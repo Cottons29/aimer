@@ -23,8 +23,12 @@ pub struct Modifiers {
 pub enum NamedKey {
     Backspace,
     Delete,
+    ArrowUp,
+    ArrowDown,
     ArrowLeft,
     ArrowRight,
+    PageUp,
+    PageDown,
     Home,
     End,
     Enter,
