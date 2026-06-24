@@ -17,11 +17,14 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             return false;
         };
 
-        // Allow active drags to continue even when pointer leaves bounds.
+        // Allow active drags AND pending gestures to continue even when the
+        // pointer leaves bounds. A fast swipe can move outside the scrollable
+        // before exceeding the 10dp drag threshold — dropping those events
+        // would silently kill the gesture. Pending counts as "claimed" once a
+        // PointerDown was received inside the bounds.
         let inside = self.bounds.is_inside(cursor.x, cursor.y);
-        let active_drag = !matches!(self.ctrl.drag_mode.get(), DragMode::None | DragMode::Pending);
+        let active_drag = self.ctrl.drag_mode.get() != DragMode::None;
         if !inside && !active_drag {
-            self.ctrl.drag_mode.set(DragMode::None);
             return false;
         }
 
@@ -33,10 +36,54 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         let mode_before = self.ctrl.drag_mode.get();
         let mut child_consumed = false;
 
+        // ── PointerUp / Cancel: arm momentum BEFORE child dispatch ──
+        //
+        // If a child widget consumed PointerDown (e.g. a Button inside the
+        // scrollable), it will also consume PointerUp.  By handling the
+        // fling/momentum setup first we guarantee the scrollable always arms
+        // the post-release glide, regardless of what the child does.
+        // The child still receives a Cancel so it can clear its pressed state.
+        if matches!(event, ElementEvent::PointerUp(_) | ElementEvent::Cancel) {
+            // Forward a Cancel to the child so it loses its active/pressed state.
+            if mode_before != DragMode::None && mode_before != DragMode::Pending {
+                let _ = aimer_widget::dispatch_event(&self.child, pos, &ElementEvent::Cancel);
+            }
+
+            let now = Instant::now();
+            if let Some(last_time) = self.ctrl.last_event_time.get() {
+                let elapsed = now.duration_since(last_time).as_millis();
+                if elapsed > VELOCITY_RESET_IDLE_MS {
+                    self.ctrl.pointer_velocity.set(Vec2d::default());
+                    self.ctrl.clear_velocity_history();
+                    self.ctrl.cancel_fling();
+                } else {
+                    let max_v = MAX_SCROLL_VELOCITY * self.ctrl.last_scale.get();
+                    // Use the blended drag velocity (exponential moving average)
+                    // rather than the peak from the velocity history.  The peak
+                    // is sensitive to single outlier samples from touch jitter or
+                    // timing glitches, which can make the fling shoot off at an
+                    // unrealistic speed.  The blended velocity matches what the
+                    // user actually felt during the drag.
+                    let raw = self.ctrl.smoothed_velocity();
+                    let sv = Vec2d {
+                        x: (raw.x * RELEASE_VELOCITY_GAIN).clamp(-max_v, max_v),
+                        y: (raw.y * RELEASE_VELOCITY_GAIN).clamp(-max_v, max_v),
+                    };
+                    self.ctrl.cancel_fling();
+                    self.ctrl.pointer_velocity.set(sv);
+                }
+            }
+
+            self.ctrl.last_frame_time.set(Some(now));
+            self.ctrl.drag_mode.set(DragMode::None);
+            self.ctrl.last_pointer_pos.set(None);
+            aimer_events::window::request_animation_frame();
+            return false;
+        }
+
+        // ── All other events: normal child-first dispatch ──
         if mode_before == DragMode::None || mode_before == DragMode::Pending {
             child_consumed = aimer_widget::dispatch_event(&self.child, pos, event);
-        } else if matches!(event, ElementEvent::PointerUp(_) | ElementEvent::Cancel) {
-            let _ = aimer_widget::dispatch_event(&self.child, pos, &ElementEvent::Cancel);
         }
 
         let we_consumed = match event {
@@ -121,8 +168,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 self.ctrl.push_velocity(target_vx, target_vy);
                 let sv = self.ctrl.smoothed_velocity();
                 self.ctrl.pointer_velocity.set(sv);
+                // A wheel/trackpad scroll takes over from any release fling and
+                // uses the velocity-based momentum, not the bézier curve.
+                self.ctrl.cancel_fling();
 
-                self.window.request_redraw();
+                aimer_events::window::request_animation_frame();
                 true
             }
             ElementEvent::PointerDown(p) => {
@@ -147,9 +197,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             let page = vp_h * KEYBOARD_PAGE_FRACTION;
                             let vy = if p.y < y { page * vel_scale } else { -page * vel_scale };
                             self.ctrl.pointer_velocity.set(Vec2d { x: 0.0, y: vy });
+                            self.ctrl.cancel_fling();
                             self.ctrl.drag_mode.set(DragMode::None);
                             self.ctrl.last_pointer_pos.set(Some(*p));
-                            self.window.request_redraw();
+                            aimer_events::window::request_animation_frame();
                             return true;
                         }
                     }
@@ -158,9 +209,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             let page = vp_w * KEYBOARD_PAGE_FRACTION;
                             let vx = if p.x < x { page * vel_scale } else { -page * vel_scale };
                             self.ctrl.pointer_velocity.set(Vec2d { x: vx, y: 0.0 });
+                            self.ctrl.cancel_fling();
                             self.ctrl.drag_mode.set(DragMode::None);
                             self.ctrl.last_pointer_pos.set(Some(*p));
-                            self.window.request_redraw();
+                            aimer_events::window::request_animation_frame();
                             return true;
                         }
                     }
@@ -168,6 +220,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
                 self.ctrl.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
                 self.ctrl.clear_velocity_history();
+                // A fresh touch/click stops the in-flight release fling.
+                self.ctrl.cancel_fling();
 
                 self.ctrl.drag_mode.set(mode);
                 self.ctrl.last_pointer_pos.set(Some(*p));
@@ -245,6 +299,15 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         new_velocity.x = (new_velocity.x / dt) * frame_ref;
                         new_velocity.y = (new_velocity.y / dt) * frame_ref;
 
+                        // Record the instantaneous drag velocity so that releasing
+                        // the finger (PointerUp) can fling with momentum. The release
+                        // path uses `smoothed_velocity()`, which reads from this
+                        // history; without this push the history stays empty for
+                        // touch drags (it is otherwise only filled by the trackpad
+                        // `Scroll` path), making the smoothed velocity zero and
+                        // stopping the scroll instantly on lift — notably on iOS.
+                        self.ctrl.push_velocity(new_velocity.x, new_velocity.y);
+
                         let old_velocity = self.ctrl.pointer_velocity.get();
                         let blend_factor = (dt / DRAG_BLEND_WINDOW).min(1.0);
                         let blend_new = (DRAG_BLEND_BASE * (1.0 - blend_factor) + blend_factor).min(1.0);
@@ -300,7 +363,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         self.ctrl.scroll_offset.set(offset);
                     }
                     self.ctrl.last_pointer_pos.set(Some(*p));
-                    self.window.request_redraw();
+                    aimer_events::window::request_animation_frame();
                     return true;
                 }
                 false
@@ -357,32 +420,17 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     self.ctrl.scroll_offset.set(offset);
                     self.ctrl.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
                     self.ctrl.clear_velocity_history();
-                    self.window.request_redraw();
+                    self.ctrl.cancel_fling();
+                    aimer_events::window::request_animation_frame();
                     true
                 } else {
                     false
                 }
             }
+            // PointerUp/Cancel is handled early above (before child dispatch),
+            // so it never reaches this match.
+            ElementEvent::PointerUp(_) | ElementEvent::Cancel => false,
             ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } => child_consumed,
-            ElementEvent::PointerUp(_) | ElementEvent::Cancel => {
-                let now = Instant::now();
-                if let Some(last_time) = self.ctrl.last_event_time.get() {
-                    let elapsed = now.duration_since(last_time).as_millis();
-                    if elapsed > VELOCITY_RESET_IDLE_MS {
-                        self.ctrl.pointer_velocity.set(Vec2d::default());
-                        self.ctrl.clear_velocity_history();
-                    } else {
-                        // Use smoothed velocity for fling on release.
-                        let sv = self.ctrl.smoothed_velocity();
-                        self.ctrl.pointer_velocity.set(sv);
-                    }
-                }
-
-                self.ctrl.drag_mode.set(DragMode::None);
-                self.ctrl.last_pointer_pos.set(None);
-                self.window.request_redraw();
-                false
-            }
         };
 
         child_consumed || we_consumed

@@ -177,6 +177,17 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     EVENT_PROXY.set(event_loop.create_proxy()).ok();
 
+    // Route animation redraw requests through the event loop instead of letting
+    // animating widgets (e.g. scroll momentum) spawn a sleeping thread per frame.
+    // `FrameReady` is delivered via `user_event` after the current frame, which
+    // schedules the next redraw safely even on platforms (iOS) that coalesce a
+    // synchronous `request_redraw()` issued from inside the draw cycle.
+    aimer_events::window::set_redraw_requester(|| {
+        if let Some(proxy) = EVENT_PROXY.get() {
+            let _ = proxy.send_event(AimerCustomAppEvent::FrameReady);
+        }
+    });
+
     const DEFAULT_INSPECTOR_PORT: &str = env!("DEFAULT_INSPECTOR_PORT");
     const DEFAULT_INSPECTOR_ADDRESS: &str = env!("DEFAULT_INSPECTOR_ADDRESS");
 
@@ -210,12 +221,6 @@ fn start_event_loop(widget: impl Widget + 'static) {
         window_scale: 1.0,
         native_window_size: None,
         pending_resize: None,
-        #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
-        last_frame_time: Cell::new(None),
-        #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
-        frame_interval: Cell::new(None),
-        #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
-        pending_redraw: Cell::new(false),
         #[cfg(not(target_arch = "wasm32"))]
         async_runtime,
         #[cfg(debug_assertions)]
@@ -227,6 +232,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
         #[cfg(debug_assertions)]
         inspector_redraw_frames: Cell::new(0),
         start_up_frames: Cell::new(24),
+        active_touch_id: None,
     };
 
     info!("Started main event loop");

@@ -56,10 +56,31 @@ impl WindowEventHandler {
 
     fn handle_touch(item: Touch, app: &mut AimerApplicationHandler, _id: WindowId, _event: WindowEvent) {
         let scale = app.window_scale;
-        // info!("Scale: {:?}", scale);
         let pos = Vec2d { x: (item.location.x / scale) as f32, y: (item.location.y / scale) as f32 };
-        // info!("Touch position: {:?}", pos );
-        // info!("Touch: {:?}", pos);
+
+        // Multi-touch: track the primary (first) finger that started a gesture.
+        // Secondary fingers are ignored so a second touch doesn't cause the
+        // scrollable to see a sudden position jump from one finger to another.
+        // This matches UIScrollView behaviour — the first finger owns the scroll.
+        match item.phase {
+            TouchPhase::Started => {
+                if app.active_touch_id.is_some() {
+                    // A finger is already down — ignore this second touch.
+                    return;
+                }
+                app.active_touch_id = Some(item.id);
+            }
+            TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled => {
+                // Only process events from the primary finger.
+                if app.active_touch_id != Some(item.id) {
+                    return;
+                }
+                if item.phase == TouchPhase::Ended || item.phase == TouchPhase::Cancelled {
+                    app.active_touch_id = None;
+                }
+            }
+        }
+
         let event = match item.phase {
             TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
             TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
@@ -75,7 +96,14 @@ impl WindowEventHandler {
                     handled = true;
                 }
                 if !handled {
-                    if matches!(&event, ElementEvent::PointerDown(_)) {
+                    // Broadcast PointerUp/Cancel alongside PointerDown so that
+                    // elements with an active drag (e.g. scrollable fling) receive
+                    // the release event even when the finger lifts outside their
+                    // bounds — the common case for a fast flick on touch screens.
+                    if matches!(
+                        &event,
+                        ElementEvent::PointerDown(_) | ElementEvent::PointerUp(_) | ElementEvent::Cancel
+                    ) {
                         broadcast_event(root.as_ref(), &event);
                     }
                 }
