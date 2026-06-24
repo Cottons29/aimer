@@ -7,8 +7,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_macro::Rebuildable;
 use aimer_widget::base::*;
-use aimer_widget::{Element, LayoutElement};
-use winit::window::Window;
+use aimer_widget::Element;
 
 #[derive(Rebuildable)]
 pub struct RawScrollableContainer<E: Element> {
@@ -16,7 +15,6 @@ pub struct RawScrollableContainer<E: Element> {
     pub(crate) ctrl: ScrollController,
     pub(crate) vertical_scroll_bar: Option<ScrollBar>,
     pub(crate) horizontal_scroll_bar: Option<ScrollBar>,
-    pub(crate) window: &'static Window,
     pub(crate) bounds: CacheBounds,
 }
 
@@ -55,8 +53,9 @@ impl<E: Element> RawScrollableContainer<E> {
             Dimension::Auto => (track_width * 0.6).max(4.0),
         };
 
-        // Compute content size once per draw to avoid recomputing child layout.
-        let content_size = self.content_size(ctx);
+        // Reuse the content size computed once at the start of this frame's draw
+        // (see `draw_scroll`) to avoid recomputing the child layout.
+        let content_size = self.ctrl.cached_content_size.get();
         let (track_length, content_extent, scroll_pos) = if is_vertical {
             (viewport_h, content_size.height, -offset.y)
         } else {

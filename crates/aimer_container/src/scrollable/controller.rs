@@ -2,8 +2,10 @@ use crate::scrollable::constants::*;
 use crate::scrollable::scroll_behavior::ScrollBehavior;
 use crate::scrollable::ScrollAxis;
 use aimer_attribute::position::Vec2d;
+use aimer_attribute::size::ResolvedSize;
 use std::cell::Cell;
 use web_time::Instant;
+use aimer_utils::debug;
 
 /// Ring buffer of recent velocity samples for trackpad smoothing.
 pub(crate) struct VelocityHistory {
@@ -84,6 +86,79 @@ pub struct ScrollController {
     pub(crate) cached_viewport: Cell<(f32, f32)>,
     pub(crate) cached_v_track_width: Cell<f32>,
     pub(crate) cached_h_track_width: Cell<f32>,
+    /// Content size computed once at the start of each `draw`, reused by the
+    /// scrollbar drawing path so child layout is not recomputed within a frame.
+    pub(crate) cached_content_size: Cell<ResolvedSize>,
+    /// Wall-clock instant the current release fling started, or `None` when no
+    /// cubic-bézier fling is active. While `Some`, momentum is driven by the
+    /// curve rather than by per-frame velocity decay.
+    pub(crate) fling_start_time: Cell<Option<Instant>>,
+    /// Scroll offset captured at the moment the fling started.
+    pub(crate) fling_start_offset: Cell<Vec2d>,
+    /// Scroll offset the fling eases toward (`start + projected distance`).
+    pub(crate) fling_target_offset: Cell<Vec2d>,
+    /// Total duration (seconds) of the active bézier fling.
+    pub(crate) fling_duration: Cell<f32>,
+}
+
+/// One axis of a cubic Bézier with implicit endpoints `P0 = 0`, `P3 = 1`.
+#[inline]
+fn bezier_axis(s: f32, p1: f32, p2: f32) -> f32 {
+    let mt = 1.0 - s;
+    3.0 * mt * mt * s * p1 + 3.0 * mt * s * s * p2 + s * s * s
+}
+
+/// Derivative (w.r.t. the parameter `s`) of [`bezier_axis`].
+#[inline]
+fn bezier_axis_deriv(s: f32, p1: f32, p2: f32) -> f32 {
+    let mt = 1.0 - s;
+    3.0 * mt * mt * p1 + 6.0 * mt * s * (p2 - p1) + 3.0 * s * s * (1.0 - p2)
+}
+
+/// Evaluate a CSS-style `cubic-bezier(x1, y1, x2, y2)` easing at linear time
+/// fraction `t ∈ [0, 1]`, returning the eased progress `∈ [0, 1]`.
+///
+/// The control points encode time on the x-axis and progress on the y-axis, so
+/// we first solve `bezier_x(s) = t` for the curve parameter `s` (Newton-Raphson
+/// with a bisection fallback), then read `bezier_y(s)`.
+pub(crate) fn cubic_bezier_ease(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+    if t <= 0.0 {
+        return 0.0;
+    }
+    if t >= 1.0 {
+        return 1.0;
+    }
+
+    // Newton-Raphson from a sensible initial guess.
+    let mut s = t;
+    for _ in 0..8 {
+        let x = bezier_axis(s, x1, x2) - t;
+        if x.abs() < 1e-5 {
+            return bezier_axis(s, y1, y2);
+        }
+        let dx = bezier_axis_deriv(s, x1, x2);
+        if dx.abs() < 1e-6 {
+            break;
+        }
+        s = (s - x / dx).clamp(0.0, 1.0);
+    }
+
+    // Bisection fallback if Newton stalled.
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    s = t;
+    for _ in 0..16 {
+        let x = bezier_axis(s, x1, x2);
+        if (x - t).abs() < 1e-5 {
+            break;
+        }
+        if x < t {
+            lo = s;
+        } else {
+            hi = s;
+        }
+        s = 0.5 * (lo + hi);
+    }
+    bezier_axis(s, y1, y2)
 }
 
 impl ScrollController {
@@ -166,6 +241,75 @@ impl ScrollController {
         self.velocity_history.borrow_mut().clear();
     }
 
+    /// Cancel any active cubic-bézier release fling.
+    ///
+    /// Called whenever a new input (touch-down, wheel, keyboard, scrollbar
+    /// paging) should take over momentum, so the curve-driven glide does not
+    /// keep fighting the fresh interaction.
+    pub(crate) fn cancel_fling(&self) {
+        self.fling_start_time.set(None);
+    }
+
+    /// Arm a cubic-bézier release fling.
+    ///
+    /// `release_velocity` is the projected launch velocity (px per 120 Hz
+    /// frame). The fling runs for a fixed [`FLING_DURATION_S`] window and its
+    /// position follows `start + distance · cubic-bezier(t / duration)`.
+    ///
+    /// The coast distance is derived per axis so the curve's initial slope
+    /// (`slope0 = y1 / x1`, the curve's `dy/dx` at `t = 0`) matches the release
+    /// speed: the animation leaves the finger at exactly the velocity it was
+    /// moving (no visible jump), then decelerates along the curve to a gentle
+    /// stop. Because the curve is the only deceleration model here, the friction
+    /// field no longer participates in the fling — `FLING_DURATION_S` is the
+    /// single knob (longer = farther + slower settle).
+    ///
+    ///   v0_px_s = release_velocity / FRAME_REF_120         (px per second)
+    ///   v(0)    = distance · slope0 / duration  =!  v0_px_s
+    ///   ⇒ distance = v0_px_s · duration / slope0
+    ///
+    /// Currently unused: touch/mouse release now carries momentum through the
+    /// shared velocity + friction model (so it matches trackpad feel) rather
+    /// than this bézier fling. Kept available as an alternative fling model.
+    #[allow(dead_code)]
+    pub(crate) fn start_fling(&self, release_velocity: Vec2d, now: Instant) {
+        if release_velocity.x == 0.0 && release_velocity.y == 0.0 {
+            self.cancel_fling();
+            return;
+        }
+
+        let duration = FLING_DURATION_S;
+        let slope0 = FLING_BEZIER_Y1 / FLING_BEZIER_X1;
+        // distance = (v_px_frame / FRAME_REF_120) · duration / slope0.
+        let k = duration / (FRAME_REF_120 * slope0);
+        let dist = Vec2d {
+            x: release_velocity.x * k,
+            y: release_velocity.y * k,
+        };
+
+        let start = self.scroll_offset.get();
+        // debug!("Start: {:?}", start);
+        let mut target = Vec2d {
+            x: start.x + dist.x,
+            y: start.y + dist.y,
+        };
+        // Non-bouncy scrolling never overshoots, so pin the target to the edge
+        // and let the curve ease straight into it.
+        if !self.scroll_behavior.bouncy {
+            target = self.clamp_offset(target);
+        }
+
+        if duration <= 0.0 || (dist.x == 0.0 && dist.y == 0.0) {
+            self.cancel_fling();
+            return;
+        }
+
+        self.fling_start_offset.set(start);
+        self.fling_target_offset.set(target);
+        self.fling_duration.set(duration);
+        self.fling_start_time.set(Some(now));
+    }
+
     /// Check if a point is inside the vertical scrollbar *track* but outside the thumb.
     pub(crate) fn hit_test_v_track(&self, p: Vec2d, viewport_w: f32, viewport_h: f32, track_width: f32) -> bool {
         if let Some((_tx, y, _tw, h)) = self.v_thumb_rect.get() {
@@ -211,41 +355,102 @@ impl ScrollController {
 
         let frame_ratio = dt / FRAME_REF_120;
 
-        if velocity.x.abs() > VELOCITY_EPSILON || velocity.y.abs() > VELOCITY_EPSILON {
-            #[cfg(target_os = "ios")]
-            let oob_damping_base: f32 = OOB_DAMPING_BASE_IOS;
-            #[cfg(not(target_os = "ios"))]
-            let oob_damping_base: f32 = OOB_DAMPING_BASE_DEFAULT;
-            if offset.x != clamped.x {
-                let damping = oob_damping_base.powf(frame_ratio);
-                velocity.x *= damping;
-                if (offset.x > clamped.x && velocity.x > 0.0) || (offset.x < clamped.x && velocity.x < 0.0) {
-                    velocity.x *= OOB_OVERSHOOT_DAMPING;
-                }
-            }
-            if offset.y != clamped.y {
-                let damping = oob_damping_base.powf(frame_ratio);
-                velocity.y *= damping;
-                if (offset.y > clamped.y && velocity.y > 0.0) || (offset.y < clamped.y && velocity.y < 0.0) {
-                    velocity.y *= OOB_OVERSHOOT_DAMPING;
-                }
-            }
+        if let Some(fling_start) = self.fling_start_time.get() {
+            // Curve-driven release fling: position follows
+            // `start + distance · cubic-bezier(t / duration)`. This replaces the
+            // per-frame velocity decay while the fling is active so the glide
+            // eases to a stop along the requested curve.
+            let duration = self.fling_duration.get();
+            let elapsed = now.duration_since(fling_start).as_secs_f32();
+            let u = if duration > 0.0 { (elapsed / duration).clamp(0.0, 1.0) } else { 1.0 };
 
+            let eased = cubic_bezier_ease(u, FLING_BEZIER_X1, FLING_BEZIER_Y1, FLING_BEZIER_X2, FLING_BEZIER_Y2);
+            let start = self.fling_start_offset.get();
+            let target = self.fling_target_offset.get();
+            let new = Vec2d {
+                x: start.x + (target.x - start.x) * eased,
+                y: start.y + (target.y - start.y) * eased,
+            };
+
+            // Per-frame step, reused as the handoff velocity (px/frame) so the
+            // spring-back / out-of-bounds code keeps working if the fling
+            // overshoots a bouncy edge.
+            let step = Vec2d { x: new.x - offset.x, y: new.y - offset.y };
+            let vel = if dt > 0.0 {
+                Vec2d { x: step.x / frame_ratio, y: step.y / frame_ratio }
+            } else {
+                Vec2d::default()
+            };
+
+            offset = new;
+            // debug!("New Offset : {:?}", new);
+            self.pointer_velocity.set(vel);
+            needs_redraw = true;
+
+            let oob = offset.x != clamped.x || offset.y != clamped.y;
+            if oob && self.scroll_behavior.bouncy {
+                // Hand the remaining momentum to the velocity-based spring so the
+                // content bounces and recovers from the edge like native iOS.
+                self.cancel_fling();
+            } else {
+                // Snap to rest once finished, or once the tail step becomes
+                // sub-pixel (the curve crawls toward the target for a long time
+                // after covering ~95% of the distance early).
+                let tail_done = u >= FLING_TAIL_START
+                    && step.x.abs() < FLING_END_STEP_PX
+                    && step.y.abs() < FLING_END_STEP_PX;
+                if u >= 1.0 || tail_done {
+                    offset = target;
+                    self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+                    self.cancel_fling();
+                }
+            }
+        } else if velocity.x.abs() > VELOCITY_EPSILON || velocity.y.abs() > VELOCITY_EPSILON {
+            // Discrete per-frame velocity decay: v *= friction^(dt / FRAME_REF_120).
+            //
+            // This matches UIScrollView's deceleration model exactly: a fixed
+            // retention factor applied once per frame.  `friction` is calibrated
+            // per 60 fps (UIScrollView.DecelerationRate.normal = 0.9998); the
+            // `powf(frame_ratio)` makes it frame-rate independent.
+            //     60 fps:  v *= 0.9998^1.0 = 0.9998
+            //     120 fps: v *= 0.9998^0.5 = 0.9999
+            let decay = self.scroll_behavior.friction.powf(frame_ratio);
+
+            // Integrate position, then clamp and zero velocity at the edge.
+            // On iOS, UIScrollView never lets content fly past the edge during
+            // a fling (rubber-band only applies during the drag).
             offset.x += velocity.x * frame_ratio;
             offset.y += velocity.y * frame_ratio;
-            let friction_factor = self.scroll_behavior.friction.powf(frame_ratio);
-            velocity.x *= friction_factor;
-            velocity.y *= friction_factor;
+
+            velocity.x *= decay;
+            velocity.y *= decay;
+
+            // Clamp to bounds: if we hit the edge, stop momentum on that axis.
+            let new_clamped = self.clamp_offset(offset);
+            if offset.x != new_clamped.x {
+                offset.x = new_clamped.x;
+                velocity.x = 0.0;
+            }
+            if offset.y != new_clamped.y {
+                offset.y = new_clamped.y;
+                velocity.y = 0.0;
+            }
+
             self.pointer_velocity.set(velocity);
             needs_redraw = true;
         } else if velocity.x != 0.0 || velocity.y != 0.0 {
             self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
         }
 
-        // Spring back if bouncy is enabled.
-        // Skip spring-back on axes where the user is actively scrolling in
-        // the same direction — otherwise the two forces fight and cause shake.
-        if self.scroll_behavior.bouncy && (offset.x != clamped.x || offset.y != clamped.y) {
+        // Spring back if bouncy is enabled AND momentum has finished.
+        // During active momentum the exponential decay drives the offset;
+        // spring-back only kicks in once velocity drops to near-zero to pull
+        // the content back to the edge.  Without this guard, spring-back
+        // fights the momentum every frame (applying SPRING_VELOCITY_DAMPING
+        // and killing the coast almost instantly).
+        let v_check = self.pointer_velocity.get();
+        let momentum_active = v_check.x.abs() > VELOCITY_EPSILON || v_check.y.abs() > VELOCITY_EPSILON;
+        if self.scroll_behavior.bouncy && !momentum_active && (offset.x != clamped.x || offset.y != clamped.y) {
             let dx = clamped.x - offset.x;
             let dy = clamped.y - offset.y;
 

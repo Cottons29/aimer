@@ -68,18 +68,10 @@ pub struct AimerApplicationHandler {
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
     pub start_up_frames: Cell<u8>,
-    /// Timestamp of the last frame actually presented. Used by the desktop
-    /// frame limiter to cap the redraw cadence to the display refresh rate.
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
-    pub last_frame_time: Cell<Option<std::time::Instant>>,
-    /// Lazily-computed minimum interval between frames, derived from the active
-    /// monitor's refresh rate (fallback 60 Hz).
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
-    pub frame_interval: Cell<Option<std::time::Duration>>,
-    /// Set when a redraw was deferred by the frame limiter so it can be re-armed
-    /// once the next refresh slot is reached.
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
-    pub pending_redraw: Cell<bool>,
+    /// ID of the primary touch finger currently owning the gesture.
+    /// `None` when no finger is down. Prevents a second finger from
+    /// hijacking the scroll position mid-gesture (UIScrollView behaviour).
+    pub active_touch_id: Option<u64>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
@@ -207,26 +199,6 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // Re-arm a frame that the desktop limiter deferred. Once the display's
-        // refresh interval has elapsed since the last presented frame, request
-        // the redraw; otherwise keep sleeping until the deadline.
-        #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
-        if self.pending_redraw.get() {
-            use winit::event_loop::ControlFlow;
-            if let Some(last) = self.last_frame_time.get() {
-                let interval = self.frame_interval();
-                if last.elapsed() >= interval {
-                    self.pending_redraw.set(false);
-                    _event_loop.set_control_flow(ControlFlow::Wait);
-                    if let Some(window) = self.window {
-                        window.request_redraw();
-                    }
-                } else {
-                    _event_loop.set_control_flow(ControlFlow::WaitUntil(last + interval));
-                }
-            }
-        }
-
         if self.start_up_frames.get() > 0 {
             let Some(window) = self.window.as_ref() else { return };
             window.request_redraw();
@@ -296,76 +268,6 @@ impl AimerApplicationHandler {
         }
     }
 
-    /// Desktop frame limiter. Returns `true` when the current redraw arrived
-    /// sooner than the display refresh interval, in which case the caller must
-    /// skip rendering; the deferred frame is re-armed in `about_to_wait`.
-    ///
-    /// When the frame is allowed, records its timestamp and returns to plain
-    /// `ControlFlow::Wait` so the loop sleeps until the next event/redraw.
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
-    fn throttle_frame(&self, event_loop: &ActiveEventLoop) -> bool {
-        use std::time::Instant;
-        use winit::event_loop::ControlFlow;
-
-        // Never throttle during the first few startup frames.  The GPU surface
-        // may still be settling (Resized events racing with RedrawRequested),
-        // and deferring here can leave the window blank until the user resizes.
-        if self.start_up_frames.get() > 0 {
-            self.last_frame_time.set(Some(Instant::now()));
-            self.pending_redraw.set(false);
-            event_loop.set_control_flow(ControlFlow::Wait);
-            return false;
-        }
-
-        let interval = self.frame_interval();
-        if let Some(last) = self.last_frame_time.get() {
-            if last.elapsed() < interval {
-                // Too soon: defer to the next refresh slot instead of painting.
-                self.pending_redraw.set(true);
-                event_loop.set_control_flow(ControlFlow::WaitUntil(last + interval));
-                return true;
-            }
-        }
-        self.last_frame_time.set(Some(Instant::now()));
-        self.pending_redraw.set(false);
-        event_loop.set_control_flow(ControlFlow::Wait);
-        false
-    }
-
-    /// Minimum interval between frames, derived from the active monitor's
-    /// refresh rate so the app never renders more frames than the display can
-    /// show (e.g. ~8.33 ms / 120 fps on a ProMotion panel).
-    ///
-    /// The result is memoized **only once a real refresh rate is read**. Early
-    /// in startup (or on platforms where it is briefly unavailable),
-    /// `current_monitor()` / `refresh_rate_millihertz()` can return `None`; in
-    /// that case we fall back to 60 Hz for this frame only and retry on the
-    /// next frame instead of poisoning the cache with 60 Hz for the whole
-    /// session. This is what lets a 120 Hz display actually reach 120 fps.
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
-    fn frame_interval(&self) -> std::time::Duration {
-        use std::time::Duration;
-
-        if let Some(interval) = self.frame_interval.get() {
-            return interval;
-        }
-        let real_hz = self
-            .window
-            .and_then(|w| w.current_monitor())
-            .and_then(|m| m.refresh_rate_millihertz())
-            .map(|mhz| mhz as f64 / 1000.0)
-            .filter(|hz| *hz > 1.0);
-        let hz = real_hz.unwrap_or(60.0);
-        let interval = Duration::from_secs_f64(1.0 / hz);
-        // Cache only when the rate is genuine; otherwise leave the cache empty
-        // so a later frame can re-read the true refresh rate.
-        if real_hz.is_some() {
-            debug!("Frame limiter locked to {:.1} Hz refresh rate", hz);
-            self.frame_interval.set(Some(interval));
-        }
-        interval
-    }
-
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "android")]
@@ -396,17 +298,11 @@ impl AimerApplicationHandler {
             }
         }
 
-        // Frame-rate limiter (desktop only). The momentum/scroll animation
-        // re-arms `window.request_redraw()` from inside the draw cycle
-        // (see `draw_scroll.rs`). Under `ControlFlow::Wait` each request wakes
-        // the loop immediately, so on macOS frames render back-to-back far
-        // beyond the monitor's refresh rate (framerate overflow). Pace them to
-        // the display refresh interval with `ControlFlow::WaitUntil`.
-        #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
-        if self.throttle_frame(event_loop) {
-            return;
-        }
-
+        // Presentation is paced by v-sync (`PresentMode::Fifo`): `present()`
+        // blocks until the display's next refresh slot, so the scroll/momentum
+        // animation re-arming `request_redraw()` from inside the draw cycle is
+        // naturally throttled to the panel refresh rate without a software
+        // limiter racing the compositor's v-sync.
         #[allow(clippy::collapsible_if)]
         if let Some(size) = self.pending_resize.take() {
             self.render_ctx.resize(size);

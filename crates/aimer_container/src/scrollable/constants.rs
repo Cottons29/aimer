@@ -47,6 +47,50 @@ pub const OOB_RESISTANCE_SCALE: f32 = 0.3;
 /// Maximum fling velocity (px/frame at scale 1.0) from a scroll-wheel event.
 pub const MAX_SCROLL_VELOCITY: f32 = 15000.0;
 
+/// Gain applied to the peak drag velocity when a touch/mouse drag is released.
+///
+/// On release the peak finger velocity now seeds the SAME velocity +
+/// exponential-friction momentum the trackpad/wheel `Scroll` path uses (see
+/// `handle_scroll.rs`), so a touch flick decelerates exactly like a trackpad
+/// flick. A trackpad already feeds a near-1:1 velocity into that model, so this
+/// gain is kept close to 1.0 — just a light projection so a quick swipe gets a
+/// satisfying push without overshooting the natural, trackpad-matched glide that
+/// the shared `friction` decay then carries to rest.
+pub const RELEASE_VELOCITY_GAIN: f32 = 1.5;
+
+/// Control points of the cubic-bézier curve that shapes the release fling.
+///
+/// `cubic-bezier(0.17, 0.74, 0.30, 1.0)` — a smooth, gliding deceleration curve
+/// (P0 = (0,0), P3 = (1,1) are implicit). The content position over the fling is
+/// `start + distance · bezier(t / duration)`. Compared with the previous,
+/// strongly front-loaded curve (which shot off fast then crawled — a "gliding on
+/// mud" feel), this gentler initial slope launches the content without a harsh
+/// jump and carries it through a long, even glide that eases cleanly to rest,
+/// like sliding on ice.
+pub const FLING_BEZIER_X1: f32 = 0.17;
+pub const FLING_BEZIER_Y1: f32 = 0.74;
+pub const FLING_BEZIER_X2: f32 = 0.30;
+pub const FLING_BEZIER_Y2: f32 = 1.0;
+
+/// Total duration (seconds) of a release fling shaped by the cubic-bézier curve.
+///
+/// The glide eases from the release speed to a stop over this fixed window. The
+/// coast distance is derived per axis from the release velocity so the curve's
+/// initial slope matches the finger speed (no visible jump on lift-off) — a
+/// longer duration therefore also glides farther. Tunable: raise it to slide
+/// farther / settle slower, lower it for a snappier stop.
+pub const FLING_DURATION_S: f32 = 2.4;
+
+/// Normalized time fraction after which the bézier fling may snap to rest.
+///
+/// The curve reaches ~95% of its distance early (by `X2`), then crawls toward
+/// the target over a long, barely-visible tail. Once past this fraction we let
+/// the fling end as soon as the per-frame step becomes sub-pixel, so the glide
+/// settles cleanly instead of creeping for seconds.
+pub const FLING_TAIL_START: f32 = 0.5;
+/// Per-frame step (px) below which, in the tail, the bézier fling snaps to rest.
+pub const FLING_END_STEP_PX: f32 = 0.5;
+
 /// Size of the ring buffer used for trackpad velocity smoothing.
 pub const VELOCITY_HISTORY_SIZE: usize = 5;
 
@@ -62,7 +106,10 @@ pub const SCROLLBAR_DRAG_SMOOTH_OLD: f32 = 0.4;
 pub const SCROLLBAR_DRAG_SMOOTH_NEW: f32 = 0.6;
 
 /// Idle time (ms) after the last event past which residual velocity is cleared.
-pub const VELOCITY_RESET_IDLE_MS: u128 = 100;
+/// Must be generous enough for mobile platforms where touch delivery latency
+/// (iOS gesture arbitration, ProMotion batching) can easily exceed 100ms
+/// between the last PointerMove and the PointerUp that ends the gesture.
+pub const VELOCITY_RESET_IDLE_MS: u128 = 400;
 
 /// Cubic ease-out coefficient for spring-back (1 − t³).
 pub const EASE_OUT_CUBIC: f32 = 3.0;
