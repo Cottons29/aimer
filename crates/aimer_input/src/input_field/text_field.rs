@@ -5,7 +5,7 @@ use crate::input_field::raw_fields::{
 use std::cell::UnsafeCell;
 use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
 use aimer_attribute::CacheBounds;
-use aimer_widget::base::{BuildContext, Colors};
+use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{Element,Widget, WidgetConstructor};
 
 
@@ -106,6 +106,8 @@ pub struct TextField {
     pub focus_decoration: Option<BoxDecoration>,
     #[constructor(default)]
     pub disabled_decoration: Option<BoxDecoration>,
+    #[constructor(default = Color { r: 0.26, g: 0.42, b: 0.95, a: 0.4 })]
+    pub selection_color: Color,
     #[constructor(default)]
     pub cursor_color: Colors,
     #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
@@ -138,6 +140,7 @@ impl Widget for TextField {
             hover_decoration: self.hover_decoration.clone(),
             focus_decoration: self.focus_decoration.clone(),
             disabled_decoration: self.disabled_decoration.clone(),
+            selection_color: self.selection_color,
             focused: UnsafeCell::new(self.auto_focus),
             hovered: UnsafeCell::new(false),
             cached_bounds: CacheBounds::new(),
