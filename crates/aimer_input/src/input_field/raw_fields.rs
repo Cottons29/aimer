@@ -377,6 +377,7 @@ pub(crate) struct RawTextField {
     pub hover_decoration: Option<BoxDecoration>,
     pub focus_decoration: Option<BoxDecoration>,
     pub disabled_decoration: Option<BoxDecoration>,
+    pub selection_color: Color,
     pub focused: UnsafeCell<bool>,
     pub hovered: UnsafeCell<bool>,
     pub cached_bounds: CacheBounds,
@@ -442,6 +443,14 @@ impl RawTextField {
     fn cursor_x_offset_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32) -> f32 {
         let text = self.controller.text();
         let offset = self.cursor.offset();
+        let prefix: String = unicode_segmentation::UnicodeSegmentation::graphemes(text, true)
+            .take(offset)
+            .collect();
+        canvas.measure_text(&prefix, font_size)
+    }
+
+    /// Measure text width up to a given grapheme offset.
+    fn text_width_to_offset(&self, text: &str, offset: usize, canvas: &aimer_canvas::Canvas, font_size: f32) -> f32 {
         let prefix: String = unicode_segmentation::UnicodeSegmentation::graphemes(text, true)
             .take(offset)
             .collect();
@@ -1067,6 +1076,23 @@ impl Drawable for RawTextField {
 
             let text_width = ctx.canvas.measure_text(&display, font_size);
             let text_x = self.align_x(text_width, content_width);
+
+            // --- Draw selection highlight ---
+            if let Some((sel_start, sel_end)) = self.cursor.selection_range() {
+                if sel_start != sel_end {
+                    let highlight_x = text_x + self.text_width_to_offset(&display, sel_start, &ctx.canvas, font_size);
+                    let highlight_end_x = text_x + self.text_width_to_offset(&display, sel_end, &ctx.canvas, font_size);
+                    let highlight_width = highlight_end_x - highlight_x;
+
+                    // Selection highlight covers full content height
+                    ctx.canvas.fill_color_rect(
+                        (highlight_x, 0.0).into(),
+                        ResolvedSize { width: highlight_width, height: content_height },
+                        self.selection_color,
+                        [0.0; 4],
+                    );
+                }
+            }
 
             let text_widget = self.build_text_widget(&display, &self.text_style, self.text_align);
             text_widget.draw(&content_ctx);
