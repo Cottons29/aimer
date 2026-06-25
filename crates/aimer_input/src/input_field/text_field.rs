@@ -106,7 +106,7 @@ pub struct TextField {
     pub focus_decoration: Option<BoxDecoration>,
     #[constructor(default)]
     pub disabled_decoration: Option<BoxDecoration>,
-    #[constructor(default = Color { r: 0.26, g: 0.42, b: 0.95, a: 0.4 })]
+    #[constructor(default = Color::Rgba(66, 133, 244, 100))]
     pub selection_color: Color,
     #[constructor(default)]
     pub cursor_color: Colors,
