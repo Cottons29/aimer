@@ -10,9 +10,12 @@ use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_events::window::get_window;
 use aimer_macro::Rebuildable;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
+use aimer_text::RawTextWidget;
+use aimer_widget::LayoutCache;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// Write text to the system clipboard.
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
@@ -445,14 +448,6 @@ impl RawTextField {
         canvas.measure_text(&prefix, font_size)
     }
 
-    fn ascent_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32) -> f32 {
-        canvas.measure_text_metrics("M", font_size, 0.0).ascent
-    }
-
-    fn descent_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32) -> f32 {
-        -canvas.measure_text_metrics("M", font_size, 0.0).descent
-    }
-
     fn align_x(&self, text_width: f32, content_width: f32) -> f32 {
         match self.text_align {
             TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
@@ -461,15 +456,18 @@ impl RawTextField {
         }
     }
 
-    fn align_y_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32, content_height: f32) -> f32 {
-        let ascent = self.ascent_canvas(canvas, font_size);
-        let descent = self.descent_canvas(canvas, font_size);
-        match self.text_align {
-            TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => ascent,
-            TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
-                content_height / 2.0 + (ascent - descent) / 2.0
-            }
-            TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => content_height - descent,
+    fn build_text_widget<'a>(
+        &self,
+        text: &'a str,
+        style: &TextStyle,
+        align: TextAlign,
+    ) -> RawTextWidget {
+        RawTextWidget {
+            text: Arc::from(text),
+            text_style: style.clone(),
+            text_align: align,
+            cache: LayoutCache::new(),
+            _typeface: Mutex::new(None),
         }
     }
 }
@@ -685,7 +683,7 @@ impl EventElement for RawTextField {
         // debug!("RawTextField on_event: {:?}", event);
 
         match event {
-            ElementEvent::PointerDown(pos) => {
+            ElementEvent::PointerDown(pos, _) => {
                 let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
                 // debug!("RawTextField on_event: is_inside I = {}", is_inside);
@@ -934,7 +932,7 @@ impl EventElement for RawTextField {
                 }
                 result
             }
-            ElementEvent::PointerMove(pos) => {
+            ElementEvent::PointerMove(pos, _) => {
                 let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
                 let was_hovered = self.is_hovered();
                 if was_hovered {
@@ -1020,36 +1018,28 @@ impl Drawable for RawTextField {
         ctx.canvas.translate((pad_left, pad_top).into());
 
         let content_height = (box_height - pad_top - pad_bottom).max(0.0);
+        let content_width = (box_width - pad_left - pad_right).max(0.0);
 
         let text = self.controller.text();
         let is_empty = text.is_empty();
 
         let font_size = self.scaled_font_size(&self.text_style, scale);
-        let content_width = (box_width - pad_left - pad_right).max(0.0);
+
+        // Context with parent_size set to the padded content area so
+        // RawTextWidget centres text within the content bounds, not the
+        // outer box (which includes padding).
+        let mut content_ctx = ctx.clone();
+        content_ctx.parent_size = ResolvedSize { width: content_width, height: content_height };
 
         if is_empty {
             // --- Draw prompt (visible when field is empty) ---
             if !self.prompt.is_empty() {
-                let prompt_fs = self.scaled_font_size(&self.prompt_style, scale);
-                let prompt_width = ctx.canvas.measure_text(&self.prompt, prompt_fs );
-                let prompt_x = self.align_x(prompt_width , content_width);
-                let prompt_y = self.align_y_canvas(&ctx.canvas, prompt_fs , content_height );
-                let prompt_color: Color = self.prompt_style.color;
-                ctx.canvas.draw_text(
-                    &self.prompt,
-                    (prompt_x, prompt_y ).into(),
-                    prompt_fs ,
-                    prompt_color,
-                );
+                let prompt_widget = self.build_text_widget(&self.prompt, &self.prompt_style, self.text_align);
+                prompt_widget.draw(&content_ctx);
             } else if !self.hint.is_empty() {
                 // --- Draw hint text (visible when field is empty and no prompt) ---
-                let hint_fs = self.scaled_font_size(&self.hint_style, scale);
-                let hint_width = ctx.canvas.measure_text(&self.hint, hint_fs );
-                let hint_x = self.align_x(hint_width , content_width);
-                let hint_y = self.align_y_canvas(&ctx.canvas, hint_fs , content_height );
-                let hint_color: Color = self.hint_style.color;
-                ctx.canvas
-                    .draw_text(&self.hint, (hint_x, hint_y ).into(), hint_fs , hint_color);
+                let hint_widget = self.build_text_widget(&self.hint, &self.hint_style, self.text_align);
+                hint_widget.draw(&content_ctx);
             }
 
             // --- Draw cursor when field is empty but focused ---
@@ -1075,19 +1065,15 @@ impl Drawable for RawTextField {
                 _ => text.to_string(),
             };
 
-            let text_width = ctx.canvas.measure_text(&display, font_size );
-            let text_x = self.align_x(text_width , content_width);
-            let text_y = self.align_y_canvas(&ctx.canvas, font_size , content_height );
+            let text_width = ctx.canvas.measure_text(&display, font_size);
+            let text_x = self.align_x(text_width, content_width);
 
-            if !display.is_empty() {
-                let text_color: Color = self.text_style.color;
-                ctx.canvas
-                    .draw_text(&display, (text_x, text_y ).into(), font_size , text_color);
-            }
+            let text_widget = self.build_text_widget(&display, &self.text_style, self.text_align);
+            text_widget.draw(&content_ctx);
 
             // --- Draw cursor ---
             if self.is_focused() && self.cursor.is_visible() {
-                let cursor_x = text_x + self.cursor_x_offset_canvas(&ctx.canvas, font_size );
+                let cursor_x = text_x + self.cursor_x_offset_canvas(&ctx.canvas, font_size);
                 let cursor_top = content_height * 0.15;
                 let cursor_bottom = content_height * 0.85;
                 let cursor_height = cursor_bottom - cursor_top;

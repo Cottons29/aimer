@@ -1,3 +1,5 @@
+use std::fs;
+use crate::commands::assemble::copy_assets_into;
 use crate::commands::run::Device;
 use crate::commands::run::cargo_build::{
     self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_app_log, stream_stderr_as_build_log, stream_stdout_as_app_log,
@@ -5,11 +7,12 @@ use crate::commands::run::cargo_build::{
 };
 use crate::commands::run::console::{RunnerEvent, Status};
 use crate::commands::run::helpers::{build_log, build_streamed, fail, host_arch, run_to_completion, set_status, spawn_streamed};
+use crate::commands::run::utilities::resolve_lib_path;
 use crossbeam::channel::Sender;
 use std::net::IpAddr;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use crate::commands::run::utilities::resolve_lib_path;
 
 /// The two flavours of the otherwise-identical iOS build/launch flow.
 #[derive(Clone, Copy)]
@@ -53,6 +56,17 @@ pub(crate) fn run_ios(
         }
     };
 
+    let app_path = format!("builds/ios/build/{}/{}.app", debug_subdir, pkg_name);
+
+    {
+        let app = Path::new(&app_path);
+        if app.exists() {
+            fs::remove_dir_all(app).unwrap();
+        }
+
+    }
+
+
     set_status(&tx, Status::Compiling(0));
     build_log(&tx, format!("Compiling static library for {}...", rust_target));
 
@@ -68,7 +82,7 @@ pub(crate) fn run_ios(
 
     let lib_name = pkg_name.replace("-", "_");
     // let src_lib = format!("target/{}/debug/lib{}.a", rust_target, lib_name);
-    let src_lib =  resolve_lib_path(&lib_name, rust_target, CargoBuildTarget::Ios {rust_target: rust_target.to_string()});
+    let src_lib = resolve_lib_path(&lib_name, rust_target, CargoBuildTarget::Ios { rust_target: rust_target.to_string() });
     let dest_dir = "builds/ios/Libraries";
     let dest_lib = format!("{}/lib{}.a", dest_dir, lib_name);
 
@@ -110,7 +124,15 @@ pub(crate) fn run_ios(
     }
 
     set_status(&tx, Status::Launching);
-    let app_path = format!("builds/ios/build/{}/{}.app", debug_subdir, pkg_name);
+
+
+
+
+
+    if crate::commands::assets::copy_assets_into(&app_path).is_err() {
+        fail(&tx, format!("Failed to copy assets into {}", app_path));
+        return;
+    };
 
     if !install_app(variant, &device, &app_path, &tx) {
         return;
