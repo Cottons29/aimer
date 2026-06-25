@@ -7,6 +7,7 @@ use anyhow::{Context, bail};
 use std::env::current_dir;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use log::info;
 
 /// Non-interactive bundling entry point used by `aimer assemble <platform>`.
 ///
@@ -101,7 +102,7 @@ pub(crate) fn copy_assets_into(dest_root: &str) -> anyhow::Result<()> {
     println!("Copying assets into {dest_root}");
     let report = crate::commands::assets::copy_assets_into(dest_root)?;
     for rel in &report.copied {
-        println!("Copied asset {rel} -> {}", Path::new(dest_root).join(rel).display());
+        info!("Copied asset {rel} -> {}", Path::new(dest_root).join(rel).display());
     }
     for rel in &report.missing {
         eprintln!("warning: registered asset '{rel}' not found; skipping");
@@ -259,7 +260,10 @@ fn assemble_web(release: bool) -> anyhow::Result<String> {
 
     // copy_assets_into(&format!("/assets"))?;
 
-    let artifact = "builds/web/assets";
+    let artifact = "builds/web";
+    // if !Path::new(artifact).exists() {
+    //     fs::crea
+    // }
     copy_assets_into(artifact)?;
 
     let mut trunk = Command::new("trunk");

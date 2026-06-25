@@ -6,6 +6,7 @@ use crossbeam::channel::Sender;
 use std::net::IpAddr;
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
+use crate::commands::assemble::copy_assets_into;
 
 pub fn spawn_web_runner(
     _: Device,
@@ -24,8 +25,8 @@ pub fn spawn_web_runner(
     //     return;
     // }
 
-    let artifact = "builds/web/assets";
-    let Ok(_) = crate::commands::assemble::copy_assets_into(artifact) else  {
+    let artifact = "builds/web";
+    let Ok(_) = copy_assets_into(artifact) else  {
         println!("Failed to copy assets into {artifact}");
         return;
     };
