@@ -201,45 +201,6 @@ impl State<MyList> for MyListState {
                                                 )
                                             ),
                                         ),
-                                        hover_decoration: BoxDecoration!(
-                                            background_color: Colors::Gray.alpha(120),
-                                            border: BoxBorder::all(
-                                                BorderSlice!(
-                                                    style: BorderStyle::Solid,
-                                                    color: Colors::Black,
-                                                    stroke: 2,
-
-                                                )
-                                            ),
-                                            outline: BoxOutline::all(
-                                                BorderSlice!(
-                                                    style: BorderStyle::Solid,
-                                                    color: Color::Transparent,
-                                                    stroke: 2,
-
-                                                )
-                                            ),
-                                        ),
-
-                                        pressed_decoration: BoxDecoration!(
-                                            background_color: Colors::Green,
-                                            border: BoxBorder::all(
-                                                BorderSlice!(
-                                                    style: BorderStyle::Solid,
-                                                    color: Colors::Black,
-                                                    stroke: 2,
-
-                                                )
-                                            ),
-                                            outline: BoxOutline::all(
-                                                BorderSlice!(
-                                                    style: BorderStyle::Solid,
-                                                    color: Colors::Black,
-                                                    stroke: 2,
-
-                                                )
-                                            ),
-                                        ),
                                         child: Container!(
 
                                             child: Text!(
@@ -290,7 +251,6 @@ impl State<MyList> for MyListState {
                                                         }
                                                     },
                                                     decoration: BoxDecoration!(background_color: Colors::Gray),
-                                                    hover_decoration: BoxDecoration!(background_color: Colors::Gray.alpha(120)),
                                                     child: Container!(
                                                         child: Text!(
                                                             "Delete",
