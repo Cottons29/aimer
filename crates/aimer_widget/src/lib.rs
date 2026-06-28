@@ -1,5 +1,7 @@
 mod attribute;
 pub mod components;
+pub mod key;
+pub mod reconcile;
 mod widget;
 pub mod layout_cache;
 
@@ -25,6 +27,7 @@ pub use crate::components::event_element::EventElement;
 pub use crate::components::layout_element::LayoutElement;
 pub use crate::components::drawable::Drawable;
 pub use crate::components::rebuildable::Rebuildable;
+pub use crate::components::reconcilable::Reconcilable;
 
 
 pub mod base {
@@ -35,8 +38,10 @@ pub mod base {
     pub use aimer_color::prelude::*;
 }
 pub use crate::widget::{Widget, WidgetTrait};
+pub use crate::key::Key;
 
 pub use crate::components::element::{dispatch_event, broadcast_event};
+pub use crate::reconcile::try_update_element;
 pub use crate::widget::stateful::{StatefulElement, StatefulWidget, State, StateUpdater};
 pub use crate::widget::stateless::{ StatelessElement, StatelessWidget, NamedWidget};
 pub use aimer_macro::{widget, Constructor, main, WidgetConstructor};
