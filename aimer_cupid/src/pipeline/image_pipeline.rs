@@ -2,7 +2,6 @@ use crate::utilities::TextureId;
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use wgpu::ShaderSource;
-use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -51,7 +50,6 @@ pub struct ImagePipeline {
     textures: HashMap<TextureId, TextureEntry>,
     next_id: TextureId,
     instance_buffer: wgpu::Buffer,
-    #[allow(dead_code)]
     instance_capacity: usize,
     /// Running write offset (in instances) into `instance_buffer` for the
     /// current frame. Reset by `begin_frame`. Each `draw_batch` writes its
@@ -200,14 +198,80 @@ impl ImagePipeline {
         self.textures.contains_key(&id)
     }
 
+    /// Upload RGBA8 image data only if the texture ID does not already exist.
+    /// Returns `true` if a new texture was uploaded, `false` if it already existed.
+    /// Uses a single HashMap lookup instead of `has_texture` + `upload_image_with_id`.
+    pub fn upload_if_absent(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: TextureId,
+        width: u32,
+        height: u32,
+        data: &[u8],
+    ) -> bool {
+        use std::collections::hash_map::Entry;
+        match self.textures.entry(id) {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(vacant) => {
+                // Use create_texture + write_texture instead of create_texture_with_data
+                // so the copy is deferred to the GPU timeline (non-blocking).
+                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("uploaded image"),
+                    size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * width),
+                        rows_per_image: Some(height),
+                    },
+                    wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                );
+
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("image bind group"),
+                    layout: &self.texture_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                    ],
+                });
+
+                vacant.insert(TextureEntry { bind_group, texture });
+                true
+            }
+        }
+    }
+
     /// Prepare the pipeline for a new frame's image batches.
     ///
-    /// Resets the per-frame instance write offset and ensures the shared
-    /// instance buffer is large enough to hold *all* image instances of the
-    /// frame at once. Sizing up-front (instead of inside `draw_batch`) avoids
-    /// recreating the buffer mid-frame, which would orphan instance data that
-    /// earlier `draw_batch` calls already recorded draws against.
-    pub fn begin_frame(&mut self, device: &wgpu::Device, total_instances: usize) {
+    /// Resets the per-frame instance write offset, writes the viewport uniform
+    /// once (instead of per batch), and ensures the shared instance buffer is
+    /// large enough to hold *all* image instances of the frame at once.
+    pub fn begin_frame(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        total_instances: usize,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+    ) {
         self.frame_instance_offset = 0;
         if total_instances > self.instance_capacity {
             self.instance_capacity = total_instances.next_power_of_two();
@@ -218,6 +282,13 @@ impl ImagePipeline {
                 mapped_at_creation: false,
             });
         }
+
+        // Write the viewport uniform once per frame instead of per batch.
+        #[cfg(target_os = "android")]
+        let is_srgb_f32 = 2.0_f32;
+        #[cfg(not(target_os = "android"))]
+        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
+        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
     }
 
     pub fn upload_image_with_id(
@@ -229,8 +300,8 @@ impl ImagePipeline {
         height: u32,
         data: &[u8],
     ) {
+        // In-place update if the texture exists and dimensions match.
         if let Some(entry) = self.textures.get(&id) {
-            // Check if dimensions match for in-place update
             let size = entry.texture.size();
             if size.width == width && size.height == height {
                 queue.write_texture(
@@ -248,20 +319,30 @@ impl ImagePipeline {
             }
         }
 
-        let texture = device.create_texture_with_data(
-            queue,
-            &wgpu::TextureDescriptor {
-                label: Some("uploaded image"),
-                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("uploaded image"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
             },
-            wgpu::util::TextureDataOrder::LayerMajor,
             data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -279,15 +360,11 @@ impl ImagePipeline {
     }
 
     /// Draw a batch of instances with the same texture_id.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw_batch(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         pass: &mut wgpu::RenderPass<'_>,
-        width: u32,
-        height: u32,
-        is_srgb: bool,
         texture_id: TextureId,
         instances: &[ImageInstance],
     ) {
@@ -323,13 +400,7 @@ impl ImagePipeline {
 
         let byte_offset = (self.frame_instance_offset * size_of::<ImageInstance>()) as u64;
 
-        // On Android, pass 2.0 to signal shaders to skip sRGB conversion entirely.
-        #[cfg(target_os = "android")]
-        let is_srgb_f32 = 2.0_f32;
-        #[cfg(not(target_os = "android"))]
-        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
-        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
-
+        // Viewport uniform is written once in `begin_frame` — no per-batch write needed.
         queue.write_buffer(&self.instance_buffer, byte_offset, bytemuck::cast_slice(instances));
 
         pass.set_pipeline(&self.pipeline);
