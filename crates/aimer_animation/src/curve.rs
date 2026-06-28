@@ -13,6 +13,22 @@ pub enum Curve {
     Decelerate,
     /// Bounce at the end.
     BounceOut,
+    /// Bounce at the start.
+    BounceIn,
+    /// Bounce at both start and end.
+    BounceInOut,
+    /// Elastic (springy overshoot) easing in.
+    ElasticIn,
+    /// Elastic easing out.
+    ElasticOut,
+    /// Elastic easing in and out.
+    ElasticInOut,
+    /// Material Design standard curve (cubic bezier 0.4, 0.0, 0.2, 1.0).
+    FastOutSlowIn,
+    /// Material Design decelerate (cubic bezier 0.0, 0.0, 0.2, 1.0).
+    LinearOutSlowIn,
+    /// Material Design accelerate (cubic bezier 0.4, 0.0, 1.0, 1.0).
+    FastOutLinearIn,
 }
 
 impl Curve {
@@ -42,6 +58,27 @@ impl Curve {
                 1.0 - inv * inv
             }
             Curve::BounceOut => bounce_out(t),
+            Curve::BounceIn => 1.0 - bounce_out(1.0 - t),
+            Curve::BounceInOut => {
+                if t < 0.5 {
+                    (1.0 - bounce_out(1.0 - 2.0 * t)) / 2.0
+                } else {
+                    (1.0 + bounce_out(2.0 * t - 1.0)) / 2.0
+                }
+            }
+            Curve::ElasticIn => elastic_in(t),
+            Curve::ElasticOut => elastic_out(t),
+            Curve::ElasticInOut => {
+                if t < 0.5 {
+                    elastic_in(2.0 * t) / 2.0
+                } else {
+                    elastic_out(2.0 * t - 1.0) / 2.0 + 0.5
+                }
+            }
+            // Material Design curves — pre-computed cubic bezier control points
+            Curve::FastOutSlowIn => cubic_bezier_y_for_x(t, 0.4, 0.0, 0.2, 1.0),
+            Curve::LinearOutSlowIn => cubic_bezier_y_for_x(t, 0.0, 0.0, 0.2, 1.0),
+            Curve::FastOutLinearIn => cubic_bezier_y_for_x(t, 0.4, 0.0, 1.0, 1.0),
         }
     }
 }
@@ -67,6 +104,25 @@ fn bounce_out(t: f32) -> f32 {
         let t = t - 2.625 / D1;
         N1 * t * t + 0.984375
     }
+}
+
+fn elastic_in(t: f32) -> f32 {
+    if t == 0.0 || t == 1.0 {
+        return t;
+    }
+    let p = 0.3;
+    let s = p / 4.0;
+    let t = t - 1.0;
+    -(2.0f32.powf(10.0 * t) * ((t - s) * std::f32::consts::TAU / p).sin())
+}
+
+fn elastic_out(t: f32) -> f32 {
+    if t == 0.0 || t == 1.0 {
+        return t;
+    }
+    let p = 0.3;
+    let s = p / 4.0;
+    2.0f32.powf(-10.0 * t) * ((t - s) * std::f32::consts::TAU / p).sin() + 1.0
 }
 
 /// Approximate cubic bezier: find y for a given x using Newton's method.
@@ -148,5 +204,36 @@ mod tests {
         assert!((Curve::Decelerate.transform(0.0) - 0.0).abs() < 1e-9);
         assert!((Curve::Decelerate.transform(1.0) - 1.0).abs() < 1e-9);
         assert!(Curve::Decelerate.transform(0.5) > 0.5);
+    }
+
+    #[test]
+    fn test_bounce_in_boundaries() {
+        assert!((Curve::BounceIn.transform(0.0) - 0.0).abs() < 1e-9);
+        assert!((Curve::BounceIn.transform(1.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_bounce_in_out_boundaries() {
+        assert!((Curve::BounceInOut.transform(0.0) - 0.0).abs() < 1e-9);
+        assert!((Curve::BounceInOut.transform(1.0) - 1.0).abs() < 1e-9);
+        assert!((Curve::BounceInOut.transform(0.5) - 0.5).abs() < 0.05);
+    }
+
+    #[test]
+    fn test_elastic_boundaries() {
+        assert!((Curve::ElasticIn.transform(0.0) - 0.0).abs() < 1e-9);
+        assert!((Curve::ElasticIn.transform(1.0) - 1.0).abs() < 1e-9);
+        assert!((Curve::ElasticOut.transform(0.0) - 0.0).abs() < 1e-9);
+        assert!((Curve::ElasticOut.transform(1.0) - 1.0).abs() < 1e-9);
+        assert!((Curve::ElasticInOut.transform(0.0) - 0.0).abs() < 1e-9);
+        assert!((Curve::ElasticInOut.transform(1.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_material_curves_boundaries() {
+        for curve in &[Curve::FastOutSlowIn, Curve::LinearOutSlowIn, Curve::FastOutLinearIn] {
+            assert!((curve.transform(0.0) - 0.0).abs() < 1e-6, "{curve:?} at 0.0");
+            assert!((curve.transform(1.0) - 1.0).abs() < 1e-6, "{curve:?} at 1.0");
+        }
     }
 }
