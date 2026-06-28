@@ -143,21 +143,17 @@ impl<'w> GpuContext<'w> {
 
         let max_dim = device.limits().max_texture_dimension_2d;
 
-        // Pick the lowest-latency present mode the surface supports so the frame
-        // rate is not hard-capped to the display refresh by classic v-sync.
-        // `Fifo` (v-sync) caps at the panel refresh (~60 fps on a 60 Hz screen);
-        // `Mailbox` lets the GPU render ahead and present the newest frame
-        // (smooth, no tearing) and `Immediate` is fully uncapped (allows
-        // tearing). We prefer Mailbox, then Immediate, and fall back to Fifo
-        // (the only mode guaranteed to always be available) so we can reach the
-        // 120+ fps target on high-refresh displays.
-        let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
-            wgpu::PresentMode::Mailbox
-        } else if caps.present_modes.contains(&wgpu::PresentMode::Immediate) {
-            wgpu::PresentMode::Immediate
-        } else {
-            wgpu::PresentMode::Fifo
-        };
+        // Use `Fifo` (v-sync) so presentation is paced by the display/compositor
+        // itself: `surface.present()` blocks until the next refresh slot, keeping
+        // frames in phase with the panel. This replaces the old
+        // `Mailbox`/`Immediate` render-ahead modes that were only honored when the
+        // surface owned the scanout (fullscreen); in windowed mode the compositor
+        // re-synchronized them anyway, and the software frame limiter that capped
+        // them raced the compositor's v-sync, producing windowed judder. Letting
+        // v-sync be the single timing source removes that beat pattern entirely.
+        // `Fifo` is always available and still presents at the full panel refresh
+        // rate (e.g. 120 Hz) on high-refresh displays.
+        let present_mode = wgpu::PresentMode::Fifo;
 
         debug!("Gpu Context : Initialized with max texture dimension: {} and is_srgb: {} present_mode: {:?}", max_dim, is_srgb, present_mode);
         let config = SurfaceConfiguration {
