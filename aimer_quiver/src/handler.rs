@@ -59,18 +59,11 @@ pub struct AimerApplicationHandler {
     pub pending_widget: Option<Box<dyn Widget>>,
     pub cursor_pos: Vec2d,
     pub current_modifiers: aimer_events::element::Modifiers,
-    /// Whether an IME composition (pre-edit) is currently in progress.
-    /// While `true`, raw key events are owned by the input method and must not
-    /// be turned into text/navigation input; the composed result arrives via
-    /// `WindowEvent::Ime(Ime::Commit(..))`.
     pub ime_composing: bool,
     pub window_scale: f64,
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
     pub start_up_frames: Cell<u8>,
-    /// ID of the primary touch finger currently owning the gesture.
-    /// `None` when no finger is down. Prevents a second finger from
-    /// hijacking the scroll position mid-gesture (UIScrollView behaviour).
     pub active_touch_id: Option<u64>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
@@ -180,12 +173,6 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
         // On Android the surface may be (re-)created with the correct size now.
         // Schedule a resize so the GPU surface matches the actual window dimensions.
         self.pending_resize = Some(size);
-        // Ensure the first few frames are always rendered even if the desktop
-        // frame limiter would otherwise defer them.  On macOS the window
-        // manager may fire a Resized event whose RedrawRequested races with
-        // this one; without startup frames the limiter can defer the redraw
-        // indefinitely, leaving a blank window until the user manually resizes.
-        self.start_up_frames.set(5);
         window.request_redraw();
     }
 
@@ -303,9 +290,14 @@ impl AimerApplicationHandler {
         // animation re-arming `request_redraw()` from inside the draw cycle is
         // naturally throttled to the panel refresh rate without a software
         // limiter racing the compositor's v-sync.
+        // Only consume pending_resize if the render context is actually ready.
+        // On web, GPU init is async — consuming the resize before the GPU exists
+        // would silently drop it and leave the surface at the wrong size.
         #[allow(clippy::collapsible_if)]
-        if let Some(size) = self.pending_resize.take() {
-            self.render_ctx.resize(size);
+        if self.render_ctx.is_ready() {
+            if let Some(size) = self.pending_resize.take() {
+                self.render_ctx.resize(size);
+            }
         }
 
         let Some(window) = self.window else { return };
@@ -357,13 +349,11 @@ impl AimerApplicationHandler {
         };
 
         let presented = self.render_ctx.render_frame(draw_widgets);
-        // let presented = ExecTimes::no_param("AimerApplicationHandler::RenderingFrame", || self.render_ctx.render_frame(draw_widgets));
-        #[cfg(target_os = "ios")]
-        // debug!("iOS render(): presented={presented}");
         if !presented {
             // Surface texture was not available (e.g. surface outdated or
             // window not ready).  Request a redraw so we retry next frame
-            // instead of staying blank.
+            // instead of staying blank.  Critical on web (async GPU init)
+            // and iOS (late surface availability).
             if let Some(window) = &self.window {
                 window.request_redraw();
             }
