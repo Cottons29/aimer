@@ -44,4 +44,8 @@ impl Widget for Text {
             _typeface: Mutex::new(None),
         })
     }
+
+    fn text_content(&self) -> Option<&str> {
+        Some(&self.text)
+    }
 }
