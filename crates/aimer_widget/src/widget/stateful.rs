@@ -1,4 +1,5 @@
-use crate::{Drawable, Element, LayoutElement, VisitorElement, Widget, base::*, EventElement, Rebuildable};
+use crate::{Drawable, Element, LayoutElement, VisitorElement, Widget, base::*, EventElement, Rebuildable, Reconcilable};
+use crate::reconcile::try_update_element;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
@@ -232,6 +233,7 @@ pub struct StatefulElement {
     last_rebuilt_generation: AtomicU64,
     // #[cfg(debug_assertions)]
     pub debug_name: &'static str,
+    pub key: Option<crate::key::Key>,
     pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
 }
 
@@ -242,12 +244,14 @@ impl StatefulElement {
         widget: &W,
         ctx: &BuildContext,
         debug_name: &'static str,
+        key: Option<crate::key::Key>,
     ) -> (Self, StateUpdater<W::State>)
     where
         W::State: Send + Sync + 'static,
     {
         let (mut element, updater) = Self::new(widget, ctx);
         element.debug_name = debug_name;
+        element.key = key;
         (element, updater)
     }
 
@@ -300,6 +304,7 @@ impl StatefulElement {
             rebuild_generation: AtomicU64::new(0),
             last_rebuilt_generation: AtomicU64::new(0),
             debug_name: "Unknown",
+            key: None,
             bounds: std::cell::Cell::new(None),
         };
 
@@ -307,6 +312,11 @@ impl StatefulElement {
     }
 
     /// Check if this element needs a rebuild and perform it if so.
+    ///
+    /// Uses element reconciliation: before replacing the child, tries to update it
+    /// in-place via `try_update_element`. If the child's type and key match the new
+    /// element's, the child is updated without replacement — preserving nested
+    /// `StatefulElement` state, GPU resources, and reducing allocations.
     ///
     /// Before rebuilding itself, this method first walks the existing child tree
     /// to let any nested `StatefulElement`s rebuild independently. This avoids
@@ -328,11 +338,28 @@ impl StatefulElement {
             return;
         }
 
-        let new_child = (self.rebuild_fn)(ctx);
-        // Safety: single-threaded rendering pipeline
-        unsafe {
-            *self.child.0.get() = new_child;
+        // First, let nested dirty StatefulElements rebuild in-place.
+        {
+            let child = unsafe { &*self.child.0.get() };
+            Self::propagate_rebuild(child.as_ref(), ctx);
         }
+
+        // Build the new child element.
+        let new_child = (self.rebuild_fn)(ctx);
+
+        // Reconciliation: try to update the existing child in-place.
+        // If types/keys match, the child is updated without replacement,
+        // preserving nested state, GPU resources, etc.
+        let old_child = unsafe { &*self.child.0.get() };
+        if !try_update_element(old_child.as_ref(), new_child.as_ref(), ctx) {
+            // Types or keys don't match — replace the child entirely.
+            unsafe {
+                *self.child.0.get() = new_child;
+            }
+        }
+        // If try_update_element returned true, the old child was updated in-place
+        // and remains valid — no replacement needed.
+
         self.dirty.store(false, Ordering::Release);
         self.rebuild_generation.fetch_add(1, Ordering::Relaxed);
         self.last_rebuilt_generation
@@ -402,12 +429,13 @@ impl EventElement for StatefulElement {
         crate::components::element::dispatch_event(
             child.as_ref(),
             match event {
-                ElementEvent::PointerDown(p) => *p,
-                ElementEvent::PointerUp(p) => *p,
-                ElementEvent::PointerMove(p) => *p,
+                ElementEvent::PointerDown(p, _, _) => *p,
+                ElementEvent::PointerUp(p, _, _) => *p,
+                ElementEvent::PointerMove(p, _, _) => *p,
                 ElementEvent::Scroll { .. } => Vec2d::default(),
                 ElementEvent::CharInput { .. } => Vec2d::default(),
                 ElementEvent::KeyInput { .. } => Vec2d::default(),
+                ElementEvent::ImePreedit { .. } => Vec2d::default(),
                 ElementEvent::Cancel => Vec2d::default(),
             },
             event,
@@ -455,6 +483,22 @@ impl LayoutElement for StatefulElement {
 impl Rebuildable for StatefulElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         StatefulElement::rebuild_if_dirty(self, ctx);
+    }
+}
+
+impl Reconcilable for StatefulElement {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
+    fn key(&self) -> Option<crate::key::Key> {
+        self.key.clone()
+    }
+
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        // StatefulElement preserves its state across parent rebuilds.
+        // The state cell and rebuild_fn are unchanged — the parent's rebuild_fn
+        // will call our build() which produces a fresh child element via to_element().
+        // Our own rebuild_if_dirty handles child reconciliation.
+        true
     }
 }
 
