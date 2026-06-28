@@ -169,6 +169,14 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
             WindowEvent::Resized(new_size) => {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(new_size);
+                    // Ensure a frame is painted after the surface is reconfigured.
+                    // On macOS, the initial request_redraw() in resumed() can be
+                    // silently dropped if the window isn't fully on-screen yet.
+                    // The first Resized event is the reliable signal that the
+                    // window is visible and the surface is ready.
+                    if let Some(window) = self.window.as_ref() {
+                        window.request_redraw();
+                    }
                 }
             }
 
