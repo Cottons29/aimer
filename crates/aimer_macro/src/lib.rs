@@ -321,6 +321,11 @@ pub fn rebuildable_element_derive(input: TokenStream) -> TokenStream {
     auto_impl("aimer_widget::Rebuildable", input)
 }
 
+#[proc_macro_derive(Reconcilable)]
+pub fn reconcilable_derive(input: TokenStream) -> TokenStream {
+    auto_impl("aimer_widget::Reconcilable", input)
+}
+
 #[proc_macro_derive(Drawable)]
 pub fn drawable_element_derive(input: TokenStream) -> TokenStream {
     auto_impl("aimer_widget::Drawable", input)
