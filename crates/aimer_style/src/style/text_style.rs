@@ -57,7 +57,7 @@ pub enum TextAlign {
 }
 
 #[allow(dead_code)]
-#[derive(aimer_macro::Constructor, Clone)]
+#[derive(aimer_macro::Constructor, Clone, Copy)]
 pub struct TextStyle  {
     #[constructor(default = 13)]
     pub font_size: u32,
@@ -92,7 +92,7 @@ impl Default for TextStyle {
 }
 
 #[allow(dead_code)]
-#[derive( Default, Clone)]
+#[derive( Default, Clone, Copy)]
 pub enum TextOverflow {
     #[default]
     Clip,
