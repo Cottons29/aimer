@@ -3,7 +3,7 @@ use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_macro::{Constructor, Rebuildable, WidgetConstructor};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget};
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Reconcilable, VisitorElement, Widget};
 
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
@@ -202,5 +202,13 @@ impl<E: Element> LayoutElement for RawPositionedElement<E> {
 
     fn layer(&self) -> u32 {
         self.layer
+    }
+}
+
+impl<E: Element + 'static> Reconcilable for RawPositionedElement<E> {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        false
     }
 }
