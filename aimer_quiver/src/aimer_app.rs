@@ -231,7 +231,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
         inspector_prev_enabled: Cell::new(false),
         #[cfg(debug_assertions)]
         inspector_redraw_frames: Cell::new(0),
-        start_up_frames: Cell::new(24),
+        start_up_frames: Cell::new(255),
         active_touch_id: None,
     };
 
