@@ -4,7 +4,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{Rebuildable, WidgetConstructor};
 pub use aimer_style::*;
-use aimer_widget::{Drawable, Element, LayoutCache, Widget, base::*, LayoutElement, VisitorElement, EventElement};
+use aimer_widget::{Drawable, Element, LayoutCache, Widget, base::*, LayoutElement, Reconcilable, VisitorElement, EventElement};
 
 #[derive(WidgetConstructor)]
 pub struct Container<T = ZeroSizedBox>
@@ -519,4 +519,12 @@ impl<T: Element> LayoutElement for RawContainer<T> {
     }
 
 
+}
+
+impl<T: Element + 'static> Reconcilable for RawContainer<T> {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        false
+    }
 }
