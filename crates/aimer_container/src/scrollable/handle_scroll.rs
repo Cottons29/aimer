@@ -29,8 +29,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         }
 
         let pos = match event {
-            ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) | ElementEvent::Scroll{delta: p, ..} => *p,
-            ElementEvent::Cancel | ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } => Vec2d::default(),
+            ElementEvent::PointerDown(p, _, _) | ElementEvent::PointerUp(p, _, _) | ElementEvent::PointerMove(p, _, _) | ElementEvent::Scroll{delta: p, ..} => *p,
+            ElementEvent::Cancel | ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } | ElementEvent::ImePreedit { .. } => Vec2d::default(),
         };
 
         let mode_before = self.ctrl.drag_mode.get();
@@ -43,10 +43,14 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         // fling/momentum setup first we guarantee the scrollable always arms
         // the post-release glide, regardless of what the child does.
         // The child still receives a Cancel so it can clear its pressed state.
-        if matches!(event, ElementEvent::PointerUp(_) | ElementEvent::Cancel) {
+        if matches!(event, ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel) {
             // Forward a Cancel to the child so it loses its active/pressed state.
             if mode_before != DragMode::None && mode_before != DragMode::Pending {
                 let _ = aimer_widget::dispatch_event(&self.child, pos, &ElementEvent::Cancel);
+            } else if matches!(event, ElementEvent::PointerUp(_, _, _)) {
+                // No active drag — this is a tap. Dispatch PointerUp to the
+                // child so widgets like Button can detect the tap gesture.
+                let _ = aimer_widget::dispatch_event(&self.child, pos, event);
             }
 
             let now = Instant::now();
@@ -175,7 +179,15 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 aimer_events::window::request_animation_frame();
                 true
             }
-            ElementEvent::PointerDown(p) => {
+            ElementEvent::PointerDown(p, _, id) => {
+                // Primary-finger tracking: only the first finger owns the scroll.
+                // Secondary fingers are ignored so a second touch doesn't cause a
+                // sudden position jump — matching UIScrollView behaviour.
+                if self.ctrl.active_touch_id.get().is_some() && self.ctrl.active_touch_id.get() != Some(*id) {
+                    return false;
+                }
+                self.ctrl.active_touch_id.set(Some(*id));
+
                 let mut mode = DragMode::Pending;
                 if self.ctrl.hit_test_v_thumb(*p) {
                     mode = DragMode::VerticalScrollbar;
@@ -227,7 +239,12 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 self.ctrl.last_pointer_pos.set(Some(*p));
                 false
             }
-            ElementEvent::PointerMove(p) => {
+            ElementEvent::PointerMove(p, _, id) => {
+                // Ignore moves from non-primary fingers.
+                if self.ctrl.active_touch_id.get().is_some() && self.ctrl.active_touch_id.get() != Some(*id) {
+                    return false;
+                }
+
                 let mut mode = self.ctrl.drag_mode.get();
                 #[allow(clippy::collapsible_if)]
                 if mode  == DragMode::Pending {
@@ -429,8 +446,18 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             }
             // PointerUp/Cancel is handled early above (before child dispatch),
             // so it never reaches this match.
-            ElementEvent::PointerUp(_) | ElementEvent::Cancel => false,
-            ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } => child_consumed,
+            ElementEvent::PointerUp(_, _, id) => {
+                // Release primary-finger lock.
+                if self.ctrl.active_touch_id.get() == Some(*id) {
+                    self.ctrl.active_touch_id.set(None);
+                }
+                false
+            }
+            ElementEvent::Cancel => {
+                self.ctrl.active_touch_id.set(None);
+                false
+            }
+            ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } | ElementEvent::ImePreedit { .. } => child_consumed,
         };
 
         child_consumed || we_consumed
