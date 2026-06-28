@@ -25,24 +25,41 @@ pub const OOB_DAMPING_BASE_IOS: f32 = 0.15;
 /// Out-of-bounds velocity damping base on other platforms.
 pub const OOB_DAMPING_BASE_DEFAULT: f32 = 0.4;
 /// Extra velocity damping applied when overshooting further out of bounds.
-pub const OOB_OVERSHOOT_DAMPING: f32 = 0.5;
+/// Lower values let the content coast further into the rubber-band zone.
+pub const OOB_OVERSHOOT_DAMPING: f32 = 0.25;
 
 /// Exponent applied to the out-of-bounds distance for the bouncy stretch.
-pub const BOUNCY_STRETCH_EXPONENT: f32 = 0.75;
+/// 0.85 gives a natural, visible overshoot — content moves noticeably when
+/// dragged past the edge, then compresses gently at the extremes.
+pub const BOUNCY_STRETCH_EXPONENT: f32 = 0.85;
 /// Multiplier converting `bouncy_resistance` into a stretch scale.
-pub const BOUNCY_RESISTANCE_SCALE: f32 = 2.0;
+/// High value (12) so the visual rubber-band reaches ~45% of viewport height.
+pub const BOUNCY_RESISTANCE_SCALE: f32 = 12.0;
+/// Extra resistance multiplier for non-touch devices (desktop with mouse/trackpad).
+/// Touch devices get 1.0, non-touch get 1.5 (50% more resistance).
+/// This is because mouse/trackpad users have finer control and expect more
+/// resistance when overscrolling.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+pub const BOUNCY_RESISTANCE_NON_TOUCH_SCALE: f32 = 0.8;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub const BOUNCY_RESISTANCE_NON_TOUCH_SCALE: f32 = 1.0;
 
 /// Per-frame velocity damping applied during spring-back.
-pub const SPRING_VELOCITY_DAMPING: f32 = 0.7;
+/// Higher values (0.8) = less damping = smoother, longer recovery.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+pub const SPRING_VELOCITY_DAMPING: f32 = 0.1;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub const SPRING_VELOCITY_DAMPING: f32 = 0.8;
 /// Distance (px) under which spring-back snaps exactly to the clamped offset.
-pub const SNAP_EPSILON: f32 = 0.25;
+pub const SNAP_EPSILON: f32 = 0.5;
 
 /// Minimum viewport extent (px) used to scale out-of-bounds resistance.
 pub const MIN_VIEWPORT: f32 = 100.0;
 /// Upper clamp for the normalized out-of-bounds distance.
 pub const OOB_RESISTANCE_CLAMP: f32 = 0.75;
 /// Scale factor for the quadratic out-of-bounds drag resistance.
-pub const OOB_RESISTANCE_SCALE: f32 = 0.3;
+/// Very low value so dragging past the edge feels yielding and soft.
+pub const OOB_RESISTANCE_SCALE: f32 = 0.1;
 
 /// Maximum fling velocity (px/frame at scale 1.0) from a scroll-wheel event.
 pub const MAX_SCROLL_VELOCITY: f32 = 15000.0;
@@ -79,7 +96,7 @@ pub const FLING_BEZIER_Y2: f32 = 1.0;
 /// initial slope matches the finger speed (no visible jump on lift-off) — a
 /// longer duration therefore also glides farther. Tunable: raise it to slide
 /// farther / settle slower, lower it for a snappier stop.
-pub const FLING_DURATION_S: f32 = 2.4;
+pub const FLING_DURATION_S: f32 = 2.0;
 
 /// Normalized time fraction after which the bézier fling may snap to rest.
 ///
@@ -111,8 +128,9 @@ pub const SCROLLBAR_DRAG_SMOOTH_NEW: f32 = 0.6;
 /// between the last PointerMove and the PointerUp that ends the gesture.
 pub const VELOCITY_RESET_IDLE_MS: u128 = 400;
 
-/// Cubic ease-out coefficient for spring-back (1 − t³).
-pub const EASE_OUT_CUBIC: f32 = 3.0;
+/// Ease-out exponent for spring-back (1 − (1−t)^n).
+/// Lower values = smoother, more gradual recovery.
+pub const EASE_OUT_CUBIC: f32 = 1.5;
 
 /// Keyboard scroll step (logical px per keypress).
 pub const KEYBOARD_SCROLL_STEP: f32 = 40.0;
