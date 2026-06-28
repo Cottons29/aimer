@@ -1,18 +1,34 @@
+pub mod get_started_button;
+
+use crate::get_started_button::HoverableGetStartedButton;
+use aimer::animation::{Curve as AnimCurve, MorphTransition, Rgba};
+use aimer::console::{debug, info};
 use aimer::macros::widget;
+use aimer::provider::media_query::MediaQuery;
 use aimer::style::*;
 use aimer::*;
+use std::time::Duration;
 
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
-    // The landing page is a single vertically-scrolling screen made of
-    // stacked sections. Wrapping the root Column in a Scrollable lets the
-    // whole page scroll on every platform (native + web).
     AimerApp::start(HomePage {})
 }
 
 #[widget(Stateless)]
 struct HomePage {}
+
+fn app_padding(ctx: &BuildContext) -> LayoutSpacing {
+    let window_size = MediaQuery::of(ctx).size;
+    // info!("window size: {:?}", window_size);
+    let horizontal_padding = 20f64;
+    LayoutSpacing!(
+        left: horizontal_padding.into(),
+        right: horizontal_padding.into(),
+        top: Spacing::Px(90),
+        bottom: Spacing::Px(90)
+    )
+}
 
 impl StatelessWidget for HomePage {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
@@ -26,7 +42,22 @@ impl StatelessWidget for HomePage {
                         why_aimer_section(ctx),
                         polished_tooling_section(ctx),
                         same_looking_section(ctx),
-                        SizedBox!(height: 500),
+                        // SizedBox!(height: 500),
+                        // hero_section(ctx),
+                        // why_aimer_section(ctx),
+                        // polished_tooling_section(ctx),
+                        // same_looking_section(ctx),
+                        // SizedBox!(height: 500),
+                        // hero_section(ctx),
+                        // why_aimer_section(ctx),
+                        // polished_tooling_section(ctx),
+                        // same_looking_section(ctx),
+                        // SizedBox!(height: 500),
+                        // hero_section(ctx),
+                        // why_aimer_section(ctx),
+                        // polished_tooling_section(ctx),
+                        // same_looking_section(ctx),
+                        // SizedBox!(height: 500),
                         // hero_section(ctx),
                     ]
                 )
@@ -38,19 +69,15 @@ impl StatelessWidget for HomePage {
 /// The hero section: a large underlined `Aimer` title, a tagline paragraph,
 /// a `Get Started` button and a version label on a white background.
 fn hero_section(ctx: &BuildContext) -> Box<dyn Widget> {
+    let string = String::from("Aimer");
     Container!(
+        padding: app_padding(ctx),
         color: Colors::White,
-        padding: LayoutSpacing!(
-            left: Spacing::Px(80),
-            right: Spacing::Px(80),
-            top: Spacing::Px(90),
-            bottom: Spacing::Px(90)
-        ),
         child: Column!(
             horizontal_alignment: BoxAlignment::Start,
             children: [
                 Text!(
-                    "Aimer",
+                    string.as_str(),
                     text_style: TextStyle!(
                         font_size: 72,
                         color: Colors::Black,
@@ -59,46 +86,19 @@ fn hero_section(ctx: &BuildContext) -> Box<dyn Widget> {
                     )
                 ),
                 SizedBox!(height: 24),
-                Container!(
-                    height: Dimension::Px(100.0),
-                    child: Text!(
-                        "A cross-platform UI framework built with Rust, inspired by Flutter's widget model. Build native user interfaces from a single codebase using a declarative, composable widget tree.",
-                        text_style: TextStyle!(
-                            font_size: 22,
-                            color: Colors::Gray,
-                            text_overflow: TextOverflow::Wrap,
-                        )
-                    )
+                Text!(
+                    "A cross-platform UI framework built with Rust, inspired by Flutter's widget model. Build native user interfaces from a single codebase using a declarative, composable widget tree.",
+                    text_style: TextStyle!(
+                        font_size: 22,
+                        color: Colors::Gray,
+                        text_overflow: TextOverflow::Wrap
+                    ),
                 ),
                 SizedBox!(height: 40),
                 Container!(
                     width: Dimension::Px(200.0),
                     height: Dimension::Px(56.0),
-                    child: Button!(
-                        on_press: move || {
-                            println!("Get Started pressed");
-                        },
-                        decoration: BoxDecoration!(
-                            background_color: Colors::Black,
-                            border_radius: (8, 8, 8, 8),
-                        ),
-                        hover_decoration: BoxDecoration!(
-                            background_color: Colors::Gray,
-                            border_radius: (8, 8, 8, 8),
-                        ),
-                        child: Container!(
-                            child: Text!(
-                                "Get Started",
-                                text_align: TextAlign::MidCenter,
-                                text_style: TextStyle!(
-                                    color: Colors::White,
-                                    font_size: 18,
-                                    font_weight: FontWeight::Bold,
-                                    text_decoration: TextDecoration::Underline,
-                                )
-                            )
-                        )
-                    )
+                    child: HoverableGetStartedButton!()
                 ),
                 SizedBox!(height: 14),
                 Text!(
@@ -154,12 +154,7 @@ fn feature_block(title: &str, body: Box<dyn Widget>) -> Box<dyn Widget> {
 fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
     Container!(
         box_decoration: BoxDecoration!(background_color: Colors::Black),
-        padding: LayoutSpacing!(
-            left: Spacing::Px(80),
-            right: Spacing::Px(80),
-            top: Spacing::Px(80),
-            bottom: Spacing::Px(80)
-        ),
+        padding: app_padding(ctx),
         child: Column!(
             horizontal_alignment: BoxAlignment::Start,
             children: [
@@ -298,11 +293,8 @@ fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
 /// bold inline words on the right.
 fn polished_tooling_section(ctx: &BuildContext) -> Box<dyn Widget> {
     Container!(
+        padding: app_padding(ctx),
         box_decoration: BoxDecoration!(background_color: Color::Rgb(40, 44, 52)),
-        padding: LayoutSpacing!(
-            left: Spacing::Px(80),
-            right: Spacing::Px(80),
-        ),
         child: Column!(
             horizontal_alignment: BoxAlignment::Start,
             vertical_alignment: BoxAlignment::Start,
@@ -359,17 +351,13 @@ fn platform_label(text: &str, active: bool) -> Box<dyn Widget> {
     )
 }
 
+
 /// The `Same Looking Everywhere` section: an underlined heading, a rounded
 /// browser-mock frame embedding the live counter demo and a platform row.
-fn same_looking_section(ctx: &BuildContext) -> Box<dyn Widget>  {
+fn same_looking_section(ctx: &BuildContext) -> Box<dyn Widget> {
     Container!(
         color: Colors::White,
-        padding: LayoutSpacing!(
-            left: Spacing::Px(80),
-            right: Spacing::Px(80),
-            top: Spacing::Px(80),
-            bottom: Spacing::Px(80)
-        ),
+        padding: app_padding(ctx),
         child: Column!(
             horizontal_alignment: BoxAlignment::Center,
             children: [
