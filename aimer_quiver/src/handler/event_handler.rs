@@ -2,7 +2,8 @@ use crate::handler::AimerApplicationHandler;
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::KeyAction;
 use aimer_events::element::{ElementEvent, Modifiers, NamedKey};
-use aimer_utils::{info, ExecTimes};
+use aimer_events::pointer::PointerSource;
+use aimer_utils::{ExecTimes, info};
 use aimer_widget::{broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent};
@@ -14,7 +15,15 @@ pub struct WindowEventHandler;
 impl WindowEventHandler {
     pub(crate) fn handle_events(app: &mut AimerApplicationHandler, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                #[cfg(target_os = "macos")]
+                {
+                    use winit::platform::macos::ActiveEventLoopExtMacOS;
+                    event_loop.hide_application();
+                }
+                #[cfg(not(target_os = "macos"))]
+                event_loop.exit()
+            }
 
             WindowEvent::Touch(item) => Self::handle_touch(item, app, _id, event),
 
@@ -32,10 +41,7 @@ impl WindowEventHandler {
 
             WindowEvent::Ime(ime) => Self::handle_ime(ime, app),
 
-            WindowEvent::MouseWheel { delta, phase, .. } => {
-                // debug!("Mouse wheel phase: {:?}", phase);
-                Self::handle_mouse_wheel(delta, phase, app)
-            }
+            WindowEvent::MouseWheel { delta, phase, .. } =>  Self::handle_mouse_wheel(delta, phase, app),
 
             WindowEvent::RedrawRequested => {
                 #[cfg(debug_assertions)]
@@ -47,7 +53,7 @@ impl WindowEventHandler {
             WindowEvent::Resized(size) =>
             {
                 #[cfg(not(target_os = "ios"))]
-                Self::handle_resize(size, app)
+                Self::handle_resize(size, app, event_loop)
             }
 
             _ => (),
@@ -57,38 +63,21 @@ impl WindowEventHandler {
     fn handle_touch(item: Touch, app: &mut AimerApplicationHandler, _id: WindowId, _event: WindowEvent) {
         let scale = app.window_scale;
         let pos = Vec2d { x: (item.location.x / scale) as f32, y: (item.location.y / scale) as f32 };
+        let touch_id = item.id;
 
-        // Multi-touch: track the primary (first) finger that started a gesture.
-        // Secondary fingers are ignored so a second touch doesn't cause the
-        // scrollable to see a sudden position jump from one finger to another.
-        // This matches UIScrollView behaviour — the first finger owns the scroll.
-        match item.phase {
-            TouchPhase::Started => {
-                if app.active_touch_id.is_some() {
-                    // A finger is already down — ignore this second touch.
-                    return;
-                }
-                app.active_touch_id = Some(item.id);
-            }
-            TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled => {
-                // Only process events from the primary finger.
-                if app.active_touch_id != Some(item.id) {
-                    return;
-                }
-                if item.phase == TouchPhase::Ended || item.phase == TouchPhase::Cancelled {
-                    app.active_touch_id = None;
-                }
-            }
-        }
+        // All touch events are passed through with their finger ID.
+        // Individual widgets (scrollable, gesture detector) decide which
+        // fingers to track — the scrollable keeps its own primary-finger
+        // filter so a second touch doesn't jump the scroll position.
 
         let event = match item.phase {
-            TouchPhase::Started => Some(ElementEvent::PointerDown(pos)),
-            TouchPhase::Moved => Some(ElementEvent::PointerMove(pos)),
-            TouchPhase::Ended => Some(ElementEvent::PointerUp(pos)),
-            TouchPhase::Cancelled => Some(ElementEvent::Cancel),
+            TouchPhase::Started => ElementEvent::PointerDown(pos, PointerSource::Touch, touch_id),
+            TouchPhase::Moved => ElementEvent::PointerMove(pos, PointerSource::Touch, touch_id),
+            TouchPhase::Ended => ElementEvent::PointerUp(pos, PointerSource::Touch, touch_id),
+            TouchPhase::Cancelled => ElementEvent::Cancel,
         };
         #[allow(clippy::collapsible_if)]
-        if let Some(event) = event {
+        {
             if let Some(root) = &app.widget_root {
                 let mut handled = dispatch_event(root.as_ref(), pos, &event);
                 #[cfg(debug_assertions)]
@@ -100,10 +89,7 @@ impl WindowEventHandler {
                     // elements with an active drag (e.g. scrollable fling) receive
                     // the release event even when the finger lifts outside their
                     // bounds — the common case for a fast flick on touch screens.
-                    if matches!(
-                        &event,
-                        ElementEvent::PointerDown(_) | ElementEvent::PointerUp(_) | ElementEvent::Cancel
-                    ) {
+                    if matches!(&event, ElementEvent::PointerDown(_, _, _) | ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel) {
                         broadcast_event(root.as_ref(), &event);
                     }
                 }
@@ -124,27 +110,34 @@ impl WindowEventHandler {
         }
         app.cursor_pos = new_pos;
         if let Some(root) = &app.widget_root {
-            let event = ElementEvent::PointerMove(app.cursor_pos);
-            let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
-            #[cfg(debug_assertions)]
-            if app.inspector.is_enabled() {
-                handled = true;
-            }
-            if let Some(window) = &app.window
-                && handled
-            {
+            let event = ElementEvent::PointerMove(app.cursor_pos, PointerSource::Mouse, 0);
+            let _handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
+            if let Some(window) = &app.window {
                 window.request_redraw();
             }
         }
     }
 
     fn handle_mouse_input(state: ElementState, button: MouseButton, app: &mut AimerApplicationHandler) {
-        if button != MouseButton::Left {
+        // Only handle left and right mouse buttons here.
+        // Middle button and others are ignored for now.
+        if !matches!(button, MouseButton::Left | MouseButton::Right) {
             return;
         }
 
         let c = app.cursor_pos;
-        let event = if state.is_pressed() { ElementEvent::PointerDown(c) } else { ElementEvent::PointerUp(c) };
+        let event = if button == MouseButton::Right {
+            // Right-click: only fire on press, not release.
+            if state.is_pressed() {
+                ElementEvent::PointerDown(c, PointerSource::Mouse, 0)
+            } else {
+                ElementEvent::PointerUp(c, PointerSource::Mouse, 0)
+            }
+        } else if state.is_pressed() {
+            ElementEvent::PointerDown(c, PointerSource::Mouse, 0)
+        } else {
+            ElementEvent::PointerUp(c, PointerSource::Mouse, 0)
+        };
         #[allow(clippy::collapsible_if)]
         if let Some(root) = &app.widget_root {
             let mut handled = dispatch_event(root.as_ref(), c, &event);
@@ -153,7 +146,7 @@ impl WindowEventHandler {
                 handled = true;
             }
             if !handled {
-                if matches!(&event, ElementEvent::PointerDown(_)) {
+                if matches!(&event, ElementEvent::PointerDown(_, _, _) | ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel) {
                     broadcast_event(root.as_ref(), &event);
                 }
             }
@@ -325,9 +318,16 @@ impl WindowEventHandler {
             Ime::Enabled => {
                 app.ime_composing = false;
             }
-            Ime::Preedit(text, _cursor) => {
+            Ime::Preedit(text, cursor) => {
                 app.ime_composing = !text.is_empty();
-                // Redraw so a focused field can reflect composition state.
+                // Forward preedit to focused widget for composition rendering
+                if let Some(root) = &app.widget_root {
+                    let event = ElementEvent::ImePreedit {
+                        text: text.clone(),
+                        cursor: cursor.clone(),
+                    };
+                    dispatch_event(root.as_ref(), app.cursor_pos, &event);
+                }
                 if let Some(window) = &app.window {
                     window.request_redraw();
                 }
@@ -347,7 +347,8 @@ impl WindowEventHandler {
         // debug!("Mouse wheel delta: {:?}", delta);
         let scroll_delta = match delta {
             MouseScrollDelta::LineDelta(x, y) => Vec2d { x: x * 20.0, y: y * 20.0 },
-            MouseScrollDelta::PixelDelta(pos) => Vec2d { x: pos.x as f32, y: pos.y as f32 },
+            // Scale trackpad (PixelDelta) down for more resistance / less sensitivity.
+            MouseScrollDelta::PixelDelta(pos) => Vec2d { x: pos.x as f32 * 0.85, y: pos.y as f32 * 0.85 },
         };
 
         let event = ElementEvent::Scroll { delta: scroll_delta, phase };
@@ -366,7 +367,7 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_resize(size: PhysicalSize<u32>, app: &mut AimerApplicationHandler) {
+    fn handle_resize(size: PhysicalSize<u32>, app: &mut AimerApplicationHandler, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "ios")]
         aimer_utils::debug!("iOS handle_resize raw size: {size:?}");
         #[cfg(target_os = "ios")]
@@ -417,10 +418,13 @@ impl WindowEventHandler {
         if let Some(root) = &app.widget_root {
             root.invalidate_layout();
         }
-        if let Some(window) = &app.window {
-            window.request_redraw();
-        }
 
-        // debug!("Rendered a frame");
+        // Render a frame immediately during the resize event so the
+        // compositor has fresh content before it can stretch the old
+        // drawable.  Without this synchronous render the compositor
+        // (WindowServer on macOS) stretches the previous frame to the
+        // new window size — visible as directional stretching when
+        // dragging the right or bottom window edge.
+        app.render(event_loop);
     }
 }
