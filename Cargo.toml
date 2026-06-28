@@ -25,7 +25,7 @@ aimer_assets.workspace = true
 aimer_style.workspace = true
 aimer_text.workspace = true
 aimer_macro.workspace = true
-
+aimer_provider.workspace = true
 
 
 [workspace]
@@ -34,7 +34,7 @@ members = [
     ".",
     "website",
     "aimer_quiver",
-    "aimer_cli",
+    "dev_tools/aimer_cli",
     "aimer_cupid",
     "crates/aimer_widget",
     "crates/aimer_container",
@@ -52,7 +52,7 @@ members = [
     "crates/aimer_text",
     "crates/aimer_macro",
     "jaime"
-]
+, "crates/aimer_provider", "dev_tools/aimer_lsp", "crates/aimer_sdk"]
 
 
 [workspace.dependencies]
@@ -73,6 +73,7 @@ aimer_assets = { path = "crates/aimer_assets" }
 aimer_style = { path = "crates/aimer_style" }
 aimer_text = { path = "crates/aimer_text" }
 aimer_macro = { path = "crates/aimer_macro" }
+aimer_provider = {path = "crates/aimer_provider"}
 
 
 #############
