@@ -3,7 +3,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_attribute::{BoxConstraint, CacheBounds};
 use aimer_macro::{Rebuildable, WidgetConstructor};
 use aimer_style::LayoutSpacing;
-use aimer_widget::{base::BuildContext, Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement, Widget};
+use aimer_widget::{base::BuildContext, Drawable, Element, EventElement, LayoutCache, LayoutElement, Reconcilable, VisitorElement, Widget};
 
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 
@@ -547,6 +547,13 @@ impl LayoutElement for RawFlex {
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.cache_bound.pos_start_end()
     }
+}
 
+impl Reconcilable for RawFlex {
+    fn as_any(&self) -> &dyn std::any::Any { self }
 
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        // TODO: reconcile children by key matching
+        false
+    }
 }
