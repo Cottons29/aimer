@@ -1,0 +1,10 @@
+[watch]
+# The web scaffold lives in `builds/web`, but the Rust source it compiles is at
+# the project root (`src`). Watch paths are relative to this Trunk.toml, so we
+# point two levels up — otherwise Trunk tries to watch `builds/web/src`, which
+# does not exist, and aborts with "error taking the canonical path to the watch
+# path".
+watch = ["../../src"]
+
+[serve]
+port = 3000
