@@ -1,4 +1,5 @@
 pub mod gesture;
+pub mod mouse_region;
 mod input_field;
 pub mod callback;
 
