@@ -2,10 +2,14 @@ use crate::text_pipeline::TextOverflowMode;
 use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
 use std::any::Any;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct RichTextSegment {
-    pub text: String,
+    // Shared reference-counted text so cloning a segment (the draw list is
+    // rebuilt every frame) does not reallocate the string.
+    pub text: Arc<str>,
     pub font_size: Option<f32>,
     pub color: Option<Color>,
     pub font_weight: Option<u16>,
@@ -13,7 +17,7 @@ pub struct RichTextSegment {
 }
 
 impl RichTextSegment {
-    pub fn new(text: impl Into<String>) -> Self {
+    pub fn new(text: impl Into<Arc<str>>) -> Self {
         Self { text: text.into(), font_size: None, color: None, font_weight: None, italic: None }
     }
 
@@ -42,7 +46,7 @@ pub enum DrawCommand {
     },
     DrawText {
         position: Vec2d,
-        text: String,
+        text: Arc<str>,
         font_size: f32,
         color: Color,
         bounds_width: Option<f32>,
@@ -193,14 +197,14 @@ impl DrawList {
             .push(DrawCommand::DrawImage { rect, texture_id });
     }
 
-    pub fn draw_text(&mut self, position: Vec2d, text: String, font_size: f32, color: Color) {
+    pub fn draw_text(&mut self, position: Vec2d, text: Arc<str>, font_size: f32, color: Color) {
         self.draw_text_with_overflow(position, text, font_size, color, None, None, TextOverflowMode::Clip);
     }
     #[allow(clippy::too_many_arguments)]
     pub fn draw_text_with_overflow(
         &mut self,
         position: Vec2d,
-        text: String,
+        text: Arc<str>,
         font_size: f32,
         color: Color,
         bounds_width: Option<f32>,
@@ -253,7 +257,18 @@ impl DrawList {
     }
 
     pub fn load_image(&mut self, bytes: &[u8], width: u32, height: u32) -> TextureId {
-        let texture_id = fxhash::hash32(&bytes);
+        // Hash only a small sample of the buffer to avoid O(n) cost on large images.
+        let texture_id = {
+            let mut hasher = fxhash::FxHasher::default();
+            width.hash(&mut hasher);
+            height.hash(&mut hasher);
+            let sample_len = 256.min(bytes.len());
+            if sample_len > 0 {
+                bytes[..sample_len].hash(&mut hasher);
+                bytes[bytes.len() - sample_len..].hash(&mut hasher);
+            }
+            hasher.finish() as u32
+        };
         // Record size always so future frames can query it, even if we already queued the load.
         self.set_texture_size(texture_id, width, height);
         if self.has_texture_id(texture_id) {
