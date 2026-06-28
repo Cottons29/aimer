@@ -29,6 +29,11 @@ pub mod render_ctx {
     }
 
     impl H5CanvasApi {
+        /// Returns true when the async GPU init has completed and the context is usable.
+        pub fn is_ready(&self) -> bool {
+            self.state.borrow().is_some()
+        }
+
         pub fn initialize(&mut self, window: &'static Window, size: PhysicalSize<u32>) {
             // Append the winit canvas to the DOM
             if let Some(canvas) = window.canvas() {
