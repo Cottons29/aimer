@@ -54,6 +54,10 @@ enum Commands {
         /// Run on the device with this id without showing the picker
         #[arg(short, long)]
         device: Option<String>,
+        /// Disable the interactive TUI and print logs to stdout/stderr instead.
+        /// Useful when running from an IDE or CI where no terminal is available.
+        #[arg(long)]
+        no_tui: bool,
     },
 
     /// Build the project for a target without launching it
@@ -135,8 +139,8 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Create { project_name }) => {
             commands::create::execute(project_name)?;
         }
-        Some(Commands::Run { target, device }) => {
-            commands::run::execute(target.map(|t| t.to_string()), device.clone())?;
+        Some(Commands::Run { target, device, no_tui }) => {
+            commands::run::execute(target.map(|t| t.to_string()), device.clone(), *no_tui)?;
         }
         Some(Commands::Build { target, release }) => {
             commands::build::execute(target.map(|t| t.to_string()), *release)?;
