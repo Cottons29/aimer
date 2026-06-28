@@ -21,15 +21,15 @@ use aimer::*;
 #[main]
 pub fn my_app() {
     // #[cfg(not(target_arch = "wasm32"))]
-    // start_counter();
+    start_counter();
     // state_router()
     // simply start the app with AimerApp::start
     // #[cfg(target_arch = "wasm32")]
     // test_positioned();
     // test_text()
-    test_scrollable()
+    // test_scrollable()
     // test_scrollable_row()
-    // stateful_2::start_my_list();
+    stateful_2::start_my_list();
     // start_my_animated_list()
     // test_border_outline()
     // test_image()
