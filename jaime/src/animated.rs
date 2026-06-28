@@ -1,8 +1,8 @@
+use aimer::animation::{AnimInstant, Animated, AnimationController};
 use aimer::macros::widget;
 use aimer::style::*;
 use aimer::*;
 use std::time::Duration;
-use aimer::animation::{AnimInstant, Animated, AnimationController};
 use uuid::Uuid;
 
 const ANIM_DURATION: Duration = Duration::from_millis(50);
@@ -36,10 +36,7 @@ impl Drop for ListItem {
 impl StatefulWidget for MyAnimatedList {
     type State = MyListState;
     fn create_state(&self) -> Self::State {
-        MyListState {
-            list: vec![],
-            updater: StateUpdater::empty(),
-        }
+        MyListState { list: vec![], updater: StateUpdater::empty() }
     }
 }
 
@@ -136,7 +133,6 @@ impl State<MyAnimatedList> for MyListState {
                                             }
                                         },
                                         decoration: BoxDecoration!(background_color: Colors::Gray),
-                                        hover_decoration: BoxDecoration!(background_color: Colors::Gray.alpha(120)),
                                         child: Container!(
                                             child: Text!(
                                                 "Add Item",
@@ -195,7 +191,6 @@ impl State<MyAnimatedList> for MyListState {
                                                             }
                                                         },
                                                         decoration: BoxDecoration!(background_color: Colors::Gray),
-                                                        hover_decoration: BoxDecoration!(background_color: Colors::Gray.alpha(120)),
                                                         child: Container!(
                                                             height: 50,
                                                             width: 200,
