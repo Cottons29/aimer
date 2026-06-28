@@ -203,7 +203,7 @@ fn fetch_devices() -> Vec<Device> {
     unique_devices
 }
 
-pub fn execute(target: Option<String>, device: Option<String>) -> anyhow::Result<()> {
+pub fn execute(target: Option<String>, device: Option<String>, no_tui: bool) -> anyhow::Result<()> {
     match get_project_root(false) {
         Ok(item) => {
             let mut config_path = item;
@@ -216,7 +216,7 @@ pub fn execute(target: Option<String>, device: Option<String>) -> anyhow::Result
             return Err(anyhow!("Aimer.toml not found in project root"));
         }
     }
-    let selected_device = if target.is_some() || device.is_some() {
+    let selected_device = if target.is_some() || device.is_some() || no_tui {
         // Non-interactive (scriptable) mode.
         resolve_device(target, device)?
     } else {
@@ -247,7 +247,11 @@ pub fn execute(target: Option<String>, device: Option<String>) -> anyhow::Result
 
     let pkg_name = crate::config::resolve_package_name(std::path::Path::new("."));
 
-    console::start(selected_device, pkg_name).context("interactive console exited with an error")?;
+    if no_tui {
+        console::start_no_tui(selected_device, pkg_name).context("console exited with an error")?;
+    } else {
+        console::start(selected_device, pkg_name).context("interactive console exited with an error")?;
+    }
     Ok(())
 }
 
