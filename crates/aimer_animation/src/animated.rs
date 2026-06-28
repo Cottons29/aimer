@@ -4,7 +4,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_macro::WidgetConstructor;
 use aimer_widget::base::*;
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -217,5 +217,14 @@ impl LayoutElement for AnimatedElement {
 
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
+    }
+}
+
+impl Reconcilable for AnimatedElement {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        // AnimatedElement manages animation state — always replace on rebuild.
+        false
     }
 }
