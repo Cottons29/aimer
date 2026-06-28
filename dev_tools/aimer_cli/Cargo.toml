@@ -1,6 +1,6 @@
 [package]
 name = "aimer_cli"
-version = "0.1.6+7"
+version = "0.1.6+8"
 edition = "2024"
 resolver = "3"
 
