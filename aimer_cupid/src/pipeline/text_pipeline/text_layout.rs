@@ -1,5 +1,6 @@
 use super::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
 use aimer_utils::time_cost;
+use std::collections::VecDeque;
 use unicode_bidi::BidiInfo;
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
@@ -229,7 +230,13 @@ where
     let max_width = options.max_width.max(0.0);
     let max_height = options.max_height.max(0.0);
 
-    for shaping_run in &shaping_runs {
+    // Use a queue so remainder runs from word-wrapping are re-evaluated for
+    // overflow on subsequent lines.  A plain `for` loop would emit the
+    // remainder once and `continue`, skipping the overflow check — causing
+    // long words to render past the second line's edge.
+    let mut queue: VecDeque<ShapingRun<'_>> = shaping_runs.into_iter().collect();
+
+    while let Some(shaping_run) = queue.pop_front() {
         let run_start = shaping_run.start;
         let run_text = shaping_run.text;
         let run_end = run_start + run_text.len();
@@ -273,7 +280,8 @@ where
             // at least one cluster (avoids an infinite wrapping loop on a single
             // wide cluster that can never fit).
             let mut sub_x = options.origin_x + line_width;
-            let mut remainder_start: Option<usize> = None;
+            let mut remainder_start: Option<(usize, bool)> = None;
+            let mut last_word_break: Option<usize> = None;
             let mut cluster_offset = 0usize;
             for (_, cluster_str) in run_text.grapheme_indices(true) {
                 // Each cluster contributes its share of the total advance.
@@ -288,32 +296,66 @@ where
                     .map(|g| g.advance)
                     .sum();
 
+                // Track the last whitespace cluster as a preferred word break.
+                // Use the *start* of the space so that when we break here the
+                // space glyph is included on the current line (its advance is
+                // already part of `sub_x`).  The glyph filter below uses
+                // `<= break_point` to include it.
+                if cluster_str.chars().all(char::is_whitespace) {
+                    last_word_break = Some(cluster_byte_start);
+                }
+
                 if sub_x + cluster_advance > options.origin_x + max_width && sub_x > options.origin_x {
-                    remainder_start = Some(cluster_byte_start);
+                    // Prefer breaking at the last word boundary rather than
+                    // mid-word.  If no word break was seen, fall back to the
+                    // cluster-level break.
+                    if let Some(wb) = last_word_break {
+                        remainder_start = Some((wb, true));
+                    } else {
+                        remainder_start = Some((cluster_byte_start, false));
+                    }
                     break;
                 }
                 sub_x += cluster_advance;
                 cluster_offset += cluster_str.len();
             }
 
-            if let Some(break_point) = remainder_start {
-                // Emit glyphs before break_point onto the current line.
+            if let Some((break_point, is_word_break)) = remainder_start {
+                // Emit glyphs up to break_point onto the current line.
+                // For word breaks we include the space glyph on the current
+                // line but position it separately at the accumulated width
+                // (not at line_start x), since it belongs after the word.
+                // For character breaks we exclude the overflowing char.
                 let glyph_start = glyphs.len();
                 let line_glyphs: Vec<_> = shaped
                     .iter()
-                    .filter(|g| g.cluster < break_point)
+                    .filter(|g| if is_word_break { g.cluster <= break_point } else { g.cluster < break_point })
                     .cloned()
                     .collect();
-                let line_run_width: f32 = line_glyphs.iter().map(|g| g.advance).sum();
+                // Track accumulated width for per-glyph positioning so the
+                // space lands after the preceding characters, not at the
+                // line's start x.
+                let mut acc_w = 0.0_f32;
+                let mut space_advance = 0.0_f32;
                 for mut glyph in line_glyphs {
-                    glyph.x += options.origin_x + line_width;
-                    glyph.y += baseline;
+                    let is_space = is_word_break && glyph.cluster == break_point;
+                    glyph.x = options.origin_x + line_width + acc_w;
+                    glyph.y = baseline;
+                    if is_space {
+                        space_advance = glyph.advance;
+                    }
+                    acc_w += glyph.advance;
                     glyphs.push(glyph);
                 }
-                runs.push(TextRun { text_range: run_start..break_point, level, font_id, glyph_range: glyph_start..glyphs.len() });
+                // For word breaks the text_range must include the space byte.
+                let text_end = if is_word_break { break_point + 1 } else { break_point };
+                runs.push(TextRun { text_range: run_start..text_end, level, font_id, glyph_range: glyph_start..glyphs.len() });
+                // line_run_width is the width of glyphs BEFORE the space;
+                // add the space advance for the total line width.
+                let line_run_width = acc_w;
                 finish_line(
                     &mut lines,
-                    line_start_text..break_point,
+                    line_start_text..text_end,
                     line_start_glyph..glyphs.len(),
                     baseline,
                     line_run_width + line_width,
@@ -321,8 +363,15 @@ where
                     false,
                 );
 
-                // Start a new line with the remainder.
-                line_start_text = break_point;
+                // Skip leading whitespace at the start of the new line so
+                // wrapped lines don't begin with a space character.
+                let mut trimmed = text_end;
+                while trimmed < run_end && text.as_bytes()[trimmed] == b' ' {
+                    trimmed += 1;
+                }
+
+                // Start a new line with the trimmed remainder.
+                line_start_text = trimmed;
                 line_start_glyph = glyphs.len();
                 line_width = 0.0;
                 baseline += metrics.line_height;
@@ -330,17 +379,14 @@ where
                     break;
                 }
 
-                // Emit remaining glyphs onto the new line.
-                let glyph_start2 = glyphs.len();
-                let mut remainder_width = 0.0f32;
-                for mut glyph in shaped.iter().filter(|g| g.cluster >= break_point).cloned() {
-                    glyph.x = options.origin_x + remainder_width;
-                    glyph.y = baseline;
-                    remainder_width += glyph.advance;
-                    glyphs.push(glyph);
+                // Push the remainder back to the queue so it is re-shaped
+                // and checked for overflow on the new line (fixes second-line
+                // word wrapping).  We do NOT emit remainder glyphs here — the
+                // queue iteration will emit them via the normal path below,
+                // avoiding double-emission.
+                if trimmed < run_end {
+                    queue.push_front(ShapingRun { text: &text[trimmed..run_end], start: trimmed, level });
                 }
-                line_width = remainder_width;
-                runs.push(TextRun { text_range: break_point..run_end, level, font_id, glyph_range: glyph_start2..glyphs.len() });
                 continue;
             } else {
                 // Couldn't split — emit whole run on a new line.
@@ -375,7 +421,11 @@ where
 
     let width = lines.iter().map(|line| line.width).fold(0.0, f32::max);
     let line_count = lines.len();
-    let height = line_count as f32 * metrics.line_height;
+    // line_height includes one line_gap per line, but line_gap only appears
+    // *between* lines — subtract the trailing one so the reported height
+    // matches the actual rendered extent (first-line ascent through last-line
+    // descent).
+    let height = line_count as f32 * metrics.line_height - metrics.line_gap;
     ParagraphLayout {
         text: text.to_string(),
         glyphs,
@@ -556,26 +606,60 @@ pub fn layout_shaped_text(
     let font_size = shaped_text.font_size;
     let line_height = shaped_text.line_height;
 
-    let mut glyphs = Vec::new();
+    let mut glyphs: Vec<PositionedGlyph> = Vec::new();
     let mut pen_x = origin_x;
     let mut pen_y = origin_y;
+
+    // Word-wrap state: track the last space position so we can break the line
+    // at word boundaries instead of mid-word.  If a single word is wider than
+    // max_width we fall back to character-level wrapping so text never overflows.
+    let mut last_space_glyph_idx: usize = usize::MAX;
+    let mut last_space_pen_x: f32 = origin_x;
 
     time_cost!("text_layout::LayoutText - positioned shaped clusters", {
         for cluster in &shaped_text.clusters {
             if cluster.text == "\n" {
                 pen_x = origin_x;
                 pen_y += line_height;
+                last_space_glyph_idx = usize::MAX;
                 continue;
             }
 
-            // Simple word-wrap: wrap only between grapheme clusters so UTF-8 text,
-            // combining marks, and emoji sequences are never split mid-cluster.
-            if max_width > 0.0 && pen_x + cluster.width > origin_x + max_width && pen_x > origin_x {
-                pen_x = origin_x;
-                pen_y += line_height;
+            // Track the last space cluster so we know where to break.
+            if cluster.text.chars().all(char::is_whitespace) {
+                last_space_glyph_idx = glyphs.len();
+                last_space_pen_x = pen_x + cluster.width;
             }
 
-            // time_cost!("text_layout::LayoutText - shaped_glyphs.iter().for_each", {
+            if max_width > 0.0 && pen_x + cluster.width > origin_x + max_width && pen_x > origin_x {
+                if last_space_glyph_idx < glyphs.len() {
+                    // Word-wrap: move the part of the word that was already
+                    // placed after the last space down to a new line, keeping
+                    // those glyphs (they must not be discarded) and shifting
+                    // them so the word starts at the left margin.
+                    let wrap_offset = last_space_pen_x - origin_x;
+                    // Width of the already-placed glyphs that belong to the
+                    // overflowing word (everything after the last space).
+                    let moved_width = pen_x - last_space_pen_x;
+                    for glyph in &mut glyphs[last_space_glyph_idx..] {
+                        glyph.x -= wrap_offset;
+                        glyph.y += line_height;
+                    }
+                    // Continue the new line right after the moved glyphs so the
+                    // current cluster is appended (not overlapped) below.
+                    pen_x = origin_x + moved_width;
+                    pen_y += line_height;
+                    last_space_glyph_idx = usize::MAX;
+                    // Fall through to the normal emit path below, which places
+                    // the current cluster at the updated pen position.
+                } else {
+                    // No word break available (word wider than max_width) — fall
+                    // back to character-level wrapping.
+                    pen_x = origin_x;
+                    pen_y += line_height;
+                }
+            }
+
             for &(glyph_key, advance, x_offset, y_offset) in &cluster.glyphs {
                 let rg = time_cost!("RasterizeKey", || rasterizer.rasterize_key(glyph_key, font_size));
                 if rg.width > 0 && rg.height > 0 {
@@ -597,7 +681,6 @@ pub fn layout_shaped_text(
 
                 pen_x += advance;
             }
-            // })
         }
     });
     glyphs
@@ -637,7 +720,7 @@ mod tests {
         assert_eq!(layout.lines[0].text_range, 0..5);
         assert_eq!(layout.lines[1].text_range, 6..12);
         assert_eq!(layout.metrics.line_count, 2);
-        assert_eq!(layout.metrics.height, layout.metrics.line_height * 2.0);
+        assert_eq!(layout.metrics.height, layout.metrics.line_height * 2.0 - layout.metrics.line_gap);
     }
 
     #[test]

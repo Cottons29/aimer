@@ -92,7 +92,13 @@ impl<'w> GpuContext<'w> {
 
         #[cfg(target_os = "android")]
         let limit = Limits::downlevel_webgl2_defaults().using_resolution(resolution);
-        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        // iOS/Metal exposes stricter device limits than the desktop defaults
+        // (e.g. `max_inter_stage_shader_variables` is 15, while `Limits::default()`
+        // requests 16). Requesting the adapter's own limits keeps the request
+        // within what the device actually supports so `request_device` succeeds.
+        #[cfg(target_os = "ios")]
+        let limit = adapter.limits();
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
         let limit = Limits::default();
         #[cfg(target_arch = "wasm32")]
         let limit = Limits::downlevel_webgl2_defaults();
@@ -137,13 +143,25 @@ impl<'w> GpuContext<'w> {
 
         let max_dim = device.limits().max_texture_dimension_2d;
 
-        debug!("Gpu Context : Initialized with max texture dimension: {} and is_srgb: {}", max_dim, is_srgb);
+        // Use `Fifo` (v-sync) so presentation is paced by the display/compositor
+        // itself: `surface.present()` blocks until the next refresh slot, keeping
+        // frames in phase with the panel. This replaces the old
+        // `Mailbox`/`Immediate` render-ahead modes that were only honored when the
+        // surface owned the scanout (fullscreen); in windowed mode the compositor
+        // re-synchronized them anyway, and the software frame limiter that capped
+        // them raced the compositor's v-sync, producing windowed judder. Letting
+        // v-sync be the single timing source removes that beat pattern entirely.
+        // `Fifo` is always available and still presents at the full panel refresh
+        // rate (e.g. 120 Hz) on high-refresh displays.
+        let present_mode = wgpu::PresentMode::Fifo;
+
+        debug!("Gpu Context : Initialized with max texture dimension: {} and is_srgb: {} present_mode: {:?}", max_dim, is_srgb, present_mode);
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: selected_format,
             width: size.width.max(1).min(max_dim),
             height: size.height.max(1).min(max_dim),
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,

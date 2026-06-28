@@ -1,7 +1,7 @@
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::*;
 use aimer_widget::{*, TextOverflowMode};
@@ -12,7 +12,7 @@ use aimer_widget::base::BuildContext;
 
 #[derive(Rebuildable, EventElement)]
 pub struct RawTextWidget {
-    pub text: String,
+    pub text: Arc<str>,
     pub text_style: TextStyle,
     pub text_align: TextAlign,
     pub cache: LayoutCache,
@@ -111,6 +111,17 @@ impl Drawable for RawTextWidget {
                 ctx.canvas.draw_text(&self.text, (x, y).into(), font_size, color);
             }
         }
+
+        if matches!(self.text_style.text_decoration, TextDecoration::Underline) {
+            let thickness = (font_size * 0.06).max(1.0);
+            let underline_y = y + descent.max(1.0) * 0.5;
+            ctx.canvas.fill_color_rect(
+                (x, underline_y).into(),
+                ResolvedSize { width: text_width, height: thickness },
+                color,
+                [0.0, 0.0, 0.0, 0.0],
+            );
+        }
     }
 }
 
@@ -152,5 +163,15 @@ impl LayoutElement for RawTextWidget {
     }
     fn invalidate_layout(&self) {
         self.cache.invalidate();
+    }
+}
+
+impl Reconcilable for RawTextWidget {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        // Leaf element — always replace. Text elements are cheap to create.
+        // The real benefit of reconciliation is at StatefulElement (preserving state).
+        false
     }
 }

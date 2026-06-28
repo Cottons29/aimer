@@ -1,8 +1,9 @@
 use aimer_animation::AnimInstant;
+use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_widget::base::{BuildContext, Color, Colors};
-use aimer_widget::{Drawable, EventElement, LayoutElement, VisitorElement};
-use std::cell::UnsafeCell;
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Reconcilable, VisitorElement};
+use std::cell::{Cell, UnsafeCell};
 
 use crate::input_field::controller::TextFieldController;
 use aimer_attribute::CacheBounds;
@@ -10,9 +11,12 @@ use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_events::window::get_window;
 use aimer_macro::Rebuildable;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
+use aimer_text::RawTextWidget;
+use aimer_widget::LayoutCache;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// Write text to the system clipboard.
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
@@ -222,15 +226,17 @@ mod android_keyboard {
     use aimer_events::android_app;
 
     pub fn show_keyboard() {
-        if let Some(app) = android_app::get_android_app() {
-            app.show_soft_input(false);
-        }
+        // Focus the hidden `EditText` owned by `com.aimer.AimerActivity` and raise
+        // the soft keyboard. Composed (CJK) text is captured there and forwarded
+        // back into Rust via the `nativeInsertText` JNI bridge. The previous
+        // `AndroidApp::show_soft_input` only raised the keyboard against the bare
+        // native surface, which has no `InputConnection`, so IME-composed text was
+        // silently dropped.
+        android_app::show_keyboard();
     }
 
     pub fn dismiss_keyboard() {
-        if let Some(app) = android_app::get_android_app() {
-            app.hide_soft_input(false);
-        }
+        android_app::hide_keyboard();
     }
 }
 
@@ -348,15 +354,13 @@ pub enum ExpandDirection {
     #[default]
     None,
 }
-
-
 #[allow(dead_code)]
 #[derive(Rebuildable)]
 pub(crate) struct RawTextField {
     pub input_type: InputType,
     pub controller: TextFieldController,
-    pub prompt: String,
-    pub hint: String,
+    pub prompt: Arc<str>,
+    pub hint: Arc<str>,
     pub hint_style: TextStyle,
     pub text_style: TextStyle,
     pub prompt_style: TextStyle,
@@ -372,11 +376,23 @@ pub(crate) struct RawTextField {
     pub hover_decoration: Option<BoxDecoration>,
     pub focus_decoration: Option<BoxDecoration>,
     pub disabled_decoration: Option<BoxDecoration>,
-    pub focused: UnsafeCell<bool>,
-    pub hovered: UnsafeCell<bool>,
+    pub selection_color: Color,
+    pub focused: Cell<bool>,
+    pub hovered: Cell<bool>,
     pub cached_bounds: CacheBounds,
     pub on_changed: TextFieldCallback,
     pub on_submitted: TextFieldCallback,
+    pub on_focus: TextFieldCallback,
+    pub on_blur: TextFieldCallback,
+    pub read_only: bool,
+    pub mouse_held: Cell<bool>,
+    pub last_click_time: Cell<AnimInstant>,
+    pub click_count: Cell<u8>,
+    pub pending_click: Cell<Option<Vec2d>>,
+    pub scroll_x: Cell<f32>,
+    pub preedit_text: Cell<String>,
+    pub preedit_cursor: Cell<Option<(usize, usize)>>,
+    pub blink_scheduled: Cell<bool>,
     pub padding: LayoutSpacing
 }
 
@@ -387,23 +403,22 @@ impl RawTextField {
     }
 
     fn is_focused(&self) -> bool {
-        unsafe { *self.focused.get() }
+        self.focused.get()
     }
 
     fn set_focused(&self, focused: bool) {
-        unsafe {
-            *self.focused.get() = focused;
+        self.focused.set(focused);
+        if !focused {
+            self.blink_scheduled.set(false);
         }
     }
 
     fn is_hovered(&self) -> bool {
-        unsafe { *self.hovered.get() }
+        self.hovered.get()
     }
 
     fn set_hovered(&self, hovered: bool) {
-        unsafe {
-            *self.hovered.get() = hovered;
-        }
+        self.hovered.set(hovered);
     }
 
     fn active_decoration(&self) -> &BoxDecoration {
@@ -443,12 +458,12 @@ impl RawTextField {
         canvas.measure_text(&prefix, font_size)
     }
 
-    fn ascent_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32) -> f32 {
-        canvas.measure_text_metrics("M", font_size, 0.0).ascent
-    }
-
-    fn descent_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32) -> f32 {
-        -canvas.measure_text_metrics("M", font_size, 0.0).descent
+    /// Measure text width up to a given grapheme offset.
+    fn text_width_to_offset(&self, text: &str, offset: usize, canvas: &aimer_canvas::Canvas, font_size: f32) -> f32 {
+        let prefix: String = unicode_segmentation::UnicodeSegmentation::graphemes(text, true)
+            .take(offset)
+            .collect();
+        canvas.measure_text(&prefix, font_size)
     }
 
     fn align_x(&self, text_width: f32, content_width: f32) -> f32 {
@@ -459,16 +474,78 @@ impl RawTextField {
         }
     }
 
-    fn align_y_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32, content_height: f32) -> f32 {
-        let ascent = self.ascent_canvas(canvas, font_size);
-        let descent = self.descent_canvas(canvas, font_size);
-        match self.text_align {
-            TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => ascent,
-            TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
-                content_height / 2.0 + (ascent - descent) / 2.0
-            }
-            TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => content_height - descent,
+    fn build_text_widget<'a>(
+        &self,
+        text: &'a str,
+        style: &TextStyle,
+        align: TextAlign,
+    ) -> RawTextWidget {
+        RawTextWidget {
+            text: Arc::from(text),
+            text_style: style.clone(),
+            text_align: align,
+            cache: LayoutCache::new(),
+            _typeface: Mutex::new(None),
         }
+    }
+
+    // ── Word / line selection helpers ────────────────────────────────
+
+    /// Select the word at the given grapheme offset using Unicode word boundaries.
+    fn select_word_at(&self, grapheme_offset: usize) {
+        use unicode_segmentation::UnicodeSegmentation;
+        let text = self.controller.text();
+        if text.is_empty() { return; }
+
+        // Convert grapheme offset to byte offset
+        let byte_offset: usize = text.chars().take(grapheme_offset).map(|c| c.len_utf8()).sum();
+
+        // Find word boundaries
+        let word_bounds: Vec<(usize, &str)> = text.split_word_bound_indices().collect();
+
+        for &(start, segment) in &word_bounds {
+            let end = start + segment.len();
+            if byte_offset >= start && byte_offset < end {
+                let grapheme_start = text[..start].chars().count();
+                let grapheme_end = text[..end].chars().count();
+                self.cursor.set_selection_anchor(Some(grapheme_start));
+                self.cursor.set_offset(grapheme_end);
+                return;
+            }
+        }
+    }
+
+    /// Select the line (between newline characters) containing the given grapheme offset.
+    fn select_line_at(&self, grapheme_offset: usize) {
+        let text = self.controller.text();
+        if text.is_empty() { return; }
+
+        let chars: Vec<char> = text.chars().collect();
+        let mut line_start = grapheme_offset;
+        let mut line_end = grapheme_offset;
+
+        while line_start > 0 && chars[line_start - 1] != '\n' { line_start -= 1; }
+        while line_end < chars.len() && chars[line_end] != '\n' { line_end += 1; }
+
+        self.cursor.set_selection_anchor(Some(line_start));
+        self.cursor.set_offset(line_end);
+    }
+
+    /// Adjust `scroll_x` so the cursor is visible within `content_width`.
+    fn ensure_cursor_visible(&self, content_width: f32, canvas: &aimer_canvas::Canvas, font_size: f32) {
+        let cursor_x = self.cursor_x_offset_canvas(canvas, font_size);
+        let scroll = self.scroll_x.get();
+
+        if cursor_x < scroll {
+            self.scroll_x.set(cursor_x.max(0.0));
+        } else if cursor_x > scroll + content_width {
+            self.scroll_x.set((cursor_x - content_width).max(0.0));
+        }
+    }
+
+    /// Count the number of lines in the text (newlines + 1).
+    fn line_count(&self) -> usize {
+        self.controller.text().chars().filter(|&c| c == '\n').count() + 1
     }
 }
 
@@ -578,7 +655,11 @@ fn wasm_request_keyboard(show: bool) {
             // that may not fire keydown for each character.
             {
                 let cb = Closure::<dyn FnMut(web_sys::InputEvent)>::new(move |evt: web_sys::InputEvent| {
-                    if evt.is_composing() {
+                    // IME-composed text (Chinese/Japanese/Korean, ...) is committed
+                    // through the `compositionend` handler below. Skip every
+                    // composition-related `input` event here so the composed result
+                    // is never inserted twice.
+                    if evt.is_composing() || evt.input_type() == "insertCompositionText" {
                         return;
                     }
                     let Some(data) = evt.data() else { return };
@@ -613,6 +694,45 @@ fn wasm_request_keyboard(show: bool) {
                 cb.forget();
             }
 
+            // Commit IME-composed text (Chinese / Japanese / Korean, ...). The
+            // browser fires `compositionend` with the final string once the user
+            // accepts a candidate. This is the authoritative commit signal and is
+            // forwarded as synthesized key events, mirroring the plain `input`
+            // path so the framework inserts the composed characters exactly once.
+            {
+                let cb = Closure::<dyn FnMut(web_sys::CompositionEvent)>::new(move |evt: web_sys::CompositionEvent| {
+                    let Some(data) = evt.data() else { return };
+                    if data.is_empty() {
+                        return;
+                    }
+                    let Some(w) = web_sys::window() else { return };
+                    let Some(doc) = w.document() else { return };
+                    let Some(canvas) = doc.get_element_by_id("aimer_app") else { return };
+                    for ch in data.chars() {
+                        let key = ch.to_string();
+                        for event_type in &["keydown", "keyup"] {
+                            let synth = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(
+                                event_type,
+                                web_sys::KeyboardEventInit::new()
+                                    .key(&key)
+                                    .bubbles(true)
+                                    .cancelable(true),
+                            )
+                            .unwrap();
+                            canvas.dispatch_event(&synth).ok();
+                        }
+                    }
+                    // Clear the hidden input so the next composition starts clean.
+                    if let Some(el) = doc.get_element_by_id("__aimer_hidden_input") {
+                        let el: web_sys::HtmlInputElement = el.unchecked_into();
+                        el.set_value("");
+                    }
+                });
+                el.add_event_listener_with_callback("compositionend", cb.as_ref().unchecked_ref())
+                    .ok();
+                cb.forget();
+            }
+
             el
         }
     };
@@ -640,15 +760,35 @@ impl EventElement for RawTextField {
         // debug!("RawTextField on_event: {:?}", event);
 
         match event {
-            ElementEvent::PointerDown(pos) => {
+            ElementEvent::PointerDown(pos, _, _) => {
                 let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
-                // debug!("RawTextField on_event: is_inside I = {}", is_inside);
-
                 if is_inside {
+                    let was_focused = self.is_focused();
                     self.set_focused(true);
-                    self.cursor.set_offset(self.controller.char_count());
+                    self.mouse_held.set(true);
+                    self.cursor.clear_selection();
+
+                    // Double/triple-click detection
+                    let now = AnimInstant::now();
+                    let elapsed = now.duration_since(self.last_click_time.get());
+                    let prev_count = self.click_count.get();
+                    let new_count = if elapsed.as_millis() < 500 { prev_count + 1 } else { 1 };
+                    self.click_count.set(new_count);
+                    self.last_click_time.set(now);
+
+                    // Defer cursor placement to draw() where canvas is available
+                    self.pending_click.set(Some(*pos));
                     self.cursor.reset_blink();
+
+                    if !was_focused {
+                        self.on_focus.call(self.controller.text());
+                    }
+
+                    // Clear IME preedit on new click
+                    self.preedit_text.set(String::new());
+                    self.preedit_cursor.set(None);
+
                     #[cfg(target_os = "ios")]
                     ios_keyboard::show_keyboard();
                     #[cfg(target_os = "android")]
@@ -656,17 +796,27 @@ impl EventElement for RawTextField {
                     #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
                     if let Some(w) = get_window() {
                         w.set_ime_allowed(true);
+                        if let Some((start, end)) = self.cached_bounds.pos_start_end() {
+                            use winit::dpi::{LogicalPosition, LogicalSize};
+                            let pos = LogicalPosition::new(start.x as f64, start.y as f64);
+                            let size = LogicalSize::new(
+                                (end.x - start.x).max(1.0) as f64,
+                                (end.y - start.y).max(1.0) as f64,
+                            );
+                            w.set_ime_cursor_area(pos, size);
+                        }
                     }
                     #[cfg(target_arch = "wasm32")]
                     wasm_request_keyboard(true);
                     true
                 } else {
                     self.set_focused(false);
+                    self.mouse_held.set(false);
+                    self.on_blur.call(self.controller.text());
                     #[cfg(target_os = "ios")]
                     ios_keyboard::dismiss_keyboard();
                     #[cfg(target_os = "android")]
                     android_keyboard::dismiss_keyboard();
-                    #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
                     if let Some(w) = get_window() {
                         w.set_ime_allowed(false);
                     }
@@ -676,11 +826,22 @@ impl EventElement for RawTextField {
                 }
             }
             ElementEvent::CharInput { ch, action,  .. } => {
-                if !self.is_focused() {
+                if !self.is_focused() || self.read_only {
                     return false;
                 }
                 if *action == KeyAction::Released {
                     return false;
+                }
+
+                // Enforce max_length: reject if at or over the limit
+                if let Some(max) = self.max_length {
+                    // If there's a selection, the deleted chars free up space
+                    let selected_len = self.cursor.selection_range()
+                        .map(|(s, e)| e - s)
+                        .unwrap_or(0);
+                    if self.controller.char_count().saturating_sub(selected_len) >= max {
+                        return false;
+                    }
                 }
 
                 // If there is a selection, delete it first
@@ -726,7 +887,7 @@ impl EventElement for RawTextField {
                             }
                             true
                         }
-                        NamedKey::Other(k) if k == "x" => {
+                        NamedKey::Other(k) if k == "x" && !self.read_only => {
                             // Cut
                             if let Some((start, end)) = self.cursor.selection_range() {
                                 let selected = self.controller.delete_range(start, end);
@@ -737,7 +898,7 @@ impl EventElement for RawTextField {
                             }
                             true
                         }
-                        NamedKey::Other(k) if k == "v" => {
+                        NamedKey::Other(k) if k == "v" && !self.read_only => {
                             // Paste
                             if let Some(text) = clipboard_read() {
                                 // Delete selection first if any
@@ -754,6 +915,48 @@ impl EventElement for RawTextField {
                             }
                             true
                         }
+                        NamedKey::Other(k) if k == "z" && !modifiers.shift && !self.read_only => {
+                            // Undo
+                            if self.controller.undo() {
+                                let len = self.controller.char_count();
+                                let off = self.cursor.offset();
+                                if off > len {
+                                    self.cursor.set_offset(len);
+                                }
+                                self.on_changed.call(self.controller.text());
+                            }
+                            true
+                        }
+                        NamedKey::Other(k) if k == "z" && modifiers.shift && !self.read_only => {
+                            // Redo (Ctrl+Shift+Z)
+                            if self.controller.redo() {
+                                let len = self.controller.char_count();
+                                let off = self.cursor.offset();
+                                if off > len {
+                                    self.cursor.set_offset(len);
+                                }
+                                self.on_changed.call(self.controller.text());
+                            }
+                            true
+                        }
+                        NamedKey::Other(k) if k == "y" && !self.read_only => {
+                            // Redo (Ctrl+Y — Windows convention)
+                            if self.controller.redo() {
+                                let len = self.controller.char_count();
+                                let off = self.cursor.offset();
+                                if off > len {
+                                    self.cursor.set_offset(len);
+                                }
+                                self.on_changed.call(self.controller.text());
+                            }
+                            true
+                        }
+                        NamedKey::Enter => {
+                            // Ctrl+Enter / Cmd+Enter: submit even in multi-line mode
+                            self.cursor.clear_selection();
+                            self.on_submitted.call(self.controller.text());
+                            true
+                        }
                         _ => false,
                     };
                     if result {
@@ -763,7 +966,7 @@ impl EventElement for RawTextField {
                 }
 
                 let result = match key {
-                    NamedKey::Backspace => {
+                    NamedKey::Backspace if !self.read_only => {
                         if let Some((start, end)) = self.cursor.selection_range() {
                             self.controller.delete_range(start, end);
                             self.cursor.set_offset(start);
@@ -779,7 +982,7 @@ impl EventElement for RawTextField {
                         }
                         true
                     }
-                    NamedKey::Delete => {
+                    NamedKey::Delete if !self.read_only => {
                         if let Some((start, end)) = self.cursor.selection_range() {
                             self.controller.delete_range(start, end);
                             self.cursor.set_offset(start);
@@ -794,7 +997,25 @@ impl EventElement for RawTextField {
                         }
                         true
                     }
+                    NamedKey::Enter if !self.read_only && self.max_lines.map_or(false, |max| max > 1) => {
+                        // Multi-line mode: Enter inserts newline
+                        if let Some(max) = self.max_lines {
+                            if self.line_count() >= max { return true; }
+                        }
+                        // Delete selection first
+                        if let Some((start, end)) = self.cursor.selection_range() {
+                            self.controller.delete_range(start, end);
+                            self.cursor.set_offset(start);
+                            self.cursor.clear_selection();
+                        }
+                        let offset = self.cursor.offset();
+                        unsafe { self.controller.insert_char('\n', offset); }
+                        self.cursor.set_offset(offset + 1);
+                        self.on_changed.call(self.controller.text());
+                        true
+                    }
                     NamedKey::Enter => {
+                        // Single-line mode (or Ctrl+Enter in multi-line): submit
                         self.cursor.clear_selection();
                         self.on_submitted.call(self.controller.text());
                         true
@@ -838,6 +1059,53 @@ impl EventElement for RawTextField {
                         }
                         true
                     }
+                    NamedKey::ArrowUp => {
+                        let text = self.controller.text();
+                        let offset = self.cursor.offset();
+                        let chars: Vec<char> = text.chars().collect();
+                        // Find start of current line
+                        let line_start = chars[..offset].iter().rposition(|&c| c == '\n').map(|p| p + 1).unwrap_or(0);
+                        if line_start == 0 { return true; } // already at first line
+                        let col = offset - line_start;
+                        // Find start of previous line
+                        let prev_line_end = line_start - 1;
+                        let prev_line_start = chars[..prev_line_end].iter().rposition(|&c| c == '\n').map(|p| p + 1).unwrap_or(0);
+                        let prev_line_len = prev_line_end - prev_line_start;
+                        let new_offset = prev_line_start + col.min(prev_line_len);
+                        if modifiers.shift {
+                            if self.cursor.selection_anchor().is_none() {
+                                self.cursor.set_selection_anchor(Some(offset));
+                            }
+                        } else {
+                            self.cursor.clear_selection();
+                        }
+                        self.cursor.set_offset(new_offset);
+                        true
+                    }
+                    NamedKey::ArrowDown => {
+                        let text = self.controller.text();
+                        let offset = self.cursor.offset();
+                        let chars: Vec<char> = text.chars().collect();
+                        // Find end of current line
+                        let line_end = chars[offset..].iter().position(|&c| c == '\n').map(|p| offset + p).unwrap_or(chars.len());
+                        if line_end >= chars.len() { return true; } // already at last line
+                        let line_start = chars[..offset].iter().rposition(|&c| c == '\n').map(|p| p + 1).unwrap_or(0);
+                        let col = offset - line_start;
+                        // Find next line
+                        let next_line_start = line_end + 1;
+                        let next_line_end = chars[next_line_start..].iter().position(|&c| c == '\n').map(|p| next_line_start + p).unwrap_or(chars.len());
+                        let next_line_len = next_line_end - next_line_start;
+                        let new_offset = next_line_start + col.min(next_line_len);
+                        if modifiers.shift {
+                            if self.cursor.selection_anchor().is_none() {
+                                self.cursor.set_selection_anchor(Some(offset));
+                            }
+                        } else {
+                            self.cursor.clear_selection();
+                        }
+                        self.cursor.set_offset(new_offset);
+                        true
+                    }
                     NamedKey::Home => {
                         if modifiers.shift {
                             let offset = self.cursor.offset();
@@ -865,6 +1133,7 @@ impl EventElement for RawTextField {
                     NamedKey::Escape => {
                         self.cursor.clear_selection();
                         self.set_focused(false);
+                        self.on_blur.call(self.controller.text());
                         #[cfg(target_os = "ios")]
                         ios_keyboard::dismiss_keyboard();
                         #[cfg(target_os = "android")]
@@ -878,19 +1147,42 @@ impl EventElement for RawTextField {
                 }
                 result
             }
-            ElementEvent::PointerMove(pos) => {
+            ElementEvent::PointerMove(pos, _, _) => {
                 let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
                 let was_hovered = self.is_hovered();
-                if was_hovered {
-                    get_window().unwrap().set_cursor(winit::window::CursorIcon::Text);
-                }else{
-                    get_window().unwrap().set_cursor(winit::window::CursorIcon::Default);
+                if let Some(w) = get_window() {
+                    if is_inside || self.mouse_held.get() {
+                        w.set_cursor(winit::window::CursorIcon::Text);
+                    } else {
+                        w.set_cursor(winit::window::CursorIcon::Default);
+                    }
                 }
                 self.set_hovered(is_inside);
+
+                // Drag-to-select: when mouse is held, defer position resolution to draw()
+                if self.mouse_held.get() {
+                    self.pending_click.set(Some(*pos));
+                    return true;
+                }
+
                 was_hovered != is_inside
+            }
+            ElementEvent::PointerUp(_pos, _, _) => {
+                self.mouse_held.set(false);
+                false
+            }
+            ElementEvent::ImePreedit { text, cursor } => {
+                if !self.is_focused() { return false; }
+                self.preedit_text.set(text.clone());
+                self.preedit_cursor.set(*cursor);
+                true
             }
             ElementEvent::Cancel => {
                 self.set_focused(false);
+                self.mouse_held.set(false);
+                self.on_blur.call(self.controller.text());
+                self.preedit_text.set(String::new());
+                self.preedit_cursor.set(None);
                 #[cfg(target_os = "ios")]
                 ios_keyboard::dismiss_keyboard();
                 #[cfg(target_os = "android")]
@@ -964,36 +1256,82 @@ impl Drawable for RawTextField {
         ctx.canvas.translate((pad_left, pad_top).into());
 
         let content_height = (box_height - pad_top - pad_bottom).max(0.0);
+        let content_width = (box_width - pad_left - pad_right).max(0.0);
 
         let text = self.controller.text();
         let is_empty = text.is_empty();
 
         let font_size = self.scaled_font_size(&self.text_style, scale);
-        let content_width = (box_width - pad_left - pad_right).max(0.0);
+
+        // --- Process pending click (deferred from on_event for canvas access) ---
+        if let Some(click_pos) = self.pending_click.take() {
+            let display_for_measure = if is_empty {
+                String::new()
+            } else {
+                match self.input_type {
+                    InputType::Obscure => "\u{2022}".repeat(self.controller.char_count()),
+                    _ => text.to_string(),
+                }
+            };
+            let text_width = ctx.canvas.measure_text(&display_for_measure, font_size);
+            let text_x = self.align_x(text_width, content_width);
+
+            // click_pos is in logical (unscaled) coords; abs_x/pad_left/text_x
+            // are in canvas (scaled) coords. Multiply by scale to align them.
+            let click_canvas_x = click_pos.x * scale;
+            let rel_x = click_canvas_x - abs_x - pad_left - text_x + self.scroll_x.get();
+
+            use unicode_segmentation::UnicodeSegmentation;
+            let graphemes: Vec<&str> = if display_for_measure.is_empty() {
+                vec![]
+            } else {
+                display_for_measure.graphemes(true).collect()
+            };
+            let mut click_offset = graphemes.len(); // default: past end
+            if !graphemes.is_empty() {
+                let mut acc_width = 0.0f32;
+                for (i, g) in graphemes.iter().enumerate() {
+                    let g_width = ctx.canvas.measure_text(g, font_size);
+                    if rel_x <= acc_width + g_width / 2.0 {
+                        click_offset = i;
+                        break;
+                    }
+                    acc_width += g_width;
+                }
+            }
+
+            // Apply double/triple-click selection
+            let click_count = self.click_count.get();
+            match click_count {
+                2 => self.select_word_at(click_offset),
+                3 => {
+                    self.select_line_at(click_offset);
+                    self.click_count.set(0);
+                }
+                _ => {
+                    // For drag-to-select: set anchor to the click position (not the old cursor)
+                    // so the selection extends from the click point to the drag destination.
+                    if self.mouse_held.get() && self.cursor.selection_anchor().is_none() {
+                        self.cursor.set_selection_anchor(Some(click_offset));
+                    }
+                    self.cursor.set_offset(click_offset);
+                }
+            }
+            self.cursor.reset_blink();
+        }
+
+        // Context with parent_size set to the padded content area
+        let mut content_ctx = ctx.clone();
+        content_ctx.parent_size = ResolvedSize { width: content_width, height: content_height };
 
         if is_empty {
             // --- Draw prompt (visible when field is empty) ---
             if !self.prompt.is_empty() {
-                let prompt_fs = self.scaled_font_size(&self.prompt_style, scale);
-                let prompt_width = ctx.canvas.measure_text(&self.prompt, prompt_fs );
-                let prompt_x = self.align_x(prompt_width , content_width);
-                let prompt_y = self.align_y_canvas(&ctx.canvas, prompt_fs , content_height );
-                let prompt_color: Color = self.prompt_style.color;
-                ctx.canvas.draw_text(
-                    &self.prompt,
-                    (prompt_x, prompt_y ).into(),
-                    prompt_fs ,
-                    prompt_color,
-                );
+                let prompt_widget = self.build_text_widget(&self.prompt, &self.prompt_style, self.text_align);
+                prompt_widget.draw(&content_ctx);
             } else if !self.hint.is_empty() {
-                // --- Draw hint text (visible when field is empty and no prompt) ---
-                let hint_fs = self.scaled_font_size(&self.hint_style, scale);
-                let hint_width = ctx.canvas.measure_text(&self.hint, hint_fs );
-                let hint_x = self.align_x(hint_width , content_width);
-                let hint_y = self.align_y_canvas(&ctx.canvas, hint_fs , content_height );
-                let hint_color: Color = self.hint_style.color;
-                ctx.canvas
-                    .draw_text(&self.hint, (hint_x, hint_y ).into(), hint_fs , hint_color);
+                let hint_widget = self.build_text_widget(&self.hint, &self.hint_style, self.text_align);
+                hint_widget.draw(&content_ctx);
             }
 
             // --- Draw cursor when field is empty but focused ---
@@ -1019,31 +1357,164 @@ impl Drawable for RawTextField {
                 _ => text.to_string(),
             };
 
-            let text_width = ctx.canvas.measure_text(&display, font_size );
-            let text_x = self.align_x(text_width , content_width);
-            let text_y = self.align_y_canvas(&ctx.canvas, font_size , content_height );
+            let is_multiline = display.contains('\n');
 
-            if !display.is_empty() {
-                let text_color: Color = self.text_style.color;
-                ctx.canvas
-                    .draw_text(&display, (text_x, text_y ).into(), font_size , text_color);
-            }
+            if is_multiline {
+                // --- Multi-line rendering ---
+                let lines: Vec<&str> = display.split('\n').collect();
+                // Use real font vertical metrics (ascent + descent + line_gap)
+                // instead of an approximate multiplier. The hardcoded 1.4× could
+                // clip descenders when the actual line height exceeds it.
+                let line_metrics = ctx.canvas.measure_text_metrics("", font_size, 0.0);
+                let line_height = line_metrics.line_height;
+                let total_text_height = lines.len() as f32 * line_height;
+                let base_y = match self.text_align {
+                    TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => 0.0,
+                    TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => (content_height - total_text_height) / 2.0,
+                    TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => content_height - total_text_height,
+                };
 
-            // --- Draw cursor ---
-            if self.is_focused() && self.cursor.is_visible() {
-                let cursor_x = text_x + self.cursor_x_offset_canvas(&ctx.canvas, font_size );
-                let cursor_top = content_height * 0.15;
-                let cursor_bottom = content_height * 0.85;
-                let cursor_height = cursor_bottom - cursor_top;
-                let cursor_color: Color = self.cursor.color.into();
-                let stroke_w = 1.5 * scale;
+                // Track grapheme offset for selection/cursor across lines
+                let mut grapheme_offset = 0usize;
 
-                ctx.canvas.fill_color_rect(
-                    (cursor_x, cursor_top).into(),
-                    ResolvedSize { width: stroke_w, height: cursor_height },
-                    cursor_color,
-                    [0.0; 4],
-                );
+                for (line_idx, line) in lines.iter().enumerate() {
+                    let line_y = base_y + line_idx as f32 * line_height;
+                    let line_graphemes: usize = line.chars().count();
+
+                    let line_width = ctx.canvas.measure_text(line, font_size);
+                    let line_x = self.align_x(line_width, content_width);
+
+                    // Draw selection highlight for this line
+                    if let Some((sel_start, sel_end)) = self.cursor.selection_range() {
+                        let line_start = grapheme_offset;
+                        let line_end = grapheme_offset + line_graphemes;
+
+                        if sel_start < line_end && sel_end > line_start {
+                            let local_start = sel_start.saturating_sub(line_start);
+                            let local_end = (sel_end - line_start).min(line_graphemes);
+                            let hl_x = line_x + self.text_width_to_offset(line, local_start, &ctx.canvas, font_size);
+                            let hl_end_x = line_x + self.text_width_to_offset(line, local_end, &ctx.canvas, font_size);
+
+                            ctx.canvas.fill_color_rect(
+                                (hl_x, line_y).into(),
+                                ResolvedSize { width: hl_end_x - hl_x, height: line_height },
+                                self.selection_color,
+                                [0.0; 4],
+                            );
+                        }
+                    }
+
+                    // Draw line text
+                    ctx.canvas.save();
+                    ctx.canvas.translate((0.0, line_y).into());
+                    let mut line_ctx = content_ctx.clone();
+                    line_ctx.parent_size = ResolvedSize { width: content_width, height: line_height };
+                    let line_widget = self.build_text_widget(line, &self.text_style, self.text_align);
+                    line_widget.draw(&line_ctx);
+                    ctx.canvas.restore();
+
+                    // Draw cursor if on this line
+                    if self.is_focused() && self.cursor.is_visible() {
+                        let cursor_off = self.cursor.offset();
+                        if cursor_off >= grapheme_offset && cursor_off <= grapheme_offset + line_graphemes {
+                            let local_off = cursor_off - grapheme_offset;
+                            let cursor_x = line_x + self.text_width_to_offset(line, local_off, &ctx.canvas, font_size);
+                            let cursor_top = line_y + line_height * 0.15;
+                            let cursor_bottom = line_y + line_height * 0.85;
+                            let cursor_color: Color = self.cursor.color.into();
+                            let stroke_w = 1.5 * scale;
+
+                            ctx.canvas.fill_color_rect(
+                                (cursor_x, cursor_top).into(),
+                                ResolvedSize { width: stroke_w, height: cursor_bottom - cursor_top },
+                                cursor_color,
+                                [0.0; 4],
+                            );
+                        }
+                    }
+
+                    grapheme_offset += line_graphemes;
+                    // Account for the '\n' character in offset counting
+                    if line_idx < lines.len() - 1 {
+                        grapheme_offset += 1;
+                    }
+                }
+            } else {
+                // --- Single-line rendering (with horizontal scroll) ---
+                let text_width = ctx.canvas.measure_text(&display, font_size);
+                let text_x = self.align_x(text_width, content_width);
+
+                // Ensure cursor is visible
+                self.ensure_cursor_visible(content_width, &ctx.canvas, font_size);
+                let scroll = self.scroll_x.get();
+
+                // Draw text — RawTextWidget handles alignment via text_align + parent_size.
+                // Apply scroll by translating the canvas so the visible portion aligns.
+                ctx.canvas.save();
+                ctx.canvas.translate((-scroll, 0.0).into());
+                let text_widget = self.build_text_widget(&display, &self.text_style, self.text_align);
+                text_widget.draw(&content_ctx);
+                ctx.canvas.restore();
+
+                // --- Draw selection highlight ---
+                if let Some((sel_start, sel_end)) = self.cursor.selection_range() {
+                    if sel_start != sel_end {
+                        let highlight_x = text_x - scroll + self.text_width_to_offset(&display, sel_start, &ctx.canvas, font_size);
+                        let highlight_end_x = text_x - scroll + self.text_width_to_offset(&display, sel_end, &ctx.canvas, font_size);
+                        let highlight_width = highlight_end_x - highlight_x;
+
+                        ctx.canvas.fill_color_rect(
+                            (highlight_x, 0.0).into(),
+                            ResolvedSize { width: highlight_width, height: content_height },
+                            self.selection_color,
+                            [0.0; 4],
+                        );
+                    }
+                }
+
+                // --- Draw cursor ---
+                if self.is_focused() && self.cursor.is_visible() {
+                    let cursor_x = text_x - scroll + self.cursor_x_offset_canvas(&ctx.canvas, font_size);
+                    let cursor_top = content_height * 0.15;
+                    let cursor_bottom = content_height * 0.85;
+                    let cursor_height = cursor_bottom - cursor_top;
+                    let cursor_color: Color = self.cursor.color.into();
+                    let stroke_w = 1.5 * scale;
+
+                    ctx.canvas.fill_color_rect(
+                        (cursor_x, cursor_top).into(),
+                        ResolvedSize { width: stroke_w, height: cursor_height },
+                        cursor_color,
+                        [0.0; 4],
+                    );
+                }
+
+                // --- Draw IME preedit text ---
+                let preedit = self.preedit_text.take();
+                if !preedit.is_empty() && self.is_focused() {
+                    self.preedit_text.set(preedit.clone());
+                    let cursor_x = text_x - scroll + self.cursor_x_offset_canvas(&ctx.canvas, font_size);
+                    let preedit_width = ctx.canvas.measure_text(&preedit, font_size);
+
+                    // Draw preedit text at cursor position
+                    ctx.canvas.save();
+                    ctx.canvas.translate((cursor_x, 0.0).into());
+                    let mut preedit_ctx = content_ctx.clone();
+                    preedit_ctx.parent_size = ResolvedSize { width: preedit_width, height: content_height };
+                    let preedit_widget = self.build_text_widget(&preedit, &self.text_style, self.text_align);
+                    preedit_widget.draw(&preedit_ctx);
+                    ctx.canvas.restore();
+
+                    // Draw underline under preedit text
+                    let underline_y = content_height * 0.85;
+                    let cursor_color: Color = self.cursor.color.into();
+                    ctx.canvas.fill_color_rect(
+                        (cursor_x, underline_y).into(),
+                        ResolvedSize { width: preedit_width, height: 1.0 * scale },
+                        cursor_color,
+                        [0.0; 4],
+                    );
+                }
             }
         }
 
@@ -1051,10 +1522,27 @@ impl Drawable for RawTextField {
         ctx.canvas.restore(); // clip + translate
         ctx.canvas.restore(); // outer save
 
-        // Drive cursor blink: toggle visibility and schedule next redraw while focused
+        // Drive cursor blink: only schedule a new frame when the blink actually
+        // toggled (~500ms interval) instead of every frame (~16ms). This reduces
+        // focused rendering from ~60fps to ~2fps.
         if self.is_focused() {
-            self.cursor.update_blink();
-            ctx.window.request_redraw();
+            let toggled = self.cursor.update_blink();
+            if toggled || !self.blink_scheduled.get() {
+                self.blink_scheduled.set(true);
+                let rate = self.cursor.blink_rate_ms;
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(rate));
+                    aimer_events::window::request_animation_frame();
+                });
+            }
         }
+    }
+}
+
+impl Reconcilable for RawTextField {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        false
     }
 }

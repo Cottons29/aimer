@@ -22,6 +22,7 @@ winit.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 openssl = { workspace = true }
+aimer_events.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
@@ -31,4 +32,4 @@ reqwest = { workspace = true }
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 wasm-bindgen.workspace = true
-web-sys = { workspace = true, features = [ "Response", "Window", "Blob", "Url", "HtmlImageElement","RequestInit","Headers"] }
+web-sys = { workspace = true, features = [ "Response", "Window", "Blob", "Url", "HtmlImageElement","RequestInit","Headers","OffscreenCanvas","OffscreenCanvasRenderingContext2d","ImageData"] }

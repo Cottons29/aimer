@@ -1,4 +1,3 @@
-
 use aimer::*;
 use aimer::macros::widget;
 use aimer::style::*;
@@ -8,7 +7,7 @@ use aimer::callback::{Callback, VoidCallback};
 // this is the entry point of the app
 pub fn start_counter() {
     // simply start the app with AimerApp::start
-    AimerApp::start(CounterWidget::create_new( 1, None))
+    AimerApp::start(CounterWidget::create_new(1, None))
 }
 
 // creating a widget with state
@@ -96,7 +95,6 @@ impl State<CounterWidget> for CounterState {
                                 });
                             },
                             decoration: BoxDecoration!(background_color: Colors::Yellow),
-                            hover_decoration: BoxDecoration!(background_color: Colors::Green),
                             child: Container!(
                                 child: Text!(
                                     "Increase",
@@ -129,9 +127,7 @@ impl State<CounterWidget> for CounterState {
                                     console::debug!("Double click on button");
                                 }
                             },
-                            pressed_overlay_color: Colors::Blue,
                             decoration: BoxDecoration!(background_color: Colors::Yellow),
-                            hover_decoration: BoxDecoration!(background_color: Colors::Green),
                             child: Container!(
                                 child: Text!(
                                     "Decrease",
@@ -152,23 +148,19 @@ impl State<CounterWidget> for CounterState {
                             on_press:  {
                                 let on_switch = self.on_switch.clone();
                                 move || {
-
                                     console::debug!("Switching to Stateful 2");
                                 }
                             },
                             decoration: BoxDecoration!(background_color: Colors::Blue),
-                            hover_decoration: BoxDecoration!(background_color: Colors::Green),
-                            child: Container!(
-                                child: Text!(
-                                    "Switch to Stateful 2",
-                                    text_align: TextAlign::MidCenter,
-                                    text_style: TextStyle!(
-                                        color: Colors::White,
-                                    )
+                            child: Text!(
+                                "Switch to Stateful 2",
+                                text_align: TextAlign::MidCenter,
+                                text_style: TextStyle!(
+                                    color: Colors::White,
                                 )
                             )
                         )
-                    ),
+                    )
                 ]
             )
         )

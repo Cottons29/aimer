@@ -1,11 +1,13 @@
+use aimer_animation::AnimInstant;
 use crate::input_field::controller::TextFieldController;
 use crate::input_field::raw_fields::{
     Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback,
 };
-use std::cell::UnsafeCell;
+use std::cell::Cell;
+use std::sync::Arc;
 use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
 use aimer_attribute::CacheBounds;
-use aimer_widget::base::{BuildContext, Colors};
+use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{Element,Widget, WidgetConstructor};
 
 
@@ -68,6 +70,15 @@ use aimer_widget::{Element,Widget, WidgetConstructor};
 /// * `on_submitted` - Callback triggered when the user submits the input (e.g., pressing Enter).
 ///   Accepts a `TextFieldCallback` which is wrapped with an `AsyncTextFieldCallback`.
 ///
+/// * `on_focus` - Callback triggered when the field gains focus.
+///   Accepts a `TextFieldCallback` which is wrapped with an `AsyncTextFieldCallback`.
+///
+/// * `on_blur` - Callback triggered when the field loses focus.
+///   Accepts a `TextFieldCallback` which is wrapped with an `AsyncTextFieldCallback`.
+///
+/// * `read_only` - When `true`, text cannot be modified via keyboard input.
+///   Selection, copy, and cursor movement still work. Defaults to `false`.
+///
 ///
 pub struct TextField {
     #[constructor(default)]
@@ -75,9 +86,9 @@ pub struct TextField {
     #[constructor(default)]
     pub input_type: InputType,
     #[constructor(default, into)]
-    pub prompt: String,
+    pub prompt: Arc<str>,
     #[constructor(default, into)]
-    pub hint: String,
+    pub hint: Arc<str>,
     #[constructor(default)]
     pub hint_style: TextStyle,
     #[constructor(default)]
@@ -106,12 +117,20 @@ pub struct TextField {
     pub focus_decoration: Option<BoxDecoration>,
     #[constructor(default)]
     pub disabled_decoration: Option<BoxDecoration>,
+    #[constructor(default = Color::Rgba(66, 133, 244, 100))]
+    pub selection_color: Color,
     #[constructor(default)]
     pub cursor_color: Colors,
     #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
     pub on_changed: TextFieldCallback,
     #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
     pub on_submitted: TextFieldCallback,
+    #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
+    pub on_focus: TextFieldCallback,
+    #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
+    pub on_blur: TextFieldCallback,
+    #[constructor(default)]
+    pub read_only: bool,
     #[constructor(default = TextField::DEFAULT_PADDING)]
     pub padding: LayoutSpacing,
 }
@@ -123,9 +142,9 @@ impl Widget for TextField {
             controller: self.controller.clone(),
             prompt: self.prompt.clone(),
             hint: self.hint.clone(),
-            hint_style: self.hint_style.clone(),
-            text_style: self.text_style.clone(),
-            prompt_style: self.prompt_style.clone(),
+            hint_style: self.hint_style,
+            text_style: self.text_style,
+            prompt_style: self.prompt_style,
             text_align: self.text_align,
             auto_focus: self.auto_focus,
             max_lines: self.max_lines,
@@ -138,11 +157,23 @@ impl Widget for TextField {
             hover_decoration: self.hover_decoration.clone(),
             focus_decoration: self.focus_decoration.clone(),
             disabled_decoration: self.disabled_decoration.clone(),
-            focused: UnsafeCell::new(self.auto_focus),
-            hovered: UnsafeCell::new(false),
+            selection_color: self.selection_color,
+            focused: Cell::new(self.auto_focus),
+            hovered: Cell::new(false),
             cached_bounds: CacheBounds::new(),
             on_changed: self.on_changed.clone(),
             on_submitted: self.on_submitted.clone(),
+            on_focus: self.on_focus.clone(),
+            on_blur: self.on_blur.clone(),
+            read_only: self.read_only,
+            mouse_held: Cell::new(false),
+            last_click_time: Cell::new(AnimInstant::now()),
+            click_count: Cell::new(0),
+            pending_click: Cell::new(None),
+            scroll_x: Cell::new(0.0),
+            preedit_text: Cell::new(String::new()),
+            preedit_cursor: Cell::new(None),
+            blink_scheduled: Cell::new(false),
             padding: self.padding
         })
     }

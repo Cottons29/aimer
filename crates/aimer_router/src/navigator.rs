@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::sync::Arc;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, State, StatefulElement, StateUpdater, StatefulWidget, Widget};
@@ -168,12 +169,27 @@ pub struct NavigatorController<R> {
     history_len_fn: Arc<dyn Fn() -> usize + Send + Sync>,
 }
 
+
+impl<R> Clone for NavigatorController<R> {
+    fn clone(&self) -> Self {
+        NavigatorController {
+            push_fn: self.push_fn.clone(),
+            pop_fn: self.pop_fn.clone(),
+            can_pop_fn: self.can_pop_fn.clone(),
+            history_len_fn: self.history_len_fn.clone(),
+        }
+    }
+}
+
+
+pub type NavigationState<R: 'static + Send + Sync> = Arc<NavigatorController<R>>;
+
 impl<R: 'static + Send + Sync> NavigatorController<R> {
     /// Flutter-style: `Navigator::of(ctx).push(route)`
-    pub fn of(ctx: &BuildContext) -> Arc<NavigatorController<R>> {
-        ctx.get_state::<Arc<NavigatorController<R>>>()
+    #[track_caller]
+    pub fn of(ctx: &BuildContext) -> NavigationState<R> {
+        ctx.get_state::<NavigatorController<R>>()
             .expect("No Navigator found in context. Make sure a Navigator widget is an ancestor.")
-            .as_ref()
             .clone()
     }
 

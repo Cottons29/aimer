@@ -62,7 +62,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #[cfg(target_arch = "wasm32")]
-        #[wasm_bindgen]
+        #[wasm_bindgen(start)]
         pub fn __generated_entrance_point(){
             #fn_name()
         }
@@ -319,6 +319,11 @@ pub fn layout_element_derive(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Rebuildable)]
 pub fn rebuildable_element_derive(input: TokenStream) -> TokenStream {
     auto_impl("aimer_widget::Rebuildable", input)
+}
+
+#[proc_macro_derive(Reconcilable)]
+pub fn reconcilable_derive(input: TokenStream) -> TokenStream {
+    auto_impl("aimer_widget::Reconcilable", input)
 }
 
 #[proc_macro_derive(Drawable)]

@@ -1,23 +1,24 @@
+pub mod constants;
+pub mod controller;
+pub mod draw_scroll;
+pub mod handle_scroll;
 pub mod raw_scroll;
 pub mod scroll_bar;
 pub mod scroll_behavior;
-pub mod scroll_spring;
-pub mod draw_scroll;
-pub mod handle_scroll;
-pub mod controller;
 
-pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
+use controller::VelocityHistory;
 pub use controller::{DragMode, ScrollController};
+pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
 
 use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
 use crate::single_child::container::RawContainer;
+use aimer_attribute::CacheBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_macro::WidgetConstructor;
-use std::cell::Cell;
-use aimer_attribute::CacheBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, Widget};
+use std::cell::Cell;
 
 #[derive(WidgetConstructor)]
 pub struct Scrollable<W: Widget + 'static> {
@@ -42,7 +43,7 @@ impl<W: Widget> Widget for Scrollable<W> {
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
         }
 
-        let raw_container = RawContainer::new(RawScrollableContainer {
+        Box::new(RawContainer::new(RawScrollableContainer {
             child: self.child.to_element(&child_ctx),
             ctrl: ScrollController {
                 speed_multiplier: ctx.scale,
@@ -80,12 +81,20 @@ impl<W: Widget> Widget for Scrollable<W> {
                     ScrollAxis::Horizontal => ScrollAxis::Horizontal,
                 },
                 cursor_pos: Cell::new(None),
+                velocity_history: std::cell::RefCell::new(VelocityHistory::new()),
+                cached_viewport: Cell::new((0.0, 0.0)),
+                cached_v_track_width: Cell::new(0.0),
+                cached_h_track_width: Cell::new(0.0),
+                cached_content_size: Cell::new(Default::default()),
+                fling_start_time: Cell::new(None),
+                fling_start_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+                fling_target_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+                fling_duration: Cell::new(0.0),
+                active_touch_id: Cell::new(None),
             },
             vertical_scroll_bar: self.vertical_scroll_bar.clone(),
             horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
-            window: ctx.window,
             bounds: CacheBounds::with_vec2d(child_ctx.parent_pos),
-        });
-        Box::new(raw_container)
+        }))
     }
 }

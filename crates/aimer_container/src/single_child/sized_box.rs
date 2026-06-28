@@ -4,7 +4,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{EventElement, Rebuildable, WidgetConstructor};
 use aimer_widget::base::*;
-use aimer_widget::{base::Color, Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget};
+use aimer_widget::{base::Color, Drawable, Element, LayoutCache, LayoutElement, Reconcilable, VisitorElement, Widget};
 
 
 #[derive(WidgetConstructor)]
@@ -164,4 +164,12 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
     }
 
 
+}
+
+impl<E: Element + 'static> Reconcilable for RawSizedBox<E> {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        false
+    }
 }

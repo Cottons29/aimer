@@ -1,4 +1,4 @@
-use crate::{base::*, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
+use crate::{base::*, Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 // StatelessWidget is effectively just a Widget.
@@ -30,6 +30,7 @@ impl Widget for NamedWidget {
         }
         Box::new(StatelessElement {
             child,
+            key: None,
             debug_name: self.name,
             bounds: std::cell::Cell::new(None),
         })
@@ -46,6 +47,7 @@ impl Rebuildable for StatelessElement {}
 
 pub struct StatelessElement {
     pub child: Box<dyn Element>,
+    pub key: Option<crate::key::Key>,
     pub debug_name: &'static str,
     pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
 }
@@ -113,6 +115,20 @@ impl VisitorElement for StatelessElement {
         self.debug_name
     }
 
+}
+
+impl Reconcilable for StatelessElement {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
+    fn key(&self) -> Option<crate::key::Key> {
+        self.key.clone()
+    }
+
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        // StatelessElement preserves its wrapper identity.
+        // Child reconciliation happens at the StatefulElement level.
+        true
+    }
 }
 
 

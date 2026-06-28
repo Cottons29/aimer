@@ -1,7 +1,13 @@
 [application]
-name="Jaime"
-version="0.0.1"
-group="com.example.jaime"
+name = "Jaime"
+version = "0.0.1"
+group = "com.example.jaime"
 
 
 [assets]
+# Files bundled into every platform package. The path below is used verbatim
+# as the runtime lookup key, e.g. `AssetImage!("image.png")`.
+files = [
+    "assets/image.png",
+    "assets/my_image.png"
+]

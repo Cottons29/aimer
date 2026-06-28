@@ -14,7 +14,7 @@ use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_inspector::InspectorOverlay;
-use aimer_utils::debug;
+use aimer_utils::{ExecTimes, debug};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, Widget};
 use std::cell::Cell;
@@ -59,10 +59,12 @@ pub struct AimerApplicationHandler {
     pub pending_widget: Option<Box<dyn Widget>>,
     pub cursor_pos: Vec2d,
     pub current_modifiers: aimer_events::element::Modifiers,
+    pub ime_composing: bool,
     pub window_scale: f64,
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
     pub start_up_frames: Cell<u8>,
+    pub active_touch_id: Option<u64>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
@@ -121,6 +123,14 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
         }
 
         let window = self.window.unwrap();
+
+        // winit's iOS window is created without a `UIWindowScene`. On the
+        // iOS 26/27 SDK the scene life cycle is mandatory, so a scene-less
+        // window stays invisible (black screen) and never redraws. Attach it to
+        // the active window scene so it becomes visible and starts redrawing.
+        #[cfg(target_os = "ios")]
+        crate::ios_screen::attach_window_to_active_scene(window);
+
         #[allow(unused_mut)]
         let mut size = window.inner_size();
 
@@ -135,7 +145,25 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
             }
         }
 
-        debug!("Magical Window Size : {:?}", window.outer_size());
+        #[cfg(target_os = "ios")]
+        {
+            let full = window.outer_size();
+            if full.width != 0 && full.height != 0 {
+                size = PhysicalSize::new(full.width, full.height);
+            }
+            if size.width == 0 || size.height == 0 {
+                let fallback = self
+                    .native_window_size
+                    .map(|s| PhysicalSize::new(s.width as u32, s.height as u32))
+                    .or_else(|| crate::ios_screen::get_screen_resolution_pixels().map(|(w, h)| PhysicalSize::new(w as u32, h as u32)));
+                if let Some(fallback) = fallback {
+                    debug!("iOS zero window size, using native screen resolution: {fallback:?}");
+                    size = fallback;
+                }
+            }
+        }
+
+        debug!("Logical Window Size : {:?}", window.outer_size());
         debug!("Physical Window Size : {size:?}");
 
         self.render_ctx.initialize(window, size);
@@ -257,9 +285,19 @@ impl AimerApplicationHandler {
             }
         }
 
+        // Presentation is paced by v-sync (`PresentMode::Fifo`): `present()`
+        // blocks until the display's next refresh slot, so the scroll/momentum
+        // animation re-arming `request_redraw()` from inside the draw cycle is
+        // naturally throttled to the panel refresh rate without a software
+        // limiter racing the compositor's v-sync.
+        // Only consume pending_resize if the render context is actually ready.
+        // On web, GPU init is async — consuming the resize before the GPU exists
+        // would silently drop it and leave the surface at the wrong size.
         #[allow(clippy::collapsible_if)]
-        if let Some(size) = self.pending_resize.take() {
-            self.render_ctx.resize(size);
+        if self.render_ctx.is_ready() {
+            if let Some(size) = self.pending_resize.take() {
+                self.render_ctx.resize(size);
+            }
         }
 
         let Some(window) = self.window else { return };
@@ -310,7 +348,15 @@ impl AimerApplicationHandler {
             }
         };
 
-        if !self.render_ctx.render_frame(draw_widgets) {
+        let presented = self.render_ctx.render_frame(draw_widgets);
+        if !presented {
+            // Surface texture was not available (e.g. surface outdated or
+            // window not ready).  Request a redraw so we retry next frame
+            // instead of staying blank.  Critical on web (async GPU init)
+            // and iOS (late surface availability).
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
             return;
         }
 
