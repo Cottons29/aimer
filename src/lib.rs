@@ -73,4 +73,6 @@ pub mod router  {
 }
 
 
+pub use aimer_provider as provider;
+
 
