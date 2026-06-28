@@ -10,6 +10,7 @@ use crate::text_pipeline::text_layout::{PositionedGlyph, ShapedText, layout_shap
 use aimer_utils::time_cost;
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Per-instance data for one glyph quad.
 #[repr(C)]
@@ -47,7 +48,9 @@ impl GlyphInstance {
 pub struct TextDrawRequest {
     pub x: f32,
     pub y: f32,
-    pub text: String,
+    // Reference-counted so cloning the request per frame (and from the draw
+    // list) is a cheap refcount bump rather than a fresh string allocation.
+    pub text: Arc<str>,
     pub font_size: f32,
     pub color: [f32; 4],
     pub bounds_width: f32,
@@ -63,7 +66,7 @@ pub struct TextDrawRequest {
 
 #[derive(Clone, Debug)]
 pub struct RichTextSpan {
-    pub text: String,
+    pub text: Arc<str>,
     pub font_size: Option<f32>,
     pub color: Option<[f32; 4]>,
     pub font_weight: Option<u16>,
@@ -71,7 +74,7 @@ pub struct RichTextSpan {
 }
 
 impl RichTextSpan {
-    pub fn new(text: impl Into<String>) -> Self {
+    pub fn new(text: impl Into<Arc<str>>) -> Self {
         Self { text: text.into(), font_size: None, color: None, font_weight: None, italic: None }
     }
 
@@ -355,7 +358,7 @@ impl TextPipelineV2 {
 
     pub fn preload_text(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32) {
         for (key, glyph) in self.rasterizer.preload_text(text, font_size) {
-            self.insert_rasterized_glyph(device, key, glyph.is_color, glyph.width, glyph.height, &glyph.bitmap);
+            self.insert_rasterized_glyph(device, queue, key, glyph.is_color, glyph.width, glyph.height, &glyph.bitmap);
         }
 
         self.flush_atlas(device, queue);
@@ -371,16 +374,25 @@ impl TextPipelineV2 {
 
     /// Insert a single rasterized glyph bitmap into the matching atlas, skipping
     /// empty (zero-area) glyphs and glyphs already present.
-    fn insert_rasterized_glyph(&mut self, device: &wgpu::Device, key: GlyphKey, is_color: bool, width: u32, height: u32, bitmap: &[u8]) {
+    fn insert_rasterized_glyph(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        key: GlyphKey,
+        is_color: bool,
+        width: u32,
+        height: u32,
+        bitmap: &[u8],
+    ) {
         if width == 0 || height == 0 {
             return;
         }
         if is_color {
             if self.color_atlas.get(&key).is_none() {
-                self.color_atlas.get_or_insert(device, key, width, height, bitmap);
+                self.color_atlas.get_or_insert(device, queue, key, width, height, bitmap);
             }
         } else if self.atlas.get(&key).is_none() {
-            self.atlas.get_or_insert(device, key, width, height, bitmap);
+            self.atlas.get_or_insert(device, queue, key, width, height, bitmap);
         }
     }
 
@@ -414,7 +426,7 @@ impl TextPipelineV2 {
     pub fn warm_glyph_set(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, font_sizes: &[f32]) {
         for &font_size in font_sizes {
             for (key, glyph) in self.rasterizer.preload_text(Self::COMMON_GLYPH_SET, font_size) {
-                self.insert_rasterized_glyph(device, key, glyph.is_color, glyph.width, glyph.height, &glyph.bitmap);
+                self.insert_rasterized_glyph(device, queue, key, glyph.is_color, glyph.width, glyph.height, &glyph.bitmap);
             }
         }
 
@@ -432,7 +444,7 @@ impl TextPipelineV2 {
     /// if it differs the width-independent shaping cache still hits, so the
     /// expensive shaping work is warmed regardless.
     pub fn warm_text(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32, layout_width: f32) {
-        self.warm_layout(device, text, font_size, layout_width);
+        self.warm_layout(device, queue, text, font_size, layout_width);
         self.flush_atlas(device, queue);
     }
 
@@ -440,7 +452,7 @@ impl TextPipelineV2 {
     /// populating both caches exactly like `prepare` does, then rasterize every
     /// positioned glyph into the atlas. Does not upload/flush the atlas (callers
     /// batch a single `flush_atlas` afterwards).
-    fn warm_layout(&mut self, device: &wgpu::Device, text: &str, font_size: f32, layout_width: f32) {
+    fn warm_layout(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32, layout_width: f32) {
         let cache_key = LayoutCacheKey::new(text, font_size, layout_width);
 
         // Populate (or reuse) the layout/shaping caches, mirroring the hot path
@@ -468,11 +480,11 @@ impl TextPipelineV2 {
             if is_color {
                 if self.color_atlas.get(&key).is_none() {
                     let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
-                    self.color_atlas.get_or_insert(device, key, rg.width, rg.height, &rg.bitmap);
+                    self.color_atlas.get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
                 }
             } else if self.atlas.get(&key).is_none() {
                 let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
-                self.atlas.get_or_insert(device, key, rg.width, rg.height, &rg.bitmap);
+                self.atlas.get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
             }
         }
     }
@@ -596,7 +608,7 @@ impl TextPipelineV2 {
                                 // Cache hit on the rasterizer side — instant.
                                 let rg = self.rasterizer.rasterize_key(key, pg.font_size);
                                 self.color_atlas
-                                    .get_or_insert(device, key, rg.width, rg.height, &rg.bitmap)
+                                    .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap)
                             };
                             (region, true)
                         } else {
@@ -605,7 +617,7 @@ impl TextPipelineV2 {
                             } else {
                                 let rg = self.rasterizer.rasterize_key(key, pg.font_size);
                                 self.atlas
-                                    .get_or_insert(device, key, rg.width, rg.height, &rg.bitmap)
+                                    .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap)
                             };
                             (region, false)
                         };
