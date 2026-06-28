@@ -8,9 +8,3 @@ watch = ["../../src"]
 
 [serve]
 port = 3000
-
-# --- aimer assets (auto-generated) ---
-[[copy]]
-file = "../../assets/polished_tooling.png"
-[[copy]]
-file = "../../assets/web_screenshot.png"
