@@ -7,15 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		C7A3B2D1F5E83D7B1E6F5092 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F2A1C0E4B72C6A0D5E4F81 /* main.swift */; };
 		2471626C6643ED4FC7F810D3 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0B72399071DA7A9D3A3629F8 /* Foundation.framework */; };
 		A1B2C3D4E5F60718293A4B5C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D4E5F6071829A1B2C3D4E5F6 /* Assets.xcassets */; };
+		C7A3B2D1F5E83D7B1E6F5092 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F2A1C0E4B72C6A0D5E4F81 /* main.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		B3F2A1C0E4B72C6A0D5E4F81 /* main.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		0B72399071DA7A9D3A3629F8 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		992093C02504A3F306172469 /* website.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = website.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B3F2A1C0E4B72C6A0D5E4F81 /* main.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		D4E5F6071829A1B2C3D4E5F6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -101,6 +101,11 @@
 			attributes = {
 				LastSwiftUpdateCheck = 1600;
 				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					7648BF25D679D16DF8E7E6F4 = {
+						DevelopmentTeam = YCLCW25V8V;
+					};
+				};
 			};
 			buildConfigurationList = 2387A685D112612CDD6DD78D /* Build configuration list for PBXProject "website" */;
 			compatibilityVersion = "Xcode 3.2";
@@ -111,8 +116,6 @@
 				Base,
 			);
 			mainGroup = A4F672D615B5CA5001D28519;
-			minimizedProjectReferenceProxies = 0;
-			preferredProjectObjectVersion = 77;
 			productRefGroup = 605947B78B2A2F74560FF371 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -150,8 +153,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				DEVELOPMENT_TEAM = YCLCW25V8V;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "website/Info.plist";
+				INFOPLIST_FILE = website/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				OTHER_LDFLAGS = (
 					"-L$(SRCROOT)/Libraries",
 					"-lwebsite",
@@ -175,7 +180,7 @@
 					"-framework",
 					CoreFoundation,
 				);
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.cottons.website;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -290,8 +295,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_OPTIMIZATION_LEVEL = "-Owholemodule";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
@@ -301,8 +305,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				DEVELOPMENT_TEAM = YCLCW25V8V;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "website/Info.plist";
+				INFOPLIST_FILE = website/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				OTHER_LDFLAGS = (
 					"-L$(SRCROOT)/Libraries",
 					"-lwebsite",
@@ -326,7 +332,7 @@
 					"-framework",
 					CoreFoundation,
 				);
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.cottons.website;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
@@ -345,7 +351,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		E78EF380B86DAD433C3C7F9E /* Build configuration list for PBXNativeTarget "$website" */ = {
+		E78EF380B86DAD433C3C7F9E /* Build configuration list for PBXNativeTarget "website" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				BECACC829D12230529BB85F1 /* Release */,
