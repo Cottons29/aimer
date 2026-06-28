@@ -1,0 +1,63 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <id>com.cottons.aimer.aimer_idea_plugin</id>
+    <name>Aimer</name>
+    <vendor url="https://github.com/AimerFramework">Aimer Framework</vendor>
+
+    <description><![CDATA[
+        IDE support for the <a href="https://github.com/AimerFramework/aimer">Aimer</a> UI framework.<br><br>
+        <b>Features:</b>
+        <ul>
+            <li>Widget Tree visualization — see all <code>#[widget]</code> structs at a glance</li>
+            <li>Aimer.toml editing — schema validation and autocompletion</li>
+            <li>CLI integration — run, assemble, and doctor commands from the IDE</li>
+            <li>LSP-powered diagnostics — catch widget errors before compile time</li>
+        </ul>
+    ]]></description>
+
+    <depends>com.intellij.modules.lsp</depends>
+    <depends>com.jetbrains.rust</depends>
+
+    <resource-bundle>messages.AimerBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Widget Tree tool window -->
+        <toolWindow id="Aimer Widget Tree"
+                    factoryClass="com.cottons.aimer.widgetTree.WidgetTreeToolWindowFactory"
+                    icon="AllIcons.Toolwindows.ToolWindowProject"/>
+
+        <!-- CLI run configurations -->
+        <configurationType implementation="com.cottons.aimer.run.AimerRunConfigurationType"/>
+
+        <!-- LSP server support -->
+        <com.intellij.platform.lsp.customLspServerSupportProvider
+            implementation="com.cottons.aimer.lsp.AimerLspServerSupportProvider"/>
+
+        <!-- Notification group for Aimer actions -->
+        <notificationGroup id="Aimer"
+                           displayType="BALLOON"/>
+
+        <!-- Run gutter icon for #[aimer::main] and #[main] -->
+        <codeInsight.lineMarkerProvider
+            language="Rust"
+            implementationClass="com.cottons.aimer.actions.AimerMainRunLineMarkerContributor"/>
+    </extensions>
+
+    <actions>
+        <group id="Aimer" text="Aimer" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="Aimer.Run"
+                    class="com.cottons.aimer.actions.RunAction"
+                    text="Run Aimer App"
+                    icon="AllIcons.Actions.Execute"/>
+            <action id="Aimer.Assemble"
+                    class="com.cottons.aimer.actions.AssembleAction"
+                    text="Assemble Aimer Bundle"
+                    icon="AllIcons.Actions.BuildLoadChanges"/>
+            <action id="Aimer.Doctor"
+                    class="com.cottons.aimer.actions.DoctorAction"
+                    text="Aimer Doctor"
+                    icon="AllIcons.General.InspectionsEye"/>
+        </group>
+    </actions>
+</idea-plugin>
