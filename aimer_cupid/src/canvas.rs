@@ -1,6 +1,7 @@
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::draw_cmd::DrawList;
 use crate::text_pipeline::TextOverflowMode;
@@ -123,13 +124,13 @@ impl CupidCanvas {
     pub fn draw_text(&self, x: f32, y: f32, text: &str, font_size: f32, color: Color) {
         self.draw_list
             .borrow_mut()
-            .draw_text(Vec2d::new(x, y), text.to_string(), font_size, color);
+            .draw_text(Vec2d::new(x, y), Arc::from(text), font_size, color);
     }
 
     pub fn draw_text_wrapped(&self, x: f32, y: f32, text: &str, font_size: f32, color: Color, max_width: f32) {
         self.draw_list.borrow_mut().draw_text_with_overflow(
             Vec2d::new(x, y),
-            text.to_string(),
+            Arc::from(text),
             font_size,
             color,
             Some(max_width),
@@ -152,7 +153,7 @@ impl CupidCanvas {
     ) {
         self.draw_list.borrow_mut().draw_text_with_overflow(
             Vec2d::new(x, y),
-            text.to_string(),
+            Arc::from(text),
             font_size,
             color,
             Some(bounds_width),
@@ -188,27 +189,53 @@ impl CupidCanvas {
         let mut width = 0.0_f32;
         let mut current_width = 0.0_f32;
         let mut line_count = 1_usize;
+        // Width position right after the most recent whitespace on the current
+        // line (relative to the line start). `None` means no break opportunity
+        // is available on the current line yet. This mirrors the word-wrapping
+        // performed by `layout_shaped_text` so the measured line count matches
+        // the rendered one (otherwise the last line would be clipped).
+        let mut last_space_end: Option<f32> = None;
 
         for c in text.chars() {
             if c == '\n' {
                 width = width.max(current_width);
                 current_width = 0.0;
                 line_count += 1;
+                last_space_end = None;
                 continue;
             }
 
             let glyph_width = rasterizer.advance_width(c, font_size);
+
+            // Track the last whitespace position as the preferred break point.
+            if c.is_whitespace() {
+                last_space_end = Some(current_width + glyph_width);
+            }
+
             if max_width > 0.0 && current_width > 0.0 && current_width + glyph_width > max_width {
-                width = width.max(current_width);
-                current_width = 0.0;
-                line_count += 1;
+                if let Some(space_end) = last_space_end {
+                    // Word-wrap: the partial word after the last space moves to
+                    // the next line, so the current line ends at the space.
+                    let moved_width = (current_width - space_end).max(0.0);
+                    width = width.max(space_end);
+                    current_width = moved_width;
+                    line_count += 1;
+                    last_space_end = None;
+                } else {
+                    // No break opportunity — fall back to character wrapping.
+                    width = width.max(current_width);
+                    current_width = 0.0;
+                    line_count += 1;
+                }
             }
             current_width += glyph_width;
         }
 
         width = width.max(current_width);
 
-        let metrics = TextMetrics { width, height: line_count as f32 * line_height, ascent, descent, line_gap, line_height, line_count };
+        // Subtract one line_gap: it only appears *between* lines, not after
+        // the last one.  This matches the corrected layout_paragraph height.
+        let metrics = TextMetrics { width, height: line_count as f32 * line_height - line_gap, ascent, descent, line_gap, line_height, line_count };
 
         let mut cache = self.metrics_cache.borrow_mut();
         if cache.len() > 1024 {
