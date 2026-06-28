@@ -2,15 +2,16 @@ use crate::base::*;
 use crate::components::event_element::EventElement;
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
+use crate::components::reconcilable::Reconcilable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
 use crate::Drawable;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 
-impl<T> Element for T where T: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable {}
+impl<T> Element for T where T: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable + Reconcilable {}
 
-pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable {}
+pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable + Reconcilable {}
 
 impl VisitorElement for Box<dyn Element> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -71,6 +72,17 @@ impl EventElement for Box<dyn Element> {
 impl Drawable for Box<dyn Element> {
     fn draw(&self, ctx: &BuildContext) {
         self.as_ref().draw(ctx)
+    }
+}
+
+impl Reconcilable for Box<dyn Element> {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
+    fn key(&self) -> Option<crate::key::Key> {
+        self.as_ref().key()
+    }
+    fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
+        self.as_ref().update_from_widget(new_element, ctx)
     }
 }
 
