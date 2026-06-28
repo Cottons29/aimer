@@ -276,8 +276,9 @@ impl Renderer {
                         y: ty,
                         text: spans
                             .iter()
-                            .map(|span| span.text.as_str())
-                            .collect::<String>(),
+                            .map(|span| &*span.text)
+                            .collect::<String>()
+                            .into(),
                         font_size: *font_size,
                         color: color.to_array(),
                         bounds_width: bounds_width.unwrap_or(width as f32 - tx),
@@ -326,10 +327,8 @@ impl Renderer {
                     });
                 }
                 DrawCommand::LoadImage { bytes, texture_id, width, height } => {
-                    if !self.image_pipeline.has_texture(*texture_id) {
-                        self.image_pipeline
-                            .upload_image_with_id(device, queue, *texture_id, *width, *height, bytes);
-                    }
+                    self.image_pipeline
+                        .upload_if_absent(device, queue, *texture_id, *width, *height, bytes);
                 }
                 DrawCommand::LoadImageWithId { texture_id, bytes, width, height } => {
                     self.image_pipeline
@@ -436,7 +435,7 @@ impl Renderer {
                 .iter()
                 .filter(|cmd| matches!(cmd.kind, ResolvedKind::Image { .. }))
                 .count();
-            self.image_pipeline.begin_frame(device, total_image_instances);
+            self.image_pipeline.begin_frame(device, queue, total_image_instances, width, height, is_srgb);
 
             let mut image_batch: Vec<ImageInstance> = Vec::new();
             let mut current_texture_id: Option<u32> = None;
@@ -449,7 +448,7 @@ impl Renderer {
                             && !image_batch.is_empty()
                         {
                             self.image_pipeline
-                                .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &image_batch);
+                                .draw_batch(device, queue, &mut pass, tid, &image_batch);
                             image_batch.clear();
                         }
                         self.rect_pipeline.push(*inst);
@@ -464,7 +463,7 @@ impl Renderer {
                             let Some(tid) = current_texture_id.take() else { continue };
                             if !image_batch.is_empty() {
                                 self.image_pipeline
-                                    .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &image_batch);
+                                    .draw_batch(device, queue, &mut pass, tid, &image_batch);
                                 image_batch.clear();
                             }
                         }
@@ -482,7 +481,7 @@ impl Renderer {
                             && !image_batch.is_empty()
                         {
                             self.image_pipeline
-                                .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &image_batch);
+                                .draw_batch(device, queue, &mut pass, tid, &image_batch);
                             image_batch.clear();
                         }
                         // Render the custom pipeline
@@ -498,7 +497,7 @@ impl Renderer {
                 && !image_batch.is_empty()
             {
                 self.image_pipeline
-                    .draw_batch(device, queue, &mut pass, width, height, is_srgb, tid, &image_batch);
+                    .draw_batch(device, queue, &mut pass, tid, &image_batch);
             }
 
             // Flush remaining rects
