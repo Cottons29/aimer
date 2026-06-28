@@ -89,6 +89,8 @@ impl ExecTimes {
         res
     }
 
+    
+
     #[cfg(not(feature = "time-cost"))]
     #[inline]
     pub fn no_param<T>(_: &str, f: impl FnOnce() -> T) -> T {

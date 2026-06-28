@@ -14,12 +14,15 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         let viewport_w = raw_viewport_w.min(max_dim);
         let viewport_h = raw_viewport_h.min(max_dim);
         let content_size = self.content_size(ctx);
+        // Cache content size for the rest of this frame (scrollbar drawing reads
+        // it) to avoid recomputing the child layout multiple times per draw.
+        self.ctrl.cached_content_size.set(content_size);
         let transform = ctx.canvas.get_transform_translation();
         let max_x = (content_size.width - viewport_w).max(0.0);
         let max_y = (content_size.height - viewport_h).max(0.0);
 
-        self.bounds
-            .save(ctx.scale, transform.0, transform.1, viewport_w, viewport_h);
+        self.bounds.save(ctx.scale, transform.0, transform.1, viewport_w, viewport_h);
+        self.ctrl.cached_viewport.set((viewport_w, viewport_h));
         self.ctrl.cursor_pos.set(Some(ctx.cursor_pos));
 
         let mut final_max = Vec2d { x: max_x, y: max_y };
@@ -47,18 +50,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             offset = new_offset;
 
             if needs_redraw {
-                #[cfg(target_os = "ios")]
-                {
-                    let window = self.window;
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                        window.request_redraw();
-                    });
-                }
-                #[cfg(not(target_os = "ios"))]
-                {
-                    self.window.request_redraw();
-                }
+                aimer_events::window::request_animation_frame();
             }
         }
 
@@ -67,8 +59,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         // Clip to viewport
         ctx.canvas.save();
-        ctx.canvas
-            .set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
+        ctx.canvas.set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
 
         // Translate by scroll offset
         // On high-DPI displays (e.g. iOS retina), avoid rounding to preserve smooth sub-pixel scrolling
@@ -92,8 +83,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         // Draw scrollbars on top, clipped to viewport
         ctx.canvas.save();
-        ctx.canvas
-            .set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
+        ctx.canvas.set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
         {
             if let Some(ref vertical_bar) = self.vertical_scroll_bar
                 && matches!(self.ctrl.axis, ScrollAxis::Vertical)
@@ -110,3 +100,4 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         ctx.canvas.restore();
     }
 }
+

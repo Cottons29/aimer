@@ -8,7 +8,7 @@ pub mod handler;
 pub use aimer_app::AimerApp;
 #[cfg(target_os = "ios")]
 mod ios_screen {
-    pub use crate::ffi_utils::ios_screen::get_screen_resolution_pixels;
+    pub use crate::ffi_utils::ios_screen::{attach_window_to_active_scene, get_screen_resolution_pixels};
 }
 
 pub mod window_attr;

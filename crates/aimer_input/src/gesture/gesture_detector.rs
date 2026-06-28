@@ -1,135 +1,399 @@
-use crate::gesture::GestureActions;
+use crate::callback::{RawInnerCallback, VoidCallback, VoidParamedFunction, CallbackExecutor};
+use crate::gesture::{
+    DragUpdateData, GestureEvent, ScaleData, ScrollData, SwipeDirection,
+    DragCallback, DragUpdateCallback, SwipeCallback, ScrollCallback, ScaleCallback,
+    DOUBLE_TAP_TIMEOUT, LONG_PRESS_DURATION, TAP_SLOP, SWIPE_VELOCITY_THRESHOLD, SWIPE_MAX_DURATION_MS,
+};
+use aimer_animation::time::AnimInstant;
 use aimer_attribute::{BoxConstraint, CacheBounds};
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerEvent, PointerPosition};
-use std::cell::{Cell, RefCell};
-use aimer_widget::base::{BuildContext, Color};
-use aimer_widget::{Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use aimer_widget::base::BuildContext;
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement};
 use winit::window::Window;
-use aimer_style::BoxDecoration;
-use aimer_macro::Rebuildable;
+use aimer_macro::Constructor;
 
+/// A pure gesture recognizer that wraps a child element.
+///
+/// `GestureDetector` detects tap, double-tap, long-press, drag, swipe,
+/// scroll, and scale (pinch) gestures and fires the corresponding callbacks.
+/// It does **not** render any visual feedback — decoration, pressed overlays,
+/// and hover effects belong to higher-level widgets like [`Button`].
+///
+/// This mirrors Flutter's `GestureDetector`: a transparent wrapper that
+/// recognises gestures and delegates rendering entirely to its child.
 #[allow(dead_code)]
-#[derive(Rebuildable)]
+#[derive(Constructor)]
 pub struct GestureDetector<'a, E: Element> {
+    // Layout
     pub(crate) width: Dimension,
     pub(crate) height: Dimension,
-    pub(crate) decoration: BoxDecoration,
-    pub(crate) hover_decoration: BoxDecoration,
-    pub(crate) pressed_decoration: BoxDecoration,
-    pub(crate) disabled_decoration: BoxDecoration,
-    pub(crate) is_disabled: bool,
-    pub(crate) is_hovered: Cell<bool>,
-    pub(crate) is_pressed: Cell<bool>,
-    pub(crate) pressed_overlay_color: Option<Color>,
-    pub(crate) gesture: RefCell<GestureActions>,
-    pub(crate) is_mouse_down: Cell<bool>,
-    pub(crate) is_dirty: Cell<bool>,
-    pub(crate) child: E,
-    pub(crate) cache: LayoutCache,
+    // Child
+    pub child: E,
+    // Hit-testing
     pub(crate) cached_bounds: CacheBounds,
     pub(crate) window: &'a Window,
+    // Callbacks
+    pub on_tap: VoidCallback,
+    pub on_double_press: VoidCallback,
+    pub on_long_press: VoidCallback,
+    pub on_drag_start: DragCallback,
+    pub on_drag_update: DragUpdateCallback,
+    pub on_drag_end:VoidCallback,
+    pub on_right_tap: VoidCallback,
+    pub on_swipe:SwipeCallback,
+    pub on_scroll: ScrollCallback,
+    pub on_scale: ScaleCallback,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub runtime_handle: Option<tokio::runtime::Handle>,
+    // Gesture state (interior mutability for &self access in on_event)
+    pub(crate) state: RefCell<GestureState>,
+}
+
+#[derive(Default, Debug)]
+pub(crate) struct GestureState {
+    down_position: Option<PointerPosition>,
+    down_time: Option<AnimInstant>,
+    last_tap_time: Option<AnimInstant>,
+    last_tap_position: Option<PointerPosition>,
+    is_dragging: bool,
+    last_drag_position: Option<PointerPosition>,
+    touches: HashMap<u64, PointerPosition>,
+    initial_pinch_distance: Option<f32>,
+    current_scale: f32,
+    drag_start_time: Option<AnimInstant>,
+    drag_start_position: Option<PointerPosition>,
 }
 
 impl<'a, E: Element> GestureDetector<'a, E> {
-    /// Recursively render a child element and its descendants.
-    fn render_child(widget: &dyn Element, ctx: &BuildContext) {
-        ctx.canvas.save();
-        widget.draw(ctx);
-        let content = widget.content_size(ctx);
-        let child_ctx = BuildContext {
-            parent_size: content,
-            canvas: ctx.canvas.clone(),
-            scale: ctx.scale,
-            parent_pos: Vec2d::default(),
-            cursor_pos: ctx.cursor_pos,
-            box_constraint: BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: content.width, max_height: content.height },
-            visible_rect: ctx.visible_rect,
-            window: ctx.window,
-            #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx.async_handle.clone(),
-            inherited_states: ctx.inherited_states.clone(),
-        };
-        widget.visit_children(&mut |child| {
-            Self::render_child(child, &child_ctx);
-        });
-        ctx.canvas.restore();
-    }
-
-    /// Feed a pointer event into the button. Returns `true` if the event was consumed.
-    pub fn handle_pointer_event(&self, event: &PointerEvent) {
-        // debug!("GestureDetectorElement::handle_pointer_event: {:?}", event);
-        if self.is_disabled {
-            // debug!("GestureDetectorElement::handle_pointer_event: disabled");
-            return;
-        }
-
-        let mut changed = false;
-        match event {
-            PointerEvent::Down(_) => {
-                if !self.is_pressed.get() {
-                    self.is_pressed.set(true);
-                    changed = true;
-                }
-            }
-            PointerEvent::Up(_) => {
-                if self.is_pressed.get() {
-                    self.is_pressed.set(false);
-                    changed = true;
-                }
-            }
-
-            PointerEvent::Move(_) => {}
-            PointerEvent::Cancel => {
-                if self.is_pressed.get() {
-                    self.is_pressed.set(false);
-                    changed = true;
-                }
-            }
-        }
-        
-        self.gesture.borrow_mut().handle_pointer_event(event);
-
-        if changed {
-            self.is_dirty.set(true);
-            self.window.request_redraw();
-        }
-
-
-    }
-
-    #[inline]
-    fn active_decoration(&self) -> &BoxDecoration {
-        if self.is_disabled {
-            &self.disabled_decoration
-        } else if self.is_pressed.get() {
-            &self.pressed_decoration
-        } else if self.is_hovered.get() {
-            &self.hover_decoration
-        } else {
-            &self.decoration
-        }
-    }
-
     fn compute_dimensions(&self, ctx: &BuildContext) -> (f32, f32) {
         let box_width = match self.width {
             Dimension::Px(w) => w * ctx.scale,
             Dimension::Percent(p) => ctx.box_constraint.max_width * (p / 100.0),
             Dimension::Auto => ctx.box_constraint.max_width,
         };
-
         let box_height = match self.height {
             Dimension::Px(h) => h * ctx.scale,
             Dimension::Percent(p) => ctx.box_constraint.max_height * (p / 100.0),
             Dimension::Auto => ctx.box_constraint.max_height,
         };
-
         (box_width.max(0.0), box_height.max(0.0))
     }
+
+    // ── Callback execution helpers ──────────────────────────────────────
+
+    fn execute_callback(cb: &VoidCallback, #[cfg(not(target_arch = "wasm32"))] runtime_handle: &Option<tokio::runtime::Handle>) {
+        if let Some(callback) = (*cb.get()).as_ref() {
+            match callback {
+                RawInnerCallback::Empty => {},
+                RawInnerCallback::Sync(f) => f(()),
+                RawInnerCallback::Async(f) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if let Some(handle) = runtime_handle {
+                        handle.spawn(f(()));
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        wasm_bindgen_futures::spawn_local(f(()));
+                    }
+                }
+            }
+        }
+    }
+
+    fn execute_paramed_callback<T: 'static>(cb: &VoidParamedFunction<T>, arg: T, #[cfg(
+        not(target_arch = "wasm32")
+    )] runtime_handle: &Option<tokio::runtime::Handle>) {
+        if let Some(callback) = (*cb.get()).as_ref() {
+            match callback {
+                RawInnerCallback::Empty => {},
+                RawInnerCallback::Sync(f) => f(arg),
+                RawInnerCallback::Async(f) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if let Some(handle) = runtime_handle {
+                        handle.spawn(f(arg));
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        wasm_bindgen_futures::spawn_local(f(arg));
+                    }
+                },
+            }
+        }
+    }
+
+    // ── Gesture state machine ───────────────────────────────────────────
+
+    fn process_pointer_event(&self, event: &PointerEvent) -> Option<GestureEvent> {
+        let mut state = self.state.borrow_mut();
+
+        match event {
+            PointerEvent::Down(pos) => {
+                let now = AnimInstant::now();
+                state.touches.insert(pos.id, *pos);
+
+                if state.touches.len() == 2 {
+                    let positions: Vec<PointerPosition> = state.touches.values().copied().collect();
+                    let dist = distance(positions[0], positions[1]);
+                    state.initial_pinch_distance = Some(dist);
+                    state.current_scale = 1.0;
+                    let focal = midpoint(positions[0], positions[1]);
+                    return Some(GestureEvent::ScaleStart { focal_x: focal.x, focal_y: focal.y });
+                }
+
+                if state.touches.len() == 1 {
+                    state.down_position = Some(*pos);
+                    state.down_time = Some(now);
+                    state.is_dragging = false;
+                    state.last_drag_position = None;
+                    state.drag_start_time = None;
+                    state.drag_start_position = None;
+                }
+                None
+            }
+
+            PointerEvent::Up(pos) => {
+                state.touches.remove(&pos.id);
+
+                if state.initial_pinch_distance.is_some() && state.touches.len() < 2 {
+                    state.initial_pinch_distance = None;
+                    state.current_scale = 1.0;
+                    drop(state);
+                    return Some(GestureEvent::ScaleEnd);
+                }
+
+                if state.is_dragging {
+                    let start_time = state.drag_start_time.take();
+                    let start_pos = state.drag_start_position.take();
+                    state.is_dragging = false;
+                    state.last_drag_position = None;
+                    state.down_position = None;
+                    state.down_time = None;
+                    drop(state);
+
+                    if let Some(ref cb) = self.on_drag_end.callable() {
+                        Self::execute_callback(
+                            cb,
+                            #[cfg(not(target_arch = "wasm32"))]
+                            &self.runtime_handle,
+                        );
+                    }
+
+                    if let (Some(start_time), Some(start_pos)) = (start_time, start_pos) && let Some(ref cb) = self.on_swipe.callable() {
+                        let elapsed = AnimInstant::now().duration_since(start_time);
+                        if elapsed.as_millis() as u64 <= SWIPE_MAX_DURATION_MS {
+                            let dx = pos.x - start_pos.x;
+                            let dy = pos.y - start_pos.y;
+                            let dist = (dx * dx + dy * dy).sqrt();
+                            let velocity = dist / elapsed.as_secs_f32();
+                            if velocity > SWIPE_VELOCITY_THRESHOLD {
+                                let direction = if dx.abs() > dy.abs() {
+                                    if dx > 0.0 { SwipeDirection::Right } else { SwipeDirection::Left }
+                                } else {
+                                    if dy > 0.0 { SwipeDirection::Down } else { SwipeDirection::Up }
+                                };
+                                let vx = dx / elapsed.as_secs_f32();
+                                let vy = dy / elapsed.as_secs_f32();
+
+                                Self::execute_paramed_callback(
+                                    cb,
+                                    direction,
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    &self.runtime_handle,
+                                );
+                                return Some(GestureEvent::Swipe { direction, velocity_x: vx, velocity_y: vy });
+                            }
+                        }
+                    }
+
+                    return Some(GestureEvent::DragEnd(*pos));
+                }
+
+                let down_pos = state.down_position.take()?;
+                let down_time = state.down_time.take()?;
+                let now = AnimInstant::now();
+                let elapsed = now.duration_since(down_time);
+
+                if distance(down_pos, *pos) > TAP_SLOP {
+                    state.last_tap_time = None;
+                    state.last_tap_position = None;
+                    return None;
+                }
+
+                if let Some(ref cb) = self.on_long_press.callable()  {
+                    if elapsed >= LONG_PRESS_DURATION {
+                        state.last_tap_time = None;
+                        state.last_tap_position = None;
+                        drop(state);
+
+                        Self::execute_callback(
+                            cb,
+                            #[cfg(not(target_arch = "wasm32"))]
+                            &self.runtime_handle,
+                        );
+                        return Some(GestureEvent::LongPress(*pos));
+                    }
+                }
+
+
+                #[allow(clippy::collapsible_if)]
+                if let Some(ref cb) = self.on_double_press.callable()  {
+                    if let (Some(last_time), Some(last_pos)) = (state.last_tap_time, state.last_tap_position) {
+                        let delta = now.duration_since(last_time);
+                        if delta < DOUBLE_TAP_TIMEOUT && distance(last_pos, *pos) < TAP_SLOP {
+                            state.last_tap_time = None;
+                            state.last_tap_position = None;
+                            drop(state);
+
+                            Self::execute_callback(
+                                cb,
+                                #[cfg(not(target_arch = "wasm32"))]
+                                &self.runtime_handle,
+                            );
+                            return Some(GestureEvent::DoubleTap(*pos));
+                        }
+                    }
+                }
+
+
+                state.last_tap_time = Some(now);
+                state.last_tap_position = Some(*pos);
+                drop(state);
+                if let Some(ref cb) = self.on_tap.callable()  {
+                    Self::execute_callback(
+                        cb,
+                        #[cfg(not(target_arch = "wasm32"))]
+                        &self.runtime_handle,
+                    );
+                }
+                Some(GestureEvent::Tap(*pos))
+            }
+
+            PointerEvent::Move(pos) => {
+                state.touches.insert(pos.id, *pos);
+
+                if state.touches.len() >= 2 && state.initial_pinch_distance.is_some() && let Some(ref cb) = self.on_scale.callable()  {
+                    let positions: Vec<PointerPosition> = state.touches.values().copied().collect();
+                    let current_dist = distance(positions[0], positions[1]);
+                    let initial_dist = state.initial_pinch_distance.unwrap_or(current_dist);
+                    if initial_dist > 0.0 {
+                        let new_scale = current_dist / initial_dist;
+                        let delta_scale = if state.current_scale > 0.0 { new_scale / state.current_scale } else { 1.0 };
+                        state.current_scale = new_scale;
+                        let focal = midpoint(positions[0], positions[1]);
+                        let data = ScaleData { focal_x: focal.x, focal_y: focal.y, scale: new_scale, delta_scale };
+                        drop(state);
+                        Self::execute_paramed_callback(
+                            cb,
+                            data,
+                            #[cfg(not(target_arch = "wasm32"))]
+                            &self.runtime_handle,
+                        );
+                        return Some(GestureEvent::ScaleUpdate { focal_x: focal.x, focal_y: focal.y, scale: new_scale, delta_scale });
+                    }
+                }
+
+                if let Some(down_pos) = state.down_position  {
+                    if state.is_dragging && let Some(ref cb) = self.on_drag_update.callable()  {
+                        let last = state.last_drag_position.unwrap_or(down_pos);
+                        let delta_x = pos.x - last.x;
+                        let delta_y = pos.y - last.y;
+                        state.last_drag_position = Some(*pos);
+                        let data = DragUpdateData { position: *pos, delta_x, delta_y };
+                        drop(state);
+                        Self::execute_paramed_callback(
+                            cb,
+                            data,
+                            #[cfg(not(target_arch = "wasm32"))]
+                            &self.runtime_handle,
+                        );
+                        return Some(GestureEvent::DragUpdate { position: *pos, delta_x, delta_y });
+                    } else if distance(down_pos, *pos) > TAP_SLOP && let Some(ref cb) = self.on_drag_start.callable()  {
+                        state.is_dragging = true;
+                        state.last_drag_position = Some(*pos);
+                        state.drag_start_time = Some(AnimInstant::now());
+                        state.drag_start_position = Some(down_pos);
+                        drop(state);
+                        Self::execute_paramed_callback(
+                            cb,
+                            down_pos,
+                            #[cfg(not(target_arch = "wasm32"))]
+                            &self.runtime_handle,
+                        );
+
+                        return Some(GestureEvent::DragStart(down_pos));
+                    }
+                }
+                None
+            }
+
+            PointerEvent::Cancel => {
+                if state.is_dragging {
+                    state.is_dragging = false;
+                    state.last_drag_position = None;
+                }
+                if state.initial_pinch_distance.is_some() {
+                    state.initial_pinch_distance = None;
+                    state.current_scale = 1.0;
+                }
+                state.touches.clear();
+                state.down_position = None;
+                state.down_time = None;
+                None
+            }
+
+            PointerEvent::RightClick(pos) => {
+                drop(state);
+                if let Some(ref cb) = self.on_right_tap.callable()  {
+                    Self::execute_callback(
+                        cb,
+                        #[cfg(not(target_arch = "wasm32"))]
+                        &self.runtime_handle,
+                    );
+                }
+                Some(GestureEvent::RightTap(*pos))
+            }
+
+            PointerEvent::Scroll { delta_x, delta_y } => {
+                let data = ScrollData { delta_x: *delta_x, delta_y: *delta_y };
+                drop(state);
+                if let Some(ref cb) = self.on_scroll.callable()  {
+                    Self::execute_paramed_callback(
+                        cb,
+                        data,
+                        #[cfg(not(target_arch = "wasm32"))]
+                        &self.runtime_handle,
+                    );
+                }
+                Some(GestureEvent::Scroll { delta_x: *delta_x, delta_y: *delta_y })
+            }
+        }
+    }
 }
+
+// ── Geometry helpers ────────────────────────────────────────────────────
+
+fn distance(a: PointerPosition, b: PointerPosition) -> f32 {
+    let dx = a.x - b.x;
+    let dy = a.y - b.y;
+    (dx * dx + dy * dy).sqrt()
+}
+
+fn midpoint(a: PointerPosition, b: PointerPosition) -> PointerPosition {
+    PointerPosition {
+        x: (a.x + b.x) / 2.0,
+        y: (a.y + b.y) / 2.0,
+        source: a.source,
+        id: a.id,
+    }
+}
+
+// ── Element trait impls ─────────────────────────────────────────────────
 
 impl<'b, E: Element> VisitorElement for GestureDetector<'b, E> {
     fn debug_name(&self) -> &'static str {
@@ -139,63 +403,50 @@ impl<'b, E: Element> VisitorElement for GestureDetector<'b, E> {
 
 impl<'b, E: Element> EventElement for GestureDetector<'b, E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
-        // debug!("GestureDetectorElement::on_event: {:?}", event);
-        // debug!("GestureDetectorElement::caches_bound: {:?}", self.cached_bounds);
-
-
-        if self.is_disabled {
-            return false;
-        }
-
         if matches!(event, ElementEvent::Cancel) {
-            self.handle_pointer_event(&PointerEvent::Cancel);
-            self.is_hovered.set(false);
+            self.process_pointer_event(&PointerEvent::Cancel);
             self.window.request_redraw();
             return true;
         }
 
         let pos = match event {
-            ElementEvent::PointerDown(p) | ElementEvent::PointerUp(p) | ElementEvent::PointerMove(p) => p,
+            ElementEvent::PointerDown(p, _, _)
+            | ElementEvent::PointerUp(p, _, _)
+            | ElementEvent::PointerMove(p, _, _) => p,
+            ElementEvent::Scroll { .. } => {
+                let pointer_event = match event {
+                    ElementEvent::Scroll { delta, .. } => PointerEvent::Scroll {
+                        delta_x: delta.x,
+                        delta_y: delta.y,
+                    },
+                    _ => unreachable!(),
+                };
+                self.process_pointer_event(&pointer_event);
+                self.window.request_redraw();
+                return true;
+            }
             _ => return false,
         };
-        // debug!("Step 1");
 
-        let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
-
-        let is_pressed = self.is_pressed.get();
-
-        if !is_inside && !is_pressed {
-            let was_hovered = self.is_hovered.get();
-            self.is_hovered.set(false);
-            if was_hovered {
-                self.is_dirty.set(true);
-                self.window.request_redraw();
-            }
+        if !self.cached_bounds.is_inside(pos.x, pos.y) {
             return false;
         }
-        // debug!("Step 3");
-
-        if matches!(event, ElementEvent::PointerMove(_)) && is_inside == self.is_hovered.get() {
-            return true;
-        }
-
-
-        self.is_hovered.set(is_inside);
-        self.is_dirty.set(true);
-        self.window.request_redraw();
-
-        // debug!("Step 5");
 
         let pointer_event = match event {
-            ElementEvent::PointerDown(pos) => PointerEvent::Down(PointerPosition { x: pos.x, y: pos.y }),
-            ElementEvent::PointerUp(pos) => PointerEvent::Up(PointerPosition { x: pos.x, y: pos.y }),
-            ElementEvent::PointerMove(pos) => PointerEvent::Move(PointerPosition { x: pos.x, y: pos.y }),
-            ElementEvent::Cancel => PointerEvent::Cancel,
+            ElementEvent::PointerDown(pos, source, id) => {
+                PointerEvent::Down(PointerPosition { x: pos.x, y: pos.y, source: *source, id: *id })
+            }
+            ElementEvent::PointerUp(pos, source, id) => {
+                PointerEvent::Up(PointerPosition { x: pos.x, y: pos.y, source: *source, id: *id })
+            }
+            ElementEvent::PointerMove(pos, source, id) => {
+                PointerEvent::Move(PointerPosition { x: pos.x, y: pos.y, source: *source, id: *id })
+            }
             _ => return false,
         };
 
-        self.handle_pointer_event(&pointer_event);
-
+        self.process_pointer_event(&pointer_event);
+        self.window.request_redraw();
         true
     }
 
@@ -204,22 +455,15 @@ impl<'b, E: Element> EventElement for GestureDetector<'b, E> {
     }
 }
 
-
 impl<'b, E: Element> LayoutElement for GestureDetector<'b, E> {
     #[inline]
     fn size(&self) -> Option<Size> {
         Some(Size { width: self.width, height: self.height })
     }
 
-
-
-    /// Compute box dimensions using the non-hover style first (dimensions
-    /// should be the same for both styles, but we need them to calculate
-    /// bounds before deciding on hover).
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale = ctx.scale;
         let constraint = ctx.box_constraint;
-        let decoration = self.active_decoration();
 
         let width = match self.width {
             Dimension::Px(w) => w * scale,
@@ -233,104 +477,26 @@ impl<'b, E: Element> LayoutElement for GestureDetector<'b, E> {
             Dimension::Auto => self.child.computed_size(ctx).height,
         };
 
-        let width = width.max(0.0);
-        let height = height.max(0.0);
-        let (ol, ot, or, ob) = decoration.outline.strokes(width, height, scale);
-
-        ResolvedSize { width: width + ol + or, height: height + ot + ob }
+        ResolvedSize { width: width.max(0.0), height: height.max(0.0) }
     }
 }
 
 impl<'w, E: Element> Drawable for GestureDetector<'w, E> {
     fn draw(&self, ctx: &BuildContext<'_>) {
-        self.is_dirty.set(false);
-        let (box_width, box_height) = self.compute_dimensions(ctx);
-
-        ctx.canvas.save();
-        // Compute outline strokes using the current decoration (before hover re-evaluation)
-        let decoration = self.active_decoration();
-        let (ol, ot, _or, _ob) = decoration.outline.strokes(box_width, box_height, ctx.scale);
-        ctx.canvas.translate((ol, ot).into());
-
-        // Cache absolute bounds for hit-testing
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
-        self.cached_bounds
-            .save(ctx.scale, abs_x, abs_y, box_width, box_height);
+        let (w, h) = self.compute_dimensions(ctx);
+        self.cached_bounds.save(ctx.scale, abs_x, abs_y, w, h);
 
-        // Re-evaluate hover state from the current cursor position so that
-        // newly-rebuilt elements (which start with is_hovered = false) still
-        // render the correct decoration when the pointer is over them.
-        if !self.is_disabled {
-            let hovering = self.cached_bounds.is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y);
-            self.is_hovered.set(hovering);
-        }
+        self.child.draw(ctx);
+    }
+}
 
-        let decoration = self.active_decoration();
+impl<'b, E: Element> Rebuildable for GestureDetector<'b, E> {}
 
-        // Draw background + border + outline using BoxDecoration
-        if self.is_disabled {
-            ctx.canvas.set_alpha(0.5);
-        }
+impl<'b: 'static, E: Element + 'static> Reconcilable for GestureDetector<'b, E> {
+    fn as_any(&self) -> &dyn std::any::Any { self }
 
-        let decoration_ctx = BuildContext { parent_size: ResolvedSize { width: box_width, height: box_height }, ..ctx.clone() };
-        decoration.draw(&decoration_ctx);
-
-        if self.is_disabled {
-            ctx.canvas.restore_alpha();
-        }
-
-        let radii = decoration
-            .border_radius
-            .resolve(box_width, box_height, ctx.scale);
-
-        // Draw pressed overlay for visual feedback
-        if self.is_pressed.get() && !self.is_disabled {
-            let overlay_color = self.pressed_overlay_color.unwrap_or(Color::Rgba(0, 0, 0, 40));
-            ctx.canvas.fill_color_rect_per_corner(
-                (0.0, 0.0).into(),
-                ResolvedSize { width: box_width, height: box_height },
-                overlay_color,
-                radii,
-            );
-        }
-
-        // Clip children to the rounded border so they don't leak outside
-        let has_radius = radii.iter().any(|&r| r > 0.0);
-        if has_radius {
-            ctx.canvas
-                .set_clip_rounded((0.0, 0.0).into(), ResolvedSize { width: box_width, height: box_height }, radii);
-        }
-
-        // Draw child centered within the button bounds
-        let child_size = self.child.computed_size(ctx);
-        let offset_x = (box_width - child_size.width).max(0.0) / 2.0;
-        let offset_y = (box_height - child_size.height).max(0.0) / 2.0;
-
-        ctx.canvas.save();
-        ctx.canvas.translate((offset_x, offset_y).into());
-
-        let child_ctx = BuildContext {
-            parent_size: ResolvedSize { width: box_width, height: box_height },
-            canvas: ctx.canvas.clone(),
-            scale: ctx.scale,
-            parent_pos: Vec2d::default(),
-            cursor_pos: ctx.cursor_pos,
-            box_constraint: BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: box_width, max_height: box_height },
-            visible_rect: ctx.visible_rect,
-            window: ctx.window,
-            #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx.async_handle.clone(),
-            inherited_states: ctx.inherited_states.clone(),
-        };
-        Self::render_child(&self.child, &child_ctx);
-
-        ctx.canvas.restore();
-
-        // Clear the rounded clip if it was set
-        if has_radius {
-            ctx.canvas.clear_clip();
-        }
-
-        ctx.canvas.restore();
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        false
     }
 }

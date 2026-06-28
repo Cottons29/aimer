@@ -35,6 +35,14 @@ pub enum LineHeight {
 
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy)]
+pub enum TextDecoration {
+    #[default]
+    None,
+    Underline,
+}
+
+#[allow(dead_code)]
+#[derive(Default, Clone, Copy)]
 pub enum TextAlign {
     #[default]
     TopLeft,
@@ -49,7 +57,7 @@ pub enum TextAlign {
 }
 
 #[allow(dead_code)]
-#[derive(aimer_macro::Constructor, Clone)]
+#[derive(aimer_macro::Constructor, Clone, Copy)]
 pub struct TextStyle  {
     #[constructor(default = 13)]
     pub font_size: u32,
@@ -61,6 +69,8 @@ pub struct TextStyle  {
     pub color: Color,
     #[constructor(default)]
     pub text_overflow: TextOverflow,
+    #[constructor(default)]
+    pub text_decoration: TextDecoration,
 }
 
 impl TextStyle {
@@ -75,13 +85,14 @@ impl Default for TextStyle {
             font_weight: FontWeight::Normal,
             color: Colors::Black.into(),
             text_overflow: TextOverflow::Clip,
+            text_decoration: TextDecoration::None,
         }
     }
 
 }
 
 #[allow(dead_code)]
-#[derive( Default, Clone)]
+#[derive( Default, Clone, Copy)]
 pub enum TextOverflow {
     #[default]
     Clip,

@@ -5,14 +5,14 @@ use aimer_macro::WidgetConstructor;
 use aimer_style::{TextAlign, TextOverflow, TextStyle};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, LayoutCache, Widget};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// this is a widget for creating the text
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
 pub struct Text {
     #[constructor(into, first)]
-    text: String,
+    text: Arc<str>,
     #[constructor(default)]
     text_align: TextAlign,
     #[constructor(default)]
@@ -43,5 +43,9 @@ impl Widget for Text {
             cache: LayoutCache::new(),
             _typeface: Mutex::new(None),
         })
+    }
+
+    fn text_content(&self) -> Option<&str> {
+        Some(&self.text)
     }
 }

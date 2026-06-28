@@ -47,3 +47,10 @@ impl Spacing {
         }
     }
 }
+
+
+impl From<f64> for Spacing {
+    fn from(value: f64) -> Self {
+        Spacing::Px(value as u32)
+    }
+}

@@ -1,0 +1,10 @@
+[package]
+name = "${project_name}"
+version = "${version}"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+aimer = {path = "/Users/cottons/Documents/aimer-fw/aimer/aimer"}

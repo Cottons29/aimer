@@ -39,7 +39,6 @@ impl StatelessWidget for HomeWidget {
                                     }
                                 },
                                 decoration: BoxDecoration!(background_color: Colors::Blue),
-                                hover_decoration: BoxDecoration!(background_color: Colors::Green),
                                 child: Container!(
                                     width: 200,
                                     height: 50,
@@ -60,7 +59,6 @@ impl StatelessWidget for HomeWidget {
                                     }
                                 },
                                 decoration: BoxDecoration!(background_color: Colors::Blue),
-                                hover_decoration: BoxDecoration!(background_color: Colors::Green),
                                 child: Container!(
                                     width: 200,
                                     height: 50,

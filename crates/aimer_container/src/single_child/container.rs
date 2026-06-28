@@ -4,7 +4,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{Rebuildable, WidgetConstructor};
 pub use aimer_style::*;
-use aimer_widget::{Drawable, Element, LayoutCache, Widget, base::*, LayoutElement, VisitorElement, EventElement};
+use aimer_widget::{Drawable, Element, LayoutCache, Widget, base::*, LayoutElement, Reconcilable, VisitorElement, EventElement};
 
 #[derive(WidgetConstructor)]
 pub struct Container<T = ZeroSizedBox>
@@ -255,6 +255,17 @@ impl<T: Element> Drawable for RawContainer<T> {
         child_ctx.box_constraint.max_width = content_w;
         child_ctx.box_constraint.max_height = content_h;
         child_ctx.parent_size = ResolvedSize { width: content_w, height: content_h };
+
+        // The child is drawn after translating the canvas by the margin and the
+        // padding + border inset, so the visibility rect (used for scroll
+        // culling) must be shifted by the same offset. Otherwise children of a
+        // padded/margined container are culled too early and disappear before
+        // they actually leave the viewport.
+        let inset_x = m_left + p_left + b_left;
+        let inset_y = m_top + p_top + b_top;
+        child_ctx.visible_rect = ctx
+            .visible_rect
+            .map(|(vx, vy, vw, vh)| (vx - inset_x, vy - inset_y, vw, vh));
 
         self.child.draw(&child_ctx);
         ctx.canvas.clear_clip();
@@ -508,4 +519,12 @@ impl<T: Element> LayoutElement for RawContainer<T> {
     }
 
 
+}
+
+impl<T: Element + 'static> Reconcilable for RawContainer<T> {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        false
+    }
 }

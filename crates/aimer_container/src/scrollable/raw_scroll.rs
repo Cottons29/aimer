@@ -1,14 +1,13 @@
+pub use crate::scrollable::controller::DragMode;
 use crate::scrollable::controller::ScrollController;
 use crate::scrollable::scroll_bar::ScrollBar;
+use aimer_attribute::CacheBounds;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_attribute::CacheBounds;
-use aimer_widget::base::*;
-use aimer_widget::{Element, LayoutElement};
-use winit::window::Window;
 use aimer_macro::Rebuildable;
-pub use crate::scrollable::controller::DragMode;
+use aimer_widget::base::*;
+use aimer_widget::{Element, Reconcilable};
 
 #[derive(Rebuildable)]
 pub struct RawScrollableContainer<E: Element> {
@@ -16,7 +15,6 @@ pub struct RawScrollableContainer<E: Element> {
     pub(crate) ctrl: ScrollController,
     pub(crate) vertical_scroll_bar: Option<ScrollBar>,
     pub(crate) horizontal_scroll_bar: Option<ScrollBar>,
-    pub(crate) window: &'static Window,
     pub(crate) bounds: CacheBounds,
 }
 
@@ -26,14 +24,7 @@ impl<E: Element> RawScrollableContainer<E> {
         (ctx.box_constraint.max_width, ctx.box_constraint.max_height)
     }
 
-    pub(crate) fn draw_scrollbar(
-        &self,
-        ctx: &BuildContext,
-        scroll_bar: &ScrollBar,
-        viewport_w: f32,
-        viewport_h: f32,
-        is_vertical: bool,
-    ) {
+    pub(crate) fn draw_scrollbar(&self, ctx: &BuildContext, scroll_bar: &ScrollBar, viewport_w: f32, viewport_h: f32, is_vertical: bool) {
         let scale = ctx.scale;
         let offset = self.ctrl.visual_offset(self.ctrl.scroll_offset.get());
 
@@ -49,17 +40,25 @@ impl<E: Element> RawScrollableContainer<E> {
             Dimension::Auto => 12.0 * scale,
         };
 
+        // Cache track width for hit-testing track clicks.
+        if is_vertical {
+            self.ctrl.cached_v_track_width.set(track_width);
+        } else {
+            self.ctrl.cached_h_track_width.set(track_width);
+        }
+
         let thumb_width = match scroll_bar.thumb.width {
             Dimension::Px(v) => v * scale,
             Dimension::Percent(p) => track_width * (p / 100.0),
             Dimension::Auto => (track_width * 0.6).max(4.0),
         };
 
+        // Reuse the content size computed once at the start of this frame's draw
+        // (see `draw_scroll`) to avoid recomputing the child layout.
+        let content_size = self.ctrl.cached_content_size.get();
         let (track_length, content_extent, scroll_pos) = if is_vertical {
-            let content_size = self.content_size(ctx);
             (viewport_h, content_size.height, -offset.y)
         } else {
-            let content_size = self.content_size(ctx);
             (viewport_w, content_size.width, -offset.x)
         };
 
@@ -138,23 +137,15 @@ impl<E: Element> RawScrollableContainer<E> {
         // Draw track
         let track_color: Color = scroll_bar.track.color.into();
         let (track_w, track_h) = if is_vertical { (track_width, track_length) } else { (track_length, track_width) };
-        ctx.canvas.fill_color_rect(
-            Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize { width: track_w, height: track_h },
-            track_color,
-            [0.0; 4],
-        );
+        ctx.canvas
+            .fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: track_w, height: track_h }, track_color, [0.0; 4]);
 
         // Draw up/left button
         if let Some(ref btn) = scroll_bar.up_button {
             let btn_color: Color = btn.color.into();
             let (bw, bh) = if is_vertical { (track_width, button_h.0) } else { (button_h.0, track_width) };
-            ctx.canvas.fill_color_rect(
-                Vec2d { x: 0.0, y: 0.0 },
-                ResolvedSize { width: bw, height: bh },
-                btn_color,
-                [0.0; 4],
-            );
+            ctx.canvas
+                .fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: bw, height: bh }, btn_color, [0.0; 4]);
         }
 
         // Draw down/right button
@@ -169,34 +160,51 @@ impl<E: Element> RawScrollableContainer<E> {
                 .fill_color_rect(Vec2d { x: bx, y: by }, ResolvedSize { width: bw, height: bh }, btn_color, [0.0; 4]);
         }
 
-        // Draw thumb
-        let thumb_color: Color = scroll_bar.thumb.color.into();
+        // Draw thumb. Pick the color based on drag (active) and cursor hover state.
+        // The thumb hit-rect used for hover is the one stored on the previous frame.
+        let is_active = if is_vertical {
+            self.ctrl.drag_mode.get() == DragMode::VerticalScrollbar
+        } else {
+            self.ctrl.drag_mode.get() == DragMode::HorizontalScrollbar
+        };
+        let is_hover = self.ctrl.cursor_pos.get().is_some_and(|c| {
+            if is_vertical {
+                self.ctrl.hit_test_v_thumb(c)
+            } else {
+                self.ctrl.hit_test_h_thumb(c)
+            }
+        });
+        let thumb_color: Color = if is_active {
+            scroll_bar.thumb.active_color.into()
+        } else if is_hover {
+            scroll_bar.thumb.hover_color.into()
+        } else {
+            scroll_bar.thumb.color.into()
+        };
         let thumb_x_offset = (track_width - thumb_width) / 2.0;
         let (tx, ty, tw, th) = if is_vertical {
-            self.ctrl.v_thumb_rect.set(Some((
-                viewport_w - track_width + thumb_x_offset,
-                thumb_offset,
-                thumb_width,
-                thumb_length,
-            )));
+            self.ctrl
+                .v_thumb_rect
+                .set(Some((viewport_w - track_width + thumb_x_offset, thumb_offset, thumb_width, thumb_length)));
             (thumb_x_offset, thumb_offset, thumb_width, thumb_length)
         } else {
-            self.ctrl.h_thumb_rect.set(Some((
-                thumb_offset,
-                viewport_h - track_width + thumb_x_offset,
-                thumb_length,
-                thumb_width,
-            )));
+            self.ctrl
+                .h_thumb_rect
+                .set(Some((thumb_offset, viewport_h - track_width + thumb_x_offset, thumb_length, thumb_width)));
             (thumb_offset, thumb_x_offset, thumb_length, thumb_width)
         };
 
-        ctx.canvas.fill_color_rect(
-            Vec2d { x: tx, y: ty },
-            ResolvedSize { width: tw, height: th },
-            thumb_color,
-            [thumb_radius; 4],
-        );
+        ctx.canvas
+            .fill_color_rect(Vec2d { x: tx, y: ty }, ResolvedSize { width: tw, height: th }, thumb_color, [thumb_radius; 4]);
 
         ctx.canvas.restore();
+    }
+}
+
+impl<E: Element + 'static> Reconcilable for RawScrollableContainer<E> {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
+    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        false
     }
 }

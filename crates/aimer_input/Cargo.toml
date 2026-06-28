@@ -15,6 +15,7 @@ aimer_style.workspace = true
 aimer_animation.workspace = true
 unicode-segmentation.workspace = true
 aimer_macro.workspace = true
+aimer_text.workspace = true
 #####################
 winit.workspace = true
 chrono.workspace = true
@@ -28,4 +29,4 @@ arboard.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"
 wasm-bindgen = { workspace = true }
-web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlInputElement", "HtmlElement", "CssStyleDeclaration", "HtmlCollection", "KeyboardEvent", "KeyboardEventInit", "InputEvent", "EventTarget", "Navigator", "Clipboard"] }
+web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlInputElement", "HtmlElement", "CssStyleDeclaration", "HtmlCollection", "KeyboardEvent", "KeyboardEventInit", "InputEvent", "CompositionEvent", "EventTarget", "Navigator", "Clipboard"] }

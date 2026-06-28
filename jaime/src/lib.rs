@@ -5,10 +5,10 @@ mod starter;
 pub mod stateful;
 mod stateful_2;
 
-
 #[allow(unused_imports)]
 use crate::animated::start_my_animated_list;
 use crate::color_sync::start_color_sync;
+use crate::routing::state_router;
 #[allow(unused_imports)]
 use crate::stateful::start_counter;
 use aimer::AimerApp;
@@ -16,21 +16,20 @@ use aimer::style::*;
 use aimer::*;
 #[allow(unused_imports)]
 use aimer::*;
-use crate::routing::state_router;
 
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
     // #[cfg(not(target_arch = "wasm32"))]
-    // start_counter();
+    start_counter();
     // state_router()
     // simply start the app with AimerApp::start
     // #[cfg(target_arch = "wasm32")]
     // test_positioned();
-    test_text()
+    // test_text()
     // test_scrollable()
     // test_scrollable_row()
-    // stateful_2::start_my_list();
+    stateful_2::start_my_list();
     // start_my_animated_list()
     // test_border_outline()
     // test_image()
@@ -312,11 +311,7 @@ pub fn test_scrollable() {
         children: items_2
     );
     let scrollbar = ScrollBar {
-        track: ScrollTrack {
-            width: Dimension::Px(2.0),
-            color: Colors::Transparent,
-            hover_color: Colors::Gray.alpha(120),
-        },
+        track: ScrollTrack { width: Dimension::Px(2.0), color: Colors::Transparent, hover_color: Colors::Gray.alpha(120) },
         thumb: ScrollThumb {
             width: Dimension::Px(2.0),
             radius: Dimension::Px(4.0),
@@ -451,11 +446,7 @@ fn test_scrollable_row() {
         children: items
     );
     let scrollbar = ScrollBar {
-        track: ScrollTrack {
-            width: Dimension::Px(2.0),
-            color: Colors::Transparent,
-            hover_color: Colors::Gray.alpha(120),
-        },
+        track: ScrollTrack { width: Dimension::Px(2.0), color: Colors::Transparent, hover_color: Colors::Gray.alpha(120) },
         thumb: ScrollThumb {
             width: Dimension::Px(2.0),
             radius: Dimension::Px(4.0),
@@ -553,7 +544,7 @@ fn test_image() {
                 ]
             ),
             padding: LayoutSpacing::all(Spacing::Px(10)),
-            child: NetworkImage! (
+            child: AssetImage! (
                 // size: Size{width: Dimension::Px(360.0), height: Dimension::Px(240.0)},
                 // source: ImageSource::Network("https://cdn.pixabay.com/photo/2017/05/31/16/39/windows-2360920_1280.png".to_string()),
                 // "https://img.freepik.com/free-vector/bird-colorful-gradient-design-vector_343694-2506.jpg?semt=ais_incoming&w=740&q=80",
@@ -563,7 +554,8 @@ fn test_image() {
                 // "https://www.evenlund.com/wp-content/uploads/2022/03/colortile.png",
                 // "/Users/cottons/Downloads/PNG_transparency_demonstration_1.png",
                 // "/Users/cottons/Downloads/2a-color-bars2.png",
-                "https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png",
+                // "https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png",
+                "assets/my_image.png",
                 // "https://upload.wikimedia.org/wikipedia/commons/6/66/SMPTE_Color_Bars.svg",
                 // "https://t4.ftcdn.net/jpg/02/77/71/45/360_F_277714513_fQ0akmI3TQxa0wkPCLeO12Rx3cL2AuIf.jpg",
                 fit: BoxFit::FitWidth,
@@ -572,6 +564,6 @@ fn test_image() {
                 // loading_widget: SizedBox!(color: Colors::Green),
                 // error_widget: SizedBox!(color: Colors::Red),
             )
-            ),
+        ),
     ))
 }
