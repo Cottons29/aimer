@@ -5,7 +5,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use std::cell::Cell;
 use web_time::Instant;
-use aimer_utils::debug;
+use aimer_utils::info;
 
 /// Ring buffer of recent velocity samples for trackpad smoothing.
 pub(crate) struct VelocityHistory {
@@ -99,6 +99,9 @@ pub struct ScrollController {
     pub(crate) fling_target_offset: Cell<Vec2d>,
     /// Total duration (seconds) of the active bézier fling.
     pub(crate) fling_duration: Cell<f32>,
+    /// Primary touch finger ID that owns this scrollable, or `None` for mouse.
+    /// Set on first PointerDown, cleared on PointerUp/Cancel.
+    pub(crate) active_touch_id: Cell<Option<u64>>,
 }
 
 /// One axis of a cubic Bézier with implicit endpoints `P0 = 0`, `P3 = 1`.
@@ -174,12 +177,14 @@ impl ScrollController {
 
     #[inline(always)]
     fn apply_bouncy(value: f32, min: f32, max: f32, resistance: f32) -> f32 {
+        // Non-touch devices (desktop) get 50% more resistance for a stiffer feel.
+        let scaled_resistance = resistance * BOUNCY_RESISTANCE_SCALE * BOUNCY_RESISTANCE_NON_TOUCH_SCALE;
         if value < min {
             let diff = min - value;
-            min - diff.powf(BOUNCY_STRETCH_EXPONENT) * (resistance * BOUNCY_RESISTANCE_SCALE)
+            min - diff.powf(BOUNCY_STRETCH_EXPONENT) * scaled_resistance
         } else if value > max {
             let diff = value - max;
-            max + diff.powf(BOUNCY_STRETCH_EXPONENT) * (resistance * BOUNCY_RESISTANCE_SCALE)
+            max + diff.powf(BOUNCY_STRETCH_EXPONENT) * scaled_resistance
         } else {
             value
         }
@@ -196,12 +201,19 @@ impl ScrollController {
 
         if self.scroll_behavior.bouncy {
             let resistance = self.scroll_behavior.bouncy_resistance;
+            let vx = Self::apply_bouncy(offset.x, max_x, min_x, resistance);
+            let vy = Self::apply_bouncy(offset.y, max_y, min_y, resistance);
 
-            (
-                Self::apply_bouncy(offset.x, max_x, min_x, resistance),
-                Self::apply_bouncy(offset.y, max_y, min_y, resistance),
-            )
-                .into()
+            let stretch_x = (vx - offset.x).abs();
+            let stretch_y = (vy - offset.y).abs();
+            // if stretch_x > 0.5 || stretch_y > 0.5 {
+            //     info!(
+            //         "rubber-band stretch | offset: ({:.1}, {:.1}) | visual: ({:.1}, {:.1}) | stretch: ({:.1}, {:.1}) | resistance: {:.2}",
+            //         offset.x, offset.y, vx, vy, stretch_x, stretch_y, resistance
+            //     );
+            // }
+
+            (vx, vy).into()
         } else {
             (offset.x.clamp(max_x, min_x), offset.y.clamp(max_y, min_y)).into()
         }
@@ -426,14 +438,38 @@ impl ScrollController {
             velocity.y *= decay;
 
             // Clamp to bounds: if we hit the edge, stop momentum on that axis.
-            let new_clamped = self.clamp_offset(offset);
-            if offset.x != new_clamped.x {
-                offset.x = new_clamped.x;
-                velocity.x = 0.0;
-            }
-            if offset.y != new_clamped.y {
-                offset.y = new_clamped.y;
-                velocity.y = 0.0;
+            // For bouncy scrolling, DON'T clamp here — let the offset overshoot
+            // so the spring-back code can pull it back with a smooth transition.
+            if !self.scroll_behavior.bouncy {
+                let new_clamped = self.clamp_offset(offset);
+                if offset.x != new_clamped.x {
+                    offset.x = new_clamped.x;
+                    velocity.x = 0.0;
+                }
+                if offset.y != new_clamped.y {
+                    offset.y = new_clamped.y;
+                    velocity.y = 0.0;
+                }
+            } else {
+                // Bouncy: only zero velocity that pushes FURTHER out of bounds.
+                // If velocity is pushing toward the edge (helping recovery),
+                // let it continue — this prevents oscillation when the user
+                // scrolls while spring-back is active.
+                let new_clamped = self.clamp_offset(offset);
+                if offset.x != new_clamped.x {
+                    let dx = new_clamped.x - offset.x;
+                    // Zero velocity only if it's moving AWAY from the edge
+                    if (dx > 0.0 && velocity.x < 0.0) || (dx < 0.0 && velocity.x > 0.0) {
+                        velocity.x = 0.0;
+                    }
+                }
+                if offset.y != new_clamped.y {
+                    let dy = new_clamped.y - offset.y;
+                    // Zero velocity only if it's moving AWAY from the edge
+                    if (dy > 0.0 && velocity.y < 0.0) || (dy < 0.0 && velocity.y > 0.0) {
+                        velocity.y = 0.0;
+                    }
+                }
             }
 
             self.pointer_velocity.set(velocity);
@@ -453,6 +489,12 @@ impl ScrollController {
         if self.scroll_behavior.bouncy && !momentum_active && (offset.x != clamped.x || offset.y != clamped.y) {
             let dx = clamped.x - offset.x;
             let dy = clamped.y - offset.y;
+            let oob_dist = (dx * dx + dy * dy).sqrt();
+
+            // info!(
+            //     "rubber-band spring-back | oob_dist: {:.1}px | offset: ({:.1}, {:.1}) | target: ({:.1}, {:.1})",
+            //     oob_dist, offset.x, offset.y, clamped.x, clamped.y
+            // );
 
             let base_spring = 1.0 - (1.0 - self.scroll_behavior.bouncy_recovery).powf(frame_ratio);
             // Cubic ease-out: fast start, gentle landing (1 − (1−t)³)
@@ -474,6 +516,21 @@ impl ScrollController {
                 offset.y += dy * spring_factor;
             }
 
+            // Clamp to prevent overshooting the edge — this makes the spring
+            // critically damped (no oscillation, smooth one-way return).
+            if spring_x {
+                let new_dx = clamped.x - offset.x;
+                if (dx > 0.0 && new_dx < 0.0) || (dx < 0.0 && new_dx > 0.0) {
+                    offset.x = clamped.x;
+                }
+            }
+            if spring_y {
+                let new_dy = clamped.y - offset.y;
+                if (dy > 0.0 && new_dy < 0.0) || (dy < 0.0 && new_dy > 0.0) {
+                    offset.y = clamped.y;
+                }
+            }
+
             let mut v = v;
             if spring_x {
                 v.x *= SPRING_VELOCITY_DAMPING.powf(frame_ratio);
@@ -488,12 +545,14 @@ impl ScrollController {
                 let mut v = self.pointer_velocity.get();
                 v.x = 0.0;
                 self.pointer_velocity.set(v);
+                // info!("rubber-band snap | x-axis snapped to edge");
             }
             if spring_y && (offset.y - clamped.y).abs() < SNAP_EPSILON {
                 offset.y = clamped.y;
                 let mut v = self.pointer_velocity.get();
                 v.y = 0.0;
                 self.pointer_velocity.set(v);
+                // info!("rubber-band snap | y-axis snapped to edge");
             }
             if spring_x || spring_y {
                 needs_redraw = true;
