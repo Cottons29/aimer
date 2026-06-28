@@ -124,8 +124,14 @@ fn assemble_macos(pkg_name: &str, release: bool) -> anyhow::Result<String> {
 
     let src_lib = artifact_path(rust_target, &lib_name, release, ".a");
     copy_lib(&src_lib, "builds/macos/Libraries", &format!("lib{lib_name}.a"))?;
-
     let configuration = xcode_configuration(release);
+    let artifact = format!("builds/macos/build/{configuration}/{pkg_name}.app");
+    let artifact_path = Path::new(&artifact);
+    if artifact_path.exists() {
+        std::fs::remove_dir_all(artifact_path)?;
+    }
+
+
     let mut xcode = Command::new("xcodebuild");
     xcode
         .arg("-project")
@@ -140,7 +146,7 @@ fn assemble_macos(pkg_name: &str, release: bool) -> anyhow::Result<String> {
         .current_dir("builds/macos");
     run_step(xcode, "xcodebuild for macOS")?;
 
-    let artifact = format!("builds/macos/build/{configuration}/{pkg_name}.app");
+
     copy_assets_into(&format!("{artifact}/Contents/Resources"))?;
     Ok(artifact)
 }
