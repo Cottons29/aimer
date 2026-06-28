@@ -479,3 +479,114 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
     // Terminal restoration is handled by `_guard` on drop.
     Ok(())
 }
+
+/// Start the console in non-interactive (no-TUI) mode.
+///
+/// Prints build and app logs directly to stdout/stderr without creating an
+/// alternate screen or using ratatui. Designed for IDE and CI integrations
+/// where no terminal device is available.
+pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
+    let (tx, rx) = crossbeam::channel::unbounded();
+
+    // Starting inspector server
+    let inspector_runtime = Runtime::new().context("failed to start inspector server tokio runtime")?;
+
+    let inspector_server_address = match device.target {
+        Targets::Ios | Targets::Android => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+        _ => IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+    };
+
+    let inspector_handle = match InspectorServer::start(inspector_server_address, 9229, inspector_runtime.handle()) {
+        Ok(handle) => handle,
+        Err(e) => {
+            let _ = tx.send(RunnerEvent::AppLog(format!("Failed to start inspector server: {}", e)));
+            return Err(anyhow::anyhow!("failed to start inspector server: {e}"));
+        }
+    };
+
+    let mut current_child = spawn_runner(device.clone(), pkg_name.clone(), tx.clone(), inspector_handle.address, inspector_handle.port);
+
+    // Hot-reload file watcher
+    let _watcher = {
+        let tx_watch = tx.clone();
+        let mut debounce_last = Instant::now();
+        let mut watcher = notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
+            if let Ok(event) = res {
+                use notify::EventKind;
+                match event.kind {
+                    EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
+                        let dominated_by_rs = event
+                            .paths
+                            .iter()
+                            .any(|p| p.extension().is_some_and(|ext| ext == "rs"));
+                        if dominated_by_rs {
+                            let now = Instant::now();
+                            if now.duration_since(debounce_last) > Duration::from_millis(500) {
+                                debounce_last = now;
+                                let _ = tx_watch.send(RunnerEvent::HotReload);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .ok();
+        if let Some(ref mut w) = watcher {
+            let _ = w.watch(Path::new("src"), RecursiveMode::Recursive);
+            if Path::new("crates").exists() {
+                let _ = w.watch(Path::new("crates"), RecursiveMode::Recursive);
+            }
+        }
+        watcher
+    };
+
+    // Simple blocking event loop — print logs to stdout/stderr.
+    loop {
+        match rx.recv() {
+            Ok(event) => match event {
+                RunnerEvent::BuildLog(msg) => {
+                    eprintln!("[build] {}", msg);
+                }
+                RunnerEvent::AppLog(msg) => {
+                    println!("{}", msg);
+                }
+                RunnerEvent::StatusChange(status) => {
+                    match &status {
+                        Status::Compiling(pct) => eprintln!("[status] Compiling {}%", pct),
+                        Status::Building(pct) => eprintln!("[status] Building {}%", pct),
+                        Status::Fetching(pct) => eprintln!("[status] Fetching {}%", pct),
+                        Status::Launching => eprintln!("[status] Launching..."),
+                        Status::Running => eprintln!("[status] Running"),
+                        Status::Error => eprintln!("[status] Error"),
+                        Status::Locking => eprintln!("[status] Locking..."),
+                        Status::Idling => {}
+                    }
+                }
+                RunnerEvent::HotReload => {
+                    eprintln!("[hot-reload] File change detected, rebuilding...");
+                    if device.target == Targets::Web {
+                        pipeline::spawn_wasm_pack(tx.clone());
+                    } else {
+                        if let Some(mut child) = current_child.lock().unwrap().take() {
+                            let _ = child.kill();
+                        }
+                        current_child = spawn_runner(
+                            device.clone(),
+                            pkg_name.clone(),
+                            tx.clone(),
+                            inspector_handle.address,
+                            inspector_handle.port,
+                        );
+                    }
+                }
+            },
+            Err(_) => {
+                // Channel closed — runner thread exited.
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
