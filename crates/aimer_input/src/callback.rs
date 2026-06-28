@@ -72,6 +72,17 @@ pub struct Callback<Args = (), Return = ()> {
     inner: CallbackInner<Args, Return>,
 }
 
+
+impl<Args, Return>  Callback<Args, Return> {
+    pub fn callable(&self) -> Option<&Self> {
+        if self.inner.is_default(){
+            None
+        }else {
+            Some(self)
+        }
+    }
+}
+
 unsafe impl<Args, Return> Send for Callback<Args, Return>
 where
     Args: Send,
@@ -83,6 +94,18 @@ where
     Args: Sync,
     Return: Sync,
 {
+}
+
+impl<Args, Return> Default for Callback<Args, Return> {
+    fn default() -> Self {
+        Self { inner: CallbackInner::default() }
+    }
+}
+
+impl<Args, Return> Clone for Callback<Args, Return> {
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
 }
 
 impl<Args, Return> Debug for Callback<Args, Return> {
@@ -119,7 +142,6 @@ impl<P, R> CallbackExecutor for Callback<P, R> {
 
 pub type VoidParamedFunction<R> = Callback<R, ()>;
 
-
 /// A struct representing a callback with no input and no output (void callback).
 ///
 /// `VoidCallback` is a wrapper around `CallbackInner<(), ()>` that provides
@@ -146,6 +168,16 @@ pub struct VoidCallback {
     inner: CallbackInner<(), ()>,
 }
 
+impl VoidCallback {
+    pub fn callable(&self) -> Option<&Self> {
+        if self.inner.is_default(){
+            None
+        }else {
+            Some(self)
+        }
+    }
+}
+
 unsafe impl Send for VoidCallback {}
 unsafe impl Sync for VoidCallback {}
 
@@ -160,6 +192,15 @@ impl<F: Fn() + 'static> From<F> for VoidCallback {
         Self { inner: CallbackInner::from(move |_| f()) }
     }
 }
+
+// impl<F: Fn() + 'static> From<Option<F>> for VoidCallback {
+//     fn from(f: Option<F>) -> Self {
+//         match f {
+//             Some(f) => Self { inner: CallbackInner::from(move |_| f()) },
+//             None => Self{inner: CallbackInner::default()},
+//         }
+//     }
+// }
 
 impl<F, Fut> From<AsyncCallback<F>> for VoidCallback
 where
