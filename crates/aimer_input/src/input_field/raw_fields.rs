@@ -475,13 +475,13 @@ impl RawTextField {
     }
 
     fn build_text_widget<'a>(
-        &self,
+        &'_ self,
         text: &'a str,
         style: &TextStyle,
         align: TextAlign,
     ) -> RawTextWidget {
         RawTextWidget {
-            text: Arc::from(text),
+            text: text.into(),
             text_style: style.clone(),
             text_align: align,
             cache: LayoutCache::new(),

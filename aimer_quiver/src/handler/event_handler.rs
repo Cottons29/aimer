@@ -29,6 +29,8 @@ impl WindowEventHandler {
 
             WindowEvent::CursorMoved { position, .. } => Self::handle_cursor_move(position, app),
 
+            WindowEvent::CursorLeft { .. } => Self::handle_cursor_left(app),
+
             WindowEvent::MouseInput { state, button, .. } => Self::handle_mouse_input(state, button, app),
 
             WindowEvent::ModifiersChanged(mods) => {
@@ -112,6 +114,23 @@ impl WindowEventHandler {
         if let Some(root) = &app.widget_root {
             let event = ElementEvent::PointerMove(app.cursor_pos, PointerSource::Mouse, 0);
             let _handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
+            if let Some(window) = &app.window {
+                window.request_redraw();
+            }
+        }
+    }
+
+    fn handle_cursor_left(app: &mut AimerApplicationHandler) {
+        // The cursor left the window. Dispatch a pointer move at a position that
+        // is outside every element's bounds so that hover-tracking elements
+        // (e.g. `MouseRegion`) see `is_inside == false` and fire their
+        // hover-exit transition. Without this, a region whose bounds reach the
+        // window edge would stay stuck in `RegionAcceptState::Enter` forever.
+        let off_screen = Vec2d { x: f32::MIN, y: f32::MIN };
+        app.cursor_pos = off_screen;
+        if let Some(root) = &app.widget_root {
+            let event = ElementEvent::PointerMove(off_screen, PointerSource::Mouse, 0);
+            let _handled = dispatch_event(root.as_ref(), off_screen, &event);
             if let Some(window) = &app.window {
                 window.request_redraw();
             }

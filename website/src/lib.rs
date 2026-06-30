@@ -97,7 +97,7 @@ fn hero_section(ctx: &BuildContext) -> Box<dyn Widget> {
                 SizedBox!(height: 40),
                 Container!(
                     width: Dimension::Px(200.0),
-                    height: Dimension::Px(56.0),
+                    height: Dimension::Px(156.0),
                     child: HoverableGetStartedButton!()
                 ),
                 SizedBox!(height: 14),

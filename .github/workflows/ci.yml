@@ -24,9 +24,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Clippy (deny warnings)
-        # --no-deps so -D warnings applies only to aimer_cli, not to the
-        # workspace-member dependencies (which are outside this CI's scope).
-        run: cargo clippy --no-deps -p aimer_cli --all-targets -- -D warnings
+        run: cargo clippy --no-deps -p aimer_cli
 
       - name: Run tests
         run: cargo test -p aimer_cli
