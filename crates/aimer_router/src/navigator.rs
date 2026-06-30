@@ -182,12 +182,12 @@ impl<R> Clone for NavigatorController<R> {
 }
 
 
-pub type NavigationState<R: 'static + Send + Sync> = Arc<NavigatorController<R>>;
+pub type NavigatorInstance<R: 'static + Send + Sync> = Arc<NavigatorController<R>>;
 
 impl<R: 'static + Send + Sync> NavigatorController<R> {
     /// Flutter-style: `Navigator::of(ctx).push(route)`
     #[track_caller]
-    pub fn of(ctx: &BuildContext) -> NavigationState<R> {
+    pub fn of(ctx: &BuildContext) -> NavigatorInstance<R> {
         ctx.get_state::<NavigatorController<R>>()
             .expect("No Navigator found in context. Make sure a Navigator widget is an ancestor.")
             .clone()

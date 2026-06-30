@@ -8,7 +8,7 @@ pub use aimer_color::prelude::*;
 pub use aimer_container::flex::row_column::*;
 pub use aimer_container::flex::*;
 pub use aimer_container::*;
-pub use aimer_input::gesture::button::Button;
+pub use aimer_input::button::Button;
 pub use aimer_input::callback::{AsyncCallback, RawInnerCallback, CallbackInner};
 pub use aimer_input::input::*;
 pub use aimer_input::*;

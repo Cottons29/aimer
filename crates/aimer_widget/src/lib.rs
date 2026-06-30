@@ -37,7 +37,7 @@ pub mod base {
     pub use crate::components::context::BuildContext;
     pub use aimer_color::prelude::*;
 }
-pub use crate::widget::{Widget, WidgetTrait};
+pub use crate::widget::{Widget};
 pub use crate::key::Key;
 
 pub use crate::components::element::{dispatch_event, broadcast_event};

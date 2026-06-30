@@ -1,22 +1,62 @@
-use crate::callback::{RawInnerCallback, VoidCallback, VoidParamedFunction, CallbackExecutor};
+use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback, VoidParamedFunction};
 use crate::gesture::{
-    DragUpdateData, GestureEvent, ScaleData, ScrollData, SwipeDirection,
-    DragCallback, DragUpdateCallback, SwipeCallback, ScrollCallback, ScaleCallback,
-    DOUBLE_TAP_TIMEOUT, LONG_PRESS_DURATION, TAP_SLOP, SWIPE_VELOCITY_THRESHOLD, SWIPE_MAX_DURATION_MS,
+    DragCallback, DragUpdateCallback, DragUpdateData, GestureEvent, ScaleCallback,
+    ScaleData, ScrollCallback, ScrollData, SwipeCallback, SwipeDirection,
+    DOUBLE_TAP_TIMEOUT, LONG_PRESS_DURATION, SWIPE_MAX_DURATION_MS, SWIPE_VELOCITY_THRESHOLD, TAP_SLOP,
 };
 use aimer_animation::time::AnimInstant;
-use aimer_attribute::{BoxConstraint, CacheBounds};
-use aimer_attribute::dimension::Dimension;
-use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_attribute::CacheBounds;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerEvent, PointerPosition};
+use aimer_widget::base::BuildContext;
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement};
 use winit::window::Window;
-use aimer_macro::Constructor;
+
+
+pub struct GestureDetector<W: Widget + 'static> {
+    pub on_tap: VoidCallback,
+    pub on_double_press: VoidCallback,
+    pub on_long_press: VoidCallback,
+    pub on_drag_start: DragCallback,
+    pub on_drag_update: DragUpdateCallback,
+    pub on_drag_end:VoidCallback,
+    pub on_right_tap: VoidCallback,
+    pub on_swipe:SwipeCallback,
+    pub on_scroll: ScrollCallback,
+    pub on_scale: ScaleCallback,
+    pub child: W,
+}
+
+impl<W: Widget + 'static> Widget for GestureDetector<W> {
+    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+        RawGestureDetector {
+            child: self.child.to_element(ctx),
+            cached_bounds: CacheBounds::new(),
+            window: ctx.window,
+            on_tap: self.on_tap.clone(),
+            on_double_press: self.on_double_press.clone(),
+            on_long_press: self.on_long_press.clone(),
+            on_drag_start: self.on_drag_start.clone(),
+            on_drag_update: self.on_drag_update.clone(),
+            on_drag_end: self.on_drag_end.clone(),
+            on_right_tap: self.on_right_tap.clone(),
+            on_swipe: self.on_swipe.clone(),
+            on_scroll: self.on_scroll.clone(),
+            on_scale: self.on_scale.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            runtime_handle: Some(ctx.async_handle.clone()),
+            state: RefCell::new(Default::default()),
+        }.boxed()
+    }
+}
+
+
+
+
+
 
 /// A pure gesture recognizer that wraps a child element.
 ///
@@ -28,16 +68,13 @@ use aimer_macro::Constructor;
 /// This mirrors Flutter's `GestureDetector`: a transparent wrapper that
 /// recognises gestures and delegates rendering entirely to its child.
 #[allow(dead_code)]
-#[derive(Constructor)]
-pub struct GestureDetector<'a, E: Element> {
-    // Layout
-    pub(crate) width: Dimension,
-    pub(crate) height: Dimension,
+pub struct RawGestureDetector<'a, E: Element> {
     // Child
     pub child: E,
     // Hit-testing
     pub(crate) cached_bounds: CacheBounds,
     pub(crate) window: &'a Window,
+    // Press state — shared with parent (e.g. ButtonVisual) for overlay rendering
     // Callbacks
     pub on_tap: VoidCallback,
     pub on_double_press: VoidCallback,
@@ -70,21 +107,7 @@ pub(crate) struct GestureState {
     drag_start_position: Option<PointerPosition>,
 }
 
-impl<'a, E: Element> GestureDetector<'a, E> {
-    fn compute_dimensions(&self, ctx: &BuildContext) -> (f32, f32) {
-        let box_width = match self.width {
-            Dimension::Px(w) => w * ctx.scale,
-            Dimension::Percent(p) => ctx.box_constraint.max_width * (p / 100.0),
-            Dimension::Auto => ctx.box_constraint.max_width,
-        };
-        let box_height = match self.height {
-            Dimension::Px(h) => h * ctx.scale,
-            Dimension::Percent(p) => ctx.box_constraint.max_height * (p / 100.0),
-            Dimension::Auto => ctx.box_constraint.max_height,
-        };
-        (box_width.max(0.0), box_height.max(0.0))
-    }
-
+impl<'a, E: Element> RawGestureDetector<'a, E> {
     // ── Callback execution helpers ──────────────────────────────────────
 
     fn execute_callback(cb: &VoidCallback, #[cfg(not(target_arch = "wasm32"))] runtime_handle: &Option<tokio::runtime::Handle>) {
@@ -395,13 +418,13 @@ fn midpoint(a: PointerPosition, b: PointerPosition) -> PointerPosition {
 
 // ── Element trait impls ─────────────────────────────────────────────────
 
-impl<'b, E: Element> VisitorElement for GestureDetector<'b, E> {
+impl<'b, E: Element> VisitorElement for RawGestureDetector<'b, E> {
     fn debug_name(&self) -> &'static str {
         "GestureDetector"
     }
 }
 
-impl<'b, E: Element> EventElement for GestureDetector<'b, E> {
+impl<'b, E: Element> EventElement for RawGestureDetector<'b, E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
         if matches!(event, ElementEvent::Cancel) {
             self.process_pointer_event(&PointerEvent::Cancel);
@@ -455,45 +478,30 @@ impl<'b, E: Element> EventElement for GestureDetector<'b, E> {
     }
 }
 
-impl<'b, E: Element> LayoutElement for GestureDetector<'b, E> {
+impl<'b, E: Element> LayoutElement for RawGestureDetector<'b, E> {
     #[inline]
     fn size(&self) -> Option<Size> {
-        Some(Size { width: self.width, height: self.height })
+        None
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let scale = ctx.scale;
-        let constraint = ctx.box_constraint;
-
-        let width = match self.width {
-            Dimension::Px(w) => w * scale,
-            Dimension::Percent(p) => constraint.max_width * (p / 100.0),
-            Dimension::Auto => self.child.computed_size(ctx).width,
-        };
-
-        let height = match self.height {
-            Dimension::Px(h) => h * scale,
-            Dimension::Percent(p) => constraint.max_height * (p / 100.0),
-            Dimension::Auto => self.child.computed_size(ctx).height,
-        };
-
-        ResolvedSize { width: width.max(0.0), height: height.max(0.0) }
+        self.child.computed_size(ctx)
     }
 }
 
-impl<'w, E: Element> Drawable for GestureDetector<'w, E> {
+impl<'w, E: Element> Drawable for RawGestureDetector<'w, E> {
     fn draw(&self, ctx: &BuildContext<'_>) {
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
-        let (w, h) = self.compute_dimensions(ctx);
-        self.cached_bounds.save(ctx.scale, abs_x, abs_y, w, h);
+        let child_size = self.child.computed_size(ctx);
+        self.cached_bounds.save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
 
         self.child.draw(ctx);
     }
 }
 
-impl<'b, E: Element> Rebuildable for GestureDetector<'b, E> {}
+impl<'b, E: Element> Rebuildable for RawGestureDetector<'b, E> {}
 
-impl<'b: 'static, E: Element + 'static> Reconcilable for GestureDetector<'b, E> {
+impl<'b: 'static, E: Element + 'static> Reconcilable for RawGestureDetector<'b, E> {
     fn as_any(&self) -> &dyn std::any::Any { self }
 
     fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {

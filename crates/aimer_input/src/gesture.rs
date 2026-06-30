@@ -1,7 +1,5 @@
 use crate::callback::VoidParamedFunction;
 use aimer_events::pointer::PointerPosition;
-
-pub mod button;
 pub mod gesture_detector;
 
 pub(crate) const DOUBLE_TAP_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
@@ -10,8 +8,6 @@ pub(crate) const LONG_PRESS_DURATION: std::time::Duration = std::time::Duration:
 pub(crate) const TAP_SLOP: f32 = 18.0;
 pub(crate) const SWIPE_VELOCITY_THRESHOLD: f32 = 300.0; // px/sec
 pub(crate) const SWIPE_MAX_DURATION_MS: u64 = 500;
-
-// ── Callback parameter types ──────────────────────────────────────────
 
 #[derive(Clone, Debug)]
 pub struct DragUpdateData {
@@ -42,15 +38,11 @@ pub enum SwipeDirection {
     Right,
 }
 
-// ── Callback aliases ──────────────────────────────────────────────────
-
 pub type DragCallback = VoidParamedFunction<PointerPosition>;
 pub type DragUpdateCallback = VoidParamedFunction<DragUpdateData>;
 pub type SwipeCallback = VoidParamedFunction<SwipeDirection>;
 pub type ScrollCallback = VoidParamedFunction<ScrollData>;
 pub type ScaleCallback = VoidParamedFunction<ScaleData>;
-
-// ── Gesture events ────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
 pub enum GestureEvent {
@@ -85,13 +77,13 @@ mod tests {
 
         // We can't easily create a GestureDetector without a Window in tests.
         // Instead, test the state machine logic by creating a minimal detector.
-        // For now, test via GestureActions-like interface.
+        // For now, test via a GestureActions-like interface.
         use std::sync::atomic::AtomicBool;
 
         let pos = PointerPosition { x: 10.0, y: 10.0, source: PointerSource::Mouse, id: 0 };
 
         // Simulate the state machine logic directly
-        let mut state = super::gesture_detector::GestureState::default();
+        let _state = gesture_detector::GestureState::default();
         // This tests the core logic without needing a Window
         assert!(true, "Gesture state machine compiles and runs");
     }

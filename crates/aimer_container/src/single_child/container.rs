@@ -4,7 +4,8 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{Rebuildable, WidgetConstructor};
 pub use aimer_style::*;
-use aimer_widget::{Drawable, Element, LayoutCache, Widget, base::*, LayoutElement, Reconcilable, VisitorElement, EventElement};
+use aimer_utils::debug;
+use aimer_widget::{Drawable, Element, EventElement, LayoutCache, LayoutElement, Reconcilable, VisitorElement, Widget, base::*};
 
 #[derive(WidgetConstructor)]
 pub struct Container<T = ZeroSizedBox>
@@ -89,11 +90,12 @@ impl<W: Widget> Widget for Container<W> {
         })
     }
 }
+
 /// #### Low level container element.
 ///
 /// - **Container**: safe wrapper for RawContainer
 ///
-/// - **SizedBox**: fixed size container or place holder
+/// - **SizedBox**: fixed size container or placeholder
 #[derive(Default, Rebuildable)]
 pub struct RawContainer<T: Element> {
     pub padding: LayoutSpacing,
@@ -199,7 +201,10 @@ impl<T: Element> Drawable for RawContainer<T> {
 
         let decoration_ctx = BuildContext { parent_size: ResolvedSize { width: draw_width, height: draw_height }, ..ctx.clone() };
 
-        if let Some(color) = self.color && self.box_decoration.background_color.is_none() {
+        if let Some(color) = self.color
+            && self.box_decoration.background_color.is_none()
+        {
+            debug!("updated color to {color:?}");
             self.box_decoration.update_color(color)
         }
 
@@ -211,10 +216,7 @@ impl<T: Element> Drawable for RawContainer<T> {
         let _p_bottom = self.padding.bottom.value(box_height, scale);
 
         let border = self.box_decoration.border;
-        let radii = self
-            .box_decoration
-            .border_radius
-            .resolve(box_width, box_height, scale);
+        let radii = self.box_decoration.border_radius.resolve(box_width, box_height, scale);
 
         let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
             match dim {
@@ -246,8 +248,7 @@ impl<T: Element> Drawable for RawContainer<T> {
         ctx.canvas
             .set_clip_rounded(Vec2d { x: clip_x, y: clip_y }, ResolvedSize { width: clip_w, height: clip_h }, inner_radii);
 
-        ctx.canvas
-            .translate(Vec2d { x: p_left + b_left, y: p_top + b_top });
+        ctx.canvas.translate(Vec2d { x: p_left + b_left, y: p_top + b_top });
 
         let mut child_ctx = ctx.clone();
         let content_w = (box_width - p_left - b_left - _p_right - b_right).max(0.0);
@@ -263,9 +264,7 @@ impl<T: Element> Drawable for RawContainer<T> {
         // they actually leave the viewport.
         let inset_x = m_left + p_left + b_left;
         let inset_y = m_top + p_top + b_top;
-        child_ctx.visible_rect = ctx
-            .visible_rect
-            .map(|(vx, vy, vw, vh)| (vx - inset_x, vy - inset_y, vw, vh));
+        child_ctx.visible_rect = ctx.visible_rect.map(|(vx, vy, vw, vh)| (vx - inset_x, vy - inset_y, vw, vh));
 
         self.child.draw(&child_ctx);
         ctx.canvas.clear_clip();
@@ -364,11 +363,9 @@ impl<T: Element> LayoutElement for RawContainer<T> {
         } else {
             ResolvedSize { width: (box_width + m_left + m_right).max(0.0), height: (box_height + m_top + m_bottom).max(0.0) }
         };
-        self.cache
-            .set_computed(ctx.box_constraint, scale_bits, result);
+        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
         result
     }
-
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
@@ -443,8 +440,7 @@ impl<T: Element> LayoutElement for RawContainer<T> {
                 height: (b_h - p_top - p_bottom - b_top - b_bottom).max(0.0),
             }
         };
-        self.cache
-            .set_content(ctx.box_constraint, scale_bits, result);
+        self.cache.set_content(ctx.box_constraint, scale_bits, result);
         result
     }
 
@@ -517,12 +513,12 @@ impl<T: Element> LayoutElement for RawContainer<T> {
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.bounds.get()
     }
-
-
 }
 
 impl<T: Element + 'static> Reconcilable for RawContainer<T> {
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 
     fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
         false
