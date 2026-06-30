@@ -1,5 +1,6 @@
 pub mod raw_text;
 
+use std::rc::Rc;
 use crate::text::raw_text::RawTextWidget;
 use aimer_macro::WidgetConstructor;
 use aimer_style::{TextAlign, TextOverflow, TextStyle};
@@ -12,7 +13,7 @@ use std::sync::{Arc, Mutex};
 #[derive(WidgetConstructor)]
 pub struct Text {
     #[constructor(into, first)]
-    text: Arc<str>,
+    text: Rc<str>,
     #[constructor(default)]
     text_align: TextAlign,
     #[constructor(default)]
@@ -36,13 +37,13 @@ impl Text {
 
 impl Widget for Text {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(RawTextWidget {
+        RawTextWidget {
             text: self.text.clone(),
             text_style: self.text_style.clone(),
             text_align: self.text_align,
             cache: LayoutCache::new(),
             _typeface: Mutex::new(None),
-        })
+        }.boxed()
     }
 
     fn text_content(&self) -> Option<&str> {
