@@ -1,4 +1,4 @@
-
+use std::rc::Rc;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use std::sync::{Arc, Mutex};
@@ -12,7 +12,7 @@ use aimer_widget::base::BuildContext;
 
 #[derive(Rebuildable, EventElement)]
 pub struct RawTextWidget {
-    pub text: Arc<str>,
+    pub text: Rc<str>,
     pub text_style: TextStyle,
     pub text_align: TextAlign,
     pub cache: LayoutCache,
