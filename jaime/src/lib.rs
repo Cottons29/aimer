@@ -29,7 +29,7 @@ pub fn my_app() {
     // test_text()
     // test_scrollable()
     // test_scrollable_row()
-    stateful_2::start_my_list();
+    // stateful_2::start_my_list();
     // start_my_animated_list()
     // test_border_outline()
     // test_image()

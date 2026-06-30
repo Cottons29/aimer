@@ -53,7 +53,7 @@ impl State<CounterWidget> for CounterState {
     fn build(&self, _: &BuildContext) -> impl Widget {
         let updater = self.updater.clone();
         Container!(
-            // color: Colors::Gray,
+            color: Colors::Gray,
             padding: LayoutSpacing!(top: Spacing::Px(20)),
             child: Flex!(
                 direction: LayoutDirection::Column,
