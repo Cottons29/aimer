@@ -11,13 +11,44 @@ use aimer_events::element::ElementEvent;
 
 impl<T> Element for T where T: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable + Reconcilable {}
 
-pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable + Reconcilable {}
+pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable + Reconcilable {
+
+    /// Converts the implementing instance into a `Box` containing a dynamic trait object of type `Element`.
+    ///
+    /// This method is useful when you want to box a type that implements the `Element` trait to enable
+    /// dynamic dispatch at runtime. It requires the size of the type to be known at compile time (`Self: Sized`)
+    /// and the type to have a `'static` lifetime.
+    ///
+    /// # Returns
+    ///
+    /// A `Box` containing the implementing instance as a dynamic `Element` trait object.
+    ///
+    /// # Example
+    ///
+    /// ```rust ignore
+    /// struct MyElement;
+    ///
+    /// impl Element for MyElement {
+    ///     // implementation details
+    /// }
+    ///
+    /// let element = MyElement;
+    /// let boxed_element: Box<dyn Element> = element.boxed();
+    /// ```
+    ///
+    /// # Constraints
+    ///
+    /// - The type must implement the `Element` trait.
+    /// - The type must be `Sized` and `'static`.
+    fn boxed(self) -> Box<dyn Element> where Self: Sized + 'static {
+        Box::new(self)
+    }
+}
 
 impl VisitorElement for Box<dyn Element> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().visit_children(visitor)
     }
-
     fn debug_name(&self) -> &'static str {
         self.as_ref().debug_name()
     }
@@ -76,11 +107,11 @@ impl Drawable for Box<dyn Element> {
 }
 
 impl Reconcilable for Box<dyn Element> {
-    fn as_any(&self) -> &dyn std::any::Any { self }
-
     fn key(&self) -> Option<crate::key::Key> {
         self.as_ref().key()
     }
+
+    fn as_any(&self) -> &dyn std::any::Any { self }
     fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
         self.as_ref().update_from_widget(new_element, ctx)
     }
