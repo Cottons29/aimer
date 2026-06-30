@@ -1,5 +1,5 @@
-use crate::{Drawable, Element, LayoutElement, VisitorElement, Widget, base::*, EventElement, Rebuildable, Reconcilable};
 use crate::reconcile::try_update_element;
+use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget, base::*};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
@@ -7,6 +7,7 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::cell::UnsafeCell;
 use std::panic::Location;
 use std::process::exit;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use winit::window::Window;
@@ -60,7 +61,7 @@ impl<S> Clone for StateUpdater<S> {
     }
 }
 
-impl<S: Send + 'static> StateUpdater<S> {
+impl<S: 'static> StateUpdater<S> {
     /// Create a new `StateUpdater` from a channel sender, shared state, and a dirty flag.
     #[inline]
     fn new(tx: Sender<StateMutation<S>>, state: Arc<SyncState<S>>, dirty: Arc<AtomicBool>, window: &'static Window) -> Self {
@@ -206,6 +207,11 @@ impl<S: Send + 'static> StateUpdater<S> {
 
 pub trait StatefulWidget: Sized {
     type State: State<Self>;
+
+    fn widget(&self) -> &Self where Self: Sized {
+        self
+    }
+
     fn create_state(&self) -> Self::State;
 }
 
@@ -213,11 +219,9 @@ pub trait State<W: StatefulWidget> {
     /// Called once after the state is created, providing a [`StateUpdater`] handle.
     /// Store the updater in your state struct to later call `set_state()` from
     /// event handlers or callbacks — similar to Flutter's `setState`.
-    fn init_state(&mut self, _updater: StateUpdater<Self>)
+    fn init_state(&mut self, updater: StateUpdater<Self>)
     where
-        Self: Sized,
-    {
-    }
+        Self: Sized;
 
     fn build(&self, ctx: &BuildContext) -> impl Widget;
 }
@@ -225,7 +229,7 @@ pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element>;
 pub struct StatefulElement {
     child: SyncChild,
     pub dirty: Arc<AtomicBool>,
-    pub rebuild_fn: Arc<RebuildCallBack>,
+    pub rebuild_fn: Rc<RebuildCallBack>,
     /// Monotonically increasing generation counter. Incremented on each rebuild
     /// so that multiple `set_state` calls between frames only trigger one rebuild.
     rebuild_generation: AtomicU64,
@@ -247,7 +251,7 @@ impl StatefulElement {
         key: Option<crate::key::Key>,
     ) -> (Self, StateUpdater<W::State>)
     where
-        W::State: Send + Sync + 'static,
+        W::State: 'static,
     {
         let (mut element, updater) = Self::new(widget, ctx);
         element.debug_name = debug_name;
@@ -257,7 +261,7 @@ impl StatefulElement {
 
     pub fn new<W: StatefulWidget + 'static>(widget: &W, ctx: &BuildContext) -> (Self, StateUpdater<W::State>)
     where
-        W::State: Send + Sync + 'static,
+        W::State:  'static,
     {
         let state = widget.create_state();
         let dirty = Arc::new(AtomicBool::new(false));
@@ -279,7 +283,7 @@ impl StatefulElement {
 
         let state_for_build = state_cell.clone();
         let rx_for_rebuild = rx;
-        let rebuild_fn: Arc<RebuildCallBack> = Arc::new(move |ctx| {
+        let rebuild_fn: Rc<RebuildCallBack> = Rc::new(move |ctx| {
             // Drain all pending mutations from the channel before rebuilding.
             let s = unsafe { &mut *state_for_build.0.get() };
             while let Ok(mutation) = rx_for_rebuild.try_recv() {
@@ -422,7 +426,6 @@ impl VisitorElement for StatefulElement {
     }
 }
 
-
 impl EventElement for StatefulElement {
     fn on_event(&self, event: &ElementEvent) -> bool {
         let child = unsafe { &*self.child.0.get() };
@@ -462,7 +465,6 @@ impl LayoutElement for StatefulElement {
         unsafe { &*self.child.0.get() }.computed_size(ctx)
     }
 
-
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         unsafe { &*self.child.0.get() }.content_size(ctx)
     }
@@ -487,10 +489,12 @@ impl Rebuildable for StatefulElement {
 }
 
 impl Reconcilable for StatefulElement {
-    fn as_any(&self) -> &dyn std::any::Any { self }
-
     fn key(&self) -> Option<crate::key::Key> {
         self.key.clone()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 
     fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
