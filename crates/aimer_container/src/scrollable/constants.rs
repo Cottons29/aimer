@@ -96,7 +96,7 @@ pub const FLING_BEZIER_Y2: f32 = 1.0;
 /// initial slope matches the finger speed (no visible jump on lift-off) — a
 /// longer duration therefore also glides farther. Tunable: raise it to slide
 /// farther / settle slower, lower it for a snappier stop.
-pub const FLING_DURATION_S: f32 = 2.0;
+pub const FLING_DURATION_S: f32 = 1.4;
 
 /// Normalized time fraction after which the bézier fling may snap to rest.
 ///
