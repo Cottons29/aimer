@@ -7,3 +7,4 @@ edition = "2024"
 crate-type = ["cdylib", "staticlib"]
 [dependencies]
 aimer = {path = ".."}
+webbrowser = "1.2.1"

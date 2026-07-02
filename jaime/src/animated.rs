@@ -76,14 +76,14 @@ impl State<MyAnimatedList> for MyListState {
                         });
                     });
                 };
-                #[cfg(target_arch = "wasm32")]
-                wasm_bindgen_futures::spawn_local(async move {
-                    cleanup();
-                });
-                #[cfg(not(target_arch = "wasm32"))]
-                std::thread::spawn(move || {
-                    cleanup();
-                });
+                // #[cfg(target_arch = "wasm32")]
+                // wasm_bindgen_futures::spawn_local(async move {
+                //     cleanup();
+                // });
+                // #[cfg(not(target_arch = "wasm32"))]
+                // std::thread::spawn(move || {
+                //     cleanup();
+                // });
             }
         }
 

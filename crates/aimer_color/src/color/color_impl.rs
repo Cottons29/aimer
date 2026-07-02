@@ -17,7 +17,7 @@ impl ColorMixer for Color {
                 let a = rgba & 0xFF;
                 (a << 24) | (r << 16) | (g << 8) | b
             }
-            Color::Gray(v, a) => ((a as u32) << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32),
+            Color::Grayscale(v, a) => ((a as u32) << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32),
             Color::Gray8(v) => (0xFF << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32),
             Color::Basic(named) => named.to_u32(),
             Color::Hsl(h, s, l) => {

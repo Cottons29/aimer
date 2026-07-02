@@ -1,15 +1,14 @@
 use crate::reconcile::try_update_element;
-use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget, base::*};
+use crate::{base::*, Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
-use crossbeam_channel::{Receiver, Sender, unbounded};
-use std::cell::UnsafeCell;
+use crossbeam_channel::{unbounded, Receiver, Sender};
+use std::cell::{Cell, UnsafeCell};
 use std::panic::Location;
 use std::process::exit;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use winit::window::Window;
 
 /// A `Send + Sync` wrapper around `UnsafeCell<Box<dyn Element>>`.
@@ -43,8 +42,8 @@ struct StateUpdaterInner<S> {
     /// Channel sender for queueing state mutations.
     tx: Sender<StateMutation<S>>,
     /// Shared state for synchronous reads on the render thread.
-    state: Arc<SyncState<S>>,
-    dirty: Arc<AtomicBool>,
+    state: Rc<SyncState<S>>,
+    dirty: Rc<Cell<bool>>,
     window: &'static Window,
 }
 
@@ -64,12 +63,22 @@ impl<S> Clone for StateUpdater<S> {
 impl<S: 'static> StateUpdater<S> {
     /// Create a new `StateUpdater` from a channel sender, shared state, and a dirty flag.
     #[inline]
-    fn new(tx: Sender<StateMutation<S>>, state: Arc<SyncState<S>>, dirty: Arc<AtomicBool>, window: &'static Window) -> Self {
+    fn with(tx: Sender<StateMutation<S>>, state: Rc<SyncState<S>>, dirty: Rc<Cell<bool>>, window: &'static Window) -> Self {
         Self { inner: Some(StateUpdaterInner { tx, state, dirty, window }) }
     }
 
     /// Create an empty `StateUpdater` that is not yet initialized.
     /// Calling `set_state` or `read` on an empty updater will panic.
+    ///
+    /// It has the same functionality as `StateUpdater<S>::empty`
+    pub fn new() ->  Self {
+        Self::empty()
+    }
+
+    /// Create an empty `StateUpdater` that is not yet initialized.
+    /// Calling `set_state` or `read` on an empty updater will panic.
+    ///
+    /// It has the same functionality as `StateUpdater<S>::new`
     #[inline]
     pub fn empty() -> Self {
         Self { inner: None }
@@ -131,10 +140,36 @@ impl<S: 'static> StateUpdater<S> {
         let _ = inner.tx.send(Box::new(f));
         // Only request a redraw if this is the first set_state since the last rebuild.
         // This coalesces multiple set_state calls into a single redraw request.
-        if !inner.dirty.swap(true, Ordering::Release) {
+        if !inner.dirty.replace(true) {
             inner.window.request_redraw();
         }
     }
+
+
+    // pub fn state(&self) -> Option<&S>{
+    //     let inner = match self.inner.as_ref() {
+    //         Some(inner) => inner.state,
+    //         None => {
+    //             let loc = Location::caller();
+    //             #[cfg(not(target_os = "ios"))]
+    //             self.beautiful_error(loc);
+    //             exit(1);
+    //         }
+    //     };
+    //
+    // }
+
+    // pub fn state(&self) -> Option<&S> {
+    //     let inner = match self.inner.as_ref() {
+    //         Some(inner) => inner.state,
+    //         None => {
+    //             let loc = Location::caller();
+    //             #[cfg(not(target_os = "ios"))]
+    //             self.beautiful_error(loc);
+    //             exit(1);
+    //         }
+    //     };
+    // }
 
     /// Read the current state without marking dirty.
     ///
@@ -228,7 +263,7 @@ pub trait State<W: StatefulWidget> {
 pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element>;
 pub struct StatefulElement {
     child: SyncChild,
-    pub dirty: Arc<AtomicBool>,
+    pub dirty: Rc<Cell<bool>>,
     pub rebuild_fn: Rc<RebuildCallBack>,
     /// Monotonically increasing generation counter. Incremented on each rebuild
     /// so that multiple `set_state` calls between frames only trigger one rebuild.
@@ -239,6 +274,13 @@ pub struct StatefulElement {
     pub debug_name: &'static str,
     pub key: Option<crate::key::Key>,
     pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
+}
+
+
+impl StatefulElement {
+    pub fn boxed(self) -> Box<dyn Element> {
+        Box::new(self)
+    }
 }
 
 impl StatefulElement {
@@ -264,16 +306,16 @@ impl StatefulElement {
         W::State:  'static,
     {
         let state = widget.create_state();
-        let dirty = Arc::new(AtomicBool::new(false));
+        let dirty = Rc::new(Cell::new(false));
 
         // Create the channel for state mutations.
         #[allow(clippy::type_complexity)]
         let (tx, rx): (Sender<StateMutation<W::State>>, Receiver<StateMutation<W::State>>) = unbounded();
 
-        let state_cell = Arc::new(SyncState(UnsafeCell::new(state)));
+        let state_cell = Rc::new(SyncState(UnsafeCell::new(state)));
 
         // Create the updater and pass it into init_state.
-        let init_updater = StateUpdater::new(tx.clone(), state_cell.clone(), dirty.clone(), ctx.window);
+        let init_updater = StateUpdater::with(tx.clone(), state_cell.clone(), dirty.clone(), ctx.window);
 
         {
             // Safety: single-threaded — we are the only accessor during construction.
@@ -299,7 +341,7 @@ impl StatefulElement {
             Widget::to_element(&s.build(ctx), ctx)
         };
 
-        let updater = StateUpdater::new(tx, state_cell, dirty.clone(), ctx.window);
+        let updater = StateUpdater::with(tx, state_cell, dirty.clone(), ctx.window);
 
         let element = StatefulElement {
             child: SyncChild(UnsafeCell::new(child)),
@@ -309,7 +351,7 @@ impl StatefulElement {
             last_rebuilt_generation: AtomicU64::new(0),
             debug_name: "Unknown",
             key: None,
-            bounds: std::cell::Cell::new(None),
+            bounds: Cell::new(None),
         };
 
         (element, updater)
@@ -327,7 +369,7 @@ impl StatefulElement {
     /// destroying and recreating the entire subtree when only a deeply-nested
     /// element's state has changed.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        if !self.dirty.load(Ordering::Acquire) {
+        if !self.dirty.get() {
             // Self is clean — but a nested StatefulElement might be dirty.
             // Propagate rebuild through the existing child tree.
             let child = unsafe { &*self.child.0.get() };
@@ -338,7 +380,7 @@ impl StatefulElement {
         // Coalesce: only rebuild once per generation bump.
         let current_gen = self.rebuild_generation.load(Ordering::Relaxed);
         let last = self.last_rebuilt_generation.load(Ordering::Relaxed);
-        if current_gen == last && !self.dirty.load(Ordering::Acquire) {
+        if current_gen == last && !self.dirty.get() {
             return;
         }
 
@@ -364,7 +406,7 @@ impl StatefulElement {
         // If try_update_element returned true, the old child was updated in-place
         // and remains valid — no replacement needed.
 
-        self.dirty.store(false, Ordering::Release);
+        self.dirty.set(false);
         self.rebuild_generation.fetch_add(1, Ordering::Relaxed);
         self.last_rebuilt_generation
             .store(self.rebuild_generation.load(Ordering::Relaxed), Ordering::Relaxed);
@@ -379,7 +421,7 @@ impl StatefulElement {
 
     /// Returns true if this element is marked dirty.
     pub fn is_dirty(&self) -> bool {
-        self.dirty.load(Ordering::Relaxed)
+        self.dirty.get()
     }
 }
 

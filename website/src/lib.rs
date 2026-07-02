@@ -23,8 +23,8 @@ fn app_padding(ctx: &BuildContext) -> LayoutSpacing {
     // info!("window size: {:?}", window_size);
     let horizontal_padding = 20f64;
     LayoutSpacing!(
-        left: horizontal_padding.into(),
-        right: horizontal_padding.into(),
+        left: horizontal_padding,
+        right: horizontal_padding,
         top: Spacing::Px(90),
         bottom: Spacing::Px(90)
     )
@@ -33,6 +33,7 @@ fn app_padding(ctx: &BuildContext) -> LayoutSpacing {
 impl StatelessWidget for HomePage {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         Container!(
+            // color: Color::GREEN,
             child: Scrollable!(
                 axis: ScrollAxis::Vertical,
                 // horizontal_scroll_bar: ScrollBar!(),
@@ -97,17 +98,22 @@ fn hero_section(ctx: &BuildContext) -> Box<dyn Widget> {
                 SizedBox!(height: 40),
                 Container!(
                     width: Dimension::Px(200.0),
-                    height: Dimension::Px(156.0),
+                    height: Dimension::Px(50.0),
                     child: HoverableGetStartedButton!()
                 ),
                 SizedBox!(height: 14),
-                Text!(
-                    "Version 0.0.1",
-                    text_style: TextStyle!(
-                        font_size: 14,
-                        color: Colors::Gray,
-                    )
-                ),
+                Container!(
+                    padding: LayoutSpacing!(
+                        left: 60,
+                    ),
+                    child: Text!(
+                        "Version 0.0.1",
+                        text_style: TextStyle!(
+                            font_size: 14,
+                            color: Colors::Gray,
+                        )
+                    ),
+                )
             ]
         )
     )
