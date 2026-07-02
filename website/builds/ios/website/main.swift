@@ -25,6 +25,57 @@ func aimer_ios_dismiss_keyboard() {
     }
 }
 
+// Frame scheduling into Rust.
+// A CADisplayLink drives redraws in sync with the display (up to 120 fps on
+// ProMotion). It stays paused while idle; Rust unpauses it when a frame is
+// requested and pauses it again once no more frames are pending.
+@_silgen_name("aimer_ios_frame_tick")
+func aimer_ios_frame_tick()
+
+final class FrameDriver {
+    static let shared = FrameDriver()
+    private var displayLink: CADisplayLink?
+
+    func start() {
+        guard displayLink == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(tick))
+        if #available(iOS 15.0, *) {
+            // Allow the system to run up to 120 Hz on ProMotion displays.
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+        }
+        // Start paused; frames are produced on demand.
+        link.isPaused = true
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    func requestFrame() {
+        displayLink?.isPaused = false
+    }
+
+    func pause() {
+        displayLink?.isPaused = true
+    }
+
+    @objc private func tick() {
+        aimer_ios_frame_tick()
+    }
+}
+
+@_cdecl("aimer_ios_request_frame")
+func aimer_ios_request_frame() {
+    DispatchQueue.main.async {
+        FrameDriver.shared.requestFrame()
+    }
+}
+
+@_cdecl("aimer_ios_pause_frames")
+func aimer_ios_pause_frames() {
+    DispatchQueue.main.async {
+        FrameDriver.shared.pause()
+    }
+}
+
 final class KeyboardForwardingTextView: UITextView, UITextViewDelegate {
     override var canBecomeFirstResponder: Bool { true }
 
@@ -231,6 +282,7 @@ final class KeyboardForwarder {
 }
 
 KeyboardForwarder.shared.start()
+FrameDriver.shared.start()
 
 #if DEBUG
 print("Starting AimerApplication...")
