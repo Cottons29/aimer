@@ -44,6 +44,41 @@ pub extern "C" fn trigger_rust_backspace() {
     }
 }
 
+// iOS frame scheduling: driven by a Swift `CADisplayLink` (see `main.swift`).
+#[cfg(target_os = "ios")]
+unsafe extern "C" {
+    /// Pause the Swift `CADisplayLink` so it stops delivering vsync ticks while
+    /// the app is idle.
+    fn aimer_ios_pause_frames();
+}
+
+/// Called from Swift on every display-link vsync.
+///
+/// If a frame was requested since the last tick, forward a `FrameReady` through
+/// the event loop (which routes to `request_redraw()`). If nothing is pending,
+/// pause the display link so the app does not render while idle. Mirrors the
+/// `EVENT_PROXY` guard used by the other `trigger_rust_*` entry points.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn aimer_ios_frame_tick() {
+    if !aimer_events::window::take_frame_requested() {
+        // No frame pending — idle the display link until the next request.
+        unsafe {
+            aimer_ios_pause_frames();
+        }
+        return;
+    }
+
+    let Some(proxy) = EVENT_PROXY.get() else {
+        aimer_utils::debug!("aimer_ios_frame_tick: EVENT_PROXY not initialized yet");
+        return;
+    };
+
+    if let Err(e) = proxy.send_event(AimerCustomAppEvent::FrameReady) {
+        aimer_utils::error!("aimer_ios_frame_tick: failed to send event: {:?}", e);
+    }
+}
+
 #[cfg(target_os = "ios")]
 fn dereference_ptr<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
     unsafe { std::slice::from_raw_parts(ptr, len) }

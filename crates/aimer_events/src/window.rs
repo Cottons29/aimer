@@ -1,7 +1,31 @@
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use winit::window::Window;
 
 static GLOBAL_WINDOW: OnceLock<&'static Window> = OnceLock::new();
+
+/// Whether a frame has been requested since the last display-link tick.
+///
+/// On iOS the frame loop is driven by a Swift `CADisplayLink` (see
+/// `main.swift`). Requesting a frame sets this flag and unpauses the link;
+/// each vsync tick consumes it via [`take_frame_requested`]. When a tick finds
+/// it cleared, the link is paused again so the app does not render while idle.
+static FRAME_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Atomically read-and-clear the pending-frame flag.
+///
+/// Returns `true` if a frame had been requested since the last call. Used by
+/// the iOS display-link tick to decide whether to render this vsync or pause
+/// the link.
+pub fn take_frame_requested() -> bool {
+    FRAME_REQUESTED.swap(false, Ordering::AcqRel)
+}
+
+#[cfg(target_os = "ios")]
+unsafe extern "C" {
+    /// Unpause the Swift `CADisplayLink` so it starts delivering vsync ticks.
+    fn aimer_ios_request_frame();
+}
 
 type RedrawRequester = Box<dyn Fn() + Send + Sync + 'static>;
 
@@ -43,24 +67,24 @@ where
 /// On iOS, `request_redraw()` issued from inside the draw cycle (or from a
 /// `user_event` that arrives immediately after) is silently coalesced by the
 /// system — the next `RedrawRequested` is never delivered and animations stop
-/// after a single step.  Routing through the `EventLoopProxy` (`FrameReady`)
-/// does not reliably avoid this because iOS can still coalesce the resulting
-/// `request_redraw()` when it arrives too close to the previous frame.
+/// after a single step.
 ///
-/// The reliable workaround: **spawn a short-lived thread** that sleeps 1 ms
-/// (yielding to the UIKit run loop) then calls this function again.  The 1 ms
-/// gap pushes the `request_redraw()` outside the coalescing window so the next
-/// frame is genuinely scheduled.  The thread is cheap (reused by the OS thread
-/// pool) and only lives for 1 ms.
+/// Instead, the frame loop is driven by a Swift `CADisplayLink` synced to the
+/// display (up to 120 Hz on ProMotion). Requesting a frame simply raises the
+/// [`FRAME_REQUESTED`] flag and unpauses the link; the next vsync tick then
+/// delivers a `FrameReady` (see `aimer_ios_frame_tick` in `aimer_quiver`) that
+/// routes to `request_redraw()` outside the coalescing window. The link pauses
+/// itself once a tick observes no pending request, so the app stays idle when
+/// nothing is animating.
 pub fn request_animation_frame() {
     #[cfg(target_os = "ios")]
     {
-        // Push the redraw request 1 ms into the future so iOS does not
-        // coalesce it with the current frame.
-        std::thread::spawn(|| {
-            std::thread::sleep(std::time::Duration::from_millis(1));
-            request_animation_frame_inner();
-        });
+        // Mark a frame as pending and make sure the display link is running so
+        // the next vsync delivers it.
+        FRAME_REQUESTED.store(true, Ordering::Release);
+        unsafe {
+            aimer_ios_request_frame();
+        }
     }
     #[cfg(not(target_os = "ios"))]
     {
@@ -69,6 +93,7 @@ pub fn request_animation_frame() {
 }
 
 /// Inner implementation — actual redraw request (platform-independent).
+#[cfg_attr(target_os = "ios", allow(dead_code))]
 fn request_animation_frame_inner() {
     if let Some(requester) = REDRAW_REQUESTER.get() {
         requester();
