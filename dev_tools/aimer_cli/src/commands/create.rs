@@ -143,6 +143,11 @@ fn scaffold(
     fs::write(dir.join("src/lib.rs"), include_str!("../../templates/lib.rs.template"))
         .context("writing src/lib.rs")?;
 
+    // build.rs — iOS cdylib link workaround for the Swift-provided frame-driver
+    // symbols (see the template for details).
+    fs::write(dir.join("build.rs"), include_str!("../../templates/build.rs.template"))
+        .context("writing build.rs")?;
+
     fs::write(dir.join("README.md"), format!("# {}\n\n{}", project_name, description))
         .context("writing README.md")?;
 
@@ -234,6 +239,7 @@ mod tests {
 
         // Core files and directories are present.
         assert!(dir.join("src/lib.rs").exists(), "missing src/lib.rs");
+        assert!(dir.join("build.rs").exists(), "missing build.rs");
         assert!(dir.join("Cargo.toml").exists(), "missing Cargo.toml");
         assert!(dir.join("aimer.toml").exists(), "missing aimer.toml");
         assert!(dir.join(".gitignore").exists(), "missing .gitignore");
