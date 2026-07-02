@@ -9,5 +9,6 @@ group = "com.example.jaime"
 # as the runtime lookup key, e.g. `AssetImage!("image.png")`.
 files = [
     "assets/polished_tooling.png",
-    "assets/web_screenshot.png"
+    "assets/web_screenshot.png",
+    "assets/github-svgrepo-com.png"
 ]

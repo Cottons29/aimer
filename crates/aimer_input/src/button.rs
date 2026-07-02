@@ -3,6 +3,7 @@ use crate::gesture::gesture_detector::GestureDetector;
 use crate::gesture::{DragCallback, DragUpdateCallback, ScaleCallback, ScrollCallback, SwipeCallback};
 use crate::mouse_region::{MouseRegion, PointerState};
 use aimer_attribute::CacheBounds;
+use aimer_container::Container;
 use aimer_style::BoxDecoration;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, State, StateUpdater, StatefulElement, StatefulWidget, Widget, WidgetConstructor};
@@ -83,13 +84,21 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let child = self.child.clone();
+
+        let mut decor = self.decoration.clone();
+
+        if self.is_hover {
+            if let Some(color) = decor.background_color {
+                decor.background_color =  Some(color.lighten(0.2));
+            }
+        }
+
         MouseRegion {
             on_hover_enter: {
                 let updater = self.state_updater.clone();
                 move || {
                     updater.set_state(|s| {
                         s.is_hover = true;
-                        println!("Hover Enter");
                     })
                 }
             }
@@ -99,7 +108,6 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
                 move || {
                     updater.set_state(|s| {
                         s.is_hover = false;
-                        println!("Hover Exit");
                     })
                 }
             }
@@ -119,7 +127,10 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
                 on_swipe: SwipeCallback::default(),
                 on_scroll: ScrollCallback::default(),
                 on_scale: ScaleCallback::default(),
-                child: child as Rc<dyn Widget>,
+                child: Container! {
+                    box_decoration: decor,
+                    child: child as Rc<dyn Widget>,
+                },
             },
         }
     }

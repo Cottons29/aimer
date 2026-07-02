@@ -128,6 +128,12 @@ pub const SCROLLBAR_DRAG_SMOOTH_NEW: f32 = 0.6;
 /// between the last PointerMove and the PointerUp that ends the gesture.
 pub const VELOCITY_RESET_IDLE_MS: u128 = 400;
 
+/// Time (ms) after which a lingering `active_touch_id` is considered stale and
+/// cleared on the next PointerDown. This is a safety net for iOS where the app
+/// can be backgrounded without receiving a Cancel/PointerUp, leaving the
+/// scrollable stuck with a dead touch ID that rejects all new touches.
+pub const STALE_TOUCH_THRESHOLD_MS: u128 = 1000;
+
 /// Ease-out exponent for spring-back (1 − (1−t)^n).
 /// Lower values = smoother, more gradual recovery.
 pub const EASE_OUT_CUBIC: f32 = 1.5;

@@ -13,6 +13,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         if let Some(cursor_pos) = event.get_pointer_pos() {
             self.ctrl.cursor_pos.set(Some(cursor_pos));
         }
+
         let Some(cursor) = self.ctrl.cursor_pos.get() else {
             return false;
         };
@@ -93,6 +94,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         let we_consumed = match event {
             ElementEvent::Scroll{delta, ..} => {
                 let mut offset = self.ctrl.scroll_offset.get();
+
+                // println!("offset: {:?}", offset);
                 let clamped = self.ctrl.clamp_offset(offset);
 
                 let mut scroll_delta = match self.ctrl.axis {
@@ -183,8 +186,24 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 // Primary-finger tracking: only the first finger owns the scroll.
                 // Secondary fingers are ignored so a second touch doesn't cause a
                 // sudden position jump — matching UIScrollView behaviour.
-                if self.ctrl.active_touch_id.get().is_some() && self.ctrl.active_touch_id.get() != Some(*id) {
-                    return false;
+                //
+                // Stale-touch safety net: if `active_touch_id` is still set from a
+                // previous gesture but the last event was too long ago (e.g. the app
+                // was backgrounded on iOS without receiving a Cancel/PointerUp),
+                // clear the stale state so the new touch can be accepted.
+                if let Some(prev_id) = self.ctrl.active_touch_id.get() {
+                    if prev_id != *id {
+                        let stale = self.ctrl.last_event_time.get().is_none_or(|t| {
+                            Instant::now().duration_since(t).as_millis() > STALE_TOUCH_THRESHOLD_MS
+                        });
+                        if stale {
+                            self.ctrl.active_touch_id.set(None);
+                            self.ctrl.drag_mode.set(DragMode::None);
+                            self.ctrl.last_pointer_pos.set(None);
+                        } else {
+                            return false;
+                        }
+                    }
                 }
                 self.ctrl.active_touch_id.set(Some(*id));
 
@@ -251,6 +270,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     if let Some(start) = self.ctrl.last_pointer_pos.get() {
                         let dx = p.x - start.x;
                         let dy = p.y - start.y;
+
+                        // println!("dy: {:?}", dy);
 
                         let threshold = DRAG_START_THRESHOLD_DP * self.ctrl.last_scale.get();
                         let exceeds_threshold = match self.ctrl.axis {

@@ -37,7 +37,16 @@ impl<E: Element> RawScrollableContainer<E> {
                     viewport_h * (p / 100.0)
                 }
             }
-            Dimension::Auto => 12.0 * scale,
+            Dimension::Auto => {
+                #[cfg(any(target_os = "android", target_os = "ios"))]
+                {
+                    6.0 * scale
+                }
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                {
+                    12.0 * scale
+                }
+            }
         };
 
         // Cache track width for hit-testing track clicks.
@@ -56,11 +65,8 @@ impl<E: Element> RawScrollableContainer<E> {
         // Reuse the content size computed once at the start of this frame's draw
         // (see `draw_scroll`) to avoid recomputing the child layout.
         let content_size = self.ctrl.cached_content_size.get();
-        let (track_length, content_extent, scroll_pos) = if is_vertical {
-            (viewport_h, content_size.height, -offset.y)
-        } else {
-            (viewport_w, content_size.width, -offset.x)
-        };
+        let (track_length, content_extent, scroll_pos) =
+            if is_vertical { (viewport_h, content_size.height, -offset.y) } else { (viewport_w, content_size.width, -offset.x) };
 
         let button_h = if is_vertical {
             let resolve_btn_h = |btn: &crate::scrollable::scroll_bar::ScrollButton| -> f32 {
@@ -70,16 +76,8 @@ impl<E: Element> RawScrollableContainer<E> {
                     Dimension::Auto => track_width,
                 }
             };
-            let up_h = scroll_bar
-                .up_button
-                .as_ref()
-                .map(&resolve_btn_h)
-                .unwrap_or(0.0);
-            let down_h = scroll_bar
-                .down_button
-                .as_ref()
-                .map(resolve_btn_h)
-                .unwrap_or(0.0);
+            let up_h = scroll_bar.up_button.as_ref().map(&resolve_btn_h).unwrap_or(0.0);
+            let down_h = scroll_bar.down_button.as_ref().map(resolve_btn_h).unwrap_or(0.0);
             (up_h, down_h)
         } else {
             let resolve_btn_w = |btn: &crate::scrollable::scroll_bar::ScrollButton| -> f32 {
@@ -89,16 +87,8 @@ impl<E: Element> RawScrollableContainer<E> {
                     Dimension::Auto => track_width,
                 }
             };
-            let left_w = scroll_bar
-                .up_button
-                .as_ref()
-                .map(&resolve_btn_w)
-                .unwrap_or(0.0);
-            let right_w = scroll_bar
-                .down_button
-                .as_ref()
-                .map(resolve_btn_w)
-                .unwrap_or(0.0);
+            let left_w = scroll_bar.up_button.as_ref().map(&resolve_btn_w).unwrap_or(0.0);
+            let right_w = scroll_bar.down_button.as_ref().map(resolve_btn_w).unwrap_or(0.0);
             (left_w, right_w)
         };
 
@@ -127,11 +117,9 @@ impl<E: Element> RawScrollableContainer<E> {
 
         // Position the scrollbar at the edge of the viewport
         if is_vertical {
-            ctx.canvas
-                .translate(Vec2d { x: (viewport_w - track_width).round(), y: 0.0 });
+            ctx.canvas.translate(Vec2d { x: (viewport_w - track_width).round(), y: 0.0 });
         } else {
-            ctx.canvas
-                .translate(Vec2d { x: 0.0, y: (viewport_h - track_width).round() });
+            ctx.canvas.translate(Vec2d { x: 0.0, y: (viewport_h - track_width).round() });
         }
 
         // Draw track
@@ -167,13 +155,11 @@ impl<E: Element> RawScrollableContainer<E> {
         } else {
             self.ctrl.drag_mode.get() == DragMode::HorizontalScrollbar
         };
-        let is_hover = self.ctrl.cursor_pos.get().is_some_and(|c| {
-            if is_vertical {
-                self.ctrl.hit_test_v_thumb(c)
-            } else {
-                self.ctrl.hit_test_h_thumb(c)
-            }
-        });
+        let is_hover = self
+            .ctrl
+            .cursor_pos
+            .get()
+            .is_some_and(|c| if is_vertical { self.ctrl.hit_test_v_thumb(c) } else { self.ctrl.hit_test_h_thumb(c) });
         let thumb_color: Color = if is_active {
             scroll_bar.thumb.active_color.into()
         } else if is_hover {
@@ -202,7 +188,9 @@ impl<E: Element> RawScrollableContainer<E> {
 }
 
 impl<E: Element + 'static> Reconcilable for RawScrollableContainer<E> {
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 
     fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
         false

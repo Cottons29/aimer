@@ -58,6 +58,16 @@ impl WindowEventHandler {
                 Self::handle_resize(size, app, event_loop)
             }
 
+            // When the window loses focus (e.g. app backgrounded on iOS),
+            // broadcast Cancel so all widgets release stale touch/drag state.
+            // Without this, a scrollable's `active_touch_id` stays set from the
+            // old touch, and new touches after resume are silently rejected.
+            WindowEvent::Focused(false) => {
+                if let Some(root) = &app.widget_root {
+                    broadcast_event(root.as_ref(), &ElementEvent::Cancel);
+                }
+            }
+
             _ => (),
         }
     }
@@ -121,12 +131,21 @@ impl WindowEventHandler {
     }
 
     fn handle_cursor_left(app: &mut AimerApplicationHandler) {
-        // The cursor left the window. Dispatch a pointer move at a position that
-        // is outside every element's bounds so that hover-tracking elements
-        // (e.g. `MouseRegion`) see `is_inside == false` and fire their
-        // hover-exit transition. Without this, a region whose bounds reach the
-        // window edge would stay stuck in `RegionAcceptState::Enter` forever.
+        // The cursor left the window. First, broadcast a Cancel to terminate any
+        // active drag (e.g. scrollable content drag, scrollbar thumb drag).
+        // Without this, the subsequent PointerMove at f32::MIN would compute an
+        // enormous delta from the last real cursor position, jumping the scroll
+        // offset by millions of pixels — making the content appear to vanish.
         let off_screen = Vec2d { x: f32::MIN, y: f32::MIN };
+        if let Some(root) = &app.widget_root {
+            broadcast_event(root.as_ref(), &ElementEvent::Cancel);
+        }
+
+        // Then dispatch a pointer move at a position that is outside every
+        // element's bounds so that hover-tracking elements (e.g. `MouseRegion`)
+        // see `is_inside == false` and fire their hover-exit transition.
+        // Without this, a region whose bounds reach the window edge would stay
+        // stuck in `RegionAcceptState::Enter` forever.
         app.cursor_pos = off_screen;
         if let Some(root) = &app.widget_root {
             let event = ElementEvent::PointerMove(off_screen, PointerSource::Mouse, 0);

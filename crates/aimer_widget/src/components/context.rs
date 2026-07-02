@@ -1,13 +1,14 @@
-use std::collections::HashMap;
-use std::any::{Any, TypeId};
-use std::sync::{Arc, RwLock};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+use aimer_attribute::BoxConstraint;
+use aimer_canvas::Canvas;
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::RwLock;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Handle;
 use winit::window::Window;
-use aimer_attribute::BoxConstraint;
-use aimer_canvas::{Canvas};
 
 #[derive(Clone)]
 pub struct BuildContext<'a> {
@@ -21,7 +22,7 @@ pub struct BuildContext<'a> {
     pub window: &'static Window,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_handle: Handle,
-    pub inherited_states: Arc<RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>,
+    pub inherited_states: Rc<RwLock<HashMap<TypeId, Rc<dyn Any>>>>,
 }
 
 impl<'a> std::fmt::Debug for BuildContext<'a> {
@@ -58,15 +59,15 @@ impl<'a> BuildContext<'a> {
             window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle,
-            inherited_states: Arc::new(RwLock::new(HashMap::new())),
+            inherited_states: Rc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn insert_state<T: Any + Send + Sync>(&self, state: T) {
-        self.inherited_states.write().unwrap().insert(TypeId::of::<T>(), Arc::new(state));
+    pub fn insert_state<T: Any>(&self, state: T) {
+        self.inherited_states.write().unwrap().insert(TypeId::of::<T>(), Rc::new(state));
     }
 
-    pub fn get_state<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
+    pub fn get_state<T: Any>(&self) -> Option<Rc<T>> {
         self.inherited_states
             .read().unwrap()
             .get(&TypeId::of::<T>())

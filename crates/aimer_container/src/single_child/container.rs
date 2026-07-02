@@ -24,7 +24,7 @@ where
     pub box_decoration: BoxDecoration,
     #[constructor(default = Option::None, into)]
     pub color: Option<Color>,
-    pub(crate) child: T,
+    pub child: T,
 }
 
 impl<W: Widget> Widget for Container<W> {

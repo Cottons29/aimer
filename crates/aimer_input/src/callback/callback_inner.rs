@@ -11,8 +11,7 @@ pub enum RawInnerCallback<P, R> {
     Empty,
 }
 
-
-impl<P,R>  RawInnerCallback<P,R>{
+impl<P, R> RawInnerCallback<P, R> {
     pub fn is_not_empty(&self) -> bool {
         !matches!(self, RawInnerCallback::Empty)
     }
@@ -78,9 +77,7 @@ impl<P, R> CallbackInner<P, R> {
     /// Compares the underlying `Rc` data pointer against the shared
     /// `EMPTY_CB` sentinel — O(1), no allocation, no lock.
     pub fn is_default(&self) -> bool {
-        EMPTY_CB_PTR.with(|sentinel| {
-            Rc::as_ptr(&self.0) as *const () == *sentinel
-        })
+        EMPTY_CB_PTR.with(|sentinel| Rc::as_ptr(&self.0) as *const () == *sentinel)
     }
 }
 

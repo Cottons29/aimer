@@ -22,7 +22,7 @@ use std::rc::Rc;
 ///
 /// # Example
 /// ```rust
-/// use crate::control::callback::{CallbackExecutor, RawInnerCallback};
+/// use aimer_input::callback::{CallbackExecutor, RawInnerCallback};
 ///
 /// struct MyCallbackExecutor {
 ///     callback: Option<RawInnerCallback<i32, String>>,
@@ -61,25 +61,19 @@ pub trait CallbackExecutor {
 ///
 /// # Example
 /// ```
-/// use crate::control::callback::*;
+/// use aimer_input::callback::Callback;
+///
 /// // Example of using a Callback with specific argument and return types
-/// let callback = Callback {
-///     inner: CallbackInner::new(|x: i32| x + 1),
-/// };
+/// let callback = Callback::from(|x: i32| x + 1);
 /// ```
 ///
 pub struct Callback<Args = (), Return = ()> {
     inner: CallbackInner<Args, Return>,
 }
 
-
-impl<Args, Return>  Callback<Args, Return> {
+impl<Args, Return> Callback<Args, Return> {
     pub fn callable(&self) -> Option<&Self> {
-        if self.inner.is_default(){
-            None
-        }else {
-            Some(self)
-        }
+        if self.inner.is_default() { None } else { Some(self) }
     }
 }
 
@@ -158,7 +152,8 @@ pub type VoidParamedFunction<R> = Callback<R, ()>;
 ///
 /// # Example
 /// ```
-/// use crate::control::callback::*;
+/// use aimer_input::callback::VoidCallback;
+///
 /// // Create a default instance of VoidCallback
 /// let callback = VoidCallback::default();
 /// ```
@@ -170,11 +165,7 @@ pub struct VoidCallback {
 
 impl VoidCallback {
     pub fn callable(&self) -> Option<&Self> {
-        if self.inner.is_default(){
-            None
-        }else {
-            Some(self)
-        }
+        if self.inner.is_default() { None } else { Some(self) }
     }
 }
 

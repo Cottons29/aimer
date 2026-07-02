@@ -2,13 +2,13 @@ use aimer_macro::Constructor;
 
 #[derive(Constructor, Default, Clone, Copy)]
 pub struct LayoutSpacing {
-    #[constructor(default)]
+    #[constructor(default, into)]
     pub top: Spacing,
-    #[constructor(default)]
+    #[constructor(default, into)]
     pub bottom: Spacing,
-    #[constructor(default)]
+    #[constructor(default, into)]
     pub left: Spacing,
-    #[constructor(default)]
+    #[constructor(default, into)]
     pub right: Spacing,
 }
 
@@ -34,6 +34,19 @@ pub enum Spacing {
     Percent(u32),
     #[default]
     None,
+}
+
+
+impl From<i32> for Spacing {
+    fn from(value: i32) -> Self {
+        Spacing::Px(value as u32)
+    }
+}
+
+impl From<u32> for Spacing {
+    fn from(value: u32) -> Self {
+        Spacing::Px(value)
+    }
 }
 
 impl Spacing {

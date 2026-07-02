@@ -9,6 +9,10 @@ pub(crate) const TAP_SLOP: f32 = 18.0;
 pub(crate) const SWIPE_VELOCITY_THRESHOLD: f32 = 300.0; // px/sec
 pub(crate) const SWIPE_MAX_DURATION_MS: u64 = 500;
 
+/// Time (ms) after which orphan touches are considered stale (e.g. app was
+/// backgrounded without Cancel/Up) and cleared on the next PointerDown.
+pub(crate) const STALE_GESTURE_TOUCH_MS: u64 = 1000;
+
 #[derive(Clone, Debug)]
 pub struct DragUpdateData {
     pub position: PointerPosition,

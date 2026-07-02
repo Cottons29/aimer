@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::sync::Arc;
+use std::rc::Rc;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, State, StatefulElement, StateUpdater, StatefulWidget, Widget};
 
@@ -123,10 +123,10 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
-        ctx.insert_state(Arc::new(NavigatorController {
+        ctx.insert_state(Rc::new(NavigatorController {
             push_fn: {
                 let updater = self.updater.clone();
-                Arc::new(move |route: R| {
+                Rc::new(move |route: R| {
                     #[cfg(target_arch = "wasm32")]
                     browser_push_state(&route.format());
                     updater.set_state(|state| {
@@ -136,7 +136,7 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
             },
             pop_fn: {
                 let updater = self.updater.clone();
-                Arc::new(move || {
+                Rc::new(move || {
                     updater.set_state(|state| {
                         if state.history.len() > 1 {
                             state.history.pop();
@@ -150,11 +150,11 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
             },
             can_pop_fn: {
                 let history = self.history.clone();
-                Arc::new(move || history.len() > 1)
+                Rc::new(move || history.len() > 1)
             },
             history_len_fn: {
                 let history = self.history.clone();
-                Arc::new(move || history.len())
+                Rc::new(move || history.len())
             },
         }));
 
@@ -163,10 +163,10 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
 }
 
 pub struct NavigatorController<R> {
-    push_fn: Arc<dyn Fn(R) + Send + Sync>,
-    pop_fn: Arc<dyn Fn() + Send + Sync>,
-    can_pop_fn: Arc<dyn Fn() -> bool + Send + Sync>,
-    history_len_fn: Arc<dyn Fn() -> usize + Send + Sync>,
+    push_fn: Rc<dyn Fn(R) >,
+    pop_fn: Rc<dyn Fn()>,
+    can_pop_fn: Rc<dyn Fn() -> bool>,
+    history_len_fn: Rc<dyn Fn() -> usize>,
 }
 
 
@@ -182,7 +182,7 @@ impl<R> Clone for NavigatorController<R> {
 }
 
 
-pub type NavigatorInstance<R: 'static + Send + Sync> = Arc<NavigatorController<R>>;
+pub type NavigatorInstance<R: 'static + Send + Sync> = Rc<NavigatorController<R>>;
 
 impl<R: 'static + Send + Sync> NavigatorController<R> {
     /// Flutter-style: `Navigator::of(ctx).push(route)`
