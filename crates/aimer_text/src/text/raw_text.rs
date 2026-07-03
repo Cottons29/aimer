@@ -77,6 +77,7 @@ impl Drawable for RawTextWidget {
         };
 
         let color = self.text_style.color;
+        let font_weight = self.text_style.font_weight.numeric();
 
         match self.text_style.text_overflow {
             TextOverflow::Clip => {
@@ -89,6 +90,7 @@ impl Drawable for RawTextWidget {
                     font_size,
                     color,
                     width,
+                    font_weight,
                 );
                 ctx.canvas.clear_clip();
                 ctx.canvas.restore();
@@ -102,13 +104,14 @@ impl Drawable for RawTextWidget {
                     width,
                     height,
                     TextOverflowMode::Ellipsis,
+                    font_weight,
                 );
             }
             TextOverflow::Wrap => {
-                ctx.canvas.draw_text_wrapped(&self.text, (x, y).into(), font_size, color, width);
+                ctx.canvas.draw_text_wrapped(&self.text, (x, y).into(), font_size, color, width, font_weight);
             }
             _ => {
-                ctx.canvas.draw_text(&self.text, (x, y).into(), font_size, color);
+                ctx.canvas.draw_text(&self.text, (x, y).into(), font_size, color, font_weight);
             }
         }
 
