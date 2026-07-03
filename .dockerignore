@@ -1,0 +1,7 @@
+# Keep the Docker build context small — `target/` alone can be many GB.
+target
+**/target
+**/dist
+.git
+.idea
+website/builds/web/self_signed_certs
