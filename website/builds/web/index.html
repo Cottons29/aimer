@@ -1,23 +1,53 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
     <title>website</title>
-    <link data-trunk rel="copy-dir" href="assets" />
-    <link data-trunk rel="rust" href="../../Cargo.toml" data-wasm-opt="z" />
-  </head>
-  <style>
+    <link data-trunk rel="copy-dir" href="assets"/>
+    <link data-trunk rel="rust" href="../../Cargo.toml" data-wasm-opt="z"/>
+</head>
+<style>
+
+    /* Fill the screen the way normal HTML content does. iOS Safari does NOT
+       paint a full-viewport element that is `position: absolute`/`fixed` and
+       sized in `dvh` behind the address bar / home-indicator strips, which
+       left white bars at the top and bottom. A plain in-flow block on a
+       `height: 100%` chain (html -> body -> canvas) behaves like ordinary page
+       content and reaches edge to edge under `viewport-fit=cover`. */
+    html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        /* The "white bars" at the top/bottom on iPhone Safari were the page's
+           default white background showing through in the safe-area strips
+           (behind the status bar / home indicator) and during the address-bar
+           show/hide transition, wherever the canvas doesn't paint. Painting the
+           page itself the app's dark color removes the white so those strips
+           blend with the app instead of flashing white. */
+        background: #000;
+    }
+
+    /* The winit/wasm renderer creates the <canvas>, appends it to <body> and
+       sets id="aimer_app" on it, so this rule styles that canvas. */
     #aimer_app {
-         position: absolute;
-         top: 0;
-         left: 0;
-         width: 100vw;
-         height: 100vh;
-         outline: none;
-     }
-  </style>
-  <body>
-    <div id="aimer_app"></div>
-  </body>
+        display: block;
+        width: 100%;
+        /* `height: 100%` resolves a hair short of the visual viewport on iOS
+           Safari when the toolbar is up, leaving a thin gap above the toolbar
+           where the (now black) page background shows. `100dvh` tracks the live
+           visual viewport and closes that gap; `100%` stays as the fallback for
+           engines without dvh. */
+        height: 100%;
+        height: 100dvh;
+        outline: none;
+        /* Black backdrop for the moment before WebGPU paints the first frame,
+           so the canvas never flashes the default white. */
+        background: #000;
+    }
+</style>
+<body>
+</body>
 </html>
