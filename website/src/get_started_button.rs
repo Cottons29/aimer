@@ -2,30 +2,14 @@
 // Hoverable Get Started button
 // ---------------------------------------------------------------------------
 
-use aimer::style::{BoxDecoration, FontWeight, LayoutSpacing, TextAlign, TextDecoration, TextStyle};
+use aimer::style::{BoxDecoration, FontWeight, TextAlign, TextStyle};
 use aimer::*;
-use aimer::{BuildContext, State, StateUpdater, StatefulWidget, Widget, widget};
+use aimer::{widget, BuildContext, Widget};
 
-#[widget(Stateful)]
+#[widget(Stateless)]
 pub struct HoverableGetStartedButton {}
 
-pub struct HoverableGetStartedButtonState {
-    updater: StateUpdater<Self>,
-}
-
-impl StatefulWidget for HoverableGetStartedButton {
-    type State = HoverableGetStartedButtonState;
-
-    fn create_state(&self) -> Self::State {
-        HoverableGetStartedButtonState { updater: StateUpdater::empty() }
-    }
-}
-
-impl State<HoverableGetStartedButton> for HoverableGetStartedButtonState {
-    fn init_state(&mut self, updater: StateUpdater<Self>) {
-        self.updater = updater;
-    }
-
+impl StatelessWidget for HoverableGetStartedButton {
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         Container!(
             child: Button!(
