@@ -553,6 +553,8 @@ impl TextPipelineV2 {
                 for span in spans {
                     let font_size = span.font_size.unwrap_or(req.font_size);
                     let color = span.color.unwrap_or(req.color);
+                    // A weight of 600+ (semi-bold and up) is rendered bold.
+                    let is_bold = span.font_weight.or(req.font_weight).unwrap_or(400) >= 600;
 
                     // Re-use the positioned glyph list from the previous frame when
                     // text content, font size, and wrapping width are all unchanged.
@@ -649,6 +651,19 @@ impl TextPipelineV2 {
                         } else {
                             self.instances.push(instance);
                             alpha_regions.push(region);
+                            if is_bold {
+                                // ponytail: synthetic (faux) bold via double-strike —
+                                // re-draw the same alpha glyph offset horizontally to
+                                // thicken the strokes. Ceiling: not a real bold face
+                                // (no dedicated weight metrics/hinting, advances are
+                                // unchanged). Upgrade path: load a real bold face or a
+                                // variable-font weight axis and key the glyph atlas by
+                                // weight.
+                                let mut bold = instance;
+                                bold.position[0] += (pg.font_size * 0.03).max(0.5);
+                                self.instances.push(bold);
+                                alpha_regions.push(region);
+                            }
                         }
                     }
 
