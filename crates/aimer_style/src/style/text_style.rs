@@ -22,6 +22,20 @@ pub enum FontWeight {
     Value(u32)
 }
 
+impl FontWeight {
+    /// Numeric CSS-style weight (100–900). 400 is normal, 700 is bold.
+    pub fn numeric(self) -> u16 {
+        match self {
+            FontWeight::VeryThin => 100,
+            FontWeight::Thin => 300,
+            FontWeight::Normal => 400,
+            FontWeight::Bold => 700,
+            FontWeight::Bolder => 900,
+            FontWeight::Value(v) => v.clamp(1, 1000) as u16,
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy)]
 pub enum LineHeight {
@@ -99,4 +113,26 @@ pub enum TextOverflow {
     Ellipsis,
     Wrap,
     Value(u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FontWeight;
+
+    // Guards the weight mapping and the ">= 600 renders bold" contract the
+    // text pipeline relies on to trigger faux-bold double-strike.
+    #[test]
+    fn numeric_weight_and_bold_threshold() {
+        assert_eq!(FontWeight::Normal.numeric(), 400);
+        assert_eq!(FontWeight::Bold.numeric(), 700);
+        assert_eq!(FontWeight::Value(650).numeric(), 650);
+
+        // Normal / light weights stay below the bold threshold.
+        assert!(FontWeight::Normal.numeric() < 600);
+        assert!(FontWeight::Thin.numeric() < 600);
+        assert!(FontWeight::VeryThin.numeric() < 600);
+        // Bold and heavier cross it.
+        assert!(FontWeight::Bold.numeric() >= 600);
+        assert!(FontWeight::Bolder.numeric() >= 600);
+    }
 }
