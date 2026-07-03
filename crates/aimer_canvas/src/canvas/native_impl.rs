@@ -90,13 +90,13 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
-    fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color) {
-        CupidCanvas::draw_text(self, pos.x, pos.y, text, font_size, CupidColor::from(color));
+    fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16) {
+        CupidCanvas::draw_text(self, pos.x, pos.y, text, font_size, CupidColor::from(color), font_weight);
     }
 
     #[inline]
-    fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32) {
-        CupidCanvas::draw_text_wrapped(self, pos.x, pos.y, text, font_size, CupidColor::from(color), max_width);
+    fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32, font_weight: u16) {
+        CupidCanvas::draw_text_wrapped(self, pos.x, pos.y, text, font_size, CupidColor::from(color), max_width, font_weight);
     }
 
     #[inline]
@@ -109,6 +109,7 @@ impl CanvasRendering for CupidCanvas {
         bounds_width: f32,
         bounds_height: f32,
         overflow: TextOverflowMode,
+        font_weight: u16,
     ) {
         CupidCanvas::draw_text_with_overflow(
             self,
@@ -120,6 +121,7 @@ impl CanvasRendering for CupidCanvas {
             bounds_width,
             bounds_height,
             overflow,
+            font_weight,
         );
     }
 
