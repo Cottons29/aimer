@@ -8,3 +8,4 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 aimer = {path = ".."}
 webbrowser = "1.2.1"
+console_error_panic_hook = "0.1"
