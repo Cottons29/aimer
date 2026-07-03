@@ -44,7 +44,7 @@ impl<'w> GpuContext<'w> {
             }
         };
 
-        debug!("gpu backends: {:?}", backends);
+        debug!("GPU backends: {:?}", backends);
 
         let instance = Instance::new(wgpu::InstanceDescriptor {
             backends,
@@ -54,9 +54,17 @@ impl<'w> GpuContext<'w> {
             display: None,
         });
 
-        let surface = instance
-            .create_surface(window)
-            .expect("failed to create surface");
+        debug!("GPU instance: {:?}", instance);
+
+        let surface = match instance.create_surface(window) {
+            Ok(surface) => surface,
+            Err(err) => {
+                error!("failed to create surface : {}", err);
+                panic!()
+            }
+        };
+
+        debug!("Surface: {:?}", surface);
 
         let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -67,17 +75,23 @@ impl<'w> GpuContext<'w> {
             .await
         {
             Ok(adapter) => adapter,
-            Err(_) => instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::default(),
-                    compatible_surface: Some(&surface),
-                    force_fallback_adapter: true,
-                })
-                .await
-                .map_err(|e| {
-                    error!("Failed to find a suitable adapter: {}", e);
-                })
-                .unwrap(),
+            Err(err) => {
+                error!("failed to find a suitable adapter  (1): {}", err);
+                match instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::default(),
+                        compatible_surface: Some(&surface),
+                        force_fallback_adapter: true,
+                    })
+                    .await
+                {
+                    Ok(item) => item,
+                    Err(err) => {
+                        error!("Failed to find a suitable adapter (2): {}", err);
+                        panic!()
+                    }
+                }
+            }
         };
 
         info!("Creating the gpu device");
@@ -132,12 +146,7 @@ impl<'w> GpuContext<'w> {
 
         debug!("Surface format: {:?}", caps.formats);
 
-        let selected_format = caps
-            .formats
-            .iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(caps.formats[0]);
+        let selected_format = caps.formats.iter().find(|f| f.is_srgb()).copied().unwrap_or(caps.formats[0]);
 
         let is_srgb = selected_format.is_srgb();
 
@@ -155,7 +164,10 @@ impl<'w> GpuContext<'w> {
         // rate (e.g. 120 Hz) on high-refresh displays.
         let present_mode = wgpu::PresentMode::Fifo;
 
-        debug!("Gpu Context : Initialized with max texture dimension: {} and is_srgb: {} present_mode: {:?}", max_dim, is_srgb, present_mode);
+        debug!(
+            "Gpu Context : Initialized with max texture dimension: {} and is_srgb: {} present_mode: {:?}",
+            max_dim, is_srgb, present_mode
+        );
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: selected_format,
