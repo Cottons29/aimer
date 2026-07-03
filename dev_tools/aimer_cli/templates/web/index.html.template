@@ -5,7 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>${app_title}</title>
     <link data-trunk rel="copy-dir" href="assets" />
-    <link data-trunk rel="rust" href="../../Cargo.toml" data-wasm-opt="z" />
+    <!-- The wasm is compiled with `+atomics,+bulk-memory` (see .cargo/config.toml)
+         plus rustc's default wasm features (sign-ext, nontrapping-float-to-int, ...),
+         so in `--release` Trunk's bundled wasm-opt aborts validation ("Atomic
+         operations require threads [--enable-threads]", then "all used features
+         should be allowed") unless told those features are on. `--all-features`
+         allows every feature so validation matches whatever rustc emitted;
+         `data-wasm-opt-params` (release-only) forwards it to wasm-opt. -->
+    <link data-trunk rel="rust" href="../../Cargo.toml" data-wasm-opt="z"
+          data-wasm-opt-params="--all-features" />
   </head>
   <style>
     #aimer_app {
