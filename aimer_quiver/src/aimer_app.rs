@@ -16,7 +16,6 @@ use aimer_utils::info;
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
-
 #[cfg(target_os = "android")]
 pub static ANDROID_APP: std::sync::OnceLock<AndroidApp> = std::sync::OnceLock::new();
 
@@ -178,30 +177,23 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     info!("Initializing EventLoop...");
     #[cfg(not(target_os = "android"))]
-    let event_loop = EventLoop::<AimerCustomAppEvent>::with_user_event()
-        .build()
-        .expect("Failed to create EventLoop");
+    let event_loop = EventLoop::<AimerCustomAppEvent>::with_user_event().build().expect("Failed to create EventLoop");
 
     #[cfg(target_os = "android")]
     let event_loop = {
         use aimer_events::android_app;
         use winit::platform::android::EventLoopBuilderExtAndroid;
-        let app = crate::aimer_app::ANDROID_APP
-            .get()
-            .expect("ANDROID_APP not set")
-            .clone();
+        let app = crate::aimer_app::ANDROID_APP.get().expect("ANDROID_APP not set").clone();
 
         android_app::set_android_app(app.clone());
 
         // Keep the JNI entry points used by `com.aimer.AimerActivity` reachable.
         // They are only ever called by the JVM at runtime (never from Rust), so
-        // without an explicit reference the linker may garbage-collect them out of
+        // without an explicit reference, the linker may garbage-collect them out of
         // the final `cdylib`, which would make the soft-keyboard text bridge fail
         // with `UnsatisfiedLinkError`.
-        let _keep_jni: [*const (); 2] = [
-            Java_com_aimer_AimerActivity_nativeInsertText as *const (),
-            Java_com_aimer_AimerActivity_nativeBackspace as *const (),
-        ];
+        let _keep_jni: [*const (); 2] =
+            [Java_com_aimer_AimerActivity_nativeInsertText as *const (), Java_com_aimer_AimerActivity_nativeBackspace as *const ()];
         std::hint::black_box(_keep_jni);
 
         EventLoop::<AimerCustomAppEvent>::with_user_event()
@@ -212,7 +204,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     EVENT_PROXY.set(event_loop.create_proxy()).ok();
 
-    // Route animation redraw requests through the event loop instead of letting
+    // Route animation redraws requests through the event loop instead of letting
     // animating widgets (e.g. scroll momentum) spawn a sleeping thread per frame.
     // `FrameReady` is delivered via `user_event` after the current frame, which
     // schedules the next redraw safely even on platforms (iOS) that coalesce a
