@@ -82,6 +82,20 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             self.ctrl.last_frame_time.set(Some(now));
             self.ctrl.drag_mode.set(DragMode::None);
             self.ctrl.last_pointer_pos.set(None);
+            // Release the primary-finger lock. This branch returns early, so the
+            // `match` arms below that also clear `active_touch_id` never run for
+            // PointerUp/Cancel. Leaving it set means the next PointerDown (which
+            // on the wasm/pointer-events backend always carries a fresh id) is
+            // seen as a rejected secondary finger until the lock goes stale — so
+            // a new scroll started before the fling settles gets ignored.
+            match event {
+                ElementEvent::PointerUp(_, _, id) => {
+                    if self.ctrl.active_touch_id.get() == Some(*id) {
+                        self.ctrl.active_touch_id.set(None);
+                    }
+                }
+                _ => self.ctrl.active_touch_id.set(None),
+            }
             aimer_events::window::request_animation_frame();
             return false;
         }
