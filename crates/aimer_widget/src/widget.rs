@@ -90,5 +90,5 @@ pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &
 
     let text_color = Color::Rgba(255, 255, 255, 255);
     ctx.canvas
-        .draw_text(&label, (2.0_f32, font_size).into(), font_size, text_color);
+        .draw_text(&label, (2.0_f32, font_size).into(), font_size, text_color, 400);
 }
