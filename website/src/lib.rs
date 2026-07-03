@@ -12,6 +12,7 @@ use std::time::Duration;
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
+    console_error_panic_hook::set_once();
     AimerApp::start(HomePage {})
 }
 
@@ -25,9 +26,20 @@ fn app_padding(ctx: &BuildContext) -> LayoutSpacing {
     LayoutSpacing!(
         left: horizontal_padding,
         right: horizontal_padding,
-        top: Spacing::Px(90),
-        bottom: Spacing::Px(90)
+        top: Spacing::Px(20),
+        bottom: Spacing::Px(20)
     )
+}
+
+
+fn is_mobile(ctx: &BuildContext) -> bool {
+    let window_size = MediaQuery::of(ctx).size;
+    window_size.width < 600f32
+}
+
+
+fn mobile_title(ctx: &BuildContext) -> u32 {
+    if is_mobile(ctx) { 30 } else { 44 }
 }
 
 impl StatelessWidget for HomePage {
@@ -43,23 +55,7 @@ impl StatelessWidget for HomePage {
                         why_aimer_section(ctx),
                         polished_tooling_section(ctx),
                         same_looking_section(ctx),
-                        // SizedBox!(height: 500),
-                        // hero_section(ctx),
-                        // why_aimer_section(ctx),
-                        // polished_tooling_section(ctx),
-                        // same_looking_section(ctx),
-                        // SizedBox!(height: 500),
-                        // hero_section(ctx),
-                        // why_aimer_section(ctx),
-                        // polished_tooling_section(ctx),
-                        // same_looking_section(ctx),
-                        // SizedBox!(height: 500),
-                        // hero_section(ctx),
-                        // why_aimer_section(ctx),
-                        // polished_tooling_section(ctx),
-                        // same_looking_section(ctx),
-                        // SizedBox!(height: 500),
-                        // hero_section(ctx),
+
                     ]
                 )
             )
@@ -77,6 +73,7 @@ fn hero_section(ctx: &BuildContext) -> Box<dyn Widget> {
         child: Column!(
             horizontal_alignment: BoxAlignment::Start,
             children: [
+                SizedBox!(height: 24),
                 Text!(
                     string.as_str(),
                     text_style: TextStyle!(
@@ -128,7 +125,7 @@ fn word(text: &str, bold: bool) -> Box<dyn Widget> {
         text_style: TextStyle!(
             font_size: 16,
             color: if bold { Color::Basic(Colors::White) } else { Color::Rgb(180, 180, 180) },
-            font_weight: if bold { FontWeight::Bold } else { FontWeight::Normal },
+            font_weight: if bold { FontWeight::Bold } else { FontWeight::Bolder },
         )
     )
 }
@@ -167,7 +164,7 @@ fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
                 Text!(
                     "Why Aimer ?",
                     text_style: TextStyle!(
-                        font_size: 48,
+                        font_size: mobile_title(ctx),
                         color: Colors::White,
                         font_weight: FontWeight::Bolder,
                         text_decoration: TextDecoration::Underline,
@@ -180,110 +177,85 @@ fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
                 // wrapped in a fixed-height Container because Positioned children
                 // do not contribute to the Stack's intrinsic size.
                 Container!(
-                    height: Dimension::Px(400.0),
-                    child: Stack!(
+                    height: Dimension::Px(600.0),
+                    child: Column!(
+                        horizontal_alignment: BoxAlignment::Start,
                         children: [
-                            Positioned!(
-                                top: 0.0,
-                                left: 0.0,
-                                child: Container!(
-                                    width: Dimension::Percent(50.0),
-                                    padding: LayoutSpacing!(right: Spacing::Px(24)),
-                                    child: Column!(
-                                        horizontal_alignment: BoxAlignment::Start,
-                                        children: [
-                                            feature_block(
-                                                "Type Safety",
-                                                Column!(
-                                                    horizontal_alignment: BoxAlignment::Start,
-                                                    children: [
-                                                        Row!(children: [
-                                                            word("Build UIs with ", false),
-                                                            word("Rust's", true),
-                                                            word(" type system.", false),
-                                                        ]),
-                                                        Row!(children: [
-                                                            word("Catch errors at ", false),
-                                                            word("compile time", true),
-                                                            word(".", false),
-                                                        ]),
-                                                    ]
-                                                )
-                                            ),
-                                            feature_block(
-                                                "Mobile & Desktop",
-                                                Column!(
-                                                    horizontal_alignment: BoxAlignment::Start,
-                                                    children: [
-                                                        Row!(children: [
-                                                            word("Runs on ", false),
-                                                            word("macOS", true),
-                                                            word(", ", false),
-                                                            word("iOS", true),
-                                                            word(", ", false),
-                                                            word("Android", true),
-                                                            word(",", false),
-                                                        ]),
-                                                        Row!(children: [
-                                                            word("and ", false),
-                                                            word("Web", true),
-                                                            word(". ", false),
-                                                            word("Windows", true),
-                                                            word(" & ", false),
-                                                            word("Linux", true),
-                                                            word(" soon.", false),
-                                                        ]),
-                                                    ]
-                                                )
-                                            ),
-                                            feature_block(
-                                                "Performance",
-                                                Row!(children: [
-                                                    word("GPU-accelerated rendering via ", false),
-                                                    word("Cupid", true),
-                                                    word(" & ", false),
-                                                    word("wgpu", true),
-                                                    word(".", false),
-                                                ])
-                                            ),
-                                        ]
-                                    )
+                            feature_block(
+                                "Type Safety",
+                                Column!(
+                                    horizontal_alignment: BoxAlignment::Start,
+                                    children: [
+                                        Row!(children: [
+                                            word("Build UIs with ", false),
+                                            word("Rust's", true),
+                                            word(" type system.", false),
+                                        ]),
+                                        Row!(children: [
+                                            word("Catch errors at ", false),
+                                            word("compile time", true),
+                                            word(".", false),
+                                        ]),
+                                    ]
                                 )
                             ),
-                            Positioned!(
-                                top: 0.0,
-                                left: Dimension::Percent(50.0),
-                                child: Container!(
-                                    width: Dimension::Percent(50.0),
-                                    padding: LayoutSpacing!(left: Spacing::Px(24)),
-                                    child: Column!(
-                                        horizontal_alignment: BoxAlignment::Start,
-                                        children: [
-                                            feature_block(
-                                                "Crates",
-                                                Row!(children: [
-                                                    word("Modular crates, available on ", false),
-                                                    word("crates.io", true),
-                                                    word(".", false),
-                                                ])
-                                            ),
-                                            feature_block(
-                                                "Consistence Looking",
-                                                Column!(
-                                                    horizontal_alignment: BoxAlignment::Start,
-                                                    children: [
-                                                        Row!(children: [
-                                                            word("The same widget tree looks ", false),
-                                                            word("identical", true),
-                                                        ]),
-                                                        Row!(children: [
-                                                            word("everywhere it runs.", false),
-                                                        ]),
-                                                    ]
-                                                )
-                                            ),
-                                        ]
-                                    )
+                            feature_block(
+                                "Mobile & Desktop",
+                                Column!(
+                                    horizontal_alignment: BoxAlignment::Start,
+                                    children: [
+                                        Row!(children: [
+                                            word("Runs on ", false),
+                                            word("macOS", true),
+                                            word(", ", false),
+                                            word("iOS", true),
+                                            word(", ", false),
+                                            word("Android", true),
+                                            word(",", false),
+                                        ]),
+                                        Row!(children: [
+                                            word("and ", false),
+                                            word("Web", true),
+                                            word(". ", false),
+                                            word("Windows", true),
+                                            word(" & ", false),
+                                            word("Linux", true),
+                                            word(" soon.", false),
+                                        ]),
+                                    ]
+                                )
+                            ),
+                            feature_block(
+                                "Performance",
+                                Row!(children: [
+                                    word("GPU-accelerated rendering via ", false),
+                                    word("Cupid", true),
+                                    word(" & ", false),
+                                    word("wgpu", true),
+                                    word(".", false),
+                                ])
+                            ),
+                            feature_block(
+                                "Crates",
+                                Row!(children: [
+                                    word("Modular crates, available on ", false),
+                                    word("crates.io", true),
+                                    word(".", false),
+                                ])
+                            ),
+                            feature_block(
+                                "Consistence Looking",
+                                Column!(
+                                    horizontal_alignment: BoxAlignment::Start,
+                                    children: [
+                                        Row!(children: [
+                                            word("The same widget tree looks ", false),
+                                            word("identical", true),
+                                        ]),
+                                        Row!(children: [
+                                            word("everywhere it runs.", false),
+                                        ]),
+                                    ]
                                 )
                             ),
                         ]
@@ -311,7 +283,7 @@ fn polished_tooling_section(ctx: &BuildContext) -> Box<dyn Widget> {
                     child: Text!(
                         "Polished Tooling",
                         text_style: TextStyle!(
-                            font_size: 48,
+                            font_size: mobile_title(ctx),
                             color: Colors::Yellow,
                             font_weight: FontWeight::Bolder,
                             text_decoration: TextDecoration::Underline,
@@ -319,7 +291,7 @@ fn polished_tooling_section(ctx: &BuildContext) -> Box<dyn Widget> {
                     ),
                 ),
                 Container!(
-                    height : 450,
+                    height : if is_mobile(ctx) { 250 } else { 450 },
                     child: AssetImage!(
                         "assets/polished_tooling.png",
                     )
@@ -357,7 +329,6 @@ fn platform_label(text: &str, active: bool) -> Box<dyn Widget> {
     )
 }
 
-
 /// The `Same Looking Everywhere` section: an underlined heading, a rounded
 /// browser-mock frame embedding the live counter demo and a platform row.
 fn same_looking_section(ctx: &BuildContext) -> Box<dyn Widget> {
@@ -370,9 +341,9 @@ fn same_looking_section(ctx: &BuildContext) -> Box<dyn Widget> {
                 Container!(
                     height: 100,
                     child: Text!(
-                        "Same Looking Everywhere",
+                        "Consistence Looking",
                         text_style: TextStyle!(
-                            font_size: 44,
+                            font_size: mobile_title(ctx),
                             color: Colors::Black,
                             font_weight: FontWeight::Bolder,
                             text_decoration: TextDecoration::Underline,
@@ -381,7 +352,7 @@ fn same_looking_section(ctx: &BuildContext) -> Box<dyn Widget> {
                 ),
                 SizedBox!(height: 24),
                 Container!(
-                    height: 600,
+                    height: if is_mobile(ctx) { 250 } else { 450 },
                     child: AssetImage!(
                         "assets/web_screenshot.png",
                     )
@@ -390,7 +361,7 @@ fn same_looking_section(ctx: &BuildContext) -> Box<dyn Widget> {
                 Row!(
                     horizontal_alignment: BoxAlignment::Center,
                     vertical_alignment: BoxAlignment::Center,
-                    gaps: LayoutSpacing::horizontal(Spacing::Px(16)),
+                    gaps: LayoutSpacing::horizontal(Spacing::Px(8)),
                     children: [
                         platform_label("macOS", false),
                         platform_label("iOS", false),
@@ -399,6 +370,7 @@ fn same_looking_section(ctx: &BuildContext) -> Box<dyn Widget> {
                         platform_label("Windows", false),
                     ]
                 ),
+                SizedBox!(height: 40),
             ]
         )
     )
