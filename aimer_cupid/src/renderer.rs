@@ -247,7 +247,7 @@ impl Renderer {
                         }),
                     });
                 }
-                DrawCommand::DrawText { position, text, font_size, color, bounds_width, bounds_height, overflow } => {
+                DrawCommand::DrawText { position, text, font_size, color, bounds_width, bounds_height, overflow, font_weight } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
                     let _idx = self.text_requests.len();
                     self.text_requests.push(TextDrawRequest {
@@ -260,7 +260,7 @@ impl Renderer {
                         bounds_height: bounds_height.unwrap_or(height as f32 - ty),
                         overflow: *overflow,
                         line_height: None,
-                        font_weight: None,
+                        font_weight: Some(*font_weight),
                         italic: false,
                         clip_rect: clip_to_array(self.clip_stack.last()),
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),

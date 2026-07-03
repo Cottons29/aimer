@@ -121,13 +121,14 @@ impl CupidCanvas {
         self.draw_list.borrow_mut().restore();
     }
 
-    pub fn draw_text(&self, x: f32, y: f32, text: &str, font_size: f32, color: Color) {
+    pub fn draw_text(&self, x: f32, y: f32, text: &str, font_size: f32, color: Color, font_weight: u16) {
         self.draw_list
             .borrow_mut()
-            .draw_text(Vec2d::new(x, y), Arc::from(text), font_size, color);
+            .draw_text(Vec2d::new(x, y), Arc::from(text), font_size, color, font_weight);
     }
 
-    pub fn draw_text_wrapped(&self, x: f32, y: f32, text: &str, font_size: f32, color: Color, max_width: f32) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_wrapped(&self, x: f32, y: f32, text: &str, font_size: f32, color: Color, max_width: f32, font_weight: u16) {
         self.draw_list.borrow_mut().draw_text_with_overflow(
             Vec2d::new(x, y),
             Arc::from(text),
@@ -136,6 +137,7 @@ impl CupidCanvas {
             Some(max_width),
             None,
             TextOverflowMode::Wrap,
+            font_weight,
         );
     }
 
@@ -150,6 +152,7 @@ impl CupidCanvas {
         bounds_width: f32,
         bounds_height: f32,
         overflow: TextOverflowMode,
+        font_weight: u16,
     ) {
         self.draw_list.borrow_mut().draw_text_with_overflow(
             Vec2d::new(x, y),
@@ -159,6 +162,7 @@ impl CupidCanvas {
             Some(bounds_width),
             Some(bounds_height),
             overflow,
+            font_weight,
         );
     }
 

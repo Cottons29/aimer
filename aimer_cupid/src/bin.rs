@@ -279,6 +279,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                     44.0,
                     Color::black(),
                     self.window.as_ref().unwrap().inner_size().width as f32 - 60.0,
+                    400,
                 );
 
                 // Draw test image if available

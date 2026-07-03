@@ -52,6 +52,7 @@ pub enum DrawCommand {
         bounds_width: Option<f32>,
         bounds_height: Option<f32>,
         overflow: TextOverflowMode,
+        font_weight: u16,
     },
     DrawRichText {
         position: Vec2d,
@@ -197,8 +198,8 @@ impl DrawList {
             .push(DrawCommand::DrawImage { rect, texture_id });
     }
 
-    pub fn draw_text(&mut self, position: Vec2d, text: Arc<str>, font_size: f32, color: Color) {
-        self.draw_text_with_overflow(position, text, font_size, color, None, None, TextOverflowMode::Clip);
+    pub fn draw_text(&mut self, position: Vec2d, text: Arc<str>, font_size: f32, color: Color, font_weight: u16) {
+        self.draw_text_with_overflow(position, text, font_size, color, None, None, TextOverflowMode::Clip, font_weight);
     }
     #[allow(clippy::too_many_arguments)]
     pub fn draw_text_with_overflow(
@@ -210,9 +211,10 @@ impl DrawList {
         bounds_width: Option<f32>,
         bounds_height: Option<f32>,
         overflow: TextOverflowMode,
+        font_weight: u16,
     ) {
         self.commands
-            .push(DrawCommand::DrawText { position, text, font_size, color, bounds_width, bounds_height, overflow });
+            .push(DrawCommand::DrawText { position, text, font_size, color, bounds_width, bounds_height, overflow, font_weight });
     }
 
     pub fn draw_rich_text(&mut self, position: Vec2d, spans: Vec<RichTextSegment>, font_size: f32, color: Color) {
