@@ -113,7 +113,7 @@ impl RectPipeline {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[RectInstance::layout()],
+                buffers: &[Some(RectInstance::layout())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
