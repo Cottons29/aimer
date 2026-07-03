@@ -6,5 +6,24 @@
 # path".
 watch = ["../../src"]
 
+
 [serve]
 port = 3000
+address = "0.0.0.0"
+# Serve over HTTPS. WebGPU (navigator.gpu / GPUCanvasContext) is only exposed in
+# a browser "secure context": https:// pages, or the hard-coded-trusted
+# localhost / 127.0.0.1. Serving over plain http on a LAN IP (e.g.
+# http://192.168.0.100:3000) is an *insecure* context, so the browser disables
+# WebGPU and wgpu panics with "canvas context is not a GPUCanvasContext". TLS
+# makes the LAN IP a secure context so the site works from other devices too.
+#
+# Generate the self-signed cert first (run once, re-run to add more IPs/hosts):
+#   ./gen_certs.sh 192.168.0.100
+# The cert must list the address you type in the URL bar in its SAN, so pass any
+# LAN IP you use. Browsers will warn about the self-signed cert on first visit —
+# accept it once (on the phone/other device too) and WebGPU will work.
+tls_key_path = "self_signed_certs/key.pem"
+tls_cert_path = "self_signed_certs/cert.pem"
+
+[build]
+release=false
