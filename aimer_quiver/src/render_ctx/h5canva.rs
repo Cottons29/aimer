@@ -43,6 +43,20 @@ pub mod render_ctx {
                 info!("Creating canvas...");
                 body.append_child(&canvas).unwrap();
                 canvas.set_attribute("id", "aimer_app").unwrap();
+
+                // Without `touch-action: none`, mobile browsers treat a touch drag
+                // on the canvas as a page pan/pinch and fire `pointercancel`
+                // mid-gesture — winit reports that as a cancelled touch, so the
+                // scrollable never receives a continuous PointerMove stream and
+                // scroll feels broken/janky compared to native. Telling the browser
+                // not to perform any default touch gesture on the canvas lets every
+                // touchmove reach the app, matching native scroll behaviour.
+                // Note: winit's `prevent_default` alone is insufficient here because
+                // per the Pointer Events spec, calling preventDefault on pointerdown
+                // does not stop scrolling — only `touch-action` does.
+                // Use `style().set_property` (not `set_attribute("style", ..)`) so we
+                // don't clobber the width/height styles winit sets on resize.
+                let _ = canvas.style().set_property("touch-action", "none");
                 info!("Canvas created.");
             }
 
