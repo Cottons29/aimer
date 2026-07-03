@@ -333,9 +333,9 @@ impl DrawList {
         &self.commands
     }
 
-    pub fn drain_commands(&mut self) -> Vec<DrawCommand> {
-        std::mem::take(&mut self.commands)
-    }
+    // pub fn drain_commands(&mut self) -> Vec<DrawCommand> {
+    //     std::mem::take(&mut self.commands)
+    // }
 
     pub fn has_texture_id(&self, texture_id: TextureId) -> bool {
         self.commands.iter().any(|cmd| match cmd {

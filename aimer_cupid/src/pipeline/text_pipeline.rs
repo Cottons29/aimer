@@ -253,7 +253,7 @@ impl TextPipelineV2 {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[GlyphInstance::layout()],
+                buffers: &[Some(GlyphInstance::layout())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -279,7 +279,7 @@ impl TextPipelineV2 {
             vertex: wgpu::VertexState {
                 module: &color_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[GlyphInstance::layout()],
+                buffers: &[Some(GlyphInstance::layout())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {

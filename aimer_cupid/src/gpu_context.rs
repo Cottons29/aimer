@@ -1,5 +1,5 @@
 use aimer_utils::{debug, error, info};
-use wgpu::{Device, Instance, Limits, Queue, Surface, SurfaceConfiguration, TextureFormat};
+use wgpu::{Device, Instance, Limits, Queue, Surface, SurfaceColorSpace, SurfaceConfiguration, SurfaceTexture, TextureFormat};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
@@ -71,6 +71,7 @@ impl<'w> GpuContext<'w> {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                apply_limit_buckets: true,
             })
             .await
         {
@@ -82,6 +83,7 @@ impl<'w> GpuContext<'w> {
                         power_preference: wgpu::PowerPreference::default(),
                         compatible_surface: Some(&surface),
                         force_fallback_adapter: true,
+                        apply_limit_buckets: true,
                     })
                     .await
                 {
@@ -177,6 +179,7 @@ impl<'w> GpuContext<'w> {
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
+            color_space: SurfaceColorSpace::Auto
         };
         surface.configure(&device, &config);
 
@@ -204,7 +207,8 @@ impl<'w> GpuContext<'w> {
         self.surface.get_current_texture()
     }
 
-    pub fn end_frame(&self, frame: wgpu::SurfaceTexture) {
-        frame.present();
+    pub fn end_frame(&self, frame: SurfaceTexture) {
+        // wgpu 30: presentation moved from `SurfaceTexture::present()` to `Queue::present()`.
+        self.queue.present(frame);
     }
 }
