@@ -35,8 +35,9 @@ pub trait CanvasRendering: Clone {
     fn rotate(&self, radians: f32);
     fn save(&self);
     fn restore(&self);
-    fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color);
-    fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32);
+    fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16);
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32, font_weight: u16);
     #[allow(clippy::too_many_arguments)]
     fn draw_text_with_overflow(
         &self,
@@ -47,6 +48,7 @@ pub trait CanvasRendering: Clone {
         bounds_width: f32,
         bounds_height: f32,
         overflow: TextOverflowMode,
+        font_weight: u16,
     );
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize);
     fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)>;
@@ -264,15 +266,16 @@ impl<'a> AimerCanvas<'a> {
     /// Draws text at the specified position with the given font size and color.
     #[allow(dead_code)]
     #[inline]
-    pub fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color) {
-        CanvasRendering::draw_text(self.inner, text, pos, font_size, color);
+    pub fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16) {
+        CanvasRendering::draw_text(self.inner, text, pos, font_size, color, font_weight);
     }
 
     /// Draws wrapped text constrained to `max_width`.
     #[allow(dead_code)]
     #[inline]
-    pub fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32) {
-        CanvasRendering::draw_text_wrapped(self.inner, text, pos, font_size, color, max_width);
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32, font_weight: u16) {
+        CanvasRendering::draw_text_wrapped(self.inner, text, pos, font_size, color, max_width, font_weight);
     }
 
     /// Draws text with explicit bounds and overflow behavior.
@@ -288,8 +291,9 @@ impl<'a> AimerCanvas<'a> {
         bounds_width: f32,
         bounds_height: f32,
         overflow: TextOverflowMode,
+        font_weight: u16,
     ) {
-        CanvasRendering::draw_text_with_overflow(self.inner, text, pos, font_size, color, bounds_width, bounds_height, overflow);
+        CanvasRendering::draw_text_with_overflow(self.inner, text, pos, font_size, color, bounds_width, bounds_height, overflow, font_weight);
     }
 
     /// Draws an image identified by `image_id` at the specified position and size.
