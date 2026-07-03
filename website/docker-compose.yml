@@ -1,0 +1,18 @@
+# Build and run the web bundle:
+#   cd website
+#   docker compose up --build          # local dev: builds from source
+# then open http://localhost:8080
+#
+# On the server this same file is used to PULL the CI-built image:
+#   docker compose pull && docker compose up -d
+# `image:` points at GHCR so `pull` works; `build:` is kept so local dev still
+# builds and tags the very same name (compose builds when you pass --build).
+services:
+  web:
+    image: ghcr.io/cottons29/aimer-website:latest
+    build:
+      context: ..
+      dockerfile: website/Dockerfile
+    ports:
+      - "3000:80"
+    restart: unless-stopped
