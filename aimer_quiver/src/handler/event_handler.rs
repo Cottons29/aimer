@@ -43,7 +43,7 @@ impl WindowEventHandler {
 
             WindowEvent::Ime(ime) => Self::handle_ime(ime, app),
 
-            WindowEvent::MouseWheel { delta, phase, .. } =>  Self::handle_mouse_wheel(delta, phase, app),
+            WindowEvent::MouseWheel { delta, phase, .. } => Self::handle_mouse_wheel(delta, phase, app),
 
             WindowEvent::RedrawRequested => {
                 #[cfg(debug_assertions)]
@@ -360,10 +360,7 @@ impl WindowEventHandler {
                 app.ime_composing = !text.is_empty();
                 // Forward preedit to focused widget for composition rendering
                 if let Some(root) = &app.widget_root {
-                    let event = ElementEvent::ImePreedit {
-                        text: text.clone(),
-                        cursor: cursor.clone(),
-                    };
+                    let event = ElementEvent::ImePreedit { text: text.clone(), cursor: cursor.clone() };
                     dispatch_event(root.as_ref(), app.cursor_pos, &event);
                 }
                 if let Some(window) = &app.window {
