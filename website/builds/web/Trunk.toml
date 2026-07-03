@@ -25,5 +25,5 @@ address = "0.0.0.0"
 tls_key_path = "self_signed_certs/key.pem"
 tls_cert_path = "self_signed_certs/cert.pem"
 
+
 [build]
-release=false

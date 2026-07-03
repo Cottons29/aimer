@@ -12,9 +12,10 @@ builds/macos/Libraries
 builds/ios/Libraries
 
 # web
-builds/web/node_modules
+builds/web/dist
 builds/web/pkg
-builds/web/package-lock.json
+builds/web/assets
+
 
 # cargo target
 target
