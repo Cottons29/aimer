@@ -1,0 +1,73 @@
+name: website build & deploy
+
+# Auto-build the web image on push and redeploy it on the server.
+#
+# Only runs when something that actually changes the compiled site is touched.
+# ponytail: the website WASM is built from the whole workspace, so this list
+# covers website + the source crates/manifests it compiles from. Ceiling: a
+# change in a crate NOT listed here (e.g. a new top-level workspace member) will
+# not trigger a deploy — add its path here if that happens.
+on:
+  push:
+    branches: [main, master]
+
+  workflow_dispatch: {}
+
+env:
+  IMAGE: ghcr.io/cottons29/aimer-website
+
+jobs:
+  build:
+    name: build & push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # push to GHCR with the built-in GITHUB_TOKEN
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .                                  # repo root: website needs all crates
+          file: website/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          # Reuse layers between runs so the heavy nightly + trunk build is cached.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: ssh restart on server
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull new image and restart container
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          # GHCR packages are private by default, so authenticate on the server
+          # with the same short-lived token (valid for this run, packages:read).
+          envs: GHCR_USER,GHCR_TOKEN
+          script: |
+            cd  ${{env.PROJECT_PATH}}
+
+            podman-compose -f "${COMPOSE}" pull
+            podman-compose -f "${COMPOSE}" up -d
+            podman image prune -f
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
