@@ -3,7 +3,7 @@
 A cross-platform UI framework built with Rust, inspired by Flutter's widget model. Aimer lets you build native user
 interfaces from a single codebase using a declarative, composable widget tree.
 
-```
+```rust
 #[aimer::main]
 pub fn start_app() {
     AimerApp::start(
@@ -74,7 +74,7 @@ cargo install --git https://github.com/Cottons29/aimer.git
 ### Create a New Project
 
 ```bash
-aimer new my_aimer
+aimer create my_aimer
 ```
 
 ### Running the App
