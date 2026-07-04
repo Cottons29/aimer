@@ -1,5 +1,6 @@
 use crate::position::Vec2d;
 use crate::size::ResolvedSize;
+use std::cell::Cell;
 use std::ops::{Div, Mul};
 
 ///
@@ -111,51 +112,53 @@ impl Default for Bounds {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+// `bound` is wrapped in a `Cell` so it can be mutated through a shared
+// `&self` (during layout/draw) soundly. The previous version stored a bare
+// `Option<Bounds>` and mutated it via a `&raw const ... as *mut` cast, which
+// is undefined behaviour: the type was `Freeze`, so the optimizer was free to
+// assume it never changed behind a `&self` and cache the stale value. In
+// release/wasm-opt builds that meant `is_inside` kept reading the old `None`
+// bounds after `save`, so hover hit-testing silently stopped working.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CacheBounds {
-    bound: Option<Bounds>,
+    bound: Cell<Option<Bounds>>,
 }
 
 impl CacheBounds {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        Self { bound: None }
+        Self { bound: Cell::new(None) }
     }
 
     pub const fn with_vec2d(vec2d: Vec2d) -> Self {
-        Self { bound: Some(Bounds::new(vec2d.x, vec2d.y, 0.0, 0.0)) }
+        Self { bound: Cell::new(Some(Bounds::new(vec2d.x, vec2d.y, 0.0, 0.0))) }
     }
 
-    pub const fn is_cached(&self) -> bool {
-        self.bound.is_some()
+    pub fn is_cached(&self) -> bool {
+        self.bound.get().is_some()
     }
 
-    pub const fn get_bounds(&self) -> Option<Bounds> {
-        self.bound
+    pub fn get_bounds(&self) -> Option<Bounds> {
+        self.bound.get()
     }
 
     pub fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bound.map(|b| (Vec2d { x: b.x, y: b.y }, Vec2d { x: b.x + b.width, y: b.y + b.height }))
+        self.bound.get().map(|b| (Vec2d { x: b.x, y: b.y }, Vec2d { x: b.x + b.width, y: b.y + b.height }))
     }
 
-    pub const fn set_bounds(&self, bounds: Bounds) {
-        let bound_ptr = &raw const self.bound as *mut Option<Bounds>;
-        unsafe {
-            *bound_ptr = Some(bounds);
+    pub fn set_bounds(&self, bounds: Bounds) {
+        self.bound.set(Some(bounds));
+    }
+
+    pub fn set_size(&self, size: ResolvedSize) {
+        if let Some(mut bound) = self.bound.get() {
+            bound.width = size.width;
+            bound.height = size.height;
+            self.bound.set(Some(bound));
         }
     }
 
-    pub const fn set_size(&self, size: ResolvedSize) {
-        let bound_ptr = &raw const self.bound as *mut Option<Bounds>;
-        unsafe {
-            if let Some(bound) = &mut *bound_ptr {
-                bound.width = size.width;
-                bound.height = size.height;
-            }
-        }
-    }
-
-    pub const fn save(&self, scale: f32, x: f32, y: f32, width: f32, height: f32) {
+    pub fn save(&self, scale: f32, x: f32, y: f32, width: f32, height: f32) {
         let cache_x = x / scale;
         let cache_y = y / scale;
         let cache_w = width / scale;
@@ -164,8 +167,27 @@ impl CacheBounds {
         self.set_bounds(bound);
     }
 
-    pub const fn is_inside(&self, x: f32, y: f32) -> bool {
-        let Some(bound) = self.bound else { return false };
+    pub fn is_inside(&self, x: f32, y: f32) -> bool {
+        let Some(bound) = self.bound.get() else { return false };
         bound.x <= x && x <= bound.x + bound.width && bound.y <= y && y <= bound.y + bound.height
+    }
+}
+
+#[cfg(test)]
+mod cache_bounds_tests {
+    use super::*;
+
+    // Regression: `save` mutates through a shared `&self`, then `is_inside`
+    // reads it back. With the old `Freeze` field + raw-pointer write the
+    // optimizer cached the stale `None` in release/wasm-opt builds and hover
+    // hit-testing silently failed. This must hold in release too.
+    #[test]
+    fn save_is_visible_to_is_inside_through_shared_ref() {
+        let bounds = CacheBounds::new();
+        assert!(!bounds.is_inside(50.0, 50.0), "empty bounds contain nothing");
+
+        bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
+        assert!(bounds.is_inside(50.0, 40.0), "point inside must be detected after save");
+        assert!(!bounds.is_inside(200.0, 40.0), "point outside must be rejected");
     }
 }
