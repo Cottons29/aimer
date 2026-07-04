@@ -182,9 +182,9 @@ impl<R> Clone for NavigatorController<R> {
 }
 
 
-pub type NavigatorInstance<R: 'static + Send + Sync> = Rc<NavigatorController<R>>;
+pub type NavigatorInstance<R: 'static > = Rc<NavigatorController<R>>;
 
-impl<R: 'static + Send + Sync> NavigatorController<R> {
+impl<R: 'static> NavigatorController<R> {
     /// Flutter-style: `Navigator::of(ctx).push(route)`
     #[track_caller]
     pub fn of(ctx: &BuildContext) -> NavigatorInstance<R> {
