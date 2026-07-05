@@ -1,14 +1,16 @@
+mod auto_trait_impl;
 mod codegen;
 mod field_info;
-mod auto_trait_impl;
+mod unique_key;
 
 use crate::auto_trait_impl::auto_impl;
 use crate::codegen::router::RouterCodegen;
 use crate::codegen::{ConstructorCodegen, RawWidgetCodegen, StatefulWidgetCodegen, StatelessWidgetCodegen};
+use crate::unique_key::UniqueKeyInput;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::punctuated::Punctuated;
-use syn::{parse_macro_input, Item, ItemFn, Path, Token};
+use syn::{Item, ItemFn, Path, Token, parse_macro_input};
 
 /// Attribute macro that marks the Aimer application entry point.
 ///
@@ -230,18 +232,14 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
             let router_code = RouterCodegen::generate(input_ts);
             TokenStream::from(router_code)
         } else {
-            syn::Error::new_spanned(item, "Router widget can only be applied to enums")
-                .to_compile_error()
-                .into()
+            syn::Error::new_spanned(item, "Router widget can only be applied to enums").to_compile_error().into()
         };
     }
 
     let mut item_struct = match item {
         Item::Struct(s) => s,
         _ => {
-            return syn::Error::new_spanned(item, "Widget attribute expects a struct unless using Router")
-                .to_compile_error()
-                .into();
+            return syn::Error::new_spanned(item, "Widget attribute expects a struct unless using Router").to_compile_error().into();
         }
     };
 
@@ -249,8 +247,7 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     let has_constructor = item_struct.attrs.iter().any(|attr| {
         if attr.path().is_ident("derive") {
             if let Ok(list) = attr.parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated) {
-                list.iter()
-                    .any(|path| if let Some(segment) = path.segments.last() { segment.ident == "Constructor" } else { false })
+                list.iter().any(|path| if let Some(segment) = path.segments.last() { segment.ident == "Constructor" } else { false })
             } else {
                 false
             }
@@ -270,15 +267,11 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     if !has_constructor {
         // Remove constructor attributes from the struct to avoid compilation errors
         // since we are not adding #[derive(Constructor)] which would handle them
-        item_struct
-            .attrs
-            .retain(|attr| !attr.path().is_ident("constructor"));
+        item_struct.attrs.retain(|attr| !attr.path().is_ident("constructor"));
 
         if let syn::Fields::Named(fields) = &mut item_struct.fields {
             for field in &mut fields.named {
-                field
-                    .attrs
-                    .retain(|attr| !attr.path().is_ident("constructor"));
+                field.attrs.retain(|attr| !attr.path().is_ident("constructor"));
             }
         }
     }
@@ -331,4 +324,18 @@ pub fn drawable_element_derive(input: TokenStream) -> TokenStream {
     auto_impl("aimer_widget::Drawable", input)
 }
 
+#[proc_macro]
+/// Generates a unique key for a widget.
+pub fn unique_key(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as UniqueKeyInput);
 
+    let value = match input.prefix {
+        Some(prefix) => format!("{}-{}", prefix.value(), uuid::Uuid::new_v4()),
+        None => uuid::Uuid::new_v4().to_string(),
+    };
+
+    quote! {
+        Key::Static(#value)
+    }
+    .into()
+}
