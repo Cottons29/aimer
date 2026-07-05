@@ -8,26 +8,29 @@ use aimer_widget::{base::Color, Drawable, Element, LayoutCache, LayoutElement, R
 
 
 #[derive(WidgetConstructor)]
-pub struct SizedBox {
+pub struct SizedBox<W: Widget + 'static = ZeroSizedBox> {
     #[constructor(default, into)]
     width: Dimension,
     #[constructor(default, into)]
     height: Dimension,
     #[constructor(default, into)]
     color: Color,
-    child: Option<Box<dyn Widget>>,
+    #[constructor(default = SizedBox::PLACE_HOLDER)]
+    child: W,
 }
 
-impl Widget for SizedBox {
+impl SizedBox {
+    pub const PLACE_HOLDER: ZeroSizedBox = ZeroSizedBox;
+
+}
+
+
+impl<W: Widget + 'static> Widget for SizedBox<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = match self.child.as_ref() {
-            Some(item) => item.to_element(ctx),
-            None => ZeroSizedBox.to_element(ctx),
-        };
         Box::new(RawSizedBox {
             width: self.width,
             height: self.height,
-            child,
+            child : self.child.to_element(ctx),
             color: self.color,
             cache: LayoutCache::new(),
             debug_name: "SizedBox",

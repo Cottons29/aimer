@@ -110,23 +110,6 @@ pub struct RawContainer<T: Element> {
     pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
 }
 
-impl<E: Element> RawContainer<E> {
-    pub fn new(child: E) -> Self {
-        Self {
-            child,
-            padding: Default::default(),
-            margin: Default::default(),
-            width: Default::default(),
-            height: Default::default(),
-            box_decoration: Default::default(),
-            cache: LayoutCache::new(),
-            debug_name: "Container",
-            bounds: std::cell::Cell::new(None),
-            color: None,
-        }
-    }
-}
-
 impl<T: Element> RawContainer<T> {
     fn margin(&self, ctx: &BuildContext) -> (f32, f32, f32, f32) {
         let parent_width = ctx.box_constraint.max_width;
@@ -204,7 +187,7 @@ impl<T: Element> Drawable for RawContainer<T> {
         if let Some(color) = self.color
             && self.box_decoration.background_color.is_none()
         {
-            debug!("updated color to {color:?}");
+            // debug!("updated color to {color:?}");
             self.box_decoration.update_color(color)
         }
 
