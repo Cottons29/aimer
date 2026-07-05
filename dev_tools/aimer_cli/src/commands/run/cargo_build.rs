@@ -49,7 +49,7 @@ pub fn spawn_cargo_build(
         }
         CargoBuildTarget::Ios { rust_target } | CargoBuildTarget::IosSim { rust_target } => {
             let mut c = Command::new("cargo");
-            c.arg("build").arg("--lib").arg("--target").arg(rust_target);
+            c.arg("build").arg("--lib").arg("--target").arg(rust_target).env("RUSTFLAGS","-C link-arg=-Wl,-U,_aimer_ios_request_frame -C link-arg=-Wl,-U,_aimer_ios_pause_frames");
             c
         }
     };

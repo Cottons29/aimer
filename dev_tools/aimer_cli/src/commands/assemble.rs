@@ -7,7 +7,7 @@ use anyhow::{Context, bail};
 use std::env::current_dir;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use log::info;
+use tracing::info;
 
 /// Non-interactive bundling entry point used by `aimer assemble <platform>`.
 ///

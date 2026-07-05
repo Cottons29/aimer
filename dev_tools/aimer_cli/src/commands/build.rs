@@ -14,14 +14,9 @@ pub fn execute(target: Option<String>, release: bool) -> anyhow::Result<()> {
     let target = resolve_target(target)?;
 
     let mut cmd = build_command(target, release)?;
-    println!(
-        "Building for target '{target}'{}...",
-        if release { " (release)" } else { "" }
-    );
+    println!("Building for target '{target}'{}...", if release { " (release)" } else { "" });
 
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to start build for target '{target}'"))?;
+    let status = cmd.status().with_context(|| format!("failed to start build for target '{target}'"))?;
 
     if !status.success() {
         bail!("build failed for target '{target}'");
@@ -38,13 +33,9 @@ fn resolve_target(target: Option<String>) -> anyhow::Result<Targets> {
         return Targets::try_from(t.as_str()).map_err(|_| AimerError::UnknownTarget(t).into());
     }
 
-    let manifest_default = AimerManifest::load_from(Path::new("."))
-        .ok()
-        .flatten()
-        .and_then(|m| m.default_target().map(|s| s.to_string()));
+    let manifest_default = AimerManifest::load_from(Path::new(".")).ok().flatten().and_then(|m| m.default_target().map(|s| s.to_string()));
     if let Some(default) = manifest_default {
-        return Targets::try_from(default.as_str())
-            .map_err(|_| AimerError::UnknownTarget(default).into());
+        return Targets::try_from(default.as_str()).map_err(|_| AimerError::UnknownTarget(default).into());
     }
 
     bail!(
@@ -66,11 +57,7 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
         }
         Targets::Android | Targets::AndroidSimulator => {
             let mut c = Command::new("cargo");
-            c.arg("ndk")
-                .arg("-t")
-                .arg("arm64-v8a")
-                .arg("build")
-                .arg("--lib");
+            c.arg("ndk").arg("-t").arg("arm64-v8a").arg("build").arg("--lib");
             if release {
                 c.arg("--release");
             }
@@ -86,7 +73,7 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
         }
         Targets::Ios => {
             let mut c = Command::new("cargo");
-            c.arg("build").args(["--target", "aarch64-apple-ios", "--lib"]);
+            c.arg("build").args(["--target", "aarch64-apple-ios", "--lib"]).env("RUSTFLAGS","-C link-arg=-Wl,-U,_aimer_ios_request_frame -C link-arg=-Wl,-U,_aimer_ios_pause_frames");
             if release {
                 c.arg("--release");
             }
@@ -94,7 +81,7 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
         }
         Targets::IosSimulator => {
             let mut c = Command::new("cargo");
-            c.arg("build").args(["--target", "aarch64-apple-ios-sim", "--lib"]);
+            c.arg("build").args(["--target", "aarch64-apple-ios-sim", "--lib"]).env("RUSTFLAGS","-C link-arg=-Wl,-U,_aimer_ios_request_frame -C link-arg=-Wl,-U,_aimer_ios_pause_frames");
             if release {
                 c.arg("--release");
             }
@@ -112,8 +99,7 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
     };
 
     // Keep stdio attached to the terminal for CI-friendly output.
-    cmd.stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit());
+    cmd.stdout(std::process::Stdio::inherit()).stderr(std::process::Stdio::inherit());
 
     Ok(cmd)
 }
