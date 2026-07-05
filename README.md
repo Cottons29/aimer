@@ -31,17 +31,6 @@ tree on native platforms.
 - **Canvas-like API** — Simple and intuitive `CupidCanvas` API for lower-level drawing operations.
 - **High-Quality Typography** — Integrated text layout and glyph rasterization for crisp text at any scale.
 
-## Supported Platforms
-
-| Platform   | Rendering Backend | Status                   |
-|------------|-------------------|--------------------------|
-| macOS      | Cupid             | ✅ Supported              |
-| iOS        | Cupid             | ✅ Supported              |
-| Android    | Cupid             | ✅ Supported              |
-| Windows    | Cupid             | ⚠️ Work with `fn main()` |
-| Linux      | Cupid             | ⚠️ Work with `fn main()` |
-| Web (WASM) | Canvas 2D         | ✅ Supported              |
-
 ## Features
 
 - **Declarative UI** — Build interfaces with a composable widget tree using macros (`Container!`, `Row!`, `Column!`,
@@ -131,10 +120,10 @@ cd my_aimer && Aimer run
       `⛔️ Very Unstable`
     - [ ] Enter and exit (delete) transitions `⛔️ Very Unstable`
 - [x] Cross-platform support
-    - [x] macOS (Cupid)
-    - [x] iOS (Cupid)
-    - [x] Android (Cupid)
-    - [x] Web / WASM (Canvas 2D) `⚠️ Unstable`
+    - [x] macOS (Cupid) `⚠️ Unstable`
+    - [x] iOS (Cupid) `⚠️ Unstable`
+    - [x] Android (Cupid) `⚠️ Unstable`
+    - [x] Web / WASM (Cupid) `⚠️ Unstable`
     - [ ] Windows (Cupid)
     - [ ] Linux (Cupid)
 
