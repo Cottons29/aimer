@@ -57,7 +57,7 @@ tree on native platforms.
 ### Installation
 
 ```bash
-cargo install --git https://github.com/Cottons29/aimer.git
+cargo install --git https://github.com/Cottons29/aimer.git aimer_cli --branch nightly-0.0.1
 ````
 
 ### Create a New Project
