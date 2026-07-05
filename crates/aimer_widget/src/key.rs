@@ -29,7 +29,12 @@ pub enum Key {
     /// Identity-based key. Matched by `ptr::eq` semantics — two `Object` keys
     /// are equal only if they originate from the same [`Key::unique()`] call.
     Object(usize),
+
+    /// Compile-time-based key. Matched by pointer/identity, not by value.
+    Static(&'static str)
 }
+
+
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -38,5 +43,25 @@ impl Key {
     /// equal any other key — useful for forcing a state reset on rebuild.
     pub fn unique() -> Self {
         Key::Object(UNIQUE_COUNTER.fetch_add(1, Ordering::Relaxed) as usize)
+    }
+}
+
+
+#[cfg(test)]
+mod test{
+    use aimer_macro::unique_key;
+    use super::*;
+    #[test]
+    fn test_unique() {
+        let key1 = Key::unique();
+        let key2 = Key::unique();
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_compile_tile_unique() {
+        let key1 = unique_key!();
+        let key2 = unique_key!();
+        assert_ne!(key1, key2);
     }
 }
