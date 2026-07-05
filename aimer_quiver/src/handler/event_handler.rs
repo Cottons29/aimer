@@ -452,6 +452,12 @@ impl WindowEventHandler {
 
         if let Some(root) = &app.widget_root {
             root.invalidate_layout();
+            // Ring the bell for a rebuild: flips the dirty flag on stateful and
+            // stateless elements so `rebuild_if_dirty` re-runs `build()` on the
+            // next frame, re-reading `MediaQuery` (responsive layout on resize).
+            // ponytail: rebuilds the whole dirty tree per resize event; fine for
+            // a landing page, upgrade to MediaQuery dependency tracking if hot.
+            aimer_widget::Rebuildable::mark_needs_rebuild(root.as_ref());
         }
 
         // Render a frame immediately during the resize event so the

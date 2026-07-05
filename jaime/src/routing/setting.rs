@@ -9,6 +9,7 @@ use aimer::macros::widget;
 use aimer::router::NavigatorController;
 
 #[widget(Stateless)]
+#[derive(Clone)]
 pub struct SettingPage {}
 
 impl StatelessWidget for SettingPage {
