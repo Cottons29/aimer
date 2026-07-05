@@ -172,6 +172,16 @@ impl CupidCanvas {
             .draw_image(Rect::new(x, y, width, height), texture_id);
     }
 
+    /// Draw a styled text-decoration line. `(x, y)` is the band top-left,
+    /// `width`/`band_height` its extent; the text engine renders the styled
+    /// stroke (`style` id, `thickness`, `period`) inside the band.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_decoration(&self, x: f32, y: f32, width: f32, band_height: f32, color: Color, style: u32, thickness: f32, period: f32) {
+        self.draw_list
+            .borrow_mut()
+            .draw_text_decoration(Rect::new(x, y, width, band_height), color, style, thickness, period);
+    }
+
     /// Measure text width using the cached text rasterizer.
     pub fn measure_text(&self, text: &str, font_size: f32) -> f32 {
         self.rasterizer.borrow_mut().measure_text(text, font_size)
@@ -398,6 +408,11 @@ impl CupidCanvas {
 
     pub fn set_alpha(&self, alpha: f32) {
         self.draw_list.borrow_mut().set_alpha(alpha);
+    }
+
+    /// Enables/disables synthetic italic for subsequent plain text draws.
+    pub fn set_italic(&self, italic: bool) {
+        self.draw_list.borrow_mut().set_italic(italic);
     }
 
     pub fn restore_alpha(&self) {

@@ -3,7 +3,7 @@ use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::pipeline_cache;
 use crate::rect_pipeline::{RectInstance, RectPipeline};
-use crate::text_pipeline::{RichTextSpan, TextDrawRequest, TextPipelineV2};
+use crate::text_pipeline::{RichTextSpan, TextDecorationDraw, TextDrawRequest, TextPipelineV2};
 use crate::utilities::{Mat3, Rect};
 use aimer_utils::{debug, time_cost};
 
@@ -43,6 +43,7 @@ pub struct Renderer {
     transform_stack: Vec<Mat3>,
     clip_stack: Vec<ClipState>,
     text_requests: Vec<TextDrawRequest>,
+    decoration_requests: Vec<TextDecorationDraw>,
     resolved: Vec<ResolvedCmd>,
 }
 
@@ -62,6 +63,7 @@ impl Renderer {
             transform_stack: Vec::new(),
             clip_stack: Vec::new(),
             text_requests: Vec::new(),
+            decoration_requests: Vec::new(),
             resolved: Vec::new(),
         };
 
@@ -127,8 +129,12 @@ impl Renderer {
     ) {
         self.transform_stack.clear();
         let mut current_transform = Mat3::identity();
+        // Canvas-level italic state applied to plain `DrawText` (rich text carries
+        // italic per span). Reset each frame; toggled by `SetItalic`.
+        let mut current_italic = false;
         self.clip_stack.clear();
         self.text_requests.clear();
+        self.decoration_requests.clear();
         self.resolved.clear();
 
         for cmd in draw_list.commands() {
@@ -261,7 +267,7 @@ impl Renderer {
                         overflow: *overflow,
                         line_height: None,
                         font_weight: Some(*font_weight),
-                        italic: false,
+                        italic: current_italic,
                         clip_rect: clip_to_array(self.clip_stack.last()),
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),
                         spans: Vec::new(),
@@ -303,11 +309,35 @@ impl Renderer {
                     self.resolved
                         .push(ResolvedCmd { kind: ResolvedKind::TextIndex(()) });
                 }
+                DrawCommand::DrawTextDecoration { rect, color, style, thickness, period } => {
+                    // The band is authored in local coordinates; transform its
+                    // top-left and scale the extents so decoration follows any
+                    // active scale/translation just like the text it underlines.
+                    let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
+                    let sy = (current_transform.cols[1][0].powi(2) + current_transform.cols[1][1].powi(2)).sqrt();
+                    let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
+                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
+                    self.decoration_requests.push(TextDecorationDraw {
+                        x: p1x.min(p2x),
+                        y: p1y.min(p2y),
+                        width: (p2x - p1x).abs(),
+                        band_height: (p2y - p1y).abs(),
+                        thickness: (*thickness * sy).max(1.0),
+                        period: (*period * sx).max(1.0),
+                        style: *style,
+                        color: color.to_array(),
+                        clip_rect: clip_to_array(self.clip_stack.last()),
+                        clip_border_radius: clip_border_radius(self.clip_stack.last()),
+                    });
+                }
                 DrawCommand::SetTransform { matrix } => {
                     current_transform = *matrix;
                 }
                 DrawCommand::SetAlpha { .. } | DrawCommand::RestoreAlpha => {
                     // Alpha state is tracked at the canvas level; no GPU-side handling yet.
+                }
+                DrawCommand::SetItalic { italic } => {
+                    current_italic = *italic;
                 }
                 DrawCommand::DrawImage { rect, texture_id } => {
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
@@ -398,10 +428,10 @@ impl Renderer {
             }
         }
 
-        if !self.text_requests.is_empty() {
+        if !self.text_requests.is_empty() || !self.decoration_requests.is_empty() {
             time_cost!("TextRenderRequest", || self
                 .text_pipeline
-                .prepare(device, queue, width, height, is_srgb, &self.text_requests))
+                .prepare(device, queue, width, height, is_srgb, &self.text_requests, &self.decoration_requests))
         }
 
         // Create encoder and render pass
@@ -504,8 +534,8 @@ impl Renderer {
             self.rect_pipeline
                 .flush(device, queue, &mut pass, width, height, is_srgb);
 
-            // Render text last (including inspector overlay)
-            if !self.text_requests.is_empty() {
+            // Render text last (including inspector overlay and decorations)
+            if !self.text_requests.is_empty() || !self.decoration_requests.is_empty() {
                 self.text_pipeline.render(&mut pass);
             }
         }

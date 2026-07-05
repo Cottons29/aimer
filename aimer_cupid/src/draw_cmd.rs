@@ -63,6 +63,19 @@ pub enum DrawCommand {
         bounds_height: Option<f32>,
         overflow: TextOverflowMode,
     },
+    /// A single styled text-decoration line (underline/overline/line-through).
+    /// `rect` is the decoration band in local coordinates (`rect.height` is the
+    /// band height); the text engine draws the styled stroke inside it.
+    DrawTextDecoration {
+        rect: Rect,
+        color: Color,
+        /// Style id, see `aimer_style::TextDecorationStyle::id`.
+        style: u32,
+        /// Stroke thickness in logical pixels.
+        thickness: f32,
+        /// Repeat period for dotted/dashed/wavy styles (logical pixels).
+        period: f32,
+    },
     PushClip {
         rect: Rect,
         border_radius: [f32; 4],
@@ -76,6 +89,11 @@ pub enum DrawCommand {
         alpha: f32,
     },
     RestoreAlpha,
+    /// Sets the italic state applied to subsequent plain `DrawText` commands.
+    /// Rich text carries italic per span instead, so it is unaffected.
+    SetItalic {
+        italic: bool,
+    },
     LoadImage {
         bytes: Vec<u8>,
         texture_id: TextureId,
@@ -236,6 +254,11 @@ impl DrawList {
             .push(DrawCommand::DrawRichText { position, spans, font_size, color, bounds_width, bounds_height, overflow });
     }
 
+    pub fn draw_text_decoration(&mut self, rect: Rect, color: Color, style: u32, thickness: f32, period: f32) {
+        self.commands
+            .push(DrawCommand::DrawTextDecoration { rect, color, style, thickness, period });
+    }
+
     pub fn push_clip(&mut self, rect: Rect) {
         self.commands
             .push(DrawCommand::PushClip { rect, border_radius: [0.0; 4] });
@@ -252,6 +275,10 @@ impl DrawList {
 
     pub fn set_alpha(&mut self, alpha: f32) {
         self.commands.push(DrawCommand::SetAlpha { alpha });
+    }
+
+    pub fn set_italic(&mut self, italic: bool) {
+        self.commands.push(DrawCommand::SetItalic { italic });
     }
 
     pub fn restore_alpha(&mut self) {

@@ -50,6 +50,10 @@ pub trait CanvasRendering: Clone {
         overflow: TextOverflowMode,
         font_weight: u16,
     );
+    /// Draw a styled text-decoration line (underline/overline/line-through).
+    /// `pos`/`size` describe the band; `style` is `TextDecorationStyle::id`.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_decoration(&self, pos: Vec2d, size: ResolvedSize, color: Color, style: u32, thickness: f32, period: f32);
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize);
     fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)>;
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize);
@@ -113,6 +117,9 @@ pub trait CanvasRendering: Clone {
     );
     fn set_alpha(&self, alpha: f32);
     fn restore_alpha(&self);
+    /// Enables/disables synthetic italic for subsequent plain text draws.
+    /// Default is a no-op for backends that don't support it.
+    fn set_italic(&self, _italic: bool) {}
     fn load_image(&self, bytes: &[u8], width: u32, height: u32) -> u32;
     fn load_image_with_id(&self, image_id: u32, bytes: &[u8], width: u32, height: u32);
     fn set_texture_size(&self, image_id: u32, width: u32, height: u32);
@@ -296,6 +303,14 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::draw_text_with_overflow(self.inner, text, pos, font_size, color, bounds_width, bounds_height, overflow, font_weight);
     }
 
+    /// Draws a styled text-decoration line (underline/overline/line-through).
+    #[allow(dead_code)]
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_decoration(&self, pos: Vec2d, size: ResolvedSize, color: Color, style: u32, thickness: f32, period: f32) {
+        CanvasRendering::draw_text_decoration(self.inner, pos, size, color, style, thickness, period);
+    }
+
     /// Draws an image identified by `image_id` at the specified position and size.
     #[allow(dead_code)]
     #[inline]
@@ -404,6 +419,13 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn restore_alpha(&self) {
         CanvasRendering::restore_alpha(self.inner);
+    }
+
+    /// Enables/disables synthetic italic for subsequent plain text draws.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn set_italic(&self, italic: bool) {
+        CanvasRendering::set_italic(self.inner, italic);
     }
 
     /// Returns the current transform's translation (tx, ty) in physical pixels.

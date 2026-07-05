@@ -40,6 +40,7 @@ fn vs_main(
     @location(3) inst_color: vec4<f32>,
     @location(4) clip_rect: vec4<f32>,
     @location(5) clip_radius: vec4<f32>,
+    @location(6) inst_skew: f32,
 ) -> VertexOutput {
     let tri_idx = array<vec2<f32>, 6>(
         vec2<f32>(0.0, 0.0),
@@ -51,7 +52,9 @@ fn vs_main(
     );
     let c = tri_idx[vertex_idx];
 
-    let pixel_pos = inst_pos + c * inst_size;
+    // Synthetic italic shear, pinned at the quad's bottom edge (see text.wgsl).
+    var pixel_pos = inst_pos + c * inst_size;
+    pixel_pos.x = pixel_pos.x + inst_skew * inst_size.y * (1.0 - c.y);
     let ndc = vec2<f32>(
         pixel_pos.x / viewport.resolution.x * 2.0 - 1.0,
         -(pixel_pos.y / viewport.resolution.y * 2.0 - 1.0),

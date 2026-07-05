@@ -12,7 +12,6 @@ use aimer_macro::Constructor;
 
 use aimer_widget::Drawable;
 use aimer_widget::base::BuildContext;
-use log::debug;
 
 #[derive(Default, Clone, PartialEq, Debug, Constructor)]
 pub struct BoxDecoration {

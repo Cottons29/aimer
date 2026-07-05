@@ -1,5 +1,5 @@
-
 use aimer_color::prelude::{Color, Colors};
+use aimer_macro::Constructor;
 
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy)]
@@ -19,7 +19,7 @@ pub enum FontWeight {
     Normal,
     Bold,
     Bolder,
-    Value(u32)
+    Value(u32),
 }
 
 impl FontWeight {
@@ -43,16 +43,137 @@ pub enum LineHeight {
     Normal,
     Small,
     Huge,
-    Value(f32)
+    Value(f32),
 }
 
+/// The set of decoration lines to draw. Behaves like a small bit-set so several
+/// lines (e.g. underline + line-through) can be combined without the awkward
+/// `Combine(&'static [Self])` slice the old enum used.
+#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct TextDecorationLine(u8);
+
+impl Default for TextDecorationLine {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
 
 #[allow(dead_code)]
-#[derive(Default, Clone, Copy)]
-pub enum TextDecoration {
+impl TextDecorationLine {
+    pub const NONE: Self = Self(0);
+    pub const UNDERLINE: Self = Self(1 << 0);
+    pub const OVERLINE: Self = Self(1 << 1);
+    pub const LINE_THROUGH: Self = Self(1 << 2);
+    /// Slants the glyphs (synthetic oblique) rather than drawing a line. Kept in
+    /// this bit-set so it combines with the real lines (e.g. underline + italic).
+    pub const ITALIC: Self = Self(1 << 3);
+
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// True when every line in `other` is present in `self`.
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub const fn is_none(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl core::ops::BitOr for TextDecorationLine {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+}
+
+/// The stroke style of a decoration line, mirroring the CSS `text-decoration-style`.
+#[allow(dead_code)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum TextDecorationStyle {
     #[default]
-    None,
-    Underline,
+    Solid,
+    Double,
+    Dotted,
+    Dashed,
+    Wavy,
+}
+
+impl TextDecorationStyle {
+    /// Stable numeric id handed to the render engine (kept in sync with the
+    /// `text_decoration.wgsl` shader's `style` switch).
+    pub const fn id(self) -> u32 {
+        match self {
+            TextDecorationStyle::Solid => 0,
+            TextDecorationStyle::Double => 1,
+            TextDecorationStyle::Dotted => 2,
+            TextDecorationStyle::Dashed => 3,
+            TextDecorationStyle::Wavy => 4,
+        }
+    }
+}
+
+/// Full text-decoration description: which lines, their stroke style, an optional
+/// dedicated color (falling back to the text color), an optional thickness and a
+/// vertical offset. Replaces the old on/off `Underline`-only enum.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Constructor)]
+pub struct TextDecoration {
+    #[constructor(default)]
+    pub line: TextDecorationLine,
+    #[constructor(default)]
+    pub style: TextDecorationStyle,
+    #[constructor(default)]
+    /// `None` inherits the text color.
+    pub color: Option<Color>,
+    #[constructor(default)]
+    /// `None` derives the thickness from the font size (~6%).
+    pub thickness: Option<f32>,
+    #[constructor(default)]
+    /// Extra vertical offset in logical pixels applied to the line (+ down).
+    pub offset: f32,
+}
+
+#[allow(dead_code)]
+#[allow(non_upper_case_globals)]
+impl TextDecoration {
+    /// No decoration. Kept as an associated constant so existing
+    /// `TextDecoration::None` call sites keep working after the enum→struct change.
+    pub const None: Self =
+        Self { line: TextDecorationLine::NONE, style: TextDecorationStyle::Solid, color: None, thickness: None, offset: 0.0 };
+
+    /// A plain solid underline (the previous default decoration). Kept as an
+    /// associated constant for backward compatibility with `TextDecoration::Underline`.
+    pub const Underline: Self =
+        Self { line: TextDecorationLine::UNDERLINE, style: TextDecorationStyle::Solid, color: None, thickness: None, offset: 0.0 };
+
+    pub const fn new(line: TextDecorationLine, style: TextDecorationStyle) -> Self {
+        Self { line, style, color: None, thickness: None, offset: 0.0 }
+    }
+
+    pub const fn with_color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    pub const fn with_thickness(mut self, thickness: f32) -> Self {
+        self.thickness = Some(thickness);
+        self
+    }
+
+    pub const fn with_offset(mut self, offset: f32) -> Self {
+        self.offset = offset;
+        self
+    }
+}
+
+impl Default for TextDecoration {
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[allow(dead_code)]
@@ -66,17 +187,17 @@ pub enum TextAlign {
     MidLeft,
     MidRight,
     BotLeft,
-    BotCenter,      
-    BotRight
+    BotCenter,
+    BotRight,
 }
 
 #[allow(dead_code)]
 #[derive(aimer_macro::Constructor, Clone, Copy)]
-pub struct TextStyle  {
+pub struct TextStyle {
     #[constructor(default = 13)]
     pub font_size: u32,
     #[constructor(default)]
-    pub font_style : FontStyle,
+    pub font_style: FontStyle,
     #[constructor(default)]
     pub font_weight: FontWeight,
     #[constructor(default = TextStyle::DEFAULT_TEXT_COLOR, into)]
@@ -102,22 +223,36 @@ impl Default for TextStyle {
             text_decoration: TextDecoration::None,
         }
     }
-
 }
 
 #[allow(dead_code)]
-#[derive( Default, Clone, Copy)]
+#[derive(Default, Clone, Copy)]
 pub enum TextOverflow {
     #[default]
     Clip,
     Ellipsis,
     Wrap,
-    Value(u32)
+    Value(u32),
 }
 
 #[cfg(test)]
 mod tests {
-    use super::FontWeight;
+    use super::{FontWeight, TextDecorationLine};
+
+    // Guards the ITALIC bit: it must combine with real lines (e.g. underline)
+    // without colliding, since the text widget reads it via `contains` to decide
+    // whether to shear the glyphs.
+    #[test]
+    fn italic_line_bit_combines() {
+        let both = TextDecorationLine::UNDERLINE | TextDecorationLine::ITALIC;
+        assert!(both.contains(TextDecorationLine::ITALIC));
+        assert!(both.contains(TextDecorationLine::UNDERLINE));
+        assert!(!both.contains(TextDecorationLine::LINE_THROUGH));
+        // Italic is a distinct bit, not overlapping any decoration line.
+        assert_ne!(TextDecorationLine::ITALIC.bits(), 0);
+        assert_eq!(TextDecorationLine::ITALIC.bits() & TextDecorationLine::UNDERLINE.bits(), 0);
+        assert!(!TextDecorationLine::ITALIC.is_none());
+    }
 
     // Guards the weight mapping and the ">= 600 renders bold" contract the
     // text pipeline relies on to trigger faux-bold double-strike.
