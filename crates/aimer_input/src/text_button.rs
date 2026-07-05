@@ -4,20 +4,41 @@ use crate::gesture::{DragCallback, DragUpdateCallback, ScaleCallback, ScrollCall
 use crate::mouse_region::{MouseRegion, SharedPointerState};
 use aimer_attribute::CacheBounds;
 use aimer_macro::WidgetConstructor;
-use aimer_style::{TextDecoration, TextStyle};
+use aimer_style::TextStyle;
 use aimer_text::Text;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{Element, State, StateUpdater, StatefulElement, StatefulWidget, Widget};
 use std::rc::Rc;
 
-#[derive(WidgetConstructor)]
+#[derive(WidgetConstructor, Clone)]
 pub struct TextButton {
+    #[constructor(default)]
+    disabled: bool,
+    #[constructor(first, into)]
     label: Rc<str>,
-    color: Color,
-    hover_color: Color,
-    hover_style: TextDecoration,
+    #[constructor(default)]
+    color: Option<Color>,
+    #[constructor(default)]
+    hover_color: Option<Color>,
+    #[constructor(default)]
+    disabled_color: Option<Color>,
+    #[constructor(default)]
+    style: TextStyle,
+    #[constructor(default)]
+    hover_style: TextStyle,
+    #[constructor(default)]
+    disabled_style: TextStyle,
+    #[constructor(default, into)]
     on_press: VoidCallback,
+    #[constructor(default, into)]
     on_double_press: VoidCallback,
+}
+
+
+impl TextButton {
+    pub const TEXT_COLOR : Color = Color::BLUE;
+    pub const HOVER_COLOR : Color = Color::BLUE.lighten(0.6);
+    pub const DISABLED_COLOR : Color = Color::GRAY;
 }
 
 impl Widget for TextButton {
@@ -27,25 +48,23 @@ impl Widget for TextButton {
 }
 
 pub struct ButtonState {
-    label: Rc<str>,
-    is_hovered: bool,
+    widget: TextButton,
+    disabled: bool,
+    hovered: bool,
+    region_state: SharedPointerState,
     updater: StateUpdater<Self>,
-    current_state: SharedPointerState,
-    on_press: VoidCallback,
-    on_double_press: VoidCallback,
 }
 
-impl StatefulWidget for TextButton {
+impl<'a> StatefulWidget for TextButton {
     type State = ButtonState;
 
     fn create_state(&self) -> Self::State {
         ButtonState {
-            label: self.label.clone(),
-            is_hovered: false,
-            current_state: SharedPointerState::default(),
+            widget: self.clone(),
+            disabled: self.disabled,
+            hovered: false,
+            region_state: SharedPointerState::default(),
             updater: StateUpdater::new(),
-            on_press: self.on_press.clone(),
-            on_double_press: self.on_double_press.clone(),
         }
     }
 }
@@ -58,8 +77,22 @@ impl State<TextButton> for ButtonState {
         self.updater = updater;
     }
 
-    fn build(&self, ctx: &BuildContext) -> impl Widget {
-        // let text_color = if  self.is_hovered {self.} else {self.is_hovered};
+    fn build(&self, _: &BuildContext) -> impl Widget {
+        let mut text_style = if self.disabled {
+            self.widget.disabled_style
+        } else {
+            if self.hovered { self.widget.hover_style } else { self.widget.style }
+        };
+
+        let color  = if self.disabled {
+            self.widget.disabled_color
+        } else {
+            if self.hovered { self.widget.hover_color } else { self.widget.color }
+        };
+
+        if let Some(col) = color {
+            text_style.color = col;
+        }
 
 
         MouseRegion {
@@ -67,7 +100,7 @@ impl State<TextButton> for ButtonState {
                 let updater = self.updater.clone();
                 move || {
                     updater.set_state(|s| {
-                        s.is_hovered = true;
+                        s.hovered = true;
                     })
                 }
             }
@@ -76,18 +109,18 @@ impl State<TextButton> for ButtonState {
                 let updater = self.updater.clone();
                 move || {
                     updater.set_state(|s| {
-                        s.is_hovered = false;
+                        s.hovered = false;
                     })
                 }
             }
             .into(),
             cursor: None,
             // current_state: state.accept_state.clone(),
-            current_state: self.current_state.clone(),
+            current_state: self.region_state.clone(),
             cached_bounds: CacheBounds::new(),
             child: GestureDetector {
-                on_tap: self.on_press.clone(),
-                on_double_press: self.on_double_press.clone(),
+                on_tap: self.widget.on_press.clone(),
+                on_double_press: self.widget.on_double_press.clone(),
                 on_long_press: VoidCallback::default(),
                 on_drag_start: DragCallback::default(),
                 on_drag_update: DragUpdateCallback::default(),
@@ -97,11 +130,9 @@ impl State<TextButton> for ButtonState {
                 on_scroll: ScrollCallback::default(),
                 on_scale: ScaleCallback::default(),
                 child: Text!(
-                    self.label.clone(),
-                    text_style: TextStyle! {
-                        font_size: 20,
-                        color: Color::BLACK,
-                    },
+
+                    self.widget.label.clone(),
+                    text_style: text_style,
                 ),
             },
         }
