@@ -1,6 +1,6 @@
 [package]
 name = "aimer_cli"
-version = "0.1.6+8"
+version = "0.1.7+4"
 edition = "2024"
 resolver = "3"
 
@@ -19,7 +19,6 @@ inquire.workspace = true
 ratatui.workspace = true
 arboard.workspace = true
 colored.workspace = true
-local-ip-address.workspace = true
 crossbeam.workspace = true
 notify.workspace = true
 clap_complete.workspace = true
@@ -29,7 +28,6 @@ toml.workspace = true
 serde.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-log = "0.4.29"
 sha2.workspace = true
 hex.workspace = true
 [dev-dependencies]
