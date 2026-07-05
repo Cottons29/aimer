@@ -2,10 +2,11 @@ use crate::scrollable::constants::*;
 use crate::scrollable::scroll_behavior::ScrollBehavior;
 use crate::scrollable::ScrollAxis;
 use aimer_attribute::position::Vec2d;
+use aimer_widget::Key;
 use aimer_attribute::size::ResolvedSize;
 use std::cell::Cell;
 use web_time::Instant;
-use aimer_utils::info;
+use aimer_utils::{debug, info};
 
 /// Ring buffer of recent velocity samples for trackpad smoothing.
 pub(crate) struct VelocityHistory {
@@ -38,9 +39,17 @@ impl VelocityHistory {
         let mut sum_x = 0.0f32;
         let mut sum_y = 0.0f32;
         let mut weight_sum = 0.0f32;
+        // Oldest written sample. When the buffer is full this is `write_pos`
+        // (the slot about to be overwritten); when it is only partially filled
+        // — e.g. right after `clear()` — the written samples occupy the `count`
+        // slots ENDING at `write_pos - 1`, so the oldest is `write_pos - count`.
+        // Using `write_pos` unconditionally (the old code) read stale/leftover
+        // slots on a partial buffer, so a `clear()` never actually took effect
+        // and stale opposite-direction velocity leaked into the release fling.
+        let start = (self.write_pos + VELOCITY_HISTORY_SIZE - self.count) % VELOCITY_HISTORY_SIZE;
         for i in 0..self.count {
             // Read oldest-first so newest entries get the heaviest weight.
-            let idx = (self.write_pos + i) % VELOCITY_HISTORY_SIZE;
+            let idx = (start + i) % VELOCITY_HISTORY_SIZE;
             let weight = (i + 1) as f32;
             sum_x += self.samples[idx].0 * weight;
             sum_y += self.samples[idx].1 * weight;
@@ -68,6 +77,9 @@ pub struct ScrollController {
     pub(crate) scroll_behavior: ScrollBehavior,
     pub(crate) axis: ScrollAxis,
     pub(crate) scroll_offset: Cell<Vec2d>,
+    /// `PageStorage`-style key this scrollable saves its live offset under, so a
+    /// full teardown/re-create restores the position. `None` = not remembered.
+    pub(crate) storage_key: Option<Key>,
     pub(crate) last_pointer_pos: Cell<Option<Vec2d>>,
     pub(crate) drag_mode: Cell<DragMode>,
     pub(crate) cached_max_scroll: Cell<Vec2d>,
@@ -102,6 +114,28 @@ pub struct ScrollController {
     /// Primary touch finger ID that owns this scrollable, or `None` for mouse.
     /// Set on first PointerDown, cleared on PointerUp/Cancel.
     pub(crate) active_touch_id: Cell<Option<u64>>,
+    /// Velocity of the spring-back oscillation (px/s). Separate from
+    /// `pointer_velocity` (which carries momentum / drag velocity) so the
+    /// damped-spring simulation can overshoot and oscillate independently.
+    pub(crate) spring_velocity: Cell<Vec2d>,
+    /// Wall-clock instant the velocity-based momentum started (set on the
+    /// first `update_momentum` frame where velocity exceeds epsilon after a
+    /// touch release).  Used to hard-cap the glide at
+    /// [`MAX_MOMENTUM_DURATION_S`] so it doesn't creep for 15–20 s.
+    pub(crate) momentum_start_time: Cell<Option<Instant>>,
+}
+
+impl ScrollController {
+    /// Adopt the live scroll position (and momentum) from a previous controller.
+    ///
+    /// Used during reconciliation: when a parent rebuild produces a fresh
+    /// scrollable, the newly built controller copies the offset from the old one
+    /// so the viewport stays where the user left it instead of snapping to the top.
+    pub(crate) fn adopt_scroll_state(&self, prev: &ScrollController) {
+        self.scroll_offset.set(prev.scroll_offset.get());
+        self.pointer_velocity.set(prev.pointer_velocity.get());
+        self.spring_velocity.set(prev.spring_velocity.get());
+    }
 }
 
 /// One axis of a cubic Bézier with implicit endpoints `P0 = 0`, `P3 = 1`.
@@ -175,16 +209,41 @@ impl ScrollController {
         offset
     }
 
+    /// Hard-cap overscroll to [`MAX_OVERSCROLL_FRACTION`] of the content size.
+    ///
+    /// Unlike [`visual_offset`] (which applies a rubber-band *display*
+    /// transform), this limits the **actual** stored offset so that momentum
+    /// and trackpad events can't carry content hundreds of pixels past the
+    /// edge — matching Chrome and iOS behaviour.
+    fn clamp_overscroll(&self, offset: Vec2d) -> Vec2d {
+        let content = self.cached_content_size.get();
+        let max_ox = content.width * MAX_OVERSCROLL_FRACTION;
+        let max_oy = content.height * MAX_OVERSCROLL_FRACTION;
+        let clamped = self.clamp_offset(offset);
+        Vec2d {
+            x: offset.x.clamp(clamped.x - max_ox, clamped.x + max_ox),
+            y: offset.y.clamp(clamped.y - max_oy, clamped.y + max_oy),
+        }
+    }
+
+    /// Rational rubber-band visual transform (native macOS/iOS shape).
+    ///
+    /// Uses `f(x) = (1 - 1/(c·x/d + 1))·d` where `c` is the visual
+    /// coefficient scaled by the user's `bouncy_resistance`, `d` is the
+    /// viewport dimension, and `x` is the overscroll distance. The curve is
+    /// asymptotic — visual stretch grows quickly at first then flattens,
+    /// matching the native rubber-band feel.
     #[inline(always)]
-    fn apply_bouncy(value: f32, min: f32, max: f32, resistance: f32) -> f32 {
-        // Non-touch devices (desktop) get 50% more resistance for a stiffer feel.
-        let scaled_resistance = resistance * BOUNCY_RESISTANCE_SCALE * BOUNCY_RESISTANCE_NON_TOUCH_SCALE;
+    fn apply_bouncy(value: f32, min: f32, max: f32, dimension: f32, resistance: f32) -> f32 {
+        let c = RUBBER_BAND_VISUAL_COEFFICIENT * resistance;
         if value < min {
             let diff = min - value;
-            min - diff.powf(BOUNCY_STRETCH_EXPONENT) * scaled_resistance
+            let visual = (1.0 - 1.0 / (c * diff / dimension + 1.0)) * dimension;
+            min - visual
         } else if value > max {
             let diff = value - max;
-            max + diff.powf(BOUNCY_STRETCH_EXPONENT) * scaled_resistance
+            let visual = (1.0 - 1.0 / (c * diff / dimension + 1.0)) * dimension;
+            max + visual
         } else {
             value
         }
@@ -200,18 +259,10 @@ impl ScrollController {
         let max_y = -max.y;
 
         if self.scroll_behavior.bouncy {
+            let (vp_w, vp_h) = self.cached_viewport.get();
             let resistance = self.scroll_behavior.bouncy_resistance;
-            let vx = Self::apply_bouncy(offset.x, max_x, min_x, resistance);
-            let vy = Self::apply_bouncy(offset.y, max_y, min_y, resistance);
-
-            let stretch_x = (vx - offset.x).abs();
-            let stretch_y = (vy - offset.y).abs();
-            // if stretch_x > 0.5 || stretch_y > 0.5 {
-            //     info!(
-            //         "rubber-band stretch | offset: ({:.1}, {:.1}) | visual: ({:.1}, {:.1}) | stretch: ({:.1}, {:.1}) | resistance: {:.2}",
-            //         offset.x, offset.y, vx, vy, stretch_x, stretch_y, resistance
-            //     );
-            // }
+            let vx = Self::apply_bouncy(offset.x, max_x, min_x, vp_w.max(MIN_VIEWPORT), resistance);
+            let vy = Self::apply_bouncy(offset.y, max_y, min_y, vp_h.max(MIN_VIEWPORT), resistance);
 
             (vx, vy).into()
         } else {
@@ -356,6 +407,13 @@ impl ScrollController {
         let mut velocity = self.pointer_velocity.get();
         let mut needs_redraw = false;
 
+        // debug!("Offset: ({:.1},{:.1})", offset.x, offset.y);
+
+        // let vel_mag = (velocity.x * velocity.x + velocity.y * velocity.y).sqrt();
+        // if vel_mag > VELOCITY_EPSILON {
+        //     // info!("[scroll] update_momentum vel=({:.2},{:.2}) mag={:.4} offset=({:.1},{:.1})", velocity.x, velocity.y, vel_mag, offset.x, offset.y);
+        // }
+
         let now = Instant::now();
         let dt = self
             .last_frame_time
@@ -418,14 +476,57 @@ impl ScrollController {
                 }
             }
         } else if velocity.x.abs() > VELOCITY_EPSILON || velocity.y.abs() > VELOCITY_EPSILON {
+            // Clear any in-flight spring oscillation when fresh momentum begins.
+            self.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+
+            // Hard-cap the momentum glide at MAX_MOMENTUM_DURATION_S.
+            // Without this the exponential friction tails off asymptotically,
+            // letting content creep for 15–20 s before stopping.
+            let now_instant = Instant::now();
+            // Arm the timer exactly once, on the first momentum frame. Use an
+            // `is_none()` sentinel rather than `elapsed == 0.0`: on coarse-clock
+            // targets (web `performance.now()` is resolution-clamped, iOS
+            // ProMotion/rAF frames get coalesced) two momentum frames can read
+            // the same instant, so `duration_since` rounds to exactly 0.0. With
+            // the old `== 0.0` check that re-armed the timer every frame, so the
+            // elapsed never grew to the cap and a touch fling never stopped at
+            // MAX_MOMENTUM_DURATION_S (friction alone tailed off over 15–20 s).
+            let momentum_elapsed = match self.momentum_start_time.get() {
+                Some(t) => now_instant.duration_since(t).as_secs_f32(),
+                None => {
+                    self.momentum_start_time.set(Some(now_instant));
+                    0.0
+                }
+            };
+            if momentum_elapsed >= MAX_MOMENTUM_DURATION_S {
+                self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+                self.momentum_start_time.set(None);
+                return (offset, false);
+            } else {
+                // Fade-out zone: in the last MOMENTUM_FADEOUT_S seconds before
+                // the cap, apply progressively increasing friction so the
+                // velocity bleeds to near-zero instead of hitting a wall.
+                let remaining = MAX_MOMENTUM_DURATION_S - momentum_elapsed;
+                if remaining < MOMENTUM_FADEOUT_S {
+                    // progress ∈ [0, 1]: 0 = fade starts, 1 = at the cap.
+                    let progress = 1.0 - (remaining / MOMENTUM_FADEOUT_S);
+                    // Ramp friction from normal (0.999) down to aggressive (0.90)
+                    // as we approach the cap.
+                    let fade_friction = 0.999 - 0.099 * progress;
+                    velocity.x *= fade_friction.powf(frame_ratio);
+                    velocity.y *= fade_friction.powf(frame_ratio);
+                }
+            }
+
             // Discrete per-frame velocity decay: v *= friction^(dt / FRAME_REF_120).
             //
             // This matches UIScrollView's deceleration model exactly: a fixed
             // retention factor applied once per frame.  `friction` is calibrated
-            // per 60 fps (UIScrollView.DecelerationRate.normal = 0.9998); the
-            // `powf(frame_ratio)` makes it frame-rate independent.
-            //     60 fps:  v *= 0.9998^1.0 = 0.9998
-            //     120 fps: v *= 0.9998^0.5 = 0.9999
+            // per 120 fps (UIScrollView.DecelerationRate.normal ≈ 0.999 per
+            // 120 fps = 0.998 per 60 fps); the `powf(frame_ratio)` makes it
+            // frame-rate independent.
+            //     60 fps:  v *= 0.999^2.0 ≈ 0.998
+            //     120 fps: v *= 0.999^1.0 ≈ 0.999
             let decay = self.scroll_behavior.friction.powf(frame_ratio);
 
             // Integrate position, then clamp and zero velocity at the edge.
@@ -434,133 +535,252 @@ impl ScrollController {
             offset.x += velocity.x * frame_ratio;
             offset.y += velocity.y * frame_ratio;
 
+            // Clamp to overscroll cap immediately after integration.
+            // Without this, a strong fling can carry the content hundreds
+            // of pixels past the boundary in a single frame, and the spring
+            // takes many frames to recover — causing visible shaking.
+            if self.scroll_behavior.bouncy {
+                let capped = self.clamp_overscroll(offset);
+                if capped.x != offset.x {
+                    offset.x = capped.x;
+                    velocity.x = 0.0;
+                }
+                if capped.y != offset.y {
+                    offset.y = capped.y;
+                    velocity.y = 0.0;
+                }
+            }
+
             velocity.x *= decay;
             velocity.y *= decay;
+
+            // Recompute clamped boundaries from the post-integration offset.
+            // The pre-integration `clamped` is stale — using it would compare
+            // the moved offset against its old position, falsely triggering
+            // the out-of-bounds path on every frame and killing momentum.
+            let clamped = self.clamp_offset(offset);
+
+            // Extra friction in the overscroll zone: content decelerates
+            // faster once it crosses the boundary, preventing it from
+            // coasting deep into the rubber-band on momentum alone.
+            if self.scroll_behavior.bouncy {
+                let oob_decay = OVERSCROLL_FRICTION.powf(frame_ratio);
+                if offset.x != clamped.x {
+                    velocity.x *= oob_decay;
+                }
+                if offset.y != clamped.y {
+                    velocity.y *= oob_decay;
+                }
+            }
 
             // Clamp to bounds: if we hit the edge, stop momentum on that axis.
             // For bouncy scrolling, DON'T clamp here — let the offset overshoot
             // so the spring-back code can pull it back with a smooth transition.
             if !self.scroll_behavior.bouncy {
-                let new_clamped = self.clamp_offset(offset);
-                if offset.x != new_clamped.x {
-                    offset.x = new_clamped.x;
+                if offset.x != clamped.x {
+                    offset.x = clamped.x;
                     velocity.x = 0.0;
                 }
-                if offset.y != new_clamped.y {
-                    offset.y = new_clamped.y;
+                if offset.y != clamped.y {
+                    offset.y = clamped.y;
                     velocity.y = 0.0;
                 }
             } else {
-                // Bouncy: only zero velocity that pushes FURTHER out of bounds.
-                // If velocity is pushing toward the edge (helping recovery),
-                // let it continue — this prevents oscillation when the user
-                // scrolls while spring-back is active.
+                // Bouncy: spring takes over completely when out of bounds.
+                //
+                // Kill momentum velocity on out-of-bounds axes so the spring
+                // is the sole force driving recovery. This prevents residual
+                // momentum from fighting the spring and causing shaking.
+                let stiffness = SPRING_STIFFNESS;
+                let damping_coeff = 2.0 * SPRING_DAMPING_RATIO * stiffness.sqrt();
+                let mut sv = self.spring_velocity.get();
+
+                if offset.x != clamped.x {
+                    velocity.x = 0.0;
+                    let err_x = offset.x - clamped.x;
+                    sv.x += (-stiffness * err_x - damping_coeff * sv.x) * dt;
+                    offset.x += sv.x * dt;
+                }
+                if offset.y != clamped.y {
+                    velocity.y = 0.0;
+                    let err_y = offset.y - clamped.y;
+                    sv.y += (-stiffness * err_y - damping_coeff * sv.y) * dt;
+                    offset.y += sv.y * dt;
+                }
+                self.spring_velocity.set(sv);
+
+                // Snap to boundary if the spring crossed through it.
                 let new_clamped = self.clamp_offset(offset);
-                if offset.x != new_clamped.x {
-                    let dx = new_clamped.x - offset.x;
-                    // Zero velocity only if it's moving AWAY from the edge
-                    if (dx > 0.0 && velocity.x < 0.0) || (dx < 0.0 && velocity.x > 0.0) {
-                        velocity.x = 0.0;
-                    }
+                if offset.x != clamped.x
+                    && ((clamped.x >= offset.x && offset.x >= new_clamped.x)
+                        || (clamped.x <= offset.x && offset.x <= new_clamped.x))
+                {
+                    offset.x = new_clamped.x;
+                    sv.x = 0.0;
                 }
-                if offset.y != new_clamped.y {
-                    let dy = new_clamped.y - offset.y;
-                    // Zero velocity only if it's moving AWAY from the edge
-                    if (dy > 0.0 && velocity.y < 0.0) || (dy < 0.0 && velocity.y > 0.0) {
-                        velocity.y = 0.0;
-                    }
+                if offset.y != clamped.y
+                    && ((clamped.y >= offset.y && offset.y >= new_clamped.y)
+                        || (clamped.y <= offset.y && offset.y <= new_clamped.y))
+                {
+                    offset.y = new_clamped.y;
+                    sv.y = 0.0;
                 }
+                self.spring_velocity.set(sv);
             }
 
             self.pointer_velocity.set(velocity);
             needs_redraw = true;
         } else if velocity.x != 0.0 || velocity.y != 0.0 {
             self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+            self.momentum_start_time.set(None);
         }
 
         // Spring back if bouncy is enabled AND momentum has finished.
-        // During active momentum the exponential decay drives the offset;
-        // spring-back only kicks in once velocity drops to near-zero to pull
-        // the content back to the edge.  Without this guard, spring-back
-        // fights the momentum every frame (applying SPRING_VELOCITY_DAMPING
-        // and killing the coast almost instantly).
+        // Uses a proper damped-spring simulation (underdamped, ζ < 1) so the
+        // content overshoots the boundary, oscillates with decreasing amplitude,
+        // and settles at rest — the "bounce" feel the user expects.
         let v_check = self.pointer_velocity.get();
         let momentum_active = v_check.x.abs() > VELOCITY_EPSILON || v_check.y.abs() > VELOCITY_EPSILON;
         if self.scroll_behavior.bouncy && !momentum_active && (offset.x != clamped.x || offset.y != clamped.y) {
-            let dx = clamped.x - offset.x;
-            let dy = clamped.y - offset.y;
-            let oob_dist = (dx * dx + dy * dy).sqrt();
+            let stiffness = SPRING_STIFFNESS;
+            let damping_coeff = 2.0 * SPRING_DAMPING_RATIO * stiffness.sqrt();
 
-            // info!(
-            //     "rubber-band spring-back | oob_dist: {:.1}px | offset: ({:.1}, {:.1}) | target: ({:.1}, {:.1})",
-            //     oob_dist, offset.x, offset.y, clamped.x, clamped.y
-            // );
+            let mut sv = self.spring_velocity.get();
 
-            let base_spring = 1.0 - (1.0 - self.scroll_behavior.bouncy_recovery).powf(frame_ratio);
-            // Cubic ease-out: fast start, gentle landing (1 − (1−t)³)
-            let spring_factor = 1.0 - (1.0 - base_spring).powf(EASE_OUT_CUBIC);
+            // Semi-implicit (symplectic) Euler: update velocity first, then
+            // position.  This is more stable than explicit Euler for
+            // oscillatory systems and preserves the energy envelope well.
+            let err_x = offset.x - clamped.x;
+            let err_y = offset.y - clamped.y;
 
-            let v = self.pointer_velocity.get();
+            sv.x += (-stiffness * err_x - damping_coeff * sv.x) * dt;
+            sv.y += (-stiffness * err_y - damping_coeff * sv.y) * dt;
+            offset.x += sv.x * dt;
+            offset.y += sv.y * dt;
 
-            // Only spring back on axes where velocity is not actively
-            // carrying content in the same direction as the spring pull.
-            let spring_x = offset.x != clamped.x
-                && !(v.x.abs() > VELOCITY_EPSILON && dx.signum() == v.x.signum());
-            let spring_y = offset.y != clamped.y
-                && !(v.y.abs() > VELOCITY_EPSILON && dy.signum() == v.y.signum());
-
-            if spring_x {
-                offset.x += dx * spring_factor;
-            }
-            if spring_y {
-                offset.y += dy * spring_factor;
-            }
-
-            // Clamp to prevent overshooting the edge — this makes the spring
-            // critically damped (no oscillation, smooth one-way return).
-            if spring_x {
-                let new_dx = clamped.x - offset.x;
-                if (dx > 0.0 && new_dx < 0.0) || (dx < 0.0 && new_dx > 0.0) {
-                    offset.x = clamped.x;
-                }
-            }
-            if spring_y {
-                let new_dy = clamped.y - offset.y;
-                if (dy > 0.0 && new_dy < 0.0) || (dy < 0.0 && new_dy > 0.0) {
-                    offset.y = clamped.y;
-                }
-            }
-
-            let mut v = v;
-            if spring_x {
-                v.x *= SPRING_VELOCITY_DAMPING.powf(frame_ratio);
-            }
-            if spring_y {
-                v.y *= SPRING_VELOCITY_DAMPING.powf(frame_ratio);
-            }
-            self.pointer_velocity.set(v);
-
-            if spring_x && (offset.x - clamped.x).abs() < SNAP_EPSILON {
+            // If the spring overshot past the boundary (sign flip on err),
+            // snap to the boundary and stop.  This prevents the underdamped
+            // spring from oscillating through the boundary multiple times.
+            let new_err_x = offset.x - clamped.x;
+            let new_err_y = offset.y - clamped.y;
+            if err_x != 0.0 && (err_x > 0.0) != (new_err_x > 0.0) {
                 offset.x = clamped.x;
-                let mut v = self.pointer_velocity.get();
-                v.x = 0.0;
-                self.pointer_velocity.set(v);
-                // info!("rubber-band snap | x-axis snapped to edge");
+                sv.x = 0.0;
             }
-            if spring_y && (offset.y - clamped.y).abs() < SNAP_EPSILON {
+            if err_y != 0.0 && (err_y > 0.0) != (new_err_y > 0.0) {
                 offset.y = clamped.y;
-                let mut v = self.pointer_velocity.get();
-                v.y = 0.0;
-                self.pointer_velocity.set(v);
-                // info!("rubber-band snap | y-axis snapped to edge");
+                sv.y = 0.0;
             }
-            if spring_x || spring_y {
-                needs_redraw = true;
+
+            self.spring_velocity.set(sv);
+            needs_redraw = true;
+
+            // Snap to rest when distance from edge and velocity are both negligible.
+            if (offset.x - clamped.x).abs() < SNAP_EPSILON && sv.x.abs() < VELOCITY_EPSILON {
+                offset.x = clamped.x;
+                sv.x = 0.0;
             }
+            if (offset.y - clamped.y).abs() < SNAP_EPSILON && sv.y.abs() < VELOCITY_EPSILON {
+                offset.y = clamped.y;
+                sv.y = 0.0;
+            }
+            self.spring_velocity.set(sv);
         } else if !self.scroll_behavior.bouncy {
             offset = clamped;
         }
 
+        // Hard-cap overscroll to a fraction of viewport (prevents unlimited
+        // rubber-band from trackpad or high-velocity flings).
+        offset = self.clamp_overscroll(offset);
+
         (offset, needs_redraw)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    fn ctrl_with_offset(offset: Vec2d) -> ScrollController {
+        ScrollController {
+            scroll_behavior: ScrollBehavior::default(),
+            axis: ScrollAxis::Vertical,
+            scroll_offset: Cell::new(offset),
+            storage_key: None,
+            last_pointer_pos: Cell::new(None),
+            drag_mode: Cell::new(DragMode::None),
+            cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            cached_min_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            pointer_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            last_event_time: Cell::new(None),
+            last_frame_time: Cell::new(None),
+            v_thumb_rect: Cell::new(None),
+            h_thumb_rect: Cell::new(None),
+            v_scroll_multiplier: Cell::new(0.0),
+            h_scroll_multiplier: Cell::new(0.0),
+            last_scale: Cell::new(1.0),
+            speed_multiplier: 1.0,
+            cursor_pos: Cell::new(None),
+            velocity_history: RefCell::new(VelocityHistory::new()),
+            cached_viewport: Cell::new((0.0, 0.0)),
+            cached_v_track_width: Cell::new(0.0),
+            cached_h_track_width: Cell::new(0.0),
+            cached_content_size: Cell::new(Default::default()),
+            fling_start_time: Cell::new(None),
+            fling_start_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            fling_target_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            fling_duration: Cell::new(0.0),
+            active_touch_id: Cell::new(None),
+            spring_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            momentum_start_time: Cell::new(None),
+        }
+    }
+
+    // Reconciliation contract: on rebuild the freshly built controller starts at
+    // its initial offset (top), then adopts the previous controller's live scroll
+    // position so the viewport doesn't snap back to the top.
+    #[test]
+    fn adopt_scroll_state_preserves_offset() {
+        let prev = ctrl_with_offset(Vec2d { x: 3.0, y: 150.0 });
+        prev.pointer_velocity.set(Vec2d { x: 0.0, y: -12.0 });
+        prev.spring_velocity.set(Vec2d { x: 0.0, y: -200.0 });
+
+        let fresh = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
+        assert_eq!(fresh.scroll_offset.get().y, 0.0, "fresh element starts at the top");
+
+        fresh.adopt_scroll_state(&prev);
+
+        assert_eq!(fresh.scroll_offset.get().x, 3.0);
+        assert_eq!(fresh.scroll_offset.get().y, 150.0);
+        assert_eq!(fresh.pointer_velocity.get().y, -12.0);
+        assert_eq!(fresh.spring_velocity.get().y, -200.0);
+    }
+
+    // Small reverse-flick contract: the release fling reads `smoothed_velocity()`,
+    // a weighted average of the velocity ring buffer. After a fast fling leaves the
+    // buffer full of old-direction samples, a SMALL reverse flick pushes only 1–2
+    // opposite samples — not enough to flip that average, so without clearing the
+    // buffer the release still coasts the OLD way (the reported bug). Clearing the
+    // history on a detected reversal (as handle_scroll now does) makes the release
+    // reflect only the new direction.
+    #[test]
+    fn small_reverse_flick_clears_stale_velocity_history() {
+        let c = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
+
+        // Prior fling: buffer full of positive (old-direction) samples.
+        for _ in 0..VELOCITY_HISTORY_SIZE {
+            c.push_velocity(0.0, 100.0);
+        }
+
+        // A small reverse flick adds a single opposite sample.
+        c.push_velocity(0.0, -20.0);
+        // Without clearing, the weighted average is still the OLD direction.
+        assert!(c.smoothed_velocity().y > 0.0, "stale samples keep the average pointing the old way");
+
+        // Reversal handling clears the buffer before the new sample is recorded.
+        c.clear_velocity_history();
+        c.push_velocity(0.0, -20.0);
+        assert!(c.smoothed_velocity().y < 0.0, "after clearing, the release follows the new direction");
     }
 }

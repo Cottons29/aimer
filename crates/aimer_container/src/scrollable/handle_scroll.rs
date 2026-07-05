@@ -4,6 +4,7 @@ use crate::ScrollAxis;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
+use aimer_utils::info;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, EventElement, LayoutElement, VisitorElement};
 use web_time::Instant;
@@ -26,6 +27,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         let inside = self.bounds.is_inside(cursor.x, cursor.y);
         let active_drag = self.ctrl.drag_mode.get() != DragMode::None;
         if !inside && !active_drag {
+            // info!("[scroll] REJECTED event (outside bounds, no active drag) cursor=({:.1},{:.1})", cursor.x, cursor.y);
             return false;
         }
 
@@ -55,25 +57,22 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             }
 
             let now = Instant::now();
+            // info!("[scroll] PointerUp mode_before={:?} drag_mode={:?}", mode_before, self.ctrl.drag_mode.get());
             if let Some(last_time) = self.ctrl.last_event_time.get() {
                 let elapsed = now.duration_since(last_time).as_millis();
                 if elapsed > VELOCITY_RESET_IDLE_MS {
+                    // info!("[scroll] FLING CLEARED — idle too long ({}ms > {}ms threshold)", elapsed, VELOCITY_RESET_IDLE_MS);
                     self.ctrl.pointer_velocity.set(Vec2d::default());
                     self.ctrl.clear_velocity_history();
                     self.ctrl.cancel_fling();
                 } else {
                     let max_v = MAX_SCROLL_VELOCITY * self.ctrl.last_scale.get();
-                    // Use the blended drag velocity (exponential moving average)
-                    // rather than the peak from the velocity history.  The peak
-                    // is sensitive to single outlier samples from touch jitter or
-                    // timing glitches, which can make the fling shoot off at an
-                    // unrealistic speed.  The blended velocity matches what the
-                    // user actually felt during the drag.
                     let raw = self.ctrl.smoothed_velocity();
                     let sv = Vec2d {
                         x: (raw.x * RELEASE_VELOCITY_GAIN).clamp(-max_v, max_v),
                         y: (raw.y * RELEASE_VELOCITY_GAIN).clamp(-max_v, max_v),
                     };
+                    // info!("[scroll] FLING ARMED elapsed={}ms raw=({:.2},{:.2}) gain=({:.2},{:.2}) max_v={:.0}", elapsed, raw.x, raw.y, sv.x, sv.y, max_v);
                     self.ctrl.cancel_fling();
                     self.ctrl.pointer_velocity.set(sv);
                 }
@@ -118,21 +117,18 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 };
 
                 if self.ctrl.scroll_behavior.bouncy {
+                    // Constant maximum resistance when out-of-bounds.
+                    // Content moves at OOB_DRAG_RESISTANCE × finger speed
+                    // the instant the boundary is crossed — no gradual ramp.
                     match self.ctrl.axis {
                         ScrollAxis::Vertical => {
                             if offset.y != clamped.y {
-                                let oob_dist = (offset.y - clamped.y).abs();
-                                let viewport_h = self.ctrl.cached_max_scroll.get().y.max(MIN_VIEWPORT);
-                                let resistance = (1.0 - (oob_dist / viewport_h).min(OOB_RESISTANCE_CLAMP)).powi(2) * OOB_RESISTANCE_SCALE;
-                                scroll_delta.y *= resistance;
+                                scroll_delta.y *= OOB_DRAG_RESISTANCE;
                             }
                         }
                         ScrollAxis::Horizontal => {
                             if offset.x != clamped.x {
-                                let oob_dist = (offset.x - clamped.x).abs();
-                                let viewport_w = self.ctrl.cached_max_scroll.get().x.max(MIN_VIEWPORT);
-                                let resistance = (1.0 - (oob_dist / viewport_w).min(OOB_RESISTANCE_CLAMP)).powi(2) * OOB_RESISTANCE_SCALE;
-                                scroll_delta.x *= resistance;
+                                scroll_delta.x *= OOB_DRAG_RESISTANCE;
                             }
                         }
                     }
@@ -167,6 +163,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 let mut target_vy = (scroll_delta.y / dt) * frame_ref;
 
                 if self.ctrl.scroll_behavior.bouncy {
+                    // Maximum damping when velocity pushes further out-of-bounds.
+                    // Applied immediately at the boundary — no gradual ramp.
                     match self.ctrl.axis {
                         ScrollAxis::Vertical => {
                             if (offset.y > clamped.y && scroll_delta.y > 0.0) || (offset.y < clamped.y && scroll_delta.y < 0.0) {
@@ -192,6 +190,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 // A wheel/trackpad scroll takes over from any release fling and
                 // uses the velocity-based momentum, not the bézier curve.
                 self.ctrl.cancel_fling();
+                // Reset spring velocity so new input dominates over any
+                // in-progress spring-back recovery.
+                self.ctrl.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
 
                 aimer_events::window::request_animation_frame();
                 true
@@ -211,15 +212,18 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             Instant::now().duration_since(t).as_millis() > STALE_TOUCH_THRESHOLD_MS
                         });
                         if stale {
+                            // info!("[scroll] DOWN stale touch cleared prev_id={}", prev_id);
                             self.ctrl.active_touch_id.set(None);
                             self.ctrl.drag_mode.set(DragMode::None);
                             self.ctrl.last_pointer_pos.set(None);
                         } else {
+                            // info!("[scroll] DOWN REJECTED — secondary finger prev_id={} new_id={}", prev_id, id);
                             return false;
                         }
                     }
                 }
                 self.ctrl.active_touch_id.set(Some(*id));
+                // info!("[scroll] PointerDown id={} pos=({:.1},{:.1})", id, p.x, p.y);
 
                 let mut mode = DragMode::Pending;
                 if self.ctrl.hit_test_v_thumb(*p) {
@@ -267,6 +271,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 self.ctrl.clear_velocity_history();
                 // A fresh touch/click stops the in-flight release fling.
                 self.ctrl.cancel_fling();
+                self.ctrl.momentum_start_time.set(None);
 
                 self.ctrl.drag_mode.set(mode);
                 self.ctrl.last_pointer_pos.set(Some(*p));
@@ -275,6 +280,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             ElementEvent::PointerMove(p, _, id) => {
                 // Ignore moves from non-primary fingers.
                 if self.ctrl.active_touch_id.get().is_some() && self.ctrl.active_touch_id.get() != Some(*id) {
+                    // info!("[scroll] MOVE REJECTED — non-primary finger active={:?} got={}", self.ctrl.active_touch_id.get(), id);
                     return false;
                 }
 
@@ -296,6 +302,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         if exceeds_threshold {
                             mode = DragMode::Content;
                             self.ctrl.drag_mode.set(DragMode::Content);
+                            // info!("[scroll] DRAG STARTED (Pending→Content) dx={:.1} dy={:.1} threshold={:.1}", dx, dy, threshold);
 
                             let mut adjusted_start = start;
                             match self.ctrl.axis {
@@ -351,6 +358,38 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         new_velocity.x = (new_velocity.x / dt) * frame_ref;
                         new_velocity.y = (new_velocity.y / dt) * frame_ref;
 
+                        let mut old_velocity = self.ctrl.pointer_velocity.get();
+                        // Direction-reversal guard: if a new drag pushes AGAINST
+                        // leftover fling velocity (a fresh scroll started before the
+                        // previous momentum settled), drop the residual on that axis
+                        // instead of blending it in. Otherwise the opposing momentum
+                        // is averaged into the fresh drag and the content briefly
+                        // travels the OLD way before the new direction wins — the
+                        // "wrong direction" jump seen on touch. `new_velocity` holds
+                        // the fresh per-frame drag velocity here (the blend below
+                        // overwrites it), so a negative product means the finger now
+                        // moves opposite to the coasting momentum.
+                        let reversed_x = new_velocity.x * old_velocity.x < 0.0;
+                        let reversed_y = new_velocity.y * old_velocity.y < 0.0;
+                        if reversed_x || reversed_y {
+                            // Also drop the stale opposite-direction samples from the
+                            // velocity ring buffer BEFORE recording the new one. The
+                            // release fling is seeded from `smoothed_velocity()`, a
+                            // weighted average over the buffer. On a SMALL reverse
+                            // flick only 1–2 new samples are pushed, so the buffer
+                            // stays dominated by up to VELOCITY_HISTORY_SIZE prior
+                            // old-direction samples and that average — hence the
+                            // release fling — still points the OLD way. Clearing here
+                            // makes the release reflect only post-reversal motion.
+                            self.ctrl.clear_velocity_history();
+                            if reversed_x {
+                                old_velocity.x = 0.0;
+                            }
+                            if reversed_y {
+                                old_velocity.y = 0.0;
+                            }
+                        }
+
                         // Record the instantaneous drag velocity so that releasing
                         // the finger (PointerUp) can fling with momentum. The release
                         // path uses `smoothed_velocity()`, which reads from this
@@ -359,8 +398,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         // `Scroll` path), making the smoothed velocity zero and
                         // stopping the scroll instantly on lift — notably on iOS.
                         self.ctrl.push_velocity(new_velocity.x, new_velocity.y);
+                        // info!("[scroll] MOVE velocity pushed=({:.2},{:.2}) dt={:.4}s mode={:?}", new_velocity.x, new_velocity.y, dt, mode);
 
-                        let old_velocity = self.ctrl.pointer_velocity.get();
                         let blend_factor = (dt / DRAG_BLEND_WINDOW).min(1.0);
                         let blend_new = (DRAG_BLEND_BASE * (1.0 - blend_factor) + blend_factor).min(1.0);
                         let blend_old = 1.0 - blend_new;
@@ -374,30 +413,26 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         let clamped = self.ctrl.clamp_offset(offset);
 
                         match mode {
-                            DragMode::Content => match self.ctrl.axis {
-                                ScrollAxis::Vertical => {
-                                    let mut actual_dy = dy;
-
-                                    if offset.y != clamped.y {
-                                        let oob_dist = (offset.y - clamped.y).abs();
-
-                                        let viewport_h = self.ctrl.cached_max_scroll.get().y.max(MIN_VIEWPORT);
-                                        let resistance = (1.0 - (oob_dist / viewport_h).min(OOB_RESISTANCE_CLAMP)).powi(2) * OOB_RESISTANCE_SCALE;
-                                        actual_dy *= resistance;
+                            DragMode::Content => {
+                                // Constant maximum resistance when out-of-bounds.
+                                // Applied immediately — no gradual ramp.
+                                match self.ctrl.axis {
+                                    ScrollAxis::Vertical => {
+                                        let mut actual_dy = dy;
+                                        if offset.y != clamped.y {
+                                            actual_dy *= OOB_DRAG_RESISTANCE;
+                                        }
+                                        offset.y += actual_dy;
                                     }
-                                    offset.y += actual_dy;
-                                }
-                                ScrollAxis::Horizontal => {
-                                    let mut actual_dx = dx;
-                                    if offset.x != clamped.x {
-                                        let oob_dist = (offset.x - clamped.x).abs();
-                                        let viewport_w = self.ctrl.cached_max_scroll.get().x.max(MIN_VIEWPORT);
-                                        let resistance = (1.0 - (oob_dist / viewport_w).min(OOB_RESISTANCE_CLAMP)).powi(2) * OOB_RESISTANCE_SCALE;
-                                        actual_dx *= resistance;
+                                    ScrollAxis::Horizontal => {
+                                        let mut actual_dx = dx;
+                                        if offset.x != clamped.x {
+                                            actual_dx *= OOB_DRAG_RESISTANCE;
+                                        }
+                                        offset.x += actual_dx;
                                     }
-                                    offset.x += actual_dx;
                                 }
-                            },
+                            }
                             DragMode::VerticalScrollbar => {
                                 let target_y = offset.y - dy * self.ctrl.v_scroll_multiplier.get();
                                 offset.y = offset.y * SCROLLBAR_DRAG_SMOOTH_OLD + target_y * SCROLLBAR_DRAG_SMOOTH_NEW;
