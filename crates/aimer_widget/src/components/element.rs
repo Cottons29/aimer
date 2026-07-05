@@ -88,6 +88,10 @@ impl Rebuildable for Box<dyn Element> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         self.as_ref().rebuild_if_dirty(ctx)
     }
+
+    fn mark_needs_rebuild(&self) {
+        self.as_ref().mark_needs_rebuild()
+    }
 }
 
 impl EventElement for Box<dyn Element> {
@@ -111,7 +115,14 @@ impl Reconcilable for Box<dyn Element> {
         self.as_ref().key()
     }
 
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    // Delegate to the inner concrete element, not the `Box` itself. Otherwise
+    // any `downcast_ref::<ConcreteElement>()` on a `&dyn Element` that is really a
+    // boxed child (the common case — `RawContainer`/`RawFlex` hold their children
+    // as `Box<dyn Element>`) would see the `Any` as `Box<dyn Element>` and fail.
+    // That silently broke reconciliation state transfer, e.g. a `Scrollable`
+    // carrying its live scroll offset into the freshly built element on a parent
+    // rebuild — the downcast failed, so the viewport snapped back to the top.
+    fn as_any(&self) -> &dyn std::any::Any { self.as_ref().as_any() }
     fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
         self.as_ref().update_from_widget(new_element, ctx)
     }
@@ -170,4 +181,50 @@ pub fn broadcast_event(root: &dyn Element, event: &ElementEvent) -> bool {
     }
 
     consumed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::reconcilable::Reconcilable;
+    use std::any::Any;
+
+    // A concrete element carrying a marker value we can read back after a
+    // downcast — stands in for a state-owning element like `Scrollable`.
+    struct Marked(u32);
+    impl VisitorElement for Marked {
+        fn debug_name(&self) -> &'static str {
+            "Marked"
+        }
+    }
+    impl Drawable for Marked {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl EventElement for Marked {}
+    impl LayoutElement for Marked {}
+    impl Rebuildable for Marked {}
+    impl Reconcilable for Marked {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    // Regression guard: a `&dyn Element` that is really a `Box<dyn Element>` must
+    // still downcast to the inner concrete type. This is exactly what a
+    // reconciliation `update_from_widget` does when carrying live state (e.g. a
+    // scroll offset) from the old element into the freshly built one — the new
+    // element arrives as a boxed child. If `Box::as_any` returned the box itself,
+    // this downcast would yield `None` and the state transfer would silently do
+    // nothing (the scroll snapping back to the top on every parent rebuild).
+    #[test]
+    fn downcast_through_boxed_element_reaches_inner() {
+        let boxed: Box<dyn Element> = Box::new(Marked(42));
+        let as_dyn: &dyn Element = &boxed;
+
+        let inner = as_dyn
+            .as_any()
+            .downcast_ref::<Marked>()
+            .expect("downcast through Box<dyn Element> must reach the inner element");
+        assert_eq!(inner.0, 42);
+    }
 }

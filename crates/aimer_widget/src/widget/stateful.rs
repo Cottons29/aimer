@@ -13,7 +13,11 @@ use winit::window::Window;
 
 /// A `Send + Sync` wrapper around `UnsafeCell<Box<dyn Element>>`.
 /// Safety: the rendering pipeline is single-threaded, so concurrent access does not occur.
-struct SyncChild(UnsafeCell<Box<dyn Element>>);
+///
+/// `pub(crate)` so `StatelessElement` can reuse the same swappable-child slot
+/// (needed so `visit_children<'a>` can hand out `&'a` refs to a child that may
+/// be replaced on rebuild).
+pub(crate) struct SyncChild(pub(crate) UnsafeCell<Box<dyn Element>>);
 unsafe impl Send for SyncChild {}
 unsafe impl Sync for SyncChild {}
 
@@ -527,6 +531,13 @@ impl LayoutElement for StatefulElement {
 impl Rebuildable for StatefulElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         StatefulElement::rebuild_if_dirty(self, ctx);
+    }
+
+    fn mark_needs_rebuild(&self) {
+        self.dirty.set(true);
+        // Safety: single-threaded rendering pipeline.
+        let child = unsafe { &*self.child.0.get() };
+        child.mark_needs_rebuild();
     }
 }
 

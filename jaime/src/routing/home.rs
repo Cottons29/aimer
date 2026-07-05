@@ -7,6 +7,7 @@ use aimer::style::*;
 use crate::routing::AppRouting;
 
 #[widget(Stateless)]
+#[derive(Clone)]
 pub struct HomeWidget{}
 
 impl StatelessWidget for HomeWidget {
