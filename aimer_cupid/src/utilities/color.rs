@@ -1,4 +1,4 @@
-use aimer_color::prelude::{Color as AimerColor, ColorMixer};
+use aimer_color::prelude::{Color as AimerColor};
 use std::ops::Mul;
 
 #[derive(Debug, Clone, Copy, Default)]

@@ -39,8 +39,7 @@ impl Rgba {
     }
 
     /// Convert from `aimer_color::Color` to normalized RGBA.
-    pub fn from_color(color: &aimer_color::prelude::Color) -> Self {
-        use aimer_color::prelude::ColorMixer;
+    pub fn from_color(color: &Color) -> Self {
         let argb = color.to_u32();
         let a = ((argb >> 24) & 0xFF) as f32 / 255.0;
         let r = ((argb >> 16) & 0xFF) as f32 / 255.0;
@@ -50,8 +49,8 @@ impl Rgba {
     }
 
     /// Convert back to `aimer_color::Color::Rgba`.
-    pub fn to_color(self) -> aimer_color::prelude::Color {
-        aimer_color::prelude::Color::Rgba(
+    pub fn to_color(self) -> Color {
+        Color::Rgba(
             (self.r * 255.0).clamp(0.0, 255.0) as u8,
             (self.g * 255.0).clamp(0.0, 255.0) as u8,
             (self.b * 255.0).clamp(0.0, 255.0) as u8,
