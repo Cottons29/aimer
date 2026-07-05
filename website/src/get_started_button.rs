@@ -7,6 +7,7 @@ use aimer::*;
 use aimer::{widget, BuildContext, Widget};
 
 #[widget(Stateless)]
+#[derive(Clone)]
 pub struct HoverableGetStartedButton {}
 
 impl StatelessWidget for HoverableGetStartedButton {
