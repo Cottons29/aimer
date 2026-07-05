@@ -1,4 +1,4 @@
-// re-export all the widgets and utils
+
 
 
 pub use aimer_attribute::dimension::Dimension;
@@ -64,16 +64,7 @@ pub mod console {
 // wasm dependencies
 pub use wasm_bindgen;
 
-pub mod router  {
-    pub use aimer_router::Navigator;
-    pub use aimer_router::NavigatorController;
-    pub use aimer_router::Route;
-    pub use aimer_router::Router;
-    pub use aimer_router::navigator::NavigatorState;
-    // pub use aimer_router::router::
-}
-
-
+pub use aimer_router as router;
 pub use aimer_provider as provider;
 
 
