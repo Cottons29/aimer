@@ -7,4 +7,4 @@ edition = "2024"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-aimer = {path = "/Users/cottons/Documents/aimer-fw/aimer/aimer"}
+aimer = {git="https://github.com/Cottons29/aimer.git", branch = "nightly-0.0.1"}

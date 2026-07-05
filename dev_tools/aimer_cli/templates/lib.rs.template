@@ -1,6 +1,6 @@
+use aimer::macros::widget;
 use aimer::style::*;
 use aimer::*;
-use aimer::macros::widget;
 
 // this is the entry point of the app
 #[main]
@@ -45,9 +45,8 @@ impl State<CounterWidget> for CounterState {
 
     // build the widget with state
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
-        let updater = self.updater.clone();
-        let updater_2 = self.updater.clone();
         Container!(
+            color: Color::WHITE,
             child: Flex!(
                 direction: LayoutDirection::Column,
                 vertical_alignment: BoxAlignment::Center,
@@ -80,21 +79,26 @@ impl State<CounterWidget> for CounterState {
                         margin: LayoutSpacing!(top : Spacing::Px(140)),
                         // color: Colors::Yellow,
                         child: Button!(
-                            on_press: move || {
-                                println!("Loading the response from example.com");
-                                updater.set_state(|state| {
-                                    state.count += 1;
-                                });
+                            decoration: BoxDecoration!(
+                                background_color: Colors::Black,
+                                border_radius: 8,
+                            ),
+                            on_press: {
+                                    let updater = self.updater.clone();
+                                move || {
+                                    updater.set_state(|state| {
+                                        state.count += 1;
+                                    });
+                                }
                             },
-                            decoration: BoxDecoration!(background_color: Colors::Yellow),
-                            hover_decoration: BoxDecoration!(background_color: Colors::Green),
-                            child: Container!(
-                                child: Text!(
-                                    "Increase",
-                                    text_align: TextAlign::MidCenter,
-                                    text_style: TextStyle!(
-                                        color: Colors::Black,
-                                    )
+                            child: Text!(
+                                "Increase",
+                                text_align: TextAlign::MidCenter,
+                                text_style: TextStyle!(
+                                    color: Colors::White,
+                                    font_size: 16,
+                                    font_weight: FontWeight::Bold,
+                                    // text_decoration: TextDecoration::Underline,
                                 )
                             )
                         )
@@ -105,21 +109,26 @@ impl State<CounterWidget> for CounterState {
                         height: 50,
                         margin: LayoutSpacing!(top : Spacing::Px(10)),
                         child: Button!(
-                            on_press:  move || {
-                                println!("Loading the response from example.com");
-                                updater_2.set_state(|state| {
-                                    state.count -= 1;
-                                });
+                            decoration: BoxDecoration!(
+                                background_color: Colors::Black,
+                                border_radius: 8,
+                            ),
+                            on_press: {
+                                    let updater = self.updater.clone();
+                                move || {
+                                    updater.set_state(|state| {
+                                        state.count -= 1;
+                                    });
+                                }
                             },
-                            decoration: BoxDecoration!(background_color: Colors::Yellow),
-                            hover_decoration: BoxDecoration!(background_color: Colors::Green),
-                            child: Container!(
-                                child: Text!(
-                                    "Decrease",
-                                    text_align: TextAlign::MidCenter,
-                                    text_style: TextStyle!(
-                                        color: Colors::Black,
-                                    )
+                            child: Text!(
+                                "Decrease",
+                                text_align: TextAlign::MidCenter,
+                                text_style: TextStyle!(
+                                    color: Colors::White,
+                                    font_size: 16,
+                                    font_weight: FontWeight::Bold,
+                                    // text_decoration: TextDecoration::Underline,
                                 )
                             )
                         )
@@ -129,3 +138,4 @@ impl State<CounterWidget> for CounterState {
         )
     }
 }
+
