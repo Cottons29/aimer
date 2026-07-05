@@ -79,6 +79,13 @@ impl Drawable for RawTextWidget {
         let color = self.text_style.color;
         let font_weight = self.text_style.font_weight.numeric();
 
+        // Synthetic italic is carried on the decoration line set; enable it on the
+        // canvas so the glyphs are sheared, then reset it after the text is drawn.
+        let is_italic = self.text_style.text_decoration.line.contains(TextDecorationLine::ITALIC);
+        if is_italic {
+            ctx.canvas.set_italic(true);
+        }
+
         match self.text_style.text_overflow {
             TextOverflow::Clip => {
                 ctx.canvas.save();
@@ -115,15 +122,51 @@ impl Drawable for RawTextWidget {
             }
         }
 
-        if matches!(self.text_style.text_decoration, TextDecoration::Underline) {
-            let thickness = (font_size * 0.06).max(1.0);
-            let underline_y = y + descent.max(1.0) * 0.5;
-            ctx.canvas.fill_color_rect(
-                (x, underline_y).into(),
-                ResolvedSize { width: text_width, height: thickness },
-                color,
-                [0.0, 0.0, 0.0, 0.0],
-            );
+        if is_italic {
+            ctx.canvas.set_italic(false);
+        }
+
+        let decoration = self.text_style.text_decoration;
+        if !decoration.line.is_none() {
+            let scale = ctx.scale;
+            // Dedicated decoration color, else inherit the text color.
+            let deco_color = decoration.color.unwrap_or(color);
+            // User thickness/offset are logical px; scale them like the font.
+            let thickness = decoration.thickness.map(|t| t * scale).unwrap_or((font_size * 0.06).max(1.0));
+            let offset = decoration.offset * scale;
+            let style_id = decoration.style.id();
+
+            // The band must be tall enough to hold the styled stroke: wavy needs
+            // room for its amplitude, double needs room for two strokes + gap.
+            let (band_height, period) = match decoration.style {
+                TextDecorationStyle::Double => (thickness * 3.0, 1.0),
+                TextDecorationStyle::Dotted => (thickness, (thickness * 2.0).max(2.0)),
+                TextDecorationStyle::Dashed => (thickness, (thickness * 4.0).max(2.0)),
+                TextDecorationStyle::Wavy => (thickness * 4.0, (thickness * 6.0).max(4.0)),
+                TextDecorationStyle::Solid => (thickness, 1.0),
+            };
+
+            let emit = |center_y: f32| {
+                let band_top = center_y - band_height / 2.0;
+                ctx.canvas.draw_text_decoration(
+                    (x, band_top).into(),
+                    ResolvedSize { width: text_width, height: band_height },
+                    deco_color,
+                    style_id,
+                    thickness,
+                    period,
+                );
+            };
+
+            if decoration.line.contains(TextDecorationLine::UNDERLINE) {
+                emit(y + descent.max(1.0) * 0.5 + offset);
+            }
+            if decoration.line.contains(TextDecorationLine::LINE_THROUGH) {
+                emit(y - ascent * 0.35 + offset);
+            }
+            if decoration.line.contains(TextDecorationLine::OVERLINE) {
+                emit(y - ascent + offset);
+            }
         }
     }
 }

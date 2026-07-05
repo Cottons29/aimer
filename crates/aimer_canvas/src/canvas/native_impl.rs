@@ -277,6 +277,19 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_decoration(&self, pos: Vec2d, size: ResolvedSize, color: Color, style: u32, thickness: f32, period: f32) {
+        CupidCanvas::draw_text_decoration(
+            self,
+            pos.x, pos.y, size.width, size.height,
+            CupidColor::from(color),
+            style,
+            thickness,
+            period,
+        );
+    }
+
+    #[inline]
     fn draw_shadow_rect(
         &self,
         pos: Vec2d,
@@ -306,6 +319,11 @@ impl CanvasRendering for CupidCanvas {
     #[inline]
     fn restore_alpha(&self) {
         CupidCanvas::restore_alpha(self);
+    }
+
+    #[inline]
+    fn set_italic(&self, italic: bool) {
+        CupidCanvas::set_italic(self, italic);
     }
 
     #[inline]

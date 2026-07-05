@@ -24,9 +24,52 @@ struct GlyphInstance {
     clip_rect: [f32; 4],
     /// Border radius for the clip rect: [top-left, top-right, bottom-right, bottom-left].
     clip_border_radius: [f32; 4],
+    /// Horizontal shear factor for synthetic italic (tan of the slant angle).
+    /// 0 = upright. The glyph shaders slant the quad by this, pinned at its
+    /// bottom edge, so the advance/layout is unchanged.
+    skew: f32,
+    /// Padding to keep the struct 8-byte aligned for `Pod`/vertex upload.
+    _pad: [f32; 3],
 }
 
 impl GlyphInstance {
+    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+        0 => Float32x2,
+        1 => Float32x2,
+        2 => Float32x4,
+        3 => Float32x4,
+        4 => Float32x4,
+        5 => Float32x4,
+        6 => Float32,
+    ];
+
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: size_of::<GlyphInstance>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &Self::ATTRIBS,
+        }
+    }
+}
+
+/// Per-instance data for one decoration line quad (underline/overline/strike).
+/// The line geometry is a plain quad; the actual stroke (and its dotted/dashed/
+/// wavy shape) is produced procedurally by `text_decoration.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct DecorationInstance {
+    /// Top-left of the band quad, screen space.
+    position: [f32; 2],
+    /// Band size: [width, band_height].
+    size: [f32; 2],
+    color: [f32; 4],
+    clip_rect: [f32; 4],
+    clip_border_radius: [f32; 4],
+    /// [style_id, thickness_px, period_px, band_height_px].
+    params: [f32; 4],
+}
+
+impl DecorationInstance {
     const ATTRIBS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
@@ -38,9 +81,45 @@ impl GlyphInstance {
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
-            array_stride: size_of::<GlyphInstance>() as wgpu::BufferAddress,
+            array_stride: size_of::<DecorationInstance>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &Self::ATTRIBS,
+        }
+    }
+}
+
+/// A single styled decoration line to render, in final screen-space geometry.
+/// The producer (widget/renderer) computes where the line sits from the text
+/// metrics; the engine only rasterizes the styled stroke inside the band.
+#[derive(Clone, Copy, Debug)]
+pub struct TextDecorationDraw {
+    /// Top-left of the band quad.
+    pub x: f32,
+    pub y: f32,
+    /// Band width (line length).
+    pub width: f32,
+    /// Band height — tall enough to hold the stroke plus wave/double spacing.
+    pub band_height: f32,
+    /// Stroke thickness in pixels.
+    pub thickness: f32,
+    /// Repeat period for dotted/dashed/wavy styles (pixels).
+    pub period: f32,
+    /// Style id, matching `aimer_style::TextDecorationStyle::id`.
+    pub style: u32,
+    pub color: [f32; 4],
+    pub clip_rect: [f32; 4],
+    pub clip_border_radius: [f32; 4],
+}
+
+impl TextDecorationDraw {
+    fn to_instance(self) -> DecorationInstance {
+        DecorationInstance {
+            position: [self.x, self.y],
+            size: [self.width, self.band_height],
+            color: self.color,
+            clip_rect: self.clip_rect,
+            clip_border_radius: self.clip_border_radius,
+            params: [self.style as f32, self.thickness, self.period, self.band_height],
         }
     }
 }
@@ -151,6 +230,12 @@ pub struct TextPipelineV2 {
     color_instance_buffer: wgpu::Buffer,
     color_instance_capacity: usize,
     color_instances: Vec<GlyphInstance>,
+    /// Decoration-line pipeline + its own instance list/buffer. Decoration quads
+    /// are drawn after the glyphs (see `render`) so lines layer with their text.
+    decoration_pipeline: wgpu::RenderPipeline,
+    decoration_instance_buffer: wgpu::Buffer,
+    decoration_instance_capacity: usize,
+    decoration_instances: Vec<DecorationInstance>,
     /// Track atlas generation to only rebuild bind group when atlas texture changes.
     atlas_generation: u64,
     color_atlas_generation: u64,
@@ -190,6 +275,10 @@ impl TextPipelineV2 {
         let color_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("text color shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/text_color.wgsl").into()),
+        });
+        let decoration_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("text decoration shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/text_decoration.wgsl").into()),
         });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -299,6 +388,32 @@ impl TextPipelineV2 {
             cache: pipeline_cache,
         });
 
+        let decoration_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("text decoration pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &decoration_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Some(DecorationInstance::layout())],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &decoration_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: pipeline_cache,
+        });
+
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("text instance buffer"),
             size: (Self::INITIAL_CAPACITY * size_of::<GlyphInstance>()) as u64,
@@ -309,6 +424,13 @@ impl TextPipelineV2 {
         let color_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("text color instance buffer"),
             size: (Self::INITIAL_CAPACITY * size_of::<GlyphInstance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let decoration_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("text decoration instance buffer"),
+            size: (Self::INITIAL_CAPACITY * size_of::<DecorationInstance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -330,6 +452,10 @@ impl TextPipelineV2 {
             color_instance_buffer,
             color_instance_capacity: Self::INITIAL_CAPACITY,
             color_instances: Vec::new(),
+            decoration_pipeline,
+            decoration_instance_buffer,
+            decoration_instance_capacity: Self::INITIAL_CAPACITY,
+            decoration_instances: Vec::new(),
             atlas_generation: 0,
             color_atlas_generation: 0,
             last_viewport: (0, 0),
@@ -497,9 +623,12 @@ impl TextPipelineV2 {
         height: u32,
         is_srgb: bool,
         requests: &[TextDrawRequest],
+        decorations: &[TextDecorationDraw],
     ) {
         self.instances.clear();
         self.color_instances.clear();
+        self.decoration_instances.clear();
+        self.decoration_instances.extend(decorations.iter().map(|d| d.to_instance()));
 
         // Atlas regions recorded in lock-step with `self.instances` /
         // `self.color_instances`. UVs depend on the atlas dimensions, which can
@@ -555,6 +684,11 @@ impl TextPipelineV2 {
                     let color = span.color.unwrap_or(req.color);
                     // A weight of 600+ (semi-bold and up) is rendered bold.
                     let is_bold = span.font_weight.or(req.font_weight).unwrap_or(400) >= 600;
+                    // ponytail: synthetic (faux) italic via a horizontal shear in
+                    // the glyph shaders (0.25 ≈ 14°). Ceiling: not a real italic
+                    // face (no cursive glyph forms, advances unchanged). Upgrade
+                    // path: load a real italic/oblique face and key the atlas by it.
+                    let skew = if span.italic.unwrap_or(req.italic) { 0.25 } else { 0.0 };
 
                     // Re-use the positioned glyph list from the previous frame when
                     // text content, font size, and wrapping width are all unchanged.
@@ -643,6 +777,8 @@ impl TextPipelineV2 {
                             color,
                             clip_rect: req.clip_rect,
                             clip_border_radius: req.clip_border_radius,
+                            skew,
+                            _pad: [0.0; 3],
                         };
 
                         if target_color_list {
@@ -741,12 +877,26 @@ impl TextPipelineV2 {
             });
         }
 
-        // Upload instance data for both lists.
+        // Grow decoration instance buffer if needed.
+        if self.decoration_instances.len() > self.decoration_instance_capacity {
+            self.decoration_instance_capacity = self.decoration_instances.len().next_power_of_two();
+            self.decoration_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("text decoration instance buffer"),
+                size: (self.decoration_instance_capacity * size_of::<DecorationInstance>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+
+        // Upload instance data for all lists.
         if !self.instances.is_empty() {
             queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances));
         }
         if !self.color_instances.is_empty() {
             queue.write_buffer(&self.color_instance_buffer, 0, bytemuck::cast_slice(&self.color_instances));
+        }
+        if !self.decoration_instances.is_empty() {
+            queue.write_buffer(&self.decoration_instance_buffer, 0, bytemuck::cast_slice(&self.decoration_instances));
         }
     }
 
@@ -767,10 +917,50 @@ impl TextPipelineV2 {
             pass.set_vertex_buffer(0, self.color_instance_buffer.slice(..));
             pass.draw(0..6, 0..self.color_instances.len() as u32);
         }
+
+        // Decoration lines last, so underline/overline/strike layer with their
+        // text. Reuses the alpha `bind_group` (it only needs the viewport uniform).
+        if !self.decoration_instances.is_empty() {
+            pass.set_pipeline(&self.decoration_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_vertex_buffer(0, self.decoration_instance_buffer.slice(..));
+            pass.draw(0..6, 0..self.decoration_instances.len() as u32);
+        }
     }
 
     /// Measure text width using the rasterizer.
     pub fn measure_text(&mut self, text: &str, font_size: f32) -> f32 {
         self.rasterizer.measure_text(text, font_size)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TextDecorationDraw;
+
+    // Guards the CPU->GPU packing of a decoration line: `params` must be
+    // [style_id, thickness, period, band_height] and geometry must map to the
+    // instance's position/size, matching what `text_decoration.wgsl` reads.
+    #[test]
+    fn decoration_instance_packing() {
+        let draw = TextDecorationDraw {
+            x: 10.0,
+            y: 20.0,
+            width: 120.0,
+            band_height: 6.0,
+            thickness: 2.0,
+            period: 8.0,
+            style: 4, // Wavy
+            color: [1.0, 0.0, 0.0, 1.0],
+            clip_rect: [0.0, 0.0, -1.0, 0.0],
+            clip_border_radius: [0.0; 4],
+        };
+        let inst = draw.to_instance();
+        assert_eq!(inst.position, [10.0, 20.0]);
+        assert_eq!(inst.size, [120.0, 6.0]);
+        assert_eq!(inst.color, [1.0, 0.0, 0.0, 1.0]);
+        // params: style, thickness, period, band_height (band_height duplicated
+        // so the fragment shader has it without relying on the interpolated size).
+        assert_eq!(inst.params, [4.0, 2.0, 8.0, 6.0]);
     }
 }
