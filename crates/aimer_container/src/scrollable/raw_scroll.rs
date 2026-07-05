@@ -192,7 +192,10 @@ impl<E: Element + 'static> Reconcilable for RawScrollableContainer<E> {
         self
     }
 
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+    fn update_from_widget(&self, new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        if let Some(new) = new_element.as_any().downcast_ref::<RawScrollableContainer<E>>() {
+            new.ctrl.adopt_scroll_state(&self.ctrl);
+        }
         false
     }
 }
