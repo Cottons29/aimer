@@ -157,6 +157,12 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
                 max_height: parent_size.height,
             );
 
+            // The child is drawn after translating the canvas by the position
+            // offset (and any translate transform), so the visibility rect (used
+            // for scroll culling) must be shifted by the same amount. Otherwise a
+            // positioned block's top children (e.g. a title above a body) are
+            // culled too early and disappear while the taller body survives.
+            let child_visible_rect = shift_visible_rect(ctx.visible_rect, offset_x, offset_y, &self.transform);
 
             let child_ctx = BuildContext {
                 parent_size,
@@ -165,7 +171,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
                 parent_pos,
                 cursor_pos: ctx.cursor_pos,
                 box_constraint: child_constraint,
-                visible_rect: ctx.visible_rect,
+                visible_rect: child_visible_rect,
                 window: ctx.window,
                 #[cfg(not(target_arch = "wasm32"))]
                 async_handle: ctx.async_handle.clone(),
@@ -176,6 +182,27 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
         }
         ctx.canvas.restore();
     }
+}
+
+/// Shift the scroll-culling `visible_rect` into the positioned child's local
+/// coordinate space, i.e. by the same offset the canvas was translated:
+/// the position offset plus any translate transform. Scale/Rotate transforms
+/// leave the rect unchanged (culling stays conservative — never over-culls).
+fn shift_visible_rect(
+    visible_rect: Option<(f32, f32, f32, f32)>,
+    offset_x: f32,
+    offset_y: f32,
+    transform: &Transform,
+) -> Option<(f32, f32, f32, f32)> {
+    let (t_tx, t_ty) = match transform {
+        Transform::Translate(tx, ty) => (*tx, *ty),
+        Transform::TranslateX(tx) => (*tx, 0.0),
+        Transform::TranslateY(ty) => (0.0, *ty),
+        _ => (0.0, 0.0),
+    };
+    let shift_x = offset_x + t_tx;
+    let shift_y = offset_y + t_ty;
+    visible_rect.map(|(vx, vy, vw, vh)| (vx - shift_x, vy - shift_y, vw, vh))
 }
 
 impl<E: Element> VisitorElement for RawPositionedElement<E> {
@@ -210,5 +237,53 @@ impl<E: Element + 'static> Reconcilable for RawPositionedElement<E> {
 
     fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cull test used by the flex layout: a child at local `[y, y+h)` is drawn
+    /// only if it overlaps the visible window `[vy, vy+vh)`.
+    fn visible(child_y: f32, child_h: f32, rect: (f32, f32, f32, f32)) -> bool {
+        let (_, vy, _, vh) = rect;
+        !(child_y + child_h < vy || child_y > vy + vh)
+    }
+
+    // Reproduces the reported bug: a feature block positioned 110px down inside a
+    // 500px stack, with a short title (0..30) above a tall body (40..300). The
+    // scrollable's viewport shows y 200..800 of the stack.
+    #[test]
+    fn positioned_offset_keeps_title_visible() {
+        let stack_visible = Some((0.0, 200.0, 1000.0, 600.0));
+
+        // Before the fix: visible_rect forwarded unchanged. In block-local space
+        // the title (0..30) is treated as far above the viewport and culled,
+        // while the taller body straddles the line and survives — exactly the
+        // "title clipped, body left" symptom.
+        let unshifted = stack_visible.unwrap();
+        assert!(!visible(0.0, 30.0, unshifted), "buggy path should cull the title");
+        assert!(visible(40.0, 260.0, unshifted), "buggy path keeps the body");
+
+        // After the fix: shift by the 110px top offset. The title's real position
+        // is stack y 110..140, still above the viewport (200), so culling it is
+        // now *correct*; both title and body are judged in the same, correct space.
+        let shifted = shift_visible_rect(stack_visible, 0.0, 110.0, &Transform::None).unwrap();
+        assert_eq!(shifted, (0.0, 90.0, 1000.0, 600.0));
+
+        // A block near the top of the stack (offset 10px) whose title IS on screen
+        // must keep its title after the fix, where the unshifted path wrongly culls it.
+        let top_block = shift_visible_rect(Some((0.0, 5.0, 1000.0, 600.0)), 0.0, 10.0, &Transform::None).unwrap();
+        assert!(visible(0.0, 30.0, top_block), "on-screen title must not be culled");
+    }
+
+    #[test]
+    fn shift_includes_translate_transform() {
+        let r = shift_visible_rect(Some((0.0, 100.0, 10.0, 10.0)), 5.0, 20.0, &Transform::Translate(1.0, 2.0)).unwrap();
+        assert_eq!(r, (-6.0, 78.0, 10.0, 10.0));
+        // Scale/Rotate leave the rect untouched (conservative — never over-cull).
+        let s = shift_visible_rect(Some((0.0, 100.0, 10.0, 10.0)), 0.0, 0.0, &Transform::Scale(2.0, 2.0)).unwrap();
+        assert_eq!(s, (0.0, 100.0, 10.0, 10.0));
     }
 }

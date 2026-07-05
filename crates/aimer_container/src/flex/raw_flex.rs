@@ -65,29 +65,16 @@ pub struct RawFlex {
 impl RawFlex {
     fn render_child(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
+        // `draw` already paints the widget's *entire* subtree: every `Drawable`
+        // draws its own children (see `Container`, `Stack`, `MouseRegion`,
+        // `StatefulElement`, ...). Re-walking `visit_children` here painted that
+        // subtree a *second* time. For plain children (`Container`, `Text`)
+        // `visit_children` is empty so it was a no-op, which is why it went
+        // unnoticed — but any direct flex child with a non-empty `visit_children`
+        // (a `#[widget(Stateful)]`/`Stateless` section, `MouseRegion`, `Stack`)
+        // rendered twice, offset by the second pass's different constraints.
+        // `visit_children` is for event/hit-test traversal, not painting.
         widget.draw(ctx);
-        let content = widget.content_size(ctx);
-        let child_ctx = BuildContext {
-            parent_size: content,
-            canvas: ctx.canvas.clone(),
-            scale: ctx.scale,
-            parent_pos: Default::default(),
-            cursor_pos: ctx.cursor_pos,
-            box_constraint: BoxConstraint {
-                min_width: 0.0,
-                min_height: 0.0,
-                max_width: content.width,
-                max_height: content.height,
-            },
-            visible_rect: ctx.visible_rect,
-            window: ctx.window,
-            #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx.async_handle.clone(),
-            inherited_states: ctx.inherited_states.clone(),
-        };
-        widget.visit_children(&mut |child| {
-            Self::render_child(child, &child_ctx);
-        });
         ctx.canvas.restore();
     }
 }
