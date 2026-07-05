@@ -50,7 +50,7 @@ pub mod style {
     pub use aimer_animation::AnimationEffect;
     pub use aimer_animation::AnimationStatus;
     pub use aimer_animation::curve::Curve;
-    pub use aimer_color::prelude::{Color, ColorMixer, Colors};
+    pub use aimer_color::prelude::{Color, Colors};
     pub use aimer_container::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
     pub use aimer_style::*;
 }

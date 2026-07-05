@@ -1,64 +1,10 @@
 use crate::color::{color_trait::ColorMixer, Color};
 
 impl ColorMixer for Color {
-    fn to_u32(&self) -> u32 {
-        match *self {
-            Color::Rgba(r, g, b, a) => {
-                ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-            }
-            Color::Rgb(r, g, b) => {
-                ((0xFFu32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-            }
-            Color::Hex(rgb) => 0xFF000000 | (rgb & 0xFFFFFF),
-            Color::HexA(rgba) => {
-                let r = (rgba >> 24) & 0xFF;
-                let g = (rgba >> 16) & 0xFF;
-                let b = (rgba >> 8) & 0xFF;
-                let a = rgba & 0xFF;
-                (a << 24) | (r << 16) | (g << 8) | b
-            }
-            Color::Grayscale(v, a) => ((a as u32) << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32),
-            Color::Gray8(v) => (0xFF << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32),
-            Color::Basic(named) => named.to_u32(),
-            Color::Hsl(h, s, l) => {
-                let (r, g, b) = hsl_to_rgb(h, s, l);
-                (0xFF << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-            }
-            Color::Hsla(h, s, l, a) => {
-                let (r, g, b) = hsl_to_rgb(h, s, l);
-                let alpha = (a * 255.0).round() as u8;
-                ((alpha as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-            }
-            Color::Transparent => 0x00000000,
-        }
-    }
+
 }
 
-fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = l - c / 2.0;
 
-    let (r_prime, g_prime, b_prime) = if h < 60.0 {
-        (c, x, 0.0)
-    } else if h < 120.0 {
-        (x, c, 0.0)
-    } else if h < 180.0 {
-        (0.0, c, x)
-    } else if h < 240.0 {
-        (0.0, x, c)
-    } else if h < 300.0 {
-        (x, 0.0, c)
-    } else {
-        (c, 0.0, x)
-    };
-
-    (
-        ((r_prime + m) * 255.0).round() as u8,
-        ((g_prime + m) * 255.0).round() as u8,
-        ((b_prime + m) * 255.0).round() as u8,
-    )
-}
 
 #[cfg(test)]
 mod tests {

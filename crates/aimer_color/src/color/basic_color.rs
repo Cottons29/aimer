@@ -1,4 +1,4 @@
-use crate::prelude::ColorMixer;
+
 
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub enum Colors {
@@ -23,7 +23,7 @@ pub enum Colors {
 
 
 impl Colors {
-    pub fn alpha(&self, index: u8) -> Self {
+    pub const fn alpha(&self, index: u8) -> Self {
         let base_u32 = self.to_u32();
         let r = (base_u32 >> 16) & 0xFF;
         let g = (base_u32 >> 8) & 0xFF;
@@ -49,10 +49,8 @@ impl Colors {
             _ => Colors::Custom(argb)
         }
     }
-}
 
-impl ColorMixer for Colors {
-    fn to_u32(&self) -> u32 {
+    pub const fn to_u32(&self) -> u32 {
         match self {
             Colors::Red => 0xFFFF0000,
             Colors::Green => 0xFF00FF00,
