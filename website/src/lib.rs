@@ -1,27 +1,25 @@
 pub mod get_started_button;
+mod same_looking;
 
+use crate::same_looking::SameLookingSection;
 use crate::get_started_button::HoverableGetStartedButton;
-use aimer::animation::{Curve as AnimCurve, MorphTransition, Rgba};
-use aimer::console::{debug, info};
-use aimer::macros::widget;
+use aimer::Dimension::Percent;
+use aimer::macros::{unique_key, widget};
 use aimer::provider::media_query::MediaQuery;
 use aimer::style::*;
 use aimer::*;
-use std::time::Duration;
 
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
-    console_error_panic_hook::set_once();
     AimerApp::start(HomePage {})
 }
 
 #[widget(Stateless)]
+#[derive(Clone)]
 struct HomePage {}
 
-fn app_padding(ctx: &BuildContext) -> LayoutSpacing {
-    let window_size = MediaQuery::of(ctx).size;
-    // info!("window size: {:?}", window_size);
+fn app_padding(_: &BuildContext) -> LayoutSpacing {
     let horizontal_padding = 20f64;
     LayoutSpacing!(
         left: horizontal_padding,
@@ -31,12 +29,14 @@ fn app_padding(ctx: &BuildContext) -> LayoutSpacing {
     )
 }
 
-
 fn is_mobile(ctx: &BuildContext) -> bool {
     let window_size = MediaQuery::of(ctx).size;
     window_size.width < 600f32
 }
 
+fn resp_position(ctx: &BuildContext, wide: f32, slim: f32) -> Dimension {
+    if is_mobile(ctx) { Percent(slim) } else { Percent(wide) }
+}
 
 fn mobile_title(ctx: &BuildContext) -> u32 {
     if is_mobile(ctx) { 30 } else { 44 }
@@ -47,6 +47,7 @@ impl StatelessWidget for HomePage {
         Container!(
             // color: Color::GREEN,
             child: Scrollable!(
+                key: unique_key!(),
                 axis: ScrollAxis::Vertical,
                 // horizontal_scroll_bar: ScrollBar!(),
                 child: Column!(
@@ -54,7 +55,8 @@ impl StatelessWidget for HomePage {
                         hero_section(ctx),
                         why_aimer_section(ctx),
                         polished_tooling_section(ctx),
-                        same_looking_section(ctx),
+                        SameLookingSection!(),
+                        //--------------
 
                     ]
                 )
@@ -66,7 +68,6 @@ impl StatelessWidget for HomePage {
 /// The hero section: a large underlined `Aimer` title, a tagline paragraph,
 /// a `Get Started` button and a version label on a white background.
 fn hero_section(ctx: &BuildContext) -> Box<dyn Widget> {
-    let string = String::from("Aimer");
     Container!(
         padding: app_padding(ctx),
         color: Colors::White,
@@ -75,7 +76,7 @@ fn hero_section(ctx: &BuildContext) -> Box<dyn Widget> {
             children: [
                 SizedBox!(height: 24),
                 Text!(
-                    string.as_str(),
+                    "Aimer",
                     text_style: TextStyle!(
                         font_size: 72,
                         color: Colors::Black,
@@ -83,12 +84,29 @@ fn hero_section(ctx: &BuildContext) -> Box<dyn Widget> {
                         text_decoration: TextDecoration::Underline,
                     )
                 ),
+
+                SizedBox!(height: 8),
+
+                Text!(
+                    "“Aimer, c’est choisir avec le cœur „",
+                    text_style: TextStyle!(
+                        font_size: 20,
+                        color: Color::GRAY.with_opacity(120),
+                        font_weight: FontWeight::Normal,
+                        text_decoration: TextDecoration!(
+                            line: TextDecorationLine::ITALIC,
+                            style: TextDecorationStyle::Dashed,
+                        ),
+                    )
+                ),
+
+
                 SizedBox!(height: 24),
                 Text!(
                     "A cross-platform UI framework built with Rust, inspired by Flutter's widget model. Build native user interfaces from a single codebase using a declarative, composable widget tree.",
                     text_style: TextStyle!(
                         font_size: 22,
-                        color: Colors::Gray,
+                        color: Color::BLACK.with_opacity(200),
                         text_overflow: TextOverflow::Wrap
                     ),
                 ),
@@ -125,29 +143,36 @@ fn word(text: &str, bold: bool) -> Box<dyn Widget> {
         text_style: TextStyle!(
             font_size: 16,
             color: if bold { Color::Basic(Colors::White) } else { Color::Rgb(180, 180, 180) },
-            font_weight: if bold { FontWeight::Bold } else { FontWeight::Bolder },
+            font_weight: if bold { FontWeight::Bolder } else { FontWeight::Normal },
         )
     )
 }
 
 /// A feature block: a bold white title above a body of inline-emphasized text.
-fn feature_block(title: &str, body: Box<dyn Widget>) -> Box<dyn Widget> {
-    Container!(
-        margin: LayoutSpacing!(bottom: Spacing::Px(34)),
-        child: Column!(
-            horizontal_alignment: BoxAlignment::Start,
-            children: [
-                Text!(
-                    title.to_string(),
-                    text_style: TextStyle!(
-                        font_size: 24,
-                        color: Colors::White,
-                        font_weight: FontWeight::Bold,
-                    )
-                ),
-                SizedBox!(height: 10),
-                body,
-            ]
+fn feature_block(title: &str, body: Box<dyn Widget>, top: impl Into<Dimension>, left: impl Into<Dimension>) -> Box<dyn Widget> {
+    Positioned!(
+        top: top,
+        left: left,
+        child: Container!(
+            // width: 250,
+            // height: 100,
+            // color: Color::WHITE.with_opacity(5),
+            margin: LayoutSpacing!(bottom: Spacing::Px(14)),
+            child: Column!(
+                horizontal_alignment: BoxAlignment::Start,
+                children: [
+                    Text!(
+                        title.to_string(),
+                        text_style: TextStyle!(
+                            font_size: 24,
+                            color: Colors::White,
+                            font_weight: FontWeight::Bold,
+                        )
+                    ),
+                    SizedBox!(height: 10),
+                    body,
+                ]
+            )
         )
     )
 }
@@ -156,7 +181,9 @@ fn feature_block(title: &str, body: Box<dyn Widget>) -> Box<dyn Widget> {
 /// and five feature blocks laid out in two columns with bold inline words.
 fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
     Container!(
-        box_decoration: BoxDecoration!(background_color: Colors::Black),
+        box_decoration: BoxDecoration!(
+            background_color: Color::BLACK
+        ),
         padding: app_padding(ctx),
         child: Column!(
             horizontal_alignment: BoxAlignment::Start,
@@ -171,15 +198,10 @@ fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
                     )
                 ),
                 SizedBox!(height: 48),
-                // The two feature columns are layered inside a Stack and placed
-                // with Positioned: the first column is anchored to the left edge
-                // and the second is offset to the horizontal centre. The Stack is
-                // wrapped in a fixed-height Container because Positioned children
-                // do not contribute to the Stack's intrinsic size.
                 Container!(
-                    height: Dimension::Px(600.0),
-                    child: Column!(
-                        horizontal_alignment: BoxAlignment::Start,
+                    height: Dimension::Px(500.0),
+                    child: Stack!(
+                        // horizontal_alignment: BoxAlignment::Start,
                         children: [
                             feature_block(
                                 "Type Safety",
@@ -197,7 +219,9 @@ fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
                                             word(".", false),
                                         ]),
                                     ]
-                                )
+                                ),
+                                resp_position(ctx, 16.0, 3.0),
+                                resp_position(ctx, 12.0, 0.0)
                             ),
                             feature_block(
                                 "Mobile & Desktop",
@@ -223,7 +247,9 @@ fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
                                             word(" soon.", false),
                                         ]),
                                     ]
-                                )
+                                ),
+                                 resp_position(ctx, 45.0, 23.0),
+                                resp_position(ctx, 2.0, 0.0)
                             ),
                             feature_block(
                                 "Performance",
@@ -233,7 +259,9 @@ fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
                                     word(" & ", false),
                                     word("wgpu", true),
                                     word(".", false),
-                                ])
+                                ]),
+                                resp_position(ctx, 72.0, 46.0),
+                                resp_position(ctx, 32.0, 0.0)
                             ),
                             feature_block(
                                 "Crates",
@@ -241,7 +269,9 @@ fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
                                     word("Modular crates, available on ", false),
                                     word("crates.io", true),
                                     word(".", false),
-                                ])
+                                ]),
+                                resp_position(ctx, 34.0, 63.0),
+                                resp_position(ctx, 52.0, 0.0)
                             ),
                             feature_block(
                                 "Consistence Looking",
@@ -256,7 +286,9 @@ fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
                                             word("everywhere it runs.", false),
                                         ]),
                                     ]
-                                )
+                                ),
+                                resp_position(ctx, 2.0, 78.0),
+                                resp_position(ctx, 52.0, 0.0)
                             ),
                         ]
                     )
@@ -298,79 +330,6 @@ fn polished_tooling_section(ctx: &BuildContext) -> Box<dyn Widget> {
                 ),
 
                 SizedBox!(height: 48)
-            ]
-        )
-    )
-}
-
-/// A small window-control dot for the browser-mock title bar.
-fn window_dot(color: Color) -> Box<dyn Widget> {
-    Box::new(Container!(
-        width: Dimension::Px(12.0),
-        height: Dimension::Px(12.0),
-        margin: LayoutSpacing!(left: Spacing::Px(8)),
-        box_decoration: BoxDecoration!(
-            background_color: color,
-            border_radius: (6, 6, 6, 6),
-        ),
-        child: SizedBox!()
-    ))
-}
-
-/// A platform name in the footer row; the active platform (`Web`) is bold/black.
-fn platform_label(text: &str, active: bool) -> Box<dyn Widget> {
-    Text!(
-        text.to_string(),
-        text_style: TextStyle!(
-            font_size: if active {28} else {18},
-            color: if active { Color::Basic(Colors::Black) } else { Color::Rgb(150, 150, 150) },
-            font_weight: if active { FontWeight::Bolder } else { FontWeight::Normal },
-        )
-    )
-}
-
-/// The `Same Looking Everywhere` section: an underlined heading, a rounded
-/// browser-mock frame embedding the live counter demo and a platform row.
-fn same_looking_section(ctx: &BuildContext) -> Box<dyn Widget> {
-    Container!(
-        color: Colors::White,
-        padding: app_padding(ctx),
-        child: Column!(
-            horizontal_alignment: BoxAlignment::Center,
-            children: [
-                Container!(
-                    height: 100,
-                    child: Text!(
-                        "Consistence Looking",
-                        text_style: TextStyle!(
-                            font_size: mobile_title(ctx),
-                            color: Colors::Black,
-                            font_weight: FontWeight::Bolder,
-                            text_decoration: TextDecoration::Underline,
-                        )
-                    ),
-                ),
-                SizedBox!(height: 24),
-                Container!(
-                    height: if is_mobile(ctx) { 250 } else { 450 },
-                    child: AssetImage!(
-                        "assets/web_screenshot.png",
-                    )
-                ),
-                SizedBox!(height: 40),
-                Row!(
-                    horizontal_alignment: BoxAlignment::Center,
-                    vertical_alignment: BoxAlignment::Center,
-                    gaps: LayoutSpacing::horizontal(Spacing::Px(8)),
-                    children: [
-                        platform_label("macOS", false),
-                        platform_label("iOS", false),
-                        platform_label("Web", true),
-                        platform_label("Android", false),
-                        platform_label("Windows", false),
-                    ]
-                ),
-                SizedBox!(height: 40),
             ]
         )
     )

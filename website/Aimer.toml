@@ -10,5 +10,8 @@ group = "com.example.jaime"
 files = [
     "assets/polished_tooling.png",
     "assets/web_screenshot.png",
+    "assets/ios_screenshot.png",
+    "assets/macos_screenshot.png",
+    "assets/android_screenshot.png",
     "assets/github-svgrepo-com.png"
 ]
