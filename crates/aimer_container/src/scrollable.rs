@@ -113,6 +113,8 @@ impl<W: Widget> Widget for Scrollable<W> {
                 active_touch_id: Cell::new(None),
                 spring_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
                 momentum_start_time: Cell::new(None),
+                vel_accum: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+                vel_sample_time: Cell::new(None),
             },
             vertical_scroll_bar: self.vertical_scroll_bar.clone(),
             horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),

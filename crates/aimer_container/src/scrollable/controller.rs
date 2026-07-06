@@ -123,6 +123,14 @@ pub struct ScrollController {
     /// touch release).  Used to hard-cap the glide at
     /// [`MAX_MOMENTUM_DURATION_S`] so it doesn't creep for 15–20 s.
     pub(crate) momentum_start_time: Cell<Option<Instant>>,
+    /// Finger delta accumulated since the last emitted drag-velocity sample.
+    /// Coalesced same-frame pointer moves (web) fold in here instead of each
+    /// producing its own inflated sample; flushed once a real time slice
+    /// ([`VELOCITY_SAMPLE_MIN_DT`]) has elapsed.
+    pub(crate) vel_accum: Cell<Vec2d>,
+    /// Wall-clock instant of the last emitted drag-velocity sample, or `None`
+    /// before the first sample of a gesture.
+    pub(crate) vel_sample_time: Cell<Option<Instant>>,
 }
 
 impl ScrollController {
@@ -302,6 +310,44 @@ impl ScrollController {
     /// Clear the velocity history (e.g. on pointer-down).
     pub(crate) fn clear_velocity_history(&self) {
         self.velocity_history.borrow_mut().clear();
+    }
+
+    /// Fold a raw drag delta (already scaled by `speed_multiplier`) into the
+    /// velocity accumulator and, once a real time slice ([`VELOCITY_SAMPLE_MIN_DT`])
+    /// has elapsed since the last sample, emit the averaged drag velocity
+    /// (px per 120 Hz-frame, both axes) together with that slice's `dt`.
+    /// Returns `None` while the delta is still being accumulated within the
+    /// current slice.
+    ///
+    /// This merges the burst of *coalesced* same-`Instant` pointer moves that
+    /// web delivers per native `pointermove` into one realistic velocity sample,
+    /// instead of letting each tiny sub-delta / ~0 dt inflate the release fling
+    /// (~3x too fast on touch). Native, delivering one move per frame, emits on
+    /// every call. The offset is still updated per-event by the caller, so
+    /// dragging stays 1:1.
+    pub(crate) fn accumulate_drag_velocity(&self, dx: f32, dy: f32, now: Instant) -> Option<(Vec2d, f32)> {
+        let mut accum = self.vel_accum.get();
+        accum.x += dx;
+        accum.y += dy;
+
+        let sample_dt = self
+            .vel_sample_time
+            .get()
+            .map(|t| now.duration_since(t).as_secs_f32())
+            .unwrap_or(FRAME_REF_120);
+
+        if sample_dt >= VELOCITY_SAMPLE_MIN_DT {
+            self.vel_accum.set(Vec2d { x: 0.0, y: 0.0 });
+            self.vel_sample_time.set(Some(now));
+            let velocity = Vec2d {
+                x: (accum.x / sample_dt) * FRAME_REF_120,
+                y: (accum.y / sample_dt) * FRAME_REF_120,
+            };
+            Some((velocity, sample_dt))
+        } else {
+            self.vel_accum.set(accum);
+            None
+        }
     }
 
     /// Cancel any active cubic-bézier release fling.
@@ -734,6 +780,8 @@ mod tests {
             active_touch_id: Cell::new(None),
             spring_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             momentum_start_time: Cell::new(None),
+            vel_accum: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            vel_sample_time: Cell::new(None),
         }
     }
 
@@ -755,6 +803,63 @@ mod tests {
         assert_eq!(fresh.scroll_offset.get().y, 150.0);
         assert_eq!(fresh.pointer_velocity.get().y, -12.0);
         assert_eq!(fresh.spring_velocity.get().y, -200.0);
+    }
+
+    // Coalesced-events contract (the web "scroll too fast" bug): winit delivers
+    // one native `pointermove` on web as a BURST of coalesced samples that all
+    // read the same `Instant`. A naive per-sample `delta / dt` divides a tiny
+    // sub-delta by a ~0 dt, so the release-fling velocity explodes (~Nx the real
+    // finger speed for N coalesced samples). `accumulate_drag_velocity` folds a
+    // whole frame's coalesced sub-samples into ONE realistic value, so a drag fed
+    // as many fine same-instant sub-moves yields the same steady velocity as the
+    // identical travel fed as one coarse move per frame — NOT an inflated one.
+    #[test]
+    fn coalesced_moves_match_coarse_drag_velocity() {
+        use std::time::Duration;
+
+        let frame = Duration::from_millis(16); // ~60 Hz
+        let t0 = Instant::now();
+        let travel_per_frame = 16.0_f32; // px moved each frame
+        let frames = 6;
+        let sub = 8; // coalesced sub-samples per frame on web
+
+        // Native path: one move per frame.
+        let native = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
+        let mut last_native = Vec2d { x: 0.0, y: 0.0 };
+        let mut t = t0;
+        for _ in 0..frames {
+            if let Some((v, _)) = native.accumulate_drag_velocity(0.0, travel_per_frame, t) {
+                last_native = v;
+            }
+            t += frame;
+        }
+
+        // Web path: the SAME travel each frame, split into `sub` coalesced
+        // sub-moves that all share the frame's instant.
+        let web = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
+        let mut last_web = Vec2d { x: 0.0, y: 0.0 };
+        let mut t = t0;
+        let step = travel_per_frame / sub as f32;
+        for _ in 0..frames {
+            for _ in 0..sub {
+                if let Some((v, _)) = web.accumulate_drag_velocity(0.0, step, t) {
+                    last_web = v;
+                }
+            }
+            t += frame;
+        }
+
+        // Steady-state velocities must match (both = travel / frame time); the
+        // coalesced burst is not inflated by the number of sub-samples.
+        assert!(
+            (last_web.y - last_native.y).abs() < 0.5,
+            "coalesced web velocity {} must match coarse native velocity {} (not inflated)",
+            last_web.y,
+            last_native.y
+        );
+        // Guard the direction of the bug: the fix must not let the web value run
+        // away above the real per-frame speed.
+        assert!(last_web.y <= last_native.y * 1.2 + 0.5);
     }
 
     // Small reverse-flick contract: the release fling reads `smoothed_velocity()`,

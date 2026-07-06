@@ -4,7 +4,6 @@ use crate::ScrollAxis;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
-use aimer_utils::info;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, EventElement, LayoutElement, VisitorElement};
 use web_time::Instant;
@@ -269,6 +268,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
                 self.ctrl.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
                 self.ctrl.clear_velocity_history();
+                // Reset the velocity-sampling accumulator so a fresh gesture
+                // doesn't inherit stale coalesced delta / timing.
+                self.ctrl.vel_accum.set(Vec2d { x: 0.0, y: 0.0 });
+                self.ctrl.vel_sample_time.set(None);
                 // A fresh touch/click stops the in-flight release fling.
                 self.ctrl.cancel_fling();
                 self.ctrl.momentum_start_time.set(None);
@@ -337,77 +340,79 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
                         let dy = (p.y - last.y) * speed_multiplier;
 
-                        let mut new_velocity = match mode {
-                            DragMode::Content => match self.ctrl.axis {
-                                ScrollAxis::Vertical => Vec2d { x: 0.0, y: dy },
-                                ScrollAxis::Horizontal => Vec2d { x: dx, y: 0.0 },
-                            },
-                            _ => Vec2d { x: 0.0, y: 0.0 },
-                        };
-
                         let now = Instant::now();
-                        let dt = self.ctrl
-                            .last_event_time
-                            .get()
-                            .map(|t| now.duration_since(t).as_secs_f32())
-                            .unwrap_or(FRAME_REF_120)
-                            .max(MIN_MOVE_DT);
                         self.ctrl.last_event_time.set(Some(now));
 
-                        let frame_ref = FRAME_REF_120;
-                        new_velocity.x = (new_velocity.x / dt) * frame_ref;
-                        new_velocity.y = (new_velocity.y / dt) * frame_ref;
+                        // Turn the finger delta into a drag-velocity sample, but only
+                        // once a real slice of wall-clock time has elapsed. On web,
+                        // winit delivers one native `pointermove` as a burst of
+                        // *coalesced* samples dispatched in a single callback that all
+                        // read (almost) the same `Instant`; a naive per-sample
+                        // `delta / dt` then divides a small delta by a ~0 dt and the
+                        // velocity explodes, so the release fling launches ~3x too fast
+                        // on touch. `accumulate_drag_velocity` merges those same-frame
+                        // samples into one realistic value. The scroll *offset* below
+                        // still updates on every event, so dragging stays 1:1 and
+                        // smooth on both targets — only the fling seed is corrected.
+                        if let Some((raw_velocity, sample_dt)) = self.ctrl.accumulate_drag_velocity(dx, dy, now) {
+                            let mut new_velocity = match mode {
+                                DragMode::Content => match self.ctrl.axis {
+                                    ScrollAxis::Vertical => Vec2d { x: 0.0, y: raw_velocity.y },
+                                    ScrollAxis::Horizontal => Vec2d { x: raw_velocity.x, y: 0.0 },
+                                },
+                                _ => Vec2d { x: 0.0, y: 0.0 },
+                            };
 
-                        let mut old_velocity = self.ctrl.pointer_velocity.get();
-                        // Direction-reversal guard: if a new drag pushes AGAINST
-                        // leftover fling velocity (a fresh scroll started before the
-                        // previous momentum settled), drop the residual on that axis
-                        // instead of blending it in. Otherwise the opposing momentum
-                        // is averaged into the fresh drag and the content briefly
-                        // travels the OLD way before the new direction wins — the
-                        // "wrong direction" jump seen on touch. `new_velocity` holds
-                        // the fresh per-frame drag velocity here (the blend below
-                        // overwrites it), so a negative product means the finger now
-                        // moves opposite to the coasting momentum.
-                        let reversed_x = new_velocity.x * old_velocity.x < 0.0;
-                        let reversed_y = new_velocity.y * old_velocity.y < 0.0;
-                        if reversed_x || reversed_y {
-                            // Also drop the stale opposite-direction samples from the
-                            // velocity ring buffer BEFORE recording the new one. The
-                            // release fling is seeded from `smoothed_velocity()`, a
-                            // weighted average over the buffer. On a SMALL reverse
-                            // flick only 1–2 new samples are pushed, so the buffer
-                            // stays dominated by up to VELOCITY_HISTORY_SIZE prior
-                            // old-direction samples and that average — hence the
-                            // release fling — still points the OLD way. Clearing here
-                            // makes the release reflect only post-reversal motion.
-                            self.ctrl.clear_velocity_history();
-                            if reversed_x {
-                                old_velocity.x = 0.0;
+                            let mut old_velocity = self.ctrl.pointer_velocity.get();
+                            // Direction-reversal guard: if a new drag pushes AGAINST
+                            // leftover fling velocity (a fresh scroll started before the
+                            // previous momentum settled), drop the residual on that axis
+                            // instead of blending it in. Otherwise the opposing momentum
+                            // is averaged into the fresh drag and the content briefly
+                            // travels the OLD way before the new direction wins — the
+                            // "wrong direction" jump seen on touch. `new_velocity` holds
+                            // the fresh per-frame drag velocity here (the blend below
+                            // overwrites it), so a negative product means the finger now
+                            // moves opposite to the coasting momentum.
+                            let reversed_x = new_velocity.x * old_velocity.x < 0.0;
+                            let reversed_y = new_velocity.y * old_velocity.y < 0.0;
+                            if reversed_x || reversed_y {
+                                // Also drop the stale opposite-direction samples from the
+                                // velocity ring buffer BEFORE recording the new one. The
+                                // release fling is seeded from `smoothed_velocity()`, a
+                                // weighted average over the buffer. On a SMALL reverse
+                                // flick only 1–2 new samples are pushed, so the buffer
+                                // stays dominated by up to VELOCITY_HISTORY_SIZE prior
+                                // old-direction samples and that average — hence the
+                                // release fling — still points the OLD way. Clearing here
+                                // makes the release reflect only post-reversal motion.
+                                self.ctrl.clear_velocity_history();
+                                if reversed_x {
+                                    old_velocity.x = 0.0;
+                                }
+                                if reversed_y {
+                                    old_velocity.y = 0.0;
+                                }
                             }
-                            if reversed_y {
-                                old_velocity.y = 0.0;
-                            }
+
+                            // Record the drag velocity so that releasing the finger
+                            // (PointerUp) can fling with momentum. The release path uses
+                            // `smoothed_velocity()`, which reads from this history;
+                            // without this push the history stays empty for touch drags
+                            // (it is otherwise only filled by the trackpad `Scroll`
+                            // path), making the smoothed velocity zero and stopping the
+                            // scroll instantly on lift — notably on iOS.
+                            self.ctrl.push_velocity(new_velocity.x, new_velocity.y);
+
+                            let blend_factor = (sample_dt / DRAG_BLEND_WINDOW).min(1.0);
+                            let blend_new = (DRAG_BLEND_BASE * (1.0 - blend_factor) + blend_factor).min(1.0);
+                            let blend_old = 1.0 - blend_new;
+
+                            new_velocity.x = old_velocity.x * blend_old + new_velocity.x * blend_new;
+                            new_velocity.y = old_velocity.y * blend_old + new_velocity.y * blend_new;
+
+                            self.ctrl.pointer_velocity.set(new_velocity);
                         }
-
-                        // Record the instantaneous drag velocity so that releasing
-                        // the finger (PointerUp) can fling with momentum. The release
-                        // path uses `smoothed_velocity()`, which reads from this
-                        // history; without this push the history stays empty for
-                        // touch drags (it is otherwise only filled by the trackpad
-                        // `Scroll` path), making the smoothed velocity zero and
-                        // stopping the scroll instantly on lift — notably on iOS.
-                        self.ctrl.push_velocity(new_velocity.x, new_velocity.y);
-                        // info!("[scroll] MOVE velocity pushed=({:.2},{:.2}) dt={:.4}s mode={:?}", new_velocity.x, new_velocity.y, dt, mode);
-
-                        let blend_factor = (dt / DRAG_BLEND_WINDOW).min(1.0);
-                        let blend_new = (DRAG_BLEND_BASE * (1.0 - blend_factor) + blend_factor).min(1.0);
-                        let blend_old = 1.0 - blend_new;
-
-                        new_velocity.x = old_velocity.x * blend_old + new_velocity.x * blend_new;
-                        new_velocity.y = old_velocity.y * blend_old + new_velocity.y * blend_new;
-
-                        self.ctrl.pointer_velocity.set(new_velocity);
 
                         let mut offset = self.ctrl.scroll_offset.get();
                         let clamped = self.ctrl.clamp_offset(offset);
