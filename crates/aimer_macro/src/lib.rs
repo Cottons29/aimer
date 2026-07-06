@@ -325,8 +325,8 @@ pub fn drawable_element_derive(input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro]
-/// Generates a unique key for a widget.
-pub fn unique_key(input: TokenStream) -> TokenStream {
+/// Generates a unique key for a widget that needs to remember its state.
+pub fn key(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as UniqueKeyInput);
 
     let value = match input.prefix {

@@ -43,7 +43,7 @@ pub mod macros {
     pub use aimer_macro::WidgetConstructor;
     pub use aimer_macro::main;
     pub use aimer_macro::widget;
-    pub use aimer_macro::unique_key;
+    pub use aimer_macro::key;
 }
 
 // Styling re-export
