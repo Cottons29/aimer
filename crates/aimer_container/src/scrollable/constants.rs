@@ -17,6 +17,19 @@ pub const MIN_EVENT_DT: f32 = 0.005;
 /// Lower clamp for the delta time measured between pointer-move events.
 pub const MIN_MOVE_DT: f32 = 0.001;
 
+/// Minimum wall-clock slice (seconds) that must elapse before a fresh drag
+/// **velocity** sample is emitted from the accumulated finger delta.
+///
+/// On web, winit delivers one native `pointermove` as a burst of *coalesced*
+/// samples dispatched in a single callback that all read (almost) the same
+/// `Instant`. Computing velocity per sample then divides a small delta by a ~0
+/// dt, so the value explodes and the release fling launches far too fast on
+/// touch. Gating sampling on this slice makes same-frame coalesced samples
+/// accumulate into one realistic velocity, while native (one sample per frame,
+/// dt ≥ ~8 ms) keeps sampling every frame. Kept below a 120 Hz frame so it
+/// never throttles native input.
+pub const VELOCITY_SAMPLE_MIN_DT: f32 = FRAME_REF_120 * 0.5;
+
 /// Velocity magnitude (px/frame) below which momentum is considered stopped.
 pub const VELOCITY_EPSILON: f32 = 0.01;
 
