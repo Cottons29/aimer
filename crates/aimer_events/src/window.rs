@@ -58,7 +58,7 @@ where
     let _ = REDRAW_REQUESTER.set(Box::new(requester));
 }
 
-/// Request the next animation frame.
+/// Request the next frame render.
 ///
 /// Prefers the installed event-loop-driven requester (safe to call from within
 /// the draw cycle); falls back to `Window::request_redraw()` when none was
