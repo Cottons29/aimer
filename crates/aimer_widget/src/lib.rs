@@ -1,6 +1,7 @@
 mod attribute;
 pub mod components;
 pub mod key;
+pub mod page_storage;
 pub mod reconcile;
 mod widget;
 pub mod layout_cache;
