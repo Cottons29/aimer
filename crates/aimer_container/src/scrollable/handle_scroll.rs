@@ -1,6 +1,6 @@
+use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
 use crate::scrollable::constants::*;
-use crate::ScrollAxis;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
@@ -31,8 +31,13 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         }
 
         let pos = match event {
-            ElementEvent::PointerDown(p, _, _) | ElementEvent::PointerUp(p, _, _) | ElementEvent::PointerMove(p, _, _) | ElementEvent::Scroll{delta: p, ..} => *p,
-            ElementEvent::Cancel | ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } | ElementEvent::ImePreedit { .. } => Vec2d::default(),
+            ElementEvent::PointerDown(p, _, _)
+            | ElementEvent::PointerUp(p, _, _)
+            | ElementEvent::PointerMove(p, _, _)
+            | ElementEvent::Scroll { delta: p, .. } => *p,
+            ElementEvent::Cancel | ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } | ElementEvent::ImePreedit { .. } => {
+                Vec2d::default()
+            }
         };
 
         let mode_before = self.ctrl.drag_mode.get();
@@ -104,7 +109,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         }
 
         let we_consumed = match event {
-            ElementEvent::Scroll{delta, ..} => {
+            ElementEvent::Scroll { delta, .. } => {
                 let mut offset = self.ctrl.scroll_offset.get();
 
                 // println!("offset: {:?}", offset);
@@ -207,9 +212,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 // clear the stale state so the new touch can be accepted.
                 if let Some(prev_id) = self.ctrl.active_touch_id.get() {
                     if prev_id != *id {
-                        let stale = self.ctrl.last_event_time.get().is_none_or(|t| {
-                            Instant::now().duration_since(t).as_millis() > STALE_TOUCH_THRESHOLD_MS
-                        });
+                        let stale = self
+                            .ctrl
+                            .last_event_time
+                            .get()
+                            .is_none_or(|t| Instant::now().duration_since(t).as_millis() > STALE_TOUCH_THRESHOLD_MS);
                         if stale {
                             // info!("[scroll] DOWN stale touch cleared prev_id={}", prev_id);
                             self.ctrl.active_touch_id.set(None);
@@ -289,7 +296,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
                 let mut mode = self.ctrl.drag_mode.get();
                 #[allow(clippy::collapsible_if)]
-                if mode  == DragMode::Pending {
+                if mode == DragMode::Pending {
                     if let Some(start) = self.ctrl.last_pointer_pos.get() {
                         let dx = p.x - start.x;
                         let dy = p.y - start.y;
@@ -538,28 +545,30 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         child_consumed || we_consumed
     }
 
-    fn event_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
-
-
+    fn event_children<'a>(&'a self, _: &mut dyn FnMut(&'a dyn Element)) {}
 }
 
 impl<E: Element> VisitorElement for RawScrollableContainer<E> {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(&self.child);
+    }
+
     fn debug_name(&self) -> &'static str {
         "RawScrollableContainer"
     }
 }
 
 impl<E: Element> LayoutElement for RawScrollableContainer<E> {
-     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-         ResolvedSize { width: ctx.box_constraint.max_width, height: ctx.box_constraint.max_height }
-     }
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        ResolvedSize { width: ctx.box_constraint.max_width, height: ctx.box_constraint.max_height }
+    }
 
-     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-         let mut child_ctx = ctx.clone();
-         match self.ctrl.axis {
-             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
-             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
-         }
-         self.child.computed_size(&child_ctx)
-     }
- }
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        let mut child_ctx = ctx.clone();
+        match self.ctrl.axis {
+            ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
+            ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
+        }
+        self.child.computed_size(&child_ctx)
+    }
+}

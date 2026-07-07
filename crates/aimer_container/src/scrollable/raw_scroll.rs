@@ -195,15 +195,6 @@ impl<E: Element + 'static> Reconcilable for RawScrollableContainer<E> {
     fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
         if let Some(new) = new_element.as_any().downcast_ref::<RawScrollableContainer<E>>() {
             new.ctrl.adopt_scroll_state(&self.ctrl);
-            // Continue the carry-over walk into the child the scrollable owns, so a
-            // nested StatefulElement runs `adopt_state_from` instead of being replaced
-            // by a fresh `create_state()` on an ancestor rebuild (e.g. window resize).
-            // `event_children` stays empty (event dispatch treats the scrollable as a
-            // leaf); reconciliation reaches the child here instead.
-            //
-            // ponytail: positional single child, so a direct `try_update_element` is
-            // enough — no child list to pair up. Upgrade path: loop if the scrollable
-            // ever owns more than one child.
             try_update_element(&self.child, &new.child, ctx);
         }
         false
