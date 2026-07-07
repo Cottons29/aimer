@@ -3,13 +3,14 @@ use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconci
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
+use aimer_events::window::request_animation_frame;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::cell::{Cell, UnsafeCell};
 use std::panic::Location;
 use std::process::exit;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use winit::window::Window;
+use aimer_utils::error;
 
 /// A `Send + Sync` wrapper around `UnsafeCell<Box<dyn Element>>`.
 /// Safety: the rendering pipeline is single-threaded, so concurrent access does not occur.
@@ -56,7 +57,6 @@ struct StateUpdaterInner<S> {
     /// Shared state for synchronous reads on the render thread.
     state: Rc<SyncState<S>>,
     dirty: Rc<Cell<bool>>,
-    window: &'static Window,
 }
 
 impl<S> Clone for StateUpdater<S> {
@@ -66,7 +66,6 @@ impl<S> Clone for StateUpdater<S> {
                 tx: inner.tx.clone(),
                 state: inner.state.clone(),
                 dirty: inner.dirty.clone(),
-                window: inner.window,
             }),
         }
     }
@@ -75,19 +74,20 @@ impl<S> Clone for StateUpdater<S> {
 impl<S: 'static> StateUpdater<S> {
     /// Create a new `StateUpdater` from a channel sender, shared state, and a dirty flag.
     #[inline]
-    fn with(tx: Sender<StateMutation<S>>, state: Rc<SyncState<S>>, dirty: Rc<Cell<bool>>, window: &'static Window) -> Self {
-        Self { inner: Some(StateUpdaterInner { tx, state, dirty, window }) }
+    fn with(tx: Sender<StateMutation<S>>, state: Rc<SyncState<S>>, dirty: Rc<Cell<bool>>) -> Self {
+        Self { inner: Some(StateUpdaterInner { tx, state, dirty }) }
     }
 
+    #[track_caller]
     pub fn read_state(&self) -> &S {
-        unsafe {
-            &*self
-                .inner
-                .as_ref()
-                .map(|inner| inner.state.clone())
-                .unwrap()
-                .0
-                .get()
+        match self.inner.as_ref().map(|inner| inner.state.clone()) {
+            Some(state) => unsafe { &*state.0.get() },
+            None => {
+                let loc = Location::caller();
+                error!("Attempted to read state from an uninitialized StateUpdater");
+                self.beautiful_error(loc);
+                exit(1)
+            }
         }
     }
 
@@ -155,7 +155,6 @@ impl<S: 'static> StateUpdater<S> {
             Some(inner) => inner,
             None => {
                 let loc = Location::caller();
-                #[cfg(not(target_os = "ios"))]
                 self.beautiful_error(loc);
                 exit(1);
             }
@@ -165,7 +164,7 @@ impl<S: 'static> StateUpdater<S> {
         // Only request a redraw if this is the first set_state since the last rebuild.
         // This coalesces multiple set_state calls into a single redraw request.
         if !inner.dirty.replace(true) {
-            inner.window.request_redraw();
+            request_animation_frame()
         }
     }
 
@@ -218,14 +217,11 @@ impl<S: 'static> StateUpdater<S> {
 
     #[inline]
     fn beautiful_error(&self, loc: &Location) {
-        #[cfg(not(target_os = "ios"))]
-        #[cfg(not(target_arch = "wasm32"))]
         {
             use colored::Colorize;
             const BRACE: &str = "{";
-            println!(
-                "{}: State is not initialized
-  {} {}:{}
+            error!(
+                "State is not initialized and trying to read or update at {}:{}
    {}
    {} impl State<YourStatefulWidget> for YourWidgetState {BRACE}
    {}
@@ -234,13 +230,11 @@ impl<S: 'static> StateUpdater<S> {
    {}             Self: Sized,
    {}         {{
    {}             self.updater = _updater;
-   {}             {} override this method to set the updater
+   {}             {}
    {}         }}
    {}
    {}: call `self.updater = _updater` inside `init_state`
 ",
-                "error".red().bold(),
-                "-->".blue().bold(),
                 loc.file(),
                 loc.line(),
                 "|".blue(),
@@ -252,9 +246,9 @@ impl<S: 'static> StateUpdater<S> {
                 "|".blue(),
                 "|".blue(),
                 "|".blue(),
+                "^^^^^^^^^^^^^^^^^^^^^^^^^ add this line to prevent panic".red().bold(),
                 "|".blue(),
                 "|".blue(),
-                "              ^^^^^^^^^^^^^^^^^^^^^^^^^".red().bold(),
                 "help".yellow().bold(),
             );
         }
@@ -338,7 +332,7 @@ impl StatefulElement {
         let state_cell = Rc::new(SyncState(UnsafeCell::new(state)));
 
         // Create the updater and pass it into init_state.
-        let init_updater = StateUpdater::with(tx.clone(), state_cell.clone(), dirty.clone(), ctx.window);
+        let init_updater = StateUpdater::with(tx.clone(), state_cell.clone(), dirty.clone());
 
         {
             // Safety: single-threaded — we are the only accessor during construction.
@@ -364,7 +358,7 @@ impl StatefulElement {
             Widget::to_element(&s.build(ctx), ctx)
         };
 
-        let updater = StateUpdater::with(tx, state_cell, dirty.clone(), ctx.window);
+        let updater = StateUpdater::with(tx, state_cell, dirty.clone());
 
         let element = StatefulElement {
             child: SyncChild(UnsafeCell::new(child)),
@@ -460,7 +454,7 @@ impl StatefulElement {
     /// Called by `update_from_widget` when a parent's reconciliation replaces an
     /// entire subtree — without this, a freshly-constructed `StatefulElement`
     /// (with `current_index: 0`) would shadow the live one (with `current_index: 2`).
-    fn adopt_state_from(&self, old: &StatefulElement) {
+    pub(crate) fn adopt_state_from(&self, old: &StatefulElement) {
         // Safety: called only from `update_from_widget` during single-threaded
         // reconciliation, before the new element is visible to any other code.
         unsafe {

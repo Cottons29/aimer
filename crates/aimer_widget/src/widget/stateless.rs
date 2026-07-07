@@ -214,11 +214,11 @@ impl VisitorElement for StatelessElement {
 }
 
 impl Reconcilable for StatelessElement {
-    fn as_any(&self) -> &dyn std::any::Any { self }
-
     fn key(&self) -> Option<crate::key::Key> {
         self.key.clone()
     }
+
+    fn as_any(&self) -> &dyn std::any::Any { self }
 
     fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
         // StatelessElement preserves its wrapper identity.
