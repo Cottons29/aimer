@@ -1,9 +1,7 @@
-use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
-use crate::scrollable::constants::VELOCITY_EPSILON;
+use crate::ScrollAxis;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_utils::info;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Drawable, Element, LayoutElement};
 
@@ -66,11 +64,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // Write-back: persist the live position so a full teardown/re-create can
         // restore it (see `scroll_storage`). Stored in logical (unscaled) pixels
         // to survive a scale change. Only when the user opted in via `storage_key`.
-        if let Some(ref key) = self.ctrl.storage_key
-            && ctx.scale > 0.0
-        {
-            crate::scrollable::scroll_storage::save_offset(key, Vec2d { x: offset.x / ctx.scale, y: offset.y / ctx.scale });
-        }
+        crate::scrollable::scroll_storage::save_offset(&self.ctrl.storage_key, Vec2d { x: offset.x / ctx.scale, y: offset.y / ctx.scale });
 
         let offset = self.ctrl.visual_offset(offset);
 

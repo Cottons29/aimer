@@ -79,7 +79,7 @@ pub struct ScrollController {
     pub(crate) scroll_offset: Cell<Vec2d>,
     /// `PageStorage`-style key this scrollable saves its live offset under, so a
     /// full teardown/re-create restores the position. `None` = not remembered.
-    pub(crate) storage_key: Option<Key>,
+    pub(crate) storage_key: Key,
     pub(crate) last_pointer_pos: Cell<Option<Vec2d>>,
     pub(crate) drag_mode: Cell<DragMode>,
     pub(crate) cached_max_scroll: Cell<Vec2d>,
@@ -747,13 +747,14 @@ impl ScrollController {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    use aimer_macro::key;
 
     fn ctrl_with_offset(offset: Vec2d) -> ScrollController {
         ScrollController {
             scroll_behavior: ScrollBehavior::default(),
             axis: ScrollAxis::Vertical,
             scroll_offset: Cell::new(offset),
-            storage_key: None,
+            storage_key: key!(),
             last_pointer_pos: Cell::new(None),
             drag_mode: Cell::new(DragMode::None),
             cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),

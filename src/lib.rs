@@ -25,11 +25,14 @@ pub use aimer_text::Text;
 pub use aimer_assets::*;
 pub use aimer_assets::img_widget::image_widget::Image;
 pub use aimer_assets::img_widget::source::ImageSource;
+pub use aimer_widget::Key;
+pub use aimer_macro::key;
 
 pub mod widget {
     pub use aimer_widget::Widget;
     pub use aimer_widget::base::BuildContext;
     pub use aimer_widget::*;
+
     pub use aimer_widget::{State, StatefulWidget, StatelessWidget};
 }
 

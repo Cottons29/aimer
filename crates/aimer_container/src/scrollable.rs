@@ -13,9 +13,9 @@ pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
 
 use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
-use aimer_attribute::position::Vec2d;
 use aimer_attribute::CacheBounds;
-use aimer_macro::WidgetConstructor;
+use aimer_attribute::position::Vec2d;
+use aimer_macro::{key, WidgetConstructor};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, Key, Widget};
 use std::cell::Cell;
@@ -35,11 +35,9 @@ pub struct Scrollable<W: Widget + 'static> {
     /// saved under this key and restored if the `Scrollable` is fully torn down
     /// and later re-created (e.g. a swapped tab). `None` = not remembered across
     /// teardown (rebuild/resize is still preserved via reconciliation).
-    #[constructor(default)]
-    pub key: Option<Key>,
+    #[constructor(default = key!())]
+    pub key: Key,
 }
-
-
 
 impl<W: Widget> Widget for Scrollable<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
@@ -55,15 +53,9 @@ impl<W: Widget> Widget for Scrollable<W> {
         // full teardown) keyed by `storage_key`; otherwise fall back to the declared
         // `scroll_behavior.scroll_offset`. Stored offsets are logical (unscaled), so
         // re-apply `ctx.scale` here just like the declared offset below.
-        let initial_offset = self
-            .key
-            .as_ref()
-            .and_then(scroll_storage::read_offset)
+        let initial_offset = scroll_storage::read_offset(&self.key)
             .map(|logical| Vec2d { x: logical.x * ctx.scale, y: logical.y * ctx.scale })
-            .unwrap_or(Vec2d {
-                x: self.scroll_behavior.scroll_offset.x * ctx.scale,
-                y: self.scroll_behavior.scroll_offset.y * ctx.scale,
-            });
+            .unwrap_or(Vec2d { x: self.scroll_behavior.scroll_offset.x * ctx.scale, y: self.scroll_behavior.scroll_offset.y * ctx.scale });
 
         Box::new(RawScrollableContainer {
             child: self.child.to_element(&child_ctx),
