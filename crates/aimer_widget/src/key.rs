@@ -35,6 +35,21 @@ pub enum Key {
     Static(&'static str),
 }
 
+/// Ergonomic conversions so callers can pass a bare string literal or `String`
+/// wherever a `Key` is expected (e.g. `page_storage::read_or("my-tab", 0)`),
+/// producing the common equality-based [`Key::Value`].
+impl From<&str> for Key {
+    fn from(s: &str) -> Self {
+        Key::Value(s.to_owned())
+    }
+}
+
+impl From<String> for Key {
+    fn from(s: String) -> Self {
+        Key::Value(s)
+    }
+}
+
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 impl Key {
