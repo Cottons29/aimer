@@ -1,9 +1,9 @@
 use crate::reconcile::try_update_element;
-use crate::{base::*, Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget};
+use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget, base::*};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::cell::{Cell, UnsafeCell};
 use std::panic::Location;
 use std::process::exit;
@@ -28,6 +28,14 @@ unsafe impl Sync for SyncChild {}
 struct SyncState<S>(UnsafeCell<S>);
 unsafe impl<S: Send> Send for SyncState<S> {}
 unsafe impl<S: Send> Sync for SyncState<S> {}
+
+/// A `Sync` wrapper for the rebuild closure so `StatefulElement` can replace
+/// it during `adopt_state_from` (reconciliation) without requiring `&mut self`.
+/// Safety: the rendering pipeline is single-threaded; the closure is only
+/// invoked from `rebuild_if_dirty` on the render thread.
+struct SyncRebuildFn(UnsafeCell<Rc<RebuildCallBack>>);
+unsafe impl Send for SyncRebuildFn {}
+unsafe impl Sync for SyncRebuildFn {}
 
 /// Type-erased mutation closure sent through the channel.
 type StateMutation<S> = Box<dyn FnOnce(&mut S) + Send>;
@@ -71,11 +79,23 @@ impl<S: 'static> StateUpdater<S> {
         Self { inner: Some(StateUpdaterInner { tx, state, dirty, window }) }
     }
 
+    pub fn read_state(&self) -> &S {
+        unsafe {
+            &*self
+                .inner
+                .as_ref()
+                .map(|inner| inner.state.clone())
+                .unwrap()
+                .0
+                .get()
+        }
+    }
+
     /// Create an empty `StateUpdater` that is not yet initialized.
     /// Calling `set_state` or `read` on an empty updater will panic.
     ///
     /// It has the same functionality as `StateUpdater<S>::empty`
-    pub fn new() ->  Self {
+    pub fn new() -> Self {
         Self::empty()
     }
 
@@ -148,7 +168,6 @@ impl<S: 'static> StateUpdater<S> {
             inner.window.request_redraw();
         }
     }
-
 
     // pub fn state(&self) -> Option<&S>{
     //     let inner = match self.inner.as_ref() {
@@ -236,8 +255,6 @@ impl<S: 'static> StateUpdater<S> {
                 "|".blue(),
                 "|".blue(),
                 "              ^^^^^^^^^^^^^^^^^^^^^^^^^".red().bold(),
-                // "|".blue(),
-                // "|".blue(),
                 "help".yellow().bold(),
             );
         }
@@ -247,7 +264,10 @@ impl<S: 'static> StateUpdater<S> {
 pub trait StatefulWidget: Sized {
     type State: State<Self>;
 
-    fn widget(&self) -> &Self where Self: Sized {
+    fn widget(&self) -> &Self
+    where
+        Self: Sized,
+    {
         self
     }
 
@@ -268,18 +288,17 @@ pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element>;
 pub struct StatefulElement {
     child: SyncChild,
     pub dirty: Rc<Cell<bool>>,
-    pub rebuild_fn: Rc<RebuildCallBack>,
+    rebuild_fn: SyncRebuildFn,
     /// Monotonically increasing generation counter. Incremented on each rebuild
     /// so that multiple `set_state` calls between frames only trigger one rebuild.
     rebuild_generation: AtomicU64,
     /// The generation at which the last rebuild was performed.
     last_rebuilt_generation: AtomicU64,
     // #[cfg(debug_assertions)]
-    pub debug_name: &'static str,
+    debug_name: Cell<&'static str>,
     pub key: Option<crate::key::Key>,
     pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
 }
-
 
 impl StatefulElement {
     pub fn boxed(self) -> Box<dyn Element> {
@@ -300,14 +319,14 @@ impl StatefulElement {
         W::State: 'static,
     {
         let (mut element, updater) = Self::new(widget, ctx);
-        element.debug_name = debug_name;
+        element.debug_name.set(debug_name);
         element.key = key;
         (element, updater)
     }
 
     pub fn new<W: StatefulWidget + 'static>(widget: &W, ctx: &BuildContext) -> (Self, StateUpdater<W::State>)
     where
-        W::State:  'static,
+        W::State: 'static,
     {
         let state = widget.create_state();
         let dirty = Rc::new(Cell::new(false));
@@ -350,10 +369,10 @@ impl StatefulElement {
         let element = StatefulElement {
             child: SyncChild(UnsafeCell::new(child)),
             dirty,
-            rebuild_fn,
+            rebuild_fn: SyncRebuildFn(UnsafeCell::new(rebuild_fn)),
             rebuild_generation: AtomicU64::new(0),
             last_rebuilt_generation: AtomicU64::new(0),
-            debug_name: "Unknown",
+            debug_name: Cell::new("Unknown"),
             key: None,
             bounds: Cell::new(None),
         };
@@ -395,7 +414,10 @@ impl StatefulElement {
         }
 
         // Build the new child element.
-        let new_child = (self.rebuild_fn)(ctx);
+        let new_child = {
+            let rf = unsafe { &*self.rebuild_fn.0.get() };
+            rf(ctx)
+        };
 
         // Reconciliation: try to update the existing child in-place.
         // If types/keys match, the child is updated without replacement,
@@ -427,6 +449,34 @@ impl StatefulElement {
     pub fn is_dirty(&self) -> bool {
         self.dirty.get()
     }
+
+    /// Adopt the live state from another `StatefulElement` of the same widget type.
+    ///
+    /// Transfers the `rebuild_fn` (which captures the state cell and mutation
+    /// channel), inherits the `debug_name`, and marks this element dirty so
+    /// `rebuild_if_dirty` re-generates the child tree from the preserved state
+    /// on the next frame.
+    ///
+    /// Called by `update_from_widget` when a parent's reconciliation replaces an
+    /// entire subtree — without this, a freshly-constructed `StatefulElement`
+    /// (with `current_index: 0`) would shadow the live one (with `current_index: 2`).
+    fn adopt_state_from(&self, old: &StatefulElement) {
+        // Safety: called only from `update_from_widget` during single-threaded
+        // reconciliation, before the new element is visible to any other code.
+        unsafe {
+            // The rebuild closure captures the state cell and mutation channel.
+            // Replacing it makes this element's build() read from the live state.
+            *self.rebuild_fn.0.get() = (*old.rebuild_fn.0.get()).clone();
+        }
+        // Inherit name so inspector and future reconciliation still match.
+        self.debug_name.set(old.debug_name.get());
+        // Force a rebuild on the next draw: the child tree we were constructed
+        // with was built from the *initial* state; after adopting the old state
+        // we must regenerate it so the visual tree reflects the live state.
+        self.dirty.set(true);
+        let cur_gen = self.rebuild_generation.load(Ordering::Relaxed);
+        self.last_rebuilt_generation.store(cur_gen.wrapping_sub(1), Ordering::Relaxed);
+    }
 }
 
 impl Drawable for StatefulElement {
@@ -449,7 +499,7 @@ impl Drawable for StatefulElement {
                     return;
                 }
                 if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
-                    *hovered = Some((self.debug_name, l_start, l_end));
+                    *hovered = Some((self.debug_name.get(), l_start, l_end));
                 }
             }
         }
@@ -468,7 +518,7 @@ impl VisitorElement for StatefulElement {
     }
 
     fn debug_name(&self) -> &'static str {
-        self.debug_name
+        self.debug_name.get()
     }
 }
 
@@ -550,12 +600,17 @@ impl Reconcilable for StatefulElement {
         self
     }
 
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        // StatefulElement preserves its state across parent rebuilds.
-        // The state cell and rebuild_fn are unchanged — the parent's rebuild_fn
-        // will call our build() which produces a fresh child element via to_element().
-        // Our own rebuild_if_dirty handles child reconciliation.
-        true
+    fn update_from_widget(&self, new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+        // Transfer our live state into the freshly-built new element so that when
+        // the parent replaces this subtree, the new element carries the old state
+        // (e.g. a selected tab index, form input, etc.) forward.
+        //
+        // This mirrors how RawScrollableContainer adopts its scroll offset:
+        // modify the new element, return false, and let the parent swap us out.
+        if let Some(new) = new_element.as_any().downcast_ref::<StatefulElement>() {
+            new.adopt_state_from(self);
+        }
+        false
     }
 }
 
