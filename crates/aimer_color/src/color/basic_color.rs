@@ -24,7 +24,7 @@ pub enum Colors {
 
 impl Colors {
     pub const fn alpha(&self, index: u8) -> Self {
-        let base_u32 = self.to_u32();
+        let base_u32 = self.as_u32();
         let r = (base_u32 >> 16) & 0xFF;
         let g = (base_u32 >> 8) & 0xFF;
         let b = base_u32 & 0xFF;
@@ -50,7 +50,7 @@ impl Colors {
         }
     }
 
-    pub const fn to_u32(&self) -> u32 {
+    pub const fn as_u32(&self) -> u32 {
         match self {
             Colors::Red => 0xFFFF0000,
             Colors::Green => 0xFF00FF00,
@@ -82,9 +82,9 @@ mod tests {
 
     #[test]
     fn test_more_colors() {
-        assert_eq!(Colors::Orange.to_u32(), 0xFFFFA500);
-        assert_eq!(Colors::Purple.to_u32(), 0xFF800080);
-        assert_eq!(Colors::Brown.to_u32(), 0xFFA52A2A);
-        assert_eq!(Colors::Transparent.to_u32(), 0x00000000);
+        assert_eq!(Colors::Orange.as_u32(), 0xFFFFA500);
+        assert_eq!(Colors::Purple.as_u32(), 0xFF800080);
+        assert_eq!(Colors::Brown.as_u32(), 0xFFA52A2A);
+        assert_eq!(Colors::Transparent.as_u32(), 0x00000000);
     }
 }

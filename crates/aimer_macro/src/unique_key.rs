@@ -1,6 +1,4 @@
-use proc_macro::TokenStream;
-use quote::quote;
-use syn::{parse::Parse, parse_macro_input, LitStr, Token};
+use syn::{parse::Parse, LitStr};
 
 pub struct UniqueKeyInput {
     pub(crate) prefix: Option<LitStr>,
