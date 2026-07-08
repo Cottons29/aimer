@@ -77,6 +77,22 @@ impl State<TextButton> for ButtonState {
         self.updater = updater;
     }
 
+    /// Refresh the button's configuration (label, colours, `style` /
+    /// `hover_style`, `on_press`, `disabled`) from the freshly-built widget
+    /// while preserving the live runtime state (`hovered`, `region_state`,
+    /// `updater`). Called by the framework during reconciliation, e.g. after a
+    /// window resize or a parent `set_state` re-emits this button with new
+    /// props (such as a tab that just became selected). Without it the button
+    /// would keep its stale look — the selected/hover styling would stay stuck
+    /// on whatever it was when the state was first created.
+    fn adopt_config_from(&mut self, new: &Self)
+    where
+        Self: Sized,
+    {
+        self.widget = new.widget.clone();
+        self.disabled = new.disabled;
+    }
+
     fn build(&self, _: &BuildContext) -> impl Widget {
         let mut text_style = if self.disabled {
             self.widget.disabled_style

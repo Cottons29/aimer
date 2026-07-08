@@ -40,7 +40,7 @@ impl Rgba {
 
     /// Convert from `aimer_color::Color` to normalized RGBA.
     pub fn from_color(color: &Color) -> Self {
-        let argb = color.to_u32();
+        let argb = color.as_u32();
         let a = ((argb >> 24) & 0xFF) as f32 / 255.0;
         let r = ((argb >> 16) & 0xFF) as f32 / 255.0;
         let g = ((argb >> 8) & 0xFF) as f32 / 255.0;
