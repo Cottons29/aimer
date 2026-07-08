@@ -5,7 +5,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use std::cell::{Cell, UnsafeCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::panic::Location;
 use std::process::exit;
 use std::rc::Rc;
@@ -37,6 +37,38 @@ unsafe impl<S: Send> Sync for SyncState<S> {}
 struct SyncRebuildFn(UnsafeCell<Rc<RebuildCallBack>>);
 unsafe impl Send for SyncRebuildFn {}
 unsafe impl Sync for SyncRebuildFn {}
+
+/// A `Send + Sync` wrapper around the type-erased state cell (`Rc<dyn Any>`,
+/// concretely `Rc<SyncState<W::State>>`). Kept so a reconciling element can hand
+/// its freshly-built state to the live element for a config refresh, without
+/// `StatefulElement` being generic over `W`.
+///
+/// Wrapped in `UnsafeCell` so `adopt_state_from` can *repoint* it to the OLD
+/// element's state cell alongside `rebuild_fn`: after adoption the live element
+/// reads the OLD cell, so its config-refresh machinery (`state_any` +
+/// `adopt_config_fn`) must reference that SAME cell — otherwise a later
+/// reconcile that uses this element as the `old` side would refresh an
+/// orphaned cell while the live `rebuild_fn` keeps reading a stale one.
+/// Safety: the rendering pipeline is single-threaded.
+struct SyncStateAny(UnsafeCell<Rc<dyn std::any::Any>>);
+unsafe impl Send for SyncStateAny {}
+unsafe impl Sync for SyncStateAny {}
+
+/// Type-erased "copy the widget configuration from another element's state into
+/// mine" hook. Captures this element's state cell (typed as `W::State`);
+/// downcasts the supplied `&dyn Any` (another element's `SyncState<W::State>`)
+/// and calls `State::adopt_config_from`. No-op when the concrete types differ.
+type AdoptConfigCallBack = dyn Fn(&dyn std::any::Any);
+
+/// A `Send + Sync` wrapper around the config-adoption closure.
+///
+/// Wrapped in `UnsafeCell` for the same reason as [`SyncStateAny`]: it must be
+/// repointed to the OLD element's cell during `adopt_state_from` so it stays in
+/// sync with the adopted `rebuild_fn`.
+/// Safety: invoked only during single-threaded reconciliation.
+struct SyncAdoptConfigFn(UnsafeCell<Rc<AdoptConfigCallBack>>);
+unsafe impl Send for SyncAdoptConfigFn {}
+unsafe impl Sync for SyncAdoptConfigFn {}
 
 /// Type-erased mutation closure sent through the channel.
 type StateMutation<S> = Box<dyn FnOnce(&mut S) + Send>;
@@ -218,7 +250,6 @@ impl<S: 'static> StateUpdater<S> {
     #[inline]
     fn beautiful_error(&self, loc: &Location) {
         {
-            use colored::Colorize;
             const BRACE: &str = "{";
             error!(
                 "State is not initialized and trying to read or update at {}:{}
@@ -237,19 +268,19 @@ impl<S: 'static> StateUpdater<S> {
 ",
                 loc.file(),
                 loc.line(),
-                "|".blue(),
-                "|".blue(),
-                "|".blue(),
-                "|".blue(),
-                "|".blue(),
-                "|".blue(),
-                "|".blue(),
-                "|".blue(),
-                "|".blue(),
-                "^^^^^^^^^^^^^^^^^^^^^^^^^ add this line to prevent panic".red().bold(),
-                "|".blue(),
-                "|".blue(),
-                "help".yellow().bold(),
+                "|",
+                "|",
+                "|",
+                "|",
+                "|",
+                "|",
+                "|",
+                "|",
+                "|",
+                "^^^^^^^^^^^^^^^^^^^^^^^^^ add this line to prevent panic",
+                "|",
+                "|",
+                "help",
             );
         }
     }
@@ -276,12 +307,38 @@ pub trait State<W: StatefulWidget> {
     where
         Self: Sized;
 
+    /// Called during reconciliation when a parent rebuild produces a freshly
+    /// built element for the *same* stateful widget (e.g. a window resize, or a
+    /// parent `set_state` that re-emits this widget with new props).
+    ///
+    /// The framework preserves this (the *live*) state object — keeping runtime
+    /// fields such as hover/focus/scroll/animation progress — but the freshly
+    /// built `new` state carries the up-to-date widget *configuration* (the
+    /// props passed down from the parent, e.g. a `TextButton`'s `style` /
+    /// `hover_style` / `on_press`, or a selected/disabled flag). Copy those
+    /// configuration fields out of `new` into `self` here so the widget renders
+    /// with the current configuration while retaining its runtime state.
+    ///
+    /// Mirrors Flutter's `State::didUpdateWidget`. Defaults to a no-op, which is
+    /// correct for stateful widgets whose state is fully self-owned and does not
+    /// mirror any parent-provided props.
+    fn adopt_config_from(&mut self, _new: &Self)
+    where
+        Self: Sized,
+    {
+    }
+
     fn build(&self, ctx: &BuildContext) -> impl Widget;
 }
 pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element>;
 pub struct StatefulElement {
     child: SyncChild,
-    pub dirty: Rc<Cell<bool>>,
+    /// Marked when this element (or its state's own `set_state`) requests a
+    /// rebuild. Wrapped in `RefCell` so `adopt_state_from` can *repoint* it to
+    /// the OLD element's flag during reconciliation — see `adopt_state_from`
+    /// for why the live element must share the flag the preserved state's
+    /// captured updater flips.
+    pub dirty: RefCell<Rc<Cell<bool>>>,
     rebuild_fn: SyncRebuildFn,
     /// Monotonically increasing generation counter. Incremented on each rebuild
     /// so that multiple `set_state` calls between frames only trigger one rebuild.
@@ -292,6 +349,12 @@ pub struct StatefulElement {
     debug_name: Cell<&'static str>,
     pub key: Option<crate::key::Key>,
     pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
+    /// This element's own state cell, type-erased, so a reconciling element can
+    /// hand it to the live element's `adopt_config_fn` for a config refresh.
+    state_any: SyncStateAny,
+    /// Copies widget configuration from another element's state (passed as
+    /// `&dyn Any`) into this element's live state via `State::adopt_config_from`.
+    adopt_config_fn: SyncAdoptConfigFn,
 }
 
 impl StatefulElement {
@@ -358,17 +421,36 @@ impl StatefulElement {
             Widget::to_element(&s.build(ctx), ctx)
         };
 
+        // Type-erased handle to this element's state, plus a closure that can
+        // pull configuration out of *another* element's state (of the same
+        // `W::State` type) into this one. Together these let reconciliation
+        // refresh a preserved live state's widget props without
+        // `StatefulElement` being generic over `W`.
+        let state_any: Rc<dyn std::any::Any> = state_cell.clone();
+        let state_for_config = state_cell.clone();
+        let adopt_config_fn: Rc<AdoptConfigCallBack> = Rc::new(move |new_any: &dyn std::any::Any| {
+            if let Some(new_cell) = new_any.downcast_ref::<SyncState<W::State>>() {
+                // Safety: single-threaded reconciliation; the live state is not
+                // otherwise borrowed while we copy the fresh config into it.
+                let old_state = unsafe { &mut *state_for_config.0.get() };
+                let new_state = unsafe { &*new_cell.0.get() };
+                old_state.adopt_config_from(new_state);
+            }
+        });
+
         let updater = StateUpdater::with(tx, state_cell, dirty.clone());
 
         let element = StatefulElement {
             child: SyncChild(UnsafeCell::new(child)),
-            dirty,
+            dirty: RefCell::new(dirty),
             rebuild_fn: SyncRebuildFn(UnsafeCell::new(rebuild_fn)),
             rebuild_generation: AtomicU64::new(0),
             last_rebuilt_generation: AtomicU64::new(0),
             debug_name: Cell::new("Unknown"),
             key: None,
             bounds: Cell::new(None),
+            state_any: SyncStateAny(UnsafeCell::new(state_any)),
+            adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(adopt_config_fn)),
         };
 
         (element, updater)
@@ -386,7 +468,7 @@ impl StatefulElement {
     /// destroying and recreating the entire subtree when only a deeply-nested
     /// element's state has changed.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        if !self.dirty.get() {
+        if !self.dirty.borrow().get() {
             // Self is clean — but a nested StatefulElement might be dirty.
             // Propagate rebuild through the existing child tree.
             let child = unsafe { &*self.child.0.get() };
@@ -397,7 +479,7 @@ impl StatefulElement {
         // Coalesce: only rebuild once per generation bump.
         let current_gen = self.rebuild_generation.load(Ordering::Relaxed);
         let last = self.last_rebuilt_generation.load(Ordering::Relaxed);
-        if current_gen == last && !self.dirty.get() {
+        if current_gen == last && !self.dirty.borrow().get() {
             return;
         }
 
@@ -426,7 +508,7 @@ impl StatefulElement {
         // If try_update_element returned true, the old child was updated in-place
         // and remains valid — no replacement needed.
 
-        self.dirty.set(false);
+        self.dirty.borrow().set(false);
         self.rebuild_generation.fetch_add(1, Ordering::Relaxed);
         self.last_rebuilt_generation
             .store(self.rebuild_generation.load(Ordering::Relaxed), Ordering::Relaxed);
@@ -441,7 +523,7 @@ impl StatefulElement {
 
     /// Returns true if this element is marked dirty.
     pub fn is_dirty(&self) -> bool {
-        self.dirty.get()
+        self.dirty.borrow().get()
     }
 
     /// Adopt the live state from another `StatefulElement` of the same widget type.
@@ -454,7 +536,7 @@ impl StatefulElement {
     /// Called by `update_from_widget` when a parent's reconciliation replaces an
     /// entire subtree — without this, a freshly-constructed `StatefulElement`
     /// (with `current_index: 0`) would shadow the live one (with `current_index: 2`).
-    pub(crate) fn adopt_state_from(&self, old: &StatefulElement) {
+    pub(crate) fn adopt_state_from(&self, old: &StatefulElement, ctx: &BuildContext) {
         // Safety: called only from `update_from_widget` during single-threaded
         // reconciliation, before the new element is visible to any other code.
         unsafe {
@@ -464,10 +546,95 @@ impl StatefulElement {
         }
         // Inherit name so inspector and future reconciliation still match.
         self.debug_name.set(old.debug_name.get());
-        // Force a rebuild on the next draw: the child tree we were constructed
-        // with was built from the *initial* state; after adopting the old state
-        // we must regenerate it so the visual tree reflects the live state.
-        self.dirty.set(true);
+
+        // Adopt the OLD element's dirty flag so the *live* element and the
+        // updater captured inside the preserved state's own callbacks agree on
+        // ONE flag. We just copied `old.rebuild_fn` (which carries the old
+        // state cell and its mutation channel) into `self`, but `self` was
+        // constructed with its OWN fresh dirty flag. The preserved state's
+        // callbacks (e.g. a `TextButton`'s hover-enter/exit) call `set_state`
+        // through the OLD updater, which flips the OLD flag and queues on the
+        // OLD channel. The copied `rebuild_fn` already drains that OLD channel,
+        // but `rebuild_if_dirty` gates on `self.dirty` — so without sharing the
+        // flag the live element never notices its own state's `set_state`, the
+        // queued mutation is never drained/applied, and (for example) a
+        // button's hover highlight stays stuck after a parent rebuild.
+        *self.dirty.borrow_mut() = old.dirty.borrow().clone();
+
+        // Refresh the *configuration* stored in the preserved live state from
+        // the freshly-built element. We keep `old`'s state cell (its runtime
+        // state — hover, scroll offset, selected tab, animation progress, …),
+        // but that same cell also holds whatever props the widget copied from
+        // its parent at `create_state` time (e.g. a `TextButton`'s `style` /
+        // `hover_style` / `on_press`, a selected/disabled flag). Without this
+        // refresh a widget re-emitted with different props after a parent
+        // rebuild (a window resize, a parent `set_state`) would keep rendering
+        // its *stale* props — the classic symptom being a tab whose highlight
+        // stays stuck on the initially-selected button even though the live
+        // selection moved on. `self` is the fresh element and carries the
+        // up-to-date config in its state; hand it to `old`'s config hook.
+        //
+        // NOTE: this MUST run before we repoint `self.state_any` below, because
+        // it uses `self`'s own (freshly-built) state as the *source* of the new
+        // config.
+        {
+            // Safety: single-threaded reconciliation.
+            let fresh_state: &dyn std::any::Any = unsafe { &*self.state_any.0.get() }.as_ref();
+            let old_adopt = unsafe { &*old.adopt_config_fn.0.get() };
+            old_adopt(fresh_state);
+        }
+
+        // Repoint this element's config-refresh machinery at the OLD state cell,
+        // matching the `rebuild_fn` we just adopted. `rebuild_fn` now reads
+        // `old`'s cell, but `self` was constructed with `state_any` /
+        // `adopt_config_fn` bound to its OWN (now-orphaned) fresh cell. If we
+        // left them pointing there, a *subsequent* reconcile that uses `self` as
+        // the `old` side — which a single window resize does trigger (the eager
+        // rebuild below reconciles this subtree, and the follow-up
+        // `carry_child_state` pass reconciles it again) — would refresh the
+        // ORPHANED cell while the live `rebuild_fn` keeps reading `old`'s cell,
+        // so the freshly-built config would never reach what actually renders
+        // and the selected/highlight styling would freeze on a stale value.
+        // Safety: single-threaded reconciliation; not otherwise borrowed here.
+        unsafe {
+            *self.state_any.0.get() = (*old.state_any.0.get()).clone();
+            *self.adopt_config_fn.0.get() = (*old.adopt_config_fn.0.get()).clone();
+        }
+
+        // Materialize the adopted state *immediately*, during reconciliation —
+        // do not defer to the next `draw`.
+        //
+        // The child we were constructed with was built from this widget's
+        // *initial* state (e.g. `current_index: 0`). Merely flagging `dirty` and
+        // waiting for `draw` → `rebuild_if_dirty` to regenerate it is not
+        // enough: on a window resize the rebuilt element is frequently *culled*
+        // by a scroll viewport (its `draw`, and hence `rebuild_if_dirty`, never
+        // runs) or sits behind a wrapper whose rebuild cascade — which walks
+        // `visit_children` — never reaches it (containers such as `Container`
+        // and `Row`/`Column` expose their children only through
+        // `event_children`). In those cases the adopted `rebuild_fn` would never
+        // execute and the user's state would silently snap back to the initial
+        // value. Regenerating the child here, against the current
+        // `BuildContext`, guarantees the live state is reflected regardless of
+        // whether this element is ever drawn.
+        let new_child = {
+            let rf = unsafe { &*self.rebuild_fn.0.get() };
+            rf(ctx)
+        };
+        let old_child = unsafe { &*self.child.0.get() };
+        if !try_update_element(old_child.as_ref(), new_child.as_ref(), ctx) {
+            // Safety: single-threaded; `old_child` is not used past this point.
+            unsafe {
+                *self.child.0.get() = new_child;
+            }
+        }
+
+        // Keep `dirty` set so a later `draw` (e.g. after the element scrolls
+        // back into view at a new size) still refreshes the subtree against the
+        // then-current `BuildContext`. The eager rebuild above only guarantees
+        // the live state is never lost; a redraw still picks up responsive
+        // layout changes.
+        self.dirty.borrow().set(true);
         let cur_gen = self.rebuild_generation.load(Ordering::Relaxed);
         self.last_rebuilt_generation.store(cur_gen.wrapping_sub(1), Ordering::Relaxed);
     }
@@ -578,7 +745,7 @@ impl Rebuildable for StatefulElement {
     }
 
     fn mark_needs_rebuild(&self) {
-        self.dirty.set(true);
+        self.dirty.borrow().set(true);
         // Safety: single-threaded rendering pipeline.
         let child = unsafe { &*self.child.0.get() };
         child.mark_needs_rebuild();
@@ -594,7 +761,7 @@ impl Reconcilable for StatefulElement {
         self
     }
 
-    fn update_from_widget(&self, new_element: &dyn Element, _ctx: &BuildContext) -> bool {
+    fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
         // Transfer our live state into the freshly-built new element so that when
         // the parent replaces this subtree, the new element carries the old state
         // (e.g. a selected tab index, form input, etc.) forward.
@@ -602,7 +769,7 @@ impl Reconcilable for StatefulElement {
         // This mirrors how RawScrollableContainer adopts its scroll offset:
         // modify the new element, return false, and let the parent swap us out.
         if let Some(new) = new_element.as_any().downcast_ref::<StatefulElement>() {
-            new.adopt_state_from(self);
+            new.adopt_state_from(self, ctx);
         }
         false
     }

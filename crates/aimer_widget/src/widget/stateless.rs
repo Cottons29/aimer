@@ -51,6 +51,7 @@ impl Rebuildable for StatelessElement {
     }
 
     fn mark_needs_rebuild(&self) {
+        // eprintln!("[diag] StatelessElement.mark_needs_rebuild");
         self.dirty.set(true);
         // Safety: single-threaded rendering pipeline.
         let child = unsafe { &*self.child.0.get() };
@@ -220,9 +221,42 @@ impl Reconcilable for StatelessElement {
 
     fn as_any(&self) -> &dyn std::any::Any { self }
 
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        // StatelessElement preserves its wrapper identity.
-        // Child reconciliation happens at the StatefulElement level.
+    fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
+        // Keep this element's wrapper identity — its own `rebuild_fn`, `dirty`
+        // flag, `key` and `debug_name` — but STILL reconcile our child subtree
+        // against the freshly-built one so nested state-owning elements carry
+        // their live runtime state (a `StatefulElement`'s selected tab, a
+        // `Scrollable`'s offset, …) across a parent rebuild such as a window
+        // resize.
+        //
+        // Returning `true` here means "updated in place", so `try_update_element`
+        // will NOT descend via `carry_child_state`. That is exactly the trap
+        // that lost the user's state: a pure wrapper `StatelessElement` (e.g.
+        // the `NamedWidget` that wraps a `Stack`/`Container` whose element
+        // `debug_name` — "RawStackElement" — differs from the widget name
+        // "Stack") sat between the rebuilt ancestor and the nested
+        // `StatefulElement`. The old code returned `true` without touching the
+        // child, so the rebuild cascade stopped at the wrapper and the tab
+        // widget never adopted the old state, snapping back to its initial
+        // value. We therefore reconcile the child ourselves here (mirroring
+        // `rebuild_if_dirty`), swapping in the freshly-built child — which has
+        // already adopted the live state during its own reconciliation — when
+        // it can't be updated in place.
+        if let Some(new) = new_element.as_any().downcast_ref::<StatelessElement>() {
+            // Safety: single-threaded rendering pipeline.
+            let old_child = unsafe { &*self.child.0.get() };
+            let new_child = unsafe { &*new.child.0.get() };
+            if !try_update_element(old_child.as_ref(), new_child.as_ref(), ctx) {
+                // Move the freshly-built child (already carrying adopted state)
+                // into this wrapper; the old child ends up inside the discarded
+                // `new` element and is dropped with it.
+                // Safety: single-threaded; the immutable borrows above are no
+                // longer used past this point.
+                unsafe {
+                    std::mem::swap(&mut *self.child.0.get(), &mut *new.child.0.get());
+                }
+            }
+        }
         true
     }
 }
