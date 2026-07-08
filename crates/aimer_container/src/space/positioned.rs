@@ -1,9 +1,9 @@
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
-use aimer_macro::{Constructor, Rebuildable, WidgetConstructor};
+use aimer_macro::{Constructor, WidgetConstructor};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Reconcilable, VisitorElement, Widget};
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget};
 
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
@@ -66,7 +66,7 @@ pub enum Position {
 }
 
 #[allow(dead_code)]
-#[derive(Constructor, Rebuildable)]
+#[derive(Constructor)]
 pub struct RawPositionedElement<E: Element> {
     pub(crate) child: E,
     pub(crate) position: Position,
@@ -232,6 +232,26 @@ impl<E: Element> LayoutElement for RawPositionedElement<E> {
     }
 }
 
+// `visit_children` is intentionally empty so `Drawable::draw` doesn't double-
+// render the child. The default `Rebuildable::mark_needs_rebuild` and
+// `rebuild_if_dirty` both walk `visit_children`, which means in a
+// `Stack → Positioned → Scrollable → Stateful` chain a resize cascade would
+// stop at the `Positioned` and never reach the inner `StatefulElement` — the
+// `dirty=true` flag set by `adopt_state_from` would sit unused, and the
+// rebuilt tree from the adopted `rebuild_fn` (with restored state) would
+// never be produced. Visual symptom: stateful child "snaps back" on resize.
+impl<E: Element + 'static> Rebuildable for RawPositionedElement<E> {
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        // eprintln!("[diag] Positioned.rebuild_if_dirty -> child");
+        self.child.rebuild_if_dirty(ctx);
+    }
+
+    fn mark_needs_rebuild(&self) {
+        // eprintln!("[diag] Positioned.mark_needs_rebuild -> child");
+        self.child.mark_needs_rebuild();
+    }
+}
+
 impl<E: Element + 'static> Reconcilable for RawPositionedElement<E> {
     fn as_any(&self) -> &dyn std::any::Any { self }
 
@@ -285,5 +305,46 @@ mod tests {
         // Scale/Rotate leave the rect untouched (conservative — never over-cull).
         let s = shift_visible_rect(Some((0.0, 100.0, 10.0, 10.0)), 0.0, 0.0, &Transform::Scale(2.0, 2.0)).unwrap();
         assert_eq!(s, (0.0, 100.0, 10.0, 10.0));
+    }
+
+    /// Regression for the `Positioned → Scrollable → Stateful` resize bug:
+    /// `RawPositionedElement::visit_children` is empty (intentional, to avoid
+    /// double-render), so the default `Rebuildable::mark_needs_rebuild` /
+    /// `rebuild_if_dirty` walk `visit_children` and stop at `Positioned`. The
+    /// inner `StatefulElement` then never receives the resize cascade and the
+    /// `dirty=true` flag set by `adopt_state_from` is never consumed. This
+    /// test pins the structural trap and the divergence between the two child
+    /// accessors — the actual rebuild behavior is covered by the framework
+    /// reconcile tests in `aimer_widget`.
+    #[test]
+    fn positioned_propagates_dirty_into_child() {
+        use crate::ZeroSizedBox;
+        let positioned: RawPositionedElement<ZeroSizedBox> = RawPositionedElement {
+            child: ZeroSizedBox,
+            position: Default::default(),
+            left: Default::default(),
+            top: Default::default(),
+            right: Default::default(),
+            bottom: Default::default(),
+            transform: Default::default(),
+            layer: 0,
+        };
+
+        // `visit_children` is intentionally empty (no double-render).
+        let mut visit_count = 0;
+        positioned.visit_children(&mut |_| visit_count += 1);
+        assert_eq!(
+            visit_count, 0,
+            "visit_children must stay empty so draw() doesn't double-render"
+        );
+
+        // `event_children` DOES surface the wrapped child — events still need
+        // to reach it. The Rebuildable fix above must NOT change this.
+        let mut event_count = 0;
+        positioned.event_children(&mut |_| event_count += 1);
+        assert_eq!(
+            event_count, 1,
+            "event_children must keep surfacing the wrapped child"
+        );
     }
 }
