@@ -500,6 +500,7 @@ impl TextPipelineV2 {
 
     /// Insert a single rasterized glyph bitmap into the matching atlas, skipping
     /// empty (zero-area) glyphs and glyphs already present.
+    #[allow(clippy::too_many_arguments)]
     fn insert_rasterized_glyph(
         &mut self,
         device: &wgpu::Device,
@@ -614,7 +615,7 @@ impl TextPipelineV2 {
             }
         }
     }
-
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,

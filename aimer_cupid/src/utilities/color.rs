@@ -63,7 +63,7 @@ impl Color {
 
 impl From<AimerColor> for Color {
     fn from(c: AimerColor) -> Self {
-        let argb = c.to_u32();
+        let argb = c.as_u32();
         let a = ((argb >> 24) & 0xFF) as f32 / 255.0;
         let r = ((argb >> 16) & 0xFF) as f32 / 255.0;
         let g = ((argb >> 8) & 0xFF) as f32 / 255.0;

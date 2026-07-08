@@ -336,14 +336,14 @@ where
                 // space lands after the preceding characters, not at the
                 // line's start x.
                 let mut acc_w = 0.0_f32;
-                let mut space_advance = 0.0_f32;
+                // let mut space_advance = 0.0_f32;
                 for mut glyph in line_glyphs {
-                    let is_space = is_word_break && glyph.cluster == break_point;
+                    // let is_space = is_word_break && glyph.cluster == break_point;
                     glyph.x = options.origin_x + line_width + acc_w;
                     glyph.y = baseline;
-                    if is_space {
-                        space_advance = glyph.advance;
-                    }
+                    // if is_space {
+                    //     space_advance = glyph.advance;
+                    // }
                     acc_w += glyph.advance;
                     glyphs.push(glyph);
                 }
