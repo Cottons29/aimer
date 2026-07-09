@@ -43,7 +43,9 @@ impl WindowEventHandler {
 
             WindowEvent::Ime(ime) => Self::handle_ime(ime, app),
 
-            WindowEvent::MouseWheel { delta, phase, .. } => Self::handle_mouse_wheel(delta, phase, app),
+            WindowEvent::MouseWheel { delta, phase, .. } => {
+                Self::handle_mouse_wheel(delta, phase, app)
+            },
 
             WindowEvent::RedrawRequested => {
                 #[cfg(debug_assertions)]
@@ -58,10 +60,6 @@ impl WindowEventHandler {
                 Self::handle_resize(size, app, event_loop)
             }
 
-            // When the window loses focus (e.g. app backgrounded on iOS),
-            // broadcast Cancel so all widgets release stale touch/drag state.
-            // Without this, a scrollable's `active_touch_id` stays set from the
-            // old touch, and new touches after resume are silently rejected.
             WindowEvent::Focused(false) => {
                 if let Some(root) = &app.widget_root {
                     broadcast_event(root.as_ref(), &ElementEvent::Cancel);
