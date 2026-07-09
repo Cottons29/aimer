@@ -1,6 +1,6 @@
+use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_attribute::BoxConstraint;
 use aimer_canvas::Canvas;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ use winit::window::Window;
 #[derive(Clone)]
 pub struct BuildContext<'a> {
     pub parent_size: ResolvedSize,
-    pub canvas:  Canvas<'a>,
+    pub canvas: Canvas<'a>,
     pub scale: f32,
     pub parent_pos: Vec2d,
     pub cursor_pos: Vec2d,
@@ -45,8 +45,7 @@ impl<'a> BuildContext<'a> {
         parent_pos: Vec2d,
         cursor_pos: Vec2d,
         window: &'static Window,
-        #[cfg(not(target_arch = "wasm32"))]
-        async_handle: Handle,
+        #[cfg(not(target_arch = "wasm32"))] async_handle: Handle,
     ) -> Self {
         Self {
             canvas,
@@ -69,7 +68,8 @@ impl<'a> BuildContext<'a> {
 
     pub fn get_state<T: Any>(&self) -> Option<Rc<T>> {
         self.inherited_states
-            .read().unwrap()
+            .read()
+            .unwrap()
             .get(&TypeId::of::<T>())
             .and_then(|arc| arc.clone().downcast::<T>().ok())
     }

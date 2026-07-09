@@ -1,5 +1,5 @@
-use crate::base::BuildContext;
 use crate::Element;
+use crate::base::BuildContext;
 
 /// Trait for elements that can be updated in-place from a new widget description.
 ///

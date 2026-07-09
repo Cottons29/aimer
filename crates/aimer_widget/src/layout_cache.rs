@@ -1,7 +1,6 @@
-
+use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
 use std::cell::UnsafeCell;
-use aimer_attribute::BoxConstraint;
 
 /// Caches the result of `computed_size` and `content_size` for a single frame.
 /// The cache is keyed by `(BoxConstraint, scale)` so that if the same element
@@ -26,7 +25,6 @@ impl LayoutCache {
         }
     }
 
-
     /// Stores computed_size result.
     pub fn set_computed(&self, constraint: BoxConstraint, scale_bits: u32, size: ResolvedSize) {
         let guard = unsafe { &mut *self.computed.get() };
@@ -47,7 +45,6 @@ impl LayoutCache {
         let guard = unsafe { &mut *self.content.get() };
         *guard = Some((constraint, scale_bits, size));
     }
-    
 
     /// Clears all cached values (call at the start of each frame).
     pub fn invalidate(&self) {
