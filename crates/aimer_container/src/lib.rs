@@ -24,6 +24,7 @@ mod tests {
     use aimer_widget::Key;
     use aimer_widget::{Drawable, Element, NamedWidget, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, StatelessElement, Widget};
     use crate::flex::Row;
+    use crate::scrollable::raw_scroll::RawScrollableContainer;
     use std::any::{Any, TypeId};
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
@@ -423,6 +424,185 @@ mod tests {
                 result.live_index_after_resize
             );
         }
+    }
+
+    // Locate the `RawScrollableContainer` buried anywhere in an element tree so
+    // a test can read its live scroll offset / cached scroll range.
+    fn find_scrollable(el: &dyn Element) -> Option<&RawScrollableContainer<Box<dyn Element>>> {
+        if let Some(s) = el.as_any().downcast_ref::<RawScrollableContainer<Box<dyn Element>>>() {
+            return Some(s);
+        }
+        let mut found: Option<&RawScrollableContainer<Box<dyn Element>>> = None;
+        // Some layout elements (e.g. `Positioned`) expose their child through
+        // `event_children` rather than `visit_children`, so walk both.
+        el.visit_children(&mut |c| {
+            if found.is_none() {
+                found = find_scrollable(c);
+            }
+        });
+        if found.is_none() {
+            el.event_children(&mut |c| {
+                if found.is_none() {
+                    found = find_scrollable(c);
+                }
+            });
+        }
+        found
+    }
+
+    /// End-to-end regression for "the Scroll is not able to scroll with mouse
+    /// wheel or trackpad": build the real website layout
+    /// (`Container → Stack → Positioned → Scrollable → Column`) with content
+    /// taller than the viewport, draw it (which computes the scroll range and
+    /// bounds), then dispatch a wheel `Scroll` event exactly like the platform
+    /// layer does and assert the content actually moves.
+    #[test]
+    fn wheel_scroll_moves_content_in_website_layout() {
+        use aimer_events::element::{ElementEvent, TouchPhase};
+        use aimer_attribute::position::Vec2d;
+
+        // 500 × 600 viewport, content 2000 px tall → must be scrollable.
+        // Root at the `Positioned` (inside a `Stack`) exactly as the website
+        // nests it — this is the wrapping that recomputes the child's viewport
+        // constraint, the part suspected of collapsing the scroll range.
+        let ctx = dummy_build_context(500.0, 600.0, None);
+        let root = Stack!(
+            children: [
+                Positioned!(
+                    top: 0,
+                    left: 0,
+                    layer: 0,
+                    child: Scrollable!(
+                        axis: crate::ScrollAxis::Vertical,
+                        child: Column!(
+                            children: [placeholder_section(2000)]
+                        )
+                    )
+                )
+            ]
+        )
+        .to_element(&ctx);
+
+        // First frame: seeds cached scroll range, viewport bounds and cursor.
+        root.draw(&ctx);
+
+        let scr = find_scrollable(root.as_ref()).expect("the tree must contain a scrollable");
+        let max = scr.ctrl.cached_max_scroll.get();
+        assert!(
+            max.y > 0.0,
+            "content (2000px) is taller than the viewport (600px), so the scroll range must be positive; \
+             got max_scroll.y={} (a zero range means the Stack/Positioned wrapping collapsed the viewport)",
+            max.y
+        );
+
+        let before = scr.ctrl.scroll_offset.get().y;
+
+        // Dispatch a wheel scroll-down (negative delta = content moves up) at the
+        // viewport centre, exactly like the windowing layer's mouse-wheel path.
+        let handled = aimer_widget::dispatch_event(
+            root.as_ref(),
+            Vec2d { x: 250.0, y: 300.0 },
+            &ElementEvent::Scroll { delta: Vec2d { x: 0.0, y: -60.0 }, phase: TouchPhase::Moved },
+        );
+        assert!(handled, "the wheel Scroll event must be consumed by the scrollable");
+
+        let after = scr.ctrl.scroll_offset.get().y;
+        assert!(
+            after < before,
+            "a wheel scroll-down must move the offset (before={before}, after={after})"
+        );
+
+        // Simulate follow-up animation frames (momentum/spring settle). An
+        // in-range scroll must NOT spring back to the top — that would look
+        // like "the content can't be scrolled" even though the event fired.
+        for _ in 0..8 {
+            root.draw(&ctx);
+        }
+        let settled = scr.ctrl.scroll_offset.get().y;
+        assert!(
+            settled < -1.0,
+            "after scrolling down the content must stay scrolled (settled offset={settled}), not spring back to the top"
+        );
+    }
+
+    /// Regression for "the scroll is applied even when the pointer is over the
+    /// `HeaderSection`": the website stacks a full-screen `Scrollable`
+    /// (layer 0) under an opaque `HeaderSection` bar (layer 1). A wheel /
+    /// trackpad scroll whose pointer sits on the header must be absorbed by the
+    /// opaque header and must NOT reach — nor move — the `Scrollable` behind it;
+    /// a scroll whose pointer sits on the exposed content below the header must
+    /// still scroll.
+    #[test]
+    fn scroll_over_opaque_header_does_not_reach_scrollable_below() {
+        use aimer_attribute::position::Vec2d;
+        use aimer_events::element::{ElementEvent, TouchPhase};
+        use aimer_widget::base::Color;
+
+        let ctx = dummy_build_context(500.0, 600.0, None);
+        let root = Stack!(
+            children: [
+                // layer 0: the full-screen scrollable content.
+                Positioned!(
+                    top: 0,
+                    left: 0,
+                    layer: 0,
+                    child: Scrollable!(
+                        axis: crate::ScrollAxis::Vertical,
+                        child: Column!(
+                            children: [placeholder_section(2000)]
+                        )
+                    )
+                ),
+                // layer 1: an opaque header bar pinned to the top (0..100 px).
+                Positioned!(
+                    top: 0,
+                    left: 0,
+                    layer: 1,
+                    child: Container!(
+                        height: 100,
+                        color: Color::Rgba(255, 0, 0, 255),
+                        child: crate::ZeroSizedBox
+                    )
+                )
+            ]
+        )
+        .to_element(&ctx);
+
+        // First frame seeds the scroll range and every element's on-screen bounds.
+        root.draw(&ctx);
+
+        let scr = find_scrollable(root.as_ref()).expect("the tree must contain a scrollable");
+        assert!(
+            scr.ctrl.cached_max_scroll.get().y > 0.0,
+            "content must be taller than the viewport so it is scrollable"
+        );
+
+        // ── Scroll with the pointer ON the header (y = 50, inside 0..100). ──
+        let before_header = scr.ctrl.scroll_offset.get().y;
+        let handled_header = aimer_widget::dispatch_event(
+            root.as_ref(),
+            Vec2d { x: 250.0, y: 50.0 },
+            &ElementEvent::Scroll { delta: Vec2d { x: 0.0, y: -60.0 }, phase: TouchPhase::Moved },
+        );
+        assert!(handled_header, "the opaque header must consume (absorb) the scroll");
+        assert_eq!(
+            scr.ctrl.scroll_offset.get().y,
+            before_header,
+            "a scroll over the opaque header must NOT move the scrollable behind it"
+        );
+
+        // ── Scroll with the pointer on the exposed content (y = 300, below the header). ──
+        let before_content = scr.ctrl.scroll_offset.get().y;
+        let handled_content = aimer_widget::dispatch_event(
+            root.as_ref(),
+            Vec2d { x: 250.0, y: 300.0 },
+            &ElementEvent::Scroll { delta: Vec2d { x: 0.0, y: -60.0 }, phase: TouchPhase::Moved },
+        );
+        assert!(handled_content, "a scroll over the exposed content must be consumed by the scrollable");
+        assert!(
+            scr.ctrl.scroll_offset.get().y < before_content,
+            "a scroll over the exposed content (below the header) must move the scrollable"
+        );
     }
 
     /// Regression for the reported "button active/selected highlight is stuck

@@ -2,6 +2,7 @@ use crate::ZeroSizedBox;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_events::element::ElementEvent;
 use aimer_macro::{Rebuildable, WidgetConstructor};
 pub use aimer_style::*;
 use aimer_utils::debug;
@@ -111,6 +112,14 @@ pub struct RawContainer<T: Element> {
 }
 
 impl<T: Element> RawContainer<T> {
+    /// A container is *opaque* when it paints a background — either an explicit
+    /// `color` or a `box_decoration.background_color`. An opaque container
+    /// visually covers whatever sits behind it in a `Stack`, so it must also
+    /// occlude it for hit-testing (Flutter's `HitTestBehavior::opaque`).
+    fn is_opaque(&self) -> bool {
+        self.color.is_some() || self.box_decoration.background_color.is_some()
+    }
+
     fn margin(&self, ctx: &BuildContext) -> (f32, f32, f32, f32) {
         let parent_width = ctx.box_constraint.max_width;
         let parent_height = ctx.box_constraint.max_height;
@@ -159,6 +168,19 @@ impl<T: Element> Drawable for RawContainer<T> {
         let (m_left_v, m_top_v, m_right_v, m_bottom_v) = self.margin(ctx);
         let draw_width = (computed.width - m_left_v - m_right_v).max(0.0);
         let draw_height = (computed.height - m_top_v - m_bottom_v).max(0.0);
+
+        // Record the on-screen (logical) bounds every frame — not just when the
+        // debug inspector is on. `dispatch_event` uses `pos_start_end` to decide
+        // whether an event lands on this element; without live bounds an opaque
+        // container could never occlude an event at a specific position (see
+        // `on_event`). Bounds start after the margin translate and span the
+        // actually-drawn size (`draw_width`/`draw_height`).
+        {
+            let (start_x, start_y) = ctx.canvas.get_transform_translation();
+            let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
+            let l_end = Vec2d { x: (start_x + draw_width) / scale, y: (start_y + draw_height) / scale };
+            self.bounds.set(Some((l_start, l_end)));
+        }
 
         #[cfg(debug_assertions)]
         {
@@ -262,6 +284,22 @@ impl<T: Element> VisitorElement for RawContainer<T> {
 }
 
 impl<T: Element> EventElement for RawContainer<T> {
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        // An opaque container occludes lower `Stack` layers: a wheel / trackpad
+        // `Scroll` that lands on it must not fall through to a `Scrollable`
+        // behind it. `dispatch_event` only calls `on_event` once the event
+        // position is already inside our bounds and after our children had a
+        // chance to consume it (deepest-first), so returning `true` here simply
+        // absorbs a scroll that nothing in front of us wanted — this is exactly
+        // why the website's scrollable used to scroll while the pointer was on
+        // the opaque header. Non-scroll events keep falling through so existing
+        // click/drag routing is unchanged.
+        if matches!(event, ElementEvent::Scroll { .. }) && self.is_opaque() {
+            return true;
+        }
+        false
+    }
+
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(&self.child);
     }
