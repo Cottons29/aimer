@@ -429,6 +429,15 @@ fn midpoint(a: PointerPosition, b: PointerPosition) -> PointerPosition {
     PointerPosition { x: (a.x + b.x) / 2.0, y: (a.y + b.y) / 2.0, source: a.source, id: a.id }
 }
 
+/// Whether a gesture detector should consume (and stop propagating) a
+/// `Scroll` event. A detector only claims a scroll when it actually has an
+/// `on_scroll` handler; otherwise the event must fall through to whatever is
+/// behind/below it (e.g. a `Scrollable` on a lower `Stack` layer). `Scroll`
+/// events carry no pointer position, so the decision cannot be bounds-based.
+fn detector_consumes_scroll(on_scroll: &ScrollCallback) -> bool {
+    on_scroll.callable().is_some()
+}
+
 fn should_accept_pointer_event(cached_bounds: &CacheBounds, state: &GestureState, event: &ElementEvent, pos: Vec2d) -> bool {
     if cached_bounds.is_inside(pos.x, pos.y) {
         return true;
@@ -491,6 +500,31 @@ mod tests {
         assert!(should_accept_pointer_event(&bounds, &state, &event, pos));
     }
 
+    // Regression for "the Scroll is not able to scroll with mouse wheel or
+    // trackpad": a gesture detector with no `on_scroll` handler (e.g. a header
+    // `TextButton` = MouseRegion + GestureDetector) must NOT consume a scroll,
+    // otherwise — sitting on a top `Stack` layer and dispatched first — it
+    // swallows every wheel/trackpad scroll before it can reach a `Scrollable`
+    // on a lower layer, and nothing scrolls.
+    #[test]
+    fn detector_without_scroll_handler_lets_scroll_fall_through() {
+        let on_scroll = ScrollCallback::default();
+        assert!(
+            !detector_consumes_scroll(&on_scroll),
+            "a handler-less detector must let the scroll propagate to lower layers"
+        );
+    }
+
+    // A detector that actually handles scrolls still claims them.
+    #[test]
+    fn detector_with_scroll_handler_consumes_scroll() {
+        let on_scroll: ScrollCallback = (|_: ScrollData| {}).into();
+        assert!(
+            detector_consumes_scroll(&on_scroll),
+            "a detector with an on_scroll handler must consume the scroll"
+        );
+    }
+
     #[test]
     fn active_touch_state_is_preserved_for_replacement_detector() {
         let mut existing = GestureState::default();
@@ -526,11 +560,21 @@ impl<'b, E: Element> EventElement for RawGestureDetector<'b, E> {
 
         let pos = match event {
             ElementEvent::PointerDown(p, _, _) | ElementEvent::PointerUp(p, _, _) | ElementEvent::PointerMove(p, _, _) => p,
-            ElementEvent::Scroll { .. } => {
-                let pointer_event = match event {
-                    ElementEvent::Scroll { delta, .. } => PointerEvent::Scroll { delta_x: delta.x, delta_y: delta.y },
-                    _ => unreachable!(),
-                };
+            ElementEvent::Scroll { delta, .. } => {
+                // Only consume a scroll if this detector actually has a scroll
+                // handler. A `Scroll` event carries no pointer position, and a
+                // `MouseRegion` wrapper (which has no bounds of its own) forwards
+                // every event straight to us regardless of the cursor location,
+                // so returning `true` unconditionally meant a handler-less
+                // detector (e.g. a header `TextButton` = MouseRegion +
+                // GestureDetector) sitting on a top `Stack` layer swallowed every
+                // wheel/trackpad scroll before it could reach a `Scrollable` on a
+                // lower layer — scrolling appeared completely dead. Let the event
+                // fall through when we have nothing to do with it.
+                if !detector_consumes_scroll(&self.on_scroll) {
+                    return false;
+                }
+                let pointer_event = PointerEvent::Scroll { delta_x: delta.x, delta_y: delta.y };
                 self.process_pointer_event(&pointer_event);
                 self.window.request_redraw();
                 return true;
