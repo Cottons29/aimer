@@ -17,16 +17,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         let Some(cursor) = self.ctrl.cursor_pos.get() else {
             return false;
         };
-
-        // Allow active drags AND pending gestures to continue even when the
-        // pointer leaves bounds. A fast swipe can move outside the scrollable
-        // before exceeding the 10dp drag threshold — dropping those events
-        // would silently kill the gesture. Pending counts as "claimed" once a
-        // PointerDown was received inside the bounds.
         let inside = self.bounds.is_inside(cursor.x, cursor.y);
         let active_drag = self.ctrl.drag_mode.get() != DragMode::None;
         if !inside && !active_drag {
-            // info!("[scroll] REJECTED event (outside bounds, no active drag) cursor=({:.1},{:.1})", cursor.x, cursor.y);
             return false;
         }
 
@@ -43,20 +36,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         let mode_before = self.ctrl.drag_mode.get();
         let mut child_consumed = false;
 
-        // ── PointerUp / Cancel: arm momentum BEFORE child dispatch ──
-        //
-        // If a child widget consumed PointerDown (e.g. a Button inside the
-        // scrollable), it will also consume PointerUp.  By handling the
-        // fling/momentum setup first we guarantee the scrollable always arms
-        // the post-release glide, regardless of what the child does.
-        // The child still receives a Cancel so it can clear its pressed state.
         if matches!(event, ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel) {
-            // Forward a Cancel to the child so it loses its active/pressed state.
             if mode_before != DragMode::None && mode_before != DragMode::Pending {
                 let _ = aimer_widget::dispatch_event(&self.child, pos, &ElementEvent::Cancel);
             } else if matches!(event, ElementEvent::PointerUp(_, _, _)) {
-                // No active drag — this is a tap. Dispatch PointerUp to the
-                // child so widgets like Button can detect the tap gesture.
                 let _ = aimer_widget::dispatch_event(&self.child, pos, event);
             }
 
@@ -85,12 +68,6 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             self.ctrl.last_frame_time.set(Some(now));
             self.ctrl.drag_mode.set(DragMode::None);
             self.ctrl.last_pointer_pos.set(None);
-            // Release the primary-finger lock. This branch returns early, so the
-            // `match` arms below that also clear `active_touch_id` never run for
-            // PointerUp/Cancel. Leaving it set means the next PointerDown (which
-            // on the wasm/pointer-events backend always carries a fresh id) is
-            // seen as a rejected secondary finger until the lock goes stale — so
-            // a new scroll started before the fling settles gets ignored.
             match event {
                 ElementEvent::PointerUp(_, _, id) => {
                     if self.ctrl.active_touch_id.get() == Some(*id) {
@@ -138,17 +115,13 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     }
                 }
 
-                if !self.ctrl.scroll_behavior.bouncy {
-                    if (offset.y <= clamped.y && scroll_delta.y < 0.0) || (offset.y >= clamped.y && scroll_delta.y > 0.0) {
-                        scroll_delta.y = 0.0;
-                    }
-                    if (offset.x <= clamped.x && scroll_delta.x < 0.0) || (offset.x >= clamped.x && scroll_delta.x > 0.0) {
-                        scroll_delta.x = 0.0;
-                    }
-                }
-
-                offset.x += scroll_delta.x;
-                offset.y += scroll_delta.y;
+                // Apply the delta and (for non-bouncy scrollables) clamp to the
+                // valid range. The previous version tried to pre-zero the delta
+                // by comparing `offset` against `clamp_offset(offset)`, but an
+                // in-range offset always equals its own clamp, so every wheel /
+                // trackpad delta was discarded and the scrollable could not be
+                // scrolled at all. See `ScrollController::apply_wheel_delta`.
+                offset = self.ctrl.apply_wheel_delta(offset, scroll_delta);
                 self.ctrl.scroll_offset.set(offset);
 
                 let now = Instant::now();
@@ -202,30 +175,20 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 true
             }
             ElementEvent::PointerDown(p, _, id) => {
-                // Primary-finger tracking: only the first finger owns the scroll.
-                // Secondary fingers are ignored so a second touch doesn't cause a
-                // sudden position jump — matching UIScrollView behaviour.
-                //
-                // Stale-touch safety net: if `active_touch_id` is still set from a
-                // previous gesture but the last event was too long ago (e.g. the app
-                // was backgrounded on iOS without receiving a Cancel/PointerUp),
-                // clear the stale state so the new touch can be accepted.
-                if let Some(prev_id) = self.ctrl.active_touch_id.get() {
-                    if prev_id != *id {
-                        let stale = self
-                            .ctrl
-                            .last_event_time
-                            .get()
-                            .is_none_or(|t| Instant::now().duration_since(t).as_millis() > STALE_TOUCH_THRESHOLD_MS);
-                        if stale {
-                            // info!("[scroll] DOWN stale touch cleared prev_id={}", prev_id);
-                            self.ctrl.active_touch_id.set(None);
-                            self.ctrl.drag_mode.set(DragMode::None);
-                            self.ctrl.last_pointer_pos.set(None);
-                        } else {
-                            // info!("[scroll] DOWN REJECTED — secondary finger prev_id={} new_id={}", prev_id, id);
-                            return false;
-                        }
+                if let Some(prev_id) = self.ctrl.active_touch_id.get() && prev_id != *id {
+                    let stale = self
+                        .ctrl
+                        .last_event_time
+                        .get()
+                        .is_none_or(|t| Instant::now().duration_since(t).as_millis() > STALE_TOUCH_THRESHOLD_MS);
+                    if stale {
+                        // info!("[scroll] DOWN stale touch cleared prev_id={}", prev_id);
+                        self.ctrl.active_touch_id.set(None);
+                        self.ctrl.drag_mode.set(DragMode::None);
+                        self.ctrl.last_pointer_pos.set(None);
+                    } else {
+                        // info!("[scroll] DOWN REJECTED — secondary finger prev_id={} new_id={}", prev_id, id);
+                        return false;
                     }
                 }
                 self.ctrl.active_touch_id.set(Some(*id));
@@ -247,29 +210,25 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     let friction = self.ctrl.scroll_behavior.friction;
                     // velocity = distance / (frame_ref / (1 − friction)) to scroll exactly `distance` px.
                     let vel_scale = (1.0 - friction) / FRAME_REF_120;
-                    if self.ctrl.hit_test_v_track(*p, vp_w, vp_h, v_tw) {
-                        if let Some((_x, y, _w, _h)) = self.ctrl.v_thumb_rect.get() {
-                            let page = vp_h * KEYBOARD_PAGE_FRACTION;
-                            let vy = if p.y < y { page * vel_scale } else { -page * vel_scale };
-                            self.ctrl.pointer_velocity.set(Vec2d { x: 0.0, y: vy });
-                            self.ctrl.cancel_fling();
-                            self.ctrl.drag_mode.set(DragMode::None);
-                            self.ctrl.last_pointer_pos.set(Some(*p));
-                            aimer_events::window::request_animation_frame();
-                            return true;
-                        }
+                    if self.ctrl.hit_test_v_track(*p, vp_w, vp_h, v_tw) && let Some((_x, y, _w, _h)) = self.ctrl.v_thumb_rect.get() {
+                        let page = vp_h * KEYBOARD_PAGE_FRACTION;
+                        let vy = if p.y < y { page * vel_scale } else { -page * vel_scale };
+                        self.ctrl.pointer_velocity.set(Vec2d { x: 0.0, y: vy });
+                        self.ctrl.cancel_fling();
+                        self.ctrl.drag_mode.set(DragMode::None);
+                        self.ctrl.last_pointer_pos.set(Some(*p));
+                        aimer_events::window::request_animation_frame();
+                        return true;
                     }
-                    if self.ctrl.hit_test_h_track(*p, vp_w, vp_h, h_tw) {
-                        if let Some((x, _y, _w, _h)) = self.ctrl.h_thumb_rect.get() {
-                            let page = vp_w * KEYBOARD_PAGE_FRACTION;
-                            let vx = if p.x < x { page * vel_scale } else { -page * vel_scale };
-                            self.ctrl.pointer_velocity.set(Vec2d { x: vx, y: 0.0 });
-                            self.ctrl.cancel_fling();
-                            self.ctrl.drag_mode.set(DragMode::None);
-                            self.ctrl.last_pointer_pos.set(Some(*p));
-                            aimer_events::window::request_animation_frame();
-                            return true;
-                        }
+                    if self.ctrl.hit_test_h_track(*p, vp_w, vp_h, h_tw) && let Some((x, _y, _w, _h)) = self.ctrl.h_thumb_rect.get() {
+                        let page = vp_w * KEYBOARD_PAGE_FRACTION;
+                        let vx = if p.x < x { page * vel_scale } else { -page * vel_scale };
+                        self.ctrl.pointer_velocity.set(Vec2d { x: vx, y: 0.0 });
+                        self.ctrl.cancel_fling();
+                        self.ctrl.drag_mode.set(DragMode::None);
+                        self.ctrl.last_pointer_pos.set(Some(*p));
+                        aimer_events::window::request_animation_frame();
+                        return true;
                     }
                 }
 
@@ -349,18 +308,6 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
                         let now = Instant::now();
                         self.ctrl.last_event_time.set(Some(now));
-
-                        // Turn the finger delta into a drag-velocity sample, but only
-                        // once a real slice of wall-clock time has elapsed. On web,
-                        // winit delivers one native `pointermove` as a burst of
-                        // *coalesced* samples dispatched in a single callback that all
-                        // read (almost) the same `Instant`; a naive per-sample
-                        // `delta / dt` then divides a small delta by a ~0 dt and the
-                        // velocity explodes, so the release fling launches ~3x too fast
-                        // on touch. `accumulate_drag_velocity` merges those same-frame
-                        // samples into one realistic value. The scroll *offset* below
-                        // still updates on every event, so dragging stays 1:1 and
-                        // smooth on both targets — only the fling seed is corrected.
                         if let Some((raw_velocity, sample_dt)) = self.ctrl.accumulate_drag_velocity(dx, dy, now) {
                             let mut new_velocity = match mode {
                                 DragMode::Content => match self.ctrl.axis {
@@ -371,28 +318,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             };
 
                             let mut old_velocity = self.ctrl.pointer_velocity.get();
-                            // Direction-reversal guard: if a new drag pushes AGAINST
-                            // leftover fling velocity (a fresh scroll started before the
-                            // previous momentum settled), drop the residual on that axis
-                            // instead of blending it in. Otherwise the opposing momentum
-                            // is averaged into the fresh drag and the content briefly
-                            // travels the OLD way before the new direction wins — the
-                            // "wrong direction" jump seen on touch. `new_velocity` holds
-                            // the fresh per-frame drag velocity here (the blend below
-                            // overwrites it), so a negative product means the finger now
-                            // moves opposite to the coasting momentum.
                             let reversed_x = new_velocity.x * old_velocity.x < 0.0;
                             let reversed_y = new_velocity.y * old_velocity.y < 0.0;
                             if reversed_x || reversed_y {
-                                // Also drop the stale opposite-direction samples from the
-                                // velocity ring buffer BEFORE recording the new one. The
-                                // release fling is seeded from `smoothed_velocity()`, a
-                                // weighted average over the buffer. On a SMALL reverse
-                                // flick only 1–2 new samples are pushed, so the buffer
-                                // stays dominated by up to VELOCITY_HISTORY_SIZE prior
-                                // old-direction samples and that average — hence the
-                                // release fling — still points the OLD way. Clearing here
-                                // makes the release reflect only post-reversal motion.
                                 self.ctrl.clear_velocity_history();
                                 if reversed_x {
                                     old_velocity.x = 0.0;
@@ -402,13 +330,6 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                                 }
                             }
 
-                            // Record the drag velocity so that releasing the finger
-                            // (PointerUp) can fling with momentum. The release path uses
-                            // `smoothed_velocity()`, which reads from this history;
-                            // without this push the history stays empty for touch drags
-                            // (it is otherwise only filled by the trackpad `Scroll`
-                            // path), making the smoothed velocity zero and stopping the
-                            // scroll instantly on lift — notably on iOS.
                             self.ctrl.push_velocity(new_velocity.x, new_velocity.y);
 
                             let blend_factor = (sample_dt / DRAG_BLEND_WINDOW).min(1.0);

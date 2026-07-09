@@ -217,6 +217,28 @@ impl ScrollController {
         offset
     }
 
+    /// Apply a wheel/trackpad scroll delta to `offset` and return the new
+    /// offset.
+    ///
+    /// Non-bouncy scrollables clamp to the valid range immediately (matching
+    /// the pointer-drag and keyboard paths). Bouncy ones keep the raw
+    /// (possibly out-of-range) offset and let [`visual_offset`] +
+    /// [`update_momentum`] apply the rubber-band and spring back.
+    ///
+    /// This replaces an earlier attempt that zeroed the delta up-front when
+    /// `offset` was already at `clamp_offset(offset)`. Because an in-range
+    /// offset always equals its own clamp, that predicate matched on *every*
+    /// frame and silently discarded all wheel/trackpad deltas — the scrollable
+    /// could not be scrolled by mouse wheel or trackpad at all (drag/keyboard
+    /// still worked because they clamp *after* applying the delta).
+    pub(crate) fn apply_wheel_delta(&self, offset: Vec2d, scroll_delta: Vec2d) -> Vec2d {
+        let mut next = Vec2d { x: offset.x + scroll_delta.x, y: offset.y + scroll_delta.y };
+        if !self.scroll_behavior.bouncy {
+            next = self.clamp_offset(next);
+        }
+        next
+    }
+
     /// Hard-cap overscroll to [`MAX_OVERSCROLL_FRACTION`] of the content size.
     ///
     /// Unlike [`visual_offset`] (which applies a rubber-band *display*
@@ -888,5 +910,61 @@ mod tests {
         c.clear_velocity_history();
         c.push_velocity(0.0, -20.0);
         assert!(c.smoothed_velocity().y < 0.0, "after clearing, the release follows the new direction");
+    }
+
+    // Regression: a non-bouncy scrollable must actually move when a wheel /
+    // trackpad delta arrives while the offset is anywhere strictly inside the
+    // valid range. The old handler compared the current offset against
+    // `clamp_offset(offset)` and zeroed the delta when they were equal — which
+    // they always are for an in-range offset — so wheel/trackpad scrolling was
+    // completely dead. `apply_wheel_delta` must instead apply the delta first.
+    #[test]
+    fn wheel_delta_moves_non_bouncy_from_midrange() {
+        let mut c = ctrl_with_offset(Vec2d { x: 0.0, y: -100.0 });
+        c.scroll_behavior.bouncy = false;
+        // Valid vertical range is [-1000, 0]; -100 is strictly inside it.
+        c.cached_max_scroll.set(Vec2d { x: 0.0, y: 1000.0 });
+
+        // Scroll further down (offset grows more negative).
+        let next = c.apply_wheel_delta(Vec2d { x: 0.0, y: -100.0 }, Vec2d { x: 0.0, y: -20.0 });
+        assert_eq!(next.y, -120.0, "wheel delta must move an in-range non-bouncy offset");
+
+        // Scroll back up.
+        let up = c.apply_wheel_delta(Vec2d { x: 0.0, y: -100.0 }, Vec2d { x: 0.0, y: 15.0 });
+        assert_eq!(up.y, -85.0);
+    }
+
+    // A non-bouncy scrollable never overscrolls: a delta past the edge clamps to
+    // the boundary instead of running away.
+    #[test]
+    fn wheel_delta_clamps_non_bouncy_at_boundary() {
+        let mut c = ctrl_with_offset(Vec2d { x: 0.0, y: -990.0 });
+        c.scroll_behavior.bouncy = false;
+        c.cached_max_scroll.set(Vec2d { x: 0.0, y: 1000.0 });
+
+        // Overshoot the bottom edge (-1000): must clamp, not exceed.
+        let next = c.apply_wheel_delta(Vec2d { x: 0.0, y: -990.0 }, Vec2d { x: 0.0, y: -50.0 });
+        assert_eq!(next.y, -1000.0, "non-bouncy offset clamps at the bottom edge");
+
+        // Overshoot the top edge (0): must clamp to 0.
+        let top = c.apply_wheel_delta(Vec2d { x: 0.0, y: -10.0 }, Vec2d { x: 0.0, y: 40.0 });
+        assert_eq!(top.y, 0.0, "non-bouncy offset clamps at the top edge");
+    }
+
+    // A bouncy scrollable keeps the raw (out-of-range) offset so the visual
+    // rubber-band + spring-back can act; `apply_wheel_delta` must not clamp it.
+    #[test]
+    fn wheel_delta_allows_overscroll_when_bouncy() {
+        let c = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
+        assert!(c.scroll_behavior.bouncy, "default behavior is bouncy");
+        c.cached_max_scroll.set(Vec2d { x: 0.0, y: 1000.0 });
+
+        // Overscroll past the top edge (0) is preserved, not clamped.
+        let next = c.apply_wheel_delta(Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 0.0, y: 30.0 });
+        assert_eq!(next.y, 30.0, "bouncy offset keeps the overscroll for the rubber-band");
+
+        // A normal in-range scroll still moves.
+        let down = c.apply_wheel_delta(Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 0.0, y: -30.0 });
+        assert_eq!(down.y, -30.0);
     }
 }
