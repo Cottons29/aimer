@@ -206,6 +206,19 @@ impl LayoutCacheKey {
     }
 }
 
+/// Glyph-instance ranges owned by a single text request. `[alpha_start,
+/// alpha_end)` indexes `instances` and `[color_start, color_end)` indexes
+/// `color_instances`. `prepare` fills both lists in request order, so each
+/// request owns a contiguous slice of each and can be drawn on its own at the
+/// right z-position in the draw stream.
+#[derive(Clone, Copy, Default)]
+struct TextRequestRange {
+    alpha_start: u32,
+    alpha_end: u32,
+    color_start: u32,
+    color_end: u32,
+}
+
 pub struct TextPipelineV2 {
     rasterizer: GlyphRasterizer,
     /// Alpha-coverage atlas (R8Unorm) for monochrome glyphs.
@@ -250,6 +263,12 @@ pub struct TextPipelineV2 {
     /// for wrapping/ellipsis text, but shaped glyph ids and advances only depend
     /// on text content and font size.
     shaping_cache: HashMap<ShapingCacheKey, ShapedText>,
+    /// Per-request glyph ranges recorded during `prepare` so the renderer can
+    /// draw a single text request at its own z-position (interleaved with
+    /// rects/images) instead of drawing all text in one final pass — the
+    /// latter made text ignore z-order (e.g. a `Stack`'s upper layer could not
+    /// cover text belonging to a lower layer).
+    request_ranges: Vec<TextRequestRange>,
 }
 
 impl TextPipelineV2 {
@@ -461,6 +480,7 @@ impl TextPipelineV2 {
             last_viewport: (0, 0),
             layout_cache: HashMap::new(),
             shaping_cache: HashMap::new(),
+            request_ranges: Vec::new(),
         }
     }
 
@@ -630,6 +650,8 @@ impl TextPipelineV2 {
         self.color_instances.clear();
         self.decoration_instances.clear();
         self.decoration_instances.extend(decorations.iter().map(|d| d.to_instance()));
+        self.request_ranges.clear();
+        self.request_ranges.reserve(requests.len());
 
         // Atlas regions recorded in lock-step with `self.instances` /
         // `self.color_instances`. UVs depend on the atlas dimensions, which can
@@ -665,6 +687,12 @@ impl TextPipelineV2 {
         }
 
         for req in requests {
+            // Record the glyph ranges this request will own. Both instance lists
+            // are appended to in request order, so the slice for this request is
+            // `[start, len_after)` in each list.
+            let alpha_start = self.instances.len() as u32;
+            let color_start = self.color_instances.len() as u32;
+
             // Avoid cloning the span list on every frame (it ran even on a pure
             // cache hit). Borrow `req.spans` directly when present and only
             // allocate a one-element fallback when the request has no spans.
@@ -811,7 +839,14 @@ impl TextPipelineV2 {
                         cursor_y += last.y;
                     }
                 }
-            })
+            });
+
+            self.request_ranges.push(TextRequestRange {
+                alpha_start,
+                alpha_end: self.instances.len() as u32,
+                color_start,
+                color_end: self.color_instances.len() as u32,
+            });
         }
 
         // Now that every glyph has been inserted, the atlases have reached
@@ -901,32 +936,46 @@ impl TextPipelineV2 {
         }
     }
 
-    pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
-        // Alpha pass first, color pass second. Both within the same render
-        // pass — color emoji ride on top of any monochrome glyphs sharing the
-        // same line.
-        if !self.instances.is_empty() {
+    /// Draw a single text request's glyphs at the current point in the render
+    /// pass: alpha-coverage glyphs first, then color emoji so they ride on top
+    /// of any monochrome glyphs sharing the same line. Drawing per request —
+    /// instead of all text in one final pass — is what lets text obey z-order
+    /// against rects/images (e.g. a `Stack`'s upper layer can now cover text
+    /// belonging to a lower layer). `index` matches the request order passed to
+    /// `prepare`.
+    pub fn render_request(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
+        let Some(range) = self.request_ranges.get(index) else {
+            return;
+        };
+
+        if range.alpha_end > range.alpha_start {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-            pass.draw(0..6, 0..self.instances.len() as u32);
+            pass.draw(0..6, range.alpha_start..range.alpha_end);
         }
 
-        if !self.color_instances.is_empty() {
+        if range.color_end > range.color_start {
             pass.set_pipeline(&self.color_pipeline);
             pass.set_bind_group(0, &self.color_bind_group, &[]);
             pass.set_vertex_buffer(0, self.color_instance_buffer.slice(..));
-            pass.draw(0..6, 0..self.color_instances.len() as u32);
+            pass.draw(0..6, range.color_start..range.color_end);
         }
+    }
 
-        // Decoration lines last, so underline/overline/strike layer with their
-        // text. Reuses the alpha `bind_group` (it only needs the viewport uniform).
-        if !self.decoration_instances.is_empty() {
-            pass.set_pipeline(&self.decoration_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.decoration_instance_buffer.slice(..));
-            pass.draw(0..6, 0..self.decoration_instances.len() as u32);
+    /// Draw a single decoration line (underline/overline/strike) at its position
+    /// in the draw stream so it layers with its text. One decoration request
+    /// maps to exactly one instance. Reuses the alpha `bind_group` (it only
+    /// needs the viewport uniform).
+    pub fn render_decoration(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
+        if index >= self.decoration_instances.len() {
+            return;
         }
+        pass.set_pipeline(&self.decoration_pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_vertex_buffer(0, self.decoration_instance_buffer.slice(..));
+        let start = index as u32;
+        pass.draw(0..6, start..start + 1);
     }
 
     /// Measure text width using the rasterizer.

@@ -28,7 +28,12 @@ struct ResolvedCmd {
 enum ResolvedKind {
     Rect(RectInstance),
     Image { texture_id: u32, instance: ImageInstance },
-    TextIndex(()),
+    /// Index into `text_requests` (and the text pipeline's per-request ranges).
+    /// Kept in draw order so text is painted at its own z-position instead of
+    /// on top of everything at the end.
+    Text(usize),
+    /// Index into `decoration_requests` (one instance per decoration).
+    TextDecoration(usize),
     Custom { pipeline_index: usize },
 }
 
@@ -255,7 +260,7 @@ impl Renderer {
                 }
                 DrawCommand::DrawText { position, text, font_size, color, bounds_width, bounds_height, overflow, font_weight } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
-                    let _idx = self.text_requests.len();
+                    let idx = self.text_requests.len();
                     self.text_requests.push(TextDrawRequest {
                         x: tx,
                         y: ty,
@@ -273,10 +278,11 @@ impl Renderer {
                         spans: Vec::new(),
                     });
                     self.resolved
-                        .push(ResolvedCmd { kind: ResolvedKind::TextIndex(()) });
+                        .push(ResolvedCmd { kind: ResolvedKind::Text(idx) });
                 }
                 DrawCommand::DrawRichText { position, spans, font_size, color, bounds_width, bounds_height, overflow } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
+                    let idx = self.text_requests.len();
                     self.text_requests.push(TextDrawRequest {
                         x: tx,
                         y: ty,
@@ -307,7 +313,7 @@ impl Renderer {
                             .collect(),
                     });
                     self.resolved
-                        .push(ResolvedCmd { kind: ResolvedKind::TextIndex(()) });
+                        .push(ResolvedCmd { kind: ResolvedKind::Text(idx) });
                 }
                 DrawCommand::DrawTextDecoration { rect, color, style, thickness, period } => {
                     // The band is authored in local coordinates; transform its
@@ -317,6 +323,7 @@ impl Renderer {
                     let sy = (current_transform.cols[1][0].powi(2) + current_transform.cols[1][1].powi(2)).sqrt();
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
                     let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
+                    let deco_idx = self.decoration_requests.len();
                     self.decoration_requests.push(TextDecorationDraw {
                         x: p1x.min(p2x),
                         y: p1y.min(p2y),
@@ -329,6 +336,8 @@ impl Renderer {
                         clip_rect: clip_to_array(self.clip_stack.last()),
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),
                     });
+                    self.resolved
+                        .push(ResolvedCmd { kind: ResolvedKind::TextDecoration(deco_idx) });
                 }
                 DrawCommand::SetTransform { matrix } => {
                     current_transform = *matrix;
@@ -453,7 +462,12 @@ impl Renderer {
             });
 
             // Render commands in draw order to preserve correct z-ordering
-            // between rects and images. Consecutive same-type commands are batched.
+            // across rects, images, text and text decorations. Consecutive
+            // same-type commands are batched; switching type flushes the pending
+            // batch first so nothing is reordered. Text used to be drawn in a
+            // single pass at the very end, which made it float above every rect
+            // regardless of z-order (e.g. a `Stack`'s upper layer could not cover
+            // text drawn by a lower layer) — it is now interleaved like the rest.
             self.rect_pipeline.clear();
 
             // Size the image instance buffer for *all* image instances of this
@@ -500,8 +514,34 @@ impl Renderer {
                         current_texture_id = Some(*texture_id);
                         image_batch.push(*instance);
                     }
-                    ResolvedKind::TextIndex(()) => {
-                        // Text is rendered after all other commands
+                    ResolvedKind::Text(index) => {
+                        let index = *index;
+                        // Flush everything drawn before this text so the text
+                        // lands on top of it, and anything drawn after this text
+                        // lands on top of the text.
+                        self.rect_pipeline
+                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        if let Some(tid) = current_texture_id.take()
+                            && !image_batch.is_empty()
+                        {
+                            self.image_pipeline
+                                .draw_batch(device, queue, &mut pass, tid, &image_batch);
+                            image_batch.clear();
+                        }
+                        self.text_pipeline.render_request(&mut pass, index);
+                    }
+                    ResolvedKind::TextDecoration(index) => {
+                        let index = *index;
+                        self.rect_pipeline
+                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        if let Some(tid) = current_texture_id.take()
+                            && !image_batch.is_empty()
+                        {
+                            self.image_pipeline
+                                .draw_batch(device, queue, &mut pass, tid, &image_batch);
+                            image_batch.clear();
+                        }
+                        self.text_pipeline.render_decoration(&mut pass, index);
                     }
                     ResolvedKind::Custom { pipeline_index } => {
                         // Flush pending built-in batches to maintain z-order
@@ -533,11 +573,6 @@ impl Renderer {
             // Flush remaining rects
             self.rect_pipeline
                 .flush(device, queue, &mut pass, width, height, is_srgb);
-
-            // Render text last (including inspector overlay and decorations)
-            if !self.text_requests.is_empty() || !self.decoration_requests.is_empty() {
-                self.text_pipeline.render(&mut pass);
-            }
         }
         queue.submit(std::iter::once(encoder.finish()));
     }
