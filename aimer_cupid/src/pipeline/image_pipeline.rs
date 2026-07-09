@@ -234,11 +234,7 @@ impl ImagePipeline {
                         aspect: wgpu::TextureAspect::All,
                     },
                     data,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(4 * width),
-                        rows_per_image: Some(height),
-                    },
+                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * width), rows_per_image: Some(height) },
                     wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
                 );
 
@@ -330,18 +326,9 @@ impl ImagePipeline {
             view_formats: &[],
         });
         queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
+            wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
             data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * width),
-                rows_per_image: Some(height),
-            },
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * width), rows_per_image: Some(height) },
             wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
 
@@ -355,8 +342,7 @@ impl ImagePipeline {
             ],
         });
 
-        self.textures
-            .insert(id, TextureEntry { bind_group, texture });
+        self.textures.insert(id, TextureEntry { bind_group, texture });
     }
 
     /// Draw a batch of instances with the same texture_id.

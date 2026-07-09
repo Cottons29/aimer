@@ -203,9 +203,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                     _ => return,
                 };
 
-                let view = frame
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
+                let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
                 let width = gpu.width();
                 let height = gpu.height();

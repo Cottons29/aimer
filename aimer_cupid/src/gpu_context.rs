@@ -179,7 +179,7 @@ impl<'w> GpuContext<'w> {
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
-            color_space: SurfaceColorSpace::Auto
+            color_space: SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
 
