@@ -102,10 +102,11 @@ fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radii: vec4<f32>)
     }
     let clip_min = clip_rect.xy;
     let clip_max = clip_rect.xy + clip_rect.zw;
-    let a_left = smoothstep(0.0, 1.0, pixel_pos.x - clip_min.x);
-    let a_right = smoothstep(0.0, 1.0, clip_max.x - pixel_pos.x);
-    let a_top = smoothstep(0.0, 1.0, pixel_pos.y - clip_min.y);
-    let a_bottom = smoothstep(0.0, 1.0, clip_max.y - pixel_pos.y);
+    // AA centered on the boundary so the clip does not erode ~1px inside each edge.
+    let a_left = smoothstep(-0.5, 0.5, pixel_pos.x - clip_min.x);
+    let a_right = smoothstep(-0.5, 0.5, clip_max.x - pixel_pos.x);
+    let a_top = smoothstep(-0.5, 0.5, pixel_pos.y - clip_min.y);
+    let a_bottom = smoothstep(-0.5, 0.5, clip_max.y - pixel_pos.y);
     return a_left * a_right * a_top * a_bottom;
 }
 

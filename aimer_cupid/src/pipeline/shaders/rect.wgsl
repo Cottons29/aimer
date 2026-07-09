@@ -161,11 +161,15 @@ fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radii: vec4<f32>)
     let d_top    = pixel_pos.y - clip_min.y;
     let d_bottom = clip_max.y - pixel_pos.y;
 
-    // Smoothstep each edge for anti-aliasing (1px transition)
-    let a_left   = smoothstep(0.0, 1.0, d_left);
-    let a_right  = smoothstep(0.0, 1.0, d_right);
-    let a_top    = smoothstep(0.0, 1.0, d_top);
-    let a_bottom = smoothstep(0.0, 1.0, d_bottom);
+    // Smoothstep each edge for anti-aliasing (1px transition centered on the
+    // boundary). Centering on the edge (`-0.5..0.5`) keeps the clipped region
+    // fully opaque right up to the boundary; ramping from `0..1` instead would
+    // erode ~1px of content just inside every edge (see the rounded-clip branch
+    // above, which already centers with `smoothstep(-0.5, 0.5, d)`).
+    let a_left   = smoothstep(-0.5, 0.5, d_left);
+    let a_right  = smoothstep(-0.5, 0.5, d_right);
+    let a_top    = smoothstep(-0.5, 0.5, d_top);
+    let a_bottom = smoothstep(-0.5, 0.5, d_bottom);
 
     return a_left * a_right * a_top * a_bottom;
 }
