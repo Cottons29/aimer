@@ -1,6 +1,6 @@
 use crate::reconcile::try_update_element;
 use crate::widget::stateful::{RebuildCallBack, SyncChild};
-use crate::{base::*, Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget};
+use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget, base::*};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use std::cell::{Cell, UnsafeCell};
@@ -159,9 +159,10 @@ impl Drawable for StatelessElement {
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if !(cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y)  {return;}
-                if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
-                    *hovered = Some((self.debug_name, l_start, l_end));
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
+                    if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
+                        *hovered = Some((self.debug_name, l_start, l_end));
+                    }
                 }
             }
         }
@@ -196,9 +197,7 @@ impl LayoutElement for StatelessElement {
         }
         unsafe { &*self.child.0.get() }.pos_start_end()
     }
-
 }
-
 
 impl VisitorElement for StatelessElement {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -211,7 +210,6 @@ impl VisitorElement for StatelessElement {
     fn debug_name(&self) -> &'static str {
         self.debug_name
     }
-
 }
 
 impl Reconcilable for StatelessElement {
@@ -219,7 +217,9 @@ impl Reconcilable for StatelessElement {
         self.key.clone()
     }
 
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 
     fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
         // Keep this element's wrapper identity — its own `rebuild_fn`, `dirty`
@@ -306,7 +306,3 @@ mod tests {
         assert!(inner_dirty.get(), "mark reached the nested rebuildable child");
     }
 }
-
-
-
-

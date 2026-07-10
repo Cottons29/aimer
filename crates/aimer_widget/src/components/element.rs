@@ -1,10 +1,10 @@
+use crate::Drawable;
 use crate::base::*;
 use crate::components::event_element::EventElement;
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 use crate::components::reconcilable::Reconcilable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
-use crate::Drawable;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
@@ -12,7 +12,6 @@ use aimer_events::element::ElementEvent;
 impl<T> Element for T where T: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable + Reconcilable {}
 
 pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable + Reconcilable {
-
     /// Converts the implementing instance into a `Box` containing a dynamic trait object of type `Element`.
     ///
     /// This method is useful when you want to box a type that implements the `Element` trait to enable
@@ -40,7 +39,10 @@ pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable +
     ///
     /// - The type must implement the `Element` trait.
     /// - The type must be `Sized` and `'static`.
-    fn boxed(self) -> Box<dyn Element> where Self: Sized + 'static {
+    fn boxed(self) -> Box<dyn Element>
+    where
+        Self: Sized + 'static,
+    {
         Box::new(self)
     }
 }
@@ -79,6 +81,11 @@ impl LayoutElement for Box<dyn Element> {
     fn get_size_from_child(&self) -> Option<Size> {
         self.as_ref().get_size_from_child()
     }
+
+    fn flex(&self) -> Option<f32> {
+        self.as_ref().flex()
+    }
+
     fn invalidate_layout(&self) {
         self.as_ref().invalidate_layout()
     }
@@ -136,7 +143,9 @@ impl Reconcilable for Box<dyn Element> {
     // That silently broke reconciliation state transfer, e.g. a `Scrollable`
     // carrying its live scroll offset into the freshly built element on a parent
     // rebuild — the downcast failed, so the viewport snapped back to the top.
-    fn as_any(&self) -> &dyn std::any::Any { self.as_ref().as_any() }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self.as_ref().as_any()
+    }
     fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
         self.as_ref().update_from_widget(new_element, ctx)
     }

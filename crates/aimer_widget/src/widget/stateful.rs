@@ -1,16 +1,28 @@
 use crate::reconcile::try_update_element;
-use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget, base::*};
+use crate::{base::*, Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use aimer_utils::error;
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::panic::Location;
 use std::process::exit;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use aimer_utils::error;
+
+trait FetchAdd {
+    fn fetch_add(&self, val: u64) -> u64;
+}
+
+
+impl FetchAdd for Cell<u64> {
+    fn fetch_add(&self, val: u64) -> u64 {
+        self.get().wrapping_add(val)
+    }
+}
+
+
 
 /// A `Send + Sync` wrapper around `UnsafeCell<Box<dyn Element>>`.
 /// Safety: the rendering pipeline is single-threaded, so concurrent access does not occur.
@@ -71,7 +83,7 @@ unsafe impl Send for SyncAdoptConfigFn {}
 unsafe impl Sync for SyncAdoptConfigFn {}
 
 /// Type-erased mutation closure sent through the channel.
-type StateMutation<S> = Box<dyn FnOnce(&mut S) + Send>;
+type StateMutation<S> = Box<dyn FnOnce(&mut S)>;
 
 /// A handle that allows StatefulWidgets to trigger state mutations and rebuilds.
 /// This is the Rust equivalent of Flutter's `setState`.
@@ -127,6 +139,7 @@ impl<S: 'static> StateUpdater<S> {
     /// Calling `set_state` or `read` on an empty updater will panic.
     ///
     /// It has the same functionality as `StateUpdater<S>::empty`
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self::empty()
     }
@@ -182,7 +195,7 @@ impl<S: 'static> StateUpdater<S> {
     /// Multiple calls between frames are coalesced: the dirty flag is set once,
     /// and only a single rebuild happens during the next `draw`.
     #[track_caller]
-    pub fn set_state(&self, f: impl FnOnce(&mut S) + Send + 'static) {
+    pub fn set_state(&self, f: impl FnOnce(&mut S) + 'static) {
         let inner = match self.inner.as_ref() {
             Some(inner) => inner,
             None => {
@@ -199,31 +212,6 @@ impl<S: 'static> StateUpdater<S> {
             request_animation_frame()
         }
     }
-
-    // pub fn state(&self) -> Option<&S>{
-    //     let inner = match self.inner.as_ref() {
-    //         Some(inner) => inner.state,
-    //         None => {
-    //             let loc = Location::caller();
-    //             #[cfg(not(target_os = "ios"))]
-    //             self.beautiful_error(loc);
-    //             exit(1);
-    //         }
-    //     };
-    //
-    // }
-
-    // pub fn state(&self) -> Option<&S> {
-    //     let inner = match self.inner.as_ref() {
-    //         Some(inner) => inner.state,
-    //         None => {
-    //             let loc = Location::caller();
-    //             #[cfg(not(target_os = "ios"))]
-    //             self.beautiful_error(loc);
-    //             exit(1);
-    //         }
-    //     };
-    // }
 
     /// Read the current state without marking dirty.
     ///
@@ -303,9 +291,7 @@ pub trait State<W: StatefulWidget> {
     /// Called once after the state is created, providing a [`StateUpdater`] handle.
     /// Store the updater in your state struct to later call `set_state()` from
     /// event handlers or callbacks — similar to Flutter's `setState`.
-    fn init_state(&mut self, updater: StateUpdater<Self>)
-    where
-        Self: Sized;
+    fn init_state(&mut self, updater: StateUpdater<Self>) where Self: Sized;
 
     /// Called during reconciliation when a parent rebuild produces a freshly
     /// built element for the *same* stateful widget (e.g. a window resize, or a
@@ -318,16 +304,10 @@ pub trait State<W: StatefulWidget> {
     /// `hover_style` / `on_press`, or a selected/disabled flag). Copy those
     /// configuration fields out of `new` into `self` here so the widget renders
     /// with the current configuration while retaining its runtime state.
-    ///
-    /// Mirrors Flutter's `State::didUpdateWidget`. Defaults to a no-op, which is
-    /// correct for stateful widgets whose state is fully self-owned and does not
-    /// mirror any parent-provided props.
-    fn adopt_config_from(&mut self, _new: &Self)
-    where
-        Self: Sized,
-    {
-    }
+    fn adopt_config_from(&mut self, _new: &Self) {}
 
+
+    /// Override this method to build the widget
     fn build(&self, ctx: &BuildContext) -> impl Widget;
 }
 pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element>;
@@ -342,13 +322,13 @@ pub struct StatefulElement {
     rebuild_fn: SyncRebuildFn,
     /// Monotonically increasing generation counter. Incremented on each rebuild
     /// so that multiple `set_state` calls between frames only trigger one rebuild.
-    rebuild_generation: AtomicU64,
+    rebuild_generation: Cell<u64>,
     /// The generation at which the last rebuild was performed.
-    last_rebuilt_generation: AtomicU64,
+    last_rebuilt_generation: Cell<u64>,
     // #[cfg(debug_assertions)]
     debug_name: Cell<&'static str>,
     pub key: Option<crate::key::Key>,
-    pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
+    pub bounds: Cell<Option<(Vec2d, Vec2d)>>,
     /// This element's own state cell, type-erased, so a reconciling element can
     /// hand it to the live element's `adopt_config_fn` for a config refresh.
     state_any: SyncStateAny,
@@ -444,8 +424,8 @@ impl StatefulElement {
             child: SyncChild(UnsafeCell::new(child)),
             dirty: RefCell::new(dirty),
             rebuild_fn: SyncRebuildFn(UnsafeCell::new(rebuild_fn)),
-            rebuild_generation: AtomicU64::new(0),
-            last_rebuilt_generation: AtomicU64::new(0),
+            rebuild_generation: Cell::new(0),
+            last_rebuilt_generation: Cell::new(0),
             debug_name: Cell::new("Unknown"),
             key: None,
             bounds: Cell::new(None),
@@ -477,23 +457,35 @@ impl StatefulElement {
         }
 
         // Coalesce: only rebuild once per generation bump.
-        let current_gen = self.rebuild_generation.load(Ordering::Relaxed);
-        let last = self.last_rebuilt_generation.load(Ordering::Relaxed);
+        let current_gen = self.rebuild_generation.get();
+        let last = self.last_rebuilt_generation.get();
         if current_gen == last && !self.dirty.borrow().get() {
             return;
         }
 
-        // First, let nested dirty StatefulElements rebuild in-place.
-        {
-            let child = unsafe { &*self.child.0.get() };
-            Self::propagate_rebuild(child.as_ref(), ctx);
-        }
-
-        // Build the new child element.
+        // Build the new child element FIRST. Running our own `build` before
+        // propagating the rebuild downward ensures any inherited state this
+        // element provides via `ctx.insert_state` (e.g. a `Navigator` inserting
+        // its `NavigatorController`) is re-published into the *current* frame's
+        // context before descendants rebuild and look it up.
+        //
+        // Otherwise a nested consumer rebuilt during `propagate_rebuild` — such
+        // as a header calling `NavigatorController::of` on a window resize,
+        // where `mark_needs_rebuild` dirties the whole tree and the frame's
+        // `BuildContext` starts with an empty `inherited_states` map — would
+        // look up state the provider has not re-inserted yet this frame and
+        // panic ("No Navigator found in context").
         let new_child = {
             let rf = unsafe { &*self.rebuild_fn.0.get() };
             rf(ctx)
         };
+
+        // Then let nested dirty StatefulElements in the existing subtree rebuild
+        // in-place, now that the parent-provided context is populated.
+        {
+            let child = unsafe { &*self.child.0.get() };
+            Self::propagate_rebuild(child.as_ref(), ctx);
+        }
 
         // Reconciliation: try to update the existing child in-place.
         // If types/keys match, the child is updated without replacement,
@@ -509,9 +501,9 @@ impl StatefulElement {
         // and remains valid — no replacement needed.
 
         self.dirty.borrow().set(false);
-        self.rebuild_generation.fetch_add(1, Ordering::Relaxed);
+        self.rebuild_generation.fetch_add(1);
         self.last_rebuilt_generation
-            .store(self.rebuild_generation.load(Ordering::Relaxed), Ordering::Relaxed);
+            .set(self.rebuild_generation.get());
     }
 
     /// Walk the element tree and rebuild any nested dirty `StatefulElement`s.
@@ -635,8 +627,8 @@ impl StatefulElement {
         // the live state is never lost; a redraw still picks up responsive
         // layout changes.
         self.dirty.borrow().set(true);
-        let cur_gen = self.rebuild_generation.load(Ordering::Relaxed);
-        self.last_rebuilt_generation.store(cur_gen.wrapping_sub(1), Ordering::Relaxed);
+        let cur_gen = self.rebuild_generation.get();
+        self.last_rebuilt_generation.set(cur_gen.wrapping_sub(1));
     }
 }
 
@@ -656,10 +648,12 @@ impl Drawable for StatefulElement {
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if !(cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y) {
-                    return;
-                }
-                if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
+                if cp.x >= l_start.x
+                    && cp.x <= l_end.x
+                    && cp.y >= l_start.y
+                    && cp.y <= l_end.y
+                    && let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write()
+                {
                     *hovered = Some((self.debug_name.get(), l_start, l_end));
                 }
             }

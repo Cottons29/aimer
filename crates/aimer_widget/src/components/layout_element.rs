@@ -34,6 +34,17 @@ pub trait LayoutElement: VisitorElement {
         0
     }
 
+    /// The flex factor of this element when it lives inside a flex container
+    /// (`Row`, `Column`, `Flex`).
+    ///
+    /// Returning `Some(factor)` marks the element as *flexible*: the flex parent
+    /// gives it a share of the remaining main-axis space proportional to
+    /// `factor` (see `Expanded`). Regular elements return `None` and are laid out
+    /// according to their own size.
+    fn flex(&self) -> Option<f32> {
+        None
+    }
+
     /// get the size from the child when parent has no size explicit
     fn get_size_from_child(&self) -> Option<Size> {
         if let Some(s) = self.size() {
@@ -71,7 +82,6 @@ pub trait LayoutElement: VisitorElement {
             child.invalidate_layout();
         });
     }
-
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         if self.size().is_none() || self.pos().is_none() {

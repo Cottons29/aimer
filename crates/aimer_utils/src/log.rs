@@ -1,6 +1,6 @@
-use std::panic::Location;
 #[cfg(not(target_arch = "wasm32"))]
 use colored::Colorize;
+use std::panic::Location;
 
 #[cfg(target_arch = "wasm32")]
 mod console {
@@ -21,14 +21,14 @@ mod console {
 
 #[allow(dead_code)]
 fn extract_location(locat: &Location, log: &str, namespace: &str) -> String {
-    let file_line  = format!("{}:{}", locat.file(), locat.line());
-    format!(r#"
+    let file_line = format!("{}:{}", locat.file(), locat.line());
+    format!(
+        r#"
 //# sourceURL={file_line}
 console.{namespace}(`{log}`);
-"#,)
+"#,
+    )
 }
-
-
 
 #[track_caller]
 pub fn log(msg: &str) {
@@ -125,7 +125,6 @@ pub fn debug(msg: &str) {
         }
     }
 }
-
 
 #[macro_export]
 macro_rules! info {

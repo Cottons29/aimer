@@ -1,16 +1,11 @@
-use crate::base::BuildContext;
 use crate::Element;
+use crate::base::BuildContext;
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_attribute::size::ResolvedSize;
 use std::rc::Rc;
 
 pub mod stateful;
 pub mod stateless;
-
-
-
-
-
 
 pub trait Widget {
     fn key(&self) -> Option<crate::key::Key> {
@@ -42,7 +37,6 @@ impl Widget for Box<dyn Widget> {
         self.as_ref().text_content()
     }
 }
-
 
 impl Widget for Rc<dyn Widget> {
     fn key(&self) -> Option<crate::key::Key> {

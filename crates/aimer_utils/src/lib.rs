@@ -1,3 +1,4 @@
+pub mod callback;
 pub mod log;
 mod time_cost;
 mod widget_ref;
