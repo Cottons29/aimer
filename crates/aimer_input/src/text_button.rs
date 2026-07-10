@@ -34,11 +34,10 @@ pub struct TextButton {
     on_double_press: VoidCallback,
 }
 
-
 impl TextButton {
-    pub const TEXT_COLOR : Color = Color::BLUE;
-    pub const HOVER_COLOR : Color = Color::BLUE.lighten(0.6);
-    pub const DISABLED_COLOR : Color = Color::GRAY;
+    pub const TEXT_COLOR: Color = Color::BLUE;
+    pub const HOVER_COLOR: Color = Color::BLUE.lighten(0.6);
+    pub const DISABLED_COLOR: Color = Color::GRAY;
 }
 
 impl Widget for TextButton {
@@ -94,22 +93,15 @@ impl State<TextButton> for ButtonState {
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
-        let mut text_style = if self.disabled {
-            self.widget.disabled_style
-        } else {
-            if self.hovered { self.widget.hover_style } else { self.widget.style }
-        };
+        let mut text_style =
+            if self.disabled { self.widget.disabled_style } else { if self.hovered { self.widget.hover_style } else { self.widget.style } };
 
-        let color  = if self.disabled {
-            self.widget.disabled_color
-        } else {
-            if self.hovered { self.widget.hover_color } else { self.widget.color }
-        };
+        let color =
+            if self.disabled { self.widget.disabled_color } else { if self.hovered { self.widget.hover_color } else { self.widget.color } };
 
         if let Some(col) = color {
             text_style.color = col;
         }
-
 
         MouseRegion {
             on_hover_enter: {

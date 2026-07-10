@@ -89,7 +89,7 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
 
         if self.is_hover {
             if let Some(color) = decor.background_color {
-                decor.background_color =  Some(color.lighten(0.2));
+                decor.background_color = Some(color.lighten(0.2));
             }
         }
 

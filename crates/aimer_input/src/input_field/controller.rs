@@ -28,11 +28,7 @@ unsafe impl Sync for TextFieldController {}
 
 impl Clone for TextFieldController {
     fn clone(&self) -> Self {
-        Self {
-            text: self.text.clone(),
-            undo_stack: self.undo_stack.clone(),
-            redo_stack: self.redo_stack.clone(),
-        }
+        Self { text: self.text.clone(), undo_stack: self.undo_stack.clone(), redo_stack: self.redo_stack.clone() }
     }
 }
 
@@ -101,11 +97,7 @@ impl TextFieldController {
     pub unsafe fn insert_char(&self, ch: impl Into<char>, offset: usize) {
         self.save_undo();
         let s = unsafe { self.text_mut() };
-        let byte_offset = s
-            .char_indices()
-            .nth(offset)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
+        let byte_offset = s.char_indices().nth(offset).map(|(i, _)| i).unwrap_or(s.len());
         s.insert(byte_offset, ch.into());
     }
 
@@ -234,21 +226,27 @@ mod tests {
     #[test]
     fn test_insert_char_ascii() {
         let c = TextFieldController::with_initial("hello");
-        unsafe { c.insert_char('!', 5); }
+        unsafe {
+            c.insert_char('!', 5);
+        }
         assert_eq!(c.text(), "hello!");
     }
 
     #[test]
     fn test_insert_char_middle() {
         let c = TextFieldController::with_initial("hlo");
-        unsafe { c.insert_char('e', 1); }
+        unsafe {
+            c.insert_char('e', 1);
+        }
         assert_eq!(c.text(), "helo");
     }
 
     #[test]
     fn test_insert_char_unicode() {
         let c = TextFieldController::with_initial("helo");
-        unsafe { c.insert_char('🌟', 2); }
+        unsafe {
+            c.insert_char('🌟', 2);
+        }
         assert_eq!(c.text(), "he🌟lo");
     }
 
@@ -359,7 +357,9 @@ mod tests {
     #[test]
     fn test_undo_insert_char() {
         let c = TextFieldController::with_initial("hl");
-        unsafe { c.insert_char('e', 1); }
+        unsafe {
+            c.insert_char('e', 1);
+        }
         assert_eq!(c.text(), "hel");
         assert!(c.undo());
         assert_eq!(c.text(), "hl");

@@ -72,7 +72,6 @@ mod tests {
     use aimer_events::pointer::{PointerPosition, PointerSource};
     use std::sync::Arc;
 
-
     #[test]
     fn test_tap_callback_called() {
         // Test the gesture state machine directly

@@ -6,6 +6,7 @@ use aimer_macro::Rebuildable;
 use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Reconcilable, VisitorElement, Widget, base::*};
 use std::cell::Cell;
 use std::rc::Rc;
+use aimer_events::window::request_animation_frame;
 
 #[derive(Debug, Copy, Clone, Default)]
 pub enum PointerState {
@@ -37,6 +38,7 @@ impl<W: Widget + 'static> Widget for MouseRegion<W> {
             cursor: self.cursor,
             current_state: self.current_state.clone(),
             cached_bounds: self.cached_bounds.clone(),
+            pressed: Cell::new(false),
             window: ctx.window,
             child,
         }
@@ -60,6 +62,11 @@ pub struct RawMouseRegion<'a, E: Element> {
     pub(crate) cursor: Option<winit::window::CursorIcon>,
     pub(crate) current_state: Rc<Cell<PointerState>>,
     pub(crate) cached_bounds: CacheBounds,
+    /// Whether a mouse button is currently pressed inside this region — i.e.
+    /// a `PointerDown` has been seen and its matching `PointerUp`/`Cancel`
+    /// has not. While this is `true`, hover feedback is suppressed so it can
+    /// never rebuild the subtree mid-gesture (see [`should_reconcile_hover`]).
+    pub(crate) pressed: Cell<bool>,
     pub(crate) child: E,
     pub(crate) window: &'a winit::window::Window,
 }
@@ -93,12 +100,12 @@ impl<'a, E: Element> RawMouseRegion<'a, E> {
             if matches!(self.current_state.get(), PointerState::Outside) {
                 Self::execute_void_callback(&self.on_hover_enter);
                 self.current_state.set(PointerState::Inside);
-                self.window.request_redraw();
+                request_animation_frame()
             }
         } else if matches!(self.current_state.get(), PointerState::Inside) {
             Self::execute_void_callback(&self.on_hover_exit);
             self.current_state.set(PointerState::Outside);
-            self.window.request_redraw();
+            request_animation_frame()
         }
     }
 }
@@ -116,6 +123,14 @@ impl<'a, E: Element> VisitorElement for RawMouseRegion<'a, E> {
 impl<'a, E: Element> EventElement for RawMouseRegion<'a, E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
         // println!("Event received: {:?}", event);
+
+        // A `Cancel` ends any in-flight press (e.g. the app was backgrounded
+        // or the gesture was interrupted). Clear the pressed flag so hover
+        // feedback can resume, then forward it to the child untouched.
+        if matches!(event, ElementEvent::Cancel) {
+            self.pressed.set(false);
+            return self.child.on_event(event);
+        }
 
         // Hover tracking is a mouse-only concept. Touch input must NOT drive
         // `sync_hover`: firing `on_hover_enter` on a touch `PointerDown` calls
@@ -142,9 +157,20 @@ impl<'a, E: Element> EventElement for RawMouseRegion<'a, E> {
             self.window.set_cursor(winit::window::CursorIcon::Default);
         }
 
-        // Only fire callbacks on a state change between Enter <-> Exit,
-        // not on every mouse event.
-        self.sync_hover(is_inside);
+        // Track the press so hover feedback can't rebuild the subtree between a
+        // `PointerDown` and its `PointerUp`. A tap is a Down→Up handshake owned
+        // by the child `GestureDetector`; firing `on_hover_enter` in between
+        // calls the Button's `set_state`, which replaces the child and drops
+        // the recorded `down_position`, so the tap never fires and the user
+        // has to click again (the intermittent "button freezes" bug). The
+        // mouse variant of the touch guard already documented above.
+        self.pressed.set(next_pressed_state(self.pressed.get(), event, is_inside));
+
+        // Only reconcile hover (Enter <-> Exit) when no press is in flight,
+        // and only on an actual state change — not on every mouse event.
+        if should_reconcile_hover(self.pressed.get()) {
+            self.sync_hover(is_inside);
+        }
         self.child.on_event(event)
     }
 
@@ -172,7 +198,8 @@ impl<'a, E: Element> Drawable for RawMouseRegion<'a, E> {
         // Update cached bounds from the current canvas position
         let child_size = self.child.computed_size(ctx);
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
-        self.cached_bounds.save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
+        self.cached_bounds
+            .save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
 
         // Re-evaluate hover against the actual (last-known) cursor position so
         // the hover state survives rebuilds/replacements. After a click the
@@ -181,7 +208,13 @@ impl<'a, E: Element> Drawable for RawMouseRegion<'a, E> {
         // until the mouse moved again.
         let cursor = ctx.cursor_pos;
         let is_inside = self.cached_bounds.is_inside(cursor.x, cursor.y);
-        self.sync_hover(is_inside);
+        // Never let a redraw fire hover feedback while a press is in flight:
+        // the cursor sits inside the button during a click, so a draw-driven
+        // `on_hover_enter` would rebuild (replace) the child `GestureDetector`
+        // between `PointerDown` and `PointerUp` and swallow the tap.
+        if should_reconcile_hover(self.pressed.get()) {
+            self.sync_hover(is_inside);
+        }
 
         self.child.draw(ctx);
     }
@@ -204,11 +237,110 @@ impl<'a: 'static, E: Element + 'static> Reconcilable for RawMouseRegion<'a, E> {
             new.cached_bounds.set_bounds(bounds);
         }
 
+        // Carry the in-flight press across the replacement. If some *other*
+        // `set_state` rebuilds this region while a mouse button is held down,
+        // the fresh element would start un-pressed and immediately re-enable
+        // hover feedback — reintroducing the very mid-gesture rebuild we guard
+        // against. Preserving `pressed` keeps hover suppressed until the
+        // matching `PointerUp` arrives.
+        new.pressed.set(self.pressed.get());
+
         // Give the child a chance to copy active runtime state into the
         // replacement child before this wrapper is replaced. This preserves
         // an in-flight touch gesture when touch hover feedback rebuilds a
         // Button between PointerDown and PointerUp.
         let _ = self.child.update_from_widget(&new.child, ctx);
         false // Let the element be replaced so child gets new decoration
+    }
+}
+
+/// Whether hover enter/exit should be reconciled given a press is in flight.
+///
+/// While a mouse button is held down (`pressed == true`) the [`MouseRegion`]
+/// must NOT fire its hover callbacks: they call the Button's `set_state`,
+/// which rebuilds (replaces) the child `GestureDetector` between the
+/// `PointerDown` and the `PointerUp`. The replacement loses the recorded
+/// `down_position`, so the tap never fires and the user has to click again
+/// (the intermittent "button freezes" bug). Hover only reconciles once the
+/// press is released.
+fn should_reconcile_hover(pressed: bool) -> bool {
+    !pressed
+}
+
+/// Compute the next pressed state for a mouse event.
+///
+/// A press begins on a mouse `PointerDown` inside the region and ends on any
+/// mouse `PointerUp` (or a `Cancel`, handled separately in `on_event`).
+/// Touch events never affect this flag — hover is a mouse-only concept and
+/// touch is forwarded to the child untouched.
+fn next_pressed_state(current: bool, event: &ElementEvent, is_inside: bool) -> bool {
+    match event {
+        ElementEvent::PointerDown(_, PointerSource::Mouse, _) if is_inside => true,
+        ElementEvent::PointerUp(_, PointerSource::Mouse, _) => false,
+        _ => current,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aimer_attribute::position::Vec2d;
+
+    fn mouse_down(x: f32, y: f32) -> ElementEvent {
+        ElementEvent::PointerDown(Vec2d { x, y }, PointerSource::Mouse, 0)
+    }
+
+    fn mouse_up(x: f32, y: f32) -> ElementEvent {
+        ElementEvent::PointerUp(Vec2d { x, y }, PointerSource::Mouse, 0)
+    }
+
+    fn touch_down(x: f32, y: f32) -> ElementEvent {
+        ElementEvent::PointerDown(Vec2d { x, y }, PointerSource::Touch, 1)
+    }
+
+    // Regression for "the buttons sometimes freeze so I need to click again to
+    // trigger the button": while a mouse press is in flight the region must not
+    // reconcile hover, otherwise `on_hover_enter` -> Button `set_state` rebuilds
+    // and replaces the child `GestureDetector` between the `PointerDown` and the
+    // `PointerUp`, dropping the recorded press so the tap is silently swallowed.
+    #[test]
+    fn hover_is_suppressed_between_press_and_release() {
+        // Before any press, hover is free to update.
+        let mut pressed = false;
+        assert!(should_reconcile_hover(pressed), "hover should reconcile before a press");
+
+        // A mouse PointerDown inside the region starts the press.
+        pressed = next_pressed_state(pressed, &mouse_down(25.0, 35.0), true);
+        assert!(pressed, "a PointerDown inside must start a press");
+        assert!(!should_reconcile_hover(pressed), "hover must be suppressed while pressed");
+
+        // A move while still pressed must keep the press — and keep hover off.
+        pressed = next_pressed_state(pressed, &ElementEvent::PointerMove(Vec2d { x: 26.0, y: 36.0 }, PointerSource::Mouse, 0), true);
+        assert!(pressed, "a move must not end the press");
+        assert!(!should_reconcile_hover(pressed));
+
+        // The matching PointerUp releases the press and hover resumes.
+        pressed = next_pressed_state(pressed, &mouse_up(25.0, 35.0), true);
+        assert!(!pressed, "a PointerUp must end the press");
+        assert!(should_reconcile_hover(pressed), "hover should reconcile again after release");
+    }
+
+    // A press must only start when the button is actually pressed *inside* the
+    // region, so hovering (move) or clicking elsewhere never blocks hover.
+    #[test]
+    fn press_only_starts_on_pointer_down_inside() {
+        assert!(!next_pressed_state(false, &mouse_down(500.0, 500.0), false), "a PointerDown outside must not start a press");
+        assert!(
+            !next_pressed_state(false, &ElementEvent::PointerMove(Vec2d { x: 25.0, y: 35.0 }, PointerSource::Mouse, 0), true),
+            "a move over the region must not start a press"
+        );
+    }
+
+    // Touch input is handled by a separate (touch) path and must never toggle
+    // the mouse press flag.
+    #[test]
+    fn touch_events_do_not_affect_mouse_press() {
+        assert!(!next_pressed_state(false, &touch_down(25.0, 35.0), true), "a touch down must not start a mouse press");
+        assert!(next_pressed_state(true, &touch_down(25.0, 35.0), true), "a touch down must not clear a mouse press");
     }
 }
