@@ -47,7 +47,9 @@ tree on native platforms.
 
 ### Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install) (latest stable)
+- [Rust](https://www.rust-lang.org/tools/install) version based on the Aimer version:
+  - example : Aimer version = 1.91.0, Rust version also required to 1.91.1
+
 - Platform-specific dependencies:
     - **macOS / iOS**: Xcode and Metal-compatible hardware
     - **Android**: Android NDK
@@ -134,7 +136,10 @@ cd my_aimer && Aimer run
     - [x] Long press `⚠️ Unstable`
 - [ ] Navigation and routing
     - [x] Navigator / route stack `⚠️ Unstable`
-    - [ ] Named routes
+    - [x] Named routes (typed path + query parameters) `⚠️ Unstable`
+    - [x] Redirects & guards `⚠️ Unstable`
+    - [x] Nested & Shell routes (`Shell` / `Outlet`) `⚠️ Unstable`
+    - [x] StatefulShellRoute (per-branch history stacks) `⚠️ Unstable`
     - [ ] Page transitions
 - [ ] Theming and dark mode
     - [ ] Theme data (colors, typography, spacing)

@@ -1,8 +1,8 @@
-use aimer::*;
-use aimer::macros::widget;
-use aimer::style::*;
 use aimer::AimerApp;
 use aimer::callback::{Callback, VoidCallback};
+use aimer::macros::widget;
+use aimer::style::*;
+use aimer::*;
 
 // this is the entry point of the app
 pub fn start_counter() {
@@ -31,11 +31,7 @@ impl StatefulWidget for CounterWidget {
     type State = CounterState;
 
     fn create_state(&self) -> CounterState {
-        CounterState {
-            count: self.initial_count,
-            on_switch: self.on_switch.clone(),
-            updater: StateUpdater::empty(),
-        }
+        CounterState { count: self.initial_count, on_switch: self.on_switch.clone(), updater: StateUpdater::empty() }
     }
 }
 // implement the State trait for CounterState
@@ -119,7 +115,7 @@ impl State<CounterWidget> for CounterState {
                                     updater.set_state(|state| {
                                         state.count -= 1;
                                     });
-                                    
+
                                 }
                             },
                             on_double_press: {
