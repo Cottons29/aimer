@@ -1,7 +1,7 @@
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
-use syn::{Error, Expr, Field, Meta, Type};
 use syn::spanned::Spanned;
+use syn::{Error, Expr, Field, Meta, Type};
 
 pub struct FieldInfo<'a> {
     pub ident: &'a Ident,
@@ -91,4 +91,3 @@ impl<'a> FieldInfo<'a> {
         Ok(Self { ident, ty, skip, default, into, first, dyn_iter, async_wrapper, docs })
     }
 }
-

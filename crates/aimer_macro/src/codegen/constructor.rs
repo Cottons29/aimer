@@ -2,7 +2,7 @@ use crate::codegen::auto_wrapper::AutoWrapper;
 use crate::field_info::FieldInfo;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{spanned::Spanned, Data, DataStruct, DeriveInput, Error, Fields, Ident};
+use syn::{Data, DataStruct, DeriveInput, Error, Fields, Ident, spanned::Spanned};
 
 pub fn constructor_derive(input: TokenStream, box_widget: bool) -> TokenStream {
     let input = match syn::parse2::<DeriveInput>(input) {
@@ -12,7 +12,6 @@ pub fn constructor_derive(input: TokenStream, box_widget: bool) -> TokenStream {
 
     create_constructor(input, box_widget).unwrap_or_else(|err| err.to_compile_error())
 }
-
 
 fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream, Error> {
     let name = &ast.ident;

@@ -1,9 +1,9 @@
+pub(crate) mod auto_wrapper;
+mod constructor;
+mod raw_widget;
+pub mod router;
 mod stateful_widget;
 mod stateless_widget;
-mod raw_widget;
-mod constructor;
-pub(crate) mod auto_wrapper;
-pub mod router;
 
 use proc_macro2::TokenStream;
 
