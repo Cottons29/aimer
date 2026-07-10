@@ -24,7 +24,7 @@ impl Widget for Stack {
     }
 }
 
-#[derive(Rebuildable, LayoutElement,EventElement )]
+#[derive(Rebuildable, LayoutElement, EventElement)]
 pub struct RawStackElement {
     pub children: Vec<Box<dyn Element>>,
     pub direction: StackDirection,
@@ -81,7 +81,9 @@ impl VisitorElement for RawStackElement {
 }
 
 impl Reconcilable for RawStackElement {
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 
     fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
         // TODO: reconcile children by key matching

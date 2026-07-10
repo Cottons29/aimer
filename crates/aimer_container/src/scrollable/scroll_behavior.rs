@@ -1,7 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_macro::Constructor;
 
-#[derive(Constructor)]
+#[derive(Constructor, Clone, Copy)]
 pub struct ScrollBehavior {
     pub max_scroll: Vec2d,
     pub min_scroll: Vec2d,
@@ -31,8 +31,6 @@ impl ScrollBehavior {
     const DEFAULT_FRICTION: f32 = 0.999;
 }
 
-
-
 impl Default for ScrollBehavior {
     fn default() -> Self {
         // friction 0.999 per 120 fps ≈ UIScrollView.DecelerationRate.normal
@@ -54,17 +52,13 @@ impl Default for ScrollBehavior {
     }
 }
 
-
 impl ScrollBehavior {
     pub fn no_bounce() -> Self {
-        Self {
-            bouncy: false,
-            ..Default::default()
-        }
+        Self { bouncy: false, ..Default::default() }
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 pub enum ScrollAxis {
     #[default]
     Vertical,

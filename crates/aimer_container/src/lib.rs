@@ -1,30 +1,37 @@
-mod single_child;
 pub mod flex;
-pub mod space;
-pub mod scrollable;
 pub mod grid;
+pub mod scrollable;
+mod single_child;
+pub mod space;
 
-pub use single_child::sized_box::SizedBox;
+pub use scrollable::scroll_behavior::*;
+pub use scrollable::*;
 pub use single_child::container::Container;
+pub use single_child::sized_box::SizedBox;
 pub use single_child::zero_size_box::ZeroSizedBox;
 pub use space::positioned::Positioned;
 pub use space::stack::Stack;
-pub use scrollable::*;
-pub use scrollable::scroll_behavior::*;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::flex::Column;
+    use crate::flex::LayoutDirection;
+    use crate::flex::Row;
+    use crate::flex::flex_child::RawExpanded;
+    use crate::flex::raw_flex::RawFlex;
+    use crate::scrollable::raw_scroll::RawScrollableContainer;
     use aimer_attribute::BoxConstraint;
+    use aimer_attribute::CacheBounds;
     use aimer_attribute::size::ResolvedSize;
     use aimer_canvas::{Canvas, InnerCanvas};
     use aimer_macro::key;
-    use aimer_widget::base::BuildContext;
     use aimer_widget::Key;
-    use aimer_widget::{Drawable, Element, NamedWidget, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, StatelessElement, Widget};
-    use crate::flex::Row;
-    use crate::scrollable::raw_scroll::RawScrollableContainer;
+    use aimer_widget::base::BuildContext;
+    use aimer_widget::{
+        Drawable, Element, EventElement, LayoutElement, NamedWidget, Rebuildable, Reconcilable, State, StateUpdater, StatefulElement,
+        StatefulWidget, StatelessElement, VisitorElement, Widget,
+    };
     use std::any::{Any, TypeId};
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
@@ -101,14 +108,7 @@ mod tests {
     }
 
     fn button(index: usize, selected: bool, observers: Rc<Vec<Rc<Cell<i32>>>>) -> Box<dyn Widget> {
-        Box::new(NamedWidget::new(
-            Box::new(ButtonLike {
-                index,
-                selected,
-                observers,
-            }),
-            "ButtonLike",
-        ))
+        Box::new(NamedWidget::new(Box::new(ButtonLike { index, selected, observers }), "ButtonLike"))
     }
 
     struct TabWidget {
@@ -218,12 +218,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     fn dummy_async_handle() -> tokio::runtime::Handle {
         static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-        let runtime = RUNTIME.get_or_init(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-        });
+        let runtime = RUNTIME.get_or_init(|| tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap());
         let _guard = runtime.enter();
         tokio::runtime::Handle::current()
     }
@@ -240,12 +235,7 @@ mod tests {
             scale: 1.0,
             parent_pos: Default::default(),
             cursor_pos: Default::default(),
-            box_constraint: BoxConstraint {
-                min_width: 0.0,
-                min_height: 0.0,
-                max_width: width,
-                max_height: height,
-            },
+            box_constraint: BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: width, max_height: height },
             visible_rect,
             window: dummy_window(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -305,9 +295,7 @@ mod tests {
         .to_element(ctx)
     }
 
-    fn current_live_updater(
-        live_updater: &Rc<RefCell<Option<StateUpdater<TabState>>>>,
-    ) -> StateUpdater<TabState> {
+    fn current_live_updater(live_updater: &Rc<RefCell<Option<StateUpdater<TabState>>>>) -> StateUpdater<TabState> {
         live_updater
             .borrow()
             .as_ref()
@@ -319,28 +307,15 @@ mod tests {
         let initial_ctx = dummy_build_context(500.0, 600.0, None);
         let observer = Rc::new(Cell::new(usize::MAX));
         let live_updater = Rc::new(RefCell::new(None));
-        let button_observers: Rc<Vec<Rc<Cell<i32>>>> =
-            Rc::new((0..4).map(|_| Rc::new(Cell::new(-1))).collect());
+        let button_observers: Rc<Vec<Rc<Cell<i32>>>> = Rc::new((0..4).map(|_| Rc::new(Cell::new(-1))).collect());
 
-        let initial_child = build_home_page(
-            &initial_ctx,
-            observer.clone(),
-            live_updater.clone(),
-            button_observers.clone(),
-        );
+        let initial_child = build_home_page(&initial_ctx, observer.clone(), live_updater.clone(), button_observers.clone());
         let rebuild_observer = observer.clone();
         let rebuild_live_updater = live_updater.clone();
         let rebuild_button_observers = button_observers.clone();
         let driver = StatelessElement::new(
             initial_child,
-            move |ctx| {
-                build_home_page(
-                    ctx,
-                    rebuild_observer.clone(),
-                    rebuild_live_updater.clone(),
-                    rebuild_button_observers.clone(),
-                )
-            },
+            move |ctx| build_home_page(ctx, rebuild_observer.clone(), rebuild_live_updater.clone(), rebuild_button_observers.clone()),
             None,
             "Root",
         );
@@ -352,7 +327,11 @@ mod tests {
         driver.draw(&initial_ctx);
 
         assert_eq!(observer.get(), 3, "setup failed: observer should record the selected tab before resize");
-        assert_eq!(current_live_updater(&live_updater).read(|state| state.index), 3, "setup failed: live state should store index=3 before resize");
+        assert_eq!(
+            current_live_updater(&live_updater).read(|state| state.index),
+            3,
+            "setup failed: live state should store index=3 before resize"
+        );
 
         let resize_ctx = if culled {
             dummy_build_context(640.0, 250.0, Some((0.0, 0.0, 640.0, 250.0)))
@@ -368,8 +347,7 @@ mod tests {
         let observer_after_resize = observer.get();
         let live_index_after_resize = current_live_updater(&live_updater).read(|state| state.index);
         let verdict = Verdict::classify(observer_after_resize, live_index_after_resize);
-        let button_highlight_after_resize: Vec<i32> =
-            button_observers.iter().map(|o| o.get()).collect();
+        let button_highlight_after_resize: Vec<i32> = button_observers.iter().map(|o| o.get()).collect();
 
         VariantResult {
             label: match (culled, resize_count) {
@@ -396,12 +374,7 @@ mod tests {
     /// variant.
     #[test]
     fn real_widget_resize_repro_keeps_selected_tab() {
-        let results = [
-            run_variant(false, 1),
-            run_variant(false, 2),
-            run_variant(true, 1),
-            run_variant(true, 2),
-        ];
+        let results = [run_variant(false, 1), run_variant(false, 2), run_variant(true, 1), run_variant(true, 2)];
 
         for result in &results {
             eprintln!(
@@ -458,8 +431,8 @@ mod tests {
     /// layer does and assert the content actually moves.
     #[test]
     fn wheel_scroll_moves_content_in_website_layout() {
-        use aimer_events::element::{ElementEvent, TouchPhase};
         use aimer_attribute::position::Vec2d;
+        use aimer_events::element::{ElementEvent, TouchPhase};
 
         // 500 × 600 viewport, content 2000 px tall → must be scrollable.
         // Root at the `Positioned` (inside a `Stack`) exactly as the website
@@ -507,10 +480,7 @@ mod tests {
         assert!(handled, "the wheel Scroll event must be consumed by the scrollable");
 
         let after = scr.ctrl.scroll_offset.get().y;
-        assert!(
-            after < before,
-            "a wheel scroll-down must move the offset (before={before}, after={after})"
-        );
+        assert!(after < before, "a wheel scroll-down must move the offset (before={before}, after={after})");
 
         // Simulate follow-up animation frames (momentum/spring settle). An
         // in-range scroll must NOT spring back to the top — that would look
@@ -572,10 +542,7 @@ mod tests {
         root.draw(&ctx);
 
         let scr = find_scrollable(root.as_ref()).expect("the tree must contain a scrollable");
-        assert!(
-            scr.ctrl.cached_max_scroll.get().y > 0.0,
-            "content must be taller than the viewport so it is scrollable"
-        );
+        assert!(scr.ctrl.cached_max_scroll.get().y > 0.0, "content must be taller than the viewport so it is scrollable");
 
         // ── Scroll with the pointer ON the header (y = 50, inside 0..100). ──
         let before_header = scr.ctrl.scroll_offset.get().y;
@@ -585,11 +552,7 @@ mod tests {
             &ElementEvent::Scroll { delta: Vec2d { x: 0.0, y: -60.0 }, phase: TouchPhase::Moved },
         );
         assert!(handled_header, "the opaque header must consume (absorb) the scroll");
-        assert_eq!(
-            scr.ctrl.scroll_offset.get().y,
-            before_header,
-            "a scroll over the opaque header must NOT move the scrollable behind it"
-        );
+        assert_eq!(scr.ctrl.scroll_offset.get().y, before_header, "a scroll over the opaque header must NOT move the scrollable behind it");
 
         // ── Scroll with the pointer on the exposed content (y = 300, below the header). ──
         let before_content = scr.ctrl.scroll_offset.get().y;
@@ -616,18 +579,10 @@ mod tests {
     /// config must be refreshed to match the live selection.
     #[test]
     fn real_widget_resize_repro_keeps_button_highlight() {
-        let results = [
-            run_variant(false, 1),
-            run_variant(false, 2),
-            run_variant(true, 1),
-            run_variant(true, 2),
-        ];
+        let results = [run_variant(false, 1), run_variant(false, 2), run_variant(true, 1), run_variant(true, 2)];
 
         for result in &results {
-            eprintln!(
-                "{} => buttons={:?}",
-                result.label, result.button_highlight_after_resize
-            );
+            eprintln!("{} => buttons={:?}", result.label, result.button_highlight_after_resize);
         }
 
         for result in &results {
@@ -639,5 +594,181 @@ mod tests {
                 result.button_highlight_after_resize
             );
         }
+    }
+
+    // A leaf element that records the main-axis (`max_width`) constraint it is
+    // laid out with, so a test can observe exactly how much space its flex
+    // parent handed it. It reports a size that fills whatever it is given.
+    struct MainAxisProbe {
+        seen: Rc<Cell<f32>>,
+    }
+
+    impl VisitorElement for MainAxisProbe {
+        fn debug_name(&self) -> &'static str {
+            "MainAxisProbe"
+        }
+    }
+    impl Drawable for MainAxisProbe {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl EventElement for MainAxisProbe {}
+    impl LayoutElement for MainAxisProbe {
+        fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+            self.seen.set(ctx.box_constraint.max_width);
+            ResolvedSize { width: ctx.box_constraint.max_width, height: ctx.box_constraint.max_height }
+        }
+    }
+    impl Rebuildable for MainAxisProbe {}
+    impl Reconcilable for MainAxisProbe {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    fn expanded_probe(flex: f32, seen: &Rc<Cell<f32>>) -> Box<dyn Element> {
+        Box::new(RawExpanded { child: MainAxisProbe { seen: seen.clone() }, flex, debug_name: "Expanded" })
+    }
+
+    // A leaf element with a fixed intrinsic main-axis size that ignores the
+    // constraint it is given — emulating a `Text` (which reports no explicit
+    // `size()` yet measures to its content width). It records the constraint it
+    // saw so a test can assert it was *not* stretched.
+    struct IntrinsicProbe {
+        intrinsic_width: f32,
+        seen: Rc<Cell<f32>>,
+    }
+
+    impl VisitorElement for IntrinsicProbe {
+        fn debug_name(&self) -> &'static str {
+            "IntrinsicProbe"
+        }
+    }
+    impl Drawable for IntrinsicProbe {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl EventElement for IntrinsicProbe {}
+    impl LayoutElement for IntrinsicProbe {
+        fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+            self.seen.set(ctx.box_constraint.max_width);
+            ResolvedSize { width: self.intrinsic_width, height: ctx.box_constraint.max_height }
+        }
+    }
+    impl Rebuildable for IntrinsicProbe {}
+    impl Reconcilable for IntrinsicProbe {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    fn intrinsic_probe(intrinsic_width: f32, seen: &Rc<Cell<f32>>) -> Box<dyn Element> {
+        Box::new(IntrinsicProbe { intrinsic_width, seen: seen.clone() })
+    }
+
+    fn row_of(children: Vec<Box<dyn Element>>) -> RawFlex {
+        RawFlex {
+            direction: LayoutDirection::Row,
+            vertical_alignment: Default::default(),
+            horizontal_alignment: Default::default(),
+            gaps: Default::default(),
+            children,
+            cache: Default::default(),
+            overflow_behavior: Default::default(),
+            debug_name: "Row",
+            cache_bound: CacheBounds::new(),
+        }
+    }
+
+    /// A single `Expanded` in a `Row` fills the whole parent width.
+    #[test]
+    fn expanded_single_child_fills_row() {
+        let ctx = dummy_build_context(300.0, 100.0, None);
+        let c1 = Rc::new(Cell::new(0.0));
+        let row = row_of(vec![expanded_probe(1.0, &c1)]);
+
+        let _ = row.computed_size(&ctx);
+
+        assert_eq!(c1.get(), 300.0, "the only Expanded must receive the full width");
+    }
+
+    /// Two equal `Expanded` children split the width evenly.
+    #[test]
+    fn expanded_two_equal_children_split_evenly() {
+        let ctx = dummy_build_context(300.0, 100.0, None);
+        let c1 = Rc::new(Cell::new(0.0));
+        let c2 = Rc::new(Cell::new(0.0));
+        let row = row_of(vec![expanded_probe(1.0, &c1), expanded_probe(1.0, &c2)]);
+
+        let _ = row.computed_size(&ctx);
+
+        assert_eq!(c1.get(), 150.0);
+        assert_eq!(c2.get(), 150.0);
+    }
+
+    /// `flex = 1` and `flex = 2` split the width 1/3 : 2/3.
+    #[test]
+    fn expanded_weighted_children_split_proportionally() {
+        let ctx = dummy_build_context(300.0, 100.0, None);
+        let c1 = Rc::new(Cell::new(0.0));
+        let c2 = Rc::new(Cell::new(0.0));
+        let row = row_of(vec![expanded_probe(1.0, &c1), expanded_probe(2.0, &c2)]);
+
+        let _ = row.computed_size(&ctx);
+
+        assert_eq!(c1.get(), 100.0, "flex=1 child gets 1/3 of the width");
+        assert_eq!(c2.get(), 200.0, "flex=2 child gets 2/3 of the width");
+    }
+
+    /// A fixed-size sibling is subtracted first; the remaining space is shared
+    /// by the flex children according to their weights.
+    #[test]
+    fn expanded_shares_space_left_by_fixed_sibling() {
+        let ctx = dummy_build_context(300.0, 100.0, None);
+        let c1 = Rc::new(Cell::new(0.0));
+        let c2 = Rc::new(Cell::new(0.0));
+        let fixed: Box<dyn Element> = Container!(
+            width: 60,
+            child: crate::ZeroSizedBox
+        )
+        .to_element(&ctx);
+        let row = row_of(vec![fixed, expanded_probe(1.0, &c1), expanded_probe(2.0, &c2)]);
+
+        let _ = row.computed_size(&ctx);
+
+        // 300 - 60 = 240 free, split 1:2 => 80 and 160.
+        assert_eq!(c1.get(), 80.0, "flex=1 child gets 1/3 of the remaining 240px");
+        assert_eq!(c2.get(), 160.0, "flex=2 child gets 2/3 of the remaining 240px");
+    }
+
+    /// Regression for the website header: a size-less intrinsic child (a `Text`)
+    /// next to an `Expanded` must NOT be treated as flexible. The text keeps its
+    /// intrinsic width and the `Expanded` fills *all* the remaining space, not
+    /// half of it.
+    #[test]
+    fn intrinsic_child_does_not_steal_flex_space_from_expanded() {
+        let ctx = dummy_build_context(300.0, 100.0, None);
+        let text = Rc::new(Cell::new(0.0));
+        let exp = Rc::new(Cell::new(0.0));
+        // Row: [ Text(width 50), Expanded ]
+        let row = row_of(vec![intrinsic_probe(50.0, &text), expanded_probe(1.0, &exp)]);
+
+        let _ = row.computed_size(&ctx);
+
+        // The Expanded must get the whole remaining 300 - 50 = 250, not (300)/2.
+        assert_eq!(exp.get(), 250.0, "the Expanded must fill ALL space left by the intrinsic-sized child");
+    }
+
+    /// Two intrinsic (size-less) children and a single `Expanded`: the plain
+    /// children keep their own widths and the `Expanded` swallows the rest.
+    #[test]
+    fn multiple_intrinsic_children_keep_size_expanded_fills_rest() {
+        let ctx = dummy_build_context(300.0, 100.0, None);
+        let a = Rc::new(Cell::new(0.0));
+        let b = Rc::new(Cell::new(0.0));
+        let exp = Rc::new(Cell::new(0.0));
+        let row = row_of(vec![intrinsic_probe(30.0, &a), intrinsic_probe(70.0, &b), expanded_probe(1.0, &exp)]);
+
+        let _ = row.computed_size(&ctx);
+
+        assert_eq!(exp.get(), 200.0, "Expanded fills 300 - 30 - 70 = 200");
     }
 }

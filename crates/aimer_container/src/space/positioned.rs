@@ -81,10 +81,8 @@ pub struct RawPositionedElement<E: Element> {
 impl<E: Element> Drawable for RawPositionedElement<E> {
     fn draw(&self, ctx: &BuildContext) {
         // debug!("Positioned::draw");
-        let is_auto = self.top == Dimension::Auto
-            && self.left == Dimension::Auto
-            && self.right == Dimension::Auto
-            && self.bottom == Dimension::Auto;
+        let is_auto =
+            self.top == Dimension::Auto && self.left == Dimension::Auto && self.right == Dimension::Auto && self.bottom == Dimension::Auto;
 
         if is_auto && self.transform == Transform::None {
             self.child.draw(ctx);
@@ -102,15 +100,13 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             if self.left != Dimension::Auto {
                 offset_x = self.left.resolve(ctx.parent_size.width, ctx.scale);
             } else if self.right != Dimension::Auto {
-                offset_x =
-                    ctx.parent_size.width - self.right.resolve(ctx.parent_size.width, ctx.scale) - child_size.width;
+                offset_x = ctx.parent_size.width - self.right.resolve(ctx.parent_size.width, ctx.scale) - child_size.width;
             }
 
             if self.top != Dimension::Auto {
                 offset_y = self.top.resolve(ctx.parent_size.height, ctx.scale);
             } else if self.bottom != Dimension::Auto {
-                offset_y =
-                    ctx.parent_size.height - self.bottom.resolve(ctx.parent_size.height, ctx.scale) - child_size.height;
+                offset_y = ctx.parent_size.height - self.bottom.resolve(ctx.parent_size.height, ctx.scale) - child_size.height;
             }
         }
 
@@ -127,16 +123,16 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
                 ctx.canvas.translate(Vec2d { x: 0.0, y: *ty });
             }
             Transform::Scale(sx, sy) => {
-                ctx.canvas.scale(*sx , *sy );
+                ctx.canvas.scale(*sx, *sy);
             }
             Transform::ScaleX(sx) => {
-                ctx.canvas.scale(*sx , 1.0);
+                ctx.canvas.scale(*sx, 1.0);
             }
             Transform::ScaleY(sy) => {
-                ctx.canvas.scale(1.0, *sy );
+                ctx.canvas.scale(1.0, *sy);
             }
             Transform::Rotate(rad) => {
-                ctx.canvas.rotate(*rad );
+                ctx.canvas.rotate(*rad);
             }
             Transform::None => {}
         }
@@ -146,11 +142,8 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
         } else {
             let parent_pos = ctx.parent_pos;
 
-            let parent_size = if let Some(size) = self.child.get_size_from_child() {
-                size.resolve(&ctx.parent_size, ctx.scale)
-            } else {
-                ctx.parent_size
-            };
+            let parent_size =
+                if let Some(size) = self.child.get_size_from_child() { size.resolve(&ctx.parent_size, ctx.scale) } else { ctx.parent_size };
 
             let child_constraint = BoxConstraint!(
                 max_width: parent_size.width,
@@ -223,10 +216,6 @@ impl<E: Element> EventElement for RawPositionedElement<E> {
 }
 
 impl<E: Element> LayoutElement for RawPositionedElement<E> {
-
-
-
-
     fn layer(&self) -> u32 {
         self.layer
     }
@@ -253,7 +242,9 @@ impl<E: Element + 'static> Rebuildable for RawPositionedElement<E> {
 }
 
 impl<E: Element + 'static> Reconcilable for RawPositionedElement<E> {
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 
     fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
         false
@@ -333,18 +324,12 @@ mod tests {
         // `visit_children` is intentionally empty (no double-render).
         let mut visit_count = 0;
         positioned.visit_children(&mut |_| visit_count += 1);
-        assert_eq!(
-            visit_count, 0,
-            "visit_children must stay empty so draw() doesn't double-render"
-        );
+        assert_eq!(visit_count, 0, "visit_children must stay empty so draw() doesn't double-render");
 
         // `event_children` DOES surface the wrapped child — events still need
         // to reach it. The Rebuildable fix above must NOT change this.
         let mut event_count = 0;
         positioned.event_children(&mut |_| event_count += 1);
-        assert_eq!(
-            event_count, 1,
-            "event_children must keep surfacing the wrapped child"
-        );
+        assert_eq!(event_count, 1, "event_children must keep surfacing the wrapped child");
     }
 }

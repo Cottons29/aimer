@@ -120,7 +120,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 // by comparing `offset` against `clamp_offset(offset)`, but an
                 // in-range offset always equals its own clamp, so every wheel /
                 // trackpad delta was discarded and the scrollable could not be
-                // scrolled at all. See `ScrollController::apply_wheel_delta`.
+                // scrolled at all. See `ScrollState::apply_wheel_delta`.
                 offset = self.ctrl.apply_wheel_delta(offset, scroll_delta);
                 self.ctrl.scroll_offset.set(offset);
 
@@ -171,11 +171,16 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 // in-progress spring-back recovery.
                 self.ctrl.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
 
+                // A wheel/trackpad tick starts (or continues) a scroll session;
+                // the draw loop fires the matching `end` once the glide settles.
+                self.ctrl.begin_scroll();
                 aimer_events::window::request_animation_frame();
                 true
             }
             ElementEvent::PointerDown(p, _, id) => {
-                if let Some(prev_id) = self.ctrl.active_touch_id.get() && prev_id != *id {
+                if let Some(prev_id) = self.ctrl.active_touch_id.get()
+                    && prev_id != *id
+                {
                     let stale = self
                         .ctrl
                         .last_event_time
@@ -210,23 +215,29 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     let friction = self.ctrl.scroll_behavior.friction;
                     // velocity = distance / (frame_ref / (1 − friction)) to scroll exactly `distance` px.
                     let vel_scale = (1.0 - friction) / FRAME_REF_120;
-                    if self.ctrl.hit_test_v_track(*p, vp_w, vp_h, v_tw) && let Some((_x, y, _w, _h)) = self.ctrl.v_thumb_rect.get() {
+                    if self.ctrl.hit_test_v_track(*p, vp_w, vp_h, v_tw)
+                        && let Some((_x, y, _w, _h)) = self.ctrl.v_thumb_rect.get()
+                    {
                         let page = vp_h * KEYBOARD_PAGE_FRACTION;
                         let vy = if p.y < y { page * vel_scale } else { -page * vel_scale };
                         self.ctrl.pointer_velocity.set(Vec2d { x: 0.0, y: vy });
                         self.ctrl.cancel_fling();
                         self.ctrl.drag_mode.set(DragMode::None);
                         self.ctrl.last_pointer_pos.set(Some(*p));
+                        self.ctrl.begin_scroll();
                         aimer_events::window::request_animation_frame();
                         return true;
                     }
-                    if self.ctrl.hit_test_h_track(*p, vp_w, vp_h, h_tw) && let Some((x, _y, _w, _h)) = self.ctrl.h_thumb_rect.get() {
+                    if self.ctrl.hit_test_h_track(*p, vp_w, vp_h, h_tw)
+                        && let Some((x, _y, _w, _h)) = self.ctrl.h_thumb_rect.get()
+                    {
                         let page = vp_w * KEYBOARD_PAGE_FRACTION;
                         let vx = if p.x < x { page * vel_scale } else { -page * vel_scale };
                         self.ctrl.pointer_velocity.set(Vec2d { x: vx, y: 0.0 });
                         self.ctrl.cancel_fling();
                         self.ctrl.drag_mode.set(DragMode::None);
                         self.ctrl.last_pointer_pos.set(Some(*p));
+                        self.ctrl.begin_scroll();
                         aimer_events::window::request_animation_frame();
                         return true;
                     }
@@ -300,6 +311,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 }
 
                 if mode != DragMode::None && mode != DragMode::Pending {
+                    // The content (or a scrollbar thumb) is actively being dragged
+                    // — the start of a scroll session. Edge-triggered, so repeated
+                    // moves within the same drag don't re-fire.
+                    self.ctrl.begin_scroll();
                     if let Some(last) = self.ctrl.last_pointer_pos.get() {
                         let speed_multiplier = self.ctrl.speed_multiplier;
                         let dx = (p.x - last.x) * speed_multiplier;
@@ -441,6 +456,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     self.ctrl.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
                     self.ctrl.clear_velocity_history();
                     self.ctrl.cancel_fling();
+                    // A keyboard scroll is a discrete, self-contained session: it
+                    // moves the offset with no residual momentum, so the draw loop
+                    // reports it settled (and fires `end`) on the next frame.
+                    self.ctrl.begin_scroll();
                     aimer_events::window::request_animation_frame();
                     true
                 } else {
