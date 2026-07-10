@@ -1,20 +1,19 @@
-
-use aimer::*;
+use crate::routing::AppRouting;
 use aimer::console::debug;
 use aimer::macros::widget;
 use aimer::router::NavigatorController;
 use aimer::style::*;
-use crate::routing::AppRouting;
+use aimer::*;
 
 #[widget(Stateless)]
 #[derive(Clone)]
-pub struct HomeWidget{}
+pub struct HomeWidget {}
 
 impl StatelessWidget for HomeWidget {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         debug!("Building HomeWidget");
         Container!(
-            // color: Colors::Green,
+            color: Colors::Green,
             // margin: LayoutSpacing!(top : Spacing::Px(10)),
             child: Column!(
                 horizontal_alignment: BoxAlignment::Center,

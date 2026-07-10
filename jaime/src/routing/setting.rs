@@ -1,12 +1,10 @@
-
-
 // use aimer::flex::{Column, };
 use crate::routing::AppRouting;
-use aimer::style::*;
-use aimer::*;
 use aimer::console::debug;
 use aimer::macros::widget;
 use aimer::router::NavigatorController;
+use aimer::style::*;
+use aimer::*;
 
 #[widget(Stateless)]
 #[derive(Clone)]

@@ -22,8 +22,9 @@ address = "0.0.0.0"
 # The cert must list the address you type in the URL bar in its SAN, so pass any
 # LAN IP you use. Browsers will warn about the self-signed cert on first visit —
 # accept it once (on the phone/other device too) and WebGPU will work.
-tls_key_path = "self_signed_certs/key.pem"
-tls_cert_path = "self_signed_certs/cert.pem"
+#tls_key_path = "self_signed_certs/key.pem"
+#tls_cert_path = "self_signed_certs/cert.pem"
 
 
 [build]
+release = true

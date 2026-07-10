@@ -8,3 +8,11 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 aimer = {path = ".."}
 webbrowser = "1.2.1"
+
+[profile.release]
+opt-level = 'z'       # Default: maximum optimizations for speed
+lto = true          # Enable Link-Time Optimization for smaller, faster binaries
+strip = "symbols"   # Strip binary symbols to reduce file size further
+codegen-units = 1   # Optimize for maximum binary size reduction over compile time
+overflow-checks = false
+debug-assertions = false
