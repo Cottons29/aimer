@@ -106,13 +106,11 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                 let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
                 let cp = ctx.cursor_pos;
                 let is_hovered = cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y;
-                if !is_hovered {
-                    return;
-                };
-                let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() else {
-                    return;
-                };
-                *hovered = Some((self.debug_name(), l_start, l_end));
+                if is_hovered {
+                    if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
+                        *hovered = Some((self.debug_name(), l_start, l_end));
+                    }
+                }
             }
         }
         let size = self.computed_size(ctx);
