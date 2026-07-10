@@ -21,8 +21,8 @@ use aimer::*;
 #[main]
 pub fn my_app() {
     // #[cfg(not(target_arch = "wasm32"))]
-    start_counter();
-    // state_router()
+    // start_counter();
+    state_router()
     // simply start the app with AimerApp::start
     // #[cfg(target_arch = "wasm32")]
     // test_positioned();

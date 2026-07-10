@@ -4,12 +4,9 @@ use aimer::{AimerApp, BuildContext, Color, Container, Dimension, Element, Row, S
 
 pub struct ColorSync;
 
-
 pub fn start_color_sync() {
     AimerApp::start(ColorSync)
 }
-
-
 
 impl Widget for ColorSync {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
@@ -35,12 +32,15 @@ impl StatelessWidget for ColorSync {
             Color::Rgb(128, 0, 255),
         ];
         debug!("Loading the colors:");
-        let children : Vec<Box<dyn Widget>> = colors.iter().map(|color| {
-            SizedBox!(
-                width: Dimension::Percent(100.0),
-                color: color.clone(),
-            )
-        }).collect();
+        let children: Vec<Box<dyn Widget>> = colors
+            .iter()
+            .map(|color| {
+                SizedBox!(
+                    width: Dimension::Percent(100.0),
+                    color: color.clone(),
+                )
+            })
+            .collect();
         Container!(
             padding: LayoutSpacing::all(Spacing::Px(10)),
             child: Row!(
