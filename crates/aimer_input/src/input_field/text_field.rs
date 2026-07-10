@@ -1,15 +1,12 @@
-use aimer_animation::AnimInstant;
 use crate::input_field::controller::TextFieldController;
-use crate::input_field::raw_fields::{
-    Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback,
-};
+use crate::input_field::raw_fields::{Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback};
+use aimer_animation::AnimInstant;
+use aimer_attribute::CacheBounds;
+use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
+use aimer_widget::base::{BuildContext, Color, Colors};
+use aimer_widget::{Element, Widget, WidgetConstructor};
 use std::cell::Cell;
 use std::sync::Arc;
-use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
-use aimer_attribute::CacheBounds;
-use aimer_widget::base::{BuildContext, Color, Colors};
-use aimer_widget::{Element,Widget, WidgetConstructor};
-
 
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
@@ -138,7 +135,7 @@ pub struct TextField {
 impl Widget for TextField {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawTextField {
-            input_type:  self.input_type,
+            input_type: self.input_type,
             controller: self.controller.clone(),
             prompt: self.prompt.clone(),
             hint: self.hint.clone(),
@@ -174,11 +171,10 @@ impl Widget for TextField {
             preedit_text: Cell::new(String::new()),
             preedit_cursor: Cell::new(None),
             blink_scheduled: Cell::new(false),
-            padding: self.padding
+            padding: self.padding,
         })
     }
 }
-
 
 impl TextField {
     pub const DEFAULT_PADDING: LayoutSpacing = LayoutSpacing::all(Spacing::Px(4));

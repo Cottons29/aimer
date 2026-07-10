@@ -162,7 +162,9 @@ impl<'a, E: Element> RawGestureDetector<'a, E> {
                 // the app was backgrounded (no Cancel/Up received), clear them
                 // so a fresh single touch doesn't falsely trigger a pinch.
                 if !state.touches.is_empty()
-                    && state.down_time.is_none_or(|t| now.duration_since(t).as_millis() > STALE_GESTURE_TOUCH_MS as u128)
+                    && state
+                        .down_time
+                        .is_none_or(|t| now.duration_since(t).as_millis() > STALE_GESTURE_TOUCH_MS as u128)
                 {
                     state.touches.clear();
                     state.initial_pinch_distance = None;
@@ -509,20 +511,14 @@ mod tests {
     #[test]
     fn detector_without_scroll_handler_lets_scroll_fall_through() {
         let on_scroll = ScrollCallback::default();
-        assert!(
-            !detector_consumes_scroll(&on_scroll),
-            "a handler-less detector must let the scroll propagate to lower layers"
-        );
+        assert!(!detector_consumes_scroll(&on_scroll), "a handler-less detector must let the scroll propagate to lower layers");
     }
 
     // A detector that actually handles scrolls still claims them.
     #[test]
     fn detector_with_scroll_handler_consumes_scroll() {
         let on_scroll: ScrollCallback = (|_: ScrollData| {}).into();
-        assert!(
-            detector_consumes_scroll(&on_scroll),
-            "a detector with an on_scroll handler must consume the scroll"
-        );
+        assert!(detector_consumes_scroll(&on_scroll), "a detector with an on_scroll handler must consume the scroll");
     }
 
     #[test]
@@ -633,7 +629,8 @@ impl<'w, E: Element> Drawable for RawGestureDetector<'w, E> {
     fn draw(&self, ctx: &BuildContext<'_>) {
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         let child_size = self.child.computed_size(ctx);
-        self.cached_bounds.save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
+        self.cached_bounds
+            .save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
 
         self.child.draw(ctx);
     }
