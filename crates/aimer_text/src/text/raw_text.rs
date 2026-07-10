@@ -41,11 +41,10 @@ impl Drawable for RawTextWidget {
                 let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
                 let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
                 let cp = ctx.cursor_pos;
-                if !(cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y) {
-                    return;
-                }
-                if let Ok(mut hovered) = inspector_overlay::HOVERED_WIDGET.write() {
-                    *hovered = Some((self.debug_name(), l_start, l_end));
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
+                    if let Ok(mut hovered) = inspector_overlay::HOVERED_WIDGET.write() {
+                        *hovered = Some((self.debug_name(), l_start, l_end));
+                    }
                 }
             }
         }
