@@ -1,4 +1,4 @@
-name: aimer_cli CI
+name: aimer CI
 
 on:
   push:
@@ -10,10 +10,26 @@ env:
 
 jobs:
   lint-and-test:
-    name: clippy + tests (aimer_cli)
+    name: clippy + tests (workspace)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libssl-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libgtk-3-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -24,7 +40,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Clippy (deny warnings)
-        run: cargo clippy --no-deps -p aimer_cli
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test -p aimer_cli
+        run: cargo test --workspace
