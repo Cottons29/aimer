@@ -60,11 +60,7 @@ impl Drawable for BoxDecoration {
         }
 
         // Draw combined background, border and outline if possible
-        if self.border.has_visible_border(box_width, box_height, scale)
-            || self
-                .outline
-                .has_visible_outline(box_width, box_height, scale)
-        {
+        if self.border.has_visible_border(box_width, box_height, scale) || self.outline.has_visible_outline(box_width, box_height, scale) {
             let b_widths = self.border.strokes(box_width, box_height, scale);
             let o_widths = self.outline.strokes(box_width, box_height, scale);
 
@@ -78,9 +74,9 @@ impl Drawable for BoxDecoration {
                 self.background_color.unwrap_or(Color::Transparent),
                 radii,
                 [b_widths.1, b_widths.2, b_widths.3, b_widths.0], // stroke_rect_per_side uses [top, right, bottom, left]
-                self.border.left.color,                           // Assuming uniform color for now
+                self.border.effective_color(box_width, box_height, scale), // uniform color: use the first visible side
                 [o_widths.1, o_widths.2, o_widths.3, o_widths.0],
-                self.outline.left.color,
+                self.outline.effective_color(box_width, box_height, scale),
             );
         } else if let Some(color) = self.background_color {
             ctx.canvas.fill_color_rect_per_corner(
