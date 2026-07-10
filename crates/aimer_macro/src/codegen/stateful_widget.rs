@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{parse2, ItemStruct};
+use syn::{ItemStruct, parse2};
 
 pub fn generate_stateful_widget_impl(input: TokenStream) -> TokenStream {
     let item_struct = match parse2::<ItemStruct>(input.clone()) {
@@ -12,9 +12,7 @@ pub fn generate_stateful_widget_impl(input: TokenStream) -> TokenStream {
     let (impl_generics, ty_generics, where_clause) = item_struct.generics.split_for_impl();
 
     // Detect if the struct has a `key` field
-    let has_key = item_struct.fields.iter().any(|f| {
-        f.ident.as_ref().is_some_and(|i| i == "key")
-    });
+    let has_key = item_struct.fields.iter().any(|f| f.ident.as_ref().is_some_and(|i| i == "key"));
 
     let key_pass = if has_key {
         quote! { self.key.clone() }

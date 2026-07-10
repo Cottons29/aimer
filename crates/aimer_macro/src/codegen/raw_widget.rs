@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{parse2, ItemStruct};
+use syn::{ItemStruct, parse2};
 
 pub fn generate_raw_widget_impl(input: TokenStream) -> TokenStream {
     let item_struct = match parse2::<ItemStruct>(input.clone()) {

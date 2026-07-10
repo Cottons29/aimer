@@ -205,7 +205,7 @@ fn get_type_inner<'a>(ty: &'a Type, name: &str) -> Option<&'a Type> {
     }
     None
 }
-#[allow(clippy::collapsible_if,dead_code)]
+#[allow(clippy::collapsible_if, dead_code)]
 fn get_arc_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(TypePath { path, .. }) = ty {
         if let Some(segment) = path.segments.last() {
@@ -220,7 +220,7 @@ fn get_arc_inner(ty: &Type) -> Option<&Type> {
     }
     None
 }
-#[allow(clippy::collapsible_if,dead_code)]
+#[allow(clippy::collapsible_if, dead_code)]
 fn get_rc_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(TypePath { path, .. }) = ty {
         if let Some(segment) = path.segments.last() {
@@ -235,7 +235,7 @@ fn get_rc_inner(ty: &Type) -> Option<&Type> {
     }
     None
 }
-#[allow(clippy::collapsible_if,dead_code)]
+#[allow(clippy::collapsible_if, dead_code)]
 fn get_refcell_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(TypePath { path, .. }) = ty {
         if let Some(segment) = path.segments.last() {

@@ -232,14 +232,18 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
             let router_code = RouterCodegen::generate(input_ts);
             TokenStream::from(router_code)
         } else {
-            syn::Error::new_spanned(item, "Router widget can only be applied to enums").to_compile_error().into()
+            syn::Error::new_spanned(item, "Router widget can only be applied to enums")
+                .to_compile_error()
+                .into()
         };
     }
 
     let mut item_struct = match item {
         Item::Struct(s) => s,
         _ => {
-            return syn::Error::new_spanned(item, "Widget attribute expects a struct unless using Router").to_compile_error().into();
+            return syn::Error::new_spanned(item, "Widget attribute expects a struct unless using Router")
+                .to_compile_error()
+                .into();
         }
     };
 
@@ -247,7 +251,8 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     let has_constructor = item_struct.attrs.iter().any(|attr| {
         if attr.path().is_ident("derive") {
             if let Ok(list) = attr.parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated) {
-                list.iter().any(|path| if let Some(segment) = path.segments.last() { segment.ident == "Constructor" } else { false })
+                list.iter()
+                    .any(|path| if let Some(segment) = path.segments.last() { segment.ident == "Constructor" } else { false })
             } else {
                 false
             }
