@@ -15,37 +15,25 @@ static mut EXEC_GROUPING: LazyCell<ExecGrouping> = LazyCell::new(|| ExecGrouping
 #[macro_export]
 macro_rules! time_cost {
     ($label:expr, $f:block) => {{
-        let func = || $f ;
+        let func = || $f;
         $crate::ExecTimes::no_param($label, func)
     }};
 
-    ($label:expr, $f:expr) => {{
-        $crate::ExecTimes::no_param($label, $f)
-    }};
+    ($label:expr, $f:expr) => {{ $crate::ExecTimes::no_param($label, $f) }};
 }
 
 #[cfg(not(feature = "time-cost"))]
 #[macro_export]
 macro_rules! time_cost {
-    ($label:expr, $f:block) => {{
-        $f
-    }};
+    ($label:expr, $f:block) => {{ $f }};
 
-    ($label:expr, $f:expr) => {{
-        $crate::ExecTimes::no_param($label, $f)
-    }};
+    ($label:expr, $f:expr) => {{ $crate::ExecTimes::no_param($label, $f) }};
 }
 
 #[cfg(feature = "time-cost")]
 const MINIMUM_EXEC_TIME: Option<&str> = option_env!("MINIMUM_EXEC_TIME");
 #[cfg(feature = "time-cost")]
-static MINIMUM_EXEC_TIME_MS: LazyLock<i64> = LazyLock::new(|| {
-    MINIMUM_EXEC_TIME
-        .unwrap_or("0")
-        .parse::<i64>()
-        .unwrap_or(0)
-        .max(0)
-});
+static MINIMUM_EXEC_TIME_MS: LazyLock<i64> = LazyLock::new(|| MINIMUM_EXEC_TIME.unwrap_or("0").parse::<i64>().unwrap_or(0).max(0));
 
 #[cfg(feature = "time-cost")]
 fn add_grouping(key: &str, val: i64) {
@@ -78,9 +66,7 @@ impl ExecTimes {
     pub fn no_param<T>(label: &str, f: impl FnOnce() -> T) -> T {
         let start = chrono::Local::now();
         let res = f();
-        let delta = chrono::Local::now()
-            .signed_duration_since(start)
-            .num_milliseconds();
+        let delta = chrono::Local::now().signed_duration_since(start).num_milliseconds();
         if delta < *MINIMUM_EXEC_TIME_MS {
             return res;
         }
@@ -88,8 +74,6 @@ impl ExecTimes {
         debug!("{:<5}ms -> {}", delta, label);
         res
     }
-
-    
 
     #[cfg(not(feature = "time-cost"))]
     #[inline]
@@ -101,11 +85,6 @@ impl ExecTimes {
         let start = chrono::Local::now();
         f();
 
-        debug!(
-            "Used time: {} ms",
-            chrono::Local::now()
-                .signed_duration_since(start)
-                .num_milliseconds()
-        );
+        debug!("Used time: {} ms", chrono::Local::now().signed_duration_since(start).num_milliseconds());
     }
 }

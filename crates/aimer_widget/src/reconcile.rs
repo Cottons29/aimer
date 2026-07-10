@@ -11,11 +11,7 @@ use crate::widget::stateful::StatefulElement;
 ///
 /// Returns `true` if the existing element was updated in-place (caller keeps using it).
 /// Returns `false` if the types/keys don't match — caller must replace.
-pub fn try_update_element(
-    existing: &dyn Element,
-    new_element: &dyn Element,
-    ctx: &BuildContext,
-) -> bool {
+pub fn try_update_element(existing: &dyn Element, new_element: &dyn Element, ctx: &BuildContext) -> bool {
     // Type check: same widget type produces same element debug_name
     if existing.debug_name() != new_element.debug_name() {
         // Different widget types — can't reconcile, but if both happen to be
@@ -121,12 +117,12 @@ fn event_children_of<'a>(element: &'a dyn Element) -> Vec<&'a dyn Element> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Drawable;
     use crate::components::event_element::EventElement;
     use crate::components::layout_element::LayoutElement;
     use crate::components::rebuildable::Rebuildable;
     use crate::components::reconcilable::Reconcilable;
     use crate::components::visitor_element::VisitorElement;
-    use crate::Drawable;
     use std::any::Any;
 
     // Minimal fake elements: all trait methods except the listed ones use defaults.
@@ -194,9 +190,9 @@ mod tests {
     // freshly-built `StatefulElement` with a different key silently drops the
     // user's state.
 
-    use crate::widget::stateful::{State, StatefulElement, StatefulWidget, StateUpdater};
     use crate::Widget;
     use crate::key::Key;
+    use crate::widget::stateful::{State, StateUpdater, StatefulElement, StatefulWidget};
     use std::any::TypeId;
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
@@ -243,9 +239,7 @@ mod tests {
     }
     impl ElementWidget {
         fn new(element: Box<dyn Element>) -> Self {
-            Self {
-                element: RefCell::new(Some(element)),
-            }
+            Self { element: RefCell::new(Some(element)) }
         }
     }
     impl Widget for ElementWidget {
@@ -277,11 +271,7 @@ mod tests {
     impl StatefulWidget for CounterWidget {
         type State = CounterState;
         fn create_state(&self) -> Self::State {
-            CounterState {
-                counter: 1,
-                observer: self.observer.clone(),
-                updater: StateUpdater::new(),
-            }
+            CounterState { counter: 1, observer: self.observer.clone(), updater: StateUpdater::new() }
         }
     }
     impl State<CounterWidget> for CounterState {
@@ -348,9 +338,7 @@ mod tests {
         }
     }
 
-    fn current_config_updater(
-        live_updater: &Rc<RefCell<Option<StateUpdater<ConfigState>>>>,
-    ) -> StateUpdater<ConfigState> {
+    fn current_config_updater(live_updater: &Rc<RefCell<Option<StateUpdater<ConfigState>>>>) -> StateUpdater<ConfigState> {
         live_updater
             .borrow()
             .as_ref()
@@ -384,12 +372,7 @@ mod tests {
     fn dummy_async_handle() -> tokio::runtime::Handle {
         use std::sync::OnceLock;
         static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-        let runtime = RUNTIME.get_or_init(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-        });
+        let runtime = RUNTIME.get_or_init(|| tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap());
         let _guard = runtime.enter();
         tokio::runtime::Handle::current()
     }
@@ -399,8 +382,7 @@ mod tests {
         // leaked so the canvas reference has the `'static` lifetime
         // `BuildContext` demands.
         let canvas = {
-            let leaked: &'static aimer_canvas::InnerCanvas =
-                Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            let leaked: &'static aimer_canvas::InnerCanvas = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
             aimer_canvas::Canvas::new(leaked)
         };
         BuildContext {
@@ -433,18 +415,10 @@ mod tests {
     fn stateful_state_survives_key_mismatch() {
         let ctx = dummy_build_context();
         let observer = Rc::new(Cell::new(0usize));
-        let widget = CounterWidget {
-            observer: observer.clone(),
-        };
+        let widget = CounterWidget { observer: observer.clone() };
 
-        let (old, _old_updater) = StatefulElement::new_with_name(
-            &widget,
-            &ctx,
-            "Counter",
-            Some(Key::Value("tab1".into())),
-        );
-        let (new, _new_updater) =
-            StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
+        let (old, _old_updater) = StatefulElement::new_with_name(&widget, &ctx, "Counter", Some(Key::Value("tab1".into())));
+        let (new, _new_updater) = StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
 
         // Baseline: a freshly-built `StatefulElement` is not dirty.
         assert!(!new.dirty.borrow().get(), "new element must start clean");
@@ -459,10 +433,7 @@ mod tests {
         // inner `StatefulElement`, which flips `new.dirty = true`. Without
         // the fix, `try_update_element` early-returns on the key check and
         // the flag stays false — exactly the bug the user sees.
-        assert!(
-            new.dirty.borrow().get(),
-            "key mismatch must not silently drop the StatefulElement's live state"
-        );
+        assert!(new.dirty.borrow().get(), "key mismatch must not silently drop the StatefulElement's live state");
     }
 
     /// End-to-end version of the bug: a `StatefulElement` whose state is
@@ -476,14 +447,11 @@ mod tests {
     fn stateful_state_value_survives_rebuild() {
         let ctx = dummy_build_context();
         let observer = Rc::new(Cell::new(0usize));
-        let widget = CounterWidget {
-            observer: observer.clone(),
-        };
+        let widget = CounterWidget { observer: observer.clone() };
 
         // Build the OLD element. Initial state has counter=1; build() records
         // `1` in the observer.
-        let (old, old_updater) =
-            StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
+        let (old, old_updater) = StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
         assert_eq!(observer.get(), 1, "initial build should record counter=1");
 
         // Mutate state to 2 and drain the channel via rebuild. After this,
@@ -495,8 +463,7 @@ mod tests {
         // Build the NEW element the way `Scrollable::to_element` does on
         // resize — a brand-new `StatefulElement` of the same widget type.
         // Its own create_state() runs with counter=1; observer records 1.
-        let (new, _new_updater) =
-            StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
+        let (new, _new_updater) = StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
         assert_eq!(observer.get(), 1, "new element's initial build records 1");
 
         // Reconcile, the same way `try_update_element` is called from
@@ -510,11 +477,97 @@ mod tests {
         // `rebuild_fn` (pointing at the OLD state cell). The build() call
         // inside that closure must observe counter=2, not 1.
         new.rebuild_if_dirty(&ctx);
-        assert_eq!(
-            observer.get(),
-            2,
-            "after reconcile + rebuild, new element must read OLD state (counter=2), not initial (1)"
-        );
+        assert_eq!(observer.get(), 2, "after reconcile + rebuild, new element must read OLD state (counter=2), not initial (1)");
+    }
+
+    /// A marker inherited state a provider inserts into the `BuildContext`
+    /// during its own `build` — the test analogue of the `Navigator` inserting
+    /// its `NavigatorController`.
+    #[derive(Clone, Copy)]
+    struct ProvidedValue;
+
+    /// A `StatefulWidget` that provides an inherited value during `build`
+    /// (mirroring `NavigatorState::build` inserting its controller) and renders
+    /// a nested `ConsumerWidget` below it.
+    struct ProviderWidget;
+    struct ProviderState {
+        #[allow(dead_code)]
+        updater: StateUpdater<Self>,
+    }
+    impl StatefulWidget for ProviderWidget {
+        type State = ProviderState;
+        fn create_state(&self) -> Self::State {
+            ProviderState { updater: StateUpdater::new() }
+        }
+    }
+    impl State<ProviderWidget> for ProviderState {
+        fn init_state(&mut self, updater: StateUpdater<Self>) {
+            self.updater = updater;
+        }
+        fn build(&self, ctx: &BuildContext) -> impl Widget {
+            // Provide the inherited value *before* building the child subtree —
+            // exactly what `NavigatorState::build` does with its controller.
+            ctx.insert_state(ProvidedValue);
+            let (consumer, _u) = StatefulElement::new(&ConsumerWidget, ctx);
+            ElementWidget::new(consumer.boxed())
+        }
+    }
+
+    /// A nested `StatefulWidget` that reads the ancestor-provided inherited
+    /// value during `build`, panicking if it is absent — mirroring
+    /// `NavigatorController::of`, which panics with "No Navigator found in
+    /// context" when the controller has not been re-provided this frame.
+    struct ConsumerWidget;
+    struct ConsumerState {
+        #[allow(dead_code)]
+        updater: StateUpdater<Self>,
+    }
+    impl StatefulWidget for ConsumerWidget {
+        type State = ConsumerState;
+        fn create_state(&self) -> Self::State {
+            ConsumerState { updater: StateUpdater::new() }
+        }
+    }
+    impl State<ConsumerWidget> for ConsumerState {
+        fn init_state(&mut self, updater: StateUpdater<Self>) {
+            self.updater = updater;
+        }
+        fn build(&self, ctx: &BuildContext) -> impl Widget {
+            ctx.get_state::<ProvidedValue>()
+                .expect("No provided value in context. Ancestor provider must build before descendant.");
+            EmptyWidget
+        }
+    }
+
+    /// Regression for the reported "app panics when resizing the window: No
+    /// Navigator found in context" bug.
+    ///
+    /// On a window resize the whole element tree is marked dirty
+    /// (`mark_needs_rebuild`) and rebuilt in a single draw pass against a FRESH
+    /// `BuildContext` whose `inherited_states` map starts empty. A dirty
+    /// `StatefulElement` that provides inherited state in its own `build` (e.g.
+    /// `Navigator` inserting its `NavigatorController`) must re-provide that
+    /// state BEFORE its descendants rebuild.
+    ///
+    /// The bug: `rebuild_if_dirty` propagated the rebuild down to the existing
+    /// child subtree *before* running its own `build`, so a nested consumer (a
+    /// header calling `NavigatorController::of`) rebuilt against the empty fresh
+    /// context and panicked. This test drives that exact ordering and must not
+    /// panic.
+    #[test]
+    fn provider_reprovides_inherited_state_before_children_rebuild_on_resize() {
+        // Initial build: provider inserts the value, the consumer reads it.
+        let ctx = dummy_build_context();
+        let (provider, _u) = StatefulElement::new(&ProviderWidget, &ctx);
+
+        // Simulate a resize: dirty the whole subtree, then rebuild it against a
+        // brand-new context whose inherited_states map is empty (a new frame).
+        Rebuildable::mark_needs_rebuild(&provider);
+        let fresh_ctx = dummy_build_context();
+
+        // Must not panic: the provider's own build (which re-inserts the value)
+        // must run before the consumer subtree rebuilds and looks it up.
+        provider.rebuild_if_dirty(&fresh_ctx);
     }
 
     /// Regression for the reported "selected tab highlight is stuck after a
@@ -543,8 +596,7 @@ mod tests {
             observed_runtime: observed_runtime.clone(),
             live_updater: live_updater.clone(),
         };
-        let (old, _old_ctor_updater) =
-            StatefulElement::new_with_name(&old_widget, &ctx, "ConfigWidget", None);
+        let (old, _old_ctor_updater) = StatefulElement::new_with_name(&old_widget, &ctx, "ConfigWidget", None);
         old.draw(&ctx);
         current_config_updater(&live_updater).set_state(|state| state.runtime = 5);
         old.draw(&ctx);
@@ -559,8 +611,7 @@ mod tests {
             observed_runtime: observed_runtime.clone(),
             live_updater: live_updater.clone(),
         };
-        let (new, _new_ctor_updater) =
-            StatefulElement::new_with_name(&new_widget, &ctx, "ConfigWidget", None);
+        let (new, _new_ctor_updater) = StatefulElement::new_with_name(&new_widget, &ctx, "ConfigWidget", None);
 
         // Reconcile old against the freshly built new (what a resize triggers).
         let updated = try_update_element(&old, &new, &ctx);
@@ -568,16 +619,8 @@ mod tests {
 
         // `adopt_state_from` refreshes config eagerly during reconciliation, so
         // the observers already reflect the merged state: NEW config, OLD runtime.
-        assert_eq!(
-            observed_label.get(),
-            99,
-            "reconcile MUST refresh config to the freshly-built value (99), not keep the stale 0"
-        );
-        assert_eq!(
-            observed_runtime.get(),
-            5,
-            "reconcile MUST preserve the live runtime state (5)"
-        );
+        assert_eq!(observed_label.get(), 99, "reconcile MUST refresh config to the freshly-built value (99), not keep the stale 0");
+        assert_eq!(observed_runtime.get(), 5, "reconcile MUST preserve the live runtime state (5)");
 
         // A subsequent draw of the preserved live element keeps the merge.
         new.draw(&ctx);
@@ -640,11 +683,7 @@ mod tests {
         let (c, _c) = StatefulElement::new_with_name(&mk(3), &ctx, "ConfigWidget", None);
         try_update_element(&b, &c, &ctx);
         c.rebuild_if_dirty(&ctx);
-        assert_eq!(
-            observed_label.get(),
-            3,
-            "after chained A->B->C reconciles the live element MUST render the newest config 3"
-        );
+        assert_eq!(observed_label.get(), 3, "after chained A->B->C reconciles the live element MUST render the newest config 3");
     }
 
     /// Regression for the resize-rebuild case in `website/src/same_looking.rs`:
@@ -660,34 +699,24 @@ mod tests {
     fn stateful_state_survives_when_wrapped_scrollablelike() {
         let ctx = dummy_build_context();
         let observer = Rc::new(Cell::new(0usize));
-        let widget = CounterWidget {
-            observer: observer.clone(),
-        };
+        let widget = CounterWidget { observer: observer.clone() };
 
-        let (old_stateful, old_updater) =
-            StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
+        let (old_stateful, old_updater) = StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
         old_updater.set_state(|s| s.counter = 2);
         old_stateful.rebuild_if_dirty(&ctx);
         assert_eq!(observer.get(), 2, "old stateful carries counter=2");
 
         // Build a fresh inner stateful — what `Scrollable::to_element` does on
         // resize: brand-new widget instance, fresh state, fresh inner tree.
-        let (new_stateful, _new_updater) =
-            StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
+        let (new_stateful, _new_updater) = StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
         assert_eq!(observer.get(), 1, "new stateful's initial build records 1");
 
         // Wrap each in a parent that mimics `RawScrollableContainer`:
         //   * `event_children` is empty (events handled via `on_event`)
         //   * `update_from_widget` recurses manually via `try_update_element`
         //   * `key()` is stable across the rebuild
-        let old_parent = ScrollableLikeWrapper {
-            child: Box::new(old_stateful),
-            key: Some(crate::Key::Static("scrollable-default")),
-        };
-        let new_parent = ScrollableLikeWrapper {
-            child: Box::new(new_stateful),
-            key: Some(crate::Key::Static("scrollable-default")),
-        };
+        let old_parent = ScrollableLikeWrapper { child: Box::new(old_stateful), key: Some(crate::Key::Static("scrollable-default")) };
+        let new_parent = ScrollableLikeWrapper { child: Box::new(new_stateful), key: Some(crate::Key::Static("scrollable-default")) };
 
         let old_dyn: &dyn crate::Element = &old_parent;
         let new_dyn: &dyn crate::Element = &new_parent;
@@ -696,17 +725,13 @@ mod tests {
         // Trigger the inner stateful's rebuild — adopted `rebuild_fn` must
         // read from the OLD state cell, so the build closure records 2.
         new_parent.child.rebuild_if_dirty(&ctx);
-        assert_eq!(
-            observer.get(),
-            2,
-            "stateful inside a Scrollable-like wrapper must keep its state across resize rebuild"
-        );
+        assert_eq!(observer.get(), 2, "stateful inside a Scrollable-like wrapper must keep its state across resize rebuild");
     }
 
     mod resize_repro {
         use super::*;
-        use aimer_attribute::size::ResolvedSize;
         use crate::widget::stateless::StatelessElement;
+        use aimer_attribute::size::ResolvedSize;
         use std::cell::{Cell, RefCell};
 
         struct ResizeCounterWidget {
@@ -753,10 +778,7 @@ mod tests {
 
         impl FakeLeaf {
             fn new(name: &'static str, width: f32, height: f32) -> Self {
-                Self {
-                    name,
-                    size: ResolvedSize { width, height },
-                }
+                Self { name, size: ResolvedSize { width, height } }
             }
         }
 
@@ -793,10 +815,7 @@ mod tests {
 
         impl FakeContainer {
             fn new(child: Box<dyn Element>, width: f32, height: f32) -> Self {
-                Self {
-                    child,
-                    size: ResolvedSize { width, height },
-                }
+                Self { child, size: ResolvedSize { width, height } }
             }
         }
 
@@ -866,9 +885,7 @@ mod tests {
                     if is_visible {
                         let mut child_ctx = ctx.clone();
                         child_ctx.parent_size = child_size;
-                        child_ctx.visible_rect = ctx.visible_rect.map(|(vx, vy, vw, vh)| {
-                            (vx, vy - current_y, vw, vh)
-                        });
+                        child_ctx.visible_rect = ctx.visible_rect.map(|(vx, vy, vw, vh)| (vx, vy - current_y, vw, vh));
                         child.draw(&child_ctx);
                     }
 
@@ -1018,10 +1035,7 @@ mod tests {
 
         impl FakeScrollable {
             fn new(child: Box<dyn Element>) -> Self {
-                Self {
-                    child,
-                    key: Some(crate::Key::Static("scrollable-default")),
-                }
+                Self { child, key: Some(crate::Key::Static("scrollable-default")) }
             }
         }
 
@@ -1084,10 +1098,7 @@ mod tests {
             observer: Rc<Cell<usize>>,
             live_updater: Rc<RefCell<Option<StateUpdater<ResizeCounterState>>>>,
         ) -> Box<dyn Element> {
-            let counter_widget = ResizeCounterWidget {
-                observer,
-                live_updater,
-            };
+            let counter_widget = ResizeCounterWidget { observer, live_updater };
             let (stateful, _updater) = StatefulElement::new_with_name(&counter_widget, ctx, "Counter", None);
 
             FakeContainer::new(
@@ -1114,9 +1125,7 @@ mod tests {
             .boxed()
         }
 
-        fn current_live_updater(
-            live_updater: &Rc<RefCell<Option<StateUpdater<ResizeCounterState>>>>,
-        ) -> StateUpdater<ResizeCounterState> {
+        fn current_live_updater(live_updater: &Rc<RefCell<Option<StateUpdater<ResizeCounterState>>>>) -> StateUpdater<ResizeCounterState> {
             live_updater
                 .borrow()
                 .as_ref()
@@ -1144,18 +1153,10 @@ mod tests {
             current.set_state(|state| state.counter = 2);
             driver.draw(&initial_ctx);
 
-            assert_eq!(
-                observer.get(),
-                2,
-                "setup failed: stateful draw should observe counter=2 before resize"
-            );
+            assert_eq!(observer.get(), 2, "setup failed: stateful draw should observe counter=2 before resize");
 
             let mut resize_ctx = initial_ctx.clone();
-            resize_ctx.visible_rect = if culled {
-                Some((0.0, 0.0, 500.0, 250.0))
-            } else {
-                None
-            };
+            resize_ctx.visible_rect = if culled { Some((0.0, 0.0, 500.0, 250.0)) } else { None };
 
             for _ in 0..resize_count {
                 driver.mark_needs_rebuild();
@@ -1191,12 +1192,7 @@ mod tests {
 
         #[test]
         fn resize_repro_state_survival_across_window_resize() {
-            let results = [
-                run_variant(false, 1),
-                run_variant(false, 2),
-                run_variant(true, 1),
-                run_variant(true, 2),
-            ];
+            let results = [run_variant(false, 1), run_variant(false, 2), run_variant(true, 1), run_variant(true, 2)];
 
             let mut failures = Vec::new();
             for result in &results {
@@ -1215,11 +1211,7 @@ mod tests {
                 }
             }
 
-            assert!(
-                failures.is_empty(),
-                "window-resize state reproduction failed:\n{}",
-                failures.join("\n")
-            );
+            assert!(failures.is_empty(), "window-resize state reproduction failed:\n{}", failures.join("\n"));
         }
 
         // ─── Multi-button selection reproduction ──────────────────────────
@@ -1292,27 +1284,18 @@ mod tests {
 
         const TAB_COUNT: usize = 4;
 
-        fn build_tab_row(
-            ctx: &BuildContext,
-            selected_index: Rc<Cell<usize>>,
-            observers: Rc<Vec<Rc<Cell<i32>>>>,
-        ) -> Box<dyn Element> {
+        fn build_tab_row(ctx: &BuildContext, selected_index: Rc<Cell<usize>>, observers: Rc<Vec<Rc<Cell<i32>>>>) -> Box<dyn Element> {
             let selected = selected_index.get();
             let mut children: Vec<Box<dyn Element>> = Vec::with_capacity(TAB_COUNT);
             for index in 0..TAB_COUNT {
-                let widget = TabButtonWidget {
-                    index,
-                    selected: index == selected,
-                    observer: observers[index].clone(),
-                };
+                let widget = TabButtonWidget { index, selected: index == selected, observer: observers[index].clone() };
                 // Mirror the real app: `TextButton::to_element` yields a
                 // `StatefulElement` whose `debug_name` is "Unknown", and the
                 // `#[derive(WidgetConstructor)]`-generated `NamedWidget` then
                 // wraps it in a `StatelessElement` named after the widget
                 // ("TextButton") because the names differ. Reproduce that exact
                 // wrapper so reconciliation takes the same path.
-                let (stateful, _updater) =
-                    StatefulElement::new_with_name(&widget, ctx, "Unknown", None);
+                let (stateful, _updater) = StatefulElement::new_with_name(&widget, ctx, "Unknown", None);
                 let wrapped = StatelessElement::wrapper(stateful.boxed(), None, "TextButton");
                 children.push(Box::new(wrapped));
             }
@@ -1323,8 +1306,7 @@ mod tests {
         fn switching_selected_tab_highlights_only_the_new_tab() {
             let ctx = dummy_build_context();
             let selected_index = Rc::new(Cell::new(0usize));
-            let observers: Rc<Vec<Rc<Cell<i32>>>> =
-                Rc::new((0..TAB_COUNT).map(|_| Rc::new(Cell::new(-1))).collect());
+            let observers: Rc<Vec<Rc<Cell<i32>>>> = Rc::new((0..TAB_COUNT).map(|_| Rc::new(Cell::new(-1))).collect());
 
             let initial_child = build_tab_row(&ctx, selected_index.clone(), observers.clone());
             let rebuild_selected = selected_index.clone();
@@ -1339,11 +1321,7 @@ mod tests {
             // Initial draw: index 0 selected.
             driver.draw(&ctx);
             let initial: Vec<i32> = observers.iter().map(|o| o.get()).collect();
-            assert_eq!(
-                initial,
-                vec![1, 0, 0, 0],
-                "initial render must highlight only tab 0"
-            );
+            assert_eq!(initial, vec![1, 0, 0, 0], "initial render must highlight only tab 0");
 
             // User taps "Android" (index 3): the section rebuilds the row.
             for o in observers.iter() {
@@ -1354,12 +1332,7 @@ mod tests {
             driver.draw(&ctx);
 
             let after: Vec<i32> = observers.iter().map(|o| o.get()).collect();
-            assert_eq!(
-                after,
-                vec![0, 0, 0, 1],
-                "after switching to tab 3, ONLY tab 3 must be highlighted (got {:?})",
-                after
-            );
+            assert_eq!(after, vec![0, 0, 0, 1], "after switching to tab 3, ONLY tab 3 must be highlighted (got {:?})", after);
         }
 
         /// Root-cause regression for the "hover highlight stuck after a parent
@@ -1385,20 +1358,15 @@ mod tests {
             let observer = Rc::new(Cell::new(0usize));
             let live_updater = Rc::new(RefCell::new(None));
 
-            let widget = ResizeCounterWidget {
-                observer: observer.clone(),
-                live_updater: live_updater.clone(),
-            };
+            let widget = ResizeCounterWidget { observer: observer.clone(), live_updater: live_updater.clone() };
 
             // OLD live element (counter starts at 1, publishes its own updater).
-            let (old, _old_ctor) =
-                StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
+            let (old, _old_ctor) = StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
             old.rebuild_if_dirty(&ctx);
             assert_eq!(observer.get(), 1, "old element initial build records 1");
 
             // Freshly-built element arriving from a parent rebuild.
-            let (new, _new_ctor) =
-                StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
+            let (new, _new_ctor) = StatefulElement::new_with_name(&widget, &ctx, "Counter", None);
 
             // Reconcile: `new` becomes the live element, adopting `old`'s state
             // cell + channel + dirty flag; the eager rebuild re-publishes the
@@ -1418,11 +1386,7 @@ mod tests {
             // updater's flag, so this rebuild was a no-op and the observer stuck
             // at 1 (the frozen-hover symptom).
             new.rebuild_if_dirty(&ctx);
-            assert_eq!(
-                observer.get(),
-                42,
-                "the preserved state's own set_state must drive the live element after reconcile"
-            );
+            assert_eq!(observer.get(), 42, "the preserved state's own set_state must drive the live element after reconcile");
         }
 
         // ─── Resize reproduction: selected-tab highlight goes stale ────────
@@ -1482,29 +1446,19 @@ mod tests {
                 let selected = self.current_index;
                 let mut children: Vec<Box<dyn Element>> = Vec::with_capacity(TAB_COUNT);
                 for index in 0..TAB_COUNT {
-                    let widget = TabButtonWidget {
-                        index,
-                        selected: index == selected,
-                        observer: self.observers[index].clone(),
-                    };
-                    let (stateful, _updater) =
-                        StatefulElement::new_with_name(&widget, ctx, "Unknown", None);
-                    let wrapped =
-                        StatelessElement::wrapper(stateful.boxed(), None, "TextButton");
+                    let widget = TabButtonWidget { index, selected: index == selected, observer: self.observers[index].clone() };
+                    let (stateful, _updater) = StatefulElement::new_with_name(&widget, ctx, "Unknown", None);
+                    let wrapped = StatelessElement::wrapper(stateful.boxed(), None, "TextButton");
                     children.push(Box::new(wrapped));
                 }
                 // The section's own build returns an element tree; wrap the row
                 // in a couple of container-like wrappers so the button subtree
                 // is nested (mirroring Container -> Column -> Row).
-                ElementWidget::new(
-                    FakeContainer::new(FakeFlex::new(children).boxed(), 400.0, 60.0).boxed(),
-                )
+                ElementWidget::new(FakeContainer::new(FakeFlex::new(children).boxed(), 400.0, 60.0).boxed())
             }
         }
 
-        fn current_section_updater(
-            live_updater: &Rc<RefCell<Option<StateUpdater<SectionState>>>>,
-        ) -> StateUpdater<SectionState> {
+        fn current_section_updater(live_updater: &Rc<RefCell<Option<StateUpdater<SectionState>>>>) -> StateUpdater<SectionState> {
             live_updater
                 .borrow()
                 .as_ref()
@@ -1517,24 +1471,15 @@ mod tests {
             observers: Rc<Vec<Rc<Cell<i32>>>>,
             live_updater: Rc<RefCell<Option<StateUpdater<SectionState>>>>,
         ) -> Box<dyn Element> {
-            let section = SectionWidget {
-                observers,
-                live_updater,
-            };
-            let (stateful, _updater) =
-                StatefulElement::new_with_name(&section, ctx, "SameLookingSection", None);
+            let section = SectionWidget { observers, live_updater };
+            let (stateful, _updater) = StatefulElement::new_with_name(&section, ctx, "SameLookingSection", None);
             // Nest the section deep, like the real HomePage tree.
             FakeContainer::new(
                 FakeStack::new(vec![
                     FakePositioned::new(
                         FakeScrollable::new(
                             FakeFlex::new(vec![
-                                FakeContainer::new(
-                                    FakeLeaf::new("Hero", 200.0, 100.0).boxed(),
-                                    200.0,
-                                    100.0,
-                                )
-                                .boxed(),
+                                FakeContainer::new(FakeLeaf::new("Hero", 200.0, 100.0).boxed(), 200.0, 100.0).boxed(),
                                 stateful.boxed(),
                             ])
                             .boxed(),
@@ -1553,20 +1498,15 @@ mod tests {
         #[test]
         fn resize_keeps_selected_tab_highlight() {
             let ctx = dummy_build_context();
-            let observers: Rc<Vec<Rc<Cell<i32>>>> =
-                Rc::new((0..TAB_COUNT).map(|_| Rc::new(Cell::new(-1))).collect());
-            let live_updater: Rc<RefCell<Option<StateUpdater<SectionState>>>> =
-                Rc::new(RefCell::new(None));
+            let observers: Rc<Vec<Rc<Cell<i32>>>> = Rc::new((0..TAB_COUNT).map(|_| Rc::new(Cell::new(-1))).collect());
+            let live_updater: Rc<RefCell<Option<StateUpdater<SectionState>>>> = Rc::new(RefCell::new(None));
 
-            let initial_child =
-                build_section_home(&ctx, observers.clone(), live_updater.clone());
+            let initial_child = build_section_home(&ctx, observers.clone(), live_updater.clone());
             let rebuild_observers = observers.clone();
             let rebuild_live_updater = live_updater.clone();
             let driver = StatelessElement::new(
                 initial_child,
-                move |ctx| {
-                    build_section_home(ctx, rebuild_observers.clone(), rebuild_live_updater.clone())
-                },
+                move |ctx| build_section_home(ctx, rebuild_observers.clone(), rebuild_live_updater.clone()),
                 None,
                 "HomePage",
             );
@@ -1583,12 +1523,7 @@ mod tests {
             current_section_updater(&live_updater).set_state(|s| s.current_index = 3);
             driver.draw(&ctx);
             let after_pick: Vec<i32> = observers.iter().map(|o| o.get()).collect();
-            assert_eq!(
-                after_pick,
-                vec![0, 0, 0, 1],
-                "after picking tab 3, only tab 3 is highlighted (got {:?})",
-                after_pick
-            );
+            assert_eq!(after_pick, vec![0, 0, 0, 1], "after picking tab 3, only tab 3 is highlighted (got {:?})", after_pick);
 
             // Window resize: the parent rebuilds the whole tree (fresh section
             // at index 0), reconciles, and must preserve the live selection AND
@@ -1600,16 +1535,10 @@ mod tests {
             driver.draw(&ctx);
 
             let after_resize: Vec<i32> = observers.iter().map(|o| o.get()).collect();
-            assert_eq!(
-                after_resize,
-                vec![0, 0, 0, 1],
-                "after resize, ONLY tab 3 must stay highlighted (got {:?})",
-                after_resize
-            );
+            assert_eq!(after_resize, vec![0, 0, 0, 1], "after resize, ONLY tab 3 must stay highlighted (got {:?})", after_resize);
         }
     }
 }
-
 
 /// Wrapper element that mimics `RawScrollableContainer`: its `event_children`
 /// is intentionally empty (events handled via `on_event`) but its
@@ -1649,11 +1578,7 @@ impl crate::Reconcilable for ScrollableLikeWrapper {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    fn update_from_widget(
-        &self,
-        new_element: &dyn crate::Element,
-        ctx: &BuildContext,
-    ) -> bool {
+    fn update_from_widget(&self, new_element: &dyn crate::Element, ctx: &BuildContext) -> bool {
         let new = new_element
             .as_any()
             .downcast_ref::<ScrollableLikeWrapper>()
