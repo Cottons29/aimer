@@ -1,4 +1,4 @@
-use crate::{app_padding, is_mobile, mobile_title};
+use crate::utils::{app_padding, is_mobile, mobile_title};
 use aimer::style::{FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle};
 use aimer::*;
 
@@ -14,12 +14,20 @@ impl StatefulWidget for SameLookingSection {
     type State = SameLookingSectionState;
 
     fn create_state(&self) -> Self::State {
-        SameLookingSectionState { current_index: 0, state: StateUpdater::new() }
+        // The framework preserves the live state across parent rebuilds
+        // (e.g. a window resize) by adopting it during reconciliation, so the
+        // selected tab survives without any manual persistence — this only
+        // needs to provide the initial value.
+        SameLookingSectionState {
+            current_index: 0,
+            state: StateUpdater::new()
+        }
     }
 }
 
 const PLATFORMS: &[&str] = &["macOS", "iOS", "Web", "Android"];
-const PLATFORM_IMAGE: &[&str] = &["assets/macos_screenshot.png", "assets/ios_screenshot.png", "assets/web_screenshot.png", "assets/android_screenshot.png"];
+const PLATFORM_IMAGE: &[&str] =
+    &["assets/macos_screenshot.png", "assets/ios_screenshot.png", "assets/web_screenshot.png", "assets/android_screenshot.png"];
 
 impl State<SameLookingSection> for SameLookingSectionState {
     fn init_state(&mut self, updater: StateUpdater<Self>)
@@ -73,20 +81,16 @@ impl SameLookingSectionState {
     fn build_platform_button_list(&self, _ctx: &BuildContext) -> Vec<Box<dyn Widget>> {
         let selected = self.current_index;
         PLATFORMS
-            .into_iter()
+            .iter()
             .enumerate()
             .map({
                 let updater = self.state.clone();
                 move |(i, l)| {
                     let index = i;
                     let is_selected = index == selected;
-                    let font_weight = if selected == index{
-                        FontWeight::Bolder
-                    } else {
-                        FontWeight::Normal
-                    };
+                    let font_weight = if selected == index { FontWeight::Bolder } else { FontWeight::Normal };
 
-                    Box::new(TextButton!(
+                    TextButton!(
                         *l,
                         style: TextStyle!(
                             font_size: 20,
@@ -107,13 +111,19 @@ impl SameLookingSectionState {
                         on_press: {
                             let updater = updater.clone();
                             move || {
-                                updater.set_state(move |s| s.current_index = index);
+                                println!("Tab {} pressed", index);
+                                if updater.read_state().current_index != index {
+                                    updater.set_state(
+                                        move |s| {
+                                        s.current_index = index
+                                        }
+                                    );
+                                }
                             }
                         },
-                    )) as Box<dyn Widget>
+                    )
                 }
             })
             .collect()
     }
-
 }

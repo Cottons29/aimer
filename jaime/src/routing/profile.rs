@@ -1,14 +1,13 @@
-
-use aimer::*;
+use crate::routing::AppRouting;
 use aimer::console::debug;
 use aimer::macros::widget;
 use aimer::router::NavigatorController;
 use aimer::style::*;
-use crate::routing::AppRouting;
+use aimer::*;
 
 #[widget(Stateless)]
 #[derive(Clone)]
-pub struct ProfilePage{
+pub struct ProfilePage {
     name: String,
 }
 
