@@ -3,8 +3,8 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 use aimer_macro::Constructor;
-use aimer_widget::base::BuildContext;
 use aimer_widget::Drawable;
+use aimer_widget::base::BuildContext;
 
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
@@ -55,7 +55,6 @@ pub struct BoxBorder {
     #[constructor(default)]
     pub bottom: BorderSlice,
 }
-
 
 #[derive(Default, Clone, Copy, PartialEq, Debug, Constructor)]
 pub struct BoxOutline {
@@ -117,6 +116,30 @@ impl BoxBorder {
             || (b > 0.0 && self.bottom.style != BorderStyle::None)
     }
 
+    /// Returns the color to paint the border with.
+    ///
+    /// The per-side border GPU pipeline currently supports only a single
+    /// uniform border color, so we cannot honor a different color per side.
+    /// Picking `left.color` unconditionally is wrong when only another side is
+    /// set (e.g. a `bottom`-only border): `left.color` is then the default
+    /// `Color::Transparent` and the border renders invisibly. Instead, return
+    /// the color of the first side that is actually visible (non-`None` style
+    /// and non-zero stroke), falling back to `left.color`.
+    pub fn effective_color(&self, box_width: f32, box_height: f32, scale: f32) -> Color {
+        let (l, t, r, b) = self.strokes(box_width, box_height, scale);
+        if l > 0.0 && self.left.style != BorderStyle::None {
+            self.left.color
+        } else if t > 0.0 && self.top.style != BorderStyle::None {
+            self.top.color
+        } else if r > 0.0 && self.right.style != BorderStyle::None {
+            self.right.color
+        } else if b > 0.0 && self.bottom.style != BorderStyle::None {
+            self.bottom.color
+        } else {
+            self.left.color
+        }
+    }
+
     pub fn horizontal(border: BorderSlice) -> Self {
         Self { top: border, bottom: border, ..Default::default() }
     }
@@ -140,6 +163,25 @@ impl BoxOutline {
             || (b > 0.0 && self.bottom.style != BorderStyle::None)
     }
 
+    /// Returns the color to paint the outline with. See
+    /// [`BoxBorder::effective_color`] — the per-side outline pipeline supports a
+    /// single uniform color, so we pick the color of the first visible side and
+    /// fall back to `left.color`.
+    pub fn effective_color(&self, box_width: f32, box_height: f32, scale: f32) -> Color {
+        let (l, t, r, b) = self.strokes(box_width, box_height, scale);
+        if l > 0.0 && self.left.style != BorderStyle::None {
+            self.left.color
+        } else if t > 0.0 && self.top.style != BorderStyle::None {
+            self.top.color
+        } else if r > 0.0 && self.right.style != BorderStyle::None {
+            self.right.color
+        } else if b > 0.0 && self.bottom.style != BorderStyle::None {
+            self.bottom.color
+        } else {
+            self.left.color
+        }
+    }
+
     pub fn horizontal(border: BorderSlice) -> Self {
         Self { top: border, bottom: border, ..Default::default() }
     }
@@ -159,10 +201,6 @@ impl BoxOutline {
     }
 }
 
-
-
-
-
 #[allow(dead_code)]
 impl Drawable for RawBoxBorder {
     fn draw(&self, ctx: &BuildContext) {
@@ -177,9 +215,11 @@ impl Drawable for RawBoxBorder {
         let top_stroke = resolve_dim(self.top.stroke, box_height, scale);
         let bottom_stroke = resolve_dim(self.bottom.stroke, box_height, scale);
 
-        let is_uniform_style = self.left.style == self.right.style && self.left.style == self.top.style && self.left.style == self.bottom.style;
+        let is_uniform_style =
+            self.left.style == self.right.style && self.left.style == self.top.style && self.left.style == self.bottom.style;
         let is_uniform_stroke = left_stroke == right_stroke && left_stroke == top_stroke && left_stroke == bottom_stroke;
-        let is_uniform_color = self.left.color == self.right.color && self.left.color == self.top.color && self.left.color == self.bottom.color;
+        let is_uniform_color =
+            self.left.color == self.right.color && self.left.color == self.top.color && self.left.color == self.bottom.color;
 
         // Uniform border: single stroke_rect call
         if is_uniform_style && is_uniform_stroke && is_uniform_color && left_stroke > 0.0 && self.left.style != BorderStyle::None {
@@ -188,13 +228,7 @@ impl Drawable for RawBoxBorder {
             } else {
                 (left_stroke / 2.0, left_stroke / 2.0, box_width - left_stroke, box_height - left_stroke)
             };
-            canvas.stroke_rect(
-                Vec2d { x, y },
-                ResolvedSize { width: w, height: h },
-                self.left.color,
-                left_stroke,
-                self.radius,
-            );
+            canvas.stroke_rect(Vec2d { x, y }, ResolvedSize { width: w, height: h }, self.left.color, left_stroke, self.radius);
             return;
         }
 
@@ -202,12 +236,7 @@ impl Drawable for RawBoxBorder {
         // When all colors are the same we can use a single stroke_rect_per_side call.
         if is_uniform_color && self.left.style != BorderStyle::None {
             let border_radius = self.radius;
-            let border_width = [
-                top_stroke,
-                right_stroke,
-                bottom_stroke,
-                left_stroke,
-            ];
+            let border_width = [top_stroke, right_stroke, bottom_stroke, left_stroke];
 
             canvas.stroke_rect_per_side(
                 Vec2d { x: 0.0, y: 0.0 },
@@ -227,12 +256,7 @@ impl Drawable for RawBoxBorder {
             } else {
                 (0.0, 0.0, box_width, top_stroke)
             };
-            canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize { width: w, height: h },
-                self.top.color,
-                self.radius,
-            );
+            canvas.fill_color_rect(Vec2d { x, y }, ResolvedSize { width: w, height: h }, self.top.color, self.radius);
         }
 
         // Bottom border
@@ -242,12 +266,7 @@ impl Drawable for RawBoxBorder {
             } else {
                 (0.0, box_height - bottom_stroke, box_width, bottom_stroke)
             };
-            canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize { width: w, height: h },
-                self.bottom.color,
-                self.radius,
-            );
+            canvas.fill_color_rect(Vec2d { x, y }, ResolvedSize { width: w, height: h }, self.bottom.color, self.radius);
         }
 
         // Left border
@@ -257,12 +276,7 @@ impl Drawable for RawBoxBorder {
             } else {
                 (0.0, 0.0, left_stroke, box_height)
             };
-            canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize { width: w, height: h },
-                self.left.color,
-                self.radius,
-            );
+            canvas.fill_color_rect(Vec2d { x, y }, ResolvedSize { width: w, height: h }, self.left.color, self.radius);
         }
 
         // Right border
@@ -272,12 +286,55 @@ impl Drawable for RawBoxBorder {
             } else {
                 (box_width - right_stroke, 0.0, right_stroke, box_height)
             };
-            canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize { width: w, height: h },
-                self.right.color,
-                self.radius,
-            );
+            canvas.fill_color_rect(Vec2d { x, y }, ResolvedSize { width: w, height: h }, self.right.color, self.radius);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn slice(stroke: f32, color: Color) -> BorderSlice {
+        BorderSlice { style: BorderStyle::Solid, stroke: Dimension::Px(stroke), color }
+    }
+
+    /// Regression for the website header: a `bottom`-only border must paint with
+    /// the color set on that side, not the default (transparent) `left` color.
+    #[test]
+    fn effective_color_uses_bottom_only_side() {
+        let border = BoxBorder { bottom: slice(8.0, Color::BLACK), ..Default::default() };
+        // Before the fix this returned `left.color` == Transparent (invisible).
+        assert_eq!(border.effective_color(200.0, 60.0, 1.0), Color::BLACK);
+    }
+
+    #[test]
+    fn effective_color_prefers_left_when_visible() {
+        let border = BoxBorder { left: slice(4.0, Color::RED), bottom: slice(8.0, Color::BLACK), ..Default::default() };
+        assert_eq!(border.effective_color(200.0, 60.0, 1.0), Color::RED);
+    }
+
+    #[test]
+    fn effective_color_falls_back_to_left_when_nothing_visible() {
+        // No side has a stroke: fall back to the (default) left color.
+        let border = BoxBorder::default();
+        assert_eq!(border.effective_color(200.0, 60.0, 1.0), border.left.color);
+    }
+
+    #[test]
+    fn effective_color_ignores_none_style_side() {
+        // `left` has a stroke but style None → skip it, use the visible `top`.
+        let border = BoxBorder {
+            left: BorderSlice { style: BorderStyle::None, stroke: Dimension::Px(4.0), color: Color::RED },
+            top: slice(2.0, Color::BLACK),
+            ..Default::default()
+        };
+        assert_eq!(border.effective_color(200.0, 60.0, 1.0), Color::BLACK);
+    }
+
+    #[test]
+    fn outline_effective_color_uses_visible_side() {
+        let outline = BoxOutline { right: slice(3.0, Color::BLACK), ..Default::default() };
+        assert_eq!(outline.effective_color(200.0, 60.0, 1.0), Color::BLACK);
     }
 }

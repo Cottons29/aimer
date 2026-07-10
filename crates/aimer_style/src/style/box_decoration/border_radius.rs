@@ -1,5 +1,5 @@
-use aimer_attribute::Dimension;
 use crate::style::border::resolve_dim;
+use aimer_attribute::Dimension;
 use aimer_macro::Constructor;
 
 #[derive(Default, Clone, Copy, PartialEq, Debug, Constructor)]

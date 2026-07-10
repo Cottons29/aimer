@@ -36,7 +36,6 @@ pub enum Spacing {
     None,
 }
 
-
 impl From<i32> for Spacing {
     fn from(value: i32) -> Self {
         Spacing::Px(value as u32)
@@ -60,7 +59,6 @@ impl Spacing {
         }
     }
 }
-
 
 impl From<f64> for Spacing {
     fn from(value: f64) -> Self {
