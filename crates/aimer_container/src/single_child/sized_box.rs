@@ -4,8 +4,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{EventElement, Rebuildable, WidgetConstructor};
 use aimer_widget::base::*;
-use aimer_widget::{base::Color, Drawable, Element, LayoutCache, LayoutElement, Reconcilable, VisitorElement, Widget};
-
+use aimer_widget::{Drawable, Element, LayoutCache, LayoutElement, Reconcilable, VisitorElement, Widget, base::Color};
 
 #[derive(WidgetConstructor)]
 pub struct SizedBox<W: Widget + 'static = ZeroSizedBox> {
@@ -21,16 +20,14 @@ pub struct SizedBox<W: Widget + 'static = ZeroSizedBox> {
 
 impl SizedBox {
     pub const PLACE_HOLDER: ZeroSizedBox = ZeroSizedBox;
-
 }
-
 
 impl<W: Widget + 'static> Widget for SizedBox<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawSizedBox {
             width: self.width,
             height: self.height,
-            child : self.child.to_element(ctx),
+            child: self.child.to_element(ctx),
             color: self.color,
             cache: LayoutCache::new(),
             debug_name: "SizedBox",
@@ -63,24 +60,21 @@ impl<E: Element> Drawable for RawSizedBox<E> {
                 let end_y = start_y + height;
 
                 let scale = ctx.scale;
-                let l_start = Vec2d { x: start_x/ scale, y: start_y  / scale };
-                let l_end = Vec2d { x: end_x  / scale, y: end_y  / scale };
+                let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
+                let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if !(cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y) {return;}
-                if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
-                    *hovered = Some((self.debug_name, l_start, l_end));
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
+                    if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
+                        *hovered = Some((self.debug_name, l_start, l_end));
+                    }
                 }
             }
         }
 
-        ctx.canvas.fill_color_rect(
-            Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize { width, height },
-            self.color,
-            [0.0; 4],
-        );
+        ctx.canvas
+            .fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width, height }, self.color, [0.0; 4]);
     }
 }
 
@@ -140,11 +134,9 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
         };
 
         let result = ResolvedSize { width, height };
-        self.cache
-            .set_computed(ctx.box_constraint, scale_bits, result);
+        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
         result
     }
-
 
     fn get_size_from_child(&self) -> Option<Size> {
         let mut size = self.child.get_size_from_child().unwrap_or_default();
@@ -165,12 +157,12 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.bounds.get()
     }
-
-
 }
 
 impl<E: Element + 'static> Reconcilable for RawSizedBox<E> {
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 
     fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
         false

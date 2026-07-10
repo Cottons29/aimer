@@ -1,5 +1,5 @@
-use crate::raw_scroll::{DragMode, RawScrollableContainer};
 use crate::ScrollAxis;
+use crate::raw_scroll::{DragMode, RawScrollableContainer};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_widget::base::BuildContext;
@@ -56,10 +56,22 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
             if needs_redraw {
                 aimer_events::window::request_animation_frame();
+            } else {
+                // Not dragging and momentum/fling/spring-back have fully settled:
+                // this is where a scroll session ends. `end_scroll` is edge-
+                // triggered, so it fires the callback only once (on the actual
+                // scrolling → idle transition) and is a no-op on later idle frames.
+                self.ctrl.end_scroll();
             }
         }
 
         self.ctrl.scroll_offset.set(offset);
+
+        // Level-triggered per-frame notification: fires `on_scroll` only when the
+        // logical offset actually moved since the last frame (epsilon-guarded), so
+        // it covers drags, wheel/keyboard, momentum, spring-back and programmatic
+        // scrolls without emitting on idle frames.
+        self.ctrl.notify_scroll();
 
         // Write-back: persist the live position so a full teardown/re-create can
         // restore it (see `scroll_storage`). Stored in logical (unscaled) pixels
@@ -70,7 +82,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         // Clip to viewport
         ctx.canvas.save();
-        ctx.canvas.set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
+        ctx.canvas
+            .set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
 
         // Translate by scroll offset
         // On high-DPI displays (e.g. iOS retina), avoid rounding to preserve smooth sub-pixel scrolling
@@ -94,7 +107,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         // Draw scrollbars on top, clipped to viewport
         ctx.canvas.save();
-        ctx.canvas.set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
+        ctx.canvas
+            .set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
         {
             if let Some(ref vertical_bar) = self.vertical_scroll_bar
                 && matches!(self.ctrl.axis, ScrollAxis::Vertical)
@@ -111,4 +125,3 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         ctx.canvas.restore();
     }
 }
-

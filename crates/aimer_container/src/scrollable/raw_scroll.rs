@@ -1,5 +1,5 @@
 pub use crate::scrollable::controller::DragMode;
-use crate::scrollable::controller::ScrollController;
+use crate::scrollable::controller::ScrollState;
 use crate::scrollable::scroll_bar::ScrollBar;
 use aimer_attribute::CacheBounds;
 use aimer_attribute::dimension::Dimension;
@@ -7,12 +7,16 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_macro::Rebuildable;
 use aimer_widget::base::*;
-use aimer_widget::{try_update_element, Element, Reconcilable};
+use aimer_widget::{Element, Reconcilable, try_update_element};
+use std::rc::Rc;
 
 #[derive(Rebuildable)]
 pub struct RawScrollableContainer<E: Element> {
     pub(crate) child: E,
-    pub(crate) ctrl: ScrollController,
+    /// The live scroll engine. Held behind an `Rc` so an app-supplied
+    /// [`ScrollController`](crate::ScrollController) can share the very same
+    /// state and drive it programmatically across rebuilds.
+    pub(crate) ctrl: Rc<ScrollState>,
     pub(crate) vertical_scroll_bar: Option<ScrollBar>,
     pub(crate) horizontal_scroll_bar: Option<ScrollBar>,
     pub(crate) bounds: CacheBounds,

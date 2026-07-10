@@ -30,57 +30,10 @@ where
 
 impl<W: Widget> Widget for Container<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let parent_width = ctx.box_constraint.max_width;
-        let parent_height = ctx.box_constraint.max_height;
-        let scale = ctx.scale;
-
-        let m_left = self.margin.left.value(parent_width, scale);
-        let m_right = self.margin.right.value(parent_width, scale);
-        let m_top = self.margin.top.value(parent_height, scale);
-        let m_bottom = self.margin.bottom.value(parent_height, scale);
-
-        let box_width = match self.width {
-            Dimension::Px(w) => w * scale,
-            Dimension::Percent(p) => parent_width * (p / 100.0) - (m_left + m_right),
-            Dimension::Auto => parent_width - m_left - m_right,
-        };
-
-        let box_height = match self.height {
-            Dimension::Px(h) => h * scale,
-            Dimension::Percent(p) => parent_height * (p / 100.0) - (m_top + m_bottom),
-            Dimension::Auto => parent_height - m_top - m_bottom,
-        };
-
-        let box_width = box_width.max(0.0);
-        let box_height = box_height.max(0.0);
-
-        let p_left = self.padding.left.value(box_width, scale);
-        let p_right = self.padding.right.value(box_width, scale);
-        let p_top = self.padding.top.value(box_height, scale);
-        let p_bottom = self.padding.bottom.value(box_height, scale);
-
-        let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
-            match dim {
-                Dimension::Px(w) => w * scale,
-                Dimension::Percent(p) => parent_val * (p / 100.0),
-                Dimension::Auto => 0.0,
-            }
-        };
-
-        let b_left = get_stroke(self.box_decoration.border.left.stroke, box_width).max(0.0);
-        let b_right = get_stroke(self.box_decoration.border.right.stroke, box_width).max(0.0);
-        let b_top = get_stroke(self.box_decoration.border.top.stroke, box_height).max(0.0);
-        let b_bottom = get_stroke(self.box_decoration.border.bottom.stroke, box_height).max(0.0);
-
-        let mut child_ctx = ctx.clone();
-        child_ctx.box_constraint.max_width = (box_width - p_left - b_left - p_right - b_right).max(0.0);
-        child_ctx.box_constraint.max_height = (box_height - p_top - b_top - p_bottom - b_bottom).max(0.0);
-
-        let child = self.child.to_element(&child_ctx);
         Box::new(RawContainer {
             width: self.width,
             height: self.height,
-            child,
+            child: self.child.to_element(ctx),
             padding: self.padding,
             margin: self.margin,
             box_decoration: self.box_decoration.clone(),
@@ -195,11 +148,10 @@ impl<T: Element> Drawable for RawContainer<T> {
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if !(cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y) {
-                    return;
-                }
-                if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
-                    *hovered = Some((self.debug_name, l_start, l_end));
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
+                    if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
+                        *hovered = Some((self.debug_name, l_start, l_end));
+                    }
                 }
             }
         }

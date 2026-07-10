@@ -1,14 +1,16 @@
-mod raw_flex;
+pub(crate) mod flex_child;
+pub(crate) mod raw_flex;
 pub mod row_column;
 
 // pub use raw_flex::RawFlex;
 pub use row_column::Column;
 pub use row_column::Row;
 
-pub use raw_flex::Flex;
-use aimer_widget::base::BuildContext;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+use aimer_widget::base::BuildContext;
+pub use flex_child::Expanded;
+pub use raw_flex::Flex;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutDirection {
@@ -43,7 +45,7 @@ impl OverflowBehavior {
                     ResolvedSize { width: ctx.box_constraint.max_width, height: ctx.box_constraint.max_height },
                 );
             }
-            _ => ()
+            _ => (),
         }
     }
 }

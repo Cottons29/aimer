@@ -10,6 +10,7 @@ aimer_attribute.workspace = true
 aimer_macro.workspace = true
 aimer_events.workspace = true
 aimer_style.workspace = true
+aimer_animation.workspace = true
 #################
 
 aimer_utils.workspace = true

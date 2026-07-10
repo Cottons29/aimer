@@ -7,6 +7,7 @@ pub mod scroll_bar;
 pub mod scroll_behavior;
 pub mod scroll_storage;
 
+use controller::ScrollState;
 use controller::VelocityHistory;
 pub use controller::{DragMode, ScrollController};
 pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
@@ -15,10 +16,12 @@ use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
 use aimer_attribute::CacheBounds;
 use aimer_attribute::position::Vec2d;
-use aimer_macro::{key, WidgetConstructor};
+use aimer_macro::{WidgetConstructor, key};
+use aimer_utils::callback::Callback;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, Key, Widget};
 use std::cell::Cell;
+use std::rc::Rc;
 
 #[derive(WidgetConstructor)]
 pub struct Scrollable<W: Widget + 'static> {
@@ -37,6 +40,13 @@ pub struct Scrollable<W: Widget + 'static> {
     /// teardown (rebuild/resize is still preserved via reconciliation).
     #[constructor(default = key!())]
     pub key: Key,
+    /// Optional app-held [`ScrollController`] for programmatic control. When
+    /// `Some`, the app can read the live position and drive it with
+    /// [`ScrollController::jump_to`] / [`ScrollController::animate_to`]; the
+    /// controller shares this scrollable's state and survives rebuilds. `None`
+    /// keeps the zero-cost default (internally managed) behaviour.
+    #[constructor(default)]
+    pub controller: Option<ScrollController>,
 }
 
 impl<W: Widget> Widget for Scrollable<W> {
@@ -53,63 +63,80 @@ impl<W: Widget> Widget for Scrollable<W> {
         // full teardown) keyed by `storage_key`; otherwise fall back to the declared
         // `scroll_behavior.scroll_offset`. Stored offsets are logical (unscaled), so
         // re-apply `ctx.scale` here just like the declared offset below.
-        let initial_offset = scroll_storage::read_offset(&self.key)
+        let mut initial_offset = scroll_storage::read_offset(&self.key)
             .map(|logical| Vec2d { x: logical.x * ctx.scale, y: logical.y * ctx.scale })
             .unwrap_or(Vec2d { x: self.scroll_behavior.scroll_offset.x * ctx.scale, y: self.scroll_behavior.scroll_offset.y * ctx.scale });
 
+        // If an app-supplied controller is already attached (i.e. this is a
+        // rebuild), it is the source of truth for the live position — seed the
+        // fresh state from it so the viewport stays put. Its `offset()` is
+        // logical (positive toward the content end); convert to the internal
+        // scaled/negated convention.
+        if let Some(ctrl) = &self.controller
+            && ctrl.is_attached()
+        {
+            let logical = ctrl.offset();
+            initial_offset = Vec2d { x: -logical.x * ctx.scale, y: -logical.y * ctx.scale };
+        }
+
+        let child = self.child.to_element(&child_ctx);
+        let state = Rc::new(ScrollState {
+            speed_multiplier: ctx.scale,
+            scroll_offset: Cell::new(initial_offset),
+            storage_key: self.key.clone(),
+            last_pointer_pos: Cell::new(None),
+            drag_mode: Cell::new(DragMode::None),
+            cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            cached_min_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            pointer_velocity: Cell::new(Vec2d {
+                x: self.scroll_behavior.velocity.x * ctx.scale,
+                y: self.scroll_behavior.velocity.y * ctx.scale,
+            }),
+            last_event_time: Cell::new(None),
+            last_frame_time: Cell::new(None),
+            v_thumb_rect: Cell::new(None),
+            h_thumb_rect: Cell::new(None),
+            v_scroll_multiplier: Cell::new(0.0),
+            h_scroll_multiplier: Cell::new(0.0),
+            last_scale: Cell::new(ctx.scale),
+            scroll_behavior: self.scroll_behavior,
+            axis: self.axis,
+            cursor_pos: Cell::new(None),
+            velocity_history: std::cell::RefCell::new(VelocityHistory::new()),
+            cached_viewport: Cell::new((0.0, 0.0)),
+            cached_v_track_width: Cell::new(0.0),
+            cached_h_track_width: Cell::new(0.0),
+            cached_content_size: Cell::new(Default::default()),
+            fling_start_time: Cell::new(None),
+            fling_start_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            fling_target_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            fling_duration: Cell::new(0.0),
+            anim_curve: Cell::new(None),
+            active_touch_id: Cell::new(None),
+            spring_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            momentum_start_time: Cell::new(None),
+            vel_accum: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
+            vel_sample_time: Cell::new(None),
+            is_scrolling: Cell::new(false),
+            // Left empty here; `attach` (below) re-shares any app-registered
+            // scroll-lifecycle callbacks from the controller into this state.
+            on_scroll_start: std::cell::RefCell::new(Callback::default()),
+            on_scroll_end: std::cell::RefCell::new(Callback::default()),
+            on_scroll: std::cell::RefCell::new(Callback::default()),
+            last_reported_offset: Cell::new(None),
+        });
+
+        // Share the freshly built state with the app's controller (if any) so
+        // `jump_to` / `animate_to` / `offset` operate on this live scrollable.
+        if let Some(ctrl) = &self.controller {
+            ctrl.attach(state.clone());
+        }
+
         Box::new(RawScrollableContainer {
-            child: self.child.to_element(&child_ctx),
-            ctrl: ScrollController {
-                speed_multiplier: ctx.scale,
-                scroll_offset: Cell::new(initial_offset),
-                storage_key: self.key.clone(),
-                last_pointer_pos: Cell::new(None),
-                drag_mode: Cell::new(DragMode::None),
-                cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
-                cached_min_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
-                pointer_velocity: Cell::new(Vec2d {
-                    x: self.scroll_behavior.velocity.x * ctx.scale,
-                    y: self.scroll_behavior.velocity.y * ctx.scale,
-                }),
-                last_event_time: Cell::new(None),
-                last_frame_time: Cell::new(None),
-                v_thumb_rect: Cell::new(None),
-                h_thumb_rect: Cell::new(None),
-                v_scroll_multiplier: Cell::new(0.0),
-                h_scroll_multiplier: Cell::new(0.0),
-                last_scale: Cell::new(ctx.scale),
-                scroll_behavior: ScrollBehavior {
-                    max_scroll: self.scroll_behavior.max_scroll,
-                    min_scroll: self.scroll_behavior.min_scroll,
-                    velocity: self.scroll_behavior.velocity,
-                    scroll_offset: self.scroll_behavior.scroll_offset,
-                    bouncy: self.scroll_behavior.bouncy,
-                    bouncy_resistance: self.scroll_behavior.bouncy_resistance,
-                    bouncy_recovery: self.scroll_behavior.bouncy_recovery,
-                    friction: self.scroll_behavior.friction,
-                },
-                axis: match self.axis {
-                    ScrollAxis::Vertical => ScrollAxis::Vertical,
-                    ScrollAxis::Horizontal => ScrollAxis::Horizontal,
-                },
-                cursor_pos: Cell::new(None),
-                velocity_history: std::cell::RefCell::new(VelocityHistory::new()),
-                cached_viewport: Cell::new((0.0, 0.0)),
-                cached_v_track_width: Cell::new(0.0),
-                cached_h_track_width: Cell::new(0.0),
-                cached_content_size: Cell::new(Default::default()),
-                fling_start_time: Cell::new(None),
-                fling_start_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
-                fling_target_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
-                fling_duration: Cell::new(0.0),
-                active_touch_id: Cell::new(None),
-                spring_velocity: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
-                momentum_start_time: Cell::new(None),
-                vel_accum: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
-                vel_sample_time: Cell::new(None),
-            },
-            vertical_scroll_bar: self.vertical_scroll_bar.clone(),
-            horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
+            child,
+            ctrl: state,
+            vertical_scroll_bar: self.vertical_scroll_bar,
+            horizontal_scroll_bar: self.horizontal_scroll_bar,
             bounds: CacheBounds::with_vec2d(child_ctx.parent_pos),
         })
     }

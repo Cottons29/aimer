@@ -1,8 +1,7 @@
 use aimer_attribute::dimension::Dimension;
 use aimer_widget::base::Colors;
 
-
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct ScrollTrack {
     pub width: Dimension,
     pub color: Colors,
@@ -11,15 +10,11 @@ pub struct ScrollTrack {
 
 impl Default for ScrollTrack {
     fn default() -> Self {
-        Self {
-            width: Dimension::Auto,
-            color: Colors::Transparent,
-            hover_color: Colors::Transparent,
-        }
+        Self { width: Dimension::Auto, color: Colors::Transparent, hover_color: Colors::Transparent }
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct ScrollThumb {
     pub width: Dimension,
     pub radius: Dimension,
@@ -40,7 +35,7 @@ impl Default for ScrollThumb {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct ScrollButton {
     pub width: Dimension,
     pub height: Dimension,
@@ -50,7 +45,7 @@ pub struct ScrollButton {
     pub active_color: Colors,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct ScrollBar {
     pub track: ScrollTrack,
     pub thumb: ScrollThumb,
