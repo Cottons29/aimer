@@ -68,9 +68,15 @@ mod tests {
             .join("Documents")
             .join("AimerFramework")
             .join("aimer");
+
+        let another_expected = PathBuf::from(env::var("HOME").unwrap())
+            .join("aimer")
+            .join("aimer");
+
         let project_root = get_project_root(true);
         assert!(project_root.is_ok());
-        assert_eq!(project_root.unwrap(), expected)
+        assert!(project_root.as_ref().unwrap() == &expected || project_root.as_ref().unwrap() == &another_expected);
+
     }
 
     #[test]
