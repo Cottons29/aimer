@@ -3,7 +3,7 @@ use crate::text_pipeline::font_resolver::{FontRecord, advance_width_from_face, s
 use crate::text_pipeline::glyph_outline::{ColrOutlineBuilder, rasterize_outline_glyph};
 use aimer_utils::time_cost;
 use std::collections::{HashMap, HashSet};
-#[cfg(not(target_arch = "wasm32"))]
+#[allow(unused)]
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use swash::{
@@ -901,6 +901,7 @@ mod tests {
     /// contain it; the test stays informative either way by asserting *if* the
     /// font was loaded, the record is correctly tagged as color.
     // #[test]
+    #[allow(dead_code)]
     fn khmer_glyphs_use_renderable_fallback_font() {
         let mut rasterizer = GlyphRasterizer::new();
 
@@ -927,6 +928,7 @@ mod tests {
     /// as a single shaped unit, producing exactly one visible glyph (the ligature) rather than
     /// three separate mispositioned glyphs for each codepoint.
     // #[test]
+    #[allow(dead_code)]
     fn khmer_coeng_cluster_shapes_as_ligature() {
         let mut rasterizer = GlyphRasterizer::new();
 
