@@ -153,7 +153,7 @@ impl<'a> AimerCanvas<'a> {
     /// * `&'a Canvas` - A reference to the internal `Canvas` object.
     ///
     /// # Example
-    /// ```rust
+    /// ```rust ignore
     /// let canvas = my_object.get_canvas();
     /// // Ensure no mutable operations on `my_object` while using `canvas`.
     /// ```

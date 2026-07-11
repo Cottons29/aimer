@@ -14,6 +14,8 @@ pub struct WindowEventHandler;
 
 impl WindowEventHandler {
     pub(crate) fn handle_events(app: &mut AimerApplicationHandler, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+
+
         match event {
             WindowEvent::CloseRequested => {
                 #[cfg(target_os = "macos")]
@@ -31,7 +33,8 @@ impl WindowEventHandler {
 
             WindowEvent::CursorLeft { .. } => Self::handle_cursor_left(app),
 
-            WindowEvent::MouseInput { state, button, .. } => Self::handle_mouse_input(state, button, app),
+            WindowEvent::MouseInput { state, button, .. } => {
+                Self::handle_mouse_input(state, button, app) },
 
             WindowEvent::ModifiersChanged(mods) => {
                 let state = mods.state();
@@ -174,12 +177,15 @@ impl WindowEventHandler {
         } else {
             ElementEvent::PointerUp(c, PointerSource::Mouse, 0)
         };
+
         #[allow(clippy::collapsible_if)]
         if let Some(root) = &app.widget_root {
             let mut handled = dispatch_event(root.as_ref(), c, &event);
             #[cfg(debug_assertions)]
-            if app.inspector.is_enabled() {
-                handled = true;
+            {
+                if app.inspector.is_enabled() {
+                    handled = true;
+                }
             }
             if !handled {
                 if matches!(&event, ElementEvent::PointerDown(_, _, _) | ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel) {
@@ -265,7 +271,7 @@ impl WindowEventHandler {
                 _ => None,
             },
             #[cfg(not(target_arch = "wasm32"))]
-            None => None,
+            _ => None,
         };
 
         if let Some(text) = text_input
@@ -358,7 +364,7 @@ impl WindowEventHandler {
                 app.ime_composing = !text.is_empty();
                 // Forward preedit to focused widget for composition rendering
                 if let Some(root) = &app.widget_root {
-                    let event = ElementEvent::ImePreedit { text: text.clone(), cursor: cursor.clone() };
+                    let event = ElementEvent::ImePreedit { text: text.clone(), cursor };
                     dispatch_event(root.as_ref(), app.cursor_pos, &event);
                 }
                 if let Some(window) = &app.window {

@@ -1,11 +1,10 @@
-use crate::scrollable::ScrollAxis;
 use crate::scrollable::constants::*;
 use crate::scrollable::scroll_behavior::ScrollBehavior;
+use crate::scrollable::ScrollAxis;
 use aimer_animation::curve::Curve;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_utils::callback::Callback;
-use aimer_utils::{debug, info};
 use aimer_widget::Key;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -105,7 +104,7 @@ pub struct ScrollState {
     pub(crate) last_scale: Cell<f32>,
     pub(crate) speed_multiplier: f32,
     pub(crate) cursor_pos: Cell<Option<Vec2d>>,
-    pub(crate) velocity_history: std::cell::RefCell<VelocityHistory>,
+    pub(crate) velocity_history: RefCell<VelocityHistory>,
     pub(crate) cached_viewport: Cell<(f32, f32)>,
     pub(crate) cached_v_track_width: Cell<f32>,
     pub(crate) cached_h_track_width: Cell<f32>,

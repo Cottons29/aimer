@@ -41,6 +41,22 @@ pub(crate) fn handle_user_event(app: &mut AimerApplicationHandler, event: crate:
         }
         AimerCustomAppEvent::FrameReady => {
             if let Some(window) = &app.window {
+                // A single on-demand present is not reliably composited on
+                // macOS — the same reason the app renders a `start_up_frames`
+                // burst at launch instead of one frame. A runtime state change
+                // (`set_state` -> `request_animation_frame`) routes here, so a
+                // lone `request_redraw()` renders the new frame but can leave it
+                // sitting in the swapchain while the display keeps showing the
+                // previous frame (e.g. a counter stuck on its old value even
+                // though the state already advanced).
+                //
+                // Drive a short settle burst so `about_to_wait` keeps pumping
+                // redraws until every swapchain drawable holds the latest frame
+                // (`desired_maximum_frame_latency + 1` = 3 drawables). This is
+                // the same, proven mechanism used at startup, scoped to a couple
+                // of frames so the app still returns to idle immediately after.
+                const SETTLE_FRAMES: u8 = 3;
+                app.start_up_frames.set(app.start_up_frames.get().max(SETTLE_FRAMES));
                 window.request_redraw();
             }
         }

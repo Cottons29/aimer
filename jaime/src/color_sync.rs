@@ -1,9 +1,10 @@
 use aimer::console::debug;
 use aimer::style::{LayoutSpacing, Spacing};
 use aimer::{AimerApp, BuildContext, Color, Container, Dimension, Element, Row, SizedBox, StatelessWidget, Widget};
-
+#[allow(unused)]
 pub struct ColorSync;
 
+#[allow(unused)]
 pub fn start_color_sync() {
     AimerApp::start(ColorSync)
 }
@@ -15,7 +16,7 @@ impl Widget for ColorSync {
 }
 
 impl StatelessWidget for ColorSync {
-    fn build(&self, ctx: &BuildContext) -> impl Widget {
+    fn build(&self, _: &BuildContext) -> impl Widget {
         let colors = [
             Color::Rgb(255, 0, 0),
             Color::Rgb(255, 255, 0),
@@ -37,7 +38,7 @@ impl StatelessWidget for ColorSync {
             .map(|color| {
                 SizedBox!(
                     width: Dimension::Percent(100.0),
-                    color: color.clone(),
+                    color: *color,
                 )
             })
             .collect();

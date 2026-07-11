@@ -15,7 +15,6 @@ use std::rc::Rc;
 /// `Button` renders a decorated container (background, border, outline) and
 /// provides gesture callbacks for tap, double-tap, long-press, right-click,
 /// swipe, scroll, and scale. It dims when disabled.
-
 #[allow(dead_code)]
 #[derive(WidgetConstructor)]
 pub struct Button<W: Widget + 'static> {
@@ -35,7 +34,6 @@ pub struct Button<W: Widget + 'static> {
 }
 
 pub struct ButtonState<W: Widget + 'static> {
-    is_disabled: bool,
     is_hover: bool,
     pub on_press: VoidCallback,
     pub on_long_press: VoidCallback,
@@ -52,7 +50,6 @@ impl<W: Widget + 'static> StatefulWidget for Button<W> {
 
     fn create_state(&self) -> Self::State {
         ButtonState {
-            is_disabled: self.is_disabled,
             is_hover: false,
             on_press: self.on_press.clone(),
             on_long_press: self.on_long_press.clone(),
@@ -82,15 +79,13 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
         self.state_updater = updater;
     }
 
-    fn build(&self, ctx: &BuildContext) -> impl Widget {
+    fn build(&self, _: &BuildContext) -> impl Widget {
         let child = self.child.clone();
 
         let mut decor = self.decoration.clone();
 
-        if self.is_hover {
-            if let Some(color) = decor.background_color {
-                decor.background_color = Some(color.lighten(0.2));
-            }
+        if self.is_hover && let Some(color) = decor.background_color {
+            decor.background_color = Some(color.lighten(0.2));
         }
 
         MouseRegion {

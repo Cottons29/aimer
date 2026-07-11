@@ -62,7 +62,6 @@ struct App<'w> {
     canvas: CupidCanvas,
     window: Option<Window>,
     texture_id: Option<u32>,
-    frame_count: usize,
 }
 #[allow(dead_code)]
 enum MyWindowEvent {
@@ -71,7 +70,7 @@ enum MyWindowEvent {
 #[cfg(not(target_arch = "wasm32"))]
 impl<'w> App<'w> {
     fn new() -> Self {
-        Self { gpu: None, renderer: None, canvas: CupidCanvas::new(), window: None, texture_id: None, frame_count: 200 }
+        Self { gpu: None, renderer: None, canvas: CupidCanvas::new(), window: None, texture_id: None }
     }
 }
 
@@ -153,7 +152,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
         debug!("App resumed");
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: MyWindowEvent) {
+    fn user_event(&mut self, _: &ActiveEventLoop, event: MyWindowEvent) {
         match event {
             MyWindowEvent::FirstFrame => {
                 self.window.as_ref().unwrap().request_redraw();
@@ -180,7 +179,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 }
             }
 
-            WindowEvent::MouseInput { state, button, .. } => {
+            WindowEvent::MouseInput { state, .. } => {
                 if ElementState::Pressed == state
                     && let Some(window) = self.window.as_ref()
                 {

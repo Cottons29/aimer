@@ -30,7 +30,7 @@ use std::ops::{Div, Mul};
 ///
 /// # Example
 /// ```
-/// use your_crate::Dimension;
+/// use self::aimer_attribute::Dimension;
 ///
 /// let px_dimension = Dimension::Px(100.0);
 /// let percent_dimension = Dimension::Percent(50.0);

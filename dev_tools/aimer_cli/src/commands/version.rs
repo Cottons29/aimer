@@ -1,10 +1,7 @@
-use ansi_to_tui::IntoText;
 use colored::{Color, Colorize};
 use sha2::{Digest, Sha256};
 use std::fmt::Debug;
-use std::hash::Hash;
 use std::{env, fs};
-// use crossterm::style::Stylize;
 
 #[derive(Debug)]
 pub struct VersionCommand;
@@ -14,8 +11,8 @@ impl VersionCommand {
     pub(crate) fn execute() {
         use std::thread;
 
-        let cargo_handle = thread::spawn(|| Self::get_cargo_version());
-        let rust_handle = thread::spawn(|| Self::get_rust_version());
+        let cargo_handle = thread::spawn(Self::get_cargo_version);
+        let rust_handle = thread::spawn(Self::get_rust_version);
         let binary_hash_handle = thread::spawn(|| {
             let exe = env::current_exe().unwrap();
             let bytes = fs::read(exe).unwrap();
@@ -37,7 +34,7 @@ impl VersionCommand {
             None => String::new(),
         };
 
-        let current_os_name = std::env::consts::OS;
+        let current_os_name = env::consts::OS;
         let cargo_version_line = match cargo_version {
             Some(version) => {
                 format!("cargo {}, {}", version.green().bold(), rustc_version_line)

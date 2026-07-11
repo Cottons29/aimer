@@ -7,12 +7,10 @@ mod stateful_2;
 
 #[allow(unused_imports)]
 use crate::animated::start_my_animated_list;
-use crate::color_sync::start_color_sync;
-use crate::routing::state_router;
 #[allow(unused_imports)]
 use crate::stateful::start_counter;
-use aimer::AimerApp;
 use aimer::style::*;
+use aimer::AimerApp;
 use aimer::*;
 #[allow(unused_imports)]
 use aimer::*;
@@ -21,8 +19,8 @@ use aimer::*;
 #[main]
 pub fn my_app() {
     // #[cfg(not(target_arch = "wasm32"))]
-    // start_counter();
-    state_router()
+    start_counter();
+    // state_router()
     // simply start the app with AimerApp::start
     // #[cfg(target_arch = "wasm32")]
     // test_positioned();
@@ -346,7 +344,7 @@ pub fn test_scrollable() {
                             padding: LayoutSpacing::horizontal(Spacing::Px(10)),
                             child: Scrollable!(
                                 axis: ScrollAxis::Vertical,
-                                vertical_scroll_bar: scrollbar.clone(),
+                                vertical_scroll_bar: scrollbar,
                                 child: content,
                             ),
                         ),
@@ -559,7 +557,7 @@ fn test_image() {
                 // "https://upload.wikimedia.org/wikipedia/commons/6/66/SMPTE_Color_Bars.svg",
                 // "https://t4.ftcdn.net/jpg/02/77/71/45/360_F_277714513_fQ0akmI3TQxa0wkPCLeO12Rx3cL2AuIf.jpg",
                 fit: BoxFit::FitWidth,
-                scale: 1.1,
+                scale: 1.1_f32,
                 // keep_aspect_ratio: false,
                 // loading_widget: SizedBox!(color: Colors::Green),
                 // error_widget: SizedBox!(color: Colors::Red),

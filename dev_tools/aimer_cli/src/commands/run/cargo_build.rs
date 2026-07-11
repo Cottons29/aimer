@@ -222,14 +222,15 @@ pub fn stream_stdout_with_gradle_progress(stdout: impl Read + Send + 'static, tx
 
 pub fn wait_for_child(current_child: &Arc<Mutex<Option<Child>>>) -> Option<ExitStatus> {
     loop {
+
         let mut guard = current_child.lock().unwrap();
-        if let Some(child) = guard.as_mut() {
-            if let Ok(Some(status)) = child.try_wait() {
-                return Some(status);
-            }
-        } else {
-            return None;
+
+        let child = guard.as_mut()?;
+
+        if let Ok(Some(status)) = child.try_wait() {
+            return Some(status);
         }
+        
         drop(guard);
         thread::sleep(Duration::from_millis(100));
     }

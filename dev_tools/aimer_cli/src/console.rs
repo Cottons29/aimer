@@ -542,48 +542,42 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
     };
 
     // Simple blocking event loop — print logs to stdout/stderr.
-    loop {
-        match rx.recv() {
-            Ok(event) => match event {
-                RunnerEvent::BuildLog(msg) => {
-                    eprintln!("[build] {}", msg);
+    while let Ok(event) = rx.recv()  {
+        match event {
+            RunnerEvent::BuildLog(msg) => {
+                eprintln!("[build] {}", msg);
+            }
+            RunnerEvent::AppLog(msg) => {
+                println!("{}", msg);
+            }
+            RunnerEvent::StatusChange(status) => {
+                match &status {
+                    Status::Compiling(pct) => eprintln!("[status] Compiling {}%", pct),
+                    Status::Building(pct) => eprintln!("[status] Building {}%", pct),
+                    Status::Fetching(pct) => eprintln!("[status] Fetching {}%", pct),
+                    Status::Launching => eprintln!("[status] Launching..."),
+                    Status::Running => eprintln!("[status] Running"),
+                    Status::Error => eprintln!("[status] Error"),
+                    Status::Locking => eprintln!("[status] Locking..."),
+                    Status::Idling => {}
                 }
-                RunnerEvent::AppLog(msg) => {
-                    println!("{}", msg);
-                }
-                RunnerEvent::StatusChange(status) => {
-                    match &status {
-                        Status::Compiling(pct) => eprintln!("[status] Compiling {}%", pct),
-                        Status::Building(pct) => eprintln!("[status] Building {}%", pct),
-                        Status::Fetching(pct) => eprintln!("[status] Fetching {}%", pct),
-                        Status::Launching => eprintln!("[status] Launching..."),
-                        Status::Running => eprintln!("[status] Running"),
-                        Status::Error => eprintln!("[status] Error"),
-                        Status::Locking => eprintln!("[status] Locking..."),
-                        Status::Idling => {}
+            }
+            RunnerEvent::HotReload => {
+                eprintln!("[hot-reload] File change detected, rebuilding...");
+                if device.target == Targets::Web {
+                    pipeline::spawn_wasm_pack(tx.clone());
+                } else {
+                    if let Some(mut child) = current_child.lock().unwrap().take() {
+                        let _ = child.kill();
                     }
+                    current_child = spawn_runner(
+                        device.clone(),
+                        pkg_name.clone(),
+                        tx.clone(),
+                        inspector_handle.address,
+                        inspector_handle.port,
+                    );
                 }
-                RunnerEvent::HotReload => {
-                    eprintln!("[hot-reload] File change detected, rebuilding...");
-                    if device.target == Targets::Web {
-                        pipeline::spawn_wasm_pack(tx.clone());
-                    } else {
-                        if let Some(mut child) = current_child.lock().unwrap().take() {
-                            let _ = child.kill();
-                        }
-                        current_child = spawn_runner(
-                            device.clone(),
-                            pkg_name.clone(),
-                            tx.clone(),
-                            inspector_handle.address,
-                            inspector_handle.port,
-                        );
-                    }
-                }
-            },
-            Err(_) => {
-                // Channel closed — runner thread exited.
-                break;
             }
         }
     }

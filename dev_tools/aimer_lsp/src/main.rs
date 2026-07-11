@@ -9,6 +9,6 @@ use tower_lsp::{LspService, Server};
 
 #[tokio::main]
 async fn main() {
-    let (service, socket) = LspService::new(|client| AimerBackend::new(client));
+    let (service, socket) = LspService::new(AimerBackend::new);
     Server::new(stdin(), stdout(), socket).serve(service).await;
 }

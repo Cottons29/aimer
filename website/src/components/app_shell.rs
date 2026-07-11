@@ -11,6 +11,7 @@ use crate::components::header::HeaderSection;
 /// The shell frame stays mounted while the router only swaps the `Outlet`'s
 /// child, so navigating between `Home`, `Docs` and `Learn` never rebuilds the
 /// header from scratch conceptually — it is the content area that changes.
+
 #[widget(Stateless)]
 #[derive(Clone)]
 #[constructor(crate = "crate::components::app_shell")]

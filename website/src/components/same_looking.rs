@@ -111,7 +111,7 @@ impl SameLookingSectionState {
                         on_press: {
                             let updater = updater.clone();
                             move || {
-                                println!("Tab {} pressed", index);
+                                // println!("Tab {} pressed", index);
                                 if updater.read_state().current_index != index {
                                     updater.set_state(
                                         move |s| {

@@ -42,7 +42,7 @@ impl AnimationEffect {
 /// the animation is running.
 ///
 /// # Example
-/// ```ignore
+/// ```rust ignore
 /// Animated::new(
 ///     controller,
 ///     AnimationEffect::Opacity { from: 0.0, to: 1.0 },

@@ -27,6 +27,13 @@ pub struct Vec2d {
     pub y: f32,
 }
 
+impl Vec2d {
+    pub const fn round(self) -> Self {
+        Self { x: self.x.round(), y: self.y.round() }
+    }
+}
+
+
 
 impl Mul<Vec2d> for f32 {
     type Output = Vec2d;

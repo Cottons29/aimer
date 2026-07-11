@@ -55,8 +55,9 @@ pub fn generate_diagnostics(widgets: &[WidgetInfo]) -> Vec<Diagnostic> {
                     });
                 }
             }
-            crate::widget_analyzer::WidgetKind::Router => {
+            crate::widget_analyzer::WidgetKind::Router  => {
                 // Warning: Router with no routes
+                #[allow(clippy::collapsible_match)]
                 if widget.routes.is_empty() {
                     diagnostics.push(Diagnostic {
                         range: Range {

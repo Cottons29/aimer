@@ -553,6 +553,7 @@ fn create_constructor(ast: DeriveInput, box_widget: bool) -> Result<TokenStream,
 
     let constructor_macro = quote! {
         #[doc = #doc_msg]
+        #[allow(clippy::crate_in_macro_def)]
         #[macro_export]
         macro_rules! #macro_name {
             #(#field_rules)*
