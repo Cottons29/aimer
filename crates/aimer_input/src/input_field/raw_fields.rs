@@ -16,7 +16,7 @@ use aimer_widget::LayoutCache;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Write text to the system clipboard.
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
@@ -182,7 +182,7 @@ impl std::fmt::Debug for TextFieldCallback {
 
 #[cfg(target_os = "ios")]
 mod ios_keyboard {
-    use std::ffi::{CStr, c_char, c_void};
+    use std::ffi::{c_char, c_void, CStr};
     use std::sync::OnceLock;
 
     const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
@@ -474,13 +474,13 @@ impl RawTextField {
         }
     }
 
-    fn build_text_widget<'a>(&'_ self, text: &'a str, style: &TextStyle, align: TextAlign) -> RawTextWidget {
+    fn build_text_widget(&'_ self, text: &str, style: &TextStyle, align: TextAlign) -> RawTextWidget {
         RawTextWidget {
             text: text.into(),
-            text_style: style.clone(),
+            text_style: *style,
             text_align: align,
             cache: LayoutCache::new(),
-            _typeface: Mutex::new(None),
+            _typeface: std::sync::Mutex::new(None),
         }
     }
 
@@ -986,12 +986,10 @@ impl EventElement for RawTextField {
                         }
                         true
                     }
-                    NamedKey::Enter if !self.read_only && self.max_lines.map_or(false, |max| max > 1) => {
+                    NamedKey::Enter if !self.read_only && self.max_lines.is_some_and( |max| max > 1) => {
                         // Multi-line mode: Enter inserts newline
-                        if let Some(max) = self.max_lines {
-                            if self.line_count() >= max {
-                                return true;
-                            }
+                        if let Some(max) = self.max_lines  && self.line_count() >= max{
+                            return true;
                         }
                         // Delete selection first
                         if let Some((start, end)) = self.cursor.selection_range() {
@@ -1458,19 +1456,17 @@ impl Drawable for RawTextField {
                 ctx.canvas.restore();
 
                 // --- Draw selection highlight ---
-                if let Some((sel_start, sel_end)) = self.cursor.selection_range() {
-                    if sel_start != sel_end {
-                        let highlight_x = text_x - scroll + self.text_width_to_offset(&display, sel_start, &ctx.canvas, font_size);
-                        let highlight_end_x = text_x - scroll + self.text_width_to_offset(&display, sel_end, &ctx.canvas, font_size);
-                        let highlight_width = highlight_end_x - highlight_x;
+                if let Some((sel_start, sel_end)) = self.cursor.selection_range() && sel_start != sel_end {
+                    let highlight_x = text_x - scroll + self.text_width_to_offset(&display, sel_start, &ctx.canvas, font_size);
+                    let highlight_end_x = text_x - scroll + self.text_width_to_offset(&display, sel_end, &ctx.canvas, font_size);
+                    let highlight_width = highlight_end_x - highlight_x;
 
-                        ctx.canvas.fill_color_rect(
-                            (highlight_x, 0.0).into(),
-                            ResolvedSize { width: highlight_width, height: content_height },
-                            self.selection_color,
-                            [0.0; 4],
-                        );
-                    }
+                    ctx.canvas.fill_color_rect(
+                        (highlight_x, 0.0).into(),
+                        ResolvedSize { width: highlight_width, height: content_height },
+                        self.selection_color,
+                        [0.0; 4],
+                    );
                 }
 
                 // --- Draw cursor ---

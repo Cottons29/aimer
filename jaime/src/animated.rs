@@ -63,19 +63,19 @@ impl State<MyAnimatedList> for MyListState {
                         .unwrap_or(false)
             });
             if has_dismissed {
-                let updater = self.updater.clone();
-                let cleanup = move || {
-                    updater.set_state(|state| {
-                        let now = AnimInstant::now();
-                        state.list.retain(|item| {
-                            !(item.pending_removal
-                                && item
-                                    .removal_started_at
-                                    .map(|t| now.duration_since(t) >= ANIM_DURATION)
-                                    .unwrap_or(false))
-                        });
-                    });
-                };
+                // let updater = self.updater.clone();
+                // let cleanup = move || {
+                //     updater.set_state(|state| {
+                //         let now = AnimInstant::now();
+                //         state.list.retain(|item| {
+                //             !(item.pending_removal
+                //                 && item
+                //                     .removal_started_at
+                //                     .map(|t| now.duration_since(t) >= ANIM_DURATION)
+                //                     .unwrap_or(false))
+                //         });
+                //     });
+                // };
                 // #[cfg(target_arch = "wasm32")]
                 // wasm_bindgen_futures::spawn_local(async move {
                 //     cleanup();
@@ -179,6 +179,7 @@ impl State<MyAnimatedList> for MyListState {
                                                             let item_id = item.id.clone();
                                                             let updater = self.updater.clone();
                                                             move || {
+                                                                #[allow(clippy::collapsible_if)]
                                                                 updater.set_state_with(&item_id, |state, id| {
                                                                     if let Some(item) = state.list.iter_mut().find(|i| i.id == id) {
                                                                         if !item.pending_removal {

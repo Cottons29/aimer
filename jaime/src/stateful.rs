@@ -1,7 +1,7 @@
-use aimer::AimerApp;
-use aimer::callback::{Callback, VoidCallback};
+use aimer::callback::VoidCallback;
 use aimer::macros::widget;
 use aimer::style::*;
+use aimer::AimerApp;
 use aimer::*;
 
 // this is the entry point of the app
@@ -21,7 +21,7 @@ pub struct CounterWidget {
 // create a state for the CounterWidget
 pub struct CounterState {
     count: i32,
-    on_switch: Option<VoidCallback>,
+    // on_switch: Option<VoidCallback>,
     updater: StateUpdater<Self>,
 }
 
@@ -31,7 +31,7 @@ impl StatefulWidget for CounterWidget {
     type State = CounterState;
 
     fn create_state(&self) -> CounterState {
-        CounterState { count: self.initial_count, on_switch: self.on_switch.clone(), updater: StateUpdater::empty() }
+        CounterState { count: self.initial_count, updater: StateUpdater::empty() }
     }
 }
 // implement the State trait for CounterState
@@ -47,6 +47,7 @@ impl State<CounterWidget> for CounterState {
 
     // build the widget with state
     fn build(&self, _: &BuildContext) -> impl Widget {
+        println!("self.count: {}", self.count);
         let updater = self.updater.clone();
         Container!(
             color: Colors::Gray,
@@ -71,7 +72,9 @@ impl State<CounterWidget> for CounterState {
                     SizedBox!(height: 50),
 
                     Text!(
-                        format!("Clicked: {}", self.count),
+                        {
+                            format!("Clicked: {}", self.count)
+                        },
                         text_style: TextStyle!(
                             font_size: 25,
                             color: Colors::Black,
@@ -86,6 +89,8 @@ impl State<CounterWidget> for CounterState {
                         // color: Colors::Yellow,
                         child: Button!(
                             on_press: move || {
+                                // println!("Button pressed");
+                                println!("Button pressed with state : {}", updater.read_state().count);
                                 updater.set_state(|state| {
                                     state.count += 1;
                                 });
@@ -136,27 +141,27 @@ impl State<CounterWidget> for CounterState {
                         )
                     ),
 
-                    Container!(
-                        width: 200,
-                        height: 50,
-                        margin: LayoutSpacing!(top : Spacing::Px(10)),
-                        child: Button!(
-                            on_press:  {
-                                let on_switch = self.on_switch.clone();
-                                move || {
-                                    console::debug!("Switching to Stateful 2");
-                                }
-                            },
-                            decoration: BoxDecoration!(background_color: Colors::Blue),
-                            child: Text!(
-                                "Switch to Stateful 2",
-                                text_align: TextAlign::MidCenter,
-                                text_style: TextStyle!(
-                                    color: Colors::White,
-                                )
-                            )
-                        )
-                    )
+                    // Container!(
+                    //     width: 200,
+                    //     height: 50,
+                    //     margin: LayoutSpacing!(top : Spacing::Px(10)),
+                    //     child: Button!(
+                    //         on_press:  {
+                    //             // let _ = self.on_switch.clone();
+                    //             move || {
+                    //                 console::debug!("Switching to Stateful 2");
+                    //             }
+                    //         },
+                    //         decoration: BoxDecoration!(background_color: Colors::Blue),
+                    //         child: Text!(
+                    //             "Switch to Stateful 2",
+                    //             text_align: TextAlign::MidCenter,
+                    //             text_style: TextStyle!(
+                    //                 color: Colors::White,
+                    //             )
+                    //         )
+                    //     )
+                    // )
                 ]
             )
         )

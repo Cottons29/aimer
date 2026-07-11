@@ -1,14 +1,11 @@
-use std::rc::Rc;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use std::sync::{Arc, Mutex};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::*;
-use aimer_widget::{*, TextOverflowMode};
 use aimer_widget::base::BuildContext;
-
-
-
+use aimer_widget::{TextOverflowMode, *};
+use std::rc::Rc;
+use std::sync::Mutex;
 
 #[derive(Rebuildable, EventElement)]
 pub struct RawTextWidget {
@@ -29,6 +26,7 @@ impl RawTextWidget {
 
 impl Drawable for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
+        // println!("Drawing text widget : {:?}", self.text);
         #[cfg(debug_assertions)]
         {
             if inspector_overlay::is_enabled() {
@@ -41,10 +39,8 @@ impl Drawable for RawTextWidget {
                 let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
                 let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
                 let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
-                    if let Ok(mut hovered) = inspector_overlay::HOVERED_WIDGET.write() {
-                        *hovered = Some((self.debug_name(), l_start, l_end));
-                    }
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y && let Ok(mut hovered) = inspector_overlay::HOVERED_WIDGET.write() {
+                    *hovered = Some((self.debug_name(), l_start, l_end));
                 }
             }
         }
@@ -217,6 +213,6 @@ impl Reconcilable for RawTextWidget {
     fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
         // Leaf element — always replace. Text elements are cheap to create.
         // The real benefit of reconciliation is at StatefulElement (preserving state).
-        false
+        true
     }
 }

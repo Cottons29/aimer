@@ -15,8 +15,8 @@
          `data-wasm-opt-params` (release-only) forwards it to wasm-opt. -->
     
 <script type="module">
-import init, * as bindings from '/website-6c05048c834436fe.js';
-const wasm = await init({ module_or_path: '/website-6c05048c834436fe_bg.wasm' });
+import init, * as bindings from '/website-2fa8a87ba70ec490.js';
+const wasm = await init({ module_or_path: '/website-2fa8a87ba70ec490_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -25,7 +25,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-<link rel="modulepreload" href="/website-6c05048c834436fe.js" crossorigin="anonymous" integrity="sha384-Q4GDHB0WBPBcRhWS8gYPRqYHvQ6EkLZuAXVedglFCKiszSvvKw8uTNACGSXohW/V"><link rel="preload" href="/website-6c05048c834436fe_bg.wasm" crossorigin="anonymous" integrity="sha384-Oht1PpvgPaOIId0bhBl4wJrfZNsCjRfwHZz7gK+dv4KUELoAshwWJP1s6yJhOr8x" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="/website-2fa8a87ba70ec490.js" crossorigin="anonymous" integrity="sha384-6vCrkccidx37vr9m/bWveIwwvDH030bekD3DTysuRfqKxJ/zPGqVpeKyC02xIowM"><link rel="preload" href="/website-2fa8a87ba70ec490_bg.wasm" crossorigin="anonymous" integrity="sha384-8U+BWxbmVvbLFgrzzNfIt8IGAqjKnc3BnITbr/tL+6noSMA0U0c7xP+gateRTu8A" as="fetch" type="application/wasm"></head>
 <style>
 
     /* Fill the screen the way normal HTML content does. iOS Safari does NOT

@@ -64,7 +64,7 @@ pub fn analyze_source(source: &str, file_uri: &str) -> Vec<WidgetInfo> {
             let (name, _decl_line, has_key) = find_declaration(&lines, i + 1);
 
             if let Some(name) = name {
-                let has_create_state = source.contains(&format!("fn create_state"))
+                let has_create_state = source.contains(&"fn create_state".to_string())
                     || source.contains(&format!("impl State<{}>", name));
 
                 let has_state_impl = source.contains(&format!("impl State<{}>", name));
@@ -90,20 +90,18 @@ pub fn analyze_source(source: &str, file_uri: &str) -> Vec<WidgetInfo> {
         }
 
         // Look for #[aimer::main] or #[main] entry point attributes
-        if is_entry_point_attribute(line) {
-            if let Some((name, _fn_line)) = find_function_declaration(&lines, i + 1) {
-                widgets.push(WidgetInfo {
-                    name,
-                    kind: WidgetKind::EntryPoint,
-                    file_uri: file_uri.to_string(),
-                    line: i as u32,
-                    character: 0,
-                    has_key: false,
-                    has_create_state: false,
-                    has_state_impl: false,
-                    routes: vec![],
-                });
-            }
+        if is_entry_point_attribute(line) && let Some((name, _fn_line)) = find_function_declaration(&lines, i + 1) {
+            widgets.push(WidgetInfo {
+                name,
+                kind: WidgetKind::EntryPoint,
+                file_uri: file_uri.to_string(),
+                line: i as u32,
+                character: 0,
+                has_key: false,
+                has_create_state: false,
+                has_state_impl: false,
+                routes: vec![],
+            });
         }
 
         i += 1;
@@ -169,8 +167,7 @@ fn find_declaration(lines: &[&str], start_line: usize) -> (Option<String>, usize
 fn check_has_key_field(lines: &[&str], struct_line: usize) -> bool {
     // Look for fields between { and }
     let mut brace_depth = 0;
-    for i in struct_line..lines.len().min(struct_line + 50) {
-        let line = lines[i];
+    for line in lines.iter().take(lines.len().min(struct_line + 50)).skip(struct_line) {
         for ch in line.chars() {
             if ch == '{' {
                 brace_depth += 1;
@@ -203,8 +200,9 @@ fn is_entry_point_attribute(line: &str) -> bool {
 
 /// Starting from `start_line`, find a `fn` declaration and return its name.
 fn find_function_declaration(lines: &[&str], start_line: usize) -> Option<(String, usize)> {
-    for i in start_line..lines.len().min(start_line + 5) {
-        let line = lines[i].trim();
+
+    for (i, line) in lines.iter().enumerate().take(lines.len().min(start_line + 5)).skip(start_line)  {
+        let line = line.trim();
 
         // Skip empty lines and other attributes
         if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
@@ -237,10 +235,8 @@ fn extract_routes(source: &str) -> Vec<String> {
     for line in source.lines() {
         let trimmed = line.trim();
         // #[route("/path")] or #[route = "/path"]
-        if trimmed.starts_with("#[route(") || trimmed.starts_with("#[route =") {
-            if let Some(path) = extract_quoted_string(trimmed) {
-                routes.push(path);
-            }
+        if (trimmed.starts_with("#[route(") || trimmed.starts_with("#[route =")) && let Some(path) = extract_quoted_string(trimmed) {
+            routes.push(path);
         }
         // #[routes("/a", "/b")] or #[routes = ["/a", "/b"]]
         if trimmed.starts_with("#[routes(") || trimmed.starts_with("#[routes =") {

@@ -1,12 +1,12 @@
-use crate::commands::run::Device;
+use crate::commands::assemble::copy_assets_into;
 use crate::commands::run::cargo_build::{stream_stderr_as_app_log, stream_stdout_as_app_log, wait_for_child};
 use crate::commands::run::console::{RunnerEvent, Status};
-use crate::commands::run::helpers::{build_log, fail, set_status, spawn_streamed};
+use crate::commands::run::helpers::{build_log, set_status, spawn_streamed};
+use crate::commands::run::Device;
 use crossbeam::channel::Sender;
 use std::net::IpAddr;
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
-use crate::commands::assemble::copy_assets_into;
 
 pub fn spawn_web_runner(
     _: Device,

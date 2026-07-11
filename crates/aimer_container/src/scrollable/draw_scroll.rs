@@ -46,8 +46,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         let mut offset = self.ctrl.scroll_offset.get();
 
         if self.ctrl.drag_mode.get() == DragMode::None {
-            let vel = self.ctrl.pointer_velocity.get();
-            let vel_mag = (vel.x * vel.x + vel.y * vel.y).sqrt();
+            // let vel = self.ctrl.pointer_velocity.get();
+            // let vel_mag = (vel.x * vel.x + vel.y * vel.y).sqrt();
             // if vel_mag > VELOCITY_EPSILON {
             //     info!("[scroll] DRAW momentum vel_mag={:.2} offset=({:.1},{:.1})", vel_mag, offset.x, offset.y);
             // }

@@ -1,14 +1,13 @@
-use std::fs;
-use crate::commands::assemble::copy_assets_into;
-use crate::commands::run::Device;
 use crate::commands::run::cargo_build::{
-    self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_app_log, stream_stderr_as_build_log, stream_stdout_as_app_log,
-    stream_stdout_with_xcode_progress, wait_for_child,
+    self, stream_as_app_log_split_cr, stream_stderr_as_app_log, stream_stderr_as_build_log, stream_stdout_as_app_log, stream_stdout_with_xcode_progress,
+    wait_for_child, CargoBuildTarget,
 };
 use crate::commands::run::console::{RunnerEvent, Status};
 use crate::commands::run::helpers::{build_log, build_streamed, fail, host_arch, run_to_completion, set_status, spawn_streamed};
 use crate::commands::run::utilities::resolve_lib_path;
+use crate::commands::run::Device;
 use crossbeam::channel::Sender;
+use std::fs;
 use std::net::IpAddr;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -86,8 +85,8 @@ pub(crate) fn run_ios(
     let dest_dir = "builds/ios/Libraries";
     let dest_lib = format!("{}/lib{}.a", dest_dir, lib_name);
 
-    std::fs::create_dir_all(dest_dir).unwrap();
-    if let Err(e) = std::fs::copy(&src_lib, &dest_lib) {
+    fs::create_dir_all(dest_dir).unwrap();
+    if let Err(e) = fs::copy(&src_lib, &dest_lib) {
         fail(&tx, format!("Failed to copy static library: {}", e));
         return;
     } else {

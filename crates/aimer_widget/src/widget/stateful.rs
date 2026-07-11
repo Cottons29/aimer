@@ -8,7 +8,6 @@ use aimer_utils::error;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::panic::Location;
-use std::process::exit;
 use std::rc::Rc;
 
 trait FetchAdd {
@@ -130,7 +129,7 @@ impl<S: 'static> StateUpdater<S> {
                 let loc = Location::caller();
                 error!("Attempted to read state from an uninitialized StateUpdater");
                 self.beautiful_error(loc);
-                exit(1)
+                panic!("State is not initialized (see error above)")
             }
         }
     }
@@ -201,7 +200,7 @@ impl<S: 'static> StateUpdater<S> {
             None => {
                 let loc = Location::caller();
                 self.beautiful_error(loc);
-                exit(1);
+                panic!("State is not initialized (see error above)");
             }
         };
         // Send the mutation through the channel — never blocks, never deadlocks.
@@ -227,7 +226,7 @@ impl<S: 'static> StateUpdater<S> {
                 let loc = Location::caller();
                 #[cfg(not(target_os = "ios"))]
                 self.beautiful_error(loc);
-                exit(1);
+                panic!("State is not initialized (see error above)");
             }
         };
         // Safety: single-threaded rendering pipeline — no concurrent mutation.

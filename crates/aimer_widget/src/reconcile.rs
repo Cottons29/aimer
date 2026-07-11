@@ -114,6 +114,57 @@ fn event_children_of<'a>(element: &'a dyn Element) -> Vec<&'a dyn Element> {
     children
 }
 
+/// Wrapper element that mimics `RawScrollableContainer`: its `event_children`
+/// is intentionally empty (events handled via `on_event`) but its
+/// `update_from_widget` recurses into the child via `try_update_element` —
+/// the shape used by the framework's only built-in scroll container.
+#[allow(unused)]
+struct ScrollableLikeWrapper {
+    child: Box<dyn crate::Element>,
+    key: Option<crate::Key>,
+}
+
+impl crate::VisitorElement for ScrollableLikeWrapper {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn crate::Element)) {
+        visitor(self.child.as_ref());
+    }
+    fn debug_name(&self) -> &'static str {
+        "ScrollableLikeWrapper"
+    }
+}
+
+impl crate::EventElement for ScrollableLikeWrapper {
+    fn event_children<'a>(&'a self, _: &mut dyn FnMut(&'a dyn crate::Element)) {}
+}
+
+impl crate::Drawable for ScrollableLikeWrapper {
+    fn draw(&self, _ctx: &BuildContext) {}
+}
+
+impl crate::LayoutElement for ScrollableLikeWrapper {}
+
+impl crate::Rebuildable for ScrollableLikeWrapper {}
+
+impl crate::Reconcilable for ScrollableLikeWrapper {
+    fn key(&self) -> Option<crate::Key> {
+        self.key.clone()
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn update_from_widget(&self, new_element: &dyn crate::Element, ctx: &BuildContext) -> bool {
+        let new = new_element
+            .as_any()
+            .downcast_ref::<ScrollableLikeWrapper>()
+            .expect("new element is a ScrollableLikeWrapper");
+        try_update_element(self.child.as_ref(), new.child.as_ref(), ctx);
+        false
+    }
+}
+
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,6 +449,195 @@ mod tests {
             async_handle: dummy_async_handle(),
             inherited_states: Rc::new(RwLock::new(HashMap::<TypeId, Rc<dyn Any>>::new())),
         }
+    }
+
+    // ─── Draw-path regression: the DRAWN subtree must reflect set_state ────
+    //
+    // Every other stateful test asserts on a BUILD observer (what `build()`
+    // saw). That leaves a gap: none of them check that the element actually
+    // *drawn* after a `set_state` is the freshly-rebuilt one. The reported
+    // "counter freezes on screen while `self.count` keeps incrementing in the
+    // console" symptom lives precisely in that gap — `build()` runs with the
+    // new value, yet if the stale child subtree were drawn the screen would
+    // stay frozen.
+    //
+    // This mirrors the real app: a stateful counter whose `build()` returns a
+    // container -> row -> [text-leaf, nested stateful button] tree, then fires
+    // `set_state` through the state's own updater exactly like the button's
+    // `on_press`, and asserts the DRAWN leaf shows the new value.
+
+    /// Leaf that records the value it renders when DRAWN (not when built),
+    /// so the test can prove which element actually reaches the screen.
+    struct RecordingLeaf {
+        value: usize,
+        drawn: Rc<Cell<usize>>,
+    }
+    impl VisitorElement for RecordingLeaf {
+        fn debug_name(&self) -> &'static str {
+            "RecordingLeaf"
+        }
+    }
+    impl Drawable for RecordingLeaf {
+        fn draw(&self, _ctx: &BuildContext) {
+            self.drawn.set(self.value);
+        }
+    }
+    impl EventElement for RecordingLeaf {}
+    impl LayoutElement for RecordingLeaf {}
+    impl Rebuildable for RecordingLeaf {}
+    impl Reconcilable for RecordingLeaf {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    /// Single-child wrapper that DRAWS its child (like `Container`) and is
+    /// always replaced on reconcile (`update_from_widget` -> false, default).
+    struct DrawWrapper(Box<dyn Element>);
+    impl VisitorElement for DrawWrapper {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.0.as_ref());
+        }
+        fn debug_name(&self) -> &'static str {
+            "DrawWrapper"
+        }
+    }
+    impl Drawable for DrawWrapper {
+        fn draw(&self, ctx: &BuildContext) {
+            self.0.draw(ctx);
+        }
+    }
+    impl EventElement for DrawWrapper {
+        fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.0.as_ref());
+        }
+    }
+    impl LayoutElement for DrawWrapper {}
+    impl Rebuildable for DrawWrapper {}
+    impl Reconcilable for DrawWrapper {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    /// Multi-child wrapper that DRAWS every child in order (like `Flex`).
+    struct DrawRow(Vec<Box<dyn Element>>);
+    impl VisitorElement for DrawRow {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for c in &self.0 {
+                visitor(c.as_ref());
+            }
+        }
+        fn debug_name(&self) -> &'static str {
+            "DrawRow"
+        }
+    }
+    impl Drawable for DrawRow {
+        fn draw(&self, ctx: &BuildContext) {
+            for c in &self.0 {
+                c.draw(ctx);
+            }
+        }
+    }
+    impl EventElement for DrawRow {
+        fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for c in &self.0 {
+                visitor(c.as_ref());
+            }
+        }
+    }
+    impl LayoutElement for DrawRow {}
+    impl Rebuildable for DrawRow {}
+    impl Reconcilable for DrawRow {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    /// A nested stateful widget standing in for the `Button` sibling, so the
+    /// counter's rebuild has to reconcile a real `StatefulElement` sibling
+    /// alongside the text leaf (matching jaime's flex children).
+    struct NestedButtonWidget;
+    struct NestedButtonState {
+        #[allow(dead_code)]
+        updater: StateUpdater<Self>,
+    }
+    impl StatefulWidget for NestedButtonWidget {
+        type State = NestedButtonState;
+        fn create_state(&self) -> Self::State {
+            NestedButtonState { updater: StateUpdater::new() }
+        }
+    }
+    impl State<NestedButtonWidget> for NestedButtonState {
+        fn init_state(&mut self, updater: StateUpdater<Self>) {
+            self.updater = updater;
+        }
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            EmptyWidget
+        }
+    }
+
+    struct DrawCounterWidget {
+        drawn: Rc<Cell<usize>>,
+        live_updater: Rc<RefCell<Option<StateUpdater<DrawCounterState>>>>,
+    }
+    struct DrawCounterState {
+        counter: usize,
+        drawn: Rc<Cell<usize>>,
+        live_updater: Rc<RefCell<Option<StateUpdater<Self>>>>,
+        updater: StateUpdater<Self>,
+    }
+    impl StatefulWidget for DrawCounterWidget {
+        type State = DrawCounterState;
+        fn create_state(&self) -> Self::State {
+            DrawCounterState {
+                counter: 1,
+                drawn: self.drawn.clone(),
+                live_updater: self.live_updater.clone(),
+                updater: StateUpdater::new(),
+            }
+        }
+    }
+    impl State<DrawCounterWidget> for DrawCounterState {
+        fn init_state(&mut self, updater: StateUpdater<Self>) {
+            self.updater = updater;
+        }
+        fn build(&self, ctx: &BuildContext) -> impl Widget {
+            *self.live_updater.borrow_mut() = Some(self.updater.clone());
+
+            // container -> row -> [ text-leaf(counter), nested stateful button ]
+            let leaf: Box<dyn Element> = Box::new(RecordingLeaf { value: self.counter, drawn: self.drawn.clone() });
+            let (button, _ctor) = StatefulElement::new_with_name(&NestedButtonWidget, ctx, "NestedButton", None);
+            let row: Box<dyn Element> = Box::new(DrawRow(vec![leaf, button.boxed()]));
+            ElementWidget::new(Box::new(DrawWrapper(row)))
+        }
+    }
+
+    #[test]
+    fn set_state_updates_the_drawn_subtree() {
+        let ctx = dummy_build_context();
+        let drawn = Rc::new(Cell::new(0usize));
+        let live_updater: Rc<RefCell<Option<StateUpdater<DrawCounterState>>>> = Rc::new(RefCell::new(None));
+
+        let widget = DrawCounterWidget { drawn: drawn.clone(), live_updater: live_updater.clone() };
+        let (root, _ctor) = StatefulElement::new_with_name(&widget, &ctx, "DrawCounter", None);
+
+        // First frame: the initial state (counter = 1) is drawn.
+        root.draw(&ctx);
+        assert_eq!(drawn.get(), 1, "initial draw must render counter = 1");
+
+        // Fire a mutation through the state's OWN updater — exactly what the
+        // `Increase` button's `on_press` does.
+        live_updater
+            .borrow()
+            .as_ref()
+            .expect("build() publishes the live updater")
+            .set_state(|s| s.counter = 2);
+
+        // Next frame: the DRAWN subtree must reflect the new value. If the old
+        // child were kept/drawn, `drawn` would stay 1 — the on-screen freeze.
+        root.draw(&ctx);
+        assert_eq!(drawn.get(), 2, "after set_state the DRAWN subtree must render counter = 2");
     }
 
     /// Regression: when `old` and `new` are `StatefulElement`s of the same
@@ -1112,17 +1352,17 @@ mod tests {
                                 FakeContainer::new(FakeLeaf::new("LeafC", 200.0, 100.0).boxed(), 200.0, 100.0).boxed(),
                                 stateful.boxed(),
                             ])
-                            .boxed(),
+                                .boxed(),
                         )
-                        .boxed(),
+                            .boxed(),
                     )
-                    .boxed(),
+                        .boxed(),
                 ])
-                .boxed(),
+                    .boxed(),
                 200.0,
                 400.0,
             )
-            .boxed()
+                .boxed()
         }
 
         fn current_live_updater(live_updater: &Rc<RefCell<Option<StateUpdater<ResizeCounterState>>>>) -> StateUpdater<ResizeCounterState> {
@@ -1482,17 +1722,17 @@ mod tests {
                                 FakeContainer::new(FakeLeaf::new("Hero", 200.0, 100.0).boxed(), 200.0, 100.0).boxed(),
                                 stateful.boxed(),
                             ])
-                            .boxed(),
+                                .boxed(),
                         )
-                        .boxed(),
+                            .boxed(),
                     )
-                    .boxed(),
+                        .boxed(),
                 ])
-                .boxed(),
+                    .boxed(),
                 400.0,
                 400.0,
             )
-            .boxed()
+                .boxed()
         }
 
         #[test]
@@ -1537,53 +1777,5 @@ mod tests {
             let after_resize: Vec<i32> = observers.iter().map(|o| o.get()).collect();
             assert_eq!(after_resize, vec![0, 0, 0, 1], "after resize, ONLY tab 3 must stay highlighted (got {:?})", after_resize);
         }
-    }
-}
-
-/// Wrapper element that mimics `RawScrollableContainer`: its `event_children`
-/// is intentionally empty (events handled via `on_event`) but its
-/// `update_from_widget` recurses into the child via `try_update_element` —
-/// the shape used by the framework's only built-in scroll container.
-#[allow(unused)]
-struct ScrollableLikeWrapper {
-    child: Box<dyn crate::Element>,
-    key: Option<crate::Key>,
-}
-
-impl crate::VisitorElement for ScrollableLikeWrapper {
-    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn crate::Element)) {
-        visitor(self.child.as_ref());
-    }
-    fn debug_name(&self) -> &'static str {
-        "ScrollableLikeWrapper"
-    }
-}
-
-impl crate::EventElement for ScrollableLikeWrapper {
-    fn event_children<'a>(&'a self, _: &mut dyn FnMut(&'a dyn crate::Element)) {}
-}
-
-impl crate::Drawable for ScrollableLikeWrapper {
-    fn draw(&self, _ctx: &BuildContext) {}
-}
-
-impl crate::LayoutElement for ScrollableLikeWrapper {}
-
-impl crate::Rebuildable for ScrollableLikeWrapper {}
-
-impl crate::Reconcilable for ScrollableLikeWrapper {
-    fn key(&self) -> Option<crate::Key> {
-        self.key.clone()
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-    fn update_from_widget(&self, new_element: &dyn crate::Element, ctx: &BuildContext) -> bool {
-        let new = new_element
-            .as_any()
-            .downcast_ref::<ScrollableLikeWrapper>()
-            .expect("new element is a ScrollableLikeWrapper");
-        try_update_element(self.child.as_ref(), new.child.as_ref(), ctx);
-        false
     }
 }

@@ -39,13 +39,16 @@ pub type LoadingResult = Result<u32, &'static str>;
 /// To implement the `ImageProvider` trait:
 ///
 /// ```rust
-/// #[derive(Clone)]
+/// use aimer_assets::ImageResult;
+/// use self::aimer_assets::{ ImageProvider};
+/// use aimer_widget::components::context::BuildContext;
+/// #[derive(Clone, Debug)]
 /// struct MyImageProvider;
 ///
 /// impl ImageProvider for MyImageProvider {
-///     fn get_image(&self, ctx: &BuildContext) -> LoadingResult {
+///     fn get_image(&self, ctx: &BuildContext) -> ImageResult {
 ///         // Custom logic to provide an image ID based on the context
-///         Ok(42) // Example image ID
+///         ImageResult::Success(1) // Example image ID
 ///     }
 /// }
 /// ```

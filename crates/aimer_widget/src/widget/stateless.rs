@@ -128,7 +128,7 @@ impl StatelessElement {
             child.rebuild_if_dirty(ctx);
         }
 
-        let new_child = (rebuild_fn)(ctx);
+        let new_child = rebuild_fn(ctx);
 
         // Reconcile: keep the old child in-place when types/keys match, else replace.
         let old_child = unsafe { &*self.child.0.get() };
@@ -154,15 +154,13 @@ impl Drawable for StatelessElement {
                 let end_y = start_y + size.height;
 
                 let scale = ctx.scale;
-                let l_start = crate::base::Vec2d { x: start_x / scale, y: start_y / scale };
-                let l_end = crate::base::Vec2d { x: end_x / scale, y: end_y / scale };
+                let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
+                let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
-                    if let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
-                        *hovered = Some((self.debug_name, l_start, l_end));
-                    }
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y && let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
+                    *hovered = Some((self.debug_name, l_start, l_end));
                 }
             }
         }
@@ -222,38 +220,13 @@ impl Reconcilable for StatelessElement {
     }
 
     fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
-        // Keep this element's wrapper identity — its own `rebuild_fn`, `dirty`
-        // flag, `key` and `debug_name` — but STILL reconcile our child subtree
-        // against the freshly-built one so nested state-owning elements carry
-        // their live runtime state (a `StatefulElement`'s selected tab, a
-        // `Scrollable`'s offset, …) across a parent rebuild such as a window
-        // resize.
-        //
-        // Returning `true` here means "updated in place", so `try_update_element`
-        // will NOT descend via `carry_child_state`. That is exactly the trap
-        // that lost the user's state: a pure wrapper `StatelessElement` (e.g.
-        // the `NamedWidget` that wraps a `Stack`/`Container` whose element
-        // `debug_name` — "RawStackElement" — differs from the widget name
-        // "Stack") sat between the rebuilt ancestor and the nested
-        // `StatefulElement`. The old code returned `true` without touching the
-        // child, so the rebuild cascade stopped at the wrapper and the tab
-        // widget never adopted the old state, snapping back to its initial
-        // value. We therefore reconcile the child ourselves here (mirroring
-        // `rebuild_if_dirty`), swapping in the freshly-built child — which has
-        // already adopted the live state during its own reconciliation — when
-        // it can't be updated in place.
         if let Some(new) = new_element.as_any().downcast_ref::<StatelessElement>() {
             // Safety: single-threaded rendering pipeline.
             let old_child = unsafe { &*self.child.0.get() };
             let new_child = unsafe { &*new.child.0.get() };
             if !try_update_element(old_child.as_ref(), new_child.as_ref(), ctx) {
-                // Move the freshly-built child (already carrying adopted state)
-                // into this wrapper; the old child ends up inside the discarded
-                // `new` element and is dropped with it.
-                // Safety: single-threaded; the immutable borrows above are no
-                // longer used past this point.
                 unsafe {
-                    std::mem::swap(&mut *self.child.0.get(), &mut *new.child.0.get());
+                    core::ptr::swap(self.child.0.get(), new.child.0.get());
                 }
             }
         }

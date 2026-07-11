@@ -54,7 +54,7 @@ pub struct ButtonState {
     updater: StateUpdater<Self>,
 }
 
-impl<'a> StatefulWidget for TextButton {
+impl StatefulWidget for TextButton {
     type State = ButtonState;
 
     fn create_state(&self) -> Self::State {
@@ -138,7 +138,6 @@ impl State<TextButton> for ButtonState {
                 on_scroll: ScrollCallback::default(),
                 on_scale: ScaleCallback::default(),
                 child: Text!(
-
                     self.widget.label.clone(),
                     text_style: text_style,
                 ),

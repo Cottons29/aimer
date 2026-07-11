@@ -158,7 +158,7 @@ impl TextFieldController {
         let current = self.text().to_owned();
         let undo = unsafe { &mut *self.undo_stack.get() };
         // Avoid pushing duplicate snapshots back-to-back
-        if undo.last().map_or(true, |last| last != &current) {
+        if undo.last() != Some(&current) {
             undo.push(current);
             // Cap undo stack size
             if undo.len() > Self::MAX_UNDO_DEPTH {

@@ -7,13 +7,13 @@ use aimer::*;
 use uuid::Uuid;
 #[allow(unused)]
 pub fn start_my_list() {
-    AimerApp::start(MyList::create_new(None))
+    AimerApp::start(MyList::create_new())
 }
 
 #[widget(Stateful)]
 pub struct MyList {
-    #[constructor(default)]
-    pub on_switch: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
+    // #[constructor(default)]
+    // pub on_switch: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 }
 
 pub struct ListItem {

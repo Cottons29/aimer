@@ -212,7 +212,7 @@ impl<'a, E: Element> RawGestureDetector<'a, E> {
                     state.down_time = None;
                     drop(state);
 
-                    if let Some(ref cb) = self.on_drag_end.callable() {
+                    if let Some( cb) = self.on_drag_end.callable().as_ref() {
                         Self::execute_callback(
                             cb,
                             #[cfg(not(target_arch = "wasm32"))]
@@ -221,7 +221,7 @@ impl<'a, E: Element> RawGestureDetector<'a, E> {
                     }
 
                     if let (Some(start_time), Some(start_pos)) = (start_time, start_pos)
-                        && let Some(ref cb) = self.on_swipe.callable()
+                        && let Some( cb) = self.on_swipe.callable().as_ref()
                     {
                         let elapsed = AnimInstant::now().duration_since(start_time);
                         if elapsed.as_millis() as u64 <= SWIPE_MAX_DURATION_MS {
@@ -263,23 +263,21 @@ impl<'a, E: Element> RawGestureDetector<'a, E> {
                     return None;
                 }
 
-                if let Some(ref cb) = self.on_long_press.callable() {
-                    if elapsed >= LONG_PRESS_DURATION {
-                        state.last_tap_time = None;
-                        state.last_tap_position = None;
-                        drop(state);
+                if let Some( cb) = self.on_long_press.callable().as_ref() && elapsed >= LONG_PRESS_DURATION {
+                    state.last_tap_time = None;
+                    state.last_tap_position = None;
+                    drop(state);
 
-                        Self::execute_callback(
-                            cb,
-                            #[cfg(not(target_arch = "wasm32"))]
-                            &self.runtime_handle,
-                        );
-                        return Some(GestureEvent::LongPress(*pos));
-                    }
+                    Self::execute_callback(
+                        cb,
+                        #[cfg(not(target_arch = "wasm32"))]
+                        &self.runtime_handle,
+                    );
+                    return Some(GestureEvent::LongPress(*pos));
                 }
 
                 #[allow(clippy::collapsible_if)]
-                if let Some(ref cb) = self.on_double_press.callable() {
+                if let Some( cb) = self.on_double_press.callable().as_ref() {
                     if let (Some(last_time), Some(last_pos)) = (state.last_tap_time, state.last_tap_position) {
                         let delta = now.duration_since(last_time);
                         if delta < DOUBLE_TAP_TIMEOUT && distance(last_pos, *pos) < TAP_SLOP {
@@ -300,7 +298,7 @@ impl<'a, E: Element> RawGestureDetector<'a, E> {
                 state.last_tap_time = Some(now);
                 state.last_tap_position = Some(*pos);
                 drop(state);
-                if let Some(ref cb) = self.on_tap.callable() {
+                if let Some( cb) = self.on_tap.callable().as_ref()   {
                     Self::execute_callback(
                         cb,
                         #[cfg(not(target_arch = "wasm32"))]
@@ -315,7 +313,7 @@ impl<'a, E: Element> RawGestureDetector<'a, E> {
 
                 if state.touches.len() >= 2
                     && state.initial_pinch_distance.is_some()
-                    && let Some(ref cb) = self.on_scale.callable()
+                    && let Some( cb) = self.on_scale.callable().as_ref()
                 {
                     let positions: Vec<PointerPosition> = state.touches.values().copied().collect();
                     let current_dist = distance(positions[0], positions[1]);
@@ -339,7 +337,7 @@ impl<'a, E: Element> RawGestureDetector<'a, E> {
 
                 if let Some(down_pos) = state.down_position {
                     if state.is_dragging
-                        && let Some(ref cb) = self.on_drag_update.callable()
+                        && let Some( cb) = self.on_drag_update.callable().as_ref()
                     {
                         let last = state.last_drag_position.unwrap_or(down_pos);
                         let delta_x = pos.x - last.x;
@@ -355,7 +353,7 @@ impl<'a, E: Element> RawGestureDetector<'a, E> {
                         );
                         return Some(GestureEvent::DragUpdate { position: *pos, delta_x, delta_y });
                     } else if distance(down_pos, *pos) > TAP_SLOP
-                        && let Some(ref cb) = self.on_drag_start.callable()
+                        && let Some( cb) = self.on_drag_start.callable().as_ref()
                     {
                         state.is_dragging = true;
                         state.last_drag_position = Some(*pos);
@@ -392,7 +390,7 @@ impl<'a, E: Element> RawGestureDetector<'a, E> {
 
             PointerEvent::RightClick(pos) => {
                 drop(state);
-                if let Some(ref cb) = self.on_right_tap.callable() {
+                if let Some( cb) = self.on_right_tap.callable().as_ref() {
                     Self::execute_callback(
                         cb,
                         #[cfg(not(target_arch = "wasm32"))]
@@ -405,7 +403,7 @@ impl<'a, E: Element> RawGestureDetector<'a, E> {
             PointerEvent::Scroll { delta_x, delta_y } => {
                 let data = ScrollData { delta_x: *delta_x, delta_y: *delta_y };
                 drop(state);
-                if let Some(ref cb) = self.on_scroll.callable() {
+                if let Some( cb) = self.on_scroll.callable().as_ref() {
                     Self::execute_paramed_callback(
                         cb,
                         data,
@@ -453,89 +451,6 @@ fn should_accept_pointer_event(cached_bounds: &CacheBounds, state: &GestureState
 
 fn preserve_gesture_state(existing: &GestureState, replacement: &mut GestureState) {
     *replacement = existing.clone();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use aimer_events::pointer::PointerSource;
-
-    fn touch_position(x: f32, y: f32, id: u64) -> PointerPosition {
-        PointerPosition { x, y, source: PointerSource::Touch, id }
-    }
-
-    fn touch_vec(x: f32, y: f32) -> Vec2d {
-        Vec2d { x, y }
-    }
-
-    #[test]
-    fn touch_down_inside_cached_bounds_is_accepted() {
-        let bounds = CacheBounds::new();
-        bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
-        let state = GestureState::default();
-        let pos = touch_vec(25.0, 35.0);
-        let event = ElementEvent::PointerDown(pos, PointerSource::Touch, 7);
-
-        assert!(should_accept_pointer_event(&bounds, &state, &event, pos));
-    }
-
-    #[test]
-    fn touch_down_outside_cached_bounds_is_rejected() {
-        let bounds = CacheBounds::new();
-        bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
-        let state = GestureState::default();
-        let pos = touch_vec(200.0, 35.0);
-        let event = ElementEvent::PointerDown(pos, PointerSource::Touch, 7);
-
-        assert!(!should_accept_pointer_event(&bounds, &state, &event, pos));
-    }
-
-    #[test]
-    fn active_touch_up_outside_cached_bounds_is_accepted() {
-        let bounds = CacheBounds::new();
-        bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
-        let mut state = GestureState::default();
-        state.touches.insert(7, touch_position(25.0, 35.0, 7));
-        let pos = touch_vec(115.0, 35.0);
-        let event = ElementEvent::PointerUp(pos, PointerSource::Touch, 7);
-
-        assert!(should_accept_pointer_event(&bounds, &state, &event, pos));
-    }
-
-    // Regression for "the Scroll is not able to scroll with mouse wheel or
-    // trackpad": a gesture detector with no `on_scroll` handler (e.g. a header
-    // `TextButton` = MouseRegion + GestureDetector) must NOT consume a scroll,
-    // otherwise — sitting on a top `Stack` layer and dispatched first — it
-    // swallows every wheel/trackpad scroll before it can reach a `Scrollable`
-    // on a lower layer, and nothing scrolls.
-    #[test]
-    fn detector_without_scroll_handler_lets_scroll_fall_through() {
-        let on_scroll = ScrollCallback::default();
-        assert!(!detector_consumes_scroll(&on_scroll), "a handler-less detector must let the scroll propagate to lower layers");
-    }
-
-    // A detector that actually handles scrolls still claims them.
-    #[test]
-    fn detector_with_scroll_handler_consumes_scroll() {
-        let on_scroll: ScrollCallback = (|_: ScrollData| {}).into();
-        assert!(detector_consumes_scroll(&on_scroll), "a detector with an on_scroll handler must consume the scroll");
-    }
-
-    #[test]
-    fn active_touch_state_is_preserved_for_replacement_detector() {
-        let mut existing = GestureState::default();
-        let down = touch_position(25.0, 35.0, 7);
-        existing.touches.insert(7, down);
-        existing.down_position = Some(down);
-        existing.down_time = Some(AnimInstant::now());
-
-        let mut replacement = GestureState::default();
-        preserve_gesture_state(&existing, &mut replacement);
-
-        assert_eq!(replacement.touches.get(&7), Some(&down));
-        assert_eq!(replacement.down_position, Some(down));
-        assert!(replacement.down_time.is_some());
-    }
 }
 
 // ── Element trait impls ─────────────────────────────────────────────────
@@ -655,5 +570,90 @@ impl<'b: 'static, E: Element + 'static> Reconcilable for RawGestureDetector<'b, 
 
         preserve_gesture_state(&self.state.borrow(), &mut new.state.borrow_mut());
         false
+    }
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aimer_events::pointer::PointerSource;
+
+    fn touch_position(x: f32, y: f32, id: u64) -> PointerPosition {
+        PointerPosition { x, y, source: PointerSource::Touch, id }
+    }
+
+    fn touch_vec(x: f32, y: f32) -> Vec2d {
+        Vec2d { x, y }
+    }
+
+    #[test]
+    fn touch_down_inside_cached_bounds_is_accepted() {
+        let bounds = CacheBounds::new();
+        bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
+        let state = GestureState::default();
+        let pos = touch_vec(25.0, 35.0);
+        let event = ElementEvent::PointerDown(pos, PointerSource::Touch, 7);
+
+        assert!(should_accept_pointer_event(&bounds, &state, &event, pos));
+    }
+
+    #[test]
+    fn touch_down_outside_cached_bounds_is_rejected() {
+        let bounds = CacheBounds::new();
+        bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
+        let state = GestureState::default();
+        let pos = touch_vec(200.0, 35.0);
+        let event = ElementEvent::PointerDown(pos, PointerSource::Touch, 7);
+
+        assert!(!should_accept_pointer_event(&bounds, &state, &event, pos));
+    }
+
+    #[test]
+    fn active_touch_up_outside_cached_bounds_is_accepted() {
+        let bounds = CacheBounds::new();
+        bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
+        let mut state = GestureState::default();
+        state.touches.insert(7, touch_position(25.0, 35.0, 7));
+        let pos = touch_vec(115.0, 35.0);
+        let event = ElementEvent::PointerUp(pos, PointerSource::Touch, 7);
+
+        assert!(should_accept_pointer_event(&bounds, &state, &event, pos));
+    }
+
+    // Regression for "the Scroll is not able to scroll with mouse wheel or
+    // trackpad": a gesture detector with no `on_scroll` handler (e.g. a header
+    // `TextButton` = MouseRegion + GestureDetector) must NOT consume a scroll,
+    // otherwise — sitting on a top `Stack` layer and dispatched first — it
+    // swallows every wheel/trackpad scroll before it can reach a `Scrollable`
+    // on a lower layer, and nothing scrolls.
+    #[test]
+    fn detector_without_scroll_handler_lets_scroll_fall_through() {
+        let on_scroll = ScrollCallback::default();
+        assert!(!detector_consumes_scroll(&on_scroll), "a handler-less detector must let the scroll propagate to lower layers");
+    }
+
+    // A detector that actually handles scrolls still claims them.
+    #[test]
+    fn detector_with_scroll_handler_consumes_scroll() {
+        let on_scroll: ScrollCallback = (|_: ScrollData| {}).into();
+        assert!(detector_consumes_scroll(&on_scroll), "a detector with an on_scroll handler must consume the scroll");
+    }
+
+    #[test]
+    fn active_touch_state_is_preserved_for_replacement_detector() {
+        let mut existing = GestureState::default();
+        let down = touch_position(25.0, 35.0, 7);
+        existing.touches.insert(7, down);
+        existing.down_position = Some(down);
+        existing.down_time = Some(AnimInstant::now());
+
+        let mut replacement = GestureState::default();
+        preserve_gesture_state(&existing, &mut replacement);
+
+        assert_eq!(replacement.touches.get(&7), Some(&down));
+        assert_eq!(replacement.down_position, Some(down));
+        assert!(replacement.down_time.is_some());
     }
 }

@@ -5,8 +5,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_macro::{Rebuildable, WidgetConstructor};
 pub use aimer_style::*;
-use aimer_utils::debug;
-use aimer_widget::{Drawable, Element, EventElement, LayoutCache, LayoutElement, Reconcilable, VisitorElement, Widget, base::*};
+use aimer_widget::{base::*, Drawable, Element, EventElement, LayoutCache, LayoutElement, Reconcilable, VisitorElement, Widget};
 
 #[derive(WidgetConstructor)]
 pub struct Container<T = ZeroSizedBox>
@@ -71,6 +70,23 @@ impl<T: Element> RawContainer<T> {
     /// occlude it for hit-testing (Flutter's `HitTestBehavior::opaque`).
     fn is_opaque(&self) -> bool {
         self.color.is_some() || self.box_decoration.background_color.is_some()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn new(child: T) -> Self{
+        Self {
+            margin: LayoutSpacing::default(),
+            padding: LayoutSpacing::default(),
+            width: Dimension::Auto,
+            height: Dimension::Auto,
+            box_decoration: BoxDecoration::default(),
+            child,
+            cache: LayoutCache::default(),
+            debug_name: "RawContainer",
+            color: None,
+            bounds: std::cell::Cell::new(None),
+        }
+
     }
 
     fn margin(&self, ctx: &BuildContext) -> (f32, f32, f32, f32) {
@@ -148,10 +164,8 @@ impl<T: Element> Drawable for RawContainer<T> {
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y {
-                    if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
-                        *hovered = Some((self.debug_name, l_start, l_end));
-                    }
+                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y && let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write(){
+                    *hovered = Some((self.debug_name, l_start, l_end));
                 }
             }
         }

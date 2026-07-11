@@ -61,10 +61,8 @@ pub fn branch_push<R>(branches: &mut [Vec<R>], index: usize, route: R) {
 
 /// Pop branch `index`'s stack, guarded so a branch stack is never emptied.
 pub fn branch_pop<R>(branches: &mut [Vec<R>], index: usize) {
-    if let Some(branch) = branches.get_mut(index) {
-        if branch.len() > 1 {
-            branch.pop();
-        }
+    if let Some(branch) = branches.get_mut(index) && branch.len() > 1 {
+        branch.pop();
     }
 }
 

@@ -33,9 +33,9 @@ impl Widget for Box<dyn Widget> {
     fn debug_name(&self) -> &'static str {
         self.as_ref().debug_name()
     }
-    fn text_content(&self) -> Option<&str> {
-        self.as_ref().text_content()
-    }
+    // fn text_content(&self) -> Option<&str> {
+    //     self.as_ref().text_content()
+    // }
 }
 
 impl Widget for Rc<dyn Widget> {
@@ -48,9 +48,9 @@ impl Widget for Rc<dyn Widget> {
     fn debug_name(&self) -> &'static str {
         self.as_ref().debug_name()
     }
-    fn text_content(&self) -> Option<&str> {
-        self.as_ref().text_content()
-    }
+    // fn text_content(&self) -> Option<&str> {
+    //     self.as_ref().text_content()
+    // }
 }
 
 /// Draw a colored bounding box + label at the current canvas transform origin.

@@ -139,6 +139,7 @@ impl HeaderState {
                         on_press: {
                             let navigator = navigator.clone();
                             move || {
+                                println!("Tab {} pressed", index);
                                 if index != selected {
                                     navigator.push(Self::route_for(index));
                                 }
