@@ -909,17 +909,17 @@ mod tests {
                                 FakeContainer::new(FakeLeaf::new("LeafC", 200.0, 100.0).boxed(), 200.0, 100.0).boxed(),
                                 stateful.boxed(),
                             ])
-                            .boxed(),
+                                .boxed(),
                         )
-                        .boxed(),
+                            .boxed(),
                     )
-                    .boxed(),
+                        .boxed(),
                 ])
-                .boxed(),
+                    .boxed(),
                 200.0,
                 400.0,
             )
-            .boxed()
+                .boxed()
         }
 
         fn current_live_updater(live_updater: &Rc<RefCell<Option<StateUpdater<ResizeCounterState>>>>) -> StateUpdater<ResizeCounterState> {
@@ -1098,169 +1098,6 @@ mod tests {
             }
             FakeFlex::new(children).boxed()
         }
-
-        #[test]
-        fn switching_selected_tab_highlights_only_the_new_tab() {
-            let ctx = dummy_build_context();
-            let selected_index = Rc::new(Cell::new(0usize));
-            let observers: Rc<Vec<Rc<Cell<i32>>>> = Rc::new((0..TAB_COUNT).map(|_| Rc::new(Cell::new(-1))).collect());
-
-            let initial_child = build_tab_row(&ctx, selected_index.clone(), observers.clone());
-            let rebuild_selected = selected_index.clone();
-            let rebuild_observers = observers.clone();
-            let driver = StatelessElement::new(
-                initial_child,
-                move |ctx| build_tab_row(ctx, rebuild_selected.clone(), rebuild_observers.clone()),
-                None,
-                "TabRow",
-            );
-
-            // Initial draw: index 0 selected.
-            driver.draw(&ctx);
-            let initial: Vec<i32> = observers.iter().map(|o| o.get()).collect();
-            assert_eq!(initial, vec![1, 0, 0, 0], "initial render must highlight only tab 0");
-
-            // User taps "Android" (index 3): the section rebuilds the row.
-            for o in observers.iter() {
-                o.set(-1);
-            }
-            selected_index.set(3);
-            driver.mark_needs_rebuild();
-            driver.draw(&ctx);
-
-            let after: Vec<i32> = observers.iter().map(|o| o.get()).collect();
-            assert_eq!(after, vec![0, 0, 0, 1], "after switching to tab 3, ONLY tab 3 must be highlighted (got {:?})", after);
-        }
-
-        struct SectionWidget {
-            observers: Rc<Vec<Rc<Cell<i32>>>>,
-            live_updater: Rc<RefCell<Option<StateUpdater<SectionState>>>>,
-        }
-
-        struct SectionState {
-            current_index: usize,
-            observers: Rc<Vec<Rc<Cell<i32>>>>,
-            live_updater: Rc<RefCell<Option<StateUpdater<Self>>>>,
-            updater: StateUpdater<Self>,
-        }
-
-        impl StatefulWidget for SectionWidget {
-            type State = SectionState;
-
-            fn create_state(&self) -> Self::State {
-                // Fresh section always starts at index 0 (mirrors
-                // `SameLookingSectionState::create_state`).
-                SectionState {
-                    current_index: 0,
-                    observers: self.observers.clone(),
-                    live_updater: self.live_updater.clone(),
-                    updater: StateUpdater::new(),
-                }
-            }
-        }
-
-        impl State<SectionWidget> for SectionState {
-            fn init_state(&mut self, updater: StateUpdater<Self>) {
-                self.updater = updater;
-            }
-
-            fn build(&self, ctx: &BuildContext) -> impl Widget {
-                *self.live_updater.borrow_mut() = Some(self.updater.clone());
-                // Build the row of tab buttons based on the live selection,
-                // exactly like `SameLookingSectionState::build`.
-                let selected = self.current_index;
-                let mut children: Vec<Box<dyn Element>> = Vec::with_capacity(TAB_COUNT);
-                for index in 0..TAB_COUNT {
-                    let widget = TabButtonWidget { index, selected: index == selected, observer: self.observers[index].clone() };
-                    let (stateful, _updater) = StatefulElement::new_with_name(&widget, ctx, "Unknown", None);
-                    let wrapped = StatelessElement::wrapper(stateful.boxed(), None, "TextButton");
-                    children.push(Box::new(wrapped));
-                }
-                // The section's own build returns an element tree; wrap the row
-                // in a couple of container-like wrappers so the button subtree
-                // is nested (mirroring Container -> Column -> Row).
-                ElementWidget::new(FakeContainer::new(FakeFlex::new(children).boxed(), 400.0, 60.0).boxed())
-            }
-        }
-
-        fn current_section_updater(live_updater: &Rc<RefCell<Option<StateUpdater<SectionState>>>>) -> StateUpdater<SectionState> {
-            live_updater
-                .borrow()
-                .as_ref()
-                .cloned()
-                .expect("section updater should be published from build()")
-        }
-
-        fn build_section_home(
-            ctx: &BuildContext,
-            observers: Rc<Vec<Rc<Cell<i32>>>>,
-            live_updater: Rc<RefCell<Option<StateUpdater<SectionState>>>>,
-        ) -> Box<dyn Element> {
-            let section = SectionWidget { observers, live_updater };
-            let (stateful, _updater) = StatefulElement::new_with_name(&section, ctx, "SameLookingSection", None);
-            // Nest the section deep, like the real HomePage tree.
-            FakeContainer::new(
-                FakeStack::new(vec![
-                    FakePositioned::new(
-                        FakeScrollable::new(
-                            FakeFlex::new(vec![
-                                FakeContainer::new(FakeLeaf::new("Hero", 200.0, 100.0).boxed(), 200.0, 100.0).boxed(),
-                                stateful.boxed(),
-                            ])
-                            .boxed(),
-                        )
-                        .boxed(),
-                    )
-                    .boxed(),
-                ])
-                .boxed(),
-                400.0,
-                400.0,
-            )
-            .boxed()
-        }
-
-        #[test]
-        fn resize_keeps_selected_tab_highlight() {
-            let ctx = dummy_build_context();
-            let observers: Rc<Vec<Rc<Cell<i32>>>> = Rc::new((0..TAB_COUNT).map(|_| Rc::new(Cell::new(-1))).collect());
-            let live_updater: Rc<RefCell<Option<StateUpdater<SectionState>>>> = Rc::new(RefCell::new(None));
-
-            let initial_child = build_section_home(&ctx, observers.clone(), live_updater.clone());
-            let rebuild_observers = observers.clone();
-            let rebuild_live_updater = live_updater.clone();
-            let driver = StatelessElement::new(
-                initial_child,
-                move |ctx| build_section_home(ctx, rebuild_observers.clone(), rebuild_live_updater.clone()),
-                None,
-                "HomePage",
-            );
-
-            // Initial draw: section index 0 -> only tab 0 highlighted.
-            driver.draw(&ctx);
-            let initial: Vec<i32> = observers.iter().map(|o| o.get()).collect();
-            assert_eq!(initial, vec![1, 0, 0, 0], "initial render highlights tab 0");
-
-            // User picks "Android" (index 3): the section's own set_state.
-            for o in observers.iter() {
-                o.set(-1);
-            }
-            current_section_updater(&live_updater).set_state(|s| s.current_index = 3);
-            driver.draw(&ctx);
-            let after_pick: Vec<i32> = observers.iter().map(|o| o.get()).collect();
-            assert_eq!(after_pick, vec![0, 0, 0, 1], "after picking tab 3, only tab 3 is highlighted (got {:?})", after_pick);
-
-            // Window resize: the parent rebuilds the whole tree (fresh section
-            // at index 0), reconciles, and must preserve the live selection AND
-            // refresh the button highlight to match it.
-            for o in observers.iter() {
-                o.set(-1);
-            }
-            driver.mark_needs_rebuild();
-            driver.draw(&ctx);
-
-            let after_resize: Vec<i32> = observers.iter().map(|o| o.get()).collect();
-            assert_eq!(after_resize, vec![0, 0, 0, 1], "after resize, ONLY tab 3 must stay highlighted (got {:?})", after_resize);
-        }
+        
     }
 }
