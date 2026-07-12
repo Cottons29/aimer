@@ -115,8 +115,6 @@ impl<T: Element> Drawable for RawContainer<T> {
 
         let (m_left, m_top, m_right, m_bottom) = self.margin(ctx);
 
-        ctx.canvas.translate(Vec2d { x: m_left, y: m_top });
-
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
             Dimension::Percent(p) => parent_width * (p / 100.0) - (m_left + m_right),
@@ -146,8 +144,8 @@ impl<T: Element> Drawable for RawContainer<T> {
         // actually-drawn size (`draw_width`/`draw_height`).
         {
             let (start_x, start_y) = ctx.canvas.get_transform_translation();
-            let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
-            let l_end = Vec2d { x: (start_x + draw_width) / scale, y: (start_y + draw_height) / scale };
+            let l_start = Vec2d { x: (start_x + m_left) / scale, y: (start_y + m_top) / scale };
+            let l_end = Vec2d { x: (start_x + m_left + draw_width) / scale, y: (start_y + m_top + draw_height) / scale };
             self.bounds.set(Some((l_start, l_end)));
         }
 
@@ -155,11 +153,11 @@ impl<T: Element> Drawable for RawContainer<T> {
         {
             if aimer_widget::inspector_overlay::is_enabled() {
                 let (start_x, start_y) = ctx.canvas.get_transform_translation();
-                let end_x = start_x + box_width;
-                let end_y = start_y + box_height;
+                let end_x = start_x + m_left + box_width;
+                let end_y = start_y + m_top + box_height;
 
                 let scale = ctx.scale;
-                let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
+                let l_start = Vec2d { x: (start_x + m_left) / scale, y: (start_y + m_top) / scale };
                 let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
                 self.bounds.set(Some((l_start, l_end)));
 
@@ -170,8 +168,6 @@ impl<T: Element> Drawable for RawContainer<T> {
             }
         }
 
-        let decoration_ctx = BuildContext { parent_size: ResolvedSize { width: draw_width, height: draw_height }, ..ctx.clone() };
-
         if let Some(color) = self.color
             && self.box_decoration.background_color.is_none()
         {
@@ -179,7 +175,26 @@ impl<T: Element> Drawable for RawContainer<T> {
             self.box_decoration.update_color(color)
         }
 
-        self.box_decoration.draw(&decoration_ctx);
+        // Draw background filling the *entire* allocated space (including
+        // margins) so that adjacent children in a Column/Row have no visible
+        // gap.  The canvas has NOT been translated by the margin yet, so
+        // painting at (0,0) with the full size covers margin + content area.
+        //
+        // Add a 1-px overlap on the end edges so that the GPU's per-rectangle
+        // anti-aliasing cannot leave a hairline seam between siblings.  The
+        // overlap is invisible because the next sibling's background paints
+        // over it.
+        let bg_w = box_width + m_left + m_right;
+        let bg_h = box_height + m_top + m_bottom;
+        let bg_ctx = BuildContext {
+            parent_size: ResolvedSize { width: bg_w, height: bg_h + 1.0 },
+            ..ctx.clone()
+        };
+        self.box_decoration.draw(&bg_ctx);
+
+        // Now translate by the margin so that child content and clip are
+        // positioned correctly inside the margin inset.
+        ctx.canvas.translate(Vec2d { x: m_left, y: m_top });
 
         let p_left = self.padding.left.value(box_width, scale);
         let p_top = self.padding.top.value(box_height, scale);

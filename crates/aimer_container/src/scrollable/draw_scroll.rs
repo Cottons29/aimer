@@ -88,9 +88,14 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         ctx.canvas
             .set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
 
-        // Translate by scroll offset
-        // On high-DPI displays (e.g. iOS retina), avoid rounding to preserve smooth sub-pixel scrolling
-        let (offset_x, offset_y) = if ctx.scale > 1.5 { (offset.x, offset.y) } else { (offset.x.round(), offset.y.round()) };
+        // Translate by scroll offset.  Round to device pixels at every scale
+        // so that child widget edges always land on exact device-pixel
+        // boundaries — without this, a fractional offset combined with the
+        // flex layout's child positions produces sub-pixel seams that the GPU
+        // anti-aliases into a visible white line between adjacent items.
+        let scale = ctx.scale.max(1.0);
+        let offset_x = (offset.x * scale).round() / scale;
+        let offset_y = (offset.y * scale).round() / scale;
 
         ctx.canvas.translate(Vec2d { x: offset_x, y: offset_y });
 
