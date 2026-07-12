@@ -5,7 +5,7 @@ use aimer_attribute::Dimension;
 use aimer_container::ZeroSizedBox;
 use aimer_style::BoxFit;
 use aimer_widget::base::{BuildContext, Color, Colors, ResolvedSize, Size, Vec2d};
-use aimer_widget::{Constructor, Drawable, Element, LayoutCache, LayoutElement, Reconcilable, VisitorElement, Widget};
+use aimer_widget::{Constructor, Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget};
 use std::cell::{Cell, UnsafeCell};
 use std::path::PathBuf;
 use aimer_macro::{EventElement, Rebuildable};
@@ -254,13 +254,5 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                 }
             }
         }
-    }
-}
-
-impl<P: ImageProvider + 'static> Reconcilable for RawImageWidget<P> {
-    fn as_any(&self) -> &dyn std::any::Any { self }
-
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        false
     }
 }

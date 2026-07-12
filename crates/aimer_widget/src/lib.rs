@@ -26,7 +26,6 @@ pub use crate::components::element::Element;
 pub use crate::components::event_element::EventElement;
 pub use crate::components::layout_element::LayoutElement;
 pub use crate::components::rebuildable::Rebuildable;
-pub use crate::components::reconcilable::Reconcilable;
 pub use crate::components::visitor_element::VisitorElement;
 
 pub mod base {
@@ -41,7 +40,6 @@ pub use crate::widget::Widget;
 
 pub use crate::components::element::{broadcast_event, dispatch_event};
 pub use crate::layout_cache::LayoutCache;
-pub use crate::reconcile::try_update_element;
 pub use crate::widget::stateful::{State, StateUpdater, StatefulElement, StatefulWidget};
 pub use crate::widget::stateless::{NamedWidget, StatelessElement, StatelessWidget};
 pub use aimer_canvas::TextOverflowMode;

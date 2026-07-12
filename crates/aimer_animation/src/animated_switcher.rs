@@ -7,7 +7,7 @@ use aimer_events::element::ElementEvent;
 use aimer_macro::WidgetConstructor;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement,
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
     Widget,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -187,17 +187,5 @@ impl LayoutElement for AnimatedSwitcherElement {
 
     fn invalidate_layout(&self) {
         self.current_child.invalidate_layout();
-    }
-}
-
-impl Reconcilable for AnimatedSwitcherElement {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        // When the parent rebuilds with a new AnimatedSwitcher, we always replace
-        // so the old child becomes the "outgoing" child and the new one is "incoming".
-        false
     }
 }

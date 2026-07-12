@@ -1,5 +1,4 @@
-use crate::reconcile::try_update_element;
-use crate::{base::*, Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget};
+use crate::{base::*, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
@@ -486,18 +485,19 @@ impl StatefulElement {
             Self::propagate_rebuild(child.as_ref(), ctx);
         }
 
-        // Reconciliation: try to update the existing child in-place.
-        // If types/keys match, the child is updated without replacement,
-        // preserving nested state, GPU resources, etc.
-        let old_child = unsafe { &*self.child.0.get() };
-        if !try_update_element(old_child.as_ref(), new_child.as_ref(), ctx) {
-            // Types or keys don't match — replace the child entirely.
-            unsafe {
-                *self.child.0.get() = new_child;
-            }
+        // Carry live state from nested StatefulElements in the old tree into the
+        // freshly-built new tree before replacing. This preserves runtime state
+        // (e.g. selected tab index, scroll position) across the rebuild.
+        {
+            let old_child = unsafe { &*self.child.0.get() };
+            carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
         }
-        // If try_update_element returned true, the old child was updated in-place
-        // and remains valid — no replacement needed.
+
+        // Install the newly-built child, replacing the old subtree.
+        // Safety: single-threaded rendering pipeline; old_child is not used past this point.
+        unsafe {
+            *self.child.0.get() = new_child;
+        }
 
         self.dirty.borrow().set(false);
         self.rebuild_generation.fetch_add(1);
@@ -511,7 +511,72 @@ impl StatefulElement {
     fn propagate_rebuild(element: &dyn Element, ctx: &BuildContext) {
         element.rebuild_if_dirty(ctx);
     }
+}
 
+/// If both elements are `StatefulElement`s with the same `debug_name`, adopt
+/// the live state from `old` into `new`. This is the rescue path that runs
+/// even when the element tree shape changed — it ensures nested stateful
+/// widgets (e.g. tab buttons, form inputs) keep their runtime state across
+/// a parent rebuild.
+///
+/// Safe to call on any pair: when both sides aren't matching
+/// `StatefulElement`s, it's a no-op.
+pub(crate) fn carry_stateful(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    let target = std::any::TypeId::of::<StatefulElement>();
+    if old.element_type_id() != target || new.element_type_id() != target {
+        return;
+    }
+    // SAFETY: We verified via TypeId that both concrete types are StatefulElement.
+    // The data pointer of the trait object points to the StatefulElement struct.
+    let old_s: &StatefulElement = unsafe { &*(old as *const dyn Element as *const () as *const StatefulElement) };
+    let new_s: &StatefulElement = unsafe { &*(new as *const dyn Element as *const () as *const StatefulElement) };
+    // Don't adopt if the widget types differ — that would transfer state from
+    // a different widget into the new one.
+    if old_s.debug_name() != new_s.debug_name() {
+        return;
+    }
+    new_s.adopt_state_from(old_s, ctx);
+}
+
+/// Recurse into the matched children of an old and new element tree, letting
+/// each nested `StatefulElement` carry its runtime state from the old subtree
+/// into the new one.
+///
+/// Children are enumerated through `event_children` first (the same accessor
+/// used for event dispatch). If that yields nothing, falls back to
+/// `visit_children` (used by the visitor/layout system) so that elements like
+/// scrollable containers — which hide children from event dispatch but expose
+/// them for layout — still get their nested stateful state carried across.
+pub(crate) fn carry_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    // Adopt state at this level first.
+    carry_stateful(old, new, ctx);
+
+    // Try event_children first (primary traversal for reconciliation).
+    let mut old_children: smallvec::SmallVec<[&dyn Element; 8]> = smallvec::SmallVec::new();
+    old.event_children(&mut |c| old_children.push(c));
+
+    // Fall back to visit_children if event_children is empty.
+    // This handles elements like scrollable containers that hide children
+    // from event dispatch but expose them for layout/visiting.
+    if old_children.is_empty() {
+        old.visit_children(&mut |c| old_children.push(c));
+    }
+    if old_children.is_empty() {
+        return;
+    }
+
+    let mut new_children: smallvec::SmallVec<[&dyn Element; 8]> = smallvec::SmallVec::new();
+    new.event_children(&mut |c| new_children.push(c));
+    if new_children.is_empty() {
+        new.visit_children(&mut |c| new_children.push(c));
+    }
+
+    for (old_child, new_child) in old_children.iter().zip(new_children.iter()) {
+        carry_child_state(*old_child, *new_child, ctx);
+    }
+}
+
+impl StatefulElement {
     /// Returns true if this element is marked dirty.
     pub fn is_dirty(&self) -> bool {
         self.dirty.borrow().get()
@@ -612,12 +677,15 @@ impl StatefulElement {
             let rf = unsafe { &*self.rebuild_fn.0.get() };
             rf(ctx)
         };
-        let old_child = unsafe { &*self.child.0.get() };
-        if !try_update_element(old_child.as_ref(), new_child.as_ref(), ctx) {
-            // Safety: single-threaded; `old_child` is not used past this point.
-            unsafe {
-                *self.child.0.get() = new_child;
-            }
+        // Carry live state from nested StatefulElements into the new tree.
+        {
+            let old_child = unsafe { &*self.child.0.get() };
+            carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
+        }
+        // Install the newly-built child, replacing the old subtree.
+        // Safety: single-threaded reconciliation; old child is not used past this point.
+        unsafe {
+            *self.child.0.get() = new_child;
         }
 
         // Keep `dirty` set so a later `draw` (e.g. after the element scrolls
@@ -673,6 +741,10 @@ impl VisitorElement for StatefulElement {
 
     fn debug_name(&self) -> &'static str {
         self.debug_name.get()
+    }
+
+    fn element_type_id(&self) -> std::any::TypeId {
+        std::any::TypeId::of::<StatefulElement>()
     }
 }
 
@@ -745,28 +817,6 @@ impl Rebuildable for StatefulElement {
     }
 }
 
-impl Reconcilable for StatefulElement {
-    fn key(&self) -> Option<crate::key::Key> {
-        self.key.clone()
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
-        // Transfer our live state into the freshly-built new element so that when
-        // the parent replaces this subtree, the new element carries the old state
-        // (e.g. a selected tab index, form input, etc.) forward.
-        //
-        // This mirrors how RawScrollableContainer adopts its scroll offset:
-        // modify the new element, return false, and let the parent swap us out.
-        if let Some(new) = new_element.as_any().downcast_ref::<StatefulElement>() {
-            new.adopt_state_from(self, ctx);
-        }
-        false
-    }
-}
 
 #[cfg(test)]
 mod tests {

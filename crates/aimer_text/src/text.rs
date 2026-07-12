@@ -46,8 +46,4 @@ impl Widget for Text {
             _typeface: Mutex::new(None),
         }.boxed()
     }
-    //
-    // fn text_content(&self) -> Option<&str> {
-    //     Some(&self.text)
-    // }
 }

@@ -1,7 +1,7 @@
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{EventElement, Rebuildable, WidgetConstructor};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, LayoutElement, Reconcilable, VisitorElement, Widget};
+use aimer_widget::{Drawable, Element, LayoutElement, VisitorElement, Widget};
 
 /// A flex child that fills the remaining main-axis space inside a flex
 /// container (`Row`, `Column`, `Flex`), mirroring Flutter's `Expanded` widget.
@@ -83,10 +83,6 @@ impl<E: Element> VisitorElement for RawExpanded<E> {
 }
 
 impl<E: Element> LayoutElement for RawExpanded<E> {
-    fn flex(&self) -> Option<f32> {
-        Some(self.flex)
-    }
-
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let child = self.child.computed_size(ctx);
         let max_w = ctx.box_constraint.max_width;
@@ -100,6 +96,10 @@ impl<E: Element> LayoutElement for RawExpanded<E> {
         ResolvedSize { width, height }
     }
 
+    fn flex(&self) -> Option<f32> {
+        Some(self.flex)
+    }
+
     /// An `Expanded` has no intrinsic main-axis size of its own — it is sized by
     /// its flex parent — so it must not report a fixed size to ancestors.
     fn get_size_from_child(&self) -> Option<Size> {
@@ -110,17 +110,6 @@ impl<E: Element> LayoutElement for RawExpanded<E> {
         self.child.invalidate_layout();
     }
 }
-
-impl<E: Element + 'static> Reconcilable for RawExpanded<E> {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        false
-    }
-}
-
 /// Distribute `remaining` main-axis space across children according to their
 /// flex `weights`.
 ///

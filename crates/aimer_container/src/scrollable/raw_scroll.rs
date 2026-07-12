@@ -7,7 +7,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_macro::Rebuildable;
 use aimer_widget::base::*;
-use aimer_widget::{Element, Reconcilable, try_update_element};
+use aimer_widget::{Element};
 use std::rc::Rc;
 
 #[derive(Rebuildable)]
@@ -188,19 +188,5 @@ impl<E: Element> RawScrollableContainer<E> {
             .fill_color_rect(Vec2d { x: tx, y: ty }, ResolvedSize { width: tw, height: th }, thumb_color, [thumb_radius; 4]);
 
         ctx.canvas.restore();
-    }
-}
-
-impl<E: Element + 'static> Reconcilable for RawScrollableContainer<E> {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
-        if let Some(new) = new_element.as_any().downcast_ref::<RawScrollableContainer<E>>() {
-            new.ctrl.adopt_scroll_state(&self.ctrl);
-            try_update_element(&self.child, &new.child, ctx);
-        }
-        false
     }
 }

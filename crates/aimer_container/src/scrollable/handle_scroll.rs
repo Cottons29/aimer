@@ -509,6 +509,8 @@ impl<E: Element> LayoutElement for RawScrollableContainer<E> {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
         }
-        self.child.computed_size(&child_ctx)
+        let res = self.child.computed_size(&child_ctx);
+        // println!("Content Computed Size: {:?}", res);
+        res
     }
 }

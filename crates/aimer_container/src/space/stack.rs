@@ -1,7 +1,7 @@
 use aimer_attribute::BoxConstraint;
 use aimer_macro::{EventElement, LayoutElement, Rebuildable, WidgetConstructor};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, LayoutElement, Reconcilable, VisitorElement, Widget};
+use aimer_widget::{Drawable, Element, LayoutElement, VisitorElement, Widget};
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum StackDirection {
@@ -80,13 +80,3 @@ impl VisitorElement for RawStackElement {
     }
 }
 
-impl Reconcilable for RawStackElement {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        // TODO: reconcile children by key matching
-        false
-    }
-}

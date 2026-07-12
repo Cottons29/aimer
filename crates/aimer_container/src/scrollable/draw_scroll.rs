@@ -7,6 +7,9 @@ use aimer_widget::{Drawable, Element, LayoutElement};
 
 impl<E: Element> Drawable for RawScrollableContainer<E> {
     fn draw(&self, ctx: &BuildContext) {
+
+        // println!("Scrollable drawing child: {})", self.child.debug_name() );
+
         let (raw_viewport_w, raw_viewport_h) = self.viewport_size(ctx);
         // debug!("View port size: {:?} x {:?}", raw_viewport_w, raw_viewport_h);
         // Cap viewport size to avoid precision issues with f32::MAX in shaders/transforms

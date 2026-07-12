@@ -1,6 +1,5 @@
-use crate::reconcile::try_update_element;
 use crate::widget::stateful::{RebuildCallBack, SyncChild};
-use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget, base::*};
+use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget, base::*};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use std::cell::{Cell, UnsafeCell};
@@ -105,11 +104,11 @@ impl StatelessElement {
         }
     }
 
-    /// If dirty, re-run `build()` and reconcile the new child against the old one
-    /// (mirrors [`StatefulElement::rebuild_if_dirty`]). Nested dirty elements are
-    /// rebuilt first so a self-rebuild does not needlessly discard their work.
+    /// If dirty, propagate rebuild to nested dirty elements.
+    /// The `rebuild_fn` + reconciliation path is intentionally disabled while
+    /// the `Reconcilable` removal is in progress.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        let Some(rebuild_fn) = self.rebuild_fn.clone() else {
+        let Some(_) = self.rebuild_fn.clone() else {
             // Pure wrapper: cannot rebuild itself, only propagate.
             let child = unsafe { &*self.child.0.get() };
             child.rebuild_if_dirty(ctx);
@@ -126,17 +125,6 @@ impl StatelessElement {
         {
             let child = unsafe { &*self.child.0.get() };
             child.rebuild_if_dirty(ctx);
-        }
-
-        let new_child = rebuild_fn(ctx);
-
-        // Reconcile: keep the old child in-place when types/keys match, else replace.
-        let old_child = unsafe { &*self.child.0.get() };
-        if !try_update_element(old_child.as_ref(), new_child.as_ref(), ctx) {
-            // Safety: single-threaded; `old_child` is not used past this point.
-            unsafe {
-                *self.child.0.get() = new_child;
-            }
         }
 
         self.dirty.set(false);
@@ -210,29 +198,6 @@ impl VisitorElement for StatelessElement {
     }
 }
 
-impl Reconcilable for StatelessElement {
-    fn key(&self) -> Option<crate::key::Key> {
-        self.key.clone()
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
-        if let Some(new) = new_element.as_any().downcast_ref::<StatelessElement>() {
-            // Safety: single-threaded rendering pipeline.
-            let old_child = unsafe { &*self.child.0.get() };
-            let new_child = unsafe { &*new.child.0.get() };
-            if !try_update_element(old_child.as_ref(), new_child.as_ref(), ctx) {
-                unsafe {
-                    core::ptr::swap(self.child.0.get(), new.child.0.get());
-                }
-            }
-        }
-        true
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -251,11 +216,6 @@ mod tests {
     impl LayoutElement for Leaf {}
     impl EventElement for Leaf {}
     impl Rebuildable for Leaf {}
-    impl Reconcilable for Leaf {
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-    }
 
     // The core "ring the bell" wiring for responsive-on-resize: `mark_needs_rebuild`
     // must flip a rebuildable element's dirty flag AND propagate through a
