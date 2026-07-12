@@ -16,6 +16,7 @@ pub struct MyList {
     // pub on_switch: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 }
 
+#[derive(Debug)]
 pub struct ListItem {
     id: String,
     text: String,
@@ -82,6 +83,7 @@ impl State<MyList> for MyListState {
 
 
                                 Container!(
+                                    width: 400,
                                     padding: LayoutSpacing::all(Spacing::Px(10)),
                                     child: TextField!(
                                         padding: LayoutSpacing::all(Spacing::Px(10)),
@@ -168,10 +170,12 @@ impl State<MyList> for MyListState {
                                         on_press: {
                                             let updater = self.updater.clone();
                                              move || {
+                                                println!("Button pressed with text: {}", updater.read_state().input_controller.text());
                                                 updater.set_state(|state| {
                                                     let uuid = Uuid::new_v4().to_string();
+                                                    // println!("Button pressed with text: {}", state.input_controller.text());
                                                     state.list.push(ListItem {
-                                                        id: uuid.clone(),
+                                                        id: uuid,
                                                         text: state.input_controller.take(),
                                                     })
                                                 });
@@ -221,16 +225,18 @@ impl State<MyList> for MyListState {
                                     height: 50,
                                     child: Row!(
                                         children: [
-                                            Container!(
-                                                padding: LayoutSpacing!(left: Spacing::Px(10)),
-                                                child: Text!(
-                                                    format!("Item : {}", item.text),
-                                                    text_align: TextAlign::MidLeft,
-                                                    text_style: TextStyle!(
-                                                        color: Colors::Black,
-                                                        font_size: 15,
+                                            Expanded!(
+                                                child: Container!(
+                                                    padding: LayoutSpacing!(left: Spacing::Px(10)),
+                                                    child: Text!(
+                                                        format!("Item : {}", item.text),
+                                                        text_align: TextAlign::MidLeft,
+                                                        text_style: TextStyle!(
+                                                            color: Colors::Black,
+                                                            font_size: 15,
+                                                        )
                                                     )
-                                                )
+                                                ),
                                             ),
                                             Container!(
                                                 width: 100,
@@ -239,9 +245,13 @@ impl State<MyList> for MyListState {
                                                     on_press: {
                                                         let item_id = item.id.clone();
                                                         let updater = self.updater.clone();
-                                                        move || {
-                                                            updater.set_state_with(&item_id, |state, id| {
-                                                                state.list.retain(|i| i.id != id);
+                                                         move || {
+                                                            let another_item_id = item_id.clone();
+                                                            // println!("Clicked on item with id: {}", item_id);
+                                                            // println!("List items: {:#?}", updater.read_state().list);
+                                                            updater.set_state( move |state| {
+                                                                // println!("Deleting item with id: {}", id);
+                                                                state.list.retain(|i| i.id != another_item_id);
                                                             });
                                                         }
                                                     },

@@ -3,6 +3,7 @@ use aimer::macros::widget;
 use aimer::style::*;
 use aimer::AimerApp;
 use aimer::*;
+use aimer::console::debug;
 
 // this is the entry point of the app
 pub fn start_counter() {
@@ -47,7 +48,7 @@ impl State<CounterWidget> for CounterState {
 
     // build the widget with state
     fn build(&self, _: &BuildContext) -> impl Widget {
-        println!("self.count: {}", self.count);
+        debug!("self.count: {}", self.count);
         let updater = self.updater.clone();
         Container!(
             color: Colors::Gray,
@@ -57,22 +58,23 @@ impl State<CounterWidget> for CounterState {
                 vertical_alignment: BoxAlignment::Center,
                 horizontal_alignment: BoxAlignment::Center,
                 children: [
-                    Text!(
-                        "អរគុណ 你哈皮  With State 你好 きみなと  👉",
-                        // "Stateful Counter",
-                        text_align: TextAlign::MidCenter,
-                        text_style: TextStyle!(
-                            font_size: 15,
-                            color: Colors::Black,
-                            font_weight: FontWeight::Bolder,
-                        )
-                    ),
+                    // Text!(
+                    //     "អរគុណ 你哈皮  With State 你好 きみなと  👉",
+                    //     // "Stateful Counter",
+                    //     text_align: TextAlign::MidCenter,
+                    //     text_style: TextStyle!(
+                    //         font_size: 15,
+                    //         color: Colors::Black,
+                    //         font_weight: FontWeight::Bolder,
+                    //     )
+                    // ),
 
 
                     SizedBox!(height: 50),
 
                     Text!(
                         {
+                            debug!("Clicked: {}", self.count);
                             format!("Clicked: {}", self.count)
                         },
                         text_style: TextStyle!(
@@ -95,7 +97,7 @@ impl State<CounterWidget> for CounterState {
                                     state.count += 1;
                                 });
                             },
-                            decoration: BoxDecoration!(background_color: Colors::Yellow),
+                            decoration: BoxDecoration!(background_color: Color::BLUE),
                             child: Container!(
                                 child: Text!(
                                     "Increase",
@@ -108,38 +110,38 @@ impl State<CounterWidget> for CounterState {
                         )
                     ),
 
-                    Container!(
-                        width: 200,
-                        height: 50,
-                        margin: LayoutSpacing!(top : Spacing::Px(10)),
-                        child: Button!(
-                            on_press:  {
-                                let updater = self.updater.clone();
-                                move || {
-
-                                    updater.set_state(|state| {
-                                        state.count -= 1;
-                                    });
-
-                                }
-                            },
-                            on_double_press: {
-                                || {
-                                    console::debug!("Double click on button");
-                                }
-                            },
-                            decoration: BoxDecoration!(background_color: Colors::Yellow),
-                            child: Container!(
-                                child: Text!(
-                                    "Decrease",
-                                    text_align: TextAlign::MidCenter,
-                                    text_style: TextStyle!(
-                                        color: Colors::Black,
-                                    )
-                                )
-                            )
-                        )
-                    ),
+                    // Container!(
+                    //     width: 200,
+                    //     height: 50,
+                    //     margin: LayoutSpacing!(top : Spacing::Px(10)),
+                    //     child: Button!(
+                    //         on_press:  {
+                    //             let updater = self.updater.clone();
+                    //             move || {
+                    //
+                    //                 updater.set_state(|state| {
+                    //                     state.count -= 1;
+                    //                 });
+                    //
+                    //             }
+                    //         },
+                    //         on_double_press: {
+                    //             || {
+                    //                 console::debug!("Double click on button");
+                    //             }
+                    //         },
+                    //         decoration: BoxDecoration!(background_color: Color::BLUE),
+                    //         child: Container!(
+                    //             child: Text!(
+                    //                 "Decrease",
+                    //                 text_align: TextAlign::MidCenter,
+                    //                 text_style: TextStyle!(
+                    //                     color: Colors::Black,
+                    //                 )
+                    //             )
+                    //         )
+                    //     )
+                    // ),
 
                     // Container!(
                     //     width: 200,
