@@ -70,6 +70,7 @@ mod tests {
             .join("aimer");
 
         let another_expected = PathBuf::from(env::var("HOME").unwrap())
+            .join("work")
             .join("aimer")
             .join("aimer");
 
