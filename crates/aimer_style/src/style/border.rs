@@ -2,7 +2,6 @@ use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
-use aimer_macro::Constructor;
 use aimer_widget::Drawable;
 use aimer_widget::base::BuildContext;
 
@@ -26,14 +25,32 @@ pub enum BorderMode {
 
 pub type Stroke = Dimension;
 
-#[derive(Default, Clone, Copy, PartialEq, Debug, Constructor)]
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct BorderSlice {
-    #[constructor(default)]
     pub style: BorderStyle,
-    #[constructor(default, into)]
     pub stroke: Stroke,
-    #[constructor(default, into)]
     pub color: Color,
+}
+
+impl BorderSlice {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn style(mut self, style: BorderStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    pub fn stroke(mut self, stroke: impl Into<Stroke>) -> Self {
+        self.stroke = stroke.into();
+        self
+    }
+
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
+        self.color = color.into();
+        self
+    }
 }
 
 pub fn resolve_dim(dim: Dimension, parent_val: f32, scale: f32) -> f32 {
@@ -44,27 +61,19 @@ pub fn resolve_dim(dim: Dimension, parent_val: f32, scale: f32) -> f32 {
     }
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Debug, Constructor)]
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct BoxBorder {
-    #[constructor(default)]
     pub left: BorderSlice,
-    #[constructor(default)]
     pub right: BorderSlice,
-    #[constructor(default)]
     pub top: BorderSlice,
-    #[constructor(default)]
     pub bottom: BorderSlice,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Debug, Constructor)]
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct BoxOutline {
-    #[constructor(default)]
     pub left: BorderSlice,
-    #[constructor(default)]
     pub right: BorderSlice,
-    #[constructor(default)]
     pub top: BorderSlice,
-    #[constructor(default)]
     pub bottom: BorderSlice,
 }
 
@@ -93,6 +102,30 @@ impl RawBoxBorder {
 }
 
 impl BoxBorder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn left(mut self, left: BorderSlice) -> Self {
+        self.left = left;
+        self
+    }
+
+    pub fn right(mut self, right: BorderSlice) -> Self {
+        self.right = right;
+        self
+    }
+
+    pub fn top(mut self, top: BorderSlice) -> Self {
+        self.top = top;
+        self
+    }
+
+    pub fn bottom(mut self, bottom: BorderSlice) -> Self {
+        self.bottom = bottom;
+        self
+    }
+
     pub fn all(border: BorderSlice) -> Self {
         Self { left: border, right: border, top: border, bottom: border }
     }
@@ -150,6 +183,30 @@ impl BoxBorder {
 }
 
 impl BoxOutline {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn left(mut self, left: BorderSlice) -> Self {
+        self.left = left;
+        self
+    }
+
+    pub fn right(mut self, right: BorderSlice) -> Self {
+        self.right = right;
+        self
+    }
+
+    pub fn top(mut self, top: BorderSlice) -> Self {
+        self.top = top;
+        self
+    }
+
+    pub fn bottom(mut self, bottom: BorderSlice) -> Self {
+        self.bottom = bottom;
+        self
+    }
+
     pub fn all(border: BorderSlice) -> Self {
         Self { left: border, right: border, top: border, bottom: border }
     }

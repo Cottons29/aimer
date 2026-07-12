@@ -1,8 +1,7 @@
 use crate::style::border::resolve_dim;
 use aimer_attribute::Dimension;
-use aimer_macro::Constructor;
 
-#[derive(Default, Clone, Copy, PartialEq, Debug, Constructor)]
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct BorderRadius {
     pub top_left: Dimension,
     pub top_right: Dimension,
@@ -11,6 +10,30 @@ pub struct BorderRadius {
 }
 
 impl BorderRadius {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn top_left(mut self, top_left: impl Into<Dimension>) -> Self {
+        self.top_left = top_left.into();
+        self
+    }
+
+    pub fn top_right(mut self, top_right: impl Into<Dimension>) -> Self {
+        self.top_right = top_right.into();
+        self
+    }
+
+    pub fn bottom_right(mut self, bottom_right: impl Into<Dimension>) -> Self {
+        self.bottom_right = bottom_right.into();
+        self
+    }
+
+    pub fn bottom_left(mut self, bottom_left: impl Into<Dimension>) -> Self {
+        self.bottom_left = bottom_left.into();
+        self
+    }
+
     pub fn resolve(&self, box_width: f32, box_height: f32, scale: f32) -> [f32; 4] {
         [
             resolve_dim(self.top_left, box_width, scale),

@@ -4,7 +4,6 @@ use crate::time::AnimInstant;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
-use aimer_macro::WidgetConstructor;
 use aimer_widget::base::*;
 use aimer_widget::{
     Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
@@ -27,13 +26,11 @@ use std::time::Duration;
 ///     if show_first { text_widget("First") } else { text_widget("Second") },
 /// )
 /// ```
-#[derive(WidgetConstructor)]
 pub struct AnimatedSwitcher<T: Widget + 'static> {
     pub child: T,
     pub duration: Duration,
     pub curve: Curve,
     /// Optional separate curve for the outgoing child. Defaults to `curve`.
-    #[constructor(default)]
     pub switch_out_curve: Option<Curve>,
 }
 

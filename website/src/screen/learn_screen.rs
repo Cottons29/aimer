@@ -7,31 +7,27 @@ use crate::utils::{app_padding, mobile_title};
 /// The `Learn` page rendered inside the app shell's content area.
 #[widget(Stateless)]
 #[derive(Clone)]
-#[constructor(crate = "crate::screen::learn_screen")]
 pub struct LearnPage {}
 
 impl StatelessWidget for LearnPage {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
-        Container!(
-            color: Colors::White,
-            child: Scrollable!(
-                axis: ScrollAxis::Vertical,
-                child: Container!(
-                    padding: app_padding(ctx),
-                    child: Column!(
-                        horizontal_alignment: BoxAlignment::Start,
-                        children: [
-                            SizedBox!(height: 24),
-                            Text!(
-                                "Learn",
-                                text_style: TextStyle!(
-                                    font_size: mobile_title(ctx),
-                                    color: Colors::Black,
-                                    font_weight: FontWeight::Bolder,
-                                    text_decoration: TextDecoration::Underline,
+        Container::new()
+            .color(Color::WHITE)
+            .child(Scrollable::new(Container::new()
+                    .padding(app_padding(ctx))
+                    .child(Column::new()
+                        .horizontal_alignment(BoxAlignment::Start)
+                        .children(vec![
+                            SizedBox::new().height(24).boxed(),
+                            Text::new("Learn")
+                                .text_style(TextStyle::new()
+                                    .font_size(mobile_title(ctx))
+                                    .color(Color::BLACK)
+                                    .font_weight(FontWeight::Bolder)
+                                    .text_decoration(TextDecoration::Underline)
                                 )
-                            ),
-                            SizedBox!(height: 24),
+                                .boxed(),
+                            SizedBox::new().height(24).boxed(),
                             learn_step(
                                 "1. Think in Widgets",
                                 "Every piece of UI is a widget. Learn how Container, Row and Column combine to build any layout you can imagine."
@@ -48,40 +44,33 @@ impl StatelessWidget for LearnPage {
                                 "4. Ship Everywhere",
                                 "The same widget tree runs on macOS, iOS, Android and the Web from a single Rust codebase."
                             ),
-                            SizedBox!(height: 48),
-                        ]
-                    )
-                )
-            )
-        )
+                            SizedBox::new().height(48).boxed(),
+                        ])))
+                .axis(ScrollAxis::Vertical))
     }
 }
 
 /// A single learning step: a bold title above a wrapped body paragraph.
 fn learn_step(title: &str, body: &str) -> Box<dyn Widget> {
-    Container!(
-        padding: LayoutSpacing!(bottom: 24),
-        child: Column!(
-            horizontal_alignment: BoxAlignment::Start,
-            children: [
-                Text!(
-                    title.to_string(),
-                    text_style: TextStyle!(
-                        font_size: 26,
-                        color: Colors::Blue,
-                        font_weight: FontWeight::Bold,
-                    )
-                ),
-                SizedBox!(height: 8),
-                Text!(
-                    body.to_string(),
-                    text_style: TextStyle!(
-                        font_size: 18,
-                        color: Color::BLACK.with_opacity(200),
-                        text_overflow: TextOverflow::Wrap,
-                    )
-                ),
-            ]
+    Container::new()
+        .padding(LayoutSpacing::new().bottom(24))
+        .child(Column::new()
+            .horizontal_alignment(BoxAlignment::Start)
+            .children(vec![
+                Text::new(title.to_string())
+                    .text_style(TextStyle::new()
+                        .font_size(26)
+                        .color(Color::BLUE)
+                        .font_weight(FontWeight::Bold))
+                    .boxed(),
+                SizedBox::new().height(8).boxed(),
+                Text::new(body.to_string())
+                    .text_style(TextStyle::new()
+                        .font_size(18)
+                        .color(Color::BLACK.with_opacity(200))
+                        .text_overflow(TextOverflow::Wrap))
+                    .boxed(),
+            ])
         )
-    )
+        .boxed()
 }

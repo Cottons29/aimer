@@ -49,10 +49,6 @@ impl State<MyAnimatedList> for MyListState {
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
-        // Clean up items whose reverse animation has finished (based on elapsed time).
-        // We spawn this on a separate thread because build() is called while the state
-        // lock is held, and set_state() also needs to acquire that lock — calling it
-        // directly here would deadlock.
         {
             let now = AnimInstant::now();
             let has_dismissed = self.list.iter().any(|item| {
@@ -63,158 +59,132 @@ impl State<MyAnimatedList> for MyListState {
                         .unwrap_or(false)
             });
             if has_dismissed {
-                // let updater = self.updater.clone();
-                // let cleanup = move || {
-                //     updater.set_state(|state| {
-                //         let now = AnimInstant::now();
-                //         state.list.retain(|item| {
-                //             !(item.pending_removal
-                //                 && item
-                //                     .removal_started_at
-                //                     .map(|t| now.duration_since(t) >= ANIM_DURATION)
-                //                     .unwrap_or(false))
-                //         });
-                //     });
-                // };
-                // #[cfg(target_arch = "wasm32")]
-                // wasm_bindgen_futures::spawn_local(async move {
-                //     cleanup();
-                // });
-                // #[cfg(not(target_arch = "wasm32"))]
-                // std::thread::spawn(move || {
-                //     cleanup();
-                // });
             }
         }
 
-        Container!(
-            child: Column!(
-                children: [
-                    Container!(
-                        height: 90.0,
-                        box_decoration: BoxDecoration!(
-                            background_color: Colors::Gray.alpha(120),
-                        ),
-                        child: Row!(
-                            vertical_alignment: BoxAlignment::Center,
-                            children: [
-                                Container!(
-                                    child: Text!(
-                                        format!("Item in List: {}", self.list.iter().filter(|i| !i.pending_removal).count()),
-                                        text_align: TextAlign::MidCenter,
-                                        text_style: TextStyle!(
-                                            font_size: 20,
-                                            color: Colors::Black,
-                                        )
-                                    )
-                                ),
-                                Container!(
-                                     height: 50,
-                                     width: 200,
-                                    child: Button!(
-                                        on_press: {
-                                            let updater = self.updater.clone();
-                                            move || {
-                                                updater.set_state(|state| {
-                                                    let uuid = Uuid::new_v4().to_string();
-                                                    let mut controller = AnimationController::new(
-                                                        Duration::from_millis(1000),
-                                                        Curve::EaseOut,
-                                                    );
-                                                    controller.forward();
-                                                    state.list.push(ListItem {
-                                                        id: uuid.clone(),
-                                                        text: uuid,
-                                                        controller,
-                                                        pending_removal: false,
-                                                        removal_started_at: None,
+        Container::new()
+            .child(
+                Column::new()
+                    .children(vec![
+                        Container::new()
+                            .height(Dimension::Px(90.0))
+                            .box_decoration(BoxDecoration::new()
+                                .background_color(Colors::Gray.alpha(120)))
+                            .child(
+                                Row::new()
+                                    .vertical_alignment(BoxAlignment::Center)
+                                    .children(vec![
+                                        Container::new()
+                                            .child(
+                                                Text::new(format!("Item in List: {}", self.list.iter().filter(|i| !i.pending_removal).count()))
+                                                    .text_align(TextAlign::MidCenter)
+                                                    .text_style(TextStyle::new()
+                                                        .font_size(20)
+                                                        .color(Colors::Black))
+                                            ).boxed(),
+                                        Container::new()
+                                             .height(Dimension::Px(50.0))
+                                             .width(Dimension::Px(200.0))
+                                            .child(
+                                                Button::new()
+                                                    .on_press({
+                                                        let updater = self.updater.clone();
+                                                        move || {
+                                                            updater.set_state(|state| {
+                                                                let uuid = Uuid::new_v4().to_string();
+                                                                let mut controller = AnimationController::new(
+                                                                    Duration::from_millis(1000),
+                                                                    Curve::EaseOut,
+                                                                );
+                                                                controller.forward();
+                                                                state.list.push(ListItem {
+                                                                    id: uuid.clone(),
+                                                                    text: uuid,
+                                                                    controller,
+                                                                    pending_removal: false,
+                                                                    removal_started_at: None,
+                                                                })
+                                                            });
+                                                        }
                                                     })
-                                                });
-                                            }
-                                        },
-                                        decoration: BoxDecoration!(background_color: Colors::Gray),
-                                        child: Container!(
-                                            child: Text!(
-                                                "Add Item",
-                                                text_align: TextAlign::MidCenter,
-                                                text_style: TextStyle!(
-                                                    color: Colors::Black,
-                                                    font_size: 15,
-                                                )
-                                            )
-                                        )
-                                    )
-                                ),
-                            ]
-                        )
-                    ),
-                    Scrollable!(
-                        child: Column!(
-                            children: self.list.iter().map(|item| {
-                                Animated! (
-                                    controller: item.controller.clone(),
-                                    effect: AnimationEffect::SlideX { from: -1.0, to: 0.0 },
-                                    child: Container!(
-                                        margin: LayoutSpacing!(top: Spacing::Px(10)),
-                                        color: Colors::Blue.alpha(100),
-                                        height: 50,
-                                        child: Row!(
-                                            children: [
-                                                Container!(
-                                                    padding: LayoutSpacing!(left: Spacing::Px(10)),
-                                                    child: Text!(
-                                                        format!("Item : {}", item.text),
-                                                        text_align: TextAlign::MidLeft,
-                                                        text_style: TextStyle!(
-                                                            color: Colors::Black,
-                                                            font_size: 15,
-                                                        )
-                                                    )
-                                                ),
-                                                Container!(
-                                                    width: 200,
-                                                    height: 50,
-                                                    child: Button!(
-                                                        on_press: {
-                                                            let item_id = item.id.clone();
-                                                            let updater = self.updater.clone();
-                                                            move || {
-                                                                #[allow(clippy::collapsible_if)]
-                                                                updater.set_state_with(&item_id, |state, id| {
-                                                                    if let Some(item) = state.list.iter_mut().find(|i| i.id == id) {
-                                                                        if !item.pending_removal {
-                                                                            item.pending_removal = true;
-                                                                            item.removal_started_at = Some(AnimInstant::now());
-                                                                            item.controller.reverse();
-                                                                        }
-                                                                    }
-                                                                });
-                                                            }
-                                                        },
-                                                        decoration: BoxDecoration!(background_color: Colors::Gray),
-                                                        child: Container!(
-                                                            height: 50,
-                                                            width: 200,
-                                                            child: Text!(
-                                                                "Delete",
-                                                                text_align: TextAlign::MidCenter,
-                                                                text_style: TextStyle!(
-                                                                    color: Colors::Black,
-                                                                    font_size: 15,
-                                                                )
+                                                    .decoration(BoxDecoration::new().background_color(Colors::Gray))
+                                                    .child(
+                                                        Container::new()
+                                                            .child(
+                                                                Text::new("Add Item")
+                                                                    .text_align(TextAlign::MidCenter)
+                                                                    .text_style(TextStyle::new()
+                                                                        .color(Colors::Black)
+                                                                        .font_size(15))
                                                             )
-                                                        )
                                                     )
-                                                )
-                                            ]
-                                        )
-                                    )
+                                            ).boxed(),
+                                    ]).boxed()
+                            ).boxed(),
+                        Scrollable::new(
+                            Column::new()
+                                .children(self.list.iter().map(|item| {
+                                    Animated::new(
+                                        item.controller.clone(),
+                                        AnimationEffect::SlideX { from: -1.0, to: 0.0 },
+                                        Container::new()
+                                            .margin(LayoutSpacing { top: Spacing::Px(10), ..Default::default() })
+                                            .color(Colors::Blue.alpha(100).into())
+                                            .height(Dimension::Px(50.0))
+                                            .child(
+                                                Row::new()
+                                                    .children(vec![
+                                                        Container::new()
+                                                            .padding(LayoutSpacing { left: Spacing::Px(10), ..Default::default() })
+                                                            .child(
+                                                                Text::new(format!("Item : {}", item.text))
+                                                                    .text_align(TextAlign::MidLeft)
+                                                                    .text_style(TextStyle::new()
+                                                                        .color(Colors::Black)
+                                                                        .font_size(15))
+                                                            ).boxed(),
+                                                        Container::new()
+                                                            .width(Dimension::Px(200.0))
+                                                            .height(Dimension::Px(50.0))
+                                                            .child(
+                                                                Button::new()
+                                                                    .on_press({
+                                                                        let item_id = item.id.clone();
+                                                                        let updater = self.updater.clone();
+                                                                        move || {
+                                                                            #[allow(clippy::collapsible_if)]
+                                                                            updater.set_state_with(&item_id, |state, id| {
+                                                                                if let Some(item) = state.list.iter_mut().find(|i| i.id == id) {
+                                                                                    if !item.pending_removal {
+                                                                                        item.pending_removal = true;
+                                                                                        item.removal_started_at = Some(AnimInstant::now());
+                                                                                        item.controller.reverse();
+                                                                                    }
+                                                                                }
+                                                                            });
+                                                                        }
+                                                                    })
+                                                                    .decoration(BoxDecoration::new().background_color(Colors::Gray))
+                                                                    .child(
+                                                                        Container::new()
+                                                                            .height(Dimension::Px(50.0))
+                                                                            .width(Dimension::Px(200.0))
+                                                                            .child(
+                                                                                Text::new("Delete")
+                                                                                    .text_align(TextAlign::MidCenter)
+                                                                                    .text_style(TextStyle::new()
+                                                                                        .color(Colors::Black)
+                                                                                        .font_size(15))
+                                                                            )
+                                                                    )
+                                                            ).boxed(),
+                                                    ]).boxed()
+                                            )
+                                    ).boxed()
+                                }).collect::<Vec<Box<dyn Widget>>>()
                                 )
-                            }).collect::<Vec<Box<dyn Widget>>>()
-                        )
-                    )
-                ]
+                        ).boxed()
+                    ]).boxed()
             )
-        )
     }
 }

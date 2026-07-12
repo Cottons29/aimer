@@ -3,34 +3,23 @@ use crate::gesture::gesture_detector::GestureDetector;
 use crate::gesture::{DragCallback, DragUpdateCallback, ScaleCallback, ScrollCallback, SwipeCallback};
 use crate::mouse_region::{MouseRegion, SharedPointerState};
 use aimer_attribute::CacheBounds;
-use aimer_macro::WidgetConstructor;
 use aimer_style::TextStyle;
 use aimer_text::Text;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{Element, State, StateUpdater, StatefulElement, StatefulWidget, Widget};
 use std::rc::Rc;
 
-#[derive(WidgetConstructor, Clone)]
+#[derive(Clone)]
 pub struct TextButton {
-    #[constructor(default)]
     disabled: bool,
-    #[constructor(first, into)]
     label: Rc<str>,
-    #[constructor(default)]
     color: Option<Color>,
-    #[constructor(default)]
     hover_color: Option<Color>,
-    #[constructor(default)]
     disabled_color: Option<Color>,
-    #[constructor(default)]
     style: TextStyle,
-    #[constructor(default)]
     hover_style: TextStyle,
-    #[constructor(default)]
     disabled_style: TextStyle,
-    #[constructor(default, into)]
     on_press: VoidCallback,
-    #[constructor(default, into)]
     on_double_press: VoidCallback,
 }
 
@@ -38,6 +27,66 @@ impl TextButton {
     pub const TEXT_COLOR: Color = Color::BLUE;
     pub const HOVER_COLOR: Color = Color::BLUE.lighten(0.6);
     pub const DISABLED_COLOR: Color = Color::GRAY;
+
+    pub fn new(label: impl Into<Rc<str>>) -> Self {
+        Self {
+            disabled: false,
+            label: label.into(),
+            color: None,
+            hover_color: None,
+            disabled_color: None,
+            style: TextStyle::default(),
+            hover_style: TextStyle::default(),
+            disabled_style: TextStyle::default(),
+            on_press: VoidCallback::default(),
+            on_double_press: VoidCallback::default(),
+        }
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
+        self.color = Some(color.into());
+        self
+    }
+
+    pub fn hover_color(mut self, hover_color: impl Into<Color>) -> Self {
+        self.hover_color = Some(hover_color.into());
+        self
+    }
+
+    pub fn disabled_color(mut self, disabled_color: impl Into<Color>) -> Self {
+        self.disabled_color = Some(disabled_color.into());
+        self
+    }
+
+    pub fn style(mut self, style: TextStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    pub fn hover_style(mut self, hover_style: TextStyle) -> Self {
+        self.hover_style = hover_style;
+        self
+    }
+
+    pub fn disabled_style(mut self, disabled_style: TextStyle) -> Self {
+        self.disabled_style = disabled_style;
+        self
+    }
+
+    pub fn on_press(mut self, on_press: impl Into<VoidCallback>) -> Self {
+        self.on_press = on_press.into();
+        self
+    }
+
+    pub fn on_double_press(mut self, on_double_press: impl Into<VoidCallback>) -> Self {
+        self.on_double_press = on_double_press.into();
+        self
+    }
 }
 
 impl Widget for TextButton {
@@ -137,10 +186,8 @@ impl State<TextButton> for ButtonState {
                 on_swipe: SwipeCallback::default(),
                 on_scroll: ScrollCallback::default(),
                 on_scale: ScaleCallback::default(),
-                child: Text!(
-                    self.widget.label.clone(),
-                    text_style: text_style,
-                ),
+                child: Text::new(self.widget.label.clone())
+                    .text_style(text_style),
             },
         }
     }

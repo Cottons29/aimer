@@ -42,8 +42,6 @@ pub mod animation {
 
 // Macro re-export
 pub mod macros {
-    pub use aimer_macro::Constructor;
-    pub use aimer_macro::WidgetConstructor;
     pub use aimer_macro::main;
     pub use aimer_macro::widget;
     pub use aimer_macro::key;

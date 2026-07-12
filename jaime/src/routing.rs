@@ -78,7 +78,7 @@ impl Router for TabRoute {
 /// branch's top route renders. A real app would add a bottom nav bar here whose
 /// buttons call `StatefulShellController::<TabRoute>::of(ctx).go_branch(i)`.
 fn tab_frame(_: &BuildContext) -> Box<dyn Widget> {
-    Box::new(Container!(child: Outlet))
+    Box::new(Container::new().child(Outlet))
 }
 
 /// Builds the widget for a given tab route (each `TabRoute` is itself a widget).
@@ -104,7 +104,7 @@ impl Router for AppRouting {
         match self {
             AppRouting::Home => Box::new(HomeWidget {}),
             AppRouting::Settings => Box::new(SettingPage {}),
-            AppRouting::Profile { name } => Box::new(ProfilePage! ( name: name.clone() )),
+            AppRouting::Profile { name } => Box::new(ProfilePage::new(name.clone())),
             AppRouting::Search { .. } => Box::new(HomeWidget {}),
             AppRouting::Login => Box::new(HomeWidget {}),
             AppRouting::Admin => Box::new(HomeWidget {}),
@@ -112,7 +112,7 @@ impl Router for AppRouting {
                 let child = child.clone();
                 // Persistent shell frame: a Container wrapping the Outlet where
                 // the active dashboard child route renders.
-                Shell::new(Container!(child: Outlet), move |_| Box::new(child.clone())).boxed()
+                Shell::new(Container::new().child(Outlet), move |_| Box::new(child.clone())).boxed()
             }
         }
     }

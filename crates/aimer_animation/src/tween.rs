@@ -1,5 +1,4 @@
 use crate::animatable::Animatable;
-use aimer_macro::Constructor;
 
 /// Defines a range between two values of type `T` for animation.
 ///
@@ -11,7 +10,7 @@ use aimer_macro::Constructor;
 /// let tween = Tween::new(0.0f32, 100.0);
 /// let value = tween.lerp(0.5); // 50.0
 /// ```
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone)]
 pub struct Tween<T: Animatable> {
     pub begin: T,
     pub end: T,
