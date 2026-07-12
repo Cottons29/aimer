@@ -1,5 +1,5 @@
 use aimer_attribute::BoxConstraint;
-use aimer_macro::{EventElement, LayoutElement, Rebuildable, WidgetConstructor};
+use aimer_macro::{EventElement, LayoutElement, Rebuildable};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Drawable, Element, LayoutElement, VisitorElement, Widget};
 
@@ -10,11 +10,33 @@ pub enum StackDirection {
     Reverse,
     Inherit,
 }
-#[derive(WidgetConstructor)]
 pub struct Stack {
     pub children: Vec<Box<dyn Widget>>,
-    #[constructor(default)]
     pub direction: StackDirection,
+}
+
+impl Stack {
+    pub fn new() -> Self {
+        Self {
+            children: Vec::new(),
+            direction: StackDirection::default(),
+        }
+    }
+
+    pub fn children(mut self, children: Vec<Box<dyn Widget>>) -> Self {
+        self.children = children;
+        self
+    }
+
+    pub fn add_child(mut self, child: impl Widget + 'static) -> Self {
+        self.children.push(Box::new(child));
+        self
+    }
+
+    pub fn direction(mut self, direction: StackDirection) -> Self {
+        self.direction = direction;
+        self
+    }
 }
 
 impl Widget for Stack {

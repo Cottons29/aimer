@@ -2,32 +2,72 @@ use crate::ZeroSizedBox;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_macro::{EventElement, Rebuildable, WidgetConstructor};
+use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::*;
 use aimer_widget::{Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget, base::Color};
 
-#[derive(WidgetConstructor)]
 pub struct SizedBox<W: Widget + 'static = ZeroSizedBox> {
-    #[constructor(default, into)]
     width: Dimension,
-    #[constructor(default, into)]
     height: Dimension,
-    #[constructor(default, into)]
     color: Color,
-    #[constructor(default = SizedBox::PLACE_HOLDER)]
-    child: W,
+    child: Option<W>,
+}
+
+
+impl Default for SizedBox {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SizedBox {
-    pub const PLACE_HOLDER: ZeroSizedBox = ZeroSizedBox;
+    pub fn new() -> Self {
+        Self {
+            width: Dimension::Auto,
+            height: Dimension::Auto,
+            color: Color::Transparent,
+            child: None,
+        }
+    }
+
+    pub fn width(mut self, width:  impl Into<Dimension> ) -> Self {
+        self.width = width.into();
+        self
+    }
+
+    pub fn height(mut self, height: impl Into<Dimension> ) -> Self {
+        self.height = height.into();
+        self
+    }
+
+    pub fn color(mut self, color: impl Into<Color> ) -> Self {
+        self.color = color.into();
+        self
+    }
+
+    pub fn child<W: Widget>(self, child: W) -> SizedBox<W> {
+        SizedBox {
+            width: self.width,
+            height: self.height,
+            color: self.color,
+            child: Some(child),
+        }
+    }
+}
+
+
+
+impl SizedBox {
+    pub const PLACE_HOLDER: Option<ZeroSizedBox> = Some(ZeroSizedBox);
 }
 
 impl<W: Widget + 'static> Widget for SizedBox<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+        let child = self.child.as_ref().map(|child| child.to_element(ctx)).unwrap_or(ZeroSizedBox.to_element(ctx));
         Box::new(RawSizedBox {
             width: self.width,
             height: self.height,
-            child: self.child.to_element(ctx),
+            child,
             color: self.color,
             cache: LayoutCache::new(),
             debug_name: "SizedBox",

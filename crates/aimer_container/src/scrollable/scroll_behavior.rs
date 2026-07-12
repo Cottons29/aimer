@@ -1,17 +1,13 @@
 use aimer_attribute::position::Vec2d;
-use aimer_macro::Constructor;
 
-#[derive(Constructor, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct ScrollBehavior {
     pub max_scroll: Vec2d,
     pub min_scroll: Vec2d,
     pub velocity: Vec2d,
     pub scroll_offset: Vec2d,
-    #[constructor(default = true)]
     pub bouncy: bool,
-    #[constructor(default = 0.35)]
     pub bouncy_resistance: f32,
-    #[constructor(default = 0.38)]
     pub bouncy_recovery: f32,
     /// Per-120 Hz-frame velocity retention during a fling.
     ///
@@ -23,7 +19,6 @@ pub struct ScrollBehavior {
     /// per 60 fps frame, since `0.999^2 = 0.998`).  At 60 fps this is applied
     /// as `0.999^2` per frame.
     /// Velocity at 1 s: 89 %, 2 s: 79 %, 5 s: 55 %, 10 s: 30 %.
-    #[constructor(default = ScrollBehavior::DEFAULT_FRICTION)]
     pub friction: f32,
 }
 

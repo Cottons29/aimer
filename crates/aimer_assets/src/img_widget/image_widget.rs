@@ -5,23 +5,49 @@ use aimer_attribute::Dimension;
 use aimer_container::ZeroSizedBox;
 use aimer_style::BoxFit;
 use aimer_widget::base::{BuildContext, Color, Colors, ResolvedSize, Size, Vec2d};
-use aimer_widget::{Constructor, Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget};
+use aimer_widget::{Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget};
 use std::cell::{Cell, UnsafeCell};
 use std::path::PathBuf;
 use aimer_macro::{EventElement, Rebuildable};
 
-#[derive(Constructor)]
 pub struct Image {
-    #[constructor(first, into)]
     pub path: PathBuf,
-    #[constructor(default, into)]
     pub width: Dimension,
-    #[constructor(default, into)]
     pub height: Dimension,
-    #[constructor(default)]
     pub fit: BoxFit,
-    #[constructor(default = 1.0, into)]
     pub scale: f32,
+}
+
+impl Image {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            width: Dimension::default(),
+            height: Dimension::default(),
+            fit: BoxFit::default(),
+            scale: 1.0,
+        }
+    }
+
+    pub fn width(mut self, width: impl Into<Dimension>) -> Self {
+        self.width = width.into();
+        self
+    }
+
+    pub fn height(mut self, height: impl Into<Dimension>) -> Self {
+        self.height = height.into();
+        self
+    }
+
+    pub fn fit(mut self, fit: BoxFit) -> Self {
+        self.fit = fit;
+        self
+    }
+
+    pub fn scale(mut self, scale: impl Into<f32>) -> Self {
+        self.scale = scale.into();
+        self
+    }
 }
 
 impl Widget for Image {

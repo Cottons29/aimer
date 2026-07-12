@@ -1,18 +1,36 @@
-use aimer_macro::Constructor;
-
-#[derive(Constructor, Default, Clone, Copy)]
+#[derive(Default, Clone, Copy)]
 pub struct LayoutSpacing {
-    #[constructor(default, into)]
     pub top: Spacing,
-    #[constructor(default, into)]
     pub bottom: Spacing,
-    #[constructor(default, into)]
     pub left: Spacing,
-    #[constructor(default, into)]
     pub right: Spacing,
 }
 
 impl LayoutSpacing {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn top(mut self, top: impl Into<Spacing>) -> Self {
+        self.top = top.into();
+        self
+    }
+
+    pub fn bottom(mut self, bottom: impl Into<Spacing>) -> Self {
+        self.bottom = bottom.into();
+        self
+    }
+
+    pub fn left(mut self, left: impl Into<Spacing>) -> Self {
+        self.left = left.into();
+        self
+    }
+
+    pub fn right(mut self, right: impl Into<Spacing>) -> Self {
+        self.right = right.into();
+        self
+    }
+
     /// For Top and Bottom
     pub const fn vertical(space: Spacing) -> Self {
         Self { top: space, bottom: space, left: Spacing::DEFAULT_VALUE, right: Spacing::DEFAULT_VALUE }

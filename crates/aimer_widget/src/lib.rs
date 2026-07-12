@@ -43,4 +43,4 @@ pub use crate::layout_cache::LayoutCache;
 pub use crate::widget::stateful::{State, StateUpdater, StatefulElement, StatefulWidget};
 pub use crate::widget::stateless::{NamedWidget, StatelessElement, StatelessWidget};
 pub use aimer_canvas::TextOverflowMode;
-pub use aimer_macro::{Constructor, WidgetConstructor, main, widget};
+pub use aimer_macro::{main, widget};

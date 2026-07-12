@@ -36,20 +36,17 @@ impl StatelessWidget for ColorSync {
         let children: Vec<Box<dyn Widget>> = colors
             .iter()
             .map(|color| {
-                SizedBox!(
-                    width: Dimension::Percent(100.0),
-                    color: *color,
-                )
+                SizedBox::new()
+                    .width(Dimension::Percent(100.0))
+                    .color(*color)
+                    .boxed()
             })
             .collect();
-        Container!(
-            padding: LayoutSpacing::all(Spacing::Px(10)),
-            child: Row!(
-                children: children,
+        Container::new()
+            .padding(LayoutSpacing::all(Spacing::Px(10)))
+            .child(
+                Row::new()
+                    .children(children),
             )
-        )
-        // Row!(
-        //     children: children,
-        // )
     }
 }

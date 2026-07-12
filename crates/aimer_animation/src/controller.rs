@@ -2,7 +2,6 @@ use std::time::Duration;
 use std::sync::{Arc, Mutex};
 use crate::time::AnimInstant;
 use crate::curve::Curve;
-use aimer_macro::Constructor;
 
 /// The current status of an animation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,26 +33,18 @@ pub trait StatusListener: Send + Sync {
 /// Register a [`StatusListener`] to be notified when the animation status changes
 /// (e.g. when it completes or is dismissed). Listeners are stored as `Arc<dyn StatusListener>`
 /// so the controller remains `Clone`-able (clones share the same listener set).
-#[derive(Clone, Constructor)]
+#[derive(Clone)]
 pub struct AnimationController {
-    #[constructor(default = "Duration::from_millis(300)")]
     pub duration: Duration,
-    #[constructor(default)]
     pub curve: Curve,
-    #[constructor(default)]
     pub value: f32,
-    #[constructor(default)]
     pub status: AnimationStatus,
-    #[constructor(default)]
     start_time: Option<AnimInstant>,
     /// Whether the animation should repeat indefinitely.
-    #[constructor(default)]
     pub repeat: bool,
     /// Whether the animation should reverse on each repeat (ping-pong).
-    #[constructor(default)]
     pub auto_reverse: bool,
     /// Registered status listeners (shared across clones).
-    #[constructor(default)]
     listeners: Arc<Mutex<Vec<Arc<dyn StatusListener>>>>,
 }
 

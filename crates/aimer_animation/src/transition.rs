@@ -3,7 +3,6 @@ use crate::time::AnimInstant;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
-use aimer_macro::WidgetConstructor;
 use aimer_widget::base::*;
 use aimer_widget::{
     Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
@@ -19,7 +18,6 @@ use std::sync::{Arc, Mutex};
 /// Animates the opacity of its child based on the controller's value.
 ///
 /// At value 0.0 the child is fully transparent; at 1.0 fully opaque.
-#[derive(WidgetConstructor)]
 pub struct FadeTransition<T: Widget + 'static> {
     pub opacity: AnimationController,
     pub child: T,
@@ -119,7 +117,6 @@ impl_transition_element!(
 ///
 /// The child is translated by `offset * controller_value` pixels.
 /// At value 0.0 the child is at the offset position; at 1.0 it's at its natural position.
-#[derive(WidgetConstructor)]
 pub struct SlideTransition<T: Widget + 'static> {
     pub position: AnimationController,
     /// The offset direction in pixels at value 0.0. At value 1.0 the child is at (0,0).
@@ -213,7 +210,6 @@ impl LayoutElement for SlideTransitionElement {
 // ---------------------------------------------------------------------------
 
 /// Animates uniform scale for its child based on the controller's value.
-#[derive(WidgetConstructor)]
 pub struct ScaleTransition<T: Widget + 'static> {
     pub scale: AnimationController,
     pub child: T,
@@ -305,7 +301,6 @@ impl LayoutElement for ScaleTransitionElement {
 /// Animates rotation (in full turns) for its child based on the controller's value.
 ///
 /// At value 0.0 the child is at 0 rotation; at 1.0 it has completed one full turn (2π radians).
-#[derive(WidgetConstructor)]
 pub struct RotationTransition<T: Widget + 'static> {
     pub turns: AnimationController,
     pub child: T,

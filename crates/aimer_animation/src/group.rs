@@ -1,13 +1,12 @@
 use std::time::Duration;
 use crate::controller::{AnimationController, AnimationStatus};
 use crate::time::AnimInstant;
-use aimer_macro::Constructor;
 
 /// Runs multiple animations simultaneously.
 ///
 /// All controllers start at the same time. The group completes when
 /// the last controller completes.
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone)]
 pub struct ParallelAnimation {
     pub controllers: Vec<AnimationController>,
 }
@@ -76,10 +75,9 @@ impl ParallelAnimation {
 /// Runs animations one after another.
 ///
 /// The next controller starts when the previous one completes.
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone)]
 pub struct SequentialAnimation {
     pub controllers: Vec<AnimationController>,
-    #[constructor(default)]
     current_index: usize,
 }
 
@@ -157,13 +155,11 @@ impl SequentialAnimation {
 /// Runs animations with a stagger delay between each start.
 ///
 /// Each controller starts `stagger_delay` after the previous one.
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone)]
 pub struct StaggeredAnimation {
     pub controllers: Vec<AnimationController>,
     pub stagger_delay: Duration,
-    #[constructor(default)]
     start_time: Option<AnimInstant>,
-    #[constructor(default)]
     started: Vec<bool>,
 }
 

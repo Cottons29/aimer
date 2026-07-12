@@ -1,29 +1,79 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_attribute::{BoxConstraint, CacheBounds};
-use aimer_macro::{Rebuildable, WidgetConstructor};
+use aimer_macro::Rebuildable;
 use aimer_style::LayoutSpacing;
 use aimer_widget::{Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement, Widget, base::BuildContext};
+use crate::ZeroSizedBox;
 
 use crate::flex::flex_child::distribute_flex_space;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 
 /// a flexible layout container
 #[allow(dead_code)]
-#[derive(WidgetConstructor)]
-pub struct Flex<W: Widget + 'static> {
-    #[constructor(default)]
+pub struct Flex<W: Widget + 'static = ZeroSizedBox> {
     pub(crate) direction: LayoutDirection,
-    #[constructor(default)]
     pub(crate) vertical_alignment: BoxAlignment,
-    #[constructor(default)]
     pub(crate) horizontal_alignment: BoxAlignment,
-    #[constructor(default)]
     pub(crate) gaps: LayoutSpacing,
-    #[constructor(default)]
     pub(crate) overflow: OverflowBehavior,
-    #[constructor(default)]
     pub(crate) children: Vec<W>,
+}
+
+impl Flex {
+    pub fn new() -> Self {
+        Self {
+            direction: LayoutDirection::default(),
+            vertical_alignment: BoxAlignment::default(),
+            horizontal_alignment: BoxAlignment::default(),
+            gaps: LayoutSpacing::default(),
+            overflow: OverflowBehavior::default(),
+            children: Vec::new(),
+        }
+    }
+}
+
+impl<W: Widget + 'static> Flex<W> {
+    pub fn direction(mut self, direction: LayoutDirection) -> Self {
+        self.direction = direction;
+        self
+    }
+
+    pub fn vertical_alignment(mut self, alignment: BoxAlignment) -> Self {
+        self.vertical_alignment = alignment;
+        self
+    }
+
+    pub fn horizontal_alignment(mut self, alignment: BoxAlignment) -> Self {
+        self.horizontal_alignment = alignment;
+        self
+    }
+
+    pub fn gaps(mut self, gaps: impl Into<LayoutSpacing>) -> Self {
+        self.gaps = gaps.into();
+        self
+    }
+
+    pub fn overflow(mut self, overflow: OverflowBehavior) -> Self {
+        self.overflow = overflow;
+        self
+    }
+
+    pub fn children<C: Widget>(self, children: Vec<C>) -> Flex<C> {
+        Flex {
+            direction: self.direction,
+            vertical_alignment: self.vertical_alignment,
+            horizontal_alignment: self.horizontal_alignment,
+            gaps: self.gaps,
+            overflow: self.overflow,
+            children,
+        }
+    }
+
+    pub fn add_child(mut self, child: W) -> Self {
+        self.children.push(child);
+        self
+    }
 }
 
 impl<W: Widget + 'static> Widget for Flex<W> {

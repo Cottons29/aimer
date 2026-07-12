@@ -3,10 +3,10 @@ use crate::gesture::gesture_detector::GestureDetector;
 use crate::gesture::{DragCallback, DragUpdateCallback, ScaleCallback, ScrollCallback, SwipeCallback};
 use crate::mouse_region::{MouseRegion, PointerState};
 use aimer_attribute::CacheBounds;
-use aimer_container::Container;
+use aimer_container::{Container, ZeroSizedBox};
 use aimer_style::BoxDecoration;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, State, StateUpdater, StatefulElement, StatefulWidget, Widget, WidgetConstructor};
+use aimer_widget::{Element, State, StateUpdater, StatefulElement, StatefulWidget, Widget};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -16,19 +16,12 @@ use std::rc::Rc;
 /// provides gesture callbacks for tap, double-tap, long-press, right-click,
 /// swipe, scroll, and scale. It dims when disabled.
 #[allow(dead_code)]
-#[derive(WidgetConstructor)]
-pub struct Button<W: Widget + 'static> {
-    #[constructor(default, into)]
+pub struct Button<W: Widget + 'static = ZeroSizedBox> {
     pub on_press: VoidCallback,
-    #[constructor(default, into)]
     pub on_long_press: VoidCallback,
-    #[constructor(default, into)]
     pub on_double_press: VoidCallback,
-    #[constructor(default, into)]
     pub on_right_press: VoidCallback,
-    #[constructor(default)]
     pub decoration: BoxDecoration,
-    #[constructor(default)]
     pub is_disabled: bool,
     child: Rc<W>,
 }
@@ -43,6 +36,64 @@ pub struct ButtonState<W: Widget + 'static> {
     current_state: Rc<Cell<PointerState>>,
     state_updater: StateUpdater<Self>,
     child: Rc<W>,
+}
+
+impl Button {
+    pub fn new() -> Self {
+        Self {
+            on_press: VoidCallback::default(),
+            on_long_press: VoidCallback::default(),
+            on_double_press: VoidCallback::default(),
+            on_right_press: VoidCallback::default(),
+            decoration: BoxDecoration::default(),
+            is_disabled: false,
+            child: Rc::new(ZeroSizedBox),
+        }
+    }
+}
+
+impl<W: Widget + 'static> Button<W> {
+    pub fn on_press(mut self, on_press: impl Into<VoidCallback>) -> Self {
+        self.on_press = on_press.into();
+        self
+    }
+
+    pub fn on_long_press(mut self, on_long_press: impl Into<VoidCallback>) -> Self {
+        self.on_long_press = on_long_press.into();
+        self
+    }
+
+    pub fn on_double_press(mut self, on_double_press: impl Into<VoidCallback>) -> Self {
+        self.on_double_press = on_double_press.into();
+        self
+    }
+
+    pub fn on_right_press(mut self, on_right_press: impl Into<VoidCallback>) -> Self {
+        self.on_right_press = on_right_press.into();
+        self
+    }
+
+    pub fn decoration(mut self, decoration: BoxDecoration) -> Self {
+        self.decoration = decoration;
+        self
+    }
+
+    pub fn is_disabled(mut self, is_disabled: bool) -> Self {
+        self.is_disabled = is_disabled;
+        self
+    }
+
+    pub fn child<C: Widget>(self, child: C) -> Button<C> {
+        Button {
+            on_press: self.on_press,
+            on_long_press: self.on_long_press,
+            on_double_press: self.on_double_press,
+            on_right_press: self.on_right_press,
+            decoration: self.decoration,
+            is_disabled: self.is_disabled,
+            child: Rc::new(child),
+        }
+    }
 }
 
 impl<W: Widget + 'static> StatefulWidget for Button<W> {
@@ -122,10 +173,9 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
                 on_swipe: SwipeCallback::default(),
                 on_scroll: ScrollCallback::default(),
                 on_scale: ScaleCallback::default(),
-                child: Container! {
-                    box_decoration: decor,
-                    child: child as Rc<dyn Widget>,
-                },
+                child: Container::new()
+                    .box_decoration(decor)
+                    .child(child as Rc<dyn Widget>),
             },
         }
     }

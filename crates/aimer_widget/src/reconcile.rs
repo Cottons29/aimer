@@ -1,12 +1,6 @@
 use crate::base::BuildContext;
 use crate::components::element::Element;
 
-
-
-
-
-
-
 /// Collect an element's children as exposed for event dispatch. This is the
 /// traversal `carry_child_state` walks to reach nested state-owning elements
 /// (e.g. a `Scrollable` inside a `Container`), so single-child wrappers must
@@ -48,9 +42,6 @@ impl crate::Drawable for ScrollableLikeWrapper {
 impl crate::LayoutElement for ScrollableLikeWrapper {}
 
 impl crate::Rebuildable for ScrollableLikeWrapper {}
-
-
-
 
 #[cfg(test)]
 mod tests {
@@ -493,9 +484,6 @@ mod tests {
         assert_eq!(drawn.get(), 2, "after set_state the DRAWN subtree must render counter = 2");
     }
 
-
-
-
     /// A marker inherited state a provider inserts into the `BuildContext`
     /// during its own `build` — the test analogue of the `Navigator` inserting
     /// its `NavigatorController`.
@@ -585,12 +573,6 @@ mod tests {
         // must run before the consumer subtree rebuilds and looks it up.
         provider.rebuild_if_dirty(&fresh_ctx);
     }
-
-
-
-
-
-
 
     mod resize_repro {
         use super::*;
@@ -703,7 +685,6 @@ mod tests {
 
         impl Rebuildable for FakeContainer {}
 
-
         struct FakeFlex {
             children: Vec<Box<dyn Element>>,
         }
@@ -770,8 +751,6 @@ mod tests {
 
         impl Rebuildable for FakeFlex {}
 
-
-
         struct FakeStack {
             children: Vec<Box<dyn Element>>,
         }
@@ -819,8 +798,6 @@ mod tests {
 
         impl Rebuildable for FakeStack {}
 
-
-
         struct FakePositioned {
             child: Box<dyn Element>,
         }
@@ -866,8 +843,6 @@ mod tests {
                 self.child.mark_needs_rebuild();
             }
         }
-
-
 
         struct FakeScrollable {
             child: Box<dyn Element>,
@@ -934,17 +909,17 @@ mod tests {
                                 FakeContainer::new(FakeLeaf::new("LeafC", 200.0, 100.0).boxed(), 200.0, 100.0).boxed(),
                                 stateful.boxed(),
                             ])
-                                .boxed(),
-                        )
                             .boxed(),
-                    )
+                        )
                         .boxed(),
-                ])
+                    )
                     .boxed(),
+                ])
+                .boxed(),
                 200.0,
                 400.0,
             )
-                .boxed()
+            .boxed()
         }
 
         fn current_live_updater(live_updater: &Rc<RefCell<Option<StateUpdater<ResizeCounterState>>>>) -> StateUpdater<ResizeCounterState> {
@@ -1157,7 +1132,6 @@ mod tests {
             assert_eq!(after, vec![0, 0, 0, 1], "after switching to tab 3, ONLY tab 3 must be highlighted (got {:?})", after);
         }
 
-        
         struct SectionWidget {
             observers: Rc<Vec<Rc<Cell<i32>>>>,
             live_updater: Rc<RefCell<Option<StateUpdater<SectionState>>>>,
@@ -1233,17 +1207,17 @@ mod tests {
                                 FakeContainer::new(FakeLeaf::new("Hero", 200.0, 100.0).boxed(), 200.0, 100.0).boxed(),
                                 stateful.boxed(),
                             ])
-                                .boxed(),
-                        )
                             .boxed(),
-                    )
+                        )
                         .boxed(),
-                ])
+                    )
                     .boxed(),
+                ])
+                .boxed(),
                 400.0,
                 400.0,
             )
-                .boxed()
+            .boxed()
         }
 
         #[test]

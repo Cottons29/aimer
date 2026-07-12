@@ -1,12 +1,11 @@
 use crate::animatable::Animatable;
 use crate::curve::Curve;
-use aimer_macro::Constructor;
 
 /// A single keyframe in a keyframe animation.
 ///
 /// Defines a target value and the easing curve to use when interpolating
 /// from the previous keyframe to this one.
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone)]
 pub struct Keyframe<T: Animatable + Clone> {
     pub value: T,
     pub curve: Curve,
