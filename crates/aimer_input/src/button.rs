@@ -79,6 +79,15 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
         self.state_updater = updater;
     }
 
+    fn adopt_config_from(&mut self, new: &Self) {
+        self.on_press = new.on_press.clone();
+        self.on_long_press = new.on_long_press.clone();
+        self.on_double_press = new.on_double_press.clone();
+        self.on_right_press = new.on_right_press.clone();
+        self.decoration = new.decoration.clone();
+        self.child = new.child.clone();
+    }
+
     fn build(&self, _: &BuildContext) -> impl Widget {
         let child = self.child.clone();
 
