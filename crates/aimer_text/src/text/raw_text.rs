@@ -206,13 +206,3 @@ impl LayoutElement for RawTextWidget {
         self.cache.invalidate();
     }
 }
-
-impl Reconcilable for RawTextWidget {
-    fn as_any(&self) -> &dyn std::any::Any { self }
-
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        // Leaf element — always replace. Text elements are cheap to create.
-        // The real benefit of reconciliation is at StatefulElement (preserving state).
-        true
-    }
-}

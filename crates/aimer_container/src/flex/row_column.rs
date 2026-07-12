@@ -23,9 +23,7 @@ pub struct Column<W: Widget + 'static> {
 
 impl<W: Widget + 'static> Widget for Column<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let mut child_ctx = ctx.clone();
-        child_ctx.box_constraint.max_height = f32::MAX;
-        let children = self.children.iter().map(|c| c.to_element(&child_ctx)).collect();
+        let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
         Box::new(RawFlex {
             direction: LayoutDirection::Column,
             vertical_alignment: self.vertical_alignment,
@@ -57,9 +55,7 @@ pub struct Row<W: Widget + 'static> {
 
 impl<W: Widget + 'static> Widget for Row<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let mut child_ctx = ctx.clone();
-        child_ctx.box_constraint.max_width = f32::MAX;
-        let children = self.children.iter().map(|c| c.to_element(&child_ctx)).collect();
+        let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
         Box::new(RawFlex {
             direction: LayoutDirection::Row,
             vertical_alignment: self.vertical_alignment,

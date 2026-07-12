@@ -3,9 +3,10 @@ use aimer_attribute::CacheBounds;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
 use aimer_macro::Rebuildable;
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Reconcilable, VisitorElement, Widget, base::*};
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget, base::*};
 use std::cell::Cell;
 use std::rc::Rc;
+use aimer_events::window::request_animation_frame;
 
 #[derive(Debug, Copy, Clone, Default)]
 pub enum PointerState {
@@ -98,7 +99,7 @@ impl<'a, E: Element> RawMouseRegion<'a, E> {
         } else if matches!(self.current_state.get(), PointerState::Inside) {
             Self::execute_void_callback(&self.on_hover_exit);
             self.current_state.set(PointerState::Outside);
-            self.window.request_redraw();
+            request_animation_frame()
         }
     }
 }
@@ -190,31 +191,5 @@ impl<'a, E: Element> Drawable for RawMouseRegion<'a, E> {
         self.sync_hover(is_inside);
 
         self.child.draw(ctx);
-    }
-}
-
-impl<'a: 'static, E: Element + 'static> Reconcilable for RawMouseRegion<'a, E> {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, new_element: &dyn Element, ctx: &BuildContext) -> bool {
-        let new = match new_element.as_any().downcast_ref::<RawMouseRegion<E>>() {
-            Some(n) => n,
-            None => return false,
-        };
-        // Copy our cached bounds to the replacement element so hover
-        // detection works immediately — the new element starts with empty
-        // bounds and `is_inside` would return false until the next draw pass.
-        if let Some(bounds) = self.cached_bounds.get_bounds() {
-            new.cached_bounds.set_bounds(bounds);
-        }
-
-        // Give the child a chance to copy active runtime state into the
-        // replacement child before this wrapper is replaced. This preserves
-        // an in-flight touch gesture when touch hover feedback rebuilds a
-        // Button between PointerDown and PointerUp.
-        let _ = self.child.update_from_widget(&new.child, ctx);
-        false // Let the element be replaced so child gets new decoration
     }
 }

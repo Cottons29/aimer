@@ -8,7 +8,7 @@ use aimer_events::element::ElementEvent;
 use aimer_macro::{Constructor, WidgetConstructor};
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement,
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
     Widget,
 };
 use std::cell::UnsafeCell;
@@ -369,10 +369,6 @@ impl Drawable for MorphTransitionElement {
 }
 
 impl VisitorElement for MorphTransitionElement {
-    fn debug_name(&self) -> &'static str {
-        "MorphTransitionElement"
-    }
-
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         unsafe {
             if let Some(child) = self.current_child.get() {
@@ -382,6 +378,10 @@ impl VisitorElement for MorphTransitionElement {
                 visitor(old);
             }
         }
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "MorphTransitionElement"
     }
 }
 
@@ -467,41 +467,6 @@ impl LayoutElement for MorphTransitionElement {
     }
 }
 
-impl Reconcilable for MorphTransitionElement {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        // Try to downcast the new element to MorphTransitionElement.
-        let new_morph = match new_element.as_any().downcast_ref::<MorphTransitionElement>() {
-            Some(m) => m,
-            None => return false,
-        };
-
-        unsafe {
-            // Move current child → old child (the morph source)
-            if let Some(current) = self.current_child.take() {
-                self.old_child.set(Some(current));
-            }
-
-            // Take the new element's current child
-            if let Some(new_child) = new_morph.current_child.take() {
-                self.current_child.set(Some(new_child));
-            }
-
-            // Copy new snapshot
-            let new_snap = new_morph.new_snapshot.lock().unwrap();
-            *self.new_snapshot.lock().unwrap() = new_snap.clone();
-
-            // Start the morph animation
-            *self.morph_state.lock().unwrap() = MorphState::MorphingIn;
-            self.controller.lock().unwrap().forward();
-        }
-
-        true // Keep this element, don't replace it.
-    }
-}
 
 /// Linear interpolation helper.
 fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {

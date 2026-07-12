@@ -5,7 +5,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement,
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
     Widget,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -103,12 +103,12 @@ impl Drawable for AnimatedBuilderElement {
 }
 
 impl VisitorElement for AnimatedBuilderElement {
-    fn debug_name(&self) -> &'static str {
-        "AnimatedBuilderElement"
-    }
-
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "AnimatedBuilderElement"
     }
 }
 
@@ -154,12 +154,3 @@ impl LayoutElement for AnimatedBuilderElement {
     }
 }
 
-impl Reconcilable for AnimatedBuilderElement {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        false // Always replace on rebuild — the builder closure may have changed.
-    }
-}

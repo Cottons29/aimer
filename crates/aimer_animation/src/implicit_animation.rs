@@ -8,7 +8,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement,
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
     Widget,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -163,19 +163,5 @@ impl<T: Animatable + Clone + 'static> LayoutElement for ImplicitAnimatedElement<
 
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
-    }
-}
-
-impl<T: Animatable + Clone + 'static> Reconcilable for ImplicitAnimatedElement<T> {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        // Try to downcast and detect value changes.
-        // If the new element has a different value, start a tween animation.
-        // For now, always replace — the implicit animation logic is driven
-        // by the StatefulWidget pattern where the state detects value changes.
-        false
     }
 }

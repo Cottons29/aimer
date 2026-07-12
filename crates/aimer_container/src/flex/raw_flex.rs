@@ -3,7 +3,7 @@ use aimer_attribute::size::ResolvedSize;
 use aimer_attribute::{BoxConstraint, CacheBounds};
 use aimer_macro::{Rebuildable, WidgetConstructor};
 use aimer_style::LayoutSpacing;
-use aimer_widget::{Drawable, Element, EventElement, LayoutCache, LayoutElement, Reconcilable, VisitorElement, Widget, base::BuildContext};
+use aimer_widget::{Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement, Widget, base::BuildContext};
 
 use crate::flex::flex_child::distribute_flex_space;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
@@ -66,15 +66,6 @@ pub struct RawFlex {
 impl RawFlex {
     fn render_child(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
-        // `draw` already paints the widget's *entire* subtree: every `Drawable`
-        // draws its own children (see `Container`, `Stack`, `MouseRegion`,
-        // `StatefulElement`, ...). Re-walking `visit_children` here painted that
-        // subtree a *second* time. For plain children (`Container`, `Text`)
-        // `visit_children` is empty so it was a no-op, which is why it went
-        // unnoticed — but any direct flex child with a non-empty `visit_children`
-        // (a `#[widget(Stateful)]`/`Stateless` section, `MouseRegion`, `Stack`)
-        // rendered twice, offset by the second pass's different constraints.
-        // `visit_children` is for event/hit-test traversal, not painting.
         widget.draw(ctx);
         ctx.canvas.restore();
     }
@@ -83,10 +74,10 @@ impl RawFlex {
 impl RawFlex {
     #[inline]
     fn resole_gaps(&self, ctx: &BuildContext) -> (f32, f32) {
-        let gap_x =
-            self.gaps.left.value(ctx.box_constraint.max_width, ctx.scale) + self.gaps.right.value(ctx.box_constraint.max_width, ctx.scale);
-        let gap_y = self.gaps.top.value(ctx.box_constraint.max_height, ctx.scale)
-            + self.gaps.bottom.value(ctx.box_constraint.max_height, ctx.scale);
+        let max_width = ctx.box_constraint.max_width;
+        let max_height = ctx.box_constraint.max_height;
+        let gap_x = self.gaps.left.value(max_width, ctx.scale) + self.gaps.right.value(max_width, ctx.scale);
+        let gap_y = self.gaps.top.value(max_height, ctx.scale) + self.gaps.bottom.value(max_height, ctx.scale);
 
         (gap_x, gap_y)
     }
@@ -230,13 +221,20 @@ impl Drawable for RawFlex {
                     }
                 }
             } else {
+                // Give non-flex children the *remaining* space from their
+                // position to the edge of the Column/Row, not f32::MAX.
+                // f32::MAX is only needed during intrinsic measurement
+                // (computed_size pass 1).  During draw, a widget like
+                // Scrollable uses max_height as its viewport, so it must
+                // receive the actual available space — otherwise it thinks
+                // the viewport is infinite and never scrolls.
                 match self.direction {
                     LayoutDirection::Row | LayoutDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = f32::MAX;
+                        child_ctx.box_constraint.max_width = (max_w - current_x).max(0.0);
                         child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
                     }
                     LayoutDirection::Column => {
-                        child_ctx.box_constraint.max_height = f32::MAX;
+                        child_ctx.box_constraint.max_height = (max_h - current_y).max(0.0);
                         child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
                     }
                 }
@@ -481,16 +479,5 @@ impl LayoutElement for RawFlex {
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.cache_bound.pos_start_end()
-    }
-}
-
-impl Reconcilable for RawFlex {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        // TODO: reconcile children by key matching
-        false
     }
 }

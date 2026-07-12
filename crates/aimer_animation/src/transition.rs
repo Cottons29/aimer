@@ -6,7 +6,7 @@ use aimer_events::element::ElementEvent;
 use aimer_macro::WidgetConstructor;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement,
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
     Widget,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -99,11 +99,6 @@ macro_rules! impl_transition_element {
             fn content_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.content_size(ctx) }
             fn get_size_from_child(&self) -> Option<Size> { self.child.get_size_from_child() }
             fn invalidate_layout(&self) { self.child.invalidate_layout(); }
-        }
-
-        impl Reconcilable for $name {
-            fn as_any(&self) -> &dyn std::any::Any { self }
-            fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool { false }
         }
     };
 }
@@ -213,11 +208,6 @@ impl LayoutElement for SlideTransitionElement {
     fn invalidate_layout(&self) { self.child.invalidate_layout(); }
 }
 
-impl Reconcilable for SlideTransitionElement {
-    fn as_any(&self) -> &dyn std::any::Any { self }
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool { false }
-}
-
 // ---------------------------------------------------------------------------
 // ScaleTransition
 // ---------------------------------------------------------------------------
@@ -306,11 +296,6 @@ impl LayoutElement for ScaleTransitionElement {
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.content_size(ctx) }
     fn get_size_from_child(&self) -> Option<Size> { self.child.get_size_from_child() }
     fn invalidate_layout(&self) { self.child.invalidate_layout(); }
-}
-
-impl Reconcilable for ScaleTransitionElement {
-    fn as_any(&self) -> &dyn std::any::Any { self }
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool { false }
 }
 
 // ---------------------------------------------------------------------------
@@ -405,9 +390,4 @@ impl LayoutElement for RotationTransitionElement {
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.content_size(ctx) }
     fn get_size_from_child(&self) -> Option<Size> { self.child.get_size_from_child() }
     fn invalidate_layout(&self) { self.child.invalidate_layout(); }
-}
-
-impl Reconcilable for RotationTransitionElement {
-    fn as_any(&self) -> &dyn std::any::Any { self }
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool { false }
 }

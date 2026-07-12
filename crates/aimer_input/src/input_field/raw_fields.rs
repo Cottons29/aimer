@@ -2,7 +2,7 @@ use aimer_animation::AnimInstant;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_widget::base::{BuildContext, Color, Colors};
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Reconcilable, VisitorElement};
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, VisitorElement};
 use std::cell::{Cell, UnsafeCell};
 
 use crate::input_field::controller::TextFieldController;
@@ -1536,12 +1536,3 @@ impl Drawable for RawTextField {
     }
 }
 
-impl Reconcilable for RawTextField {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, _new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        false
-    }
-}

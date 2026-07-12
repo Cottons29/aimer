@@ -11,7 +11,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerEvent, PointerPosition};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, Reconcilable, VisitorElement, Widget};
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use winit::window::Window;
@@ -552,26 +552,6 @@ impl<'w, E: Element> Drawable for RawGestureDetector<'w, E> {
 }
 
 impl<'b, E: Element> Rebuildable for RawGestureDetector<'b, E> {}
-
-impl<'b: 'static, E: Element + 'static> Reconcilable for RawGestureDetector<'b, E> {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn update_from_widget(&self, new_element: &dyn Element, _ctx: &BuildContext) -> bool {
-        let new = match new_element.as_any().downcast_ref::<RawGestureDetector<E>>() {
-            Some(n) => n,
-            None => return false,
-        };
-
-        if let Some(bounds) = self.cached_bounds.get_bounds() {
-            new.cached_bounds.set_bounds(bounds);
-        }
-
-        preserve_gesture_state(&self.state.borrow(), &mut new.state.borrow_mut());
-        false
-    }
-}
 
 
 
