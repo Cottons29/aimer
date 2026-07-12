@@ -12,13 +12,12 @@ pub struct HoverableGetStartedButton {}
 
 impl StatelessWidget for HoverableGetStartedButton {
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
-        Container!(
-            child: Button!(
-                decoration: BoxDecoration!(
-                    background_color: Colors::Black,
-                    border_radius: 8,
-                ),
-                on_press: {
+        Container::new()
+            .child(Button::new()
+                .decoration(BoxDecoration::new()
+                    .background_color(Color::BLACK)
+                    .border_radius(8))
+                .on_press({
                     move || {
                         println!("Button pressed");
                         let url = "https://github.com/Cottons29/aimer";
@@ -26,32 +25,26 @@ impl StatelessWidget for HoverableGetStartedButton {
                             eprintln!("Failed to open browser: {}", e);
                         }
                     }
-                },
-                child: Row!(
-                    vertical_alignment: BoxAlignment::Center,
-                    horizontal_alignment: BoxAlignment::Center,
-                    children: [
-                        Box::new(AssetImage!(
-                            "assets/github-svgrepo-com.png",
-                            width: 24,
-                            height: 24,
-                        )),
+                })
+                .child(Row::new()
+                    .vertical_alignment(BoxAlignment::Center)
+                    .horizontal_alignment(BoxAlignment::Center)
+                    .children(vec![
+                        Box::new(AssetImage::new("assets/github-svgrepo-com.png")
+                            .width(24)
+                            .height(24)),
 
-                        SizedBox!(width: 20),
+                        SizedBox::new().width(20).boxed(),
 
-                        Text!(
-                            "Get Started!",
-                            text_align: TextAlign::MidCenter,
-                            text_style: TextStyle!(
-                                color: Colors::White,
-                                font_size: 18,
-                                font_weight: FontWeight::Bold,
-                                // text_decoration: TextDecoration::Underline,
-                            )
-                        )
-                    ]
+                        Text::new("Get Started!")
+                            .text_align(TextAlign::MidCenter)
+                            .text_style(TextStyle::new()
+                                .color(Color::WHITE)
+                                .font_size(18)
+                                .font_weight(FontWeight::Bold))
+                            .boxed(),
+                    ])
                 )
             )
-        )
     }
 }

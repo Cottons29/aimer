@@ -100,10 +100,9 @@ mod tests {
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
             self.observers[self.index].set(if self.selected { 1 } else { 0 });
-            Container!(
-                height: 32,
-                child: crate::ZeroSizedBox
-            )
+            Container::new()
+                .height(32)
+                .child(crate::ZeroSizedBox)
         }
     }
 
@@ -159,22 +158,21 @@ mod tests {
             *self.live_updater.borrow_mut() = Some(self.updater.clone());
             // Content follows the selection (the image in the real app) AND a
             // Row of buttons whose highlight must follow the selection too.
-            Column!(
-                children: [
-                    Container!(
-                        height: 180,
-                        child: crate::ZeroSizedBox
-                    ),
-                    Row!(
-                        children: [
+            Column::new()
+                .children(vec![
+                    Container::new()
+                        .height(180)
+                        .child(crate::ZeroSizedBox)
+                        .boxed(),
+                    Row::new()
+                        .children(vec![
                             button(0, self.index == 0, self.button_observers.clone()),
                             button(1, self.index == 1, self.button_observers.clone()),
                             button(2, self.index == 2, self.button_observers.clone()),
                             button(3, self.index == 3, self.button_observers.clone()),
-                        ]
-                    ),
-                ]
-            )
+                        ])
+                        .boxed(),
+                ])
         }
     }
 
@@ -245,10 +243,10 @@ mod tests {
     }
 
     fn placeholder_section(height: i32) -> Box<dyn Widget> {
-        Container!(
-            height: height,
-            child: crate::ZeroSizedBox
-        )
+        Container::new()
+            .height(height)
+            .child(crate::ZeroSizedBox)
+            .boxed()
     }
 
     fn build_home_page(
@@ -257,41 +255,41 @@ mod tests {
         live_updater: Rc<RefCell<Option<StateUpdater<TabState>>>>,
         button_observers: Rc<Vec<Rc<Cell<i32>>>>,
     ) -> Box<dyn Element> {
-        Container!(
-            child: Stack!(
-                children: [
-                    Positioned!(
-                        top: 0,
-                        left: 0,
-                        layer: 1,
-                        child: Container!(
-                            height: 48,
-                            child: crate::ZeroSizedBox
-                        )
-                    ),
-                    Positioned!(
-                        top: 0,
-                        left: 0,
-                        layer: 0,
-                        child: Scrollable!(
-                            axis: crate::ScrollAxis::Vertical,
-                            child: Column!(
-                                children: [
-                                    placeholder_section(100),
-                                    placeholder_section(100),
-                                    placeholder_section(100),
-                                    Box::new(TabWidget {
-                                        observer,
-                                        live_updater,
-                                        button_observers,
-                                    }) as Box<dyn Widget>,
-                                ]
-                            )
-                        )
-                    )
-                ]
+        Container::new()
+            .child(
+                Stack::new()
+                    .children(vec![
+                        Box::new(Positioned::new()
+                            .top(0)
+                            .left(0)
+                            .layer(1)
+                            .child(
+                                Container::new()
+                                    .height(48)
+                                    .child(crate::ZeroSizedBox)
+                            )) as Box<dyn Widget>,
+                        Box::new(Positioned::new()
+                            .top(0)
+                            .left(0)
+                            .layer(0)
+                            .child(
+                                Scrollable::new(
+                                    Column::new()
+                                        .children(vec![
+                                            placeholder_section(100),
+                                            placeholder_section(100),
+                                            placeholder_section(100),
+                                            Box::new(TabWidget {
+                                                observer,
+                                                live_updater,
+                                                button_observers,
+                                            }) as Box<dyn Widget>,
+                                        ])
+                                )
+                                .axis(crate::ScrollAxis::Vertical)
+                            )) as Box<dyn Widget>,
+                    ])
             )
-        )
         .to_element(ctx)
     }
 
@@ -716,11 +714,10 @@ mod tests {
         let ctx = dummy_build_context(300.0, 100.0, None);
         let c1 = Rc::new(Cell::new(0.0));
         let c2 = Rc::new(Cell::new(0.0));
-        let fixed: Box<dyn Element> = Container!(
-            width: 60,
-            child: crate::ZeroSizedBox
-        )
-        .to_element(&ctx);
+        let fixed: Box<dyn Element> = Container::new()
+            .width(60)
+            .child(crate::ZeroSizedBox)
+            .to_element(&ctx);
         let row = row_of(vec![fixed, expanded_probe(1.0, &c1), expanded_probe(2.0, &c2)]);
 
         let _ = row.computed_size(&ctx);

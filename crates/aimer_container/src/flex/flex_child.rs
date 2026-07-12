@@ -1,5 +1,6 @@
+use crate::ZeroSizedBox;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_macro::{EventElement, Rebuildable, WidgetConstructor};
+use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Drawable, Element, LayoutElement, VisitorElement, Widget};
 
@@ -19,21 +20,39 @@ use aimer_widget::{Drawable, Element, LayoutElement, VisitorElement, Widget};
 /// # Example
 ///
 /// ```rust ignore
-/// Row!(
-///     children: [
-///         Expanded!(child: Container!(color: Colors::Red)),
-///         Expanded!(flex: 2, child: Container!(color: Colors::Blue)),
-///     ]
-/// )
+/// Row::new()
+///     .children(vec![
+///         Expanded::new().child(Container::new().color(Colors::Red)),
+///         Expanded::new().flex(2).child(Container::new().color(Colors::Blue)),
+///     ])
 /// ```
-#[derive(WidgetConstructor)]
-pub struct Expanded<W: Widget + 'static> {
+pub struct Expanded<W: Widget + 'static = ZeroSizedBox> {
     /// The flex factor: the child's share of the free main-axis space is
     /// `flex / sum_of_all_flex_factors`. Defaults to `1.0`.
-    #[constructor(default = 1.0)]
     flex: f32,
     /// The widget that expands to fill the assigned space.
     child: W,
+}
+
+impl Default for Expanded {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Expanded {
+    pub fn new() -> Self {
+        Self { flex: 1.0, child: ZeroSizedBox }
+    }
+
+    pub fn flex(mut self, flex: f32) -> Self {
+        self.flex = flex;
+        self
+    }
+
+    pub fn child<W: Widget + 'static>(self, child: W) -> Expanded<W> {
+        Expanded { child, flex: self.flex }
+    }
 }
 
 impl<W: Widget + 'static> Widget for Expanded<W> {

@@ -4,12 +4,11 @@ use aimer_animation::AnimInstant;
 use aimer_attribute::CacheBounds;
 use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
 use aimer_widget::base::{BuildContext, Color, Colors};
-use aimer_widget::{Element, Widget, WidgetConstructor};
+use aimer_widget::{Element, Widget};
 use std::cell::Cell;
 use std::sync::Arc;
 
 #[allow(dead_code)]
-#[derive(WidgetConstructor)]
 ///
 /// A configurable `TextField` widget struct that provides input capabilities
 /// with an array of customizable properties for text input, styling, behavior,
@@ -78,57 +77,31 @@ use std::sync::Arc;
 ///
 ///
 pub struct TextField {
-    #[constructor(default)]
     controller: TextFieldController,
-    #[constructor(default)]
     pub input_type: InputType,
-    #[constructor(default, into)]
     pub prompt: Arc<str>,
-    #[constructor(default, into)]
     pub hint: Arc<str>,
-    #[constructor(default)]
     pub hint_style: TextStyle,
-    #[constructor(default)]
     pub text_style: TextStyle,
-    #[constructor(default)]
     pub prompt_style: TextStyle,
-    #[constructor(default)]
     pub text_align: TextAlign,
-    #[constructor(default)]
     pub auto_focus: bool,
-    #[constructor(default)]
     pub max_lines: Option<usize>,
-    #[constructor(default)]
     pub min_lines: Option<usize>,
-    #[constructor(default)]
     pub max_length: Option<usize>,
-    #[constructor(default = true)]
     pub enable: bool,
-    #[constructor(default)]
     pub expand: ExpandDirection,
-    #[constructor(default = BoxDecoration { background_color: Some(Colors::White.into()), ..Default::default() })]
     pub decoration: BoxDecoration,
-    #[constructor(default)]
     pub hover_decoration: Option<BoxDecoration>,
-    #[constructor(default)]
     pub focus_decoration: Option<BoxDecoration>,
-    #[constructor(default)]
     pub disabled_decoration: Option<BoxDecoration>,
-    #[constructor(default = Color::Rgba(66, 133, 244, 100))]
     pub selection_color: Color,
-    #[constructor(default)]
     pub cursor_color: Colors,
-    #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
     pub on_changed: TextFieldCallback,
-    #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
     pub on_submitted: TextFieldCallback,
-    #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
     pub on_focus: TextFieldCallback,
-    #[constructor(default, into, async_wrapper = "AsyncTextFieldCallback")]
     pub on_blur: TextFieldCallback,
-    #[constructor(default)]
     pub read_only: bool,
-    #[constructor(default = TextField::DEFAULT_PADDING)]
     pub padding: LayoutSpacing,
 }
 
@@ -178,4 +151,165 @@ impl Widget for TextField {
 
 impl TextField {
     pub const DEFAULT_PADDING: LayoutSpacing = LayoutSpacing::all(Spacing::Px(4));
+
+    pub fn new() -> Self {
+        Self {
+            controller: TextFieldController::default(),
+            input_type: InputType::default(),
+            prompt: Arc::default(),
+            hint: Arc::default(),
+            hint_style: TextStyle::default(),
+            text_style: TextStyle::default(),
+            prompt_style: TextStyle::default(),
+            text_align: TextAlign::default(),
+            auto_focus: false,
+            max_lines: None,
+            min_lines: None,
+            max_length: None,
+            enable: true,
+            expand: ExpandDirection::default(),
+            decoration: BoxDecoration { background_color: Some(Colors::White.into()), ..Default::default() },
+            hover_decoration: None,
+            focus_decoration: None,
+            disabled_decoration: None,
+            selection_color: Color::Rgba(66, 133, 244, 100),
+            cursor_color: Colors::default(),
+            on_changed: TextFieldCallback::default(),
+            on_submitted: TextFieldCallback::default(),
+            on_focus: TextFieldCallback::default(),
+            on_blur: TextFieldCallback::default(),
+            read_only: false,
+            padding: Self::DEFAULT_PADDING,
+        }
+    }
+
+    pub fn controller(mut self, controller: TextFieldController) -> Self {
+        self.controller = controller;
+        self
+    }
+
+    pub fn input_type(mut self, input_type: InputType) -> Self {
+        self.input_type = input_type;
+        self
+    }
+
+    pub fn prompt(mut self, prompt: impl Into<Arc<str>>) -> Self {
+        self.prompt = prompt.into();
+        self
+    }
+
+    pub fn hint(mut self, hint: impl Into<Arc<str>>) -> Self {
+        self.hint = hint.into();
+        self
+    }
+
+    pub fn hint_style(mut self, hint_style: TextStyle) -> Self {
+        self.hint_style = hint_style;
+        self
+    }
+
+    pub fn text_style(mut self, text_style: TextStyle) -> Self {
+        self.text_style = text_style;
+        self
+    }
+
+    pub fn prompt_style(mut self, prompt_style: TextStyle) -> Self {
+        self.prompt_style = prompt_style;
+        self
+    }
+
+    pub fn text_align(mut self, text_align: TextAlign) -> Self {
+        self.text_align = text_align;
+        self
+    }
+
+    pub fn auto_focus(mut self, auto_focus: bool) -> Self {
+        self.auto_focus = auto_focus;
+        self
+    }
+
+    pub fn max_lines(mut self, max_lines: Option<usize>) -> Self {
+        self.max_lines = max_lines;
+        self
+    }
+
+    pub fn min_lines(mut self, min_lines: Option<usize>) -> Self {
+        self.min_lines = min_lines;
+        self
+    }
+
+    pub fn max_length(mut self, max_length: Option<usize>) -> Self {
+        self.max_length = max_length;
+        self
+    }
+
+    pub fn enable(mut self, enable: bool) -> Self {
+        self.enable = enable;
+        self
+    }
+
+    pub fn expand(mut self, expand: ExpandDirection) -> Self {
+        self.expand = expand;
+        self
+    }
+
+    pub fn decoration(mut self, decoration: BoxDecoration) -> Self {
+        self.decoration = decoration;
+        self
+    }
+
+    pub fn hover_decoration(mut self, hover_decoration: BoxDecoration) -> Self {
+        self.hover_decoration = Some(hover_decoration);
+        self
+    }
+
+    pub fn focus_decoration(mut self, focus_decoration: BoxDecoration) -> Self {
+        self.focus_decoration = Some(focus_decoration);
+        self
+    }
+
+    pub fn disabled_decoration(mut self, disabled_decoration: BoxDecoration) -> Self {
+        self.disabled_decoration = Some(disabled_decoration);
+        self
+    }
+
+    pub fn selection_color(mut self, selection_color: impl Into<Color>) -> Self {
+        self.selection_color = selection_color.into();
+        self
+    }
+
+    pub fn cursor_color(mut self, cursor_color: Colors) -> Self {
+        self.cursor_color = cursor_color;
+        self
+    }
+
+    pub fn on_changed(mut self, on_changed: impl Into<TextFieldCallback>) -> Self {
+        self.on_changed = on_changed.into();
+        self
+    }
+
+    pub fn on_submitted(mut self, on_submitted: impl Into<TextFieldCallback>) -> Self {
+        self.on_submitted = on_submitted.into();
+        self
+    }
+
+    pub fn on_focus(mut self, on_focus: impl Into<TextFieldCallback>) -> Self {
+        self.on_focus = on_focus.into();
+        self
+    }
+
+    pub fn on_blur(mut self, on_blur: impl Into<TextFieldCallback>) -> Self {
+        self.on_blur = on_blur.into();
+        self
+    }
+
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    pub fn padding(mut self, padding: impl Into<LayoutSpacing>) -> Self {
+        self.padding = padding.into();
+        self
+    }
 }

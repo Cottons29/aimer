@@ -1,28 +1,96 @@
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
-use aimer_macro::{Constructor, WidgetConstructor};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
+use crate::ZeroSizedBox;
 
 #[allow(dead_code)]
-#[derive(WidgetConstructor)]
-pub struct Positioned<W: Widget + 'static> {
+pub struct Positioned<W: Widget + 'static = ZeroSizedBox> {
     pub child: W,
-    #[constructor(default)]
     pub position: Position,
-    #[constructor(default, into)]
     pub left: Dimension,
-    #[constructor(default, into)]
     pub top: Dimension,
-    #[constructor(default, into)]
     pub right: Dimension,
-    #[constructor(default, into)]
     pub bottom: Dimension,
-    #[constructor(default)]
     pub transform: Transform,
-    #[constructor(default)]
     pub layer: u32,
+}
+
+impl Default for Positioned {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Positioned {
+    pub fn new() -> Self {
+        Self {
+            child: ZeroSizedBox,
+            position: Position::default(),
+            left: Dimension::default(),
+            top: Dimension::default(),
+            right: Dimension::default(),
+            bottom: Dimension::default(),
+            transform: Transform::default(),
+            layer: 0,
+        }
+    }
+}
+
+impl<W: Widget + 'static> Positioned<W> {
+
+    // pub fn box() -> Box<Self> {
+    //     Box::new(Self::new())
+    // }
+
+    pub fn position(mut self, position: Position) -> Self {
+        self.position = position;
+        self
+    }
+
+    pub fn left(mut self, left: impl Into<Dimension>) -> Self {
+        self.left = left.into();
+        self
+    }
+
+    pub fn top(mut self, top: impl Into<Dimension>) -> Self {
+        self.top = top.into();
+        self
+    }
+
+    pub fn right(mut self, right: impl Into<Dimension>) -> Self {
+        self.right = right.into();
+        self
+    }
+
+    pub fn bottom(mut self, bottom: impl Into<Dimension>) -> Self {
+        self.bottom = bottom.into();
+        self
+    }
+
+    pub fn transform(mut self, transform: Transform) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    pub fn layer(mut self, layer: u32) -> Self {
+        self.layer = layer;
+        self
+    }
+
+    pub fn child<C: Widget>(self, child: C) -> Positioned<C> {
+        Positioned {
+            child,
+            position: self.position,
+            left: self.left,
+            top: self.top,
+            right: self.right,
+            bottom: self.bottom,
+            transform: self.transform,
+            layer: self.layer,
+        }
+    }
 }
 
 impl<W: Widget> Widget for Positioned<W> {
@@ -66,7 +134,6 @@ pub enum Position {
 }
 
 #[allow(dead_code)]
-#[derive(Constructor)]
 pub struct RawPositionedElement<E: Element> {
     pub(crate) child: E,
     pub(crate) position: Position,
@@ -145,10 +212,12 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             let parent_size =
                 if let Some(size) = self.child.get_size_from_child() { size.resolve(&ctx.parent_size, ctx.scale) } else { ctx.parent_size };
 
-            let child_constraint = BoxConstraint!(
+            let child_constraint = BoxConstraint {
+                min_width: 0.0,
+                min_height: 0.0,
                 max_width: parent_size.width,
                 max_height: parent_size.height,
-            );
+            };
 
             // The child is drawn after translating the canvas by the position
             // offset (and any translate transform), so the visibility rect (used

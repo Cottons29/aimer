@@ -1,16 +1,14 @@
 mod auto_trait_impl;
 mod codegen;
-mod field_info;
 mod unique_key;
 
 use crate::auto_trait_impl::auto_impl;
 use crate::codegen::router::RouterCodegen;
-use crate::codegen::{ConstructorCodegen, RawWidgetCodegen, StatefulWidgetCodegen, StatelessWidgetCodegen};
+use crate::codegen::{RawWidgetCodegen, StatefulWidgetCodegen, StatelessWidgetCodegen};
 use crate::unique_key::UniqueKeyInput;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::punctuated::Punctuated;
-use syn::{Item, ItemFn, Path, Token, parse_macro_input};
+use syn::{Item, ItemFn, parse_macro_input};
 
 /// Attribute macro that marks the Aimer application entry point.
 ///
@@ -74,81 +72,6 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Derives a `create_new(...)` constructor method for a struct, returning `Self`.
-///
-/// # Usage
-/// ```rust,ignore
-/// #[derive(Constructor)]
-/// pub struct MyWidget {
-///     pub label: String,
-///     pub value: i32,
-/// }
-/// ```
-///
-/// This generates:
-/// ```rust,ignore
-/// impl MyWidget {
-///     pub fn create_new(label: String, value: i32) -> Self { ... }
-/// }
-/// ```
-/// and a corresponding declarative macro `MyWidget!(label: ..., value: ...)` for ergonomic construction.
-///
-/// # Field Attributes (`#[constructor(...)]`)
-/// - `#[constructor(skip)]` — exclude the field from the constructor parameters; the struct must
-///   implement the generated `MyWidgetConstructor` trait to supply a default value.
-/// - `#[constructor(default)]` — use `Default::default()` for this field (skips it from params).
-/// - `#[constructor(default = expr)]` — use a custom expression as the default value.
-/// - `#[constructor(into)]` — accept `impl Into<T>` for this field's parameter.
-/// - `#[constructor(first)]` — place this field's parameter first in the argument list.
-/// - `#[constructor(dyn_iter)]` — accept a dynamic iterator for this field.
-/// - `#[constructor(visibility = "private")]` — alias for `skip`.
-///
-/// # Struct Attributes (`#[constructor(...)]`)
-/// - `#[constructor(crate = "path")]` — override the crate path used in the generated code.
-///
-/// # Incompatibility
-/// Cannot be combined with `#[derive(WidgetConstructor)]` on the same struct.
-#[proc_macro_derive(Constructor, attributes(constructor))]
-pub fn constructor_derive(input: TokenStream) -> TokenStream {
-    let input: proc_macro2::TokenStream = proc_macro2::TokenStream::from(input);
-    ConstructorCodegen::generate(input).into()
-}
-
-/// Derives a `create_new(...)` constructor method for a struct, returning `Box<dyn Widget>`.
-///
-/// This is the widget-aware variant of [`Constructor`]. Use it when the struct implements
-/// the `Widget` trait and you need a boxed return type suitable for widget trees.
-///
-/// # Usage
-/// ```rust,ignore
-/// #[derive(WidgetConstructor)]
-/// pub struct MyWidget {
-///     pub label: String,
-/// }
-/// ```
-///
-/// This generates:
-/// ```rust,ignore
-/// impl MyWidget {
-///     pub fn create_new(label: String) -> Box<dyn aimer::widget::Widget> {
-///         Box::new(Self { label })
-///     }
-/// }
-/// ```
-/// and a corresponding declarative macro `MyWidget!(label: ...)` for ergonomic construction.
-///
-/// # Field Attributes
-/// Supports the same `#[constructor(...)]` field and struct attributes as [`Constructor`]:
-/// `skip`, `default`, `default = expr`, `into`, `first`, `dyn_iter`, `visibility = "private"`.
-///
-/// # Incompatibility
-/// Cannot be combined with `#[derive(Constructor)]` on the same struct.
-#[proc_macro_derive(WidgetConstructor, attributes(constructor))]
-pub fn widget_constructor_derive(input: TokenStream) -> TokenStream {
-    let input: proc_macro2::TokenStream = proc_macro2::TokenStream::from(input);
-    ConstructorCodegen::generate_boxed(input).into()
-}
-
 #[allow(dead_code)]
 enum AttributeKind {
     Stateless,
@@ -176,10 +99,10 @@ impl TryFrom<&str> for AttributeKind {
 ///
 /// | Kind | Target | What is generated |
 /// |------|--------|-------------------|
-/// | `Stateless` | struct | `impl Widget` via `StatelessWidget::build` + boxed `create_new` constructor |
-/// | `Stateful` | struct | `impl Widget` via `StatefulElement` + boxed `create_new` constructor |
-/// | `Router` | enum | full router `impl Widget` dispatch + boxed `create_new` constructor |
-/// | `RawWidget` | struct | bare `impl Widget` stub (body uses `unimplemented!`) + boxed `create_new` constructor (placeholder) |
+/// | `Stateless` | struct | `impl Widget` via `StatelessWidget::build` |
+/// | `Stateful` | struct | `impl Widget` via `StatefulElement` |
+/// | `Router` | enum | full router `impl Widget` dispatch |
+/// | `RawWidget` | struct | bare `impl Widget` stub (body uses `unimplemented!`) |
 ///
 /// # Usage
 /// ```rust,ignore
@@ -202,13 +125,6 @@ impl TryFrom<&str> for AttributeKind {
 ///     Settings,
 /// }
 /// ```
-///
-/// # Constructor generation
-/// Unless `#[derive(Constructor)]` is already present on the struct, this macro automatically
-/// generates a `create_new(...)` method returning `Box<dyn Widget>` and a matching declarative
-/// macro (same name as the struct/enum) for ergonomic construction.
-/// Field-level `#[constructor(...)]` attributes (`skip`, `default`, `into`, `first`, `dyn_iter`,
-/// `visibility`) are supported and stripped before compilation.
 ///
 /// # Panics
 /// Panics at compile time if no argument is provided.
@@ -238,7 +154,7 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
         };
     }
 
-    let mut item_struct = match item {
+    let item_struct = match item {
         Item::Struct(s) => s,
         _ => {
             return syn::Error::new_spanned(item, "Widget attribute expects a struct unless using Router")
@@ -246,40 +162,6 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
                 .into();
         }
     };
-
-    // Check if Constructor derive is already present
-    let has_constructor = item_struct.attrs.iter().any(|attr| {
-        if attr.path().is_ident("derive") {
-            if let Ok(list) = attr.parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated) {
-                list.iter()
-                    .any(|path| if let Some(segment) = path.segments.last() { segment.ident == "Constructor" } else { false })
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    });
-
-    let constructor_code = if !has_constructor {
-        // Generate constructor code manually using original struct
-        let struct_ts = quote! { #item_struct };
-        ConstructorCodegen::generate_boxed(struct_ts)
-    } else {
-        proc_macro2::TokenStream::new()
-    };
-
-    if !has_constructor {
-        // Remove constructor attributes from the struct to avoid compilation errors
-        // since we are not adding #[derive(Constructor)] which would handle them
-        item_struct.attrs.retain(|attr| !attr.path().is_ident("constructor"));
-
-        if let syn::Fields::Named(fields) = &mut item_struct.fields {
-            for field in &mut fields.named {
-                field.attrs.retain(|attr| !attr.path().is_ident("constructor"));
-            }
-        }
-    }
 
     // Convert back to TokenStream for codegen
     let input_ts = quote! { #item_struct };
@@ -292,12 +174,7 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
         StatelessWidgetCodegen::generate(input_ts)
     };
 
-    let final_output = quote! {
-        #widget_code
-        #constructor_code
-    };
-
-    TokenStream::from(final_output)
+    TokenStream::from(widget_code)
 }
 
 #[proc_macro_derive(VisitorElement)]

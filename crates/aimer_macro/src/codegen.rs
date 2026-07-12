@@ -1,23 +1,10 @@
 pub(crate) mod auto_wrapper;
-mod constructor;
 mod raw_widget;
 pub mod router;
 mod stateful_widget;
 mod stateless_widget;
 
 use proc_macro2::TokenStream;
-
-pub struct ConstructorCodegen;
-
-impl ConstructorCodegen {
-    pub fn generate(input: TokenStream) -> TokenStream {
-        constructor::constructor_derive(input, false)
-    }
-
-    pub fn generate_boxed(input: TokenStream) -> TokenStream {
-        constructor::constructor_derive(input, true)
-    }
-}
 
 pub struct StatelessWidgetCodegen;
 

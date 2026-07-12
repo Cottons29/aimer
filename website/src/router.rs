@@ -44,20 +44,16 @@ impl Router for AppRouter {
 
 /// A simple "page not found" placeholder rendered inside the shell content area.
 fn not_found_page() -> impl Widget {
-    Container!(
-        color: Color::WHITE,
-        child: Column!(
-            horizontal_alignment: BoxAlignment::Center,
-            vertical_alignment: BoxAlignment::Center,
-            children: [
-                Text!(
-                    "Page not found",
-                    text_align: TextAlign::MidCenter,
-                    text_style: TextStyle!(
-                        font_size: 44,
-                    )
-                )
-            ]
+    Container::new()
+        .color(Color::WHITE)
+        .child(Column::new()
+            .horizontal_alignment(BoxAlignment::Center)
+            .vertical_alignment(BoxAlignment::Center)
+            .children(vec![
+                Text::new("Page not found")
+                    .text_align(TextAlign::MidCenter)
+                    .text_style(TextStyle::new()
+                        .font_size(44)),
+            ])
         )
-    )
 }

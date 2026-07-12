@@ -1,5 +1,4 @@
 use aimer_color::prelude::{Color, Colors};
-use aimer_macro::Constructor;
 
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy)]
@@ -120,19 +119,14 @@ impl TextDecorationStyle {
 /// dedicated color (falling back to the text color), an optional thickness and a
 /// vertical offset. Replaces the old on/off `Underline`-only enum.
 #[allow(dead_code)]
-#[derive(Clone, Copy, Constructor)]
+#[derive(Clone, Copy)]
 pub struct TextDecoration {
-    #[constructor(default)]
     pub line: TextDecorationLine,
-    #[constructor(default)]
     pub style: TextDecorationStyle,
-    #[constructor(default)]
     /// `None` inherits the text color.
     pub color: Option<Color>,
-    #[constructor(default)]
     /// `None` derives the thickness from the font size (~6%).
     pub thickness: Option<f32>,
-    #[constructor(default)]
     /// Extra vertical offset in logical pixels applied to the line (+ down).
     pub offset: f32,
 }
@@ -140,6 +134,35 @@ pub struct TextDecoration {
 #[allow(dead_code)]
 #[allow(non_upper_case_globals)]
 impl TextDecoration {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn line(mut self, line: TextDecorationLine) -> Self {
+        self.line = line;
+        self
+    }
+
+    pub fn style(mut self, style: TextDecorationStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
+        self.color = Some(color.into());
+        self
+    }
+
+    pub fn thickness(mut self, thickness: f32) -> Self {
+        self.thickness = Some(thickness);
+        self
+    }
+
+    pub fn offset(mut self, offset: f32) -> Self {
+        self.offset = offset;
+        self
+    }
+
     /// No decoration. Kept as an associated constant so existing
     /// `TextDecoration::None` call sites keep working after the enum→struct change.
     pub const None: Self =
@@ -150,7 +173,7 @@ impl TextDecoration {
     pub const Underline: Self =
         Self { line: TextDecorationLine::UNDERLINE, style: TextDecorationStyle::Solid, color: None, thickness: None, offset: 0.0 };
 
-    pub const fn new(line: TextDecorationLine, style: TextDecorationStyle) -> Self {
+    pub const fn from_parts(line: TextDecorationLine, style: TextDecorationStyle) -> Self {
         Self { line, style, color: None, thickness: None, offset: 0.0 }
     }
 
@@ -192,24 +215,52 @@ pub enum TextAlign {
 }
 
 #[allow(dead_code)]
-#[derive(aimer_macro::Constructor, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct TextStyle {
-    #[constructor(default = 13)]
     pub font_size: u32,
-    #[constructor(default)]
     pub font_style: FontStyle,
-    #[constructor(default)]
     pub font_weight: FontWeight,
-    #[constructor(default = TextStyle::DEFAULT_TEXT_COLOR, into)]
     pub color: Color,
-    #[constructor(default)]
     pub text_overflow: TextOverflow,
-    #[constructor(default)]
     pub text_decoration: TextDecoration,
 }
 
 impl TextStyle {
     pub const DEFAULT_TEXT_COLOR: Color = Color::Basic(Colors::Black);
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn font_size(mut self, font_size: u32) -> Self {
+        self.font_size = font_size;
+        self
+    }
+
+    pub fn font_style(mut self, font_style: FontStyle) -> Self {
+        self.font_style = font_style;
+        self
+    }
+
+    pub fn font_weight(mut self, font_weight: FontWeight) -> Self {
+        self.font_weight = font_weight;
+        self
+    }
+
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
+        self.color = color.into();
+        self
+    }
+
+    pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
+        self.text_overflow = text_overflow;
+        self
+    }
+
+    pub fn text_decoration(mut self, text_decoration: TextDecoration) -> Self {
+        self.text_decoration = text_decoration;
+        self
+    }
 }
 
 impl Default for TextStyle {
