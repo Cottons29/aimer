@@ -6,15 +6,14 @@ interfaces from a single codebase using a declarative, composable widget tree.
 ```rust
 #[aimer::main]
 pub fn start_app() {
-    AimerApp::start(
-        Container::new()
-            .child(
-                Text::new("Hello World!")
-                    .text_align(TextAlign::MidCenter)
-                    .text_style(TextStyle::new().color(Color::BLACK))
-            )
-            .boxed()
-    );
+  AimerApp::start(
+    Container::new()
+      .child(
+        Text::new("Hello World!")
+          .text_align(TextAlign::MidCenter)
+          .text_style(TextStyle::new().color(Color::BLACK))
+      )
+  );
 }
 ```
 
