@@ -76,7 +76,7 @@ mod tests {
         let project_root = get_project_root(true);
         assert!(project_root.is_ok());
         let is_pass = project_root.as_ref().unwrap() == &expected || project_root.as_ref().unwrap() == &another_expected;
-        assert!(is_pass);
+        assert!(is_pass, "Project root not found project_root: {:?}", project_root);
 
     }
 
