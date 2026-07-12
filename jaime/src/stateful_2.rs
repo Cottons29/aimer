@@ -247,7 +247,7 @@ impl State<MyList> for MyListState {
                                                         let updater = self.updater.clone();
                                                          move || {
                                                             let another_item_id = item_id.clone();
-                                                            // println!("Clicked on item with id: {}", item_id);
+                                                            println!("Clicked on item with id: {}", item_id);
                                                             // println!("List items: {:#?}", updater.read_state().list);
                                                             updater.set_state( move |state| {
                                                                 // println!("Deleting item with id: {}", id);
