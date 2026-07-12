@@ -302,11 +302,21 @@ impl Drawable for RawFlex {
 
         draw_commands.sort_by_key(|cmd| cmd.0);
 
+        // Round child positions to device pixels so that adjacent backgrounds
+        // always tile without sub-pixel seams.  Without this, a fractional
+        // scroll offset combined with float-accumulated `current_y` can place
+        // two sibling rectangles on fractional device-pixel boundaries, and the
+        // GPU anti-aliasing blends the gap with the parent background (white).
+        let scale = ctx.scale.max(1.0);
+
         for cmd in draw_commands {
             let (_, offset_x, offset_y, draw_ctx, child) = cmd;
 
+            let rx = (offset_x * scale).round() / scale;
+            let ry = (offset_y * scale).round() / scale;
+
             draw_ctx.canvas.save();
-            draw_ctx.canvas.translate(Vec2d { x: offset_x, y: offset_y });
+            draw_ctx.canvas.translate(Vec2d { x: rx, y: ry });
             Self::render_child(child, &draw_ctx);
             draw_ctx.canvas.restore();
         }
