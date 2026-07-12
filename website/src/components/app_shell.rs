@@ -14,7 +14,6 @@ use crate::components::header::HeaderSection;
 
 #[widget(Stateless)]
 #[derive(Clone)]
-#[constructor(crate = "crate::components::app_shell")]
 pub struct AppShell {
     /// Index of the currently active header tab (0 = Home, 1 = Docs, 2 = Learn),
     /// used to highlight the matching header button.
@@ -23,19 +22,17 @@ pub struct AppShell {
 
 impl StatelessWidget for AppShell {
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
-        Container!(
-            color: Colors::White,
-            child: Column!(
-                children: [
+        Container::new()
+            .color(Color::WHITE)
+            .child(Column::new()
+                .children(vec![
                     Box::new(HeaderSection { show_logo: true, active_tab: self.active_tab }),
-                    Expanded!(
-                        child: Container!(
-                            color: Colors::White,
-                            child: Outlet,
-                        )
-                    ),
-                ]
+                    Expanded::new()
+                        .child(Container::new()
+                            .color(Color::WHITE)
+                            .child(Outlet))
+                        .boxed(),
+                ])
             )
-        )
     }
 }

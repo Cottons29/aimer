@@ -38,42 +38,36 @@ impl State<SameLookingSection> for SameLookingSectionState {
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
-        Container!(
-            color: Colors::White,
-            padding: app_padding(ctx),
-            child: Column!(
-                horizontal_alignment: BoxAlignment::Center,
-                children: [
-                    Container!(
-                        height: 100,
-                        child: Text!(
-                            "Consistence Looking",
-                            text_style: TextStyle!(
-                                font_size: mobile_title(ctx),
-                                color: Colors::Black,
-                                font_weight: FontWeight::Bolder,
-                                text_decoration: TextDecoration::Underline,
-                            )
-                        ),
-                    ),
-                    SizedBox!(height: 24),
-                    Container!(
-                        height: if is_mobile(ctx) { 250 } else { 450 },
-                        child: AssetImage!(
-                            PLATFORM_IMAGE[self.current_index % PLATFORM_IMAGE.len()],
-                        )
-                    ),
-                    SizedBox!(height: 40),
-                    Row!(
-                        horizontal_alignment: BoxAlignment::Center,
-                        vertical_alignment: BoxAlignment::Center,
-                        gaps: LayoutSpacing::horizontal(Spacing::Px(8)),
-                        children: self.build_platform_button_list(ctx),
-                    ),
-                    SizedBox!(height: 40),
-                ]
+        Container::new()
+            .color(Color::WHITE)
+            .padding(app_padding(ctx))
+            .child(Column::new()
+                .horizontal_alignment(BoxAlignment::Center)
+                .children(vec![
+                    Container::new()
+                        .height(100)
+                        .child(Text::new("Consistence Looking")
+                            .text_style(TextStyle::new()
+                                .font_size(mobile_title(ctx))
+                                .color(Color::BLACK)
+                                .font_weight(FontWeight::Bolder)
+                                .text_decoration(TextDecoration::Underline)))
+                        .boxed(),
+                    SizedBox::new().height(24).boxed(),
+                    Container::new()
+                        .height(if is_mobile(ctx) { 250 } else { 450 })
+                        .child(AssetImage::new(PLATFORM_IMAGE[self.current_index % PLATFORM_IMAGE.len()]))
+                        .boxed(),
+                    SizedBox::new().height(40).boxed(),
+                    Row::new()
+                        .horizontal_alignment(BoxAlignment::Center)
+                        .vertical_alignment(BoxAlignment::Center)
+                        .gaps(LayoutSpacing::horizontal(Spacing::Px(8)))
+                        .children(self.build_platform_button_list(ctx))
+                        .boxed(),
+                    SizedBox::new().height(40).boxed(),
+                ])
             )
-        )
     }
 }
 
@@ -90,25 +84,22 @@ impl SameLookingSectionState {
                     let is_selected = index == selected;
                     let font_weight = if selected == index { FontWeight::Bolder } else { FontWeight::Normal };
 
-                    TextButton!(
-                        *l,
-                        style: TextStyle!(
-                            font_size: 20,
-                            color: if is_selected { Colors::Blue } else { Colors::Black },
-                            font_weight: font_weight,
-                            text_decoration: if is_selected {
+                    TextButton::new(*l)
+                        .style(TextStyle::new()
+                            .font_size(20)
+                            .color(if is_selected { Color::BLUE } else { Color::BLACK })
+                            .font_weight(font_weight)
+                            .text_decoration(if is_selected {
                                 TextDecoration::Underline
                             } else {
                                 TextDecoration::None
-                            },
-                        ),
-                        hover_style: TextStyle!(
-                            font_size: 20,
-                            color: if is_selected { Color::BLUE } else { Color::BLUE.lighten(0.6) },
-                            font_weight: font_weight,
-                            text_decoration: TextDecoration::Underline,
-                        ),
-                        on_press: {
+                            }))
+                        .hover_style(TextStyle::new()
+                            .font_size(20)
+                            .color(if is_selected { Color::BLUE } else { Color::BLUE.lighten(0.6) })
+                            .font_weight(font_weight)
+                            .text_decoration(TextDecoration::Underline))
+                        .on_press({
                             let updater = updater.clone();
                             move || {
                                 // println!("Tab {} pressed", index);
@@ -120,8 +111,8 @@ impl SameLookingSectionState {
                                     );
                                 }
                             }
-                        },
-                    )
+                        })
+                        .boxed()
                 }
             })
             .collect()

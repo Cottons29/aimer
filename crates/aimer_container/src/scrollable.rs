@@ -17,37 +17,74 @@ pub use crate::scrollable::scroll_bar::*;
 use aimer_attribute::CacheBounds;
 use aimer_attribute::position::Vec2d;
 #[allow(unused)]
-use aimer_macro::{key, WidgetConstructor};
+use aimer_macro::key;
 use aimer_utils::callback::Callback;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, Key, Widget};
 use std::cell::Cell;
 use std::rc::Rc;
 
-#[derive(WidgetConstructor)]
 pub struct Scrollable<W: Widget + 'static> {
     pub child: W,
-    #[constructor(default)]
     pub scroll_behavior: ScrollBehavior,
-    #[constructor(default)]
     pub axis: ScrollAxis,
-    #[constructor(default = Some(ScrollBar::default()))]
     pub vertical_scroll_bar: Option<ScrollBar>,
-    #[constructor(default = Some(ScrollBar::default()))]
     pub horizontal_scroll_bar: Option<ScrollBar>,
     /// Opt-in `PageStorage`-style identity. When set, the live scroll offset is
     /// saved under this key and restored if the `Scrollable` is fully torn down
     /// and later re-created (e.g. a swapped tab). `None` = not remembered across
     /// teardown (rebuild/resize is still preserved via reconciliation).
-    #[constructor(default = key!())]
     pub key: Key,
     /// Optional app-held [`ScrollController`] for programmatic control. When
     /// `Some`, the app can read the live position and drive it with
     /// [`ScrollController::jump_to`] / [`ScrollController::animate_to`]; the
     /// controller shares this scrollable's state and survives rebuilds. `None`
     /// keeps the zero-cost default (internally managed) behaviour.
-    #[constructor(default)]
     pub controller: Option<ScrollController>,
+}
+
+impl<W: Widget + 'static> Scrollable<W> {
+    pub fn new(child: W) -> Self {
+        Self {
+            child,
+            scroll_behavior: ScrollBehavior::default(),
+            axis: ScrollAxis::default(),
+            vertical_scroll_bar: Some(ScrollBar::default()),
+            horizontal_scroll_bar: Some(ScrollBar::default()),
+            key: key!(),
+            controller: None,
+        }
+    }
+
+    pub fn scroll_behavior(mut self, scroll_behavior: ScrollBehavior) -> Self {
+        self.scroll_behavior = scroll_behavior;
+        self
+    }
+
+    pub fn axis(mut self, axis: ScrollAxis) -> Self {
+        self.axis = axis;
+        self
+    }
+
+    pub fn vertical_scroll_bar(mut self, scroll_bar: Option<ScrollBar>) -> Self {
+        self.vertical_scroll_bar = scroll_bar;
+        self
+    }
+
+    pub fn horizontal_scroll_bar(mut self, scroll_bar: Option<ScrollBar>) -> Self {
+        self.horizontal_scroll_bar = scroll_bar;
+        self
+    }
+
+    pub fn key(mut self, key: Key) -> Self {
+        self.key = key;
+        self
+    }
+
+    pub fn controller(mut self, controller: ScrollController) -> Self {
+        self.controller = Some(controller);
+        self
+    }
 }
 
 impl<W: Widget> Widget for Scrollable<W> {

@@ -2,7 +2,6 @@ use crate::time::AnimInstant;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
-use aimer_macro::WidgetConstructor;
 use aimer_widget::base::*;
 use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,7 +48,6 @@ impl AnimationEffect {
 ///     my_child_widget,
 /// )
 /// ```
-#[derive(WidgetConstructor)]
 pub struct Animated<T: Widget + 'static> {
     pub controller: AnimationController,
     pub effect: AnimationEffect,

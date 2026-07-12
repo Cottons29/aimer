@@ -3,36 +3,96 @@ use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
-use aimer_macro::{Rebuildable, WidgetConstructor};
+use aimer_macro::Rebuildable;
 pub use aimer_style::*;
 use aimer_widget::{base::*, Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement, Widget};
 
-#[derive(WidgetConstructor)]
 pub struct Container<T = ZeroSizedBox>
 where
     T: Widget + 'static,
 {
-    #[constructor(into, default)]
     pub(crate) width: Dimension,
-    #[constructor(into, default)]
     pub(crate) height: Dimension,
-    #[constructor(default)]
     pub padding: LayoutSpacing,
-    #[constructor(default)]
     pub margin: LayoutSpacing,
-    #[constructor(default)]
     pub box_decoration: BoxDecoration,
-    #[constructor(default = Option::None, into)]
     pub color: Option<Color>,
     pub child: T,
 }
 
+
+impl Default for Container {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Container {
+
+    pub fn new() -> Self {
+        Self {
+            width: Dimension::Auto,
+            height: Dimension::Auto,
+            padding: LayoutSpacing::default(),
+            margin: LayoutSpacing::default(),
+            box_decoration: BoxDecoration::default(),
+            color: None,
+            child: ZeroSizedBox,
+        }
+    }
+
+    pub fn width(mut self, width: impl Into<Dimension>) -> Self {
+        self.width = width.into();
+        self
+    }
+
+    pub fn height(mut self, height: impl Into<Dimension>) -> Self {
+        self.height = height.into();
+        self
+    }
+
+    pub fn padding(mut self, padding: LayoutSpacing) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn margin(mut self, margin: LayoutSpacing) -> Self {
+        self.margin = margin;
+        self
+    }
+
+    pub fn box_decoration(mut self, box_decoration: BoxDecoration) -> Self {
+        self.box_decoration = box_decoration;
+        self
+    }
+
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    /// make this struct became a valid Widget
+    pub fn child<W: Widget>(self, child: W) -> Container<W> {
+        Container {
+            width: self.width,
+            height: self.height,
+            padding: self.padding,
+            margin: self.margin,
+            box_decoration: self.box_decoration,
+            color: self.color,
+            child,
+        }
+    }
+}
+
+
 impl<W: Widget> Widget for Container<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+        let child = self.child.to_element(ctx);
         Box::new(RawContainer {
             width: self.width,
             height: self.height,
-            child: self.child.to_element(ctx),
+            child,
             padding: self.padding,
             margin: self.margin,
             box_decoration: self.box_decoration.clone(),
@@ -63,7 +123,7 @@ pub struct RawContainer<T: Element> {
     pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
 }
 
-impl<T: Element> RawContainer<T> {
+impl<E: Element> RawContainer<E> {
     /// A container is *opaque* when it paints a background — either an explicit
     /// `color` or a `box_decoration.background_color`. An opaque container
     /// visually covers whatever sits behind it in a `Stack`, so it must also
@@ -73,7 +133,7 @@ impl<T: Element> RawContainer<T> {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn new(child: T) -> Self{
+    pub(crate) fn new(child: E) -> Self{
         Self {
             margin: LayoutSpacing::default(),
             padding: LayoutSpacing::default(),

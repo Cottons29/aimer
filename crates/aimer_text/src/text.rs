@@ -1,26 +1,40 @@
 pub mod raw_text;
 
-use std::rc::Rc;
-use std::sync::Mutex;
 use crate::text::raw_text::RawTextWidget;
-use aimer_macro::WidgetConstructor;
 use aimer_style::{TextAlign, TextOverflow, TextStyle};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, LayoutCache, Widget};
+use std::rc::Rc;
+use std::sync::Mutex;
 
 /// this is a widget for creating the text
 #[allow(dead_code)]
-#[derive(WidgetConstructor)]
 pub struct Text {
-    #[constructor(into, first)]
     text: Rc<str>,
-    #[constructor(default)]
     text_align: TextAlign,
-    #[constructor(default)]
     text_style: TextStyle,
 }
 
 impl Text {
+    pub fn new(text: impl Into<Rc<str>>) -> Self {
+        Self { text: text.into(), text_align: TextAlign::default(), text_style: TextStyle::default() }
+    }
+
+    pub fn text(mut self, text: impl Into<Rc<str>>) -> Self {
+        self.text = text.into();
+        self
+    }
+
+    pub fn text_align(mut self, text_align: TextAlign) -> Self {
+        self.text_align = text_align;
+        self
+    }
+
+    pub fn text_style(mut self, text_style: TextStyle) -> Self {
+        self.text_style = text_style;
+        self
+    }
+
     pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
         self.text_style.text_overflow = text_overflow;
         self
@@ -44,6 +58,7 @@ impl Widget for Text {
             text_align: self.text_align,
             cache: LayoutCache::new(),
             _typeface: Mutex::new(None),
-        }.boxed()
+        }
+        .boxed()
     }
 }

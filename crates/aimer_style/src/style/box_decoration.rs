@@ -8,22 +8,15 @@ use crate::style::box_decoration::box_shadow::BoxShadow;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
-use aimer_macro::Constructor;
-
 use aimer_widget::Drawable;
 use aimer_widget::base::BuildContext;
 
-#[derive(Default, Clone, PartialEq, Debug, Constructor)]
+#[derive(Default, Clone, PartialEq, Debug)]
 pub struct BoxDecoration {
-    #[constructor(default)]
     pub border: BoxBorder,
-    #[constructor(default)]
     pub outline: BoxOutline,
-    #[constructor(default, into)]
     pub border_radius: BorderRadius,
-    #[constructor(default, dyn_iter, into)]
     pub box_shadow: Vec<BoxShadow>,
-    #[constructor(default = Option::None, into)]
     pub background_color: Option<Color>,
 }
 
@@ -34,6 +27,40 @@ impl From<BoxShadow> for Vec<BoxShadow> {
 }
 
 impl BoxDecoration {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn border(mut self, border: BoxBorder) -> Self {
+        self.border = border;
+        self
+    }
+
+    pub fn outline(mut self, outline: BoxOutline) -> Self {
+        self.outline = outline;
+        self
+    }
+
+    pub fn border_radius(mut self, border_radius: impl Into<BorderRadius>) -> Self {
+        self.border_radius = border_radius.into();
+        self
+    }
+
+    pub fn box_shadow(mut self, box_shadow: Vec<BoxShadow>) -> Self {
+        self.box_shadow = box_shadow;
+        self
+    }
+
+    pub fn add_shadow(mut self, shadow: BoxShadow) -> Self {
+        self.box_shadow.push(shadow);
+        self
+    }
+
+    pub fn background_color(mut self, background_color: impl Into<Color>) -> Self {
+        self.background_color = Some(background_color.into());
+        self
+    }
+
     pub fn update_color(&self, new_color: impl Into<Color>) {
         #[allow(unused_mut)]
         let mut bg_ptr = &self.background_color as *const Option<Color> as *mut Option<Color>;

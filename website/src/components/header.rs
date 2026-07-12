@@ -2,7 +2,7 @@ use aimer::Dimension::Px;
 use aimer::router::NavigatorController;
 use aimer::style::{BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing, TextDecoration, TextStyle};
 use aimer::*;
-use aimer::{widget, BuildContext, Container, State, StateUpdater, StatefulWidget, Text, Widget};
+use aimer::{BuildContext, Container, State, StateUpdater, StatefulWidget, Text, Widget, widget};
 
 use crate::router::AppRouter;
 
@@ -43,53 +43,49 @@ impl State<HeaderSection> for HeaderState {
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let children = vec![
-            SizedBox!(width: 16),
+            SizedBox::new().width(16).boxed(),
             if self.show_logo {
-                Text!(
-                    "Aimer",
-                    text_style: TextStyle!(
-                        text_decoration: TextDecoration::Underline,
-                        font_weight: FontWeight::Bolder,
-                        font_size: 24,
-                        color: Color::BLACK,
+                Text::new("Aimer")
+                    .text_style(
+                        TextStyle::new()
+                            .text_decoration(TextDecoration::Underline)
+                            .font_weight(FontWeight::Bolder)
+                            .font_size(24)
+                            .color(Color::BLACK),
+                    )
+                    .boxed()
+            } else {
+                SizedBox::new().width(100).boxed()
+            },
+            SizedBox::new().width(16).boxed(),
+            Expanded::new()
+                .child(
+                    Container::new().child(
+                        Row::new()
+                            .horizontal_alignment(BoxAlignment::End)
+                            .vertical_alignment(BoxAlignment::Center)
+                            .gaps(LayoutSpacing::new().left(24))
+                            .children(Self::build_platform_button_list(self, ctx)),
                     ),
                 )
-            } else {
-                SizedBox!(width: 100)
-            },
-            SizedBox!(width: 16),
-            Expanded!(
-                child: Container!(
-                    child: Row!(
-                        horizontal_alignment: BoxAlignment::End,
-                        vertical_alignment: BoxAlignment::Center,
-                        gaps:  LayoutSpacing!(
-                            left: 24
-                        ),
-                        children: Self::build_platform_button_list(self, ctx)
-                    )
-                )
-            ),
-            SizedBox!(width: 16),
+                .boxed(),
+            SizedBox::new().width(16).boxed(),
         ];
 
-        Container!(
-            color: Color::WHITE,
-            height: Px(60.0),
-            box_decoration: BoxDecoration!(
-                border: BoxBorder!(
-                    bottom: BorderSlice! (
-                        stroke: Px(1.0),
-                        color: Color::BLACK.with_opacity(48),
-                        style: BorderStyle::Solid
+        Container::new()
+            .color(Color::WHITE)
+            .height(Px(60.0))
+            .box_decoration(
+                BoxDecoration::new().border(
+                    BoxBorder::new().bottom(
+                        BorderSlice::new()
+                            .stroke(Px(1.0))
+                            .color(Color::BLACK.with_opacity(48))
+                            .style(BorderStyle::Solid),
                     ),
-                )
-            ),
-            child: Row!(
-                vertical_alignment: BoxAlignment::Center,
-                children: children,
+                ),
             )
-        )
+            .child(Row::new().vertical_alignment(BoxAlignment::Center).children(children))
     }
 }
 
@@ -118,25 +114,22 @@ impl HeaderState {
                     let is_selected = index == selected;
                     let font_weight = if selected == index { FontWeight::Bolder } else { FontWeight::Normal };
 
-                    TextButton!(
-                        *l,
-                        style: TextStyle!(
-                            font_size: 20,
-                            color: if is_selected { Colors::Blue } else { Colors::Black },
-                            font_weight: font_weight,
-                            text_decoration: if is_selected {
-                                TextDecoration::Underline
-                            } else {
-                                TextDecoration::None
-                            },
-                        ),
-                        hover_style: TextStyle!(
-                            font_size: 20,
-                            color: if is_selected { Color::BLUE } else { Color::BLUE.lighten(0.6) },
-                            font_weight: font_weight,
-                            text_decoration: TextDecoration::Underline,
-                        ),
-                        on_press: {
+                    TextButton::new(*l)
+                        .style(
+                            TextStyle::new()
+                                .font_size(20)
+                                .color(if is_selected { Color::BLUE } else { Color::BLACK })
+                                .font_weight(font_weight)
+                                .text_decoration(if is_selected { TextDecoration::Underline } else { TextDecoration::None }),
+                        )
+                        .hover_style(
+                            TextStyle::new()
+                                .font_size(20)
+                                .color(if is_selected { Color::BLUE } else { Color::BLUE.lighten(0.6) })
+                                .font_weight(font_weight)
+                                .text_decoration(TextDecoration::Underline),
+                        )
+                        .on_press({
                             let navigator = navigator.clone();
                             move || {
                                 println!("Tab {} pressed", index);
@@ -144,8 +137,8 @@ impl HeaderState {
                                     navigator.push(Self::route_for(index));
                                 }
                             }
-                        },
-                    )
+                        })
+                        .boxed()
                 }
             })
             .collect()

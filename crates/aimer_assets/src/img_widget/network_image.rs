@@ -6,29 +6,74 @@ use aimer_attribute::size::Size;
 use std::collections::HashMap;
 use aimer_style::BoxFit;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Constructor, Element, LayoutCache, Widget};
+use aimer_widget::{Element, LayoutCache, Widget};
 
-#[derive(Constructor)]
 pub struct NetworkImage {
-    #[constructor(first, into)]
     pub url: String,
-    #[constructor(default, into)]
     pub width: Dimension,
-    #[constructor(default, into)]
     pub height: Dimension,
-    #[constructor(default)]
     pub fit: BoxFit,
-    #[constructor(default)]
     pub header: Option<HashMap<String, String>>,
-    #[constructor(default)]
     pub error_widget: Option<Box<dyn Widget>>,
-    #[constructor(default)]
     pub loading_widget: Option<Box<dyn Widget>>,
-    #[constructor(default)]
     pub delay: Option<u64>,
-    #[constructor(default = 1.0, into)]
-    pub scale: f32
+    pub scale: f32,
+}
 
+impl NetworkImage {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            width: Dimension::default(),
+            height: Dimension::default(),
+            fit: BoxFit::default(),
+            header: None,
+            error_widget: None,
+            loading_widget: None,
+            delay: None,
+            scale: 1.0,
+        }
+    }
+
+    pub fn width(mut self, width: impl Into<Dimension>) -> Self {
+        self.width = width.into();
+        self
+    }
+
+    pub fn height(mut self, height: impl Into<Dimension>) -> Self {
+        self.height = height.into();
+        self
+    }
+
+    pub fn fit(mut self, fit: BoxFit) -> Self {
+        self.fit = fit;
+        self
+    }
+
+    pub fn header(mut self, header: HashMap<String, String>) -> Self {
+        self.header = Some(header);
+        self
+    }
+
+    pub fn error_widget(mut self, error_widget: impl Widget + 'static) -> Self {
+        self.error_widget = Some(Box::new(error_widget));
+        self
+    }
+
+    pub fn loading_widget(mut self, loading_widget: impl Widget + 'static) -> Self {
+        self.loading_widget = Some(Box::new(loading_widget));
+        self
+    }
+
+    pub fn delay(mut self, delay: u64) -> Self {
+        self.delay = Some(delay);
+        self
+    }
+
+    pub fn scale(mut self, scale: impl Into<f32>) -> Self {
+        self.scale = scale.into();
+        self
+    }
 }
 
 impl Widget for NetworkImage {

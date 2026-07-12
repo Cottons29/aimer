@@ -5,7 +5,6 @@ use crate::time::AnimInstant;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
-use aimer_macro::{Constructor, WidgetConstructor};
 use aimer_widget::base::*;
 use aimer_widget::{
     Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
@@ -21,7 +20,7 @@ use std::time::Duration;
 // ---------------------------------------------------------------------------
 
 /// Normalized RGBA color (each component 0.0–1.0) for smooth interpolation.
-#[derive(Debug, Clone, Copy, Constructor)]
+#[derive(Debug, Clone, Copy)]
 pub struct Rgba {
     pub r: f32,
     pub g: f32,
@@ -93,14 +92,12 @@ impl Animatable for Rgba {
 /// )
 /// .background_color(current_color)  // optional: enables color morphing
 /// ```
-#[derive(WidgetConstructor)]
 pub struct MorphTransition<T: Widget + 'static> {
     pub child: T,
     pub duration: Duration,
     pub curve: Curve,
     /// Optional background color to morph. If set, the color transitions
     /// from the old value to this value when the child changes.
-    #[constructor(default)]
     pub background_color: Option<Rgba>,
 }
 

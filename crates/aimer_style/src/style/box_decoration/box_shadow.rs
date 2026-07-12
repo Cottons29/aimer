@@ -1,5 +1,4 @@
 use aimer_color::prelude::Color;
-use aimer_macro::Constructor;
 
 /// Specifies which side(s) of the box the shadow is visible on.
 ///
@@ -93,33 +92,26 @@ impl ShadowSide {
 /// * `Constructor` - Simplifies the creation of the struct by providing default values for fields.
 ///
 ///
-#[derive(Debug, Clone, Copy, PartialEq, Constructor)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoxShadow {
     /// Horizontal offset
-    #[constructor(default = 0.0)]
     pub offset_x: f32,
     /// Vertical offset
-    #[constructor(default = 0.0)]
     pub offset_y: f32,
 
     /// Blur radius
-    #[constructor(default = 0.0)]
     pub blur: f32,
 
     /// Spread radius (grow/shrink before blur)
-    #[constructor(default = 0.0)]
     pub spread: f32,
 
     /// RGBA color (default: semi-transparent black)
-    #[constructor(default = BoxShadow::DEFAULT_COLOR, into)]
     pub color: Color,
 
     /// Inner shadow instead of outer
-    #[constructor(default = false)]
     pub inset: bool,
 
     /// Which side(s) of the box the shadow is visible on
-    #[constructor(default = ShadowSide::All)]
     pub side: ShadowSide,
 }
 
@@ -127,4 +119,51 @@ impl BoxShadow {
     /// Default shadow color: semi-transparent black (~50% opacity),
     /// closer to typical CSS usage than fully opaque black.
     pub const DEFAULT_COLOR: Color = Color::Rgba(0, 0, 0, 128);
+
+    pub fn new() -> Self {
+        Self {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            blur: 0.0,
+            spread: 0.0,
+            color: Self::DEFAULT_COLOR,
+            inset: false,
+            side: ShadowSide::All,
+        }
+    }
+
+    pub fn offset_x(mut self, offset_x: f32) -> Self {
+        self.offset_x = offset_x;
+        self
+    }
+
+    pub fn offset_y(mut self, offset_y: f32) -> Self {
+        self.offset_y = offset_y;
+        self
+    }
+
+    pub fn blur(mut self, blur: f32) -> Self {
+        self.blur = blur;
+        self
+    }
+
+    pub fn spread(mut self, spread: f32) -> Self {
+        self.spread = spread;
+        self
+    }
+
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
+        self.color = color.into();
+        self
+    }
+
+    pub fn inset(mut self, inset: bool) -> Self {
+        self.inset = inset;
+        self
+    }
+
+    pub fn side(mut self, side: ShadowSide) -> Self {
+        self.side = side;
+        self
+    }
 }

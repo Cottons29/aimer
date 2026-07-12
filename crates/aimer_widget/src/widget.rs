@@ -7,6 +7,9 @@ use std::rc::Rc;
 pub mod stateful;
 pub mod stateless;
 
+
+
+
 pub trait Widget {
     fn key(&self) -> Option<crate::key::Key> {
         None
@@ -14,6 +17,11 @@ pub trait Widget {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element>;
     fn debug_name(&self) -> &'static str {
         "Unknown"
+    }
+
+
+    fn boxed(self) -> Box<dyn Widget> where Self: Sized + 'static {
+        Box::new(self)
     }
 
     /// Returns the text content if this is a text widget.
