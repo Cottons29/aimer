@@ -7,15 +7,13 @@ interfaces from a single codebase using a declarative, composable widget tree.
 #[aimer::main]
 pub fn start_app() {
     AimerApp::start(
-        Container!(
-            child: Text!(
-                "Hello World!",
-                text_align: text::TextAlign::MidCenter,
-                text_style: TextStyle!(
-                    color: Colors::Black,
-                )
+        Container::new()
+            .child(
+                Text::new("Hello World!")
+                    .text_align(TextAlign::MidCenter)
+                    .text_style(TextStyle::new().color(Color::BLACK))
             )
-        )
+            .boxed()
     );
 }
 ```
@@ -33,8 +31,8 @@ tree on native platforms.
 
 ## Features
 
-- **Declarative UI** — Build interfaces with a composable widget tree using macros (`Container!`, `Row!`, `Column!`,
-  `Text!`, `Button!`, etc.).
+- **Declarative UI** — Build interfaces with a composable widget tree using a fluent builder pattern
+  (`Container::new().child(...)`, `Row::new().children(...)`, `Text::new("...")`, etc.).
 - **Stateful Widgets** — Flutter-style `StatefulWidget` / `State` pattern with `StateUpdater` for reactive rebuilds.
 - **Animation System** — `AnimationController` with configurable duration, curves (`EaseIn`, `EaseOut`, `Bounce`, etc.),
   and effects (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`). `⚠️ Unstable `
@@ -92,7 +90,7 @@ cd my_aimer && Aimer run
     - [x] `StatefulWidget` / `State` pattern
     - [x] `Element` tree and `BuildContext`
     - [x] `StateUpdater` for reactive rebuilds
-    - [x] Widget macros (`Container!`, `Row!`, `Column!`, `Text!`, `Button!`, etc.)
+    - [x] Widget builder pattern (`Container::new()`, `Row::new()`, `Column::new()`, `Text::new()`, `Button::new()`, etc.)
 - [x] Layout engine
     - [x] `Row` and `Column` (flexbox-inspired)
     - [x] `Container` with padding, margin, and decoration
