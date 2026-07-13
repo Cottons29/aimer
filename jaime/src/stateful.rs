@@ -3,7 +3,7 @@ use aimer::macros::widget;
 use aimer::style::*;
 use aimer::AimerApp;
 use aimer::*;
-use aimer::console::debug;
+use std::sync::Arc;
 
 // this is the entry point of the app
 pub fn start_counter() {
@@ -21,10 +21,7 @@ pub struct CounterWidget {
 
 impl CounterWidget {
     pub fn new(initial_count: i32) -> Self {
-        Self {
-            initial_count,
-            on_switch: None,
-        }
+        Self { initial_count, on_switch: None }
     }
 
     pub fn on_switch(mut self, on_switch: VoidCallback) -> Self {
@@ -35,6 +32,8 @@ impl CounterWidget {
 // create a state for the CounterWidget
 pub struct CounterState {
     count: i32,
+    on_loading: bool,
+    shared: Arc<u32>,
     updater: StateUpdater<Self>,
 }
 
@@ -43,7 +42,12 @@ impl StatefulWidget for CounterWidget {
     type State = CounterState;
 
     fn create_state(&self) -> CounterState {
-        CounterState { count: self.initial_count, updater: StateUpdater::empty() }
+        CounterState {
+            count: self.initial_count,
+            updater: StateUpdater::empty(),
+            on_loading: false,
+            shared: Arc::new(0),
+        }
     }
 }
 // implement the State trait for CounterState
@@ -57,7 +61,7 @@ impl State<CounterWidget> for CounterState {
 
     // build the widget with state
     fn build(&self, _: &BuildContext) -> impl Widget {
-        debug!("self.count: {}", self.count);
+        // debug!("self.count: {}", self.count);
         let updater = self.updater.clone();
         Container::new()
             .color(Colors::Gray.into())
@@ -67,43 +71,54 @@ impl State<CounterWidget> for CounterState {
                     .direction(LayoutDirection::Column)
                     .vertical_alignment(BoxAlignment::Center)
                     .horizontal_alignment(BoxAlignment::Center)
-                    .children(vec![
+                    .children([
                         SizedBox::new().height(50).boxed(),
-
                         Text::new({
-                                debug!("Clicked: {}", self.count);
-                                format!("Clicked: {}", self.count)
-                            })
-                            .text_style(TextStyle::new()
-                                .font_size(25)
-                                .color(Colors::Black))
-                            .boxed(),
-
+                            format!(
+                                "Clicked: {}",
+                                self.count,
+                            )
+                        })
+                        .text_style(TextStyle::new().font_size(25).color(Colors::Black))
+                        .boxed(),
                         SizedBox::new().height(50).boxed(),
-
                         Container::new()
                             .width(Dimension::Px(200.0))
                             .height(Dimension::Px(50.0))
                             .child(
                                 Button::new()
-                                    .on_press(move || {
-                                        println!("Button pressed with state : {}", updater.read_state().count);
+                                    .disabled(self.on_loading)
+                                    .on_press_async(async move || {
+                                        updater.set_state(|state| state.on_loading = true);
+                                        match reqwest::get("https://example.com").await {
+                                            Ok(response) => {
+                                                println!("Response: {:?}", response)
+                                            }
+                                            Err(err) => {
+                                                println!("Error: {}", err);
+                                                return;
+                                            }
+                                        };
+                                        updater.set_state(|state| state.on_loading = false);
+
+                                        println!(
+                                            "Button pressed with state : {}",
+                                            updater.read_state().count
+                                        );
                                         updater.set_state(|state| {
                                             state.count += 1;
                                         });
                                     })
                                     .decoration(BoxDecoration::new().background_color(Color::BLUE))
                                     .child(
-                                        Container::new()
-                                            .child(
-                                                Text::new("Increase")
-                                                    .text_align(TextAlign::MidCenter)
-                                                    .text_style(TextStyle::new()
-                                                        .color(Colors::Black))
-                                            )
+                                        Text::new(if self.on_loading { "Loading..." } else { "Click Me" })
+                                            .text_align(TextAlign::MidCenter)
+                                            .text_style(TextStyle::new().color(Colors::Black)),
                                     )
-                            ).boxed(),
-                    ])
+                                    .boxed(),
+                            )
+                            .boxed(),
+                    ]),
             )
     }
 }

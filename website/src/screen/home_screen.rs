@@ -7,7 +7,13 @@ use crate::utils::{app_padding, is_mobile, mobile_title, resp_position};
 
 #[widget(Stateful)]
 #[derive(Clone)]
-pub struct HomePage {}
+pub struct HomePage;
+
+impl HomePage {
+    pub fn boxing(_: &BuildContext) -> Box<dyn Widget> {
+        Box::new(Self)
+    }
+}
 
 pub struct HomePageState {
     pub controller: ScrollController,
