@@ -91,6 +91,9 @@ pub struct StateUpdater<S> {
     inner: Option<StateUpdaterInner<S>>,
 }
 
+unsafe impl<S> Send for StateUpdater<S> {}
+unsafe impl<S> Sync for StateUpdater<S> {}
+
 struct StateUpdaterInner<S> {
     /// Channel sender for queueing state mutations.
     tx: Sender<StateMutation<S>>,

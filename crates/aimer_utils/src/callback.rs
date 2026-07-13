@@ -132,11 +132,23 @@ impl<Args, Return, F: Fn(Args) -> Return + 'static> From<F> for Callback<Args, R
 
 impl<Args, Return, F, Fut> From<AsyncCallback<F>> for Callback<Args, Return>
 where
-    F: Fn(Args) -> Fut + Send + 'static,
+    F: FnOnce(Args) -> Fut + Send + 'static,
     Fut: Future<Output = Return> + Send + 'static,
 {
     fn from(ac: AsyncCallback<F>) -> Self {
-        Self { inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(Box::new(move |args| Box::pin(ac.0(args)))))))) }
+        let f = std::sync::Mutex::new(Some(ac.0));
+        Self {
+            inner: CallbackInner(Rc::new(UnsafeCell::new(Some(
+                RawInnerCallback::Async(Box::new(move |args| {
+                    let f = f.lock().unwrap().take();
+                    if let Some(f) = f {
+                        Box::pin(f(args))
+                    } else {
+                        Box::pin(async { panic!("AsyncCallback called more than once") })
+                    }
+                })),
+            )))),
+        }
     }
 }
 
@@ -181,6 +193,43 @@ impl VoidCallback {
     pub fn callable(&self) -> Option<&Self> {
         if self.inner.is_default() { None } else { Some(self) }
     }
+
+    /// Create a `VoidCallback` from an async function (`fn() -> impl Future<Output=()>`).
+    ///
+    /// Unlike the `From<F>` impl (which requires `Fn()`), this accepts
+    /// functions that return a `Future` — the callback stores the future
+    /// producer and must be driven by an executor.
+    ///
+    /// This method accepts `FnOnce` closures, which allows capturing mutable
+    /// state. The closure is wrapped in a `Mutex<Option<F>>` and taken on
+    /// first invocation — subsequent calls produce an empty future.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let data = vec![1, 2, 3];
+    /// let cb = VoidCallback::from_async(move || async move {
+    ///     process(data).await;
+    /// });
+    /// ```
+    pub fn from_async<F, Fut>(f: F) -> Self
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let f = std::sync::Mutex::new(Some(f));
+        Self {
+            inner: CallbackInner(Rc::new(UnsafeCell::new(Some(
+                RawInnerCallback::Async(Box::new(move |_| {
+                    let f = f.lock().unwrap().take();
+                    if let Some(f) = f {
+                        Box::pin(f())
+                    } else {
+                        Box::pin(async {})
+                    }
+                })),
+            )))),
+        }
+    }
 }
 
 unsafe impl Send for VoidCallback {}
@@ -209,13 +258,26 @@ impl<F: Fn() + 'static> From<F> for VoidCallback {
 
 impl<F, Fut> From<AsyncCallback<F>> for VoidCallback
 where
-    F: Fn() -> Fut + Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
     fn from(ac: AsyncCallback<F>) -> Self {
-        Self { inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(Box::new(move |_| Box::pin(ac.0()))))))) }
+        let f = std::sync::Mutex::new(Some(ac.0));
+        Self {
+            inner: CallbackInner(Rc::new(UnsafeCell::new(Some(
+                RawInnerCallback::Async(Box::new(move |_| {
+                    let f = f.lock().unwrap().take();
+                    if let Some(f) = f {
+                        Box::pin(f())
+                    } else {
+                        Box::pin(async {})
+                    }
+                })),
+            )))),
+        }
     }
 }
+
 
 impl CallbackExecutor for VoidCallback {
     type Args = ();
@@ -224,3 +286,8 @@ impl CallbackExecutor for VoidCallback {
         unsafe { &*self.inner.get() }
     }
 }
+
+pub trait IntoVoidCallback {
+    fn into_void_callback(self) -> VoidCallback;
+}
+
