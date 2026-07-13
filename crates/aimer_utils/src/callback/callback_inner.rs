@@ -39,11 +39,19 @@ pub struct AsyncCallback<F>(pub F);
 #[cfg(not(target_arch = "wasm32"))]
 impl<F, Fut, P, R> From<AsyncCallback<F>> for RawInnerCallback<P, R>
 where
-    F: Fn(P) -> Fut + Send + 'static,
+    F: FnOnce(P) -> Fut + Send + 'static,
     Fut: Future<Output = R> + Send + 'static,
 {
     fn from(ac: AsyncCallback<F>) -> Self {
-        RawInnerCallback::Async(Box::new(move |param| Box::pin(ac.0(param))))
+        let f = std::sync::Mutex::new(Some(ac.0));
+        RawInnerCallback::Async(Box::new(move |param| {
+            let f = f.lock().unwrap().take();
+            if let Some(f) = f {
+                Box::pin(f(param))
+            } else {
+                Box::pin(async { panic!("AsyncCallback called more than once") })
+            }
+        }))
     }
 }
 
@@ -110,10 +118,20 @@ impl<P, R, F: Fn(P) -> R + 'static> From<F> for CallbackInner<P, R> {
 
 impl<P, R, F, Fut> From<AsyncCallback<F>> for CallbackInner<P, R>
 where
-    F: Fn(P) -> Fut + Send + 'static,
+    F: FnOnce(P) -> Fut + Send + 'static,
     Fut: Future<Output = R> + Send + 'static,
 {
     fn from(ac: AsyncCallback<F>) -> Self {
-        CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(Box::new(move |param| Box::pin(ac.0(param))))))))
+        let f = std::sync::Mutex::new(Some(ac.0));
+        CallbackInner(Rc::new(UnsafeCell::new(Some(
+            RawInnerCallback::Async(Box::new(move |param| {
+                let f = f.lock().unwrap().take();
+                if let Some(f) = f {
+                    Box::pin(f(param))
+                } else {
+                    Box::pin(async { panic!("AsyncCallback called more than once") })
+                }
+            })),
+        ))))
     }
 }

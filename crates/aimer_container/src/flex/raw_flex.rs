@@ -20,6 +20,12 @@ pub struct Flex<W: Widget + 'static = ZeroSizedBox> {
     pub(crate) children: Vec<W>,
 }
 
+impl Default for Flex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Flex {
     pub fn new() -> Self {
         Self {
@@ -59,14 +65,15 @@ impl<W: Widget + 'static> Flex<W> {
         self
     }
 
-    pub fn children<C: Widget>(self, children: Vec<C>) -> Flex<C> {
+    pub fn children<C: Widget>(self, children: impl IntoIterator<Item = C>) -> Flex<C> {
+
         Flex {
             direction: self.direction,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow: self.overflow,
-            children,
+            children: children.into_iter().collect(),
         }
     }
 

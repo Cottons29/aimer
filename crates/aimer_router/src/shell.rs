@@ -25,14 +25,16 @@ impl Shell {
         Self { frame: Box::new(frame), child_builder: Rc::new(child_builder) }
     }
 
+    /// The Heap-allocated version of this `Shell::new`.
+    /// Create a shell from a `frame` widget (containing an `Outlet`) and a
+    /// closure that builds the active child widget.
+    pub fn boxing(frame: impl Widget + 'static, child_builder: impl Fn(&BuildContext) -> Box<dyn Widget> + 'static) -> Box<dyn Widget> {
+        Self::new(frame, child_builder).boxed()
+    }
+
     /// Create a shell whose active child is a fixed widget value.
     pub fn with_child(frame: impl Widget + 'static, child: impl Widget + Clone + 'static) -> Self {
         Self::new(frame, move |_| Box::new(child.clone()))
-    }
-
-    /// Box this shell as a `Box<dyn Widget>`.
-    pub fn boxed(self) -> Box<dyn Widget> {
-        Box::new(self)
     }
 }
 

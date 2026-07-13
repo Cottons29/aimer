@@ -147,10 +147,6 @@ impl<T: Widget + 'static> Widget for MorphTransition<T> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Internal types
-// ---------------------------------------------------------------------------
-
 /// Snapshot of a child's layout properties at a point in time.
 #[derive(Debug, Clone)]
 struct LayoutSnapshot {
