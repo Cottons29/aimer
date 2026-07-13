@@ -9,6 +9,10 @@ pub trait Rebuildable: VisitorElement {
         });
     }
 
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
     /// Mark this element (and its subtree) as needing a rebuild on the next frame.
     ///
     /// The default just recurses through `visit_children`; elements that actually

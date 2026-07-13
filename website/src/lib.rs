@@ -13,3 +13,7 @@ pub fn my_app() {
     // AimerApp::start(HomePage{}).
     AimerApp::start(Navigator::<AppRouter>::new(AppRouter::Home, |route| Box::new(route)));
 }
+
+fn main() {
+    AimerApp::start(Navigator::<AppRouter>::new(AppRouter::Home, |route| Box::new(route)));
+}

@@ -115,6 +115,12 @@ pub struct BoxShadow {
     pub side: ShadowSide,
 }
 
+impl Default for BoxShadow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BoxShadow {
     /// Default shadow color: semi-transparent black (~50% opacity),
     /// closer to typical CSS usage than fully opaque black.
