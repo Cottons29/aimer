@@ -1,6 +1,6 @@
 use aimer::style::{FontWeight, LayoutSpacing, TextDecoration, TextOverflow, TextStyle};
 use aimer::*;
-use aimer::{widget, BuildContext, Widget};
+use aimer::{BuildContext, Widget, widget};
 
 use crate::utils::{app_padding, mobile_title};
 
@@ -18,7 +18,7 @@ impl StatelessWidget for DocsPage {
                     .padding(app_padding(ctx))
                     .child(Column::new()
                         .horizontal_alignment(BoxAlignment::Start)
-                        .children(vec![
+                        .children([
                             SizedBox::new().height(24).boxed(),
                             Text::new("Docs")
                                 .text_style(TextStyle::new()
@@ -55,9 +55,7 @@ impl StatelessWidget for DocsPage {
 fn docs_entry(title: &str, body: &str) -> Box<dyn Widget> {
     Container::new()
         .padding(LayoutSpacing::new().bottom(24))
-        .child(Column::new()
-            .horizontal_alignment(BoxAlignment::Start)
-            .children(vec![
+        .child(Column::new().horizontal_alignment(BoxAlignment::Start).children(vec![
                 Text::new(title.to_string())
                     .text_style(TextStyle::new()
                         .font_size(26)
@@ -71,7 +69,6 @@ fn docs_entry(title: &str, body: &str) -> Box<dyn Widget> {
                         .color(Color::BLACK.with_opacity(200))
                         .text_overflow(TextOverflow::Wrap))
                     .boxed(),
-            ])
-        )
+            ]))
         .boxed()
 }

@@ -5,7 +5,7 @@ use crate::components::element::Element;
 /// traversal `carry_child_state` walks to reach nested state-owning elements
 /// (e.g. a `Scrollable` inside a `Container`), so single-child wrappers must
 /// surface their child here for scroll state to survive an ancestor rebuild.
-#[allow(clippy::needless_lifetimes)]
+#[allow(clippy::needless_lifetimes, unused)]
 fn event_children_of<'a>(element: &'a dyn Element) -> Vec<&'a dyn Element> {
     let mut children: Vec<&dyn Element> = Vec::new();
     element.event_children(&mut |c| children.push(c));
@@ -18,12 +18,12 @@ fn event_children_of<'a>(element: &'a dyn Element) -> Vec<&'a dyn Element> {
 /// the shape used by the framework's only built-in scroll container.
 #[allow(unused)]
 struct ScrollableLikeWrapper {
-    child: Box<dyn crate::Element>,
+    child: Box<dyn Element>,
     key: Option<crate::Key>,
 }
 
 impl crate::VisitorElement for ScrollableLikeWrapper {
-    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn crate::Element)) {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
     }
     fn debug_name(&self) -> &'static str {
@@ -32,7 +32,7 @@ impl crate::VisitorElement for ScrollableLikeWrapper {
 }
 
 impl crate::EventElement for ScrollableLikeWrapper {
-    fn event_children<'a>(&'a self, _: &mut dyn FnMut(&'a dyn crate::Element)) {}
+    fn event_children<'a>(&'a self, _: &mut dyn FnMut(&'a dyn Element)) {}
 }
 
 impl crate::Drawable for ScrollableLikeWrapper {
@@ -170,9 +170,11 @@ mod tests {
     /// counter value `build()` saw — this is the only way to observe what
     /// `rebuild_fn` actually reads from the state cell after `adopt_state_from`
     /// swaps it.
+    #[allow(unused)]
     struct CounterWidget {
         observer: Rc<Cell<usize>>,
     }
+    #[allow(unused)]
     struct CounterState {
         counter: usize,
         observer: Rc<Cell<usize>>,
@@ -197,7 +199,7 @@ mod tests {
             EmptyWidget
         }
     }
-
+    #[allow(unused)]
     struct ConfigWidget {
         label: usize,
         observed_label: Rc<Cell<usize>>,
@@ -248,7 +250,7 @@ mod tests {
             EmptyWidget
         }
     }
-
+    #[allow(unused)]
     fn current_config_updater(live_updater: &Rc<RefCell<Option<StateUpdater<ConfigState>>>>) -> StateUpdater<ConfigState> {
         live_updater
             .borrow()
@@ -710,10 +712,8 @@ mod tests {
                     let c_h = child_size.height;
 
                     let mut is_visible = true;
-                    if let Some((vx, vy, vw, vh)) = ctx.visible_rect {
-                        if c_w < vx || 0.0 > vx + vw || current_y + c_h < vy || current_y > vy + vh {
-                            is_visible = false;
-                        }
+                    if let Some((vx, vy, vw, vh)) = ctx.visible_rect && (c_w < vx || 0.0 > vx + vw || current_y + c_h < vy || current_y > vy + vh) {
+                        is_visible = false;
                     }
 
                     if is_visible {
@@ -846,6 +846,7 @@ mod tests {
 
         struct FakeScrollable {
             child: Box<dyn Element>,
+            #[allow(unused)]
             key: Option<Key>,
         }
 
@@ -1026,13 +1027,13 @@ mod tests {
         // buttons ("iOS"/"Web") ALSO render as active. This test asserts that
         // after switching the selection exactly ONE button (the newly selected
         // one) reports `selected == true`.
-
+        #[allow(unused)]
         struct TabButtonWidget {
             index: usize,
             selected: bool,
             observer: Rc<Cell<i32>>,
         }
-
+        #[allow(unused)]
         struct TabButtonState {
             index: usize,
             selected: bool,
@@ -1078,9 +1079,9 @@ mod tests {
                 EmptyWidget
             }
         }
-
+        #[allow(unused)]
         const TAB_COUNT: usize = 4;
-
+        #[allow(unused)]
         fn build_tab_row(ctx: &BuildContext, selected_index: Rc<Cell<usize>>, observers: Rc<Vec<Rc<Cell<i32>>>>) -> Box<dyn Element> {
             let selected = selected_index.get();
             let mut children: Vec<Box<dyn Element>> = Vec::with_capacity(TAB_COUNT);
@@ -1098,6 +1099,6 @@ mod tests {
             }
             FakeFlex::new(children).boxed()
         }
-        
+
     }
 }

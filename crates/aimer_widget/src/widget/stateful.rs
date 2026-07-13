@@ -5,6 +5,7 @@ use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
 use aimer_utils::error;
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use std::any::Any;
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::panic::Location;
 use std::rc::Rc;
@@ -13,14 +14,11 @@ trait FetchAdd {
     fn fetch_add(&self, val: u64) -> u64;
 }
 
-
 impl FetchAdd for Cell<u64> {
     fn fetch_add(&self, val: u64) -> u64 {
         self.get().wrapping_add(val)
     }
 }
-
-
 
 /// A `Send + Sync` wrapper around `UnsafeCell<Box<dyn Element>>`.
 /// Safety: the rendering pipeline is single-threaded, so concurrent access does not occur.
@@ -60,7 +58,7 @@ unsafe impl Sync for SyncRebuildFn {}
 /// reconcile that uses this element as the `old` side would refresh an
 /// orphaned cell while the live `rebuild_fn` keeps reading a stale one.
 /// Safety: the rendering pipeline is single-threaded.
-struct SyncStateAny(UnsafeCell<Rc<dyn std::any::Any>>);
+struct SyncStateAny(UnsafeCell<Rc<dyn Any>>);
 unsafe impl Send for SyncStateAny {}
 unsafe impl Sync for SyncStateAny {}
 
@@ -68,7 +66,7 @@ unsafe impl Sync for SyncStateAny {}
 /// mine" hook. Captures this element's state cell (typed as `W::State`);
 /// downcasts the supplied `&dyn Any` (another element's `SyncState<W::State>`)
 /// and calls `State::adopt_config_from`. No-op when the concrete types differ.
-type AdoptConfigCallBack = dyn Fn(&dyn std::any::Any);
+type AdoptConfigCallBack = dyn Fn(&dyn Any);
 
 /// A `Send + Sync` wrapper around the config-adoption closure.
 ///
@@ -289,7 +287,9 @@ pub trait State<W: StatefulWidget> {
     /// Called once after the state is created, providing a [`StateUpdater`] handle.
     /// Store the updater in your state struct to later call `set_state()` from
     /// event handlers or callbacks — similar to Flutter's `setState`.
-    fn init_state(&mut self, updater: StateUpdater<Self>) where Self: Sized;
+    fn init_state(&mut self, updater: StateUpdater<Self>)
+    where
+        Self: Sized;
 
     /// Called during reconciliation when a parent rebuild produces a freshly
     /// built element for the *same* stateful widget (e.g. a window resize, or a
@@ -303,7 +303,6 @@ pub trait State<W: StatefulWidget> {
     /// configuration fields out of `new` into `self` here so the widget renders
     /// with the current configuration while retaining its runtime state.
     fn adopt_config_from(&mut self, _new: &Self) {}
-
 
     /// Override this method to build the widget
     fn build(&self, ctx: &BuildContext) -> impl Widget;
@@ -404,9 +403,9 @@ impl StatefulElement {
         // `W::State` type) into this one. Together these let reconciliation
         // refresh a preserved live state's widget props without
         // `StatefulElement` being generic over `W`.
-        let state_any: Rc<dyn std::any::Any> = state_cell.clone();
+        let state_any: Rc<dyn Any> = state_cell.clone();
         let state_for_config = state_cell.clone();
-        let adopt_config_fn: Rc<AdoptConfigCallBack> = Rc::new(move |new_any: &dyn std::any::Any| {
+        let adopt_config_fn: Rc<AdoptConfigCallBack> = Rc::new(move |new_any: &dyn Any| {
             if let Some(new_cell) = new_any.downcast_ref::<SyncState<W::State>>() {
                 // Safety: single-threaded reconciliation; the live state is not
                 // otherwise borrowed while we copy the fresh config into it.
@@ -501,8 +500,7 @@ impl StatefulElement {
 
         self.dirty.borrow().set(false);
         self.rebuild_generation.fetch_add(1);
-        self.last_rebuilt_generation
-            .set(self.rebuild_generation.get());
+        self.last_rebuilt_generation.set(self.rebuild_generation.get());
     }
 
     /// Walk the element tree and rebuild any nested dirty `StatefulElement`s.
@@ -522,20 +520,14 @@ impl StatefulElement {
 /// Safe to call on any pair: when both sides aren't matching
 /// `StatefulElement`s, it's a no-op.
 pub(crate) fn carry_stateful(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
-    let target = std::any::TypeId::of::<StatefulElement>();
-    if old.element_type_id() != target || new.element_type_id() != target {
+    let Some(old_ele) = old.option_any().and_then(|o| o.downcast_ref::<StatefulElement>()) else {
         return;
-    }
-    // SAFETY: We verified via TypeId that both concrete types are StatefulElement.
-    // The data pointer of the trait object points to the StatefulElement struct.
-    let old_s: &StatefulElement = unsafe { &*(old as *const dyn Element as *const () as *const StatefulElement) };
-    let new_s: &StatefulElement = unsafe { &*(new as *const dyn Element as *const () as *const StatefulElement) };
-    // Don't adopt if the widget types differ — that would transfer state from
-    // a different widget into the new one.
-    if old_s.debug_name() != new_s.debug_name() {
+    };
+
+    let Some(new_ele) = new.option_any().and_then(|o| o.downcast_ref::<StatefulElement>()) else {
         return;
-    }
-    new_s.adopt_state_from(old_s, ctx);
+    };
+    new_ele.adopt_state_from(old_ele, ctx);
 }
 
 /// Recurse into the matched children of an old and new element tree, letting
@@ -549,11 +541,16 @@ pub(crate) fn carry_stateful(old: &dyn Element, new: &dyn Element, ctx: &BuildCo
 /// them for layout — still get their nested stateful state carried across.
 pub(crate) fn carry_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
     // Adopt state at this level first.
+    // println!("Before carry_stateful");
     carry_stateful(old, new, ctx);
+    // println!(" -> carry_stateful : success");
 
     // Try event_children first (primary traversal for reconciliation).
+    // println!("Step 1");
     let mut old_children: smallvec::SmallVec<[&dyn Element; 8]> = smallvec::SmallVec::new();
+    // println!("Step 2");
     old.event_children(&mut |c| old_children.push(c));
+    // println!("Step 3");
 
     // Fall back to visit_children if event_children is empty.
     // This handles elements like scrollable containers that hide children
@@ -561,19 +558,27 @@ pub(crate) fn carry_child_state(old: &dyn Element, new: &dyn Element, ctx: &Buil
     if old_children.is_empty() {
         old.visit_children(&mut |c| old_children.push(c));
     }
+    // println!("Step 4");
     if old_children.is_empty() {
         return;
     }
+    // println!("Step 5");
 
     let mut new_children: smallvec::SmallVec<[&dyn Element; 8]> = smallvec::SmallVec::new();
+    // println!("Step 6");
     new.event_children(&mut |c| new_children.push(c));
+    // println!("Step 7");
     if new_children.is_empty() {
         new.visit_children(&mut |c| new_children.push(c));
     }
+    // println!("Step 8");
 
     for (old_child, new_child) in old_children.iter().zip(new_children.iter()) {
+        // println!("Before call carry_child_state");
         carry_child_state(*old_child, *new_child, ctx);
+        // println!("After call carry_child_state");
     }
+    // println!("Step 9");
 }
 
 impl StatefulElement {
@@ -598,23 +603,13 @@ impl StatefulElement {
         unsafe {
             // The rebuild closure captures the state cell and mutation channel.
             // Replacing it makes this element's build() read from the live state.
+            // println!("adopt_state_from casting raw ptr");
             *self.rebuild_fn.0.get() = (*old.rebuild_fn.0.get()).clone();
         }
         // Inherit name so inspector and future reconciliation still match.
         self.debug_name.set(old.debug_name.get());
 
-        // Adopt the OLD element's dirty flag so the *live* element and the
-        // updater captured inside the preserved state's own callbacks agree on
-        // ONE flag. We just copied `old.rebuild_fn` (which carries the old
-        // state cell and its mutation channel) into `self`, but `self` was
-        // constructed with its OWN fresh dirty flag. The preserved state's
-        // callbacks (e.g. a `TextButton`'s hover-enter/exit) call `set_state`
-        // through the OLD updater, which flips the OLD flag and queues on the
-        // OLD channel. The copied `rebuild_fn` already drains that OLD channel,
-        // but `rebuild_if_dirty` gates on `self.dirty` — so without sharing the
-        // flag the live element never notices its own state's `set_state`, the
-        // queued mutation is never drained/applied, and (for example) a
-        // button's hover highlight stays stuck after a parent rebuild.
+        // Adopt the OLD element's dirty flag so the *live* element
         *self.dirty.borrow_mut() = old.dirty.borrow().clone();
 
         // Refresh the *configuration* stored in the preserved live state from
@@ -635,7 +630,7 @@ impl StatefulElement {
         // config.
         {
             // Safety: single-threaded reconciliation.
-            let fresh_state: &dyn std::any::Any = unsafe { &*self.state_any.0.get() }.as_ref();
+            let fresh_state: &dyn Any = unsafe { &*self.state_any.0.get() }.as_ref();
             let old_adopt = unsafe { &*old.adopt_config_fn.0.get() };
             old_adopt(fresh_state);
         }
@@ -809,6 +804,10 @@ impl Rebuildable for StatefulElement {
         StatefulElement::rebuild_if_dirty(self, ctx);
     }
 
+    fn option_any(&self) -> Option<&dyn Any> {
+        Some(self)
+    }
+
     fn mark_needs_rebuild(&self) {
         self.dirty.borrow().set(true);
         // Safety: single-threaded rendering pipeline.
@@ -816,7 +815,6 @@ impl Rebuildable for StatefulElement {
         child.mark_needs_rebuild();
     }
 }
-
 
 #[cfg(test)]
 mod tests {
