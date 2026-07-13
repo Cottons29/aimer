@@ -7,7 +7,13 @@ use crate::utils::{app_padding, mobile_title};
 /// The `Learn` page rendered inside the app shell's content area.
 #[widget(Stateless)]
 #[derive(Clone)]
-pub struct LearnPage {}
+pub struct LearnPage;
+
+impl LearnPage {
+    pub fn boxing(_: &BuildContext) -> Box<dyn Widget> {
+        Box::new(Self)
+    }
+}
 
 impl StatelessWidget for LearnPage {
     fn build(&self, ctx: &BuildContext) -> impl Widget {

@@ -1,6 +1,6 @@
-use aimer::*;
 use aimer::router::{Router, Shell};
 use aimer::style::{TextAlign, TextStyle};
+use aimer::*;
 
 use crate::components::app_shell::AppShell;
 use crate::screen::docs_screen::DocsPage;
@@ -34,26 +34,26 @@ impl Router for AppRouter {
         // changes as we navigate.
         let active_tab = self.active_tab();
         match self {
-            AppRouter::Home => Shell::new(AppShell { active_tab }, |_| Box::new(HomePage {})).boxed(),
-            AppRouter::Docs => Shell::new(AppShell { active_tab }, |_| Box::new(DocsPage {})).boxed(),
-            AppRouter::Learn => Shell::new(AppShell { active_tab }, |_| Box::new(LearnPage {})).boxed(),
-            AppRouter::NotFound => Shell::new(AppShell { active_tab }, |_| Box::new(not_found_page())).boxed(),
+            AppRouter::Home => Shell::boxing(AppShell { active_tab }, HomePage::boxing),
+            AppRouter::Docs => Shell::boxing(AppShell { active_tab }, DocsPage::boxing),
+            AppRouter::Learn => Shell::boxing(AppShell { active_tab }, LearnPage::boxing),
+            AppRouter::NotFound => {
+                Shell::boxing(AppShell { active_tab }, |_| not_found_page().boxed())
+            }
         }
     }
 }
 
 /// A simple "page not found" placeholder rendered inside the shell content area.
 fn not_found_page() -> impl Widget {
-    Container::new()
-        .color(Color::WHITE)
-        .child(Column::new()
+    Container::new().color(Color::WHITE).child(
+        Column::new()
             .horizontal_alignment(BoxAlignment::Center)
             .vertical_alignment(BoxAlignment::Center)
             .children(vec![
                 Text::new("Page not found")
                     .text_align(TextAlign::MidCenter)
-                    .text_style(TextStyle::new()
-                        .font_size(44)),
-            ])
-        )
+                    .text_style(TextStyle::new().font_size(44)),
+            ]),
+    )
 }

@@ -18,7 +18,8 @@ use aimer::*;
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
-    stateful_2::start_my_list();
+    // stateful_2::start_my_list();
+    start_counter();
 }
 #[allow(unused)]
 fn test_text() {
