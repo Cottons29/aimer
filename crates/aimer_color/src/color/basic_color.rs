@@ -1,5 +1,3 @@
-
-
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub enum Colors {
     Red,
@@ -20,7 +18,6 @@ pub enum Colors {
     Rgb(u8, u8, u8),
     Custom(u32),
 }
-
 
 impl Colors {
     pub const fn alpha(&self, index: u8) -> Self {
@@ -46,7 +43,7 @@ impl Colors {
             0xFF800080 => Colors::Purple,
             0xFFA52A2A => Colors::Brown,
             0x00000000 => Colors::Transparent,
-            _ => Colors::Custom(argb)
+            _ => Colors::Custom(argb),
         }
     }
 
