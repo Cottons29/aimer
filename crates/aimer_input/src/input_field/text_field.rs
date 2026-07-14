@@ -1,5 +1,7 @@
 use crate::input_field::controller::TextFieldController;
-use crate::input_field::raw_fields::{Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback};
+use crate::input_field::raw_fields::{
+    Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback,
+};
 use aimer_animation::AnimInstant;
 use aimer_attribute::CacheBounds;
 use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
@@ -168,7 +170,10 @@ impl TextField {
             max_length: None,
             enable: true,
             expand: ExpandDirection::default(),
-            decoration: BoxDecoration { background_color: Some(Colors::White.into()), ..Default::default() },
+            decoration: BoxDecoration {
+                background_color: Some(Colors::White.into()),
+                ..Default::default()
+            },
             hover_decoration: None,
             focus_decoration: None,
             disabled_decoration: None,
