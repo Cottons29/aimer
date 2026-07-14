@@ -46,24 +46,44 @@ impl BorderRadius {
 
 impl From<i32> for BorderRadius {
     fn from(value: i32) -> Self {
-        BorderRadius { top_left: value.into(), top_right: value.into(), bottom_right: value.into(), bottom_left: value.into() }
+        BorderRadius {
+            top_left: value.into(),
+            top_right: value.into(),
+            bottom_right: value.into(),
+            bottom_left: value.into(),
+        }
     }
 }
 
 impl From<f32> for BorderRadius {
     fn from(value: f32) -> Self {
-        BorderRadius { top_left: value.into(), top_right: value.into(), bottom_right: value.into(), bottom_left: value.into() }
+        BorderRadius {
+            top_left: value.into(),
+            top_right: value.into(),
+            bottom_right: value.into(),
+            bottom_left: value.into(),
+        }
     }
 }
 
 impl From<(f32, f32, f32, f32)> for BorderRadius {
     fn from((tl, tr, br, bl): (f32, f32, f32, f32)) -> Self {
-        BorderRadius { top_left: tl.into(), top_right: tr.into(), bottom_right: br.into(), bottom_left: bl.into() }
+        BorderRadius {
+            top_left: tl.into(),
+            top_right: tr.into(),
+            bottom_right: br.into(),
+            bottom_left: bl.into(),
+        }
     }
 }
 
 impl From<(i32, i32, i32, i32)> for BorderRadius {
     fn from((tl, tr, br, bl): (i32, i32, i32, i32)) -> Self {
-        BorderRadius { top_left: tl.into(), top_right: tr.into(), bottom_right: br.into(), bottom_left: bl.into() }
+        BorderRadius {
+            top_left: tl.into(),
+            top_right: tr.into(),
+            bottom_right: br.into(),
+            bottom_left: bl.into(),
+        }
     }
 }

@@ -33,12 +33,22 @@ impl LayoutSpacing {
 
     /// For Top and Bottom
     pub const fn vertical(space: Spacing) -> Self {
-        Self { top: space, bottom: space, left: Spacing::DEFAULT_VALUE, right: Spacing::DEFAULT_VALUE }
+        Self {
+            top: space,
+            bottom: space,
+            left: Spacing::DEFAULT_VALUE,
+            right: Spacing::DEFAULT_VALUE,
+        }
     }
 
     /// For Left and right
     pub const fn horizontal(space: Spacing) -> Self {
-        Self { left: space, right: space, top: Spacing::DEFAULT_VALUE, bottom: Spacing::DEFAULT_VALUE }
+        Self {
+            left: space,
+            right: space,
+            top: Spacing::DEFAULT_VALUE,
+            bottom: Spacing::DEFAULT_VALUE,
+        }
     }
 
     pub const fn all(space: Spacing) -> Self {

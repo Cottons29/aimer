@@ -272,20 +272,45 @@ impl Drawable for RawBoxBorder {
         let top_stroke = resolve_dim(self.top.stroke, box_height, scale);
         let bottom_stroke = resolve_dim(self.bottom.stroke, box_height, scale);
 
-        let is_uniform_style =
-            self.left.style == self.right.style && self.left.style == self.top.style && self.left.style == self.bottom.style;
-        let is_uniform_stroke = left_stroke == right_stroke && left_stroke == top_stroke && left_stroke == bottom_stroke;
-        let is_uniform_color =
-            self.left.color == self.right.color && self.left.color == self.top.color && self.left.color == self.bottom.color;
+        let is_uniform_style = self.left.style == self.right.style
+            && self.left.style == self.top.style
+            && self.left.style == self.bottom.style;
+        let is_uniform_stroke = left_stroke == right_stroke
+            && left_stroke == top_stroke
+            && left_stroke == bottom_stroke;
+        let is_uniform_color = self.left.color == self.right.color
+            && self.left.color == self.top.color
+            && self.left.color == self.bottom.color;
 
         // Uniform border: single stroke_rect call
-        if is_uniform_style && is_uniform_stroke && is_uniform_color && left_stroke > 0.0 && self.left.style != BorderStyle::None {
+        if is_uniform_style
+            && is_uniform_stroke
+            && is_uniform_color
+            && left_stroke > 0.0
+            && self.left.style != BorderStyle::None
+        {
             let (x, y, w, h) = if is_outline {
-                (-left_stroke / 2.0, -left_stroke / 2.0, box_width + left_stroke, box_height + left_stroke)
+                (
+                    -left_stroke / 2.0,
+                    -left_stroke / 2.0,
+                    box_width + left_stroke,
+                    box_height + left_stroke,
+                )
             } else {
-                (left_stroke / 2.0, left_stroke / 2.0, box_width - left_stroke, box_height - left_stroke)
+                (
+                    left_stroke / 2.0,
+                    left_stroke / 2.0,
+                    box_width - left_stroke,
+                    box_height - left_stroke,
+                )
             };
-            canvas.stroke_rect(Vec2d { x, y }, ResolvedSize { width: w, height: h }, self.left.color, left_stroke, self.radius);
+            canvas.stroke_rect(
+                Vec2d { x, y },
+                ResolvedSize { width: w, height: h },
+                self.left.color,
+                left_stroke,
+                self.radius,
+            );
             return;
         }
 
@@ -313,7 +338,12 @@ impl Drawable for RawBoxBorder {
             } else {
                 (0.0, 0.0, box_width, top_stroke)
             };
-            canvas.fill_color_rect(Vec2d { x, y }, ResolvedSize { width: w, height: h }, self.top.color, self.radius);
+            canvas.fill_color_rect(
+                Vec2d { x, y },
+                ResolvedSize { width: w, height: h },
+                self.top.color,
+                self.radius,
+            );
         }
 
         // Bottom border
@@ -323,7 +353,12 @@ impl Drawable for RawBoxBorder {
             } else {
                 (0.0, box_height - bottom_stroke, box_width, bottom_stroke)
             };
-            canvas.fill_color_rect(Vec2d { x, y }, ResolvedSize { width: w, height: h }, self.bottom.color, self.radius);
+            canvas.fill_color_rect(
+                Vec2d { x, y },
+                ResolvedSize { width: w, height: h },
+                self.bottom.color,
+                self.radius,
+            );
         }
 
         // Left border
@@ -333,7 +368,12 @@ impl Drawable for RawBoxBorder {
             } else {
                 (0.0, 0.0, left_stroke, box_height)
             };
-            canvas.fill_color_rect(Vec2d { x, y }, ResolvedSize { width: w, height: h }, self.left.color, self.radius);
+            canvas.fill_color_rect(
+                Vec2d { x, y },
+                ResolvedSize { width: w, height: h },
+                self.left.color,
+                self.radius,
+            );
         }
 
         // Right border
@@ -343,7 +383,12 @@ impl Drawable for RawBoxBorder {
             } else {
                 (box_width - right_stroke, 0.0, right_stroke, box_height)
             };
-            canvas.fill_color_rect(Vec2d { x, y }, ResolvedSize { width: w, height: h }, self.right.color, self.radius);
+            canvas.fill_color_rect(
+                Vec2d { x, y },
+                ResolvedSize { width: w, height: h },
+                self.right.color,
+                self.radius,
+            );
         }
     }
 }
@@ -367,7 +412,11 @@ mod tests {
 
     #[test]
     fn effective_color_prefers_left_when_visible() {
-        let border = BoxBorder { left: slice(4.0, Color::RED), bottom: slice(8.0, Color::BLACK), ..Default::default() };
+        let border = BoxBorder {
+            left: slice(4.0, Color::RED),
+            bottom: slice(8.0, Color::BLACK),
+            ..Default::default()
+        };
         assert_eq!(border.effective_color(200.0, 60.0, 1.0), Color::RED);
     }
 
@@ -382,7 +431,11 @@ mod tests {
     fn effective_color_ignores_none_style_side() {
         // `left` has a stroke but style None → skip it, use the visible `top`.
         let border = BoxBorder {
-            left: BorderSlice { style: BorderStyle::None, stroke: Dimension::Px(4.0), color: Color::RED },
+            left: BorderSlice {
+                style: BorderStyle::None,
+                stroke: Dimension::Px(4.0),
+                color: Color::RED,
+            },
             top: slice(2.0, Color::BLACK),
             ..Default::default()
         };
