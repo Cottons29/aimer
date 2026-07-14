@@ -50,9 +50,7 @@ impl Curve {
                     1.0 - inv * inv * inv / 2.0
                 }
             }
-            Curve::CubicBezier(x1, y1, x2, y2) => {
-                cubic_bezier_y_for_x(t, *x1, *y1, *x2, *y2)
-            }
+            Curve::CubicBezier(x1, y1, x2, y2) => cubic_bezier_y_for_x(t, *x1, *y1, *x2, *y2),
             Curve::Decelerate => {
                 let inv = 1.0 - t;
                 1.0 - inv * inv

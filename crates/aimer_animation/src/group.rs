@@ -1,6 +1,6 @@
-use std::time::Duration;
 use crate::controller::{AnimationController, AnimationStatus};
 use crate::time::AnimInstant;
+use std::time::Duration;
 
 /// Runs multiple animations simultaneously.
 ///
@@ -53,10 +53,12 @@ impl ParallelAnimation {
     /// - `Reverse` if any is still animating in reverse
     /// - `Dismissed` if all are dismissed
     pub fn aggregate_status(&self) -> AnimationStatus {
-        let has_forward = self.controllers.iter().any(|c| c.status == AnimationStatus::Forward);
-        let has_reverse = self.controllers.iter().any(|c| c.status == AnimationStatus::Reverse);
-        let all_completed = self.controllers.iter().all(|c| c.status == AnimationStatus::Completed);
-        let all_dismissed = self.controllers.iter().all(|c| c.status == AnimationStatus::Dismissed);
+        let has_forward = self.controllers.iter().any(|c| c.status() == AnimationStatus::Forward);
+        let has_reverse = self.controllers.iter().any(|c| c.status() == AnimationStatus::Reverse);
+        let all_completed =
+            self.controllers.iter().all(|c| c.status() == AnimationStatus::Completed);
+        let all_dismissed =
+            self.controllers.iter().all(|c| c.status() == AnimationStatus::Dismissed);
 
         if has_forward {
             AnimationStatus::Forward
@@ -120,7 +122,7 @@ impl SequentialAnimation {
     pub fn current_value(&self) -> f32 {
         self.controllers
             .get(self.current_index)
-            .map(|c| c.value)
+            .map(AnimationController::value)
             .unwrap_or(0.0)
     }
 
@@ -128,7 +130,7 @@ impl SequentialAnimation {
     pub fn current_status(&self) -> AnimationStatus {
         self.controllers
             .get(self.current_index)
-            .map(|c| c.status)
+            .map(AnimationController::status)
             .unwrap_or(AnimationStatus::Dismissed)
     }
 
@@ -141,7 +143,7 @@ impl SequentialAnimation {
         let value = self.controllers[self.current_index].tick(now);
 
         // Advance to next controller if current completed
-        if self.controllers[self.current_index].status == AnimationStatus::Completed {
+        if self.controllers[self.current_index].status() == AnimationStatus::Completed {
             self.current_index += 1;
             if self.current_index < self.controllers.len() {
                 self.controllers[self.current_index].forward();
@@ -166,12 +168,7 @@ pub struct StaggeredAnimation {
 impl StaggeredAnimation {
     pub fn new(controllers: Vec<AnimationController>, stagger_delay: Duration) -> Self {
         let len = controllers.len();
-        Self {
-            controllers,
-            stagger_delay,
-            start_time: None,
-            started: vec![false; len],
-        }
+        Self { controllers, stagger_delay, start_time: None, started: vec![false; len] }
     }
 
     /// Start all controllers (they will activate with stagger delays).
@@ -244,7 +241,7 @@ mod tests {
         let start = AnimInstant::now();
         let values = anim.tick(start + Duration::from_millis(150));
         assert!(values[0] > 0.99); // first should be done
-        assert!(values[1] < 1.0);  // second still running
+        assert!(values[1] < 1.0); // second still running
     }
 
     #[test]
