@@ -102,7 +102,9 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
         let window_attributes = {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
-                WindowAttributes::default().with_title("Aimer")
+                WindowAttributes::default()
+                    .with_inner_size(LogicalSize::new(1150, 800))
+                    .with_title("Aimer")
             }
             #[cfg(target_os = "android")]
             {

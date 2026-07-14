@@ -585,22 +585,34 @@ fn element_children(element: &dyn Element) -> smallvec::SmallVec<[&dyn Element; 
 /// scrollable containers — which hide children from event dispatch but expose
 /// them for layout — still get their nested stateful state carried across.
 pub(crate) fn carry_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
-    carry_child_state_from_root(old, new, old, ctx);
+    carry_keyed_child_state(old, new, ctx);
+    carry_unkeyed_child_state(old, new, ctx);
 }
 
-fn carry_child_state_from_root(
-    old: &dyn Element,
-    new: &dyn Element,
-    old_root: &dyn Element,
-    ctx: &BuildContext,
-) {
+fn carry_keyed_child_state(old_root: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
     if let Some(new_stateful) =
         new.option_any().and_then(|value| value.downcast_ref::<StatefulElement>())
         && let Some(key) = new_stateful.key.as_ref()
-        && let Some(old_stateful) =
-            find_keyed_stateful(old_root, key, new_stateful.debug_name.get())
     {
-        new_stateful.adopt_state_from(old_stateful, ctx);
+        if let Some(old_stateful) =
+            find_keyed_stateful(old_root, key, new_stateful.debug_name.get())
+        {
+            new_stateful.adopt_state_from(old_stateful, ctx);
+        }
+        return;
+    }
+
+    for child in element_children(new) {
+        carry_keyed_child_state(old_root, child, ctx);
+    }
+}
+
+fn carry_unkeyed_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    if new
+        .option_any()
+        .and_then(|value| value.downcast_ref::<StatefulElement>())
+        .is_some_and(|stateful| stateful.key.is_some())
+    {
         return;
     }
 
@@ -623,7 +635,7 @@ fn carry_child_state_from_root(
 
     for (old_child, new_child) in old_children.iter().zip(new_children.iter()) {
         // println!("Before call carry_child_state");
-        carry_child_state_from_root(*old_child, *new_child, old_root, ctx);
+        carry_unkeyed_child_state(*old_child, *new_child, ctx);
         // println!("After call carry_child_state");
     }
     // println!("Step 9");

@@ -614,6 +614,36 @@ mod tests {
     }
 
     #[test]
+    fn keyed_state_survives_when_a_new_wrapper_replaces_a_leaf() {
+        let ctx = dummy_build_context();
+        let observer = Rc::new(Cell::new(0usize));
+
+        let old_widget = CounterWidget { observer: observer.clone() };
+        let (old_stateful, old_updater) = StatefulElement::new_with_name(
+            &old_widget,
+            &ctx,
+            "Counter",
+            Some(Key::Static("responsive-counter")),
+        );
+        old_updater.set_state(|state| state.counter = 7);
+        old_stateful.rebuild_if_dirty(&ctx);
+
+        let new_widget = CounterWidget { observer: observer.clone() };
+        let (new_stateful, _) = StatefulElement::new_with_name(
+            &new_widget,
+            &ctx,
+            "Counter",
+            Some(Key::Static("responsive-counter")),
+        );
+
+        let old_tree = Branches(vec![Box::new(EmptyLeaf), old_stateful.boxed()]);
+        let new_tree = Branches(vec![Box::new(Wrapper(new_stateful.boxed())), Box::new(EmptyLeaf)]);
+        carry_child_state(&old_tree, &new_tree, &ctx);
+
+        assert_eq!(observer.get(), 7, "a keyed descendant must not depend on positional traversal");
+    }
+
+    #[test]
     fn keyed_state_receives_changed_config_after_moving_between_sibling_branches() {
         let ctx = dummy_build_context();
         let observed_label = Rc::new(Cell::new(0));
@@ -725,6 +755,163 @@ mod tests {
         carry_child_state(&old_tree, &new_tree, &ctx);
 
         assert_eq!(observer.get(), 1, "different keys must keep independent state");
+    }
+
+    // ─── Router-shaped reconcile: keyed switcher behind a context Outlet ──
+    //
+    // Reproduces `website/src/router.rs`: an `AnimatedSwitcher` keyed
+    // "route-switcher" is built by an `Outlet` that reads the active route's
+    // transition key from a slot the `Shell` inserts into the `BuildContext`.
+    // Navigation fires `set_state` on the top-level `Navigator`, whose rebuild
+    // re-provides the slot with the new route key and reconciles the whole
+    // shell subtree. The keyed switcher's `State` must be carried across that
+    // rebuild so its `adopt_config_from` observes the changed child key and
+    // starts the transition (here counted in `transitions`).
+
+    #[derive(Clone)]
+    struct RouteKeySlot(&'static str);
+
+    struct SwitcherMock {
+        child_key: &'static str,
+        transitions: Rc<Cell<usize>>,
+    }
+    struct SwitcherMockState {
+        child_key: &'static str,
+        transitions: Rc<Cell<usize>>,
+        #[allow(dead_code)]
+        updater: StateUpdater<Self>,
+    }
+    impl StatefulWidget for SwitcherMock {
+        type State = SwitcherMockState;
+        fn create_state(&self) -> Self::State {
+            SwitcherMockState {
+                child_key: self.child_key,
+                transitions: self.transitions.clone(),
+                updater: StateUpdater::new(),
+            }
+        }
+    }
+    impl State<SwitcherMock> for SwitcherMockState {
+        fn init_state(&mut self, updater: StateUpdater<Self>) {
+            self.updater = updater;
+        }
+        fn adopt_config_from(&mut self, new: &Self) {
+            if self.child_key != new.child_key {
+                self.transitions.set(self.transitions.get() + 1);
+                self.child_key = new.child_key;
+            }
+        }
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            EmptyWidget
+        }
+    }
+    impl Widget for SwitcherMock {
+        fn key(&self) -> Option<Key> {
+            Some(Key::Static("route-switcher"))
+        }
+        fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+            StatefulElement::new_with_name(self, ctx, "AnimatedSwitcher", self.key())
+                .0
+                .boxed()
+        }
+    }
+
+    /// Reads the active route key from context (like `Outlet` reading its
+    /// `OutletSlot`) and builds the keyed switcher from it.
+    struct OutletMock {
+        transitions: Rc<Cell<usize>>,
+    }
+    impl Widget for OutletMock {
+        fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+            let slot = ctx.get_state::<RouteKeySlot>().expect("Shell must insert RouteKeySlot");
+            SwitcherMock { child_key: slot.0, transitions: self.transitions.clone() }
+                .to_element(ctx)
+        }
+        fn debug_name(&self) -> &'static str {
+            "Outlet"
+        }
+    }
+
+    fn route_key(route: usize) -> &'static str {
+        match route {
+            0 => "home",
+            1 => "docs",
+            _ => "learn",
+        }
+    }
+
+    struct NavMock {
+        transitions: Rc<Cell<usize>>,
+        header_observer: Rc<Cell<usize>>,
+    }
+    struct NavMockState {
+        route: usize,
+        transitions: Rc<Cell<usize>>,
+        header_observer: Rc<Cell<usize>>,
+        updater: StateUpdater<Self>,
+    }
+    impl StatefulWidget for NavMock {
+        type State = NavMockState;
+        fn create_state(&self) -> Self::State {
+            NavMockState {
+                route: 0,
+                transitions: self.transitions.clone(),
+                header_observer: self.header_observer.clone(),
+                updater: StateUpdater::new(),
+            }
+        }
+    }
+    impl State<NavMock> for NavMockState {
+        fn init_state(&mut self, updater: StateUpdater<Self>) {
+            self.updater = updater;
+        }
+        fn build(&self, ctx: &BuildContext) -> impl Widget {
+            // Shell: publish the active route's transition key for the Outlet.
+            ctx.insert_state(RouteKeySlot(route_key(self.route)));
+            // Frame: a stateful header sibling + a content area holding the
+            // Outlet, wrapped in container-like elements as in `AppShell`.
+            let header = StatefulElement::new_with_name(
+                &CounterWidget { observer: self.header_observer.clone() },
+                ctx,
+                "Counter",
+                None,
+            )
+            .0
+            .boxed();
+            let outlet = OutletMock { transitions: self.transitions.clone() }.to_element(ctx);
+            let content: Box<dyn Element> = Box::new(DrawWrapper(Box::new(DrawWrapper(outlet))));
+            let frame: Box<dyn Element> = Box::new(DrawRow(vec![header, content]));
+            ElementWidget::new(frame)
+        }
+    }
+
+    #[test]
+    fn route_navigation_carries_keyed_switcher_and_starts_transition() {
+        let ctx = dummy_build_context();
+        let transitions = Rc::new(Cell::new(0usize));
+        let header_observer = Rc::new(Cell::new(0usize));
+
+        let (nav, updater) = StatefulElement::new_with_name(
+            &NavMock { transitions: transitions.clone(), header_observer: header_observer.clone() },
+            &ctx,
+            "Navigator",
+            None,
+        );
+
+        // Initial frame: switcher mounts on route "home"; no transition yet.
+        nav.draw(&ctx);
+        assert_eq!(transitions.get(), 0, "initial mount must not start a transition");
+
+        // Navigate home -> docs (like `Navigator::push`): the switcher's live
+        // state must survive the shell rebuild and observe the changed key.
+        updater.set_state(|s| s.route = 1);
+        nav.rebuild_if_dirty(&ctx);
+
+        assert_eq!(
+            transitions.get(),
+            1,
+            "switching the route must carry the keyed switcher state and start its transition"
+        );
     }
 
     /// A marker inherited state a provider inserts into the `BuildContext`
