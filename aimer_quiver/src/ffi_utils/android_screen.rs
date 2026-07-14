@@ -4,15 +4,15 @@
 // pub fn get_screen_size(env: &JNIEnv, context: JObject) -> (f32, f32) {
 //     // Get Resources
 //     let resources = env
-//         .call_method(context, "getResources", "()Landroid/content/res/Resources;", &[])
-//         .unwrap()
+//         .call_method(context, "getResources",
+// "()Landroid/content/res/Resources;", &[])         .unwrap()
 //         .l()
 //         .unwrap();
 //
 //     // Get DisplayMetrics
 //     let metrics = env
-//         .call_method(resources, "getDisplayMetrics", "()Landroid/util/DisplayMetrics;", &[])
-//         .unwrap()
+//         .call_method(resources, "getDisplayMetrics",
+// "()Landroid/util/DisplayMetrics;", &[])         .unwrap()
 //         .l()
 //         .unwrap();
 //

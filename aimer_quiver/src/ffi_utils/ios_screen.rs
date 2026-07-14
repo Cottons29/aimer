@@ -1,23 +1,19 @@
 extern crate objc;
 
-use objc::runtime::{Class, Object};
-
-use objc::msg_send;
-
-use objc::sel;
-
 use aimer_utils::info;
-use objc::sel_impl;
+use objc::runtime::{Class, Object};
+use objc::{msg_send, sel, sel_impl};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 
 /// Associate winit's `UIWindow` with the foreground-active `UIWindowScene`.
 ///
 /// winit (0.30) creates its `UIWindow` with `initWithFrame:` and calls
-/// `makeKeyAndVisible()`, but it never sets a `UIWindowScene`. Starting with the
-/// iOS 26 / 27 SDK the UIScene life cycle is mandatory (see Apple TN3187): a
-/// scene-less window is never displayed and never receives layout / redraw
-/// callbacks, so the app shows a black screen and `RedrawRequested` never fires.
+/// `makeKeyAndVisible()`, but it never sets a `UIWindowScene`. Starting with
+/// the iOS 26 / 27 SDK the UIScene life cycle is mandatory (see Apple TN3187):
+/// a scene-less window is never displayed and never receives layout / redraw
+/// callbacks, so the app shows a black screen and `RedrawRequested` never
+/// fires.
 ///
 /// Here we recover winit's `UIWindow` from the `UIView` exposed through
 /// `raw-window-handle`, attach it to the active window scene and re-assert
@@ -25,7 +21,9 @@ use winit::window::Window;
 pub fn attach_window_to_active_scene(window: &Window) {
     let ui_view = match window.window_handle() {
         Ok(handle) => match handle.as_raw() {
-            RawWindowHandle::UiKit(uikit) => uikit.ui_view.as_ptr() as *mut Object,
+            RawWindowHandle::UiKit(uikit) => uikit
+                .ui_view
+                .as_ptr() as *mut Object,
             _ => return,
         },
         Err(_) => return,
@@ -118,7 +116,14 @@ pub fn get_screen_resolution_pixels() -> Option<(f64, f64)> {
         msg_send![main_screen, nativeBounds]
     };
 
-    Some((native_bounds.size.width, native_bounds.size.height))
+    Some((
+        native_bounds
+            .size
+            .width,
+        native_bounds
+            .size
+            .height,
+    ))
 }
 #[derive(Debug)]
 #[repr(C)]

@@ -1,7 +1,5 @@
-use crate::handler::AimerApplicationHandler;
 use aimer_attribute::position::Vec2d;
-use aimer_events::element::KeyAction;
-use aimer_events::element::{ElementEvent, Modifiers, NamedKey};
+use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerSource;
 use aimer_utils::{ExecTimes, info};
 use aimer_widget::{broadcast_event, dispatch_event};
@@ -12,7 +10,15 @@ use winit::event::{
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 
+use crate::handler::AimerApplicationHandler;
+
 pub struct WindowEventHandler;
+
+pub(crate) enum HeadlessEventAction {
+    None,
+    Render,
+    Exit,
+}
 
 impl WindowEventHandler {
     pub(crate) fn handle_events(
@@ -32,7 +38,7 @@ impl WindowEventHandler {
                 event_loop.exit()
             }
 
-            WindowEvent::Touch(item) => Self::handle_touch(item, app, _id, event),
+            WindowEvent::Touch(item) => Self::handle_touch(item, app),
 
             WindowEvent::CursorMoved { position, .. } => Self::handle_cursor_move(position, app),
 
@@ -90,19 +96,89 @@ impl WindowEventHandler {
         }
     }
 
+    pub(crate) fn handle_headless_event(
+        app: &mut AimerApplicationHandler,
+        event: WindowEvent,
+    ) -> HeadlessEventAction {
+        match event {
+            WindowEvent::CloseRequested => HeadlessEventAction::Exit,
+            WindowEvent::Touch(item) => {
+                Self::handle_touch(item, app);
+                HeadlessEventAction::None
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                Self::handle_cursor_move(position, app);
+                HeadlessEventAction::None
+            }
+            WindowEvent::CursorLeft { .. } => {
+                Self::handle_cursor_left(app);
+                HeadlessEventAction::None
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                Self::handle_mouse_input(state, button, app);
+                HeadlessEventAction::None
+            }
+            WindowEvent::ModifiersChanged(mods) => {
+                let state = mods.state();
+                app.current_modifiers = Modifiers {
+                    ctrl: state.control_key(),
+                    shift: state.shift_key(),
+                    alt: state.alt_key(),
+                    meta: state.super_key(),
+                };
+                HeadlessEventAction::None
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                Self::handle_keyboard_input(event, app);
+                HeadlessEventAction::None
+            }
+            WindowEvent::Ime(ime) => {
+                Self::handle_ime(ime, app);
+                HeadlessEventAction::None
+            }
+            WindowEvent::MouseWheel { delta, phase, .. } => {
+                Self::handle_mouse_wheel(delta, phase, app);
+                HeadlessEventAction::None
+            }
+            WindowEvent::RedrawRequested => HeadlessEventAction::Render,
+            WindowEvent::Resized(size) => {
+                Self::apply_resize(size, app);
+                HeadlessEventAction::Render
+            }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                Self::update_scale_factor(&mut app.window_scale, scale_factor);
+                if let Some(root) = &app.widget_root {
+                    root.invalidate_layout();
+                    aimer_widget::Rebuildable::mark_needs_rebuild(root.as_ref());
+                }
+                HeadlessEventAction::Render
+            }
+            WindowEvent::Focused(false) => {
+                if let Some(root) = &app.widget_root {
+                    broadcast_event(root.as_ref(), &ElementEvent::Cancel);
+                }
+                HeadlessEventAction::None
+            }
+            _ => HeadlessEventAction::None,
+        }
+    }
+
     fn update_scale_factor(window_scale: &mut f64, scale_factor: f64) {
         *window_scale = scale_factor;
     }
 
-    fn handle_touch(
-        item: Touch,
-        app: &mut AimerApplicationHandler,
-        _id: WindowId,
-        _event: WindowEvent,
-    ) {
+    fn handle_touch(item: Touch, app: &mut AimerApplicationHandler) {
         let scale = app.window_scale;
-        let pos =
-            Vec2d { x: (item.location.x / scale) as f32, y: (item.location.y / scale) as f32 };
+        let pos = Vec2d {
+            x: (item
+                .location
+                .x
+                / scale) as f32,
+            y: (item
+                .location
+                .y
+                / scale) as f32,
+        };
         let touch_id = item.id;
 
         // All touch events are passed through with their finger ID.
@@ -121,7 +197,7 @@ impl WindowEventHandler {
             if let Some(root) = &app.widget_root {
                 let mut handled = dispatch_event(root.as_ref(), pos, &event);
                 #[cfg(debug_assertions)]
-                if app.inspector.is_enabled() {
+                if app.inspector_enabled() {
                     handled = true;
                 }
                 if !handled {
@@ -148,8 +224,16 @@ impl WindowEventHandler {
     fn handle_cursor_move(position: PhysicalPosition<f64>, app: &mut AimerApplicationHandler) {
         let scale = app.window_scale as f32;
         let new_pos = Vec2d { x: position.x as f32 / scale, y: position.y as f32 / scale };
-        let dx = (new_pos.x - app.cursor_pos.x).abs();
-        let dy = (new_pos.y - app.cursor_pos.y).abs();
+        let dx = (new_pos.x
+            - app
+                .cursor_pos
+                .x)
+            .abs();
+        let dy = (new_pos.y
+            - app
+                .cursor_pos
+                .y)
+            .abs();
         if dx < 1.0 && dy < 1.0 {
             return;
         }
@@ -219,7 +303,7 @@ impl WindowEventHandler {
             let mut handled = dispatch_event(root.as_ref(), c, &event);
             #[cfg(debug_assertions)]
             {
-                if app.inspector.is_enabled() {
+                if app.inspector_enabled() {
                     handled = true;
                 }
             }
@@ -252,11 +336,12 @@ impl WindowEventHandler {
             }
         };
 
-        let modifiers = app.current_modifiers.clone();
+        let modifiers = app
+            .current_modifiers
+            .clone();
 
         if modifiers.ctrl || modifiers.meta {
-            use winit::keyboard::KeyCode;
-            use winit::keyboard::PhysicalKey;
+            use winit::keyboard::{KeyCode, PhysicalKey};
             let named = match event.physical_key {
                 PhysicalKey::Code(KeyCode::KeyA) => Some(NamedKey::Other("a".into())),
                 PhysicalKey::Code(KeyCode::KeyC) => Some(NamedKey::Other("c".into())),
@@ -269,7 +354,7 @@ impl WindowEventHandler {
                 if let Some(root) = &app.widget_root {
                     let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                     #[cfg(debug_assertions)]
-                    if app.inspector.is_enabled() {
+                    if app.inspector_enabled() {
                         handled = true;
                     }
                     if let Some(window) = &app.window
@@ -317,7 +402,9 @@ impl WindowEventHandler {
 
         if let Some(text) = text_input
             && !text.is_empty()
-            && text.chars().all(|c| !c.is_control())
+            && text
+                .chars()
+                .all(|c| !c.is_control())
         {
             Self::dispatch_text(&text, &action, &modifiers, app);
             return;
@@ -355,7 +442,7 @@ impl WindowEventHandler {
             if let Some(root) = &app.widget_root {
                 let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                 #[cfg(debug_assertions)]
-                if app.inspector.is_enabled() {
+                if app.inspector_enabled() {
                     handled = true;
                 }
                 if let Some(window) = &app.window
@@ -388,7 +475,7 @@ impl WindowEventHandler {
             handled |= dispatch_event(root.as_ref(), app.cursor_pos, &ev);
         }
         #[cfg(debug_assertions)]
-        if app.inspector.is_enabled() {
+        if app.inspector_enabled() {
             handled = true;
         }
         if let Some(window) = &app.window
@@ -423,7 +510,9 @@ impl WindowEventHandler {
             }
             Ime::Commit(text) => {
                 app.ime_composing = false;
-                let modifiers = app.current_modifiers.clone();
+                let modifiers = app
+                    .current_modifiers
+                    .clone();
                 Self::dispatch_text(&text, &KeyAction::Pressed, &modifiers, app);
             }
             Ime::Disabled => {
@@ -450,7 +539,7 @@ impl WindowEventHandler {
         if let Some(root) = &app.widget_root {
             let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
             #[cfg(debug_assertions)]
-            if app.inspector.is_enabled() {
+            if app.inspector_enabled() {
                 handled = true;
             }
 
@@ -492,10 +581,15 @@ impl WindowEventHandler {
                     Self::oriented_screen_size(size, (width, height))
                 }
                 None => {
-                    if app.window.is_none() {
+                    if app
+                        .window
+                        .is_none()
+                    {
                         return;
                     }
-                    app.window.unwrap().inner_size()
+                    app.window
+                        .unwrap()
+                        .inner_size()
                 }
             }
         };
@@ -520,17 +614,7 @@ impl WindowEventHandler {
 
         // debug!("Window resized to {:?}", size);
 
-        app.pending_resize = Some(size);
-
-        if let Some(root) = &app.widget_root {
-            root.invalidate_layout();
-            // Ring the bell for a rebuild: flips the dirty flag on stateful and
-            // stateless elements so `rebuild_if_dirty` re-runs `build()` on the
-            // next frame, re-reading `MediaQuery` (responsive layout on resize).
-            // ponytail: rebuilds the whole dirty tree per resize event; fine for
-            // a landing page, upgrade to MediaQuery dependency tracking if hot.
-            aimer_widget::Rebuildable::mark_needs_rebuild(root.as_ref());
-        }
+        Self::apply_resize(size, app);
 
         // Render a frame immediately during the resize event so the
         // compositor has fresh content before it can stretch the old
@@ -539,6 +623,15 @@ impl WindowEventHandler {
         // new window size — visible as directional stretching when
         // dragging the right or bottom window edge.
         app.render(event_loop);
+    }
+
+    fn apply_resize(size: PhysicalSize<u32>, app: &mut AimerApplicationHandler) {
+        app.pending_resize = Some(size);
+
+        if let Some(root) = &app.widget_root {
+            root.invalidate_layout();
+            aimer_widget::Rebuildable::mark_needs_rebuild(root.as_ref());
+        }
     }
 }
 

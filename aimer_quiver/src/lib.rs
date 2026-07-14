@@ -4,7 +4,7 @@ mod ffi_utils;
 #[macro_use]
 pub mod aimer_app;
 pub mod handler;
-pub use aimer_app::AimerApp;
+pub use aimer_app::{AimerApp, HeadlessAimerApp, HeadlessOptions};
 #[cfg(target_os = "ios")]
 mod ios_screen {
     pub use crate::ffi_utils::ios_screen::{
