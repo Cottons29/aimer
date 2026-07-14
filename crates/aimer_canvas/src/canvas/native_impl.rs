@@ -8,7 +8,6 @@ use aimer_cupid::utilities::Color as CupidColor;
 
 #[allow(dead_code)]
 impl CanvasRendering for CupidCanvas {
-
     #[inline]
     fn begin_frame(&self) {
         CupidCanvas::begin_frame(self);
@@ -16,7 +15,15 @@ impl CanvasRendering for CupidCanvas {
 
     #[inline]
     fn fill_rect(&self, pos: Vec2d, size: ResolvedSize) {
-        CupidCanvas::fill_rect(self, pos.x, pos.y, size.width, size.height, CupidColor::black(), [0.0; 4]);
+        CupidCanvas::fill_rect(
+            self,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
+            CupidColor::black(),
+            [0.0; 4],
+        );
     }
 
     #[inline]
@@ -31,7 +38,10 @@ impl CanvasRendering for CupidCanvas {
     ) {
         CupidCanvas::fill_rect_with_border(
             self,
-            pos.x, pos.y, size.width, size.height,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
             CupidColor::from(color),
             border_radius,
             border_width,
@@ -51,7 +61,10 @@ impl CanvasRendering for CupidCanvas {
     ) {
         CupidCanvas::fill_rect_with_per_side_border(
             self,
-            pos.x, pos.y, size.width, size.height,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
             CupidColor::from(color),
             border_radius,
             border_width,
@@ -91,12 +104,37 @@ impl CanvasRendering for CupidCanvas {
 
     #[inline]
     fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16) {
-        CupidCanvas::draw_text(self, pos.x, pos.y, text, font_size, CupidColor::from(color), font_weight);
+        CupidCanvas::draw_text(
+            self,
+            pos.x,
+            pos.y,
+            text,
+            font_size,
+            CupidColor::from(color),
+            font_weight,
+        );
     }
 
     #[inline]
-    fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32, font_weight: u16) {
-        CupidCanvas::draw_text_wrapped(self, pos.x, pos.y, text, font_size, CupidColor::from(color), max_width, font_weight);
+    fn draw_text_wrapped(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        max_width: f32,
+        font_weight: u16,
+    ) {
+        CupidCanvas::draw_text_wrapped(
+            self,
+            pos.x,
+            pos.y,
+            text,
+            font_size,
+            CupidColor::from(color),
+            max_width,
+            font_weight,
+        );
     }
 
     #[inline]
@@ -156,7 +194,12 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
-    fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> crate::canvas::TextMetrics {
+    fn measure_text_metrics(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+    ) -> crate::canvas::TextMetrics {
         CupidCanvas::measure_text_metrics(self, text, font_size, max_width)
     }
 
@@ -171,7 +214,10 @@ impl CanvasRendering for CupidCanvas {
     ) {
         CupidCanvas::stroke_rect(
             self,
-            pos.x, pos.y, size.width, size.height,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
             CupidColor::from(stroke_color),
             stroke_width,
             border_radius,
@@ -189,7 +235,10 @@ impl CanvasRendering for CupidCanvas {
     ) {
         CupidCanvas::stroke_rect_per_side(
             self,
-            pos.x, pos.y, size.width, size.height,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
             CupidColor::from(stroke_color),
             stroke_width,
             border_radius,
@@ -210,7 +259,10 @@ impl CanvasRendering for CupidCanvas {
     ) {
         CupidCanvas::fill_rect_with_border_and_outline(
             self,
-            pos.x, pos.y, size.width, size.height,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
             CupidColor::from(color),
             border_radius,
             border_width,
@@ -234,7 +286,10 @@ impl CanvasRendering for CupidCanvas {
     ) {
         CupidCanvas::fill_rect_with_border_and_outline_per_side(
             self,
-            pos.x, pos.y, size.width, size.height,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
             CupidColor::from(color),
             border_radius,
             border_width,
@@ -254,7 +309,10 @@ impl CanvasRendering for CupidCanvas {
     ) {
         CupidCanvas::fill_color_rect(
             self,
-            pos.x, pos.y, size.width, size.height,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
             CupidColor::from(color),
             border_radius,
         );
@@ -270,7 +328,10 @@ impl CanvasRendering for CupidCanvas {
     ) {
         CupidCanvas::fill_color_rect_per_corner(
             self,
-            pos.x, pos.y, size.width, size.height,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
             CupidColor::from(color),
             border_radius,
         );
@@ -278,10 +339,21 @@ impl CanvasRendering for CupidCanvas {
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    fn draw_text_decoration(&self, pos: Vec2d, size: ResolvedSize, color: Color, style: u32, thickness: f32, period: f32) {
+    fn draw_text_decoration(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        style: u32,
+        thickness: f32,
+        period: f32,
+    ) {
         CupidCanvas::draw_text_decoration(
             self,
-            pos.x, pos.y, size.width, size.height,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
             CupidColor::from(color),
             style,
             thickness,
@@ -302,7 +374,10 @@ impl CanvasRendering for CupidCanvas {
     ) {
         CupidCanvas::draw_shadow_rect(
             self,
-            pos.x, pos.y, size.width, size.height,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
             CupidColor::from(shadow_color),
             shadow_params,
             border_radius,
