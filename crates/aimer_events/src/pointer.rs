@@ -14,7 +14,6 @@ pub struct PointerPosition {
     pub id: u64,
 }
 
-
 #[derive(Clone, Debug)]
 pub enum PointerEvent {
     Down(PointerPosition),
@@ -24,5 +23,8 @@ pub enum PointerEvent {
     /// Right / secondary mouse button click.
     RightClick(PointerPosition),
     /// Scroll wheel or trackpad gesture.
-    Scroll { delta_x: f32, delta_y: f32 },
+    Scroll {
+        delta_x: f32,
+        delta_y: f32,
+    },
 }
