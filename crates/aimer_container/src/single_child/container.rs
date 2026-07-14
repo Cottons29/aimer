@@ -5,12 +5,12 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_macro::Rebuildable;
 pub use aimer_style::*;
-use aimer_widget::{base::*, Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement, Widget};
+use aimer_widget::{
+    Drawable, Element, EmptyWidget, EventElement, LayoutCache, LayoutElement, VisitorElement,
+    Widget, base::*,
+};
 
-pub struct Container<T = ZeroSizedBox>
-where
-    T: Widget + 'static,
-{
+pub struct Container<T = EmptyWidget> {
     pub(crate) width: Dimension,
     pub(crate) height: Dimension,
     pub padding: LayoutSpacing,
@@ -20,7 +20,6 @@ where
     pub child: T,
 }
 
-
 impl Default for Container {
     fn default() -> Self {
         Self::new()
@@ -28,7 +27,6 @@ impl Default for Container {
 }
 
 impl Container {
-
     pub fn new() -> Self {
         Self {
             width: Dimension::Auto,
@@ -37,7 +35,7 @@ impl Container {
             margin: LayoutSpacing::default(),
             box_decoration: BoxDecoration::default(),
             color: None,
-            child: ZeroSizedBox,
+            child: EmptyWidget,
         }
     }
 
@@ -84,7 +82,6 @@ impl Container {
         }
     }
 }
-
 
 impl<W: Widget> Widget for Container<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
@@ -133,7 +130,7 @@ impl<E: Element> RawContainer<E> {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn new(child: E) -> Self{
+    pub(crate) fn new(child: E) -> Self {
         Self {
             margin: LayoutSpacing::default(),
             padding: LayoutSpacing::default(),
@@ -146,7 +143,6 @@ impl<E: Element> RawContainer<E> {
             color: None,
             bounds: std::cell::Cell::new(None),
         }
-
     }
 
     fn margin(&self, ctx: &BuildContext) -> (f32, f32, f32, f32) {
@@ -205,7 +201,10 @@ impl<T: Element> Drawable for RawContainer<T> {
         {
             let (start_x, start_y) = ctx.canvas.get_transform_translation();
             let l_start = Vec2d { x: (start_x + m_left) / scale, y: (start_y + m_top) / scale };
-            let l_end = Vec2d { x: (start_x + m_left + draw_width) / scale, y: (start_y + m_top + draw_height) / scale };
+            let l_end = Vec2d {
+                x: (start_x + m_left + draw_width) / scale,
+                y: (start_y + m_top + draw_height) / scale,
+            };
             self.bounds.set(Some((l_start, l_end)));
         }
 
@@ -222,7 +221,12 @@ impl<T: Element> Drawable for RawContainer<T> {
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y && let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write(){
+                if cp.x >= l_start.x
+                    && cp.x <= l_end.x
+                    && cp.y >= l_start.y
+                    && cp.y <= l_end.y
+                    && let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write()
+                {
                     *hovered = Some((self.debug_name, l_start, l_end));
                 }
             }
@@ -291,8 +295,11 @@ impl<T: Element> Drawable for RawContainer<T> {
             (radii[3] - b_bottom.max(b_left)).max(0.0),  // bottom-left
         ];
 
-        ctx.canvas
-            .set_clip_rounded(Vec2d { x: clip_x, y: clip_y }, ResolvedSize { width: clip_w, height: clip_h }, inner_radii);
+        ctx.canvas.set_clip_rounded(
+            Vec2d { x: clip_x, y: clip_y },
+            ResolvedSize { width: clip_w, height: clip_h },
+            inner_radii,
+        );
 
         ctx.canvas.translate(Vec2d { x: p_left + b_left, y: p_top + b_top });
 
@@ -310,7 +317,8 @@ impl<T: Element> Drawable for RawContainer<T> {
         // they actually leave the viewport.
         let inset_x = m_left + p_left + b_left;
         let inset_y = m_top + p_top + b_top;
-        child_ctx.visible_rect = ctx.visible_rect.map(|(vx, vy, vw, vh)| (vx - inset_x, vy - inset_y, vw, vh));
+        child_ctx.visible_rect =
+            ctx.visible_rect.map(|(vx, vy, vw, vh)| (vx - inset_x, vy - inset_y, vw, vh));
 
         self.child.draw(&child_ctx);
         ctx.canvas.clear_clip();
@@ -405,9 +413,16 @@ impl<T: Element> LayoutElement for RawContainer<T> {
             let bb = get_stroke(self.box_decoration.border.bottom.stroke, capped_h).max(0.0);
 
             let mut child_ctx = ctx.clone();
-            child_ctx.box_constraint.max_width = if width_unbounded { f32::MAX } else { (box_width - p_left - bl - p_right - br).max(0.0) };
-            child_ctx.box_constraint.max_height =
-                if height_unbounded { f32::MAX } else { (box_height - p_top - bt - p_bottom - bb).max(0.0) };
+            child_ctx.box_constraint.max_width = if width_unbounded {
+                f32::MAX
+            } else {
+                (box_width - p_left - bl - p_right - br).max(0.0)
+            };
+            child_ctx.box_constraint.max_height = if height_unbounded {
+                f32::MAX
+            } else {
+                (box_height - p_top - bt - p_bottom - bb).max(0.0)
+            };
             let child_size = self.child.computed_size(&child_ctx);
 
             let final_w = if width_unbounded {
@@ -423,7 +438,10 @@ impl<T: Element> LayoutElement for RawContainer<T> {
 
             ResolvedSize { width: final_w.max(0.0), height: final_h.max(0.0) }
         } else {
-            ResolvedSize { width: (box_width + m_left + m_right).max(0.0), height: (box_height + m_top + m_bottom).max(0.0) }
+            ResolvedSize {
+                width: (box_width + m_left + m_right).max(0.0),
+                height: (box_height + m_top + m_bottom).max(0.0),
+            }
         };
         self.cache.set_computed(ctx.box_constraint, scale_bits, result);
         result
@@ -486,15 +504,29 @@ impl<T: Element> LayoutElement for RawContainer<T> {
 
         let result = if width_unbounded || height_unbounded {
             let mut child_ctx = ctx.clone();
-            child_ctx.box_constraint.max_width =
-                if width_unbounded { f32::MAX } else { (b_w - p_left - b_left - p_right - b_right).max(0.0) };
-            child_ctx.box_constraint.max_height =
-                if height_unbounded { f32::MAX } else { (b_h - p_top - b_top - p_bottom - b_bottom).max(0.0) };
+            child_ctx.box_constraint.max_width = if width_unbounded {
+                f32::MAX
+            } else {
+                (b_w - p_left - b_left - p_right - b_right).max(0.0)
+            };
+            child_ctx.box_constraint.max_height = if height_unbounded {
+                f32::MAX
+            } else {
+                (b_h - p_top - b_top - p_bottom - b_bottom).max(0.0)
+            };
             let child_size = self.child.computed_size(&child_ctx);
 
             ResolvedSize {
-                width: if width_unbounded { child_size.width } else { (b_w - p_left - p_right - b_left - b_right).max(0.0) },
-                height: if height_unbounded { child_size.height } else { (b_h - p_top - p_bottom - b_top - b_bottom).max(0.0) },
+                width: if width_unbounded {
+                    child_size.width
+                } else {
+                    (b_w - p_left - p_right - b_left - b_right).max(0.0)
+                },
+                height: if height_unbounded {
+                    child_size.height
+                } else {
+                    (b_h - p_top - p_bottom - b_top - b_bottom).max(0.0)
+                },
             }
         } else {
             ResolvedSize {

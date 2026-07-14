@@ -103,7 +103,10 @@ impl<W: Widget> Widget for Scrollable<W> {
         // re-apply `ctx.scale` here just like the declared offset below.
         let mut initial_offset = scroll_storage::read_offset(&self.key)
             .map(|logical| Vec2d { x: logical.x * ctx.scale, y: logical.y * ctx.scale })
-            .unwrap_or(Vec2d { x: self.scroll_behavior.scroll_offset.x * ctx.scale, y: self.scroll_behavior.scroll_offset.y * ctx.scale });
+            .unwrap_or(Vec2d {
+                x: self.scroll_behavior.scroll_offset.x * ctx.scale,
+                y: self.scroll_behavior.scroll_offset.y * ctx.scale,
+            });
 
         // If an app-supplied controller is already attached (i.e. this is a
         // rebuild), it is the source of truth for the live position — seed the

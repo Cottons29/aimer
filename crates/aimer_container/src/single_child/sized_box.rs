@@ -4,7 +4,9 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::*;
-use aimer_widget::{Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget, base::Color};
+use aimer_widget::{
+    Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget, base::Color,
+};
 
 pub struct SizedBox<W: Widget + 'static = ZeroSizedBox> {
     width: Dimension,
@@ -12,7 +14,6 @@ pub struct SizedBox<W: Widget + 'static = ZeroSizedBox> {
     color: Color,
     child: Option<W>,
 }
-
 
 impl Default for SizedBox {
     fn default() -> Self {
@@ -30,32 +31,25 @@ impl SizedBox {
         }
     }
 
-    pub fn width(mut self, width:  impl Into<Dimension> ) -> Self {
+    pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = width.into();
         self
     }
 
-    pub fn height(mut self, height: impl Into<Dimension> ) -> Self {
+    pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = height.into();
         self
     }
 
-    pub fn color(mut self, color: impl Into<Color> ) -> Self {
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = color.into();
         self
     }
 
     pub fn child<W: Widget>(self, child: W) -> SizedBox<W> {
-        SizedBox {
-            width: self.width,
-            height: self.height,
-            color: self.color,
-            child: Some(child),
-        }
+        SizedBox { width: self.width, height: self.height, color: self.color, child: Some(child) }
     }
 }
-
-
 
 impl SizedBox {
     pub const PLACE_HOLDER: Option<ZeroSizedBox> = Some(ZeroSizedBox);
@@ -63,7 +57,11 @@ impl SizedBox {
 
 impl<W: Widget + 'static> Widget for SizedBox<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self.child.as_ref().map(|child| child.to_element(ctx)).unwrap_or(ZeroSizedBox.to_element(ctx));
+        let child = self
+            .child
+            .as_ref()
+            .map(|child| child.to_element(ctx))
+            .unwrap_or(ZeroSizedBox.to_element(ctx));
         Box::new(RawSizedBox {
             width: self.width,
             height: self.height,
@@ -105,14 +103,23 @@ impl<E: Element> Drawable for RawSizedBox<E> {
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y &&  let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write(){
+                if cp.x >= l_start.x
+                    && cp.x <= l_end.x
+                    && cp.y >= l_start.y
+                    && cp.y <= l_end.y
+                    && let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write()
+                {
                     *hovered = Some((self.debug_name, l_start, l_end));
                 }
             }
         }
 
-        ctx.canvas
-            .fill_color_rect(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width, height }, self.color, [0.0; 4]);
+        ctx.canvas.fill_color_rect(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width, height },
+            self.color,
+            [0.0; 4],
+        );
     }
 }
 
@@ -129,7 +136,9 @@ impl<E: Element> VisitorElement for RawSizedBox<E> {
 impl<E: Element> LayoutElement for RawSizedBox<E> {
     fn size(&self) -> Option<Size> {
         match (self.width, self.height) {
-            (Dimension::Px(w), Dimension::Px(h)) => Some(Size { width: Dimension::Px(w), height: Dimension::Px(h) }),
+            (Dimension::Px(w), Dimension::Px(h)) => {
+                Some(Size { width: Dimension::Px(w), height: Dimension::Px(h) })
+            }
             _ => None,
         }
     }
@@ -156,8 +165,10 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
             inherited_states: ctx.inherited_states.clone(),
         };
 
-        child_ctx.box_constraint.max_width = self.width.resolve(ctx.box_constraint.max_width, scale);
-        child_ctx.box_constraint.max_height = self.height.resolve(ctx.box_constraint.max_height, scale);
+        child_ctx.box_constraint.max_width =
+            self.width.resolve(ctx.box_constraint.max_width, scale);
+        child_ctx.box_constraint.max_height =
+            self.height.resolve(ctx.box_constraint.max_height, scale);
 
         let width = match self.width {
             Dimension::Px(w) => w * scale,

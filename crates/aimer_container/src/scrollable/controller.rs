@@ -1,6 +1,6 @@
+use crate::scrollable::ScrollAxis;
 use crate::scrollable::constants::*;
 use crate::scrollable::scroll_behavior::ScrollBehavior;
-use crate::scrollable::ScrollAxis;
 use aimer_animation::curve::Curve;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
@@ -223,7 +223,10 @@ impl ScrollState {
     pub(crate) fn notify_scroll(&self) {
         let current = self.logical_offset();
         let moved = match self.last_reported_offset.get() {
-            Some(prev) => (current.x - prev.x).abs() > SCROLL_NOTIFY_EPSILON || (current.y - prev.y).abs() > SCROLL_NOTIFY_EPSILON,
+            Some(prev) => {
+                (current.x - prev.x).abs() > SCROLL_NOTIFY_EPSILON
+                    || (current.y - prev.y).abs() > SCROLL_NOTIFY_EPSILON
+            }
             None => false,
         };
         self.last_reported_offset.set(Some(current));
@@ -537,7 +540,10 @@ impl ScrollState {
         let max_ox = content.width * MAX_OVERSCROLL_FRACTION;
         let max_oy = content.height * MAX_OVERSCROLL_FRACTION;
         let clamped = self.clamp_offset(offset);
-        Vec2d { x: offset.x.clamp(clamped.x - max_ox, clamped.x + max_ox), y: offset.y.clamp(clamped.y - max_oy, clamped.y + max_oy) }
+        Vec2d {
+            x: offset.x.clamp(clamped.x - max_ox, clamped.x + max_ox),
+            y: offset.y.clamp(clamped.y - max_oy, clamped.y + max_oy),
+        }
     }
 
     /// Rational rubber-band visual transform (native macOS/iOS shape).
@@ -586,12 +592,20 @@ impl ScrollState {
 
     /// Check if a point is inside the vertical thumb rect.
     pub(crate) fn hit_test_v_thumb(&self, p: Vec2d) -> bool {
-        if let Some((x, y, w, h)) = self.v_thumb_rect.get() { p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h } else { false }
+        if let Some((x, y, w, h)) = self.v_thumb_rect.get() {
+            p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h
+        } else {
+            false
+        }
     }
 
     /// Check if a point is inside the horizontal thumb rect.
     pub(crate) fn hit_test_h_thumb(&self, p: Vec2d) -> bool {
-        if let Some((x, y, w, h)) = self.h_thumb_rect.get() { p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h } else { false }
+        if let Some((x, y, w, h)) = self.h_thumb_rect.get() {
+            p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h
+        } else {
+            false
+        }
     }
 
     /// Push a velocity sample into the ring buffer for trackpad smoothing.
@@ -623,7 +637,12 @@ impl ScrollState {
     /// (~3x too fast on touch). Native, delivering one move per frame, emits on
     /// every call. The offset is still updated per-event by the caller, so
     /// dragging stays 1:1.
-    pub(crate) fn accumulate_drag_velocity(&self, dx: f32, dy: f32, now: Instant) -> Option<(Vec2d, f32)> {
+    pub(crate) fn accumulate_drag_velocity(
+        &self,
+        dx: f32,
+        dy: f32,
+        now: Instant,
+    ) -> Option<(Vec2d, f32)> {
         let mut accum = self.vel_accum.get();
         accum.x += dx;
         accum.y += dy;
@@ -637,7 +656,10 @@ impl ScrollState {
         if sample_dt >= VELOCITY_SAMPLE_MIN_DT {
             self.vel_accum.set(Vec2d { x: 0.0, y: 0.0 });
             self.vel_sample_time.set(Some(now));
-            let velocity = Vec2d { x: (accum.x / sample_dt) * FRAME_REF_120, y: (accum.y / sample_dt) * FRAME_REF_120 };
+            let velocity = Vec2d {
+                x: (accum.x / sample_dt) * FRAME_REF_120,
+                y: (accum.y / sample_dt) * FRAME_REF_120,
+            };
             Some((velocity, sample_dt))
         } else {
             self.vel_accum.set(accum);
@@ -744,7 +766,13 @@ impl ScrollState {
     }
 
     /// Check if a point is inside the vertical scrollbar *track* but outside the thumb.
-    pub(crate) fn hit_test_v_track(&self, p: Vec2d, viewport_w: f32, viewport_h: f32, track_width: f32) -> bool {
+    pub(crate) fn hit_test_v_track(
+        &self,
+        p: Vec2d,
+        viewport_w: f32,
+        viewport_h: f32,
+        track_width: f32,
+    ) -> bool {
         if let Some((_tx, y, _tw, h)) = self.v_thumb_rect.get() {
             // Track spans the right edge of the viewport.
             let track_left = viewport_w - track_width;
@@ -758,7 +786,13 @@ impl ScrollState {
     }
 
     /// Check if a point is inside the horizontal scrollbar *track* but outside the thumb.
-    pub(crate) fn hit_test_h_track(&self, p: Vec2d, viewport_w: f32, viewport_h: f32, track_width: f32) -> bool {
+    pub(crate) fn hit_test_h_track(
+        &self,
+        p: Vec2d,
+        viewport_w: f32,
+        viewport_h: f32,
+        track_width: f32,
+    ) -> bool {
         if let Some((x, _ty, w, _th)) = self.h_thumb_rect.get() {
             let track_top = viewport_h - track_width;
             let in_track_y = p.y >= track_top;
@@ -808,17 +842,30 @@ impl ScrollState {
             // normal release fling uses the tuned default bézier.
             let eased = match self.anim_curve.get() {
                 Some(curve) => curve.transform(u),
-                None => cubic_bezier_ease(u, FLING_BEZIER_X1, FLING_BEZIER_Y1, FLING_BEZIER_X2, FLING_BEZIER_Y2),
+                None => cubic_bezier_ease(
+                    u,
+                    FLING_BEZIER_X1,
+                    FLING_BEZIER_Y1,
+                    FLING_BEZIER_X2,
+                    FLING_BEZIER_Y2,
+                ),
             };
             let start = self.fling_start_offset.get();
             let target = self.fling_target_offset.get();
-            let new = Vec2d { x: start.x + (target.x - start.x) * eased, y: start.y + (target.y - start.y) * eased };
+            let new = Vec2d {
+                x: start.x + (target.x - start.x) * eased,
+                y: start.y + (target.y - start.y) * eased,
+            };
 
             // Per-frame step, reused as the handoff velocity (px/frame) so the
             // spring-back / out-of-bounds code keeps working if the fling
             // overshoots a bouncy edge.
             let step = Vec2d { x: new.x - offset.x, y: new.y - offset.y };
-            let vel = if dt > 0.0 { Vec2d { x: step.x / frame_ratio, y: step.y / frame_ratio } } else { Vec2d::default() };
+            let vel = if dt > 0.0 {
+                Vec2d { x: step.x / frame_ratio, y: step.y / frame_ratio }
+            } else {
+                Vec2d::default()
+            };
 
             offset = new;
             // debug!("New Offset : {:?}", new);
@@ -834,7 +881,9 @@ impl ScrollState {
                 // Snap to rest once finished, or once the tail step becomes
                 // sub-pixel (the curve crawls toward the target for a long time
                 // after covering ~95% of the distance early).
-                let tail_done = u >= FLING_TAIL_START && step.x.abs() < FLING_END_STEP_PX && step.y.abs() < FLING_END_STEP_PX;
+                let tail_done = u >= FLING_TAIL_START
+                    && step.x.abs() < FLING_END_STEP_PX
+                    && step.y.abs() < FLING_END_STEP_PX;
                 if u >= 1.0 || tail_done {
                     offset = target;
                     self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
@@ -978,13 +1027,15 @@ impl ScrollState {
                 // Snap to boundary if the spring crossed through it.
                 let new_clamped = self.clamp_offset(offset);
                 if offset.x != clamped.x
-                    && ((clamped.x >= offset.x && offset.x >= new_clamped.x) || (clamped.x <= offset.x && offset.x <= new_clamped.x))
+                    && ((clamped.x >= offset.x && offset.x >= new_clamped.x)
+                        || (clamped.x <= offset.x && offset.x <= new_clamped.x))
                 {
                     offset.x = new_clamped.x;
                     sv.x = 0.0;
                 }
                 if offset.y != clamped.y
-                    && ((clamped.y >= offset.y && offset.y >= new_clamped.y) || (clamped.y <= offset.y && offset.y <= new_clamped.y))
+                    && ((clamped.y >= offset.y && offset.y >= new_clamped.y)
+                        || (clamped.y <= offset.y && offset.y <= new_clamped.y))
                 {
                     offset.y = new_clamped.y;
                     sv.y = 0.0;
@@ -1004,8 +1055,12 @@ impl ScrollState {
         // content overshoots the boundary, oscillates with decreasing amplitude,
         // and settles at rest — the "bounce" feel the user expects.
         let v_check = self.pointer_velocity.get();
-        let momentum_active = v_check.x.abs() > VELOCITY_EPSILON || v_check.y.abs() > VELOCITY_EPSILON;
-        if self.scroll_behavior.bouncy && !momentum_active && (offset.x != clamped.x || offset.y != clamped.y) {
+        let momentum_active =
+            v_check.x.abs() > VELOCITY_EPSILON || v_check.y.abs() > VELOCITY_EPSILON;
+        if self.scroll_behavior.bouncy
+            && !momentum_active
+            && (offset.x != clamped.x || offset.y != clamped.y)
+        {
             let stiffness = SPRING_STIFFNESS;
             let damping_coeff = 2.0 * SPRING_DAMPING_RATIO * stiffness.sqrt();
 
@@ -1206,12 +1261,18 @@ mod tests {
         // A small reverse flick adds a single opposite sample.
         c.push_velocity(0.0, -20.0);
         // Without clearing, the weighted average is still the OLD direction.
-        assert!(c.smoothed_velocity().y > 0.0, "stale samples keep the average pointing the old way");
+        assert!(
+            c.smoothed_velocity().y > 0.0,
+            "stale samples keep the average pointing the old way"
+        );
 
         // Reversal handling clears the buffer before the new sample is recorded.
         c.clear_velocity_history();
         c.push_velocity(0.0, -20.0);
-        assert!(c.smoothed_velocity().y < 0.0, "after clearing, the release follows the new direction");
+        assert!(
+            c.smoothed_velocity().y < 0.0,
+            "after clearing, the release follows the new direction"
+        );
     }
 
     // Regression: a non-bouncy scrollable must actually move when a wheel /
@@ -1340,9 +1401,21 @@ mod tests {
         ctrl.animate_to(Vec2d { x: 0.0, y: 200.0 }, Duration::from_millis(300), Curve::Linear);
 
         assert!(state.fling_start_time.get().is_some(), "a timed animation arms the fling");
-        assert_eq!(state.anim_curve.get(), Some(Curve::Linear), "the requested curve drives the fling");
-        assert_eq!(state.fling_target_offset.get().y, -200.0, "target stored in internal convention");
-        assert_eq!(state.scroll_offset.get().y, 0.0, "position has not jumped — it will ease over time");
+        assert_eq!(
+            state.anim_curve.get(),
+            Some(Curve::Linear),
+            "the requested curve drives the fling"
+        );
+        assert_eq!(
+            state.fling_target_offset.get().y,
+            -200.0,
+            "target stored in internal convention"
+        );
+        assert_eq!(
+            state.scroll_offset.get().y,
+            0.0,
+            "position has not jumped — it will ease over time"
+        );
     }
 
     // A zero-duration `animate_to` degenerates to an instant jump.
@@ -1365,7 +1438,11 @@ mod tests {
         state.fling_start_time.set(Some(Instant::now() - Duration::from_millis(400)));
         let (offset, _redraw) = state.update_momentum(state.scroll_offset.get());
 
-        assert!((offset.y - (-250.0)).abs() < 1.0, "animation settles on the target (got {})", offset.y);
+        assert!(
+            (offset.y - (-250.0)).abs() < 1.0,
+            "animation settles on the target (got {})",
+            offset.y
+        );
         assert!(state.fling_start_time.get().is_none(), "the fling is cleared once complete");
         assert!(state.anim_curve.get().is_none(), "the animation curve is cleared once complete");
     }
@@ -1413,7 +1490,11 @@ mod tests {
         *state.on_scroll_start.borrow_mut() = start_cb;
 
         state.begin_scroll();
-        assert_eq!(starts.borrow()[0].y, 150.0, "offset is reported logical (positive toward content end)");
+        assert_eq!(
+            starts.borrow()[0].y,
+            150.0,
+            "offset is reported logical (positive toward content end)"
+        );
     }
 
     // A programmatic `jump_to` is a self-contained session: it fires exactly one
@@ -1507,7 +1588,11 @@ mod tests {
         state.scroll_offset.set(Vec2d { x: 0.0, y: -40.0 });
         state.notify_scroll();
         assert_eq!(log.borrow().len(), 1, "a genuine move fires the callback");
-        assert_eq!(log.borrow()[0].y, 40.0, "reports the logical offset (positive toward content end)");
+        assert_eq!(
+            log.borrow()[0].y,
+            40.0,
+            "reports the logical offset (positive toward content end)"
+        );
 
         // Another distinct move fires again (fires per frame, not per session).
         state.scroll_offset.set(Vec2d { x: 0.0, y: -90.0 });

@@ -10,10 +10,7 @@ pub struct AspectRatio<W: Widget + 'static = crate::ZeroSizedBox> {
 
 impl AspectRatio {
     pub fn new() -> Self {
-        Self {
-            aspect_ratio: 0.0,
-            child: crate::ZeroSizedBox,
-        }
+        Self { aspect_ratio: 0.0, child: crate::ZeroSizedBox }
     }
 }
 
@@ -24,10 +21,7 @@ impl<W: Widget + 'static> AspectRatio<W> {
     }
 
     pub fn child<C: Widget>(self, child: C) -> AspectRatio<C> {
-        AspectRatio {
-            aspect_ratio: self.aspect_ratio,
-            child,
-        }
+        AspectRatio { aspect_ratio: self.aspect_ratio, child }
     }
 }
 

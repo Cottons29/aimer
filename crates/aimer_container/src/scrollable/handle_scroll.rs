@@ -28,9 +28,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             | ElementEvent::PointerUp(p, _, _)
             | ElementEvent::PointerMove(p, _, _)
             | ElementEvent::Scroll { delta: p, .. } => *p,
-            ElementEvent::Cancel | ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } | ElementEvent::ImePreedit { .. } => {
-                Vec2d::default()
-            }
+            ElementEvent::Cancel
+            | ElementEvent::CharInput { .. }
+            | ElementEvent::KeyInput { .. }
+            | ElementEvent::ImePreedit { .. } => Vec2d::default(),
         };
 
         let mode_before = self.ctrl.drag_mode.get();
@@ -144,12 +145,16 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     // Applied immediately at the boundary — no gradual ramp.
                     match self.ctrl.axis {
                         ScrollAxis::Vertical => {
-                            if (offset.y > clamped.y && scroll_delta.y > 0.0) || (offset.y < clamped.y && scroll_delta.y < 0.0) {
+                            if (offset.y > clamped.y && scroll_delta.y > 0.0)
+                                || (offset.y < clamped.y && scroll_delta.y < 0.0)
+                            {
                                 target_vy *= OOB_OVERSHOOT_DAMPING;
                             }
                         }
                         ScrollAxis::Horizontal => {
-                            if (offset.x > clamped.x && scroll_delta.x > 0.0) || (offset.x < clamped.x && scroll_delta.x < 0.0) {
+                            if (offset.x > clamped.x && scroll_delta.x > 0.0)
+                                || (offset.x < clamped.x && scroll_delta.x < 0.0)
+                            {
                                 target_vx *= OOB_OVERSHOOT_DAMPING;
                             }
                         }
@@ -181,11 +186,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 if let Some(prev_id) = self.ctrl.active_touch_id.get()
                     && prev_id != *id
                 {
-                    let stale = self
-                        .ctrl
-                        .last_event_time
-                        .get()
-                        .is_none_or(|t| Instant::now().duration_since(t).as_millis() > STALE_TOUCH_THRESHOLD_MS);
+                    let stale = self.ctrl.last_event_time.get().is_none_or(|t| {
+                        Instant::now().duration_since(t).as_millis() > STALE_TOUCH_THRESHOLD_MS
+                    });
                     if stale {
                         // info!("[scroll] DOWN stale touch cleared prev_id={}", prev_id);
                         self.ctrl.active_touch_id.set(None);
@@ -259,7 +262,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             }
             ElementEvent::PointerMove(p, _, id) => {
                 // Ignore moves from non-primary fingers.
-                if self.ctrl.active_touch_id.get().is_some() && self.ctrl.active_touch_id.get() != Some(*id) {
+                if self.ctrl.active_touch_id.get().is_some()
+                    && self.ctrl.active_touch_id.get() != Some(*id)
+                {
                     // info!("[scroll] MOVE REJECTED — non-primary finger active={:?} got={}", self.ctrl.active_touch_id.get(), id);
                     return false;
                 }
@@ -303,7 +308,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             }
                             self.ctrl.last_pointer_pos.set(Some(adjusted_start));
 
-                            let _ = aimer_widget::dispatch_event(&self.child, *p, &ElementEvent::Cancel);
+                            let _ = aimer_widget::dispatch_event(
+                                &self.child,
+                                *p,
+                                &ElementEvent::Cancel,
+                            );
                         } else {
                             return child_consumed;
                         }
@@ -323,7 +332,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
                         let now = Instant::now();
                         self.ctrl.last_event_time.set(Some(now));
-                        if let Some((raw_velocity, sample_dt)) = self.ctrl.accumulate_drag_velocity(dx, dy, now) {
+                        if let Some((raw_velocity, sample_dt)) =
+                            self.ctrl.accumulate_drag_velocity(dx, dy, now)
+                        {
                             let mut new_velocity = match mode {
                                 DragMode::Content => match self.ctrl.axis {
                                     ScrollAxis::Vertical => Vec2d { x: 0.0, y: raw_velocity.y },
@@ -348,11 +359,14 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             self.ctrl.push_velocity(new_velocity.x, new_velocity.y);
 
                             let blend_factor = (sample_dt / DRAG_BLEND_WINDOW).min(1.0);
-                            let blend_new = (DRAG_BLEND_BASE * (1.0 - blend_factor) + blend_factor).min(1.0);
+                            let blend_new =
+                                (DRAG_BLEND_BASE * (1.0 - blend_factor) + blend_factor).min(1.0);
                             let blend_old = 1.0 - blend_new;
 
-                            new_velocity.x = old_velocity.x * blend_old + new_velocity.x * blend_new;
-                            new_velocity.y = old_velocity.y * blend_old + new_velocity.y * blend_new;
+                            new_velocity.x =
+                                old_velocity.x * blend_old + new_velocity.x * blend_new;
+                            new_velocity.y =
+                                old_velocity.y * blend_old + new_velocity.y * blend_new;
 
                             self.ctrl.pointer_velocity.set(new_velocity);
                         }
@@ -383,11 +397,13 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             }
                             DragMode::VerticalScrollbar => {
                                 let target_y = offset.y - dy * self.ctrl.v_scroll_multiplier.get();
-                                offset.y = offset.y * SCROLLBAR_DRAG_SMOOTH_OLD + target_y * SCROLLBAR_DRAG_SMOOTH_NEW;
+                                offset.y = offset.y * SCROLLBAR_DRAG_SMOOTH_OLD
+                                    + target_y * SCROLLBAR_DRAG_SMOOTH_NEW;
                             }
                             DragMode::HorizontalScrollbar => {
                                 let target_x = offset.x - dx * self.ctrl.h_scroll_multiplier.get();
-                                offset.x = offset.x * SCROLLBAR_DRAG_SMOOTH_OLD + target_x * SCROLLBAR_DRAG_SMOOTH_NEW;
+                                offset.x = offset.x * SCROLLBAR_DRAG_SMOOTH_OLD
+                                    + target_x * SCROLLBAR_DRAG_SMOOTH_NEW;
                             }
                             _ => {}
                         }
@@ -417,7 +433,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     (ScrollAxis::Vertical, NamedKey::ArrowUp) => Some(Vec2d { x: 0.0, y: line }),
                     (ScrollAxis::Vertical, NamedKey::ArrowDown) => Some(Vec2d { x: 0.0, y: -line }),
                     (ScrollAxis::Vertical, NamedKey::PageUp) => Some(Vec2d { x: 0.0, y: page_v }),
-                    (ScrollAxis::Vertical, NamedKey::PageDown) => Some(Vec2d { x: 0.0, y: -page_v }),
+                    (ScrollAxis::Vertical, NamedKey::PageDown) => {
+                        Some(Vec2d { x: 0.0, y: -page_v })
+                    }
                     (ScrollAxis::Vertical, NamedKey::Home) => {
                         // Scroll to top: offset.y should be 0 (min_scroll).
                         let off = self.ctrl.scroll_offset.get();
@@ -429,10 +447,16 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         let max = self.ctrl.cached_max_scroll.get();
                         Some(Vec2d { x: 0.0, y: -max.y - off.y })
                     }
-                    (ScrollAxis::Horizontal, NamedKey::ArrowLeft) => Some(Vec2d { x: line, y: 0.0 }),
-                    (ScrollAxis::Horizontal, NamedKey::ArrowRight) => Some(Vec2d { x: -line, y: 0.0 }),
+                    (ScrollAxis::Horizontal, NamedKey::ArrowLeft) => {
+                        Some(Vec2d { x: line, y: 0.0 })
+                    }
+                    (ScrollAxis::Horizontal, NamedKey::ArrowRight) => {
+                        Some(Vec2d { x: -line, y: 0.0 })
+                    }
                     (ScrollAxis::Horizontal, NamedKey::PageUp) => Some(Vec2d { x: page_h, y: 0.0 }),
-                    (ScrollAxis::Horizontal, NamedKey::PageDown) => Some(Vec2d { x: -page_h, y: 0.0 }),
+                    (ScrollAxis::Horizontal, NamedKey::PageDown) => {
+                        Some(Vec2d { x: -page_h, y: 0.0 })
+                    }
                     (ScrollAxis::Horizontal, NamedKey::Home) => {
                         let off = self.ctrl.scroll_offset.get();
                         Some(Vec2d { x: -off.x, y: 0.0 })
@@ -479,7 +503,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 self.ctrl.active_touch_id.set(None);
                 false
             }
-            ElementEvent::CharInput { .. } | ElementEvent::KeyInput { .. } | ElementEvent::ImePreedit { .. } => child_consumed,
+            ElementEvent::CharInput { .. }
+            | ElementEvent::KeyInput { .. }
+            | ElementEvent::ImePreedit { .. } => child_consumed,
         };
 
         child_consumed || we_consumed

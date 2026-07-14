@@ -57,7 +57,11 @@ impl Expanded {
 
 impl<W: Widget + 'static> Widget for Expanded<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(RawExpanded { child: self.child.to_element(ctx), flex: self.flex.max(0.0), debug_name: "Expanded" })
+        Box::new(RawExpanded {
+            child: self.child.to_element(ctx),
+            flex: self.flex.max(0.0),
+            debug_name: "Expanded",
+        })
     }
 
     fn debug_name(&self) -> &'static str {
