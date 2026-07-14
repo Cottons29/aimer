@@ -160,12 +160,18 @@ mod tests {
         // Child "home" (`/`) collapses to just the shell prefix.
         let overview = AppRouting::Dashboard(DashRoute::Overview);
         assert_eq!(overview.format(), "/dashboard");
-        assert_eq!(AppRouting::parse("/dashboard"), Some(AppRouting::Dashboard(DashRoute::Overview)));
+        assert_eq!(
+            AppRouting::parse("/dashboard"),
+            Some(AppRouting::Dashboard(DashRoute::Overview))
+        );
 
         // Nested child appends under the shell prefix.
         let reports = AppRouting::Dashboard(DashRoute::Reports);
         assert_eq!(reports.format(), "/dashboard/reports");
-        assert_eq!(AppRouting::parse("/dashboard/reports"), Some(AppRouting::Dashboard(DashRoute::Reports)));
+        assert_eq!(
+            AppRouting::parse("/dashboard/reports"),
+            Some(AppRouting::Dashboard(DashRoute::Reports))
+        );
 
         // Unknown nested child does not match.
         assert_eq!(AppRouting::parse("/dashboard/unknown"), None);
@@ -182,19 +188,29 @@ mod tests {
     fn resolve_named_builds_route_from_params() {
         let mut params = HashMap::new();
         params.insert("name".to_string(), "bob".to_string());
-        assert_eq!(AppRouting::resolve_named("profile", &params), Some(AppRouting::Profile { name: "bob".to_string() }));
+        assert_eq!(
+            AppRouting::resolve_named("profile", &params),
+            Some(AppRouting::Profile { name: "bob".to_string() })
+        );
 
         let mut params = HashMap::new();
         params.insert("q".to_string(), "rust".to_string());
         params.insert("page".to_string(), "3".to_string());
-        assert_eq!(AppRouting::resolve_named("search", &params), Some(AppRouting::Search { q: "rust".to_string(), page: 3 }));
+        assert_eq!(
+            AppRouting::resolve_named("search", &params),
+            Some(AppRouting::Search { q: "rust".to_string(), page: 3 })
+        );
 
         assert_eq!(AppRouting::resolve_named("unknown", &params), None);
     }
 
     #[test]
     fn stateful_shell_starts_each_branch_with_own_stack() {
-        let shell = StatefulShell::<TabRoute>::new(vec![TabRoute::Feed, TabRoute::Notifications, TabRoute::Profile], tab_frame, tab_child);
+        let shell = StatefulShell::<TabRoute>::new(
+            vec![TabRoute::Feed, TabRoute::Notifications, TabRoute::Profile],
+            tab_frame,
+            tab_child,
+        );
         assert_eq!(shell.active, 0);
         assert_eq!(shell.branches.len(), 3);
         assert_eq!(shell.branches[0], vec![TabRoute::Feed]);
@@ -210,5 +226,9 @@ pub fn state_router() {
 /// Launch the tabbed stateful-shell demo: three branches (Feed, Notifications,
 /// Profile), each keeping its own independent navigation history.
 pub fn tab_shell_app() {
-    AimerApp::start(StatefulShell::<TabRoute>::new(vec![TabRoute::Feed, TabRoute::Notifications, TabRoute::Profile], tab_frame, tab_child))
+    AimerApp::start(StatefulShell::<TabRoute>::new(
+        vec![TabRoute::Feed, TabRoute::Notifications, TabRoute::Profile],
+        tab_frame,
+        tab_child,
+    ))
 }

@@ -23,7 +23,6 @@ pub fn my_app() {
 }
 #[allow(unused)]
 fn test_text() {
-
     AimerApp::start(Scrollable::new(
             Container::new()
                 .child(Text::new(
@@ -59,9 +58,7 @@ r#"
 
 #[allow(unused)]
 fn test_positioned() {
-    AimerApp::start(Container::new()
-        .child(Stack::new()
-            .children(vec![
+    AimerApp::start(Container::new().child(Stack::new().children(vec![
                 Positioned::new()
                     .top(80.0)
                     .left(80.0)
@@ -92,164 +89,162 @@ fn test_positioned() {
                                 .text_style(TextStyle::new()
                                     .color(Colors::Black)))
                     ).boxed()
-            ])
-        )
-    )
+            ])))
 }
 
 #[allow(unused)]
 fn test_border_outline() {
-    AimerApp::start(Container::new()
-        .padding(LayoutSpacing::all(Spacing::Px(50)))
-        .child(
-            Container::new()
-                .child(
-                    Container::new()
+    AimerApp::start(
+        Container::new().padding(LayoutSpacing::all(Spacing::Px(50))).child(
+            Container::new().child(
+                Container::new().padding(LayoutSpacing::all(Spacing::Px(10))).child(
+                    TextField::new()
                         .padding(LayoutSpacing::all(Spacing::Px(10)))
-                        .child(
-                            TextField::new()
-                                .padding(LayoutSpacing::all(Spacing::Px(10)))
-                                .controller(TextFieldController::new())
-                                .text_align(TextAlign::MidLeft)
-                                .input_type(InputType::Text)
-                                .prompt("Input any here....")
-                                .decoration(BoxDecoration::new()
-                                    .background_color(Colors::Gray.alpha(140))
-                                    .border(BoxBorder::all(
-                                        BorderSlice::new()
-                                            .style(BorderStyle::Solid)
-                                            .color(Colors::Black)
-                                            .stroke(2),
-                                    ))
-                                    .outline(BoxOutline::all(
-                                        BorderSlice::new()
-                                            .style(BorderStyle::Solid)
-                                            .color(Colors::Black)
-                                            .stroke(2),
-                                    )))
-                                .hover_decoration(BoxDecoration::new()
-                                    .background_color(Colors::Gray.alpha(70))
-                                    .border(BoxBorder::all(
-                                        BorderSlice::new()
-                                            .style(BorderStyle::Solid)
-                                            .color(Colors::Black)
-                                            .stroke(2),
-                                    ))
-                                    .outline(BoxOutline::all(
-                                        BorderSlice::new()
-                                            .style(BorderStyle::Solid)
-                                            .color(Colors::Green)
-                                            .stroke(2),
-                                    )))
-                                .focus_decoration(BoxDecoration::new()
-                                    .background_color(Colors::Gray.alpha(100))
-                                    .border(BoxBorder::all(
-                                        BorderSlice::new()
-                                            .style(BorderStyle::Solid)
-                                            .color(Colors::Green)
-                                            .stroke(2),
-                                    ))
-                                    .outline(BoxOutline::all(
-                                        BorderSlice::new()
-                                            .style(BorderStyle::Solid)
-                                            .color(Colors::Black)
-                                            .stroke(2),
-                                    )))
+                        .controller(TextFieldController::new())
+                        .text_align(TextAlign::MidLeft)
+                        .input_type(InputType::Text)
+                        .prompt("Input any here....")
+                        .decoration(
+                            BoxDecoration::new()
+                                .background_color(Colors::Gray.alpha(140))
+                                .border(BoxBorder::all(
+                                    BorderSlice::new()
+                                        .style(BorderStyle::Solid)
+                                        .color(Colors::Black)
+                                        .stroke(2),
+                                ))
+                                .outline(BoxOutline::all(
+                                    BorderSlice::new()
+                                        .style(BorderStyle::Solid)
+                                        .color(Colors::Black)
+                                        .stroke(2),
+                                )),
+                        )
+                        .hover_decoration(
+                            BoxDecoration::new()
+                                .background_color(Colors::Gray.alpha(70))
+                                .border(BoxBorder::all(
+                                    BorderSlice::new()
+                                        .style(BorderStyle::Solid)
+                                        .color(Colors::Black)
+                                        .stroke(2),
+                                ))
+                                .outline(BoxOutline::all(
+                                    BorderSlice::new()
+                                        .style(BorderStyle::Solid)
+                                        .color(Colors::Green)
+                                        .stroke(2),
+                                )),
+                        )
+                        .focus_decoration(
+                            BoxDecoration::new()
+                                .background_color(Colors::Gray.alpha(100))
+                                .border(BoxBorder::all(
+                                    BorderSlice::new()
+                                        .style(BorderStyle::Solid)
+                                        .color(Colors::Green)
+                                        .stroke(2),
+                                ))
+                                .outline(BoxOutline::all(
+                                    BorderSlice::new()
+                                        .style(BorderStyle::Solid)
+                                        .color(Colors::Black)
+                                        .stroke(2),
+                                )),
                         ),
                 ),
-        ))
+            ),
+        ),
+    )
 }
 
 #[allow(unused)]
 pub fn test_scrollable() {
     let items: Vec<Box<dyn Widget>> = (0..1200)
         .map(|i| {
-            let color = if i % 2 == 0 {
-                Color::Rgb(100, 149, 237)
-            } else {
-                Color::Rgb(255, 160, 122)
-            };
+            let color =
+                if i % 2 == 0 { Color::Rgb(100, 149, 237) } else { Color::Rgb(255, 160, 122) };
             if i == 5 {
                 Container::new()
-                    .padding(LayoutSpacing::all( Spacing::Px(10)))
+                    .padding(LayoutSpacing::all(Spacing::Px(10)))
                     .height(Dimension::Px(200.0))
-                    .child(Text::new(format!("Item {}", i))
-                        .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new()
-                            .font_size(15)
-                            .color(Colors::Black))
-                    ).boxed()
+                    .child(
+                        Text::new(format!("Item {}", i))
+                            .text_align(TextAlign::MidCenter)
+                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                    )
+                    .boxed()
             } else {
                 Container::new()
                     .margin(LayoutSpacing { top: Spacing::Px(30), ..Default::default() })
-                    .box_decoration(BoxDecoration::new()
-                        .border(BoxBorder::all(
-                            BorderSlice::new()
-                                .style(BorderStyle::Solid)
-                                .stroke(Stroke::Px(1.0))
-                                .color(Colors::Black),
-                        ))
-                        .background_color(color))
+                    .box_decoration(
+                        BoxDecoration::new()
+                            .border(BoxBorder::all(
+                                BorderSlice::new()
+                                    .style(BorderStyle::Solid)
+                                    .stroke(Stroke::Px(1.0))
+                                    .color(Colors::Black),
+                            ))
+                            .background_color(color),
+                    )
                     .height(Dimension::Px(80.0))
-                    .child(Text::new(format!("Item {}", i))
-                        .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new()
-                            .font_size(15)
-                            .color(Colors::Black))
-                    ).boxed()
+                    .child(
+                        Text::new(format!("Item {}", i))
+                            .text_align(TextAlign::MidCenter)
+                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                    )
+                    .boxed()
             }
         })
         .collect();
 
     let items_2: Vec<Box<dyn Widget>> = (0..1200)
         .map(|i| {
-            let color = if i % 2 == 0 {
-                Color::Rgb(100, 149, 237)
-            } else {
-                Color::Rgb(255, 160, 122)
-            };
+            let color =
+                if i % 2 == 0 { Color::Rgb(100, 149, 237) } else { Color::Rgb(255, 160, 122) };
             if i == 5 {
                 Container::new()
-                    .padding(LayoutSpacing::all( Spacing::Px(10)))
+                    .padding(LayoutSpacing::all(Spacing::Px(10)))
                     .height(Dimension::Px(200.0))
-                    .box_decoration(BoxDecoration::new()
-                        .background_color(Colors::Green))
-                    .child(Text::new(format!("Item {}", i))
-                        .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new()
-                            .font_size(15)
-                            .color(Colors::Black))
-                    ).boxed()
+                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
+                    .child(
+                        Text::new(format!("Item {}", i))
+                            .text_align(TextAlign::MidCenter)
+                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                    )
+                    .boxed()
             } else {
                 Container::new()
                     .margin(LayoutSpacing { top: Spacing::Px(30), ..Default::default() })
-                    .box_decoration(BoxDecoration::new()
-                        .border(BoxBorder::all(
-                            BorderSlice::new()
-                                .style(BorderStyle::Solid)
-                                .stroke(Stroke::Px(1.0))
-                                .color(Colors::Black),
-                        ))
-                        .background_color(color))
+                    .box_decoration(
+                        BoxDecoration::new()
+                            .border(BoxBorder::all(
+                                BorderSlice::new()
+                                    .style(BorderStyle::Solid)
+                                    .stroke(Stroke::Px(1.0))
+                                    .color(Colors::Black),
+                            ))
+                            .background_color(color),
+                    )
                     .height(Dimension::Px(80.0))
-                    .child(Text::new(format!("Item {}", i))
-                        .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new()
-                            .font_size(15)
-                            .color(Colors::Black))
-                    ).boxed()
+                    .child(
+                        Text::new(format!("Item {}", i))
+                            .text_align(TextAlign::MidCenter)
+                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                    )
+                    .boxed()
             }
         })
         .collect();
-    let content = Column::new()
-        .horizontal_alignment(BoxAlignment::Center)
-        .children(items);
+    let content = Column::new().horizontal_alignment(BoxAlignment::Center).children(items);
 
-    let content_2 = Column::new()
-        .horizontal_alignment(BoxAlignment::Center)
-        .children(items_2);
+    let content_2 = Column::new().horizontal_alignment(BoxAlignment::Center).children(items_2);
     let scrollbar = ScrollBar {
-        track: ScrollTrack { width: Dimension::Px(2.0), color: Colors::Transparent, hover_color: Colors::Gray.alpha(120) },
+        track: ScrollTrack {
+            width: Dimension::Px(2.0),
+            color: Colors::Transparent,
+            hover_color: Colors::Gray.alpha(120),
+        },
         thumb: ScrollThumb {
             width: Dimension::Px(2.0),
             radius: Dimension::Px(4.0),
@@ -260,102 +255,109 @@ pub fn test_scrollable() {
         up_button: None,
         down_button: None,
     };
-    let app = Container::new()
-        .child(
-            Column::new()
-                .children(vec![
-                    Container::new()
-                        .height(Dimension::Px(80.0))
-                        .box_decoration(BoxDecoration::new()
-                            .background_color(Colors::Green))
-                        .child(Text::new("This is header")
+    let app = Container::new().child(
+        Column::new()
+            .children(vec![
+                Container::new()
+                    .height(Dimension::Px(80.0))
+                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
+                    .child(
+                        Text::new("This is header")
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new()
-                                .font_size(15)
-                                .color(Colors::Black))
-                        ).boxed(),
-
-                    Row::new()
-                        .children(vec![
-                            Container::new()
-                                .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
-                                .child(Scrollable::new(content)
+                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                    )
+                    .boxed(),
+                Row::new()
+                    .children(vec![
+                        Container::new()
+                            .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
+                            .child(
+                                Scrollable::new(content)
                                     .axis(ScrollAxis::Vertical)
-                                    .vertical_scroll_bar(Some(scrollbar))).boxed(),
-                            Container::new()
-                                .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
-                                .child(Scrollable::new(content_2)
+                                    .vertical_scroll_bar(Some(scrollbar)),
+                            )
+                            .boxed(),
+                        Container::new()
+                            .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
+                            .child(
+                                Scrollable::new(content_2)
                                     .axis(ScrollAxis::Vertical)
-                                    .vertical_scroll_bar(Some(scrollbar))).boxed(),
-                        ]).boxed(),
-                    Container::new()
-                        .height(Dimension::Px(80.0))
-                        .box_decoration(BoxDecoration::new()
-                            .background_color(Colors::Green))
-                        .child(Text::new("This is footer")
+                                    .vertical_scroll_bar(Some(scrollbar)),
+                            )
+                            .boxed(),
+                    ])
+                    .boxed(),
+                Container::new()
+                    .height(Dimension::Px(80.0))
+                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
+                    .child(
+                        Text::new("This is footer")
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new()
-                                .font_size(15)
-                                .color(Colors::Black))
-                        ).boxed()
-                ]).boxed()
-        );
+                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                    )
+                    .boxed(),
+            ])
+            .boxed(),
+    );
     AimerApp::start(app);
 }
 #[allow(unused)]
 fn test_scrollable_row() {
     let items: Vec<Box<dyn Widget>> = (0..12000)
         .map(|i| {
-            let color = if i % 2 == 0 {
-                Color::Rgb(100, 149, 237)
-            } else {
-                Color::Rgb(255, 160, 122)
-            };
+            let color =
+                if i % 2 == 0 { Color::Rgb(100, 149, 237) } else { Color::Rgb(255, 160, 122) };
             if i == 5 {
                 Container::new()
-                    .padding(LayoutSpacing::all( Spacing::Px(10)))
+                    .padding(LayoutSpacing::all(Spacing::Px(10)))
                     .margin(LayoutSpacing { right: Spacing::Px(10), ..Default::default() })
                     .width(Dimension::Px(200.0))
-                    .box_decoration(BoxDecoration::new()
-                        .border(BoxBorder::all(
-                            BorderSlice::new()
-                                .style(BorderStyle::Solid)
-                                .stroke(Stroke::Px(1.0))
-                                .color(Colors::Black),
-                        ))
-                        .background_color(Colors::Green))
-                    .child(Text::new(format!("Item {}", i))
-                        .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new()
-                            .font_size(15)
-                            .color(Colors::Black))
-                    ).boxed()
+                    .box_decoration(
+                        BoxDecoration::new()
+                            .border(BoxBorder::all(
+                                BorderSlice::new()
+                                    .style(BorderStyle::Solid)
+                                    .stroke(Stroke::Px(1.0))
+                                    .color(Colors::Black),
+                            ))
+                            .background_color(Colors::Green),
+                    )
+                    .child(
+                        Text::new(format!("Item {}", i))
+                            .text_align(TextAlign::MidCenter)
+                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                    )
+                    .boxed()
             } else {
                 Container::new()
                     .margin(LayoutSpacing { right: Spacing::Px(10), ..Default::default() })
-                    .box_decoration(BoxDecoration::new()
-                        .border(BoxBorder::all(
-                            BorderSlice::new()
-                                .style(BorderStyle::Solid)
-                                .stroke(Stroke::Px(1.0))
-                                .color(Colors::Black),
-                        ))
-                        .background_color(color))
+                    .box_decoration(
+                        BoxDecoration::new()
+                            .border(BoxBorder::all(
+                                BorderSlice::new()
+                                    .style(BorderStyle::Solid)
+                                    .stroke(Stroke::Px(1.0))
+                                    .color(Colors::Black),
+                            ))
+                            .background_color(color),
+                    )
                     .width(Dimension::Px(80.0))
-                    .child(Text::new(format!("Item {}", i))
-                        .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new()
-                            .font_size(15)
-                            .color(Colors::Black))
-                    ).boxed()
+                    .child(
+                        Text::new(format!("Item {}", i))
+                            .text_align(TextAlign::MidCenter)
+                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                    )
+                    .boxed()
             }
         })
         .collect();
-    let content = Row::new()
-        .vertical_alignment(BoxAlignment::Center)
-        .children(items);
+    let content = Row::new().vertical_alignment(BoxAlignment::Center).children(items);
     let scrollbar = ScrollBar {
-        track: ScrollTrack { width: Dimension::Px(2.0), color: Colors::Transparent, hover_color: Colors::Gray.alpha(120) },
+        track: ScrollTrack {
+            width: Dimension::Px(2.0),
+            color: Colors::Transparent,
+            hover_color: Colors::Gray.alpha(120),
+        },
         thumb: ScrollThumb {
             width: Dimension::Px(2.0),
             radius: Dimension::Px(4.0),
@@ -366,63 +368,66 @@ fn test_scrollable_row() {
         up_button: None,
         down_button: None,
     };
-    let app = Container::new()
-        .child(
-            Row::new()
-                .children(vec![
-                    Container::new()
-                        .width(Dimension::Px(80.0))
-                        .box_decoration(BoxDecoration::new()
-                            .background_color(Colors::Green))
-                        .child(Text::new("This is header")
+    let app = Container::new().child(
+        Row::new()
+            .children(vec![
+                Container::new()
+                    .width(Dimension::Px(80.0))
+                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
+                    .child(
+                        Text::new("This is header")
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new()
-                                .font_size(15)
-                                .color(Colors::Black))
-                        ).boxed(),
-                    Container::new()
-                        .padding(LayoutSpacing::all(Spacing::Px(10)))
-                        .child(Scrollable::new(content)
+                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                    )
+                    .boxed(),
+                Container::new()
+                    .padding(LayoutSpacing::all(Spacing::Px(10)))
+                    .child(
+                        Scrollable::new(content)
                             .axis(ScrollAxis::Horizontal)
-                            .vertical_scroll_bar(Some(scrollbar))).boxed(),
-                    Container::new()
-                        .width(Dimension::Px(80.0))
-                        .box_decoration(BoxDecoration::new()
-                            .background_color(Colors::Green))
-                        .child(Text::new("This is footer")
+                            .vertical_scroll_bar(Some(scrollbar)),
+                    )
+                    .boxed(),
+                Container::new()
+                    .width(Dimension::Px(80.0))
+                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
+                    .child(
+                        Text::new("This is footer")
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new()
-                                .font_size(15)
-                                .color(Colors::Black))
-                        ).boxed()
-                ]).boxed()
-        );
+                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                    )
+                    .boxed(),
+            ])
+            .boxed(),
+    );
     AimerApp::start(app);
 }
 
 #[allow(unused)]
 fn test_image() {
-    AimerApp::start(Container::new()
-        .padding(LayoutSpacing::all(Spacing::Percent(15)))
-        .box_decoration(BoxDecoration::new()
-            .background_color(Colors::Black))
-        .child(
-            Container::new()
-                .box_decoration(BoxDecoration::new()
-                    .background_color(Color::Rgb(41, 31, 31))
-                    .border_radius((55, 0, 55, 0))
-                    .box_shadow(vec![
-                        BoxShadow::new()
-                            .color(Colors::Gray.alpha(200))
-                            .blur(12.0)
-                            .spread(10.0)
-                            .offset_x(40.0)
-                            .offset_y(40.0),
-                    ]))
-                .padding(LayoutSpacing::all(Spacing::Px(10)))
-                .child(AssetImage::new("assets/my_image.png")
-                    .fit(BoxFit::FitWidth)
-                    .scale(1.1_f32)
-                )
-        ))
+    AimerApp::start(
+        Container::new()
+            .padding(LayoutSpacing::all(Spacing::Percent(15)))
+            .box_decoration(BoxDecoration::new().background_color(Colors::Black))
+            .child(
+                Container::new()
+                    .box_decoration(
+                        BoxDecoration::new()
+                            .background_color(Color::Rgb(41, 31, 31))
+                            .border_radius((55, 0, 55, 0))
+                            .box_shadow(vec![
+                                BoxShadow::new()
+                                    .color(Colors::Gray.alpha(200))
+                                    .blur(12.0)
+                                    .spread(10.0)
+                                    .offset_x(40.0)
+                                    .offset_y(40.0),
+                            ]),
+                    )
+                    .padding(LayoutSpacing::all(Spacing::Px(10)))
+                    .child(
+                        AssetImage::new("assets/my_image.png").fit(BoxFit::FitWidth).scale(1.1_f32),
+                    ),
+            ),
+    )
 }

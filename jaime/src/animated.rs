@@ -58,8 +58,7 @@ impl State<MyAnimatedList> for MyListState {
                         .map(|t| now.duration_since(t) >= ANIM_DURATION)
                         .unwrap_or(false)
             });
-            if has_dismissed {
-            }
+            if has_dismissed {}
         }
 
         Container::new()
