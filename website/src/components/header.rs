@@ -1,6 +1,9 @@
 use aimer::Dimension::Px;
 use aimer::router::NavigatorController;
-use aimer::style::{BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing, TextDecoration, TextStyle};
+use aimer::style::{
+    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing, TextDecoration,
+    TextStyle,
+};
 use aimer::*;
 use aimer::{BuildContext, Container, State, StateUpdater, StatefulWidget, Text, Widget, widget};
 
@@ -24,7 +27,11 @@ impl StatefulWidget for HeaderSection {
     type State = HeaderState;
 
     fn create_state(&self) -> Self::State {
-        Self::State { tab: self.active_tab, updater: StateUpdater::new(), show_logo: self.show_logo }
+        Self::State {
+            tab: self.active_tab,
+            updater: StateUpdater::new(),
+            show_logo: self.show_logo,
+        }
     }
 }
 
@@ -112,7 +119,8 @@ impl HeaderState {
                 move |(i, l)| {
                     let index = i;
                     let is_selected = index == selected;
-                    let font_weight = if selected == index { FontWeight::Bolder } else { FontWeight::Normal };
+                    let font_weight =
+                        if selected == index { FontWeight::Bolder } else { FontWeight::Normal };
 
                     TextButton::new(*l)
                         .style(
@@ -120,12 +128,20 @@ impl HeaderState {
                                 .font_size(20)
                                 .color(if is_selected { Color::BLUE } else { Color::BLACK })
                                 .font_weight(font_weight)
-                                .text_decoration(if is_selected { TextDecoration::Underline } else { TextDecoration::None }),
+                                .text_decoration(if is_selected {
+                                    TextDecoration::Underline
+                                } else {
+                                    TextDecoration::None
+                                }),
                         )
                         .hover_style(
                             TextStyle::new()
                                 .font_size(20)
-                                .color(if is_selected { Color::BLUE } else { Color::BLUE.lighten(0.6) })
+                                .color(if is_selected {
+                                    Color::BLUE
+                                } else {
+                                    Color::BLUE.lighten(0.6)
+                                })
                                 .font_weight(font_weight)
                                 .text_decoration(TextDecoration::Underline),
                         )

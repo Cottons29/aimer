@@ -1,7 +1,7 @@
-use aimer::{BuildContext, Dimension};
 use aimer::Dimension::Percent;
 use aimer::provider::media_query::MediaQuery;
 use aimer::style::{LayoutSpacing, Spacing};
+use aimer::{BuildContext, Dimension};
 
 pub fn app_padding(_: &BuildContext) -> LayoutSpacing {
     let horizontal_padding = 20f64;
