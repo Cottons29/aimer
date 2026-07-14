@@ -1,5 +1,5 @@
-use std::ops::{Add, Mul, Sub, SubAssign};
 use crate::size::ResolvedSize;
+use std::ops::{Add, Mul, Sub, SubAssign};
 
 macro_rules! impl_from_num {
     ($t:ty) => {
@@ -32,8 +32,6 @@ impl Vec2d {
         Self { x: self.x.round(), y: self.y.round() }
     }
 }
-
-
 
 impl Mul<Vec2d> for f32 {
     type Output = Vec2d;
@@ -79,10 +77,7 @@ impl SubAssign<(f32, f32)> for Vec2d {
 
 impl Vec2d {
     pub fn get_end(&self, size: ResolvedSize) -> Vec2d {
-        Self {
-            x: self.x + size.width,
-            y: self.y + size.height,
-        }
+        Self { x: self.x + size.width, y: self.y + size.height }
     }
 }
 
@@ -117,8 +112,3 @@ impl_from_tuple!((u32, u32));
 impl_from_tuple!((i32, i32));
 impl_from_tuple!((i64, i64));
 impl_from_tuple!((u64, u64));
-
-
-
-
-
