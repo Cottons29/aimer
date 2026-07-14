@@ -50,7 +50,13 @@ impl InspectorOverlay {
             );
 
             // Label text
-            canvas.draw_text(&label, Vec2d::from((lx + 4.0, ly + font_size)), font_size, Color::Rgba(255, 255, 255, 255), 400);
+            canvas.draw_text(
+                &label,
+                Vec2d::from((lx + 4.0, ly + font_size)),
+                font_size,
+                Color::Rgba(255, 255, 255, 255),
+                400,
+            );
         }
         canvas.restore();
     }

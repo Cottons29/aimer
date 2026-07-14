@@ -13,8 +13,8 @@ pub mod server {
     use futures_util::{SinkExt, StreamExt};
     use std::net::IpAddr;
     use std::sync::{
-        atomic::{AtomicBool, Ordering}, Arc,
-        Mutex,
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     };
     use tokio::net::TcpListener;
     use tokio::sync::broadcast;
@@ -128,30 +128,33 @@ pub mod server {
             let mut inspector_port_draft = inspector_port;
             let mut retry_count = 0;
 
-            let (listener, handle): (TcpListener, InspectorHandle) = runtime.block_on(async move {
-                loop {
-                    let addr = format!("{inspector_address}:{inspector_port_draft}");
-                    if let Ok(listener) = Self::bind_port(&addr).await {
-                        let handle = InspectorHandle {
-                            enabled: enabled.clone(),
-                            tx: tx.clone(),
-                            state: state.clone(),
-                            address: inspector_address,
-                            port: inspector_port_draft,
-                        };
-                        break Ok((listener, handle));
-                    } else {
-                        // info!("[inspector] failed to bind server, retrying...");
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        inspector_port_draft += 1;
-                        retry_count += 1;
-                        if retry_count > 20 {
-                            break Err(std::io::Error::other("Failed to bind to port after 20 retries"));
+            let (listener, handle): (TcpListener, InspectorHandle) =
+                runtime.block_on(async move {
+                    loop {
+                        let addr = format!("{inspector_address}:{inspector_port_draft}");
+                        if let Ok(listener) = Self::bind_port(&addr).await {
+                            let handle = InspectorHandle {
+                                enabled: enabled.clone(),
+                                tx: tx.clone(),
+                                state: state.clone(),
+                                address: inspector_address,
+                                port: inspector_port_draft,
+                            };
+                            break Ok((listener, handle));
+                        } else {
+                            // info!("[inspector] failed to bind server, retrying...");
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            inspector_port_draft += 1;
+                            retry_count += 1;
+                            if retry_count > 20 {
+                                break Err(std::io::Error::other(
+                                    "Failed to bind to port after 20 retries",
+                                ));
+                            }
+                            continue;
                         }
-                        continue;
                     }
-                }
-            })?;
+                })?;
 
             // println!("[inspector] listening on {}:{}", inspector_address, inspector_port_draft);
 
@@ -373,15 +376,15 @@ pub mod server {
 #[cfg(target_arch = "wasm32")]
 pub mod server {
     use crate::{InspectorMessage, WidgetNode};
-    use aimer_widget::{inspector_overlay, Element};
+    use aimer_widget::{Element, inspector_overlay};
     use serde::{Deserialize, Serialize};
     use std::cell::RefCell;
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     };
-    use wasm_bindgen::prelude::*;
     use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::*;
     use web_sys::{MessageEvent, WebSocket};
 
     #[derive(Clone)]

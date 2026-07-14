@@ -10,7 +10,6 @@ pub struct InspectorClient {
 }
 
 impl InspectorClient {
-
     /// Spawn the background WebSocket client thread and return the handle.
     pub fn connect(port: u16) -> Self {
         let state = Arc::new(Mutex::new(InspectorState::default()));
@@ -19,7 +18,7 @@ impl InspectorClient {
         let state_bg = Arc::clone(&state);
         thread::spawn(move || {
             let addr = format!("127.0.0.1:{}", port);
-            
+
             loop {
                 let tcp = match std::net::TcpStream::connect(&addr) {
                     Ok(s) => s,
@@ -70,10 +69,10 @@ impl InspectorClient {
                         }
                         Ok(Message::Close(_)) => break,
                         Err(tungstenite::Error::Io(ref e))
-                        if e.kind() == std::io::ErrorKind::WouldBlock =>
-                            {
-                                thread::sleep(std::time::Duration::from_millis(16));
-                            }
+                            if e.kind() == std::io::ErrorKind::WouldBlock =>
+                        {
+                            thread::sleep(std::time::Duration::from_millis(16));
+                        }
                         Err(_) => break,
                         _ => {}
                     }
@@ -100,12 +99,22 @@ impl InspectorClient {
 /// using a tree-style layout with box-drawing characters (├──, └──, │).
 /// When `full_tree` is true, each node shows `ElementType: WidgetName`;
 /// otherwise only the widget name is displayed.
-pub fn render_tree_lines(node: &WidgetNode, _depth: usize, lines: &mut Vec<String>, full_tree: bool) {
+pub fn render_tree_lines(
+    node: &WidgetNode,
+    _depth: usize,
+    lines: &mut Vec<String>,
+    full_tree: bool,
+) {
     let mut ids = Vec::new();
     render_tree_recursive(node, lines, &mut ids, "", full_tree);
 }
 
-pub fn render_tree_lines_with_ids(node: &WidgetNode, lines: &mut Vec<String>, ids: &mut Vec<u64>, full_tree: bool) {
+pub fn render_tree_lines_with_ids(
+    node: &WidgetNode,
+    lines: &mut Vec<String>,
+    ids: &mut Vec<u64>,
+    full_tree: bool,
+) {
     render_tree_recursive(node, lines, ids, "", full_tree);
 }
 
@@ -122,7 +131,13 @@ fn node_label(node: &WidgetNode, full_tree: bool) -> String {
     }
 }
 
-fn render_tree_recursive(node: &WidgetNode, lines: &mut Vec<String>, ids: &mut Vec<u64>, prefix: &str, full_tree: bool) {
+fn render_tree_recursive(
+    node: &WidgetNode,
+    lines: &mut Vec<String>,
+    ids: &mut Vec<u64>,
+    prefix: &str,
+    full_tree: bool,
+) {
     lines.push(format!("{}{}", prefix, node_label(node, full_tree)));
     ids.push(node.id);
 
@@ -139,7 +154,14 @@ fn render_tree_recursive(node: &WidgetNode, lines: &mut Vec<String>, ids: &mut V
     }
 }
 
-fn render_tree_with_base(node: &WidgetNode, lines: &mut Vec<String>, ids: &mut Vec<u64>, line_prefix: &str, child_base: &str, full_tree: bool) {
+fn render_tree_with_base(
+    node: &WidgetNode,
+    lines: &mut Vec<String>,
+    ids: &mut Vec<u64>,
+    line_prefix: &str,
+    child_base: &str,
+    full_tree: bool,
+) {
     lines.push(format!("{}{}", line_prefix, node_label(node, full_tree)));
     ids.push(node.id);
 
