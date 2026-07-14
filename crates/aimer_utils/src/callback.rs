@@ -138,16 +138,16 @@ where
     fn from(ac: AsyncCallback<F>) -> Self {
         let f = std::sync::Mutex::new(Some(ac.0));
         Self {
-            inner: CallbackInner(Rc::new(UnsafeCell::new(Some(
-                RawInnerCallback::Async(Box::new(move |args| {
+            inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
+                Box::new(move |args| {
                     let f = f.lock().unwrap().take();
                     if let Some(f) = f {
                         Box::pin(f(args))
                     } else {
                         Box::pin(async { panic!("AsyncCallback called more than once") })
                     }
-                })),
-            )))),
+                }),
+            ))))),
         }
     }
 }
@@ -218,16 +218,12 @@ impl VoidCallback {
     {
         let f = std::sync::Mutex::new(Some(f));
         Self {
-            inner: CallbackInner(Rc::new(UnsafeCell::new(Some(
-                RawInnerCallback::Async(Box::new(move |_| {
+            inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
+                Box::new(move |_| {
                     let f = f.lock().unwrap().take();
-                    if let Some(f) = f {
-                        Box::pin(f())
-                    } else {
-                        Box::pin(async {})
-                    }
-                })),
-            )))),
+                    if let Some(f) = f { Box::pin(f()) } else { Box::pin(async {}) }
+                }),
+            ))))),
         }
     }
 }
@@ -264,20 +260,15 @@ where
     fn from(ac: AsyncCallback<F>) -> Self {
         let f = std::sync::Mutex::new(Some(ac.0));
         Self {
-            inner: CallbackInner(Rc::new(UnsafeCell::new(Some(
-                RawInnerCallback::Async(Box::new(move |_| {
+            inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
+                Box::new(move |_| {
                     let f = f.lock().unwrap().take();
-                    if let Some(f) = f {
-                        Box::pin(f())
-                    } else {
-                        Box::pin(async {})
-                    }
-                })),
-            )))),
+                    if let Some(f) = f { Box::pin(f()) } else { Box::pin(async {}) }
+                }),
+            ))))),
         }
     }
 }
-
 
 impl CallbackExecutor for VoidCallback {
     type Args = ();
@@ -290,4 +281,3 @@ impl CallbackExecutor for VoidCallback {
 pub trait IntoVoidCallback {
     fn into_void_callback(self) -> VoidCallback;
 }
-

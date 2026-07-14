@@ -123,15 +123,15 @@ where
 {
     fn from(ac: AsyncCallback<F>) -> Self {
         let f = std::sync::Mutex::new(Some(ac.0));
-        CallbackInner(Rc::new(UnsafeCell::new(Some(
-            RawInnerCallback::Async(Box::new(move |param| {
+        CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(Box::new(
+            move |param| {
                 let f = f.lock().unwrap().take();
                 if let Some(f) = f {
                     Box::pin(f(param))
                 } else {
                     Box::pin(async { panic!("AsyncCallback called more than once") })
                 }
-            })),
-        ))))
+            },
+        ))))))
     }
 }
