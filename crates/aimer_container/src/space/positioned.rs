@@ -168,12 +168,11 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
 
         let mut offset_x = 0.0;
         let mut offset_y = 0.0;
+        let child_size = self
+            .child
+            .content_size(ctx);
 
         if !is_auto {
-            let child_size = self
-                .child
-                .content_size(ctx);
-
             if self.left != Dimension::Auto {
                 offset_x = self
                     .left
@@ -260,14 +259,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
         } else {
             let parent_pos = ctx.parent_pos;
 
-            let parent_size = if let Some(size) = self
-                .child
-                .get_size_from_child()
-            {
-                size.resolve(&ctx.parent_size, ctx.scale)
-            } else {
-                ctx.parent_size
-            };
+            let parent_size = child_size;
 
             let child_constraint = BoxConstraint {
                 min_width: 0.0,

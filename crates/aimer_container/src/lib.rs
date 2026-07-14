@@ -20,7 +20,8 @@ mod tests {
     use std::rc::Rc;
     use std::sync::{OnceLock, RwLock};
 
-    use aimer_attribute::size::ResolvedSize;
+    use aimer_attribute::dimension::Dimension;
+    use aimer_attribute::size::{ResolvedSize, Size};
     use aimer_attribute::{BoxConstraint, CacheBounds};
     use aimer_canvas::{Canvas, InnerCanvas};
     use aimer_macro::key;
@@ -35,6 +36,36 @@ mod tests {
     use crate::flex::raw_flex::RawFlex;
     use crate::flex::{Column, LayoutDirection, Row};
     use crate::scrollable::raw_scroll::RawScrollableContainer;
+    use crate::space::positioned::RawPositionedElement;
+
+    struct MeasuredPositionedChild {
+        observed_parent_size: Rc<Cell<ResolvedSize>>,
+    }
+
+    impl Drawable for MeasuredPositionedChild {
+        fn draw(&self, ctx: &BuildContext) {
+            self.observed_parent_size.set(ctx.parent_size);
+        }
+    }
+
+    impl EventElement for MeasuredPositionedChild {}
+
+    impl LayoutElement for MeasuredPositionedChild {
+        fn content_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            ResolvedSize { width: 320.0, height: 96.0 }
+        }
+
+        fn get_size_from_child(&self) -> Option<Size> {
+            Some(Size { width: 320.into(), height: 0.into() })
+        }
+    }
+
+    impl Rebuildable for MeasuredPositionedChild {}
+    impl VisitorElement for MeasuredPositionedChild {
+        fn debug_name(&self) -> &'static str {
+            "MeasuredPositionedChild"
+        }
+    }
 
     // ─── A faithful stand-in for a `TextButton` ───────────────────────────
     //
@@ -718,5 +749,31 @@ mod tests {
         let _ = row.computed_size(&ctx);
 
         assert_eq!(exp.get(), 200.0, "Expanded fills 300 - 30 - 70 = 200");
+    }
+
+    #[test]
+    fn positioned_uses_measured_child_size_when_intrinsic_height_is_zero() {
+        let ctx = dummy_build_context(1000.0, 500.0, None);
+        let observed_parent_size = Rc::new(Cell::new(ResolvedSize::default()));
+        let positioned = RawPositionedElement {
+            child: MeasuredPositionedChild {
+                observed_parent_size: observed_parent_size.clone(),
+            },
+            position: Default::default(),
+            left: 12.into(),
+            top: 16.into(),
+            right: Dimension::Auto,
+            bottom: Dimension::Auto,
+            transform: Default::default(),
+            layer: 0,
+        };
+
+        positioned.draw(&ctx);
+
+        assert_eq!(
+            observed_parent_size.get(),
+            ResolvedSize { width: 320.0, height: 96.0 },
+            "positioned children must receive their measured size, not a zero intrinsic height"
+        );
     }
 }
