@@ -90,14 +90,24 @@ pub struct Bounds {
 impl Mul<f32> for Bounds {
     type Output = Self;
     fn mul(self, rhs: f32) -> Self::Output {
-        Self { x: self.x * rhs, y: self.y * rhs, width: self.width * rhs, height: self.height * rhs }
+        Self {
+            x: self.x * rhs,
+            y: self.y * rhs,
+            width: self.width * rhs,
+            height: self.height * rhs,
+        }
     }
 }
 
 impl Div<f32> for Bounds {
     type Output = Self;
     fn div(self, rhs: f32) -> Self::Output {
-        Self { x: self.x / rhs, y: self.y / rhs, width: self.width / rhs, height: self.height / rhs }
+        Self {
+            x: self.x / rhs,
+            y: self.y / rhs,
+            width: self.width / rhs,
+            height: self.height / rhs,
+        }
     }
 }
 
@@ -143,7 +153,9 @@ impl CacheBounds {
     }
 
     pub fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bound.get().map(|b| (Vec2d { x: b.x, y: b.y }, Vec2d { x: b.x + b.width, y: b.y + b.height }))
+        self.bound
+            .get()
+            .map(|b| (Vec2d { x: b.x, y: b.y }, Vec2d { x: b.x + b.width, y: b.y + b.height }))
     }
 
     pub fn set_bounds(&self, bounds: Bounds) {

@@ -1,6 +1,5 @@
-
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
-pub struct BoxConstraint{
+pub struct BoxConstraint {
     pub min_width: f32,
     pub min_height: f32,
     pub max_width: f32,

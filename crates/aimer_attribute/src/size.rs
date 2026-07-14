@@ -1,5 +1,5 @@
-use std::ops::Mul;
 use crate::dimension::Dimension;
+use std::ops::Mul;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Size {
@@ -9,10 +9,7 @@ pub struct Size {
 
 impl Default for Size {
     fn default() -> Self {
-        Self {
-            width: Dimension::Auto,
-            height: Dimension::Auto,
-        }
+        Self { width: Dimension::Auto, height: Dimension::Auto }
     }
 }
 
@@ -37,7 +34,7 @@ impl Size {
     pub fn is_auto_height(&self) -> bool {
         self.height == Dimension::Auto
     }
-    
+
     pub fn resolve(&self, parent: &ResolvedSize, scale: f32) -> ResolvedSize {
         ResolvedSize {
             width: self.width.resolve(parent.width, scale),
@@ -58,18 +55,11 @@ pub struct ResolvedSize {
     pub height: f32,
 }
 
-
 impl Mul<f32> for ResolvedSize {
     type Output = ResolvedSize;
     fn mul(self, rhs: f32) -> Self::Output {
-        ResolvedSize {
-            width: self.width  * rhs,
-            height: self.height * rhs,
-        }
+        ResolvedSize { width: self.width * rhs, height: self.height * rhs }
     }
 }
 
-
-impl ResolvedSize {
-    
-}
+impl ResolvedSize {}
