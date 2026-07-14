@@ -21,20 +21,63 @@ fn clip_border_radius(clip: Option<&ClipState>) -> [f32; 4] {
     clip.map(|c| c.border_radius).unwrap_or([0.0; 4])
 }
 
+struct AlphaState {
+    current: f32,
+    stack: Vec<f32>,
+}
+
+impl AlphaState {
+    fn new() -> Self {
+        Self { current: 1.0, stack: Vec::new() }
+    }
+
+    fn current(&self) -> f32 {
+        self.current
+    }
+
+    fn set(&mut self, alpha: f32) {
+        self.current = alpha.clamp(0.0, 1.0);
+    }
+
+    fn save(&mut self) {
+        self.stack.push(self.current);
+    }
+
+    fn restore(&mut self) {
+        self.current = self.stack.pop().unwrap_or(1.0);
+    }
+}
+
+impl Default for AlphaState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn apply_alpha(mut color: [f32; 4], alpha: f32) -> [f32; 4] {
+    color[3] *= alpha;
+    color
+}
+
 struct ResolvedCmd {
     kind: ResolvedKind,
 }
 
 enum ResolvedKind {
     Rect(RectInstance),
-    Image { texture_id: u32, instance: ImageInstance },
+    Image {
+        texture_id: u32,
+        instance: ImageInstance,
+    },
     /// Index into `text_requests` (and the text pipeline's per-request ranges).
     /// Kept in draw order so text is painted at its own z-position instead of
     /// on top of everything at the end.
     Text(usize),
     /// Index into `decoration_requests` (one instance per decoration).
     TextDecoration(usize),
-    Custom { pipeline_index: usize },
+    Custom {
+        pipeline_index: usize,
+    },
 }
 
 pub struct Renderer {
@@ -81,8 +124,7 @@ impl Renderer {
     /// The pipeline will participate in the render loop whenever
     /// `DrawCommand::Custom` commands target it by name.
     pub fn register_custom_pipeline(&mut self, pipeline: impl CustomPipeline) {
-        self.custom_pipelines
-            .push(CustomPipelineSlot::new(pipeline));
+        self.custom_pipelines.push(CustomPipelineSlot::new(pipeline));
     }
 
     /// Returns the surface texture format (useful for creating custom pipelines).
@@ -90,26 +132,41 @@ impl Renderer {
         self.surface_format
     }
 
-    pub fn preload_text(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32) {
-        self.text_pipeline
-            .preload_text(device, queue, text, font_size);
+    pub fn preload_text(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        text: &str,
+        font_size: f32,
+    ) {
+        self.text_pipeline.preload_text(device, queue, text, font_size);
     }
 
     /// Level 2 warm-up — pre-rasterize the common ASCII glyph set at the given
     /// font sizes so the glyph atlas is populated before the first frame. This
     /// keeps even brand-new strings cheap (shaping only, no rasterization).
-    pub fn warm_glyph_set(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, font_sizes: &[f32]) {
-        self.text_pipeline
-            .warm_glyph_set(device, queue, font_sizes);
+    pub fn warm_glyph_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        font_sizes: &[f32],
+    ) {
+        self.text_pipeline.warm_glyph_set(device, queue, font_sizes);
     }
 
     /// Level 1 warm-up — pre-shape and lay out a known static string so the
     /// shaping/layout caches and atlas are warm, and the string renders on the
     /// fast cache-hit path from the very first frame. `layout_width` is the wrap
     /// width it will be drawn with (0.0 for non-wrapping text).
-    pub fn warm_text(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32, layout_width: f32) {
-        self.text_pipeline
-            .warm_text(device, queue, text, font_size, layout_width);
+    pub fn warm_text(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        text: &str,
+        font_size: f32,
+        layout_width: f32,
+    ) {
+        self.text_pipeline.warm_text(device, queue, text, font_size, layout_width);
     }
 
     /// Save the pipeline cache to disk for faster startup on next launch.
@@ -134,6 +191,7 @@ impl Renderer {
     ) {
         self.transform_stack.clear();
         let mut current_transform = Mat3::identity();
+        let mut alpha_state = AlphaState::new();
         // Canvas-level italic state applied to plain `DrawText` (rich text carries
         // italic per span). Reset each frame; toggled by `SetItalic`.
         let mut current_italic = false;
@@ -146,25 +204,33 @@ impl Renderer {
             match cmd {
                 DrawCommand::PushTransform { matrix } => {
                     self.transform_stack.push(current_transform);
+                    alpha_state.save();
                     current_transform = *matrix;
                 }
                 DrawCommand::PopTransform => {
                     if let Some(prev) = self.transform_stack.pop() {
                         current_transform = prev;
                     }
+                    alpha_state.restore();
                 }
                 DrawCommand::PushClip { rect, border_radius } => {
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
-                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
-                    let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
+                    let (p2x, p2y) = current_transform
+                        .transform_point(rect.x + rect.width, rect.y + rect.height);
+                    let sx = (current_transform.cols[0][0].powi(2)
+                        + current_transform.cols[0][1].powi(2))
+                    .sqrt();
 
-                    let new_rect = Rect::new(p1x.min(p2x), p1y.min(p2y), (p2x - p1x).abs(), (p2y - p1y).abs());
+                    let new_rect =
+                        Rect::new(p1x.min(p2x), p1y.min(p2y), (p2x - p1x).abs(), (p2y - p1y).abs());
 
                     let effective_clip = if let Some(parent) = self.clip_stack.last() {
                         let x = new_rect.x.max(parent.rect.x);
                         let y = new_rect.y.max(parent.rect.y);
-                        let r = (new_rect.x + new_rect.width).min(parent.rect.x + parent.rect.width);
-                        let b = (new_rect.y + new_rect.height).min(parent.rect.y + parent.rect.height);
+                        let r =
+                            (new_rect.x + new_rect.width).min(parent.rect.x + parent.rect.width);
+                        let b =
+                            (new_rect.y + new_rect.height).min(parent.rect.y + parent.rect.height);
                         Rect::new(x, y, (r - x).max(0.0), (b - y).max(0.0))
                     } else {
                         new_rect
@@ -181,10 +247,22 @@ impl Renderer {
                 DrawCommand::PopClip => {
                     self.clip_stack.pop();
                 }
-                DrawCommand::FillRect { rect, color, border_radius, border_width, border_color, outline_width, outline_color } => {
+                DrawCommand::FillRect {
+                    rect,
+                    color,
+                    border_radius,
+                    border_width,
+                    border_color,
+                    outline_width,
+                    outline_color,
+                } => {
                     // Extract scale factors from the current transform matrix
-                    let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
-                    let sy = (current_transform.cols[1][0].powi(2) + current_transform.cols[1][1].powi(2)).sqrt();
+                    let sx = (current_transform.cols[0][0].powi(2)
+                        + current_transform.cols[0][1].powi(2))
+                    .sqrt();
+                    let sy = (current_transform.cols[1][0].powi(2)
+                        + current_transform.cols[1][1].powi(2))
+                    .sqrt();
 
                     // Expand the quad by the outline width so the outline ring is visible.
                     // These are in logical pixels and must be scaled to device pixels.
@@ -196,7 +274,8 @@ impl Renderer {
                     // Transform the top-left and bottom-right corners of the expanded quad.
                     // This correctly handles translation and scaling.
                     let (p1x, p1y) = current_transform.transform_point(rect.x - ol, rect.y - ot);
-                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width + or, rect.y + rect.height + ob);
+                    let (p2x, p2y) = current_transform
+                        .transform_point(rect.x + rect.width + or, rect.y + rect.height + ob);
 
                     // let expanded_w = p2x - p1x;
                     // let expanded_h = p2y - p1y;
@@ -223,12 +302,18 @@ impl Renderer {
                         kind: ResolvedKind::Rect(RectInstance {
                             position: [p1x.min(p2x), p1y.min(p2y)],
                             size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
-                            color: color.to_array(),
+                            color: apply_alpha(color.to_array(), alpha_state.current()),
                             border_radius: scaled_br,
                             border_width: scaled_bw,
-                            border_color: border_color.to_array(),
+                            border_color: apply_alpha(
+                                border_color.to_array(),
+                                alpha_state.current(),
+                            ),
                             outline_width: scaled_ow,
-                            outline_color: outline_color.to_array(),
+                            outline_color: apply_alpha(
+                                outline_color.to_array(),
+                                alpha_state.current(),
+                            ),
                             clip_rect: clip_to_array(self.clip_stack.last()),
                             clip_border_radius: clip_border_radius(self.clip_stack.last()),
                             shadow_params: [0.0; 4],
@@ -239,7 +324,8 @@ impl Renderer {
                 }
                 DrawCommand::ClearRect { rect } => {
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
-                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
+                    let (p2x, p2y) = current_transform
+                        .transform_point(rect.x + rect.width, rect.y + rect.height);
                     self.resolved.push(ResolvedCmd {
                         kind: ResolvedKind::Rect(RectInstance {
                             position: [p1x.min(p2x), p1y.min(p2y)],
@@ -258,7 +344,16 @@ impl Renderer {
                         }),
                     });
                 }
-                DrawCommand::DrawText { position, text, font_size, color, bounds_width, bounds_height, overflow, font_weight } => {
+                DrawCommand::DrawText {
+                    position,
+                    text,
+                    font_size,
+                    color,
+                    bounds_width,
+                    bounds_height,
+                    overflow,
+                    font_weight,
+                } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
                     let idx = self.text_requests.len();
                     self.text_requests.push(TextDrawRequest {
@@ -266,7 +361,7 @@ impl Renderer {
                         y: ty,
                         text: text.clone(),
                         font_size: *font_size,
-                        color: color.to_array(),
+                        color: apply_alpha(color.to_array(), alpha_state.current()),
                         bounds_width: bounds_width.unwrap_or(width as f32 - tx),
                         bounds_height: bounds_height.unwrap_or(height as f32 - ty),
                         overflow: *overflow,
@@ -277,22 +372,25 @@ impl Renderer {
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),
                         spans: Vec::new(),
                     });
-                    self.resolved
-                        .push(ResolvedCmd { kind: ResolvedKind::Text(idx) });
+                    self.resolved.push(ResolvedCmd { kind: ResolvedKind::Text(idx) });
                 }
-                DrawCommand::DrawRichText { position, spans, font_size, color, bounds_width, bounds_height, overflow } => {
+                DrawCommand::DrawRichText {
+                    position,
+                    spans,
+                    font_size,
+                    color,
+                    bounds_width,
+                    bounds_height,
+                    overflow,
+                } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
                     let idx = self.text_requests.len();
                     self.text_requests.push(TextDrawRequest {
                         x: tx,
                         y: ty,
-                        text: spans
-                            .iter()
-                            .map(|span| &*span.text)
-                            .collect::<String>()
-                            .into(),
+                        text: spans.iter().map(|span| &*span.text).collect::<String>().into(),
                         font_size: *font_size,
-                        color: color.to_array(),
+                        color: apply_alpha(color.to_array(), alpha_state.current()),
                         bounds_width: bounds_width.unwrap_or(width as f32 - tx),
                         bounds_height: bounds_height.unwrap_or(height as f32 - ty),
                         overflow: *overflow,
@@ -306,23 +404,29 @@ impl Renderer {
                             .map(|span| RichTextSpan {
                                 text: span.text.clone(),
                                 font_size: span.font_size,
-                                color: span.color.map(|color| color.to_array()),
+                                color: span.color.map(|color| {
+                                    apply_alpha(color.to_array(), alpha_state.current())
+                                }),
                                 font_weight: span.font_weight,
                                 italic: span.italic,
                             })
                             .collect(),
                     });
-                    self.resolved
-                        .push(ResolvedCmd { kind: ResolvedKind::Text(idx) });
+                    self.resolved.push(ResolvedCmd { kind: ResolvedKind::Text(idx) });
                 }
                 DrawCommand::DrawTextDecoration { rect, color, style, thickness, period } => {
                     // The band is authored in local coordinates; transform its
                     // top-left and scale the extents so decoration follows any
                     // active scale/translation just like the text it underlines.
-                    let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
-                    let sy = (current_transform.cols[1][0].powi(2) + current_transform.cols[1][1].powi(2)).sqrt();
+                    let sx = (current_transform.cols[0][0].powi(2)
+                        + current_transform.cols[0][1].powi(2))
+                    .sqrt();
+                    let sy = (current_transform.cols[1][0].powi(2)
+                        + current_transform.cols[1][1].powi(2))
+                    .sqrt();
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
-                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
+                    let (p2x, p2y) = current_transform
+                        .transform_point(rect.x + rect.width, rect.y + rect.height);
                     let deco_idx = self.decoration_requests.len();
                     self.decoration_requests.push(TextDecorationDraw {
                         x: p1x.min(p2x),
@@ -332,7 +436,7 @@ impl Renderer {
                         thickness: (*thickness * sy).max(1.0),
                         period: (*period * sx).max(1.0),
                         style: *style,
-                        color: color.to_array(),
+                        color: apply_alpha(color.to_array(), alpha_state.current()),
                         clip_rect: clip_to_array(self.clip_stack.last()),
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),
                     });
@@ -342,15 +446,19 @@ impl Renderer {
                 DrawCommand::SetTransform { matrix } => {
                     current_transform = *matrix;
                 }
-                DrawCommand::SetAlpha { .. } | DrawCommand::RestoreAlpha => {
-                    // Alpha state is tracked at the canvas level; no GPU-side handling yet.
+                DrawCommand::SetAlpha { alpha } => {
+                    alpha_state.set(*alpha);
+                }
+                DrawCommand::RestoreAlpha => {
+                    alpha_state.set(1.0);
                 }
                 DrawCommand::SetItalic { italic } => {
                     current_italic = *italic;
                 }
                 DrawCommand::DrawImage { rect, texture_id } => {
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
-                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
+                    let (p2x, p2y) = current_transform
+                        .transform_point(rect.x + rect.width, rect.y + rect.height);
                     self.resolved.push(ResolvedCmd {
                         kind: ResolvedKind::Image {
                             texture_id: *texture_id,
@@ -361,21 +469,45 @@ impl Renderer {
                                 uv_scale: [1.0, 1.0],
                                 clip_rect: clip_to_array(self.clip_stack.last()),
                                 clip_border_radius: clip_border_radius(self.clip_stack.last()),
+                                alpha: alpha_state.current(),
                             },
                         },
                     });
                 }
                 DrawCommand::LoadImage { bytes, texture_id, width, height } => {
-                    self.image_pipeline
-                        .upload_if_absent(device, queue, *texture_id, *width, *height, bytes);
+                    self.image_pipeline.upload_if_absent(
+                        device,
+                        queue,
+                        *texture_id,
+                        *width,
+                        *height,
+                        bytes,
+                    );
                 }
                 DrawCommand::LoadImageWithId { texture_id, bytes, width, height } => {
-                    self.image_pipeline
-                        .upload_image_with_id(device, queue, *texture_id, *width, *height, bytes);
+                    self.image_pipeline.upload_image_with_id(
+                        device,
+                        queue,
+                        *texture_id,
+                        *width,
+                        *height,
+                        bytes,
+                    );
                 }
-                DrawCommand::DrawShadowRect { rect, shadow_color, shadow_params, border_radius, inset, side_params } => {
-                    let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
-                    let sy = (current_transform.cols[1][0].powi(2) + current_transform.cols[1][1].powi(2)).sqrt();
+                DrawCommand::DrawShadowRect {
+                    rect,
+                    shadow_color,
+                    shadow_params,
+                    border_radius,
+                    inset,
+                    side_params,
+                } => {
+                    let sx = (current_transform.cols[0][0].powi(2)
+                        + current_transform.cols[0][1].powi(2))
+                    .sqrt();
+                    let sy = (current_transform.cols[1][0].powi(2)
+                        + current_transform.cols[1][1].powi(2))
+                    .sqrt();
 
                     let offset_x = shadow_params[0];
                     let offset_y = shadow_params[1];
@@ -386,8 +518,12 @@ impl Renderer {
                     let expand_x = blur + spread.abs() + offset_x.abs();
                     let expand_y = blur + spread.abs() + offset_y.abs();
 
-                    let (p1x, p1y) = current_transform.transform_point(rect.x - expand_x, rect.y - expand_y);
-                    let (p2x, p2y) = current_transform.transform_point(rect.x + rect.width + expand_x, rect.y + rect.height + expand_y);
+                    let (p1x, p1y) =
+                        current_transform.transform_point(rect.x - expand_x, rect.y - expand_y);
+                    let (p2x, p2y) = current_transform.transform_point(
+                        rect.x + rect.width + expand_x,
+                        rect.y + rect.height + expand_y,
+                    );
 
                     let mut scaled_br = *border_radius;
                     for r in &mut scaled_br {
@@ -409,8 +545,16 @@ impl Renderer {
                             clip_rect: clip_to_array(self.clip_stack.last()),
                             clip_border_radius: clip_border_radius(self.clip_stack.last()),
                             shadow_params: scaled_params,
-                            shadow_color: shadow_color.to_array(),
-                            shadow_flags: [if *inset { 1.0 } else { 0.0 }, side_params[0], side_params[1], side_params[2]],
+                            shadow_color: apply_alpha(
+                                shadow_color.to_array(),
+                                alpha_state.current(),
+                            ),
+                            shadow_flags: [
+                                if *inset { 1.0 } else { 0.0 },
+                                side_params[0],
+                                side_params[1],
+                                side_params[2],
+                            ],
                         }),
                     });
                 }
@@ -420,8 +564,9 @@ impl Renderer {
                         .iter()
                         .position(|s| s.pipeline.name() == pipeline_name.as_str())
                     {
-                        self.resolved
-                            .push(ResolvedCmd { kind: ResolvedKind::Custom { pipeline_index: idx } });
+                        self.resolved.push(ResolvedCmd {
+                            kind: ResolvedKind::Custom { pipeline_index: idx },
+                        });
                     }
                 }
             }
@@ -429,7 +574,14 @@ impl Renderer {
 
         // Prepare custom pipelines
         {
-            let render_ctx = RenderContext { device, queue, width, height, is_srgb, format: self.surface_format };
+            let render_ctx = RenderContext {
+                device,
+                queue,
+                width,
+                height,
+                is_srgb,
+                format: self.surface_format,
+            };
             for slot in &mut self.custom_pipelines {
                 if slot.pipeline.has_work() {
                     slot.pipeline.prepare(&render_ctx);
@@ -438,13 +590,21 @@ impl Renderer {
         }
 
         if !self.text_requests.is_empty() || !self.decoration_requests.is_empty() {
-            time_cost!("TextRenderRequest", || self
-                .text_pipeline
-                .prepare(device, queue, width, height, is_srgb, &self.text_requests, &self.decoration_requests))
+            time_cost!("TextRenderRequest", || self.text_pipeline.prepare(
+                device,
+                queue,
+                width,
+                height,
+                is_srgb,
+                &self.text_requests,
+                &self.decoration_requests
+            ))
         }
 
         // Create encoder and render pass
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cupid render encoder") });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("cupid render encoder"),
+        });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -452,7 +612,10 @@ impl Renderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
@@ -479,7 +642,14 @@ impl Renderer {
                 .iter()
                 .filter(|cmd| matches!(cmd.kind, ResolvedKind::Image { .. }))
                 .count();
-            self.image_pipeline.begin_frame(device, queue, total_image_instances, width, height, is_srgb);
+            self.image_pipeline.begin_frame(
+                device,
+                queue,
+                total_image_instances,
+                width,
+                height,
+                is_srgb,
+            );
 
             let mut image_batch: Vec<ImageInstance> = Vec::new();
             let mut current_texture_id: Option<u32> = None;
@@ -491,23 +661,32 @@ impl Renderer {
                         if let Some(tid) = current_texture_id.take()
                             && !image_batch.is_empty()
                         {
-                            self.image_pipeline
-                                .draw_batch(device, queue, &mut pass, tid, &image_batch);
+                            self.image_pipeline.draw_batch(
+                                device,
+                                queue,
+                                &mut pass,
+                                tid,
+                                &image_batch,
+                            );
                             image_batch.clear();
                         }
                         self.rect_pipeline.push(*inst);
                     }
                     ResolvedKind::Image { texture_id, instance } => {
                         // Flush any pending rects before switching to images
-                        self.rect_pipeline
-                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        self.rect_pipeline.flush(device, queue, &mut pass, width, height, is_srgb);
 
                         if current_texture_id.is_some() && current_texture_id != Some(*texture_id) {
                             // Flush current image batch for previous texture
                             let Some(tid) = current_texture_id.take() else { continue };
                             if !image_batch.is_empty() {
-                                self.image_pipeline
-                                    .draw_batch(device, queue, &mut pass, tid, &image_batch);
+                                self.image_pipeline.draw_batch(
+                                    device,
+                                    queue,
+                                    &mut pass,
+                                    tid,
+                                    &image_batch,
+                                );
                                 image_batch.clear();
                             }
                         }
@@ -519,39 +698,51 @@ impl Renderer {
                         // Flush everything drawn before this text so the text
                         // lands on top of it, and anything drawn after this text
                         // lands on top of the text.
-                        self.rect_pipeline
-                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        self.rect_pipeline.flush(device, queue, &mut pass, width, height, is_srgb);
                         if let Some(tid) = current_texture_id.take()
                             && !image_batch.is_empty()
                         {
-                            self.image_pipeline
-                                .draw_batch(device, queue, &mut pass, tid, &image_batch);
+                            self.image_pipeline.draw_batch(
+                                device,
+                                queue,
+                                &mut pass,
+                                tid,
+                                &image_batch,
+                            );
                             image_batch.clear();
                         }
                         self.text_pipeline.render_request(&mut pass, index);
                     }
                     ResolvedKind::TextDecoration(index) => {
                         let index = *index;
-                        self.rect_pipeline
-                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        self.rect_pipeline.flush(device, queue, &mut pass, width, height, is_srgb);
                         if let Some(tid) = current_texture_id.take()
                             && !image_batch.is_empty()
                         {
-                            self.image_pipeline
-                                .draw_batch(device, queue, &mut pass, tid, &image_batch);
+                            self.image_pipeline.draw_batch(
+                                device,
+                                queue,
+                                &mut pass,
+                                tid,
+                                &image_batch,
+                            );
                             image_batch.clear();
                         }
                         self.text_pipeline.render_decoration(&mut pass, index);
                     }
                     ResolvedKind::Custom { pipeline_index } => {
                         // Flush pending built-in batches to maintain z-order
-                        self.rect_pipeline
-                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        self.rect_pipeline.flush(device, queue, &mut pass, width, height, is_srgb);
                         if let Some(tid) = current_texture_id.take()
                             && !image_batch.is_empty()
                         {
-                            self.image_pipeline
-                                .draw_batch(device, queue, &mut pass, tid, &image_batch);
+                            self.image_pipeline.draw_batch(
+                                device,
+                                queue,
+                                &mut pass,
+                                tid,
+                                &image_batch,
+                            );
                             image_batch.clear();
                         }
                         // Render the custom pipeline
@@ -566,13 +757,11 @@ impl Renderer {
             if let Some(tid) = current_texture_id
                 && !image_batch.is_empty()
             {
-                self.image_pipeline
-                    .draw_batch(device, queue, &mut pass, tid, &image_batch);
+                self.image_pipeline.draw_batch(device, queue, &mut pass, tid, &image_batch);
             }
 
             // Flush remaining rects
-            self.rect_pipeline
-                .flush(device, queue, &mut pass, width, height, is_srgb);
+            self.rect_pipeline.flush(device, queue, &mut pass, width, height, is_srgb);
         }
         queue.submit(std::iter::once(encoder.finish()));
     }
@@ -581,5 +770,39 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         self.save_pipeline_cache();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alpha_state_restores_nested_saved_values() {
+        let mut state = AlphaState::default();
+        state.set(0.8);
+        state.save();
+        state.set(0.25);
+        state.save();
+        state.set(0.1);
+
+        state.restore();
+        assert_eq!(state.current(), 0.25);
+        state.restore();
+        assert_eq!(state.current(), 0.8);
+    }
+
+    #[test]
+    fn apply_alpha_multiplies_existing_color_opacity() {
+        assert_eq!(apply_alpha([0.1, 0.2, 0.3, 0.8], 0.25), [0.1, 0.2, 0.3, 0.2]);
+    }
+
+    #[test]
+    fn alpha_state_clamps_invalid_values() {
+        let mut state = AlphaState::default();
+        state.set(2.0);
+        assert_eq!(state.current(), 1.0);
+        state.set(-1.0);
+        assert_eq!(state.current(), 0.0);
     }
 }

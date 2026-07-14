@@ -14,6 +14,7 @@ struct VertexOutput {
     @location(1) pixel_pos: vec2<f32>,
     @location(2) clip_rect: vec4<f32>,
     @location(3) clip_border_radius: vec4<f32>,
+    @location(4) alpha: f32,
 };
 
 struct ImageInstance {
@@ -23,6 +24,7 @@ struct ImageInstance {
     @location(3) uv_scale: vec2<f32>,
     @location(4) clip_rect: vec4<f32>,
     @location(5) clip_border_radius: vec4<f32>,
+    @location(6) alpha: f32,
 };
 
 @vertex
@@ -50,6 +52,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: ImageInstance) -> VertexOutput 
     out.pixel_pos = pixel_pos;
     out.clip_rect = inst.clip_rect;
     out.clip_border_radius = inst.clip_border_radius;
+    out.alpha = inst.alpha;
     return out;
 }
 
@@ -143,5 +146,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     
     let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
-    return result * ca;
+    return result * (ca * in.alpha);
 }

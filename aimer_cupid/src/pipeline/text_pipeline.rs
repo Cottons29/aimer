@@ -6,7 +6,9 @@ pub mod text_layout;
 
 use crate::text_pipeline::glyph_atlas::{AtlasRegion, ColorGlyphAtlas, GlyphAtlas};
 use crate::text_pipeline::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
-use crate::text_pipeline::text_layout::{PositionedGlyph, ShapedText, layout_shaped_text, shape_text};
+use crate::text_pipeline::text_layout::{
+    PositionedGlyph, ShapedText, layout_shaped_text, shape_text,
+};
 use aimer_utils::time_cost;
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
@@ -282,7 +284,11 @@ impl TextPipelineV2 {
     /// results are width-independent and tiny, so this can be generous.
     const SHAPING_CACHE_CAPACITY: usize = 4096;
 
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, pipeline_cache: Option<&wgpu::PipelineCache>) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        pipeline_cache: Option<&wgpu::PipelineCache>,
+    ) -> Self {
         let rasterizer = GlyphRasterizer::new();
         let atlas = GlyphAtlas::new(device);
         let color_atlas = ColorGlyphAtlas::new(device);
@@ -346,8 +352,20 @@ impl TextPipelineV2 {
             ],
         });
 
-        let bind_group = Self::create_bind_group(device, &bind_group_layout, &viewport_buffer, &atlas.view, &sampler);
-        let color_bind_group = Self::create_bind_group(device, &bind_group_layout, &viewport_buffer, &color_atlas.view, &sampler);
+        let bind_group = Self::create_bind_group(
+            device,
+            &bind_group_layout,
+            &viewport_buffer,
+            &atlas.view,
+            &sampler,
+        );
+        let color_bind_group = Self::create_bind_group(
+            device,
+            &bind_group_layout,
+            &viewport_buffer,
+            &color_atlas.view,
+            &sampler,
+        );
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("text pipeline layout"),
@@ -374,7 +392,10 @@ impl TextPipelineV2 {
                 })],
                 compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
@@ -400,7 +421,10 @@ impl TextPipelineV2 {
                 })],
                 compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
@@ -426,7 +450,10 @@ impl TextPipelineV2 {
                 })],
                 compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
@@ -496,15 +523,35 @@ impl TextPipelineV2 {
             layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: viewport_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(atlas_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
             ],
         })
     }
 
-    pub fn preload_text(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32) {
+    pub fn preload_text(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        text: &str,
+        font_size: f32,
+    ) {
         for (key, glyph) in self.rasterizer.preload_text(text, font_size) {
-            self.insert_rasterized_glyph(device, queue, key, glyph.is_color, glyph.width, glyph.height, &glyph.bitmap);
+            self.insert_rasterized_glyph(
+                device,
+                queue,
+                key,
+                glyph.is_color,
+                glyph.width,
+                glyph.height,
+                &glyph.bitmap,
+            );
         }
 
         self.flush_atlas(device, queue);
@@ -515,8 +562,7 @@ impl TextPipelineV2 {
     /// printable ASCII punctuation. Rasterizing this set fills the glyph atlas
     /// (the heavier of the two per-glyph costs) so even brand-new, never-seen
     /// strings only pay `rustybuzz` shaping and never glyph rasterization.
-    const COMMON_GLYPH_SET: &'static str =
-        " 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+    const COMMON_GLYPH_SET: &'static str = " 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
     /// Insert a single rasterized glyph bitmap into the matching atlas, skipping
     /// empty (zero-area) glyphs and glyphs already present.
@@ -553,15 +599,25 @@ impl TextPipelineV2 {
         let atlas_gen = self.atlas.generation();
         if atlas_gen != self.atlas_generation {
             self.atlas_generation = atlas_gen;
-            self.bind_group =
-                Self::create_bind_group(device, &self.bind_group_layout, &self.viewport_buffer, &self.atlas.view, &self.sampler);
+            self.bind_group = Self::create_bind_group(
+                device,
+                &self.bind_group_layout,
+                &self.viewport_buffer,
+                &self.atlas.view,
+                &self.sampler,
+            );
         }
 
         let color_gen = self.color_atlas.generation();
         if color_gen != self.color_atlas_generation {
             self.color_atlas_generation = color_gen;
-            self.color_bind_group =
-                Self::create_bind_group(device, &self.bind_group_layout, &self.viewport_buffer, &self.color_atlas.view, &self.sampler);
+            self.color_bind_group = Self::create_bind_group(
+                device,
+                &self.bind_group_layout,
+                &self.viewport_buffer,
+                &self.color_atlas.view,
+                &self.sampler,
+            );
         }
     }
 
@@ -570,10 +626,23 @@ impl TextPipelineV2 {
     /// first frame is drawn. Because rasterization (not shaping) is the heavier
     /// per-glyph cost, this keeps even brand-new strings (numbers, usernames,
     /// live text) cheap: they only pay shaping, never glyph rasterization.
-    pub fn warm_glyph_set(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, font_sizes: &[f32]) {
+    pub fn warm_glyph_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        font_sizes: &[f32],
+    ) {
         for &font_size in font_sizes {
             for (key, glyph) in self.rasterizer.preload_text(Self::COMMON_GLYPH_SET, font_size) {
-                self.insert_rasterized_glyph(device, queue, key, glyph.is_color, glyph.width, glyph.height, &glyph.bitmap);
+                self.insert_rasterized_glyph(
+                    device,
+                    queue,
+                    key,
+                    glyph.is_color,
+                    glyph.width,
+                    glyph.height,
+                    &glyph.bitmap,
+                );
             }
         }
 
@@ -590,7 +659,14 @@ impl TextPipelineV2 {
     /// with (0.0 for non-wrapping `Clip` text) for the layout cache to hit; even
     /// if it differs the width-independent shaping cache still hits, so the
     /// expensive shaping work is warmed regardless.
-    pub fn warm_text(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32, layout_width: f32) {
+    pub fn warm_text(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        text: &str,
+        font_size: f32,
+        layout_width: f32,
+    ) {
         self.warm_layout(device, queue, text, font_size, layout_width);
         self.flush_atlas(device, queue);
     }
@@ -599,7 +675,14 @@ impl TextPipelineV2 {
     /// populating both caches exactly like `prepare` does, then rasterize every
     /// positioned glyph into the atlas. Does not upload/flush the atlas (callers
     /// batch a single `flush_atlas` afterwards).
-    fn warm_layout(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, text: &str, font_size: f32, layout_width: f32) {
+    fn warm_layout(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        text: &str,
+        font_size: f32,
+        layout_width: f32,
+    ) {
         let cache_key = LayoutCacheKey::new(text, font_size, layout_width);
 
         // Populate (or reuse) the layout/shaping caches, mirroring the hot path
@@ -610,7 +693,9 @@ impl TextPipelineV2 {
             let rasterizer = &mut self.rasterizer;
             let positioned = self.layout_cache.entry(cache_key).or_insert_with(|| {
                 let shaped_key = ShapingCacheKey::new(text, font_size);
-                let shaped_text = shaping_cache.entry(shaped_key).or_insert_with(|| shape_text(rasterizer, text, font_size));
+                let shaped_text = shaping_cache
+                    .entry(shaped_key)
+                    .or_insert_with(|| shape_text(rasterizer, text, font_size));
                 layout_shaped_text(rasterizer, shaped_text, 0.0, 0.0, layout_width)
             });
             positioned.iter().map(|pg| (pg.glyph_key, pg.font_size)).collect()
@@ -627,7 +712,8 @@ impl TextPipelineV2 {
             if is_color {
                 if self.color_atlas.get(&key).is_none() {
                     let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
-                    self.color_atlas.get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
+                    self.color_atlas
+                        .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
                 }
             } else if self.atlas.get(&key).is_none() {
                 let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
@@ -736,17 +822,21 @@ impl TextPipelineV2 {
                     let cache_key = LayoutCacheKey::new(&span.text, font_size, layout_width);
                     // Layout is always computed at origin (0, 0) so the cached
                     // positions are purely relative and can be shifted cheaply.
-                    let positioned: &[PositionedGlyph] = time_cost!("TextPipelineV2::prepare - LayoutText", {
-                        let shaping_cache = &mut self.shaping_cache;
-                        let rasterizer = &mut self.rasterizer;
-                        self.layout_cache.entry(cache_key).or_insert_with(|| {
-                            let shaped_key = ShapingCacheKey::new(&span.text, font_size);
-                            let shaped_text = shaping_cache.entry(shaped_key).or_insert_with(|| {
-                                time_cost!("TextPipelineV2::prepare - ShapeText", || shape_text(rasterizer, &span.text, font_size))
-                            });
-                            layout_shaped_text(rasterizer, shaped_text, 0.0, 0.0, layout_width)
-                        })
-                    });
+                    let positioned: &[PositionedGlyph] =
+                        time_cost!("TextPipelineV2::prepare - LayoutText", {
+                            let shaping_cache = &mut self.shaping_cache;
+                            let rasterizer = &mut self.rasterizer;
+                            self.layout_cache.entry(cache_key).or_insert_with(|| {
+                                let shaped_key = ShapingCacheKey::new(&span.text, font_size);
+                                let shaped_text =
+                                    shaping_cache.entry(shaped_key).or_insert_with(|| {
+                                        time_cost!("TextPipelineV2::prepare - ShapeText", || {
+                                            shape_text(rasterizer, &span.text, font_size)
+                                        })
+                                    });
+                                layout_shaped_text(rasterizer, shaped_text, 0.0, 0.0, layout_width)
+                            })
+                        });
 
                     for pg in positioned {
                         let key = pg.glyph_key;
@@ -772,8 +862,9 @@ impl TextPipelineV2 {
                             } else {
                                 // Cache hit on the rasterizer side — instant.
                                 let rg = self.rasterizer.rasterize_key(key, pg.font_size);
-                                self.color_atlas
-                                    .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap)
+                                self.color_atlas.get_or_insert(
+                                    device, queue, key, rg.width, rg.height, &rg.bitmap,
+                                )
                             };
                             (region, true)
                         } else {
@@ -781,8 +872,9 @@ impl TextPipelineV2 {
                                 region
                             } else {
                                 let rg = self.rasterizer.rasterize_key(key, pg.font_size);
-                                self.atlas
-                                    .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap)
+                                self.atlas.get_or_insert(
+                                    device, queue, key, rg.width, rg.height, &rg.bitmap,
+                                )
                             };
                             (region, false)
                         };
@@ -792,7 +884,11 @@ impl TextPipelineV2 {
                         // in `rasterize_color_glyph`). For alpha glyphs we keep the
                         // historical `pg.width / pg.height` (which equals `rg_width /
                         // rg_height` when the layout came from the same rasterizer).
-                        let size = if is_color { [rg_width as f32, rg_height as f32] } else { [pg.width as f32, pg.height as f32] };
+                        let size = if is_color {
+                            [rg_width as f32, rg_height as f32]
+                        } else {
+                            [pg.width as f32, pg.height as f32]
+                        };
                         // Improvement B: cached glyphs are positioned at origin (0,0);
                         // apply the actual screen-space cursor offset here.
                         //
@@ -870,14 +966,24 @@ impl TextPipelineV2 {
         let atlas_gen = self.atlas.generation();
         if atlas_gen != self.atlas_generation {
             self.atlas_generation = atlas_gen;
-            self.bind_group =
-                Self::create_bind_group(device, &self.bind_group_layout, &self.viewport_buffer, &self.atlas.view, &self.sampler);
+            self.bind_group = Self::create_bind_group(
+                device,
+                &self.bind_group_layout,
+                &self.viewport_buffer,
+                &self.atlas.view,
+                &self.sampler,
+            );
         }
         let color_gen = self.color_atlas.generation();
         if color_gen != self.color_atlas_generation {
             self.color_atlas_generation = color_gen;
-            self.color_bind_group =
-                Self::create_bind_group(device, &self.bind_group_layout, &self.viewport_buffer, &self.color_atlas.view, &self.sampler);
+            self.color_bind_group = Self::create_bind_group(
+                device,
+                &self.bind_group_layout,
+                &self.viewport_buffer,
+                &self.color_atlas.view,
+                &self.sampler,
+            );
         }
 
         // Update viewport uniform only when dimensions or sRGB state change.
@@ -888,7 +994,11 @@ impl TextPipelineV2 {
         let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
         if self.last_viewport != (width, height) {
             self.last_viewport = (width, height);
-            queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
+            queue.write_buffer(
+                &self.viewport_buffer,
+                0,
+                bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
+            );
         }
 
         // Grow alpha instance buffer if needed.
@@ -929,10 +1039,18 @@ impl TextPipelineV2 {
             queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances));
         }
         if !self.color_instances.is_empty() {
-            queue.write_buffer(&self.color_instance_buffer, 0, bytemuck::cast_slice(&self.color_instances));
+            queue.write_buffer(
+                &self.color_instance_buffer,
+                0,
+                bytemuck::cast_slice(&self.color_instances),
+            );
         }
         if !self.decoration_instances.is_empty() {
-            queue.write_buffer(&self.decoration_instance_buffer, 0, bytemuck::cast_slice(&self.decoration_instances));
+            queue.write_buffer(
+                &self.decoration_instance_buffer,
+                0,
+                bytemuck::cast_slice(&self.decoration_instances),
+            );
         }
     }
 

@@ -49,8 +49,10 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
         for step in 1..=12 {
             let t = step as f32 / 12.0;
             let mt = 1.0 - t;
-            self.current
-                .push((mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2, mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2));
+            self.current.push((
+                mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2,
+                mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2,
+            ));
         }
     }
 
@@ -77,9 +79,17 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
     }
 }
 
-pub(crate) fn rasterize_outline_glyph(record: &FontRecord, glyph_id: u16, font_size: f32) -> Option<RasterizedGlyph> {
+pub(crate) fn rasterize_outline_glyph(
+    record: &FontRecord,
+    glyph_id: u16,
+    font_size: f32,
+) -> Option<RasterizedGlyph> {
     let data = time_cost!("   |-ReadFontData", || record.read_data())?;
-    let face = time_cost!("   |-ParseFontFace", || ttf_parser::Face::parse(&data, record.collection_index).ok())?;
+    let face = time_cost!("   |-ParseFontFace", || ttf_parser::Face::parse(
+        &data,
+        record.collection_index
+    )
+    .ok())?;
     let glyph = time_cost!("   |-SelectGlyph", || ttf_parser::GlyphId(glyph_id));
     let bbox = time_cost!("   |-ComputeGlyphBoundingBox", || face.glyph_bounding_box(glyph))?;
     let units_per_em = f32::from(face.units_per_em());
@@ -108,7 +118,8 @@ pub(crate) fn rasterize_outline_glyph(record: &FontRecord, glyph_id: u16, font_s
                     }
                 }
             }
-            bitmap[(y * width + x) as usize] = ((covered as f32 / sample_count) * 255.0).round() as u8;
+            bitmap[(y * width + x) as usize] =
+                ((covered as f32 / sample_count) * 255.0).round() as u8;
         }
     }
 
@@ -118,7 +129,12 @@ pub(crate) fn rasterize_outline_glyph(record: &FontRecord, glyph_id: u16, font_s
         height,
         offset_x,
         offset_y,
-        advance_width: advance_width_from_face(&data, record.collection_index, glyph_id, font_size)?,
+        advance_width: advance_width_from_face(
+            &data,
+            record.collection_index,
+            glyph_id,
+            font_size,
+        )?,
         is_color: false,
     })
 }
@@ -174,8 +190,10 @@ impl ttf_parser::OutlineBuilder for ColrOutlineBuilder {
         for step in 1..=12u32 {
             let t = step as f32 / 12.0;
             let mt = 1.0 - t;
-            self.current
-                .push((mt * mt * x0 + 2.0 * mt * t * x1s + t * t * x2s, mt * mt * y0 + 2.0 * mt * t * y1s + t * t * y2s));
+            self.current.push((
+                mt * mt * x0 + 2.0 * mt * t * x1s + t * t * x2s,
+                mt * mt * y0 + 2.0 * mt * t * y1s + t * t * y2s,
+            ));
         }
     }
 
@@ -191,8 +209,14 @@ impl ttf_parser::OutlineBuilder for ColrOutlineBuilder {
             let t = step as f32 / 16.0;
             let mt = 1.0 - t;
             self.current.push((
-                mt * mt * mt * x0 + 3.0 * mt * mt * t * x1s + 3.0 * mt * t * t * x2s + t * t * t * x3s,
-                mt * mt * mt * y0 + 3.0 * mt * mt * t * y1s + 3.0 * mt * t * t * y2s + t * t * t * y3s,
+                mt * mt * mt * x0
+                    + 3.0 * mt * mt * t * x1s
+                    + 3.0 * mt * t * t * x2s
+                    + t * t * t * x3s,
+                mt * mt * mt * y0
+                    + 3.0 * mt * mt * t * y1s
+                    + 3.0 * mt * t * t * y2s
+                    + t * t * t * y3s,
             ));
         }
     }

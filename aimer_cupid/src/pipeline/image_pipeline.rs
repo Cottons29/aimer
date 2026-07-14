@@ -14,16 +14,18 @@ pub struct ImageInstance {
     pub clip_rect: [f32; 4],
     /// Border radius for the clip rect: [top-left, top-right, bottom-right, bottom-left].
     pub clip_border_radius: [f32; 4],
+    pub alpha: f32,
 }
 
 impl ImageInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x2,
         3 => Float32x2,
         4 => Float32x4,
         5 => Float32x4,
+        6 => Float32,
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
@@ -65,7 +67,10 @@ impl ImagePipeline {
     const fn get_source() -> &'static str {
         #[cfg(target_os = "android")]
         {
-            concat!(include_str!("./shaders/android_color.wgsl"), include_str!("./shaders/image.wgsl"))
+            concat!(
+                include_str!("./shaders/android_color.wgsl"),
+                include_str!("./shaders/image.wgsl")
+            )
         }
         #[cfg(not(target_os = "android"))]
         {
@@ -73,7 +78,11 @@ impl ImagePipeline {
         }
     }
 
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, pipeline_cache: Option<&wgpu::PipelineCache>) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        pipeline_cache: Option<&wgpu::PipelineCache>,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image shader"),
             source: ShaderSource::Wgsl(Self::get_source().into()),
@@ -91,7 +100,11 @@ impl ImagePipeline {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
                 count: None,
             }],
         });
@@ -99,30 +112,34 @@ impl ImagePipeline {
         let viewport_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("image viewport bind group"),
             layout: &viewport_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: viewport_buffer.as_entire_binding() }],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: viewport_buffer.as_entire_binding(),
+            }],
         });
 
-        let texture_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("image texture layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("image texture layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("image pipeline layout"),
@@ -149,7 +166,10 @@ impl ImagePipeline {
                 })],
                 compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
@@ -187,7 +207,14 @@ impl ImagePipeline {
     }
 
     /// Upload RGBA8 image data and return a TextureId.
-    pub fn upload_image(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32, data: &[u8]) -> TextureId {
+    pub fn upload_image(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        data: &[u8],
+    ) -> TextureId {
         let id = self.next_id;
         self.next_id += 1;
         self.upload_image_with_id(device, queue, id, width, height, data);
@@ -234,7 +261,11 @@ impl ImagePipeline {
                         aspect: wgpu::TextureAspect::All,
                     },
                     data,
-                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * width), rows_per_image: Some(height) },
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * width),
+                        rows_per_image: Some(height),
+                    },
                     wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
                 );
 
@@ -243,8 +274,14 @@ impl ImagePipeline {
                     label: Some("image bind group"),
                     layout: &self.texture_bind_group_layout,
                     entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
                     ],
                 });
 
@@ -284,7 +321,11 @@ impl ImagePipeline {
         let is_srgb_f32 = 2.0_f32;
         #[cfg(not(target_os = "android"))]
         let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
-        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
+        queue.write_buffer(
+            &self.viewport_buffer,
+            0,
+            bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
+        );
     }
 
     pub fn upload_image_with_id(
@@ -308,7 +349,11 @@ impl ImagePipeline {
                         aspect: wgpu::TextureAspect::All,
                     },
                     data,
-                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * width), rows_per_image: Some(height) },
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * width),
+                        rows_per_image: Some(height),
+                    },
                     wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
                 );
                 return;
@@ -326,9 +371,18 @@ impl ImagePipeline {
             view_formats: &[],
         });
         queue.write_texture(
-            wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
             data,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * width), rows_per_image: Some(height) },
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
             wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
 
@@ -337,8 +391,14 @@ impl ImagePipeline {
             label: Some("image bind group"),
             layout: &self.texture_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
             ],
         });
 
@@ -396,5 +456,25 @@ impl ImagePipeline {
         pass.draw(0..6, 0..instances.len() as u32);
 
         self.frame_instance_offset = end;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_instance_carries_draw_opacity() {
+        let instance = ImageInstance {
+            position: [0.0; 2],
+            size: [1.0; 2],
+            uv_offset: [0.0; 2],
+            uv_scale: [1.0; 2],
+            clip_rect: [-1.0; 4],
+            clip_border_radius: [0.0; 4],
+            alpha: 0.35,
+        };
+
+        assert_eq!(instance.alpha, 0.35);
     }
 }
