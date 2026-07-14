@@ -1,11 +1,13 @@
 pub mod raw_text;
 
-use crate::text::raw_text::RawTextWidget;
+use std::rc::Rc;
+use std::sync::Mutex;
+
 use aimer_style::{TextAlign, TextOverflow, TextStyle};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, LayoutCache, Widget};
-use std::rc::Rc;
-use std::sync::Mutex;
+
+use crate::text::raw_text::RawTextWidget;
 
 /// this is a widget for creating the text
 #[allow(dead_code)]
@@ -40,7 +42,8 @@ impl Text {
     }
 
     pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
-        self.text_style.text_overflow = text_overflow;
+        self.text_style
+            .text_overflow = text_overflow;
         self
     }
 
@@ -57,7 +60,9 @@ impl Widget for Text {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         // println!("Creating text widget : {:?}", self.text);
         RawTextWidget {
-            text: self.text.clone(),
+            text: self
+                .text
+                .clone(),
             text_style: self.text_style,
             text_align: self.text_align,
             cache: LayoutCache::new(),

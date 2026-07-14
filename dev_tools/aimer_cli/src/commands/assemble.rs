@@ -1,13 +1,15 @@
+use std::env::current_dir;
+use std::path::Path;
+use std::process::{Command, Stdio};
+
+use anyhow::{Context, bail};
+use tracing::info;
+
 use crate::commands::run::helpers::host_arch;
 use crate::commands::run::utilities::get_project_root;
 use crate::config::resolve_package_name;
 use crate::errors::AimerError;
 use crate::targets::Targets;
-use anyhow::{Context, bail};
-use std::env::current_dir;
-use std::path::Path;
-use std::process::{Command, Stdio};
-use tracing::info;
 
 /// Non-interactive bundling entry point used by `aimer assemble <platform>`.
 ///
@@ -56,8 +58,11 @@ fn gradle_task(release: bool) -> &'static str {
 /// Run `cmd` to completion with inherited stdio, bailing with context when it
 /// fails to start or exits with a non-zero status.
 fn run_step(mut cmd: Command, action: &str) -> anyhow::Result<()> {
-    cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-    let status = cmd.status().with_context(|| format!("failed to start {action}"))?;
+    cmd.stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    let status = cmd
+        .status()
+        .with_context(|| format!("failed to start {action}"))?;
     if !status.success() {
         bail!("{action} failed");
     }
@@ -98,7 +103,12 @@ pub(crate) fn copy_assets_into(dest_root: &str) -> anyhow::Result<()> {
     println!("Copying assets into {dest_root}");
     let report = crate::commands::assets::copy_assets_into(dest_root)?;
     for rel in &report.copied {
-        info!("Copied asset {rel} -> {}", Path::new(dest_root).join(rel).display());
+        info!(
+            "Copied asset {rel} -> {}",
+            Path::new(dest_root)
+                .join(rel)
+                .display()
+        );
     }
     for rel in &report.missing {
         eprintln!("warning: registered asset '{rel}' not found; skipping");
@@ -112,7 +122,9 @@ fn assemble_macos(pkg_name: &str, release: bool) -> anyhow::Result<String> {
     let lib_name = pkg_name.replace('-', "_");
 
     let mut cargo = Command::new("cargo");
-    cargo.arg("build").args(["--target", rust_target, "--lib"]);
+    cargo
+        .arg("build")
+        .args(["--target", rust_target, "--lib"]);
     if release {
         cargo.arg("--release");
     }
@@ -145,7 +157,8 @@ fn assemble_macos(pkg_name: &str, release: bool) -> anyhow::Result<String> {
     Ok(artifact)
 }
 
-/// Build the iOS `.app` bundle (device or simulator) via `cargo` + `xcodebuild`.
+/// Build the iOS `.app` bundle (device or simulator) via `cargo` +
+/// `xcodebuild`.
 fn assemble_ios(pkg_name: &str, target: Targets, release: bool) -> anyhow::Result<String> {
     let arch = host_arch();
     let (rust_target, sdk, subdir_suffix) = match target {
@@ -159,7 +172,11 @@ fn assemble_ios(pkg_name: &str, target: Targets, release: bool) -> anyhow::Resul
     let lib_name = pkg_name.replace('-', "_");
 
     let mut cargo = Command::new("cargo");
-    cargo.arg("build").arg("--lib").arg("--target").arg(rust_target);
+    cargo
+        .arg("build")
+        .arg("--lib")
+        .arg("--target")
+        .arg(rust_target);
     if release {
         cargo.arg("--release");
     }
@@ -197,7 +214,12 @@ fn assemble_android(pkg_name: &str, release: bool) -> anyhow::Result<String> {
     let lib_name = pkg_name.replace('-', "_");
 
     let mut cargo = Command::new("cargo");
-    cargo.arg("ndk").arg("-t").arg(jni_dir).arg("build").arg("--lib");
+    cargo
+        .arg("ndk")
+        .arg("-t")
+        .arg(jni_dir)
+        .arg("build")
+        .arg("--lib");
     if release {
         cargo.arg("--release");
     }
@@ -213,11 +235,15 @@ fn assemble_android(pkg_name: &str, release: bool) -> anyhow::Result<String> {
     // Stage assets into the APK's `assets/` source set before Gradle packs it.
     copy_assets_into("builds/android/app/src/main/assets")?;
 
-    let android_dir = current_dir().context("resolving current directory")?.join("builds/android");
+    let android_dir = current_dir()
+        .context("resolving current directory")?
+        .join("builds/android");
     let gradlew = if cfg!(windows) { "gradlew.bat" } else { "gradlew" };
 
     let mut gradle = Command::new(android_dir.join(gradlew));
-    gradle.arg(gradle_task(release)).current_dir(&android_dir);
+    gradle
+        .arg(gradle_task(release))
+        .current_dir(&android_dir);
     if let Some(java_home) = resolve_compatible_java_home() {
         println!("Using JAVA_HOME: {java_home}");
         gradle.env("JAVA_HOME", java_home);
@@ -257,7 +283,9 @@ fn assemble_web(release: bool) -> anyhow::Result<String> {
     copy_assets_into(artifact)?;
 
     let mut trunk = Command::new("trunk");
-    trunk.arg("build").current_dir("builds/web");
+    trunk
+        .arg("build")
+        .current_dir("builds/web");
     if release {
         trunk.arg("--release");
     }
@@ -270,7 +298,9 @@ fn assemble_web(release: bool) -> anyhow::Result<String> {
 /// exists yet, so this compiles the artifact and reports its directory.
 fn assemble_desktop(target: Targets, release: bool) -> anyhow::Result<String> {
     let mut cargo = Command::new("cargo");
-    cargo.arg("build").arg("--lib");
+    cargo
+        .arg("build")
+        .arg("--lib");
     if release {
         cargo.arg("--release");
     }
@@ -285,15 +315,24 @@ fn assemble_desktop(target: Targets, release: bool) -> anyhow::Result<String> {
 fn resolve_compatible_java_home() -> Option<String> {
     if cfg!(target_os = "macos") {
         for version in ["17", "21", "23", "11"] {
-            let Ok(output) = Command::new("/usr/libexec/java_home").arg("-v").arg(version).output()
+            let Ok(output) = Command::new("/usr/libexec/java_home")
+                .arg("-v")
+                .arg(version)
+                .output()
             else {
                 continue;
             };
-            if !output.status.success() {
+            if !output
+                .status
+                .success()
+            {
                 continue;
             }
             if let Ok(path) = String::from_utf8(output.stdout) {
-                return Some(path.trim().to_string());
+                return Some(
+                    path.trim()
+                        .to_string(),
+                );
             }
         }
     }
@@ -333,12 +372,18 @@ mod tests {
     #[test]
     fn execute_rejects_unknown_platform() {
         let err = execute("playstation".to_string(), false).unwrap_err();
-        assert!(err.to_string().contains("unknown target"));
+        assert!(
+            err.to_string()
+                .contains("unknown target")
+        );
     }
 
     #[test]
     fn execute_rejects_terminated_platform() {
         let err = execute("terminated".to_string(), false).unwrap_err();
-        assert!(err.to_string().contains("not an assemblable platform"));
+        assert!(
+            err.to_string()
+                .contains("not an assemblable platform")
+        );
     }
 }

@@ -1,9 +1,9 @@
-use crate::input::{AsyncTextFieldCallback, TextField};
-use aimer::AimerApp;
 use aimer::macros::widget;
 use aimer::style::*;
-use aimer::*;
+use aimer::{AimerApp, *};
 use uuid::Uuid;
+
+use crate::input::{AsyncTextFieldCallback, TextField};
 #[allow(unused)]
 pub fn start_my_list() {
     AimerApp::start(MyList::new().boxed())
@@ -191,8 +191,8 @@ impl State<MyList> for MyListState {
                                             ).boxed(),
                                     ]).boxed()
                             ).boxed(),
-                        Scrollable::new(
-                            Column::new()
+                        Scrollable::new()
+                            .child(Column::new()
                                 .children(self.list.iter().map(|item| {
                                     Container::new()
                                         .margin(LayoutSpacing { top: Spacing::Px(10), ..Default::default() })
@@ -221,7 +221,7 @@ impl State<MyList> for MyListState {
                                                                 .on_press({
                                                                     let item_id = item.id.clone();
                                                                     let updater = self.updater.clone();
-                                                                     move || {
+                                                                    move || {
                                                                         let another_item_id = item_id.clone();
                                                                         updater.set_state( move |state| {
                                                                             state.list.retain(|i| i.id != another_item_id);
@@ -243,8 +243,8 @@ impl State<MyList> for MyListState {
                                                 ]).boxed()
                                         ).boxed()
                                 }).collect::<Vec<Box<dyn Widget>>>()
-                                )
-                        ).boxed()
+                                ))
+                            .boxed()
                     ]).boxed()
             )
     }

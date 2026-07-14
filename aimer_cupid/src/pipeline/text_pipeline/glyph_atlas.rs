@@ -12,7 +12,8 @@ pub struct AtlasRegion {
 }
 
 impl AtlasRegion {
-    /// Returns UV coordinates as (u_min, v_min, u_max, v_max) given atlas dimensions.
+    /// Returns UV coordinates as (u_min, v_min, u_max, v_max) given atlas
+    /// dimensions.
     pub fn uvs(&self, atlas_w: u32, atlas_h: u32) -> [f32; 4] {
         let aw = atlas_w as f32;
         let ah = atlas_h as f32;
@@ -42,7 +43,8 @@ impl ShelfPacker {
         Self { width, height, cursor_x: 0, shelf_y: 0, shelf_height: 0 }
     }
 
-    /// Try to allocate a region of `w × h`. Returns `None` if the atlas is full.
+    /// Try to allocate a region of `w × h`. Returns `None` if the atlas is
+    /// full.
     fn allocate(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
         if w == 0 || h == 0 {
             return Some((0, 0));
@@ -79,11 +81,11 @@ impl ShelfPacker {
         self.shelf_height = 0;
     }
 
-    /// Position the packer so the next allocation starts a brand-new, empty shelf
-    /// whose top edge is at `y`. Used after the atlas grows: existing glyphs keep
-    /// their positions in the (now larger) atlas, and the packer resumes in the
-    /// free space directly below them so newly inserted glyphs can never collide
-    /// with the preserved content.
+    /// Position the packer so the next allocation starts a brand-new, empty
+    /// shelf whose top edge is at `y`. Used after the atlas grows: existing
+    /// glyphs keep their positions in the (now larger) atlas, and the
+    /// packer resumes in the free space directly below them so newly
+    /// inserted glyphs can never collide with the preserved content.
     fn start_fresh_shelf_at(&mut self, y: u32) {
         self.cursor_x = 0;
         self.shelf_y = y;
@@ -100,7 +102,8 @@ struct PendingGlyph {
     y: u32,
     width: u32,
     height: u32,
-    /// Glyph bitmap rows, tightly packed (`width * height` for R8, ×4 for RGBA8).
+    /// Glyph bitmap rows, tightly packed (`width * height` for R8, ×4 for
+    /// RGBA8).
     data: Vec<u8>,
 }
 
@@ -168,7 +171,9 @@ impl GlyphAtlas {
 
     /// Look up a cached glyph region without inserting.
     pub fn get(&self, key: &GlyphKey) -> Option<AtlasRegion> {
-        self.cache.get(key).copied()
+        self.cache
+            .get(key)
+            .copied()
     }
 
     /// Returns the current atlas generation (incremented on texture recreate).
@@ -187,12 +192,17 @@ impl GlyphAtlas {
         glyph_h: u32,
         bitmap: &[u8],
     ) -> AtlasRegion {
-        if let Some(region) = self.cache.get(&key) {
+        if let Some(region) = self
+            .cache
+            .get(&key)
+        {
             return *region;
         }
 
         // Try to allocate.
-        let pos = self.packer.allocate(glyph_w, glyph_h);
+        let pos = self
+            .packer
+            .allocate(glyph_w, glyph_h);
         let (x, y) = match pos {
             Some(p) => p,
             None => {
@@ -206,16 +216,12 @@ impl GlyphAtlas {
 
         // Stage the glyph bitmap for the next `upload`. We keep only this glyph's
         // bytes (dropped after upload) rather than a full-size CPU mirror.
-        self.pending.push(PendingGlyph {
-            x,
-            y,
-            width: glyph_w,
-            height: glyph_h,
-            data: bitmap.to_vec(),
-        });
+        self.pending
+            .push(PendingGlyph { x, y, width: glyph_w, height: glyph_h, data: bitmap.to_vec() });
 
         let region = AtlasRegion { x, y, width: glyph_w, height: glyph_h };
-        self.cache.insert(key, region);
+        self.cache
+            .insert(key, region);
         region
     }
 
@@ -223,10 +229,16 @@ impl GlyphAtlas {
     /// drop the staged bytes. Each glyph is written directly at its packed
     /// position, so no full-size CPU buffer is materialized.
     pub fn upload(&mut self, queue: &wgpu::Queue) {
-        if self.pending.is_empty() {
+        if self
+            .pending
+            .is_empty()
+        {
             return;
         }
-        for glyph in self.pending.drain(..) {
+        for glyph in self
+            .pending
+            .drain(..)
+        {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
@@ -249,18 +261,19 @@ impl GlyphAtlas {
         }
     }
 
-    /// Grow the atlas to fit more glyphs. Below [`MAX_SIZE`](Self::MAX_SIZE) the
-    /// atlas doubles and the existing texture content is preserved with a GPU
-    /// texture-to-texture copy (no CPU mirror needed). At the cap we instead
-    /// evict everything and repack from scratch, so memory never grows past
-    /// `MAX_SIZE²`.
+    /// Grow the atlas to fit more glyphs. Below [`MAX_SIZE`](Self::MAX_SIZE)
+    /// the atlas doubles and the existing texture content is preserved with
+    /// a GPU texture-to-texture copy (no CPU mirror needed). At the cap we
+    /// instead evict everything and repack from scratch, so memory never
+    /// grows past `MAX_SIZE²`.
     fn grow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         // At the size cap: evict all cached glyphs and repack into the existing
         // texture instead of allocating a larger one. Stale pixels left in the
         // texture are simply never referenced again (the cache is cleared, so
         // every glyph is re-inserted and re-uploaded on demand).
         if self.width >= Self::MAX_SIZE {
-            self.cache.clear();
+            self.cache
+                .clear();
             self.packer = ShelfPacker::new(self.width, self.height);
             return;
         }
@@ -313,7 +326,8 @@ impl GlyphAtlas {
         // all cached positions valid while guaranteeing new glyphs land in free
         // space.
         self.packer = ShelfPacker::new(new_w, new_h);
-        self.packer.start_fresh_shelf_at(old_h);
+        self.packer
+            .start_fresh_shelf_at(old_h);
 
         self.width = new_w;
         self.height = new_h;
@@ -388,7 +402,9 @@ impl ColorGlyphAtlas {
     }
 
     pub fn get(&self, key: &GlyphKey) -> Option<AtlasRegion> {
-        self.cache.get(key).copied()
+        self.cache
+            .get(key)
+            .copied()
     }
 
     pub fn generation(&self) -> u64 {
@@ -405,11 +421,16 @@ impl ColorGlyphAtlas {
         glyph_h: u32,
         bitmap: &[u8],
     ) -> AtlasRegion {
-        if let Some(region) = self.cache.get(&key) {
+        if let Some(region) = self
+            .cache
+            .get(&key)
+        {
             return *region;
         }
 
-        let pos = self.packer.allocate(glyph_w, glyph_h);
+        let pos = self
+            .packer
+            .allocate(glyph_w, glyph_h);
         let (x, y) = match pos {
             Some(p) => p,
             None => {
@@ -421,24 +442,26 @@ impl ColorGlyphAtlas {
         };
 
         // Stage this glyph's RGBA8 bytes for the next `upload`; no full-size mirror.
-        self.pending.push(PendingGlyph {
-            x,
-            y,
-            width: glyph_w,
-            height: glyph_h,
-            data: bitmap.to_vec(),
-        });
+        self.pending
+            .push(PendingGlyph { x, y, width: glyph_w, height: glyph_h, data: bitmap.to_vec() });
 
         let region = AtlasRegion { x, y, width: glyph_w, height: glyph_h };
-        self.cache.insert(key, region);
+        self.cache
+            .insert(key, region);
         region
     }
 
     pub fn upload(&mut self, queue: &wgpu::Queue) {
-        if self.pending.is_empty() {
+        if self
+            .pending
+            .is_empty()
+        {
             return;
         }
-        for glyph in self.pending.drain(..) {
+        for glyph in self
+            .pending
+            .drain(..)
+        {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
@@ -465,7 +488,8 @@ impl ColorGlyphAtlas {
         // At the size cap: evict and repack into the existing texture rather than
         // allocating a larger one (see `GlyphAtlas::grow`).
         if self.width >= Self::MAX_SIZE {
-            self.cache.clear();
+            self.cache
+                .clear();
             self.packer = ShelfPacker::new(self.width, self.height);
             return;
         }
@@ -508,7 +532,8 @@ impl ColorGlyphAtlas {
         // could place new glyphs over existing ones (overlapping/garbled text after
         // a resize-triggered reflow). See `GlyphAtlas::grow` for the full rationale.
         self.packer = ShelfPacker::new(new_w, new_h);
-        self.packer.start_fresh_shelf_at(old_h);
+        self.packer
+            .start_fresh_shelf_at(old_h);
 
         self.width = new_w;
         self.height = new_h;
@@ -528,8 +553,9 @@ mod tests {
         a.x < bx2 && b.x < ax2 && a.y < by2 && b.y < ay2
     }
 
-    /// A representative spread of glyph sizes that produces several shelves on a
-    /// 512-wide atlas, mirroring what happens when many glyphs are rasterized.
+    /// A representative spread of glyph sizes that produces several shelves on
+    /// a 512-wide atlas, mirroring what happens when many glyphs are
+    /// rasterized.
     fn sample_glyphs() -> Vec<(u32, u32)> {
         let mut v = Vec::new();
         for i in 0..120u32 {
@@ -540,9 +566,9 @@ mod tests {
         v
     }
 
-    /// Pack a representative set of glyphs into a `size`×`size` packer and return
-    /// the resulting regions (in allocation order, which is what `grow()`
-    /// preserves) plus the live packer.
+    /// Pack a representative set of glyphs into a `size`×`size` packer and
+    /// return the resulting regions (in allocation order, which is what
+    /// `grow()` preserves) plus the live packer.
     fn pack_initial(size: u32) -> (ShelfPacker, Vec<AtlasRegion>) {
         let mut packer = ShelfPacker::new(size, size);
         let mut regions: Vec<AtlasRegion> = Vec::new();
@@ -554,9 +580,10 @@ mod tests {
         (packer, regions)
     }
 
-    /// The previous `grow()` strategy: reset the packer to the *doubled* size and
-    /// replay the old allocations. Because the width changed, the packer wraps
-    /// rows differently than the preserved layout, so this is unsafe.
+    /// The previous `grow()` strategy: reset the packer to the *doubled* size
+    /// and replay the old allocations. Because the width changed, the
+    /// packer wraps rows differently than the preserved layout, so this is
+    /// unsafe.
     fn old_grow_next_allocation(
         regions: &[AtlasRegion],
         new_w: u32,
@@ -569,11 +596,14 @@ mod tests {
         for r in &sorted {
             let _ = packer.allocate(r.width, r.height);
         }
-        packer.allocate(next.0, next.1).unwrap()
+        packer
+            .allocate(next.0, next.1)
+            .unwrap()
     }
 
-    /// The new `grow()` strategy: keep the packer at the doubled size but resume on
-    /// a fresh shelf directly below the preserved content (`start_fresh_shelf_at`).
+    /// The new `grow()` strategy: keep the packer at the doubled size but
+    /// resume on a fresh shelf directly below the preserved content
+    /// (`start_fresh_shelf_at`).
     fn new_grow_next_allocation(
         old_h: u32,
         new_w: u32,
@@ -582,7 +612,9 @@ mod tests {
     ) -> (u32, u32) {
         let mut packer = ShelfPacker::new(new_w, new_h);
         packer.start_fresh_shelf_at(old_h);
-        packer.allocate(next.0, next.1).unwrap()
+        packer
+            .allocate(next.0, next.1)
+            .unwrap()
     }
 
     #[test]
@@ -595,7 +627,9 @@ mod tests {
         let next = (40, 30);
         let pos = old_grow_next_allocation(&regions, 1024, 1024, next);
         let new_region = AtlasRegion { x: pos.0, y: pos.1, width: next.0, height: next.1 };
-        let overlap = regions.iter().any(|r| overlaps(r, &new_region));
+        let overlap = regions
+            .iter()
+            .any(|r| overlaps(r, &new_region));
         assert!(
             overlap,
             "expected replay-after-grow to overlap existing glyphs; got {:?}",

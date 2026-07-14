@@ -17,16 +17,17 @@ const ROUTE_SWITCHER_KEY: &str = "route-switcher";
 #[derive(Clone)]
 pub enum AppRouter {
     Home,
-    Docs,
+    Blog,
     Learn,
     NotFound,
 }
 
 impl AppRouter {
-    /// The header tab index this route highlights (0 = Home, 1 = Docs, 2 = Learn).
+    /// The header tab index this route highlights (0 = Home, 1 = Docs, 2 =
+    /// Learn).
     fn active_tab(&self) -> usize {
         match self {
-            AppRouter::Docs => 1,
+            AppRouter::Blog => 1,
             AppRouter::Learn => 2,
             _ => 0,
         }
@@ -35,7 +36,7 @@ impl AppRouter {
     fn transition_key(&self) -> &'static str {
         match self {
             AppRouter::Home => "home",
-            AppRouter::Docs => "docs",
+            AppRouter::Blog => "blog",
             AppRouter::Learn => "learn",
             AppRouter::NotFound => "not-found",
         }
@@ -62,7 +63,7 @@ impl Router for AppRouter {
             AppRouter::Home => Shell::boxing(AppShell { active_tab }, move |ctx| {
                 transitioned_page(transition_key, HomePage::boxing(ctx)).boxed()
             }),
-            AppRouter::Docs => Shell::boxing(AppShell { active_tab }, move |ctx| {
+            AppRouter::Blog => Shell::boxing(AppShell { active_tab }, move |ctx| {
                 transitioned_page(transition_key, DocsPage::boxing(ctx)).boxed()
             }),
             AppRouter::Learn => Shell::boxing(AppShell { active_tab }, move |ctx| {
@@ -75,18 +76,21 @@ impl Router for AppRouter {
     }
 }
 
-/// A simple "page not found" placeholder rendered inside the shell content area.
+/// A simple "page not found" placeholder rendered inside the shell content
+/// area.
 fn not_found_page() -> impl Widget {
-    Container::new().color(Color::WHITE).child(
-        Column::new()
-            .horizontal_alignment(BoxAlignment::Center)
-            .vertical_alignment(BoxAlignment::Center)
-            .children(vec![
-                Text::new("Page not found")
-                    .text_align(TextAlign::MidCenter)
-                    .text_style(TextStyle::new().font_size(44)),
-            ]),
-    )
+    Container::new()
+        .color(Color::WHITE)
+        .child(
+            Column::new()
+                .horizontal_alignment(BoxAlignment::Center)
+                .vertical_alignment(BoxAlignment::Center)
+                .children(vec![
+                    Text::new("Page not found")
+                        .text_align(TextAlign::MidCenter)
+                        .text_style(TextStyle::new().font_size(44)),
+                ]),
+        )
 }
 
 #[cfg(test)]
@@ -97,12 +101,12 @@ mod tests {
     fn routes_have_stable_distinct_transition_keys() {
         let keys = [
             AppRouter::Home.transition_key(),
-            AppRouter::Docs.transition_key(),
+            AppRouter::Blog.transition_key(),
             AppRouter::Learn.transition_key(),
             AppRouter::NotFound.transition_key(),
         ];
 
-        assert_eq!(keys, ["home", "docs", "learn", "not-found"]);
+        assert_eq!(keys, ["home", "blog", "learn", "not-found"]);
     }
 
     #[test]

@@ -14,21 +14,18 @@ pub mod tween;
 
 // Core primitives
 pub use animatable::Animatable;
-pub use controller::{AnimationController, AnimationStatus, StatusListener};
-pub use curve::Curve;
-pub use time::AnimInstant;
-pub use tween::{AnimatableExt, Tween};
-
-// Keyframe animation
-pub use keyframe::{Keyframe, KeyframeAnimation};
-
-// Animation orchestration
-pub use group::{ParallelAnimation, SequentialAnimation, StaggeredAnimation};
-
 // Widget layer
 pub use animated::{Animated, AnimationEffect};
 pub use animated_builder::AnimatedBuilder;
 pub use animated_switcher::AnimatedSwitcher;
+pub use controller::{AnimationController, AnimationStatus, StatusListener};
+pub use curve::Curve;
+// Animation orchestration
+pub use group::{ParallelAnimation, SequentialAnimation, StaggeredAnimation};
 pub use implicit_animation::ImplicitAnimatedBuilder;
+// Keyframe animation
+pub use keyframe::{Keyframe, KeyframeAnimation};
 pub use morph_transition::{MorphTransition, Rgba};
+pub use time::AnimInstant;
 pub use transition::{FadeTransition, RotationTransition, ScaleTransition, SlideTransition};
+pub use tween::{AnimatableExt, Tween};

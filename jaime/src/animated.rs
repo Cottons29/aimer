@@ -1,8 +1,9 @@
+use std::time::Duration;
+
 use aimer::animation::{AnimInstant, Animated, AnimationController};
 use aimer::macros::widget;
 use aimer::style::*;
 use aimer::*;
-use std::time::Duration;
 use uuid::Uuid;
 
 const ANIM_DURATION: Duration = Duration::from_millis(50);
@@ -51,13 +52,16 @@ impl State<MyAnimatedList> for MyListState {
     fn build(&self, _: &BuildContext) -> impl Widget {
         {
             let now = AnimInstant::now();
-            let has_dismissed = self.list.iter().any(|item| {
-                item.pending_removal
-                    && item
-                        .removal_started_at
-                        .map(|t| now.duration_since(t) >= ANIM_DURATION)
-                        .unwrap_or(false)
-            });
+            let has_dismissed = self
+                .list
+                .iter()
+                .any(|item| {
+                    item.pending_removal
+                        && item
+                            .removal_started_at
+                            .map(|t| now.duration_since(t) >= ANIM_DURATION)
+                            .unwrap_or(false)
+                });
             if has_dismissed {}
         }
 
@@ -120,8 +124,8 @@ impl State<MyAnimatedList> for MyListState {
                                             ).boxed(),
                                     ]).boxed()
                             ).boxed(),
-                        Scrollable::new(
-                            Column::new()
+                        Scrollable::new()
+                            .child(Column::new()
                                 .children(self.list.iter().map(|item| {
                                     Animated::new(
                                         item.controller.clone(),
@@ -181,8 +185,8 @@ impl State<MyAnimatedList> for MyListState {
                                             )
                                     ).boxed()
                                 }).collect::<Vec<Box<dyn Widget>>>()
-                                )
-                        ).boxed()
+                                ))
+                            .boxed()
                     ]).boxed()
             )
     }

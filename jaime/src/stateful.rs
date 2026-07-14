@@ -1,9 +1,9 @@
-use aimer::AimerApp;
+use std::sync::Arc;
+
 use aimer::callback::VoidCallback;
 use aimer::macros::widget;
 use aimer::style::*;
-use aimer::*;
-use std::sync::Arc;
+use aimer::{AimerApp, *};
 
 // this is the entry point of the app
 pub fn start_counter() {
@@ -62,7 +62,9 @@ impl State<CounterWidget> for CounterState {
     // build the widget with state
     fn build(&self, _: &BuildContext) -> impl Widget {
         // debug!("self.count: {}", self.count);
-        let updater = self.updater.clone();
+        let updater = self
+            .updater
+            .clone();
         Container::new()
             .color(Color::WHITE)
             .padding(LayoutSpacing { top: Spacing::Px(20), ..Default::default() })
@@ -73,13 +75,25 @@ impl State<CounterWidget> for CounterState {
                     .horizontal_alignment(BoxAlignment::Center)
                     .children([
                         Text::new("Widget with State")
-                            .text_style(TextStyle::new().font_size(25).color(Colors::Black))
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(25)
+                                    .color(Colors::Black),
+                            )
                             .boxed(),
-                        SizedBox::new().height(50).boxed(),
+                        SizedBox::new()
+                            .height(50)
+                            .boxed(),
                         Text::new(format!("Clicked: {}", self.count,))
-                            .text_style(TextStyle::new().font_size(25).color(Colors::Black))
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(25)
+                                    .color(Colors::Black),
+                            )
                             .boxed(),
-                        SizedBox::new().height(50).boxed(),
+                        SizedBox::new()
+                            .height(50)
+                            .boxed(),
                         Container::new()
                             .width(Dimension::Px(200.0))
                             .height(Dimension::Px(50.0))
@@ -93,7 +107,9 @@ impl State<CounterWidget> for CounterState {
 
                                         println!(
                                             "Button pressed with state : {}",
-                                            updater.read_state().count
+                                            updater
+                                                .read_state()
+                                                .count
                                         );
                                         updater.set_state(|state| {
                                             state.count += 1;
@@ -112,7 +128,9 @@ impl State<CounterWidget> for CounterState {
                                     .boxed(),
                             )
                             .boxed(),
-                        SizedBox::new().height(20).boxed(),
+                        SizedBox::new()
+                            .height(20)
+                            .boxed(),
                         Container::new()
                             .width(Dimension::Px(200.0))
                             .height(Dimension::Px(50.0))
@@ -120,11 +138,15 @@ impl State<CounterWidget> for CounterState {
                                 Button::new()
                                     .disabled(self.on_loading)
                                     .on_press_async({
-                                        let updater = self.updater.clone();
+                                        let updater = self
+                                            .updater
+                                            .clone();
                                         async move || {
                                             println!(
                                                 "Button pressed with state : {}",
-                                                updater.read_state().count
+                                                updater
+                                                    .read_state()
+                                                    .count
                                             );
                                             updater.set_state(|state| {
                                                 state.count -= 1;

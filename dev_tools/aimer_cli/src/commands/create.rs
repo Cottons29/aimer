@@ -5,15 +5,15 @@ pub mod macos;
 pub mod web;
 pub mod window;
 
-use crate::config::AimerManifest;
-use crate::errors::AimerError;
-use anyhow::Context;
-use inquire::{
-    Confirm, MultiSelect, Text,
-    ui::{Color, RenderConfig, Styled},
-};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use anyhow::Context;
+use inquire::ui::{Color, RenderConfig, Styled};
+use inquire::{Confirm, MultiSelect, Text};
+
+use crate::config::AimerManifest;
+use crate::errors::AimerError;
 
 macro_rules! prompt_abortable {
     ($prompt:expr) => {
@@ -25,7 +25,9 @@ macro_rules! prompt_abortable {
                     crossterm::terminal::enable_raw_mode().unwrap();
                     if let Ok(crossterm::event::Event::Key(event)) = crossterm::event::read() {
                         if event.code == crossterm::event::KeyCode::Char('c')
-                            && event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                            && event
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL)
                         {
                             crossterm::terminal::disable_raw_mode().unwrap();
                             std::process::exit(1);
@@ -118,7 +120,8 @@ fn scaffold(
     fs::create_dir_all(dir.join("src")).context("creating src directory")?;
     fs::create_dir_all(dir.join("builds")).context("creating builds directory")?;
     fs::create_dir_all(dir.join("builds/web")).context("creating builds/web directory")?;
-    // fs::create_dir_all(dir.join("builds/build_src/src")).context("creating builds/build_src/src directory")?;
+    // fs::create_dir_all(dir.join("builds/build_src/src")).context("creating
+    // builds/build_src/src directory")?;
 
     if targets.contains(&"android") {
         android::create(dir, project_name, group);
@@ -181,7 +184,10 @@ pub fn validate_project_name(name: &str) -> Result<(), AimerError> {
     let reject =
         |reason: &str| Err(AimerError::InvalidProjectName(name.to_string(), reason.to_string()));
 
-    if name.trim().is_empty() {
+    if name
+        .trim()
+        .is_empty()
+    {
         return reject("name must not be empty");
     }
     if name == "." || name == ".." {
@@ -190,7 +196,10 @@ pub fn validate_project_name(name: &str) -> Result<(), AimerError> {
     if name.contains(['/', '\\']) {
         return reject("name must not contain path separators");
     }
-    if name.chars().any(char::is_whitespace) {
+    if name
+        .chars()
+        .any(char::is_whitespace)
+    {
         return reject("name must not contain whitespace");
     }
     if name.contains(RESERVED) {
@@ -244,30 +253,87 @@ mod tests {
     #[test]
     fn scaffold_creates_expected_tree() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("myapp");
+        let dir = tmp
+            .path()
+            .join("myapp");
 
         scaffold(&dir, "myapp", "0.2.0", "a test app", "tester", "com.example.myapp", &["web"])
             .unwrap();
 
         // Core files and directories are present.
-        assert!(dir.join("src/lib.rs").exists(), "missing src/lib.rs");
-        assert!(dir.join("build.rs").exists(), "missing build.rs");
-        assert!(dir.join("Cargo.toml").exists(), "missing Cargo.toml");
-        assert!(dir.join("aimer.toml").exists(), "missing aimer.toml");
-        assert!(dir.join(".gitignore").exists(), "missing .gitignore");
-        assert!(dir.join("README.md").exists(), "missing README.md");
-        assert!(dir.join("builds/web").is_dir(), "missing builds/web");
+        assert!(
+            dir.join("src/lib.rs")
+                .exists(),
+            "missing src/lib.rs"
+        );
+        assert!(
+            dir.join("build.rs")
+                .exists(),
+            "missing build.rs"
+        );
+        assert!(
+            dir.join("Cargo.toml")
+                .exists(),
+            "missing Cargo.toml"
+        );
+        assert!(
+            dir.join("aimer.toml")
+                .exists(),
+            "missing aimer.toml"
+        );
+        assert!(
+            dir.join(".gitignore")
+                .exists(),
+            "missing .gitignore"
+        );
+        assert!(
+            dir.join("README.md")
+                .exists(),
+            "missing README.md"
+        );
+        assert!(
+            dir.join("builds/web")
+                .is_dir(),
+            "missing builds/web"
+        );
 
         // Generated Cargo.toml parses and carries the right package name.
         assert_eq!(crate::config::parse_cargo_package_name(&dir), Some("myapp".to_string()));
 
         // aimer.toml round-trips with the collected metadata.
-        let manifest = AimerManifest::load_from(&dir).unwrap().unwrap();
-        assert_eq!(manifest.package.name, "myapp");
-        assert_eq!(manifest.package.version, "0.2.0");
-        assert_eq!(manifest.package.description, "a test app");
-        assert_eq!(manifest.package.author, "tester");
-        assert_eq!(manifest.package.group, "com.example.myapp");
+        let manifest = AimerManifest::load_from(&dir)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            manifest
+                .package
+                .name,
+            "myapp"
+        );
+        assert_eq!(
+            manifest
+                .package
+                .version,
+            "0.2.0"
+        );
+        assert_eq!(
+            manifest
+                .package
+                .description,
+            "a test app"
+        );
+        assert_eq!(
+            manifest
+                .package
+                .author,
+            "tester"
+        );
+        assert_eq!(
+            manifest
+                .package
+                .group,
+            "com.example.myapp"
+        );
     }
 
     #[test]
@@ -275,7 +341,9 @@ mod tests {
         // Mirrors `execute`: a failed scaffold leaves a directory the caller can
         // remove. Here we just verify scaffolding then removing leaves nothing.
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("throwaway");
+        let dir = tmp
+            .path()
+            .join("throwaway");
         scaffold(&dir, "throwaway", "0.1.0", "", "", "com.example.throwaway", &[]).unwrap();
         assert!(dir.exists());
         std::fs::remove_dir_all(&dir).unwrap();

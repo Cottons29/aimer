@@ -5,12 +5,13 @@ pub mod profile;
 #[macro_use]
 pub mod setting;
 
-use crate::routing::home::HomeWidget;
-use crate::routing::profile::ProfilePage;
-use crate::routing::setting::SettingPage;
 use aimer::macros::widget;
 use aimer::router::{Navigator, Outlet, Router, Shell, StatefulShell};
 use aimer::*;
+
+use crate::routing::home::HomeWidget;
+use crate::routing::profile::ProfilePage;
+use crate::routing::setting::SettingPage;
 
 #[widget(Router)]
 #[derive(Clone, Debug, PartialEq)]
@@ -51,8 +52,8 @@ impl Router for DashRoute {
     }
 }
 
-/// Per-branch routes for the tabbed stateful shell. Each variant is one tab that
-/// keeps its own independent navigation history.
+/// Per-branch routes for the tabbed stateful shell. Each variant is one tab
+/// that keeps its own independent navigation history.
 #[widget(Router)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum TabRoute {
@@ -74,14 +75,16 @@ impl Router for TabRoute {
     }
 }
 
-/// Persistent tab-shell frame: a layout containing the `Outlet` where the active
-/// branch's top route renders. A real app would add a bottom nav bar here whose
-/// buttons call `StatefulShellController::<TabRoute>::of(ctx).go_branch(i)`.
+/// Persistent tab-shell frame: a layout containing the `Outlet` where the
+/// active branch's top route renders. A real app would add a bottom nav bar
+/// here whose buttons call
+/// `StatefulShellController::<TabRoute>::of(ctx).go_branch(i)`.
 fn tab_frame(_: &BuildContext) -> Box<dyn Widget> {
     Box::new(Container::new().child(Outlet))
 }
 
-/// Builds the widget for a given tab route (each `TabRoute` is itself a widget).
+/// Builds the widget for a given tab route (each `TabRoute` is itself a
+/// widget).
 fn tab_child(route: TabRoute) -> Box<dyn Widget> {
     Box::new(route)
 }
@@ -93,8 +96,9 @@ fn admin_redirect_decision(authenticated: bool) -> Option<AppRouting> {
     if authenticated { None } else { Some(AppRouting::Login) }
 }
 
-/// Guard hook wired into the generated `Route::redirect` for `AppRouting::Admin`.
-/// In a real app this would read auth state from the context.
+/// Guard hook wired into the generated `Route::redirect` for
+/// `AppRouting::Admin`. In a real app this would read auth state from the
+/// context.
 fn admin_guard(_route: &AppRouting, _ctx: &BuildContext) -> Option<AppRouting> {
     admin_redirect_decision(false)
 }
@@ -120,9 +124,11 @@ impl Router for AppRouting {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use aimer::router::Route;
     use std::collections::HashMap;
+
+    use aimer::router::Route;
+
+    use super::*;
 
     #[test]
     fn round_trip_unit_and_named_path() {
@@ -212,7 +218,12 @@ mod tests {
             tab_child,
         );
         assert_eq!(shell.active, 0);
-        assert_eq!(shell.branches.len(), 3);
+        assert_eq!(
+            shell
+                .branches
+                .len(),
+            3
+        );
         assert_eq!(shell.branches[0], vec![TabRoute::Feed]);
         assert_eq!(shell.branches[1], vec![TabRoute::Notifications]);
         assert_eq!(shell.branches[2], vec![TabRoute::Profile]);

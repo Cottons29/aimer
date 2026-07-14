@@ -1,6 +1,7 @@
-use crate::pointer::PointerSource;
 use aimer_attribute::position::Vec2d;
 pub use winit::event::TouchPhase;
+
+use crate::pointer::PointerSource;
 
 /// Key actions for keyboard events.
 #[derive(Clone, Debug, PartialEq, Eq)]

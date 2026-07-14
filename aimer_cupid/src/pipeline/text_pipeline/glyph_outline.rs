@@ -1,6 +1,7 @@
+use aimer_utils::time_cost;
+
 use crate::glyph_rasterizer::{RasterizedGlyph, point_inside};
 use crate::text_pipeline::font_resolver::{FontRecord, advance_width_from_face};
-use aimer_utils::time_cost;
 
 #[derive(Default)]
 struct GlyphOutline {
@@ -22,10 +23,16 @@ impl GlyphOutline {
     }
 
     fn finish_contour(&mut self) {
-        if self.current.len() >= 2 {
-            self.contours.push(std::mem::take(&mut self.current));
+        if self
+            .current
+            .len()
+            >= 2
+        {
+            self.contours
+                .push(std::mem::take(&mut self.current));
         } else {
-            self.current.clear();
+            self.current
+                .clear();
         }
     }
 }
@@ -41,7 +48,12 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
     }
 
     fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        let Some(&(x0, y0)) = self.current.last() else { return };
+        let Some(&(x0, y0)) = self
+            .current
+            .last()
+        else {
+            return;
+        };
         let x1 = x1 * self.scale - self.offset_x;
         let y1 = y1 * self.scale - self.offset_y;
         let x2 = x * self.scale - self.offset_x;
@@ -49,15 +61,21 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
         for step in 1..=12 {
             let t = step as f32 / 12.0;
             let mt = 1.0 - t;
-            self.current.push((
-                mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2,
-                mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2,
-            ));
+            self.current
+                .push((
+                    mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2,
+                    mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2,
+                ));
         }
     }
 
     fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        let Some(&(x0, y0)) = self.current.last() else { return };
+        let Some(&(x0, y0)) = self
+            .current
+            .last()
+        else {
+            return;
+        };
         let x1 = x1 * self.scale - self.offset_x;
         let y1 = y1 * self.scale - self.offset_y;
         let x2 = x2 * self.scale - self.offset_x;
@@ -67,10 +85,17 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
         for step in 1..=16 {
             let t = step as f32 / 16.0;
             let mt = 1.0 - t;
-            self.current.push((
-                mt * mt * mt * x0 + 3.0 * mt * mt * t * x1 + 3.0 * mt * t * t * x2 + t * t * t * x3,
-                mt * mt * mt * y0 + 3.0 * mt * mt * t * y1 + 3.0 * mt * t * t * y2 + t * t * t * y3,
-            ));
+            self.current
+                .push((
+                    mt * mt * mt * x0
+                        + 3.0 * mt * mt * t * x1
+                        + 3.0 * mt * t * t * x2
+                        + t * t * t * x3,
+                    mt * mt * mt * y0
+                        + 3.0 * mt * mt * t * y1
+                        + 3.0 * mt * t * t * y2
+                        + t * t * t * y3,
+                ));
         }
     }
 
@@ -96,8 +121,12 @@ pub(crate) fn rasterize_outline_glyph(
     let scale = font_size / units_per_em;
     let offset_x = f32::from(bbox.x_min) * scale;
     let offset_y = f32::from(bbox.y_min) * scale;
-    let width = (f32::from(bbox.x_max - bbox.x_min) * scale).ceil().max(1.0) as u32;
-    let height = (f32::from(bbox.y_max - bbox.y_min) * scale).ceil().max(1.0) as u32;
+    let width = (f32::from(bbox.x_max - bbox.x_min) * scale)
+        .ceil()
+        .max(1.0) as u32;
+    let height = (f32::from(bbox.y_max - bbox.y_min) * scale)
+        .ceil()
+        .max(1.0) as u32;
 
     let mut outline = GlyphOutline::new(scale, offset_x, offset_y);
     face.outline_glyph(glyph, &mut outline)?;
@@ -159,14 +188,21 @@ impl ColrOutlineBuilder {
         // Convert from font coordinates (y-up) to bitmap coordinates (y-down).
         let bx = x * self.scale - self.offset_x;
         let by = self.height - (y * self.scale - self.offset_y);
-        self.current.push((bx, by));
+        self.current
+            .push((bx, by));
     }
 
     pub(crate) fn finish(&mut self) {
-        if self.current.len() >= 2 {
-            self.contours.push(std::mem::take(&mut self.current));
+        if self
+            .current
+            .len()
+            >= 2
+        {
+            self.contours
+                .push(std::mem::take(&mut self.current));
         } else {
-            self.current.clear();
+            self.current
+                .clear();
         }
     }
 }
@@ -182,7 +218,12 @@ impl ttf_parser::OutlineBuilder for ColrOutlineBuilder {
     }
 
     fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        let Some(&(x0, y0)) = self.current.last() else { return };
+        let Some(&(x0, y0)) = self
+            .current
+            .last()
+        else {
+            return;
+        };
         let x1s = x1 * self.scale - self.offset_x;
         let y1s = self.height - (y1 * self.scale - self.offset_y);
         let x2s = x * self.scale - self.offset_x;
@@ -190,15 +231,21 @@ impl ttf_parser::OutlineBuilder for ColrOutlineBuilder {
         for step in 1..=12u32 {
             let t = step as f32 / 12.0;
             let mt = 1.0 - t;
-            self.current.push((
-                mt * mt * x0 + 2.0 * mt * t * x1s + t * t * x2s,
-                mt * mt * y0 + 2.0 * mt * t * y1s + t * t * y2s,
-            ));
+            self.current
+                .push((
+                    mt * mt * x0 + 2.0 * mt * t * x1s + t * t * x2s,
+                    mt * mt * y0 + 2.0 * mt * t * y1s + t * t * y2s,
+                ));
         }
     }
 
     fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        let Some(&(x0, y0)) = self.current.last() else { return };
+        let Some(&(x0, y0)) = self
+            .current
+            .last()
+        else {
+            return;
+        };
         let x1s = x1 * self.scale - self.offset_x;
         let y1s = self.height - (y1 * self.scale - self.offset_y);
         let x2s = x2 * self.scale - self.offset_x;
@@ -208,16 +255,17 @@ impl ttf_parser::OutlineBuilder for ColrOutlineBuilder {
         for step in 1..=16u32 {
             let t = step as f32 / 16.0;
             let mt = 1.0 - t;
-            self.current.push((
-                mt * mt * mt * x0
-                    + 3.0 * mt * mt * t * x1s
-                    + 3.0 * mt * t * t * x2s
-                    + t * t * t * x3s,
-                mt * mt * mt * y0
-                    + 3.0 * mt * mt * t * y1s
-                    + 3.0 * mt * t * t * y2s
-                    + t * t * t * y3s,
-            ));
+            self.current
+                .push((
+                    mt * mt * mt * x0
+                        + 3.0 * mt * mt * t * x1s
+                        + 3.0 * mt * t * t * x2s
+                        + t * t * t * x3s,
+                    mt * mt * mt * y0
+                        + 3.0 * mt * mt * t * y1s
+                        + 3.0 * mt * t * t * y2s
+                        + t * t * t * y3s,
+                ));
         }
     }
 

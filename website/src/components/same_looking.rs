@@ -1,11 +1,23 @@
-use crate::utils::{app_padding, is_mobile, mobile_title};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::thread::{sleep, spawn};
+use std::time::Duration;
+
 use aimer::animation::{AnimatedSwitcher, Curve};
 use aimer::style::{FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle};
 use aimer::*;
-use std::time::Duration;
+
+use crate::utils::{app_padding, is_mobile, mobile_title};
 
 #[widget(Stateful)]
-pub struct SameLookingSection {}
+pub struct SameLookingSection {
+    pub key: Option<Key>,
+}
+
+pub static TEST_CLICKED: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+pub static TEST_STATE_UPDATED: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+pub static CURRENT_INDEX: AtomicUsize = AtomicUsize::new(0);
 
 pub struct SameLookingSectionState {
     current_index: usize,
@@ -52,39 +64,72 @@ impl State<SameLookingSection> for SameLookingSectionState {
     where
         Self: Sized,
     {
+        let updater_2 = updater.clone();
+        let is_clicked = TEST_CLICKED.load(Ordering::Relaxed);
+        // eprintln!("is clicked: {}", is_clicked);
+
+        if !is_clicked {
+            spawn(move || {
+                sleep(Duration::from_millis(150));
+                TEST_CLICKED.store(true, Ordering::Relaxed);
+                updater_2.set_state(|s| s.current_index = 1);
+
+                eprintln!("Clicked selected index to 2");
+            });
+        }
+
         self.state = updater;
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
-        Container::new().color(Color::WHITE).padding(app_padding(ctx)).child(
-            Column::new().horizontal_alignment(BoxAlignment::Center).children(vec![
-                Container::new()
-                    .height(100)
-                    .child(
-                        Text::new("Consistence Looking").text_style(
-                            TextStyle::new()
-                                .font_size(mobile_title(ctx))
-                                .color(Color::BLACK)
-                                .font_weight(FontWeight::Bolder)
-                                .text_decoration(TextDecoration::Underline),
-                        ),
-                    )
-                    .boxed(),
-                SizedBox::new().height(24).boxed(),
-                Container::new()
-                    .height(if is_mobile(ctx) { 250 } else { 450 })
-                    .child(platform_image_switcher(self.current_index))
-                    .boxed(),
-                SizedBox::new().height(40).boxed(),
-                Row::new()
+        #[cfg(test)]
+        {
+            // no need to change this
+            TEST_STATE_UPDATED.fetch_or(self.current_index == 1, Ordering::Relaxed);
+            // no need to change this because i need to know the current index after resie
+            CURRENT_INDEX.store(self.current_index, Ordering::Relaxed);
+        }
+        eprintln!("Current index: {}", self.current_index);
+        Container::new()
+            .color(Color::WHITE)
+            .padding(app_padding(ctx))
+            .child(
+                Column::new()
                     .horizontal_alignment(BoxAlignment::Center)
-                    .vertical_alignment(BoxAlignment::Center)
-                    .gaps(LayoutSpacing::horizontal(Spacing::Px(8)))
-                    .children(self.build_platform_button_list(ctx))
-                    .boxed(),
-                SizedBox::new().height(40).boxed(),
-            ]),
-        )
+                    .children(vec![
+                        Container::new()
+                            .height(100)
+                            .child(
+                                Text::new("Consistence Looking").text_style(
+                                    TextStyle::new()
+                                        .font_size(mobile_title(ctx))
+                                        .color(Color::BLACK)
+                                        .font_weight(FontWeight::Bolder)
+                                        .text_decoration(TextDecoration::Underline),
+                                ),
+                            )
+                            .boxed(),
+                        SizedBox::new()
+                            .height(24)
+                            .boxed(),
+                        Container::new()
+                            .height(if is_mobile(ctx) { 250 } else { 450 })
+                            .child(platform_image_switcher(self.current_index))
+                            .boxed(),
+                        SizedBox::new()
+                            .height(40)
+                            .boxed(),
+                        Row::new()
+                            .horizontal_alignment(BoxAlignment::Center)
+                            .vertical_alignment(BoxAlignment::Center)
+                            .gaps(LayoutSpacing::horizontal(Spacing::Px(8)))
+                            .children(self.build_platform_button_list(ctx))
+                            .boxed(),
+                        SizedBox::new()
+                            .height(40)
+                            .boxed(),
+                    ]),
+            )
     }
 }
 
@@ -95,7 +140,9 @@ impl SameLookingSectionState {
             .iter()
             .enumerate()
             .map({
-                let updater = self.state.clone();
+                let updater = self
+                    .state
+                    .clone();
                 move |(i, l)| {
                     let index = i;
                     let is_selected = index == selected;
@@ -129,7 +176,11 @@ impl SameLookingSectionState {
                             let updater = updater.clone();
                             move || {
                                 // println!("Tab {} pressed", index);
-                                if updater.read_state().current_index != index {
+                                if updater
+                                    .read_state()
+                                    .current_index
+                                    != index
+                                {
                                     updater.set_state(move |s| s.current_index = index);
                                 }
                             }

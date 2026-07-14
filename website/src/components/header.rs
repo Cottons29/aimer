@@ -1,37 +1,33 @@
+use std::sync::atomic::Ordering;
+
 use aimer::Dimension::Px;
 use aimer::router::NavigatorController;
 use aimer::style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing, TextDecoration,
     TextStyle,
 };
-use aimer::*;
-use aimer::{BuildContext, Container, State, StateUpdater, StatefulWidget, Text, Widget, widget};
+use aimer::{
+    BuildContext, Container, State, StateUpdater, StatefulWidget, Text, Widget, widget, *,
+};
 
 use crate::router::AppRouter;
+use crate::screen::home_screen::SHOW_ICON;
 
 #[widget(Stateful)]
 pub struct HeaderSection {
-    pub show_logo: bool,
-    /// Index of the active section (0 = Home, 1 = Docs, 2 = Learn), used to
-    /// highlight the matching header button.
     pub active_tab: usize,
 }
 
 pub struct HeaderState {
     tab: usize,
     updater: StateUpdater<Self>,
-    show_logo: bool,
 }
 
 impl StatefulWidget for HeaderSection {
     type State = HeaderState;
 
     fn create_state(&self) -> Self::State {
-        Self::State {
-            tab: self.active_tab,
-            updater: StateUpdater::new(),
-            show_logo: self.show_logo,
-        }
+        Self::State { tab: self.active_tab, updater: StateUpdater::new() }
     }
 }
 
@@ -44,14 +40,18 @@ impl State<HeaderSection> for HeaderState {
     }
 
     fn adopt_config_from(&mut self, new: &Self) {
-        self.show_logo = new.show_logo;
         self.tab = new.tab;
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let show_icon = if self.tab != 0 { true } else { SHOW_ICON.load(Ordering::Relaxed) };
+
+        // println!("show_icon: {}", show_icon);
         let children = vec![
-            SizedBox::new().width(16).boxed(),
-            if self.show_logo {
+            SizedBox::new()
+                .width(16)
+                .boxed(),
+            if show_icon {
                 Text::new("Aimer")
                     .text_style(
                         TextStyle::new()
@@ -62,9 +62,13 @@ impl State<HeaderSection> for HeaderState {
                     )
                     .boxed()
             } else {
-                SizedBox::new().width(100).boxed()
+                SizedBox::new()
+                    .width(100)
+                    .boxed()
             },
-            SizedBox::new().width(16).boxed(),
+            SizedBox::new()
+                .width(16)
+                .boxed(),
             Expanded::new()
                 .child(
                     Container::new().child(
@@ -76,7 +80,9 @@ impl State<HeaderSection> for HeaderState {
                     ),
                 )
                 .boxed(),
-            SizedBox::new().width(16).boxed(),
+            SizedBox::new()
+                .width(16)
+                .boxed(),
         ];
 
         Container::new()
@@ -92,17 +98,21 @@ impl State<HeaderSection> for HeaderState {
                     ),
                 ),
             )
-            .child(Row::new().vertical_alignment(BoxAlignment::Center).children(children))
+            .child(
+                Row::new()
+                    .vertical_alignment(BoxAlignment::Center)
+                    .children(children),
+            )
     }
 }
 
 impl HeaderState {
-    const SECTIONS: &[&str] = &["Home", "Docs", "Learn"];
+    const SECTIONS: &[&str] = &["Home", "Blog", "Learn"];
 
     /// Resolve a section index to the route it navigates to.
     fn route_for(index: usize) -> AppRouter {
         match index {
-            1 => AppRouter::Docs,
+            1 => AppRouter::Blog,
             2 => AppRouter::Learn,
             _ => AppRouter::Home,
         }

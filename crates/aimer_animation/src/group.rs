@@ -1,6 +1,7 @@
+use std::time::Duration;
+
 use crate::controller::{AnimationController, AnimationStatus};
 use crate::time::AnimInstant;
-use std::time::Duration;
 
 /// Runs multiple animations simultaneously.
 ///
@@ -39,12 +40,17 @@ impl ParallelAnimation {
 
     /// Returns `true` if any controller is still animating.
     pub fn is_animating(&self) -> bool {
-        self.controllers.iter().any(|c| c.is_animating())
+        self.controllers
+            .iter()
+            .any(|c| c.is_animating())
     }
 
     /// Tick all controllers. Returns the curved values of each controller.
     pub fn tick(&mut self, now: AnimInstant) -> Vec<f32> {
-        self.controllers.iter_mut().map(|c| c.tick(now)).collect()
+        self.controllers
+            .iter_mut()
+            .map(|c| c.tick(now))
+            .collect()
     }
 
     /// Returns the aggregate status:
@@ -53,12 +59,22 @@ impl ParallelAnimation {
     /// - `Reverse` if any is still animating in reverse
     /// - `Dismissed` if all are dismissed
     pub fn aggregate_status(&self) -> AnimationStatus {
-        let has_forward = self.controllers.iter().any(|c| c.status() == AnimationStatus::Forward);
-        let has_reverse = self.controllers.iter().any(|c| c.status() == AnimationStatus::Reverse);
-        let all_completed =
-            self.controllers.iter().all(|c| c.status() == AnimationStatus::Completed);
-        let all_dismissed =
-            self.controllers.iter().all(|c| c.status() == AnimationStatus::Dismissed);
+        let has_forward = self
+            .controllers
+            .iter()
+            .any(|c| c.status() == AnimationStatus::Forward);
+        let has_reverse = self
+            .controllers
+            .iter()
+            .any(|c| c.status() == AnimationStatus::Reverse);
+        let all_completed = self
+            .controllers
+            .iter()
+            .all(|c| c.status() == AnimationStatus::Completed);
+        let all_dismissed = self
+            .controllers
+            .iter()
+            .all(|c| c.status() == AnimationStatus::Dismissed);
 
         if has_forward {
             AnimationStatus::Forward
@@ -91,15 +107,24 @@ impl SequentialAnimation {
     /// Start the sequence forward (starts the first controller).
     pub fn forward(&mut self) {
         self.current_index = 0;
-        if let Some(ctrl) = self.controllers.first_mut() {
+        if let Some(ctrl) = self
+            .controllers
+            .first_mut()
+        {
             ctrl.forward();
         }
     }
 
     /// Start the sequence in reverse (starts the last controller in reverse).
     pub fn reverse(&mut self) {
-        self.current_index = self.controllers.len().saturating_sub(1);
-        if let Some(ctrl) = self.controllers.last_mut() {
+        self.current_index = self
+            .controllers
+            .len()
+            .saturating_sub(1);
+        if let Some(ctrl) = self
+            .controllers
+            .last_mut()
+        {
             ctrl.reverse();
         }
     }
@@ -114,7 +139,10 @@ impl SequentialAnimation {
 
     /// Returns `true` if the sequence is still running.
     pub fn is_animating(&self) -> bool {
-        self.current_index < self.controllers.len()
+        self.current_index
+            < self
+                .controllers
+                .len()
             && self.controllers[self.current_index].is_animating()
     }
 
@@ -136,7 +164,11 @@ impl SequentialAnimation {
 
     /// Tick the current controller. Advances to the next when complete.
     pub fn tick(&mut self, now: AnimInstant) -> f32 {
-        if self.current_index >= self.controllers.len() {
+        if self.current_index
+            >= self
+                .controllers
+                .len()
+        {
             return 0.0;
         }
 
@@ -145,7 +177,11 @@ impl SequentialAnimation {
         // Advance to next controller if current completed
         if self.controllers[self.current_index].status() == AnimationStatus::Completed {
             self.current_index += 1;
-            if self.current_index < self.controllers.len() {
+            if self.current_index
+                < self
+                    .controllers
+                    .len()
+            {
                 self.controllers[self.current_index].forward();
             }
         }
@@ -174,9 +210,16 @@ impl StaggeredAnimation {
     /// Start all controllers (they will activate with stagger delays).
     pub fn forward(&mut self) {
         self.start_time = Some(AnimInstant::now());
-        self.started = vec![false; self.controllers.len()];
+        self.started = vec![
+            false;
+            self.controllers
+                .len()
+        ];
         // Start the first one immediately
-        if let Some(ctrl) = self.controllers.first_mut() {
+        if let Some(ctrl) = self
+            .controllers
+            .first_mut()
+        {
             ctrl.forward();
             self.started[0] = true;
         }
@@ -185,33 +228,57 @@ impl StaggeredAnimation {
     /// Reset all controllers.
     pub fn reset(&mut self) {
         self.start_time = None;
-        self.started = vec![false; self.controllers.len()];
+        self.started = vec![
+            false;
+            self.controllers
+                .len()
+        ];
         for ctrl in &mut self.controllers {
             ctrl.reset();
         }
     }
 
-    /// Returns `true` if any controller is still animating or hasn't started yet.
+    /// Returns `true` if any controller is still animating or hasn't started
+    /// yet.
     pub fn is_animating(&self) -> bool {
-        if self.start_time.is_none() {
+        if self
+            .start_time
+            .is_none()
+        {
             return false;
         }
-        let all_started = self.started.iter().all(|&s| s);
-        let any_animating = self.controllers.iter().any(|c| c.is_animating());
+        let all_started = self
+            .started
+            .iter()
+            .all(|&s| s);
+        let any_animating = self
+            .controllers
+            .iter()
+            .any(|c| c.is_animating());
         !all_started || any_animating
     }
 
-    /// Tick all controllers, starting delayed ones as their stagger time arrives.
+    /// Tick all controllers, starting delayed ones as their stagger time
+    /// arrives.
     pub fn tick(&mut self, now: AnimInstant) -> Vec<f32> {
         let start = match self.start_time {
             Some(s) => s,
-            None => return self.controllers.iter().map(|_| 0.0).collect(),
+            None => {
+                return self
+                    .controllers
+                    .iter()
+                    .map(|_| 0.0)
+                    .collect();
+            }
         };
 
         let elapsed = now.duration_since(start);
 
         // Start delayed controllers
-        for i in 1..self.controllers.len() {
+        for i in 1..self
+            .controllers
+            .len()
+        {
             if !self.started[i] {
                 let delay = self.stagger_delay * i as u32;
                 if elapsed >= delay {
@@ -221,7 +288,10 @@ impl StaggeredAnimation {
             }
         }
 
-        self.controllers.iter_mut().map(|c| c.tick(now)).collect()
+        self.controllers
+            .iter_mut()
+            .map(|c| c.tick(now))
+            .collect()
     }
 }
 
@@ -288,6 +358,10 @@ mod tests {
 
         // At t=125ms, all should be started
         anim.tick(start + Duration::from_millis(125));
-        assert!(anim.started.iter().all(|&s| s));
+        assert!(
+            anim.started
+                .iter()
+                .all(|&s| s)
+        );
     }
 }

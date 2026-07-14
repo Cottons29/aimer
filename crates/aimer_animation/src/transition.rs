@@ -1,5 +1,6 @@
-use crate::controller::AnimationController;
-use crate::time::AnimInstant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
@@ -7,8 +8,9 @@ use aimer_widget::base::*;
 use aimer_widget::{
     Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+
+use crate::controller::AnimationController;
+use crate::time::AnimInstant;
 
 // ---------------------------------------------------------------------------
 // FadeTransition
@@ -30,10 +32,20 @@ impl<T: Widget> FadeTransition<T> {
 
 impl<T: Widget + 'static> Widget for FadeTransition<T> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self.child.to_element(ctx);
-        let controller = Arc::new(Mutex::new(self.opacity.clone()));
-        let animating = Arc::new(AtomicBool::new(self.opacity.is_animating()));
-        let window: &'static winit::window::Window = ctx.window;
+        let child = self
+            .child
+            .to_element(ctx);
+        let controller = Arc::new(Mutex::new(
+            self.opacity
+                .clone(),
+        ));
+        let animating = Arc::new(AtomicBool::new(
+            self.opacity
+                .is_animating(),
+        ));
+        let window = ctx
+            .window
+            .clone();
         Box::new(FadeTransitionElement { child, controller, animating, window })
     }
 }
@@ -44,7 +56,7 @@ macro_rules! impl_transition_element {
             child: Box<dyn Element>,
             controller: Arc<Mutex<AnimationController>>,
             animating: Arc<AtomicBool>,
-            window: &'static winit::window::Window,
+            window: WindowHandle,
         }
 
         unsafe impl Send for $name {}
@@ -54,19 +66,30 @@ macro_rules! impl_transition_element {
             fn draw(&self, ctx: &BuildContext) {
                 let now = AnimInstant::now();
                 let curved_value = {
-                    let ctrl = self.controller.lock().unwrap();
+                    let ctrl = self
+                        .controller
+                        .lock()
+                        .unwrap();
                     let v = ctrl.tick(now);
-                    self.animating.store(ctrl.is_animating(), Ordering::Relaxed);
+                    self.animating
+                        .store(ctrl.is_animating(), Ordering::Relaxed);
                     v
                 };
 
-                ctx.canvas.save();
+                ctx.canvas
+                    .save();
                 $apply(ctx, curved_value);
-                self.child.draw(ctx);
-                ctx.canvas.restore();
+                self.child
+                    .draw(ctx);
+                ctx.canvas
+                    .restore();
 
-                if self.animating.load(Ordering::Relaxed) {
-                    self.window.request_redraw();
+                if self
+                    .animating
+                    .load(Ordering::Relaxed)
+                {
+                    self.window
+                        .request_redraw();
                 }
             }
         }
@@ -76,43 +99,57 @@ macro_rules! impl_transition_element {
                 $debug
             }
             fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-                visitor(self.child.as_ref());
+                visitor(
+                    self.child
+                        .as_ref(),
+                );
             }
         }
 
         impl EventElement for $name {
             fn on_event(&self, event: &ElementEvent) -> bool {
-                self.child.on_event(event)
+                self.child
+                    .on_event(event)
             }
             fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-                visitor(self.child.as_ref());
+                visitor(
+                    self.child
+                        .as_ref(),
+                );
             }
         }
 
         impl Rebuildable for $name {
             fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-                self.child.rebuild_if_dirty(ctx);
+                self.child
+                    .rebuild_if_dirty(ctx);
             }
         }
 
         impl LayoutElement for $name {
             fn pos(&self) -> Option<Vec2d> {
-                self.child.pos()
+                self.child
+                    .pos()
             }
             fn size(&self) -> Option<Size> {
-                self.child.size()
+                self.child
+                    .size()
             }
             fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-                self.child.computed_size(ctx)
+                self.child
+                    .computed_size(ctx)
             }
             fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-                self.child.content_size(ctx)
+                self.child
+                    .content_size(ctx)
             }
             fn get_size_from_child(&self) -> Option<Size> {
-                self.child.get_size_from_child()
+                self.child
+                    .get_size_from_child()
             }
             fn invalidate_layout(&self) {
-                self.child.invalidate_layout();
+                self.child
+                    .invalidate_layout();
             }
         }
     };
@@ -122,7 +159,8 @@ impl_transition_element!(
     FadeTransitionElement,
     "FadeTransitionElement",
     |ctx: &BuildContext, v: f32| {
-        ctx.canvas.set_alpha(v.clamp(0.0, 1.0));
+        ctx.canvas
+            .set_alpha(v.clamp(0.0, 1.0));
     }
 );
 
@@ -133,10 +171,12 @@ impl_transition_element!(
 /// Animates a slide offset for its child.
 ///
 /// The child is translated by `offset * controller_value` pixels.
-/// At value 0.0 the child is at the offset position; at 1.0 it's at its natural position.
+/// At value 0.0 the child is at the offset position; at 1.0 it's at its natural
+/// position.
 pub struct SlideTransition<T: Widget + 'static> {
     pub position: AnimationController,
-    /// The offset direction in pixels at value 0.0. At value 1.0 the child is at (0,0).
+    /// The offset direction in pixels at value 0.0. At value 1.0 the child is
+    /// at (0,0).
     pub offset: (f32, f32),
     pub child: T,
 }
@@ -149,10 +189,20 @@ impl<T: Widget> SlideTransition<T> {
 
 impl<T: Widget + 'static> Widget for SlideTransition<T> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self.child.to_element(ctx);
-        let controller = Arc::new(Mutex::new(self.position.clone()));
-        let animating = Arc::new(AtomicBool::new(self.position.is_animating()));
-        let window: &'static winit::window::Window = ctx.window;
+        let child = self
+            .child
+            .to_element(ctx);
+        let controller = Arc::new(Mutex::new(
+            self.position
+                .clone(),
+        ));
+        let animating = Arc::new(AtomicBool::new(
+            self.position
+                .is_animating(),
+        ));
+        let window = ctx
+            .window
+            .clone();
         let offset = self.offset;
         Box::new(SlideTransitionElement { child, controller, animating, window, offset })
     }
@@ -162,7 +212,7 @@ struct SlideTransitionElement {
     child: Box<dyn Element>,
     controller: Arc<Mutex<AnimationController>>,
     animating: Arc<AtomicBool>,
-    window: &'static winit::window::Window,
+    window: WindowHandle,
     offset: (f32, f32),
 }
 
@@ -173,24 +223,43 @@ impl Drawable for SlideTransitionElement {
     fn draw(&self, ctx: &BuildContext) {
         let now = AnimInstant::now();
         let curved_value = {
-            let ctrl = self.controller.lock().unwrap();
+            let ctrl = self
+                .controller
+                .lock()
+                .unwrap();
             let v = ctrl.tick(now);
-            self.animating.store(ctrl.is_animating(), Ordering::Relaxed);
+            self.animating
+                .store(ctrl.is_animating(), Ordering::Relaxed);
             v
         };
 
-        // At value 0.0: child is fully offset. At value 1.0: child is at natural position.
+        // At value 0.0: child is fully offset. At value 1.0: child is at natural
+        // position.
         let remaining = 1.0 - curved_value;
-        let dx = self.offset.0 * remaining;
-        let dy = self.offset.1 * remaining;
+        let dx = self
+            .offset
+            .0
+            * remaining;
+        let dy = self
+            .offset
+            .1
+            * remaining;
 
-        ctx.canvas.save();
-        ctx.canvas.translate((dx, dy).into());
-        self.child.draw(ctx);
-        ctx.canvas.restore();
+        ctx.canvas
+            .save();
+        ctx.canvas
+            .translate((dx, dy).into());
+        self.child
+            .draw(ctx);
+        ctx.canvas
+            .restore();
 
-        if self.animating.load(Ordering::Relaxed) {
-            self.window.request_redraw();
+        if self
+            .animating
+            .load(Ordering::Relaxed)
+        {
+            self.window
+                .request_redraw();
         }
     }
 }
@@ -200,43 +269,57 @@ impl VisitorElement for SlideTransitionElement {
         "SlideTransitionElement"
     }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 }
 
 impl EventElement for SlideTransitionElement {
     fn on_event(&self, event: &ElementEvent) -> bool {
-        self.child.on_event(event)
+        self.child
+            .on_event(event)
     }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 }
 
 impl Rebuildable for SlideTransitionElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.child.rebuild_if_dirty(ctx);
+        self.child
+            .rebuild_if_dirty(ctx);
     }
 }
 
 impl LayoutElement for SlideTransitionElement {
     fn pos(&self) -> Option<Vec2d> {
-        self.child.pos()
+        self.child
+            .pos()
     }
     fn size(&self) -> Option<Size> {
-        self.child.size()
+        self.child
+            .size()
     }
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.computed_size(ctx)
+        self.child
+            .computed_size(ctx)
     }
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.content_size(ctx)
+        self.child
+            .content_size(ctx)
     }
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child.get_size_from_child()
+        self.child
+            .get_size_from_child()
     }
     fn invalidate_layout(&self) {
-        self.child.invalidate_layout();
+        self.child
+            .invalidate_layout();
     }
 }
 
@@ -258,10 +341,20 @@ impl<T: Widget> ScaleTransition<T> {
 
 impl<T: Widget + 'static> Widget for ScaleTransition<T> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self.child.to_element(ctx);
-        let controller = Arc::new(Mutex::new(self.scale.clone()));
-        let animating = Arc::new(AtomicBool::new(self.scale.is_animating()));
-        let window: &'static winit::window::Window = ctx.window;
+        let child = self
+            .child
+            .to_element(ctx);
+        let controller = Arc::new(Mutex::new(
+            self.scale
+                .clone(),
+        ));
+        let animating = Arc::new(AtomicBool::new(
+            self.scale
+                .is_animating(),
+        ));
+        let window = ctx
+            .window
+            .clone();
         Box::new(ScaleTransitionElement { child, controller, animating, window })
     }
 }
@@ -270,7 +363,7 @@ struct ScaleTransitionElement {
     child: Box<dyn Element>,
     controller: Arc<Mutex<AnimationController>>,
     animating: Arc<AtomicBool>,
-    window: &'static winit::window::Window,
+    window: WindowHandle,
 }
 
 unsafe impl Send for ScaleTransitionElement {}
@@ -280,24 +373,44 @@ impl Drawable for ScaleTransitionElement {
     fn draw(&self, ctx: &BuildContext) {
         let now = AnimInstant::now();
         let curved_value = {
-            let ctrl = self.controller.lock().unwrap();
+            let ctrl = self
+                .controller
+                .lock()
+                .unwrap();
             let v = ctrl.tick(now);
-            self.animating.store(ctrl.is_animating(), Ordering::Relaxed);
+            self.animating
+                .store(ctrl.is_animating(), Ordering::Relaxed);
             v
         };
 
-        let cx = ctx.box_constraint.max_width / 2.0;
-        let cy = ctx.box_constraint.max_height / 2.0;
+        let cx = ctx
+            .box_constraint
+            .max_width
+            / 2.0;
+        let cy = ctx
+            .box_constraint
+            .max_height
+            / 2.0;
 
-        ctx.canvas.save();
-        ctx.canvas.translate((cx, cy).into());
-        ctx.canvas.scale(curved_value, curved_value);
-        ctx.canvas.translate((-cx, -cy).into());
-        self.child.draw(ctx);
-        ctx.canvas.restore();
+        ctx.canvas
+            .save();
+        ctx.canvas
+            .translate((cx, cy).into());
+        ctx.canvas
+            .scale(curved_value, curved_value);
+        ctx.canvas
+            .translate((-cx, -cy).into());
+        self.child
+            .draw(ctx);
+        ctx.canvas
+            .restore();
 
-        if self.animating.load(Ordering::Relaxed) {
-            self.window.request_redraw();
+        if self
+            .animating
+            .load(Ordering::Relaxed)
+        {
+            self.window
+                .request_redraw();
         }
     }
 }
@@ -307,43 +420,57 @@ impl VisitorElement for ScaleTransitionElement {
         "ScaleTransitionElement"
     }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 }
 
 impl EventElement for ScaleTransitionElement {
     fn on_event(&self, event: &ElementEvent) -> bool {
-        self.child.on_event(event)
+        self.child
+            .on_event(event)
     }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 }
 
 impl Rebuildable for ScaleTransitionElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.child.rebuild_if_dirty(ctx);
+        self.child
+            .rebuild_if_dirty(ctx);
     }
 }
 
 impl LayoutElement for ScaleTransitionElement {
     fn pos(&self) -> Option<Vec2d> {
-        self.child.pos()
+        self.child
+            .pos()
     }
     fn size(&self) -> Option<Size> {
-        self.child.size()
+        self.child
+            .size()
     }
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.computed_size(ctx)
+        self.child
+            .computed_size(ctx)
     }
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.content_size(ctx)
+        self.child
+            .content_size(ctx)
     }
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child.get_size_from_child()
+        self.child
+            .get_size_from_child()
     }
     fn invalidate_layout(&self) {
-        self.child.invalidate_layout();
+        self.child
+            .invalidate_layout();
     }
 }
 
@@ -351,9 +478,11 @@ impl LayoutElement for ScaleTransitionElement {
 // RotationTransition
 // ---------------------------------------------------------------------------
 
-/// Animates rotation (in full turns) for its child based on the controller's value.
+/// Animates rotation (in full turns) for its child based on the controller's
+/// value.
 ///
-/// At value 0.0 the child is at 0 rotation; at 1.0 it has completed one full turn (2π radians).
+/// At value 0.0 the child is at 0 rotation; at 1.0 it has completed one full
+/// turn (2π radians).
 pub struct RotationTransition<T: Widget + 'static> {
     pub turns: AnimationController,
     pub child: T,
@@ -367,10 +496,20 @@ impl<T: Widget> RotationTransition<T> {
 
 impl<T: Widget + 'static> Widget for RotationTransition<T> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self.child.to_element(ctx);
-        let controller = Arc::new(Mutex::new(self.turns.clone()));
-        let animating = Arc::new(AtomicBool::new(self.turns.is_animating()));
-        let window: &'static winit::window::Window = ctx.window;
+        let child = self
+            .child
+            .to_element(ctx);
+        let controller = Arc::new(Mutex::new(
+            self.turns
+                .clone(),
+        ));
+        let animating = Arc::new(AtomicBool::new(
+            self.turns
+                .is_animating(),
+        ));
+        let window = ctx
+            .window
+            .clone();
         Box::new(RotationTransitionElement { child, controller, animating, window })
     }
 }
@@ -379,7 +518,7 @@ struct RotationTransitionElement {
     child: Box<dyn Element>,
     controller: Arc<Mutex<AnimationController>>,
     animating: Arc<AtomicBool>,
-    window: &'static winit::window::Window,
+    window: WindowHandle,
 }
 
 unsafe impl Send for RotationTransitionElement {}
@@ -389,26 +528,46 @@ impl Drawable for RotationTransitionElement {
     fn draw(&self, ctx: &BuildContext) {
         let now = AnimInstant::now();
         let curved_value = {
-            let ctrl = self.controller.lock().unwrap();
+            let ctrl = self
+                .controller
+                .lock()
+                .unwrap();
             let v = ctrl.tick(now);
-            self.animating.store(ctrl.is_animating(), Ordering::Relaxed);
+            self.animating
+                .store(ctrl.is_animating(), Ordering::Relaxed);
             v
         };
 
         // Convert turns to radians: 1.0 turn = 2π radians
         let angle = curved_value * std::f32::consts::TAU;
-        let cx = ctx.box_constraint.max_width / 2.0;
-        let cy = ctx.box_constraint.max_height / 2.0;
+        let cx = ctx
+            .box_constraint
+            .max_width
+            / 2.0;
+        let cy = ctx
+            .box_constraint
+            .max_height
+            / 2.0;
 
-        ctx.canvas.save();
-        ctx.canvas.translate((cx, cy).into());
-        ctx.canvas.rotate(angle);
-        ctx.canvas.translate((-cx, -cy).into());
-        self.child.draw(ctx);
-        ctx.canvas.restore();
+        ctx.canvas
+            .save();
+        ctx.canvas
+            .translate((cx, cy).into());
+        ctx.canvas
+            .rotate(angle);
+        ctx.canvas
+            .translate((-cx, -cy).into());
+        self.child
+            .draw(ctx);
+        ctx.canvas
+            .restore();
 
-        if self.animating.load(Ordering::Relaxed) {
-            self.window.request_redraw();
+        if self
+            .animating
+            .load(Ordering::Relaxed)
+        {
+            self.window
+                .request_redraw();
         }
     }
 }
@@ -418,42 +577,56 @@ impl VisitorElement for RotationTransitionElement {
         "RotationTransitionElement"
     }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 }
 
 impl EventElement for RotationTransitionElement {
     fn on_event(&self, event: &ElementEvent) -> bool {
-        self.child.on_event(event)
+        self.child
+            .on_event(event)
     }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 }
 
 impl Rebuildable for RotationTransitionElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.child.rebuild_if_dirty(ctx);
+        self.child
+            .rebuild_if_dirty(ctx);
     }
 }
 
 impl LayoutElement for RotationTransitionElement {
     fn pos(&self) -> Option<Vec2d> {
-        self.child.pos()
+        self.child
+            .pos()
     }
     fn size(&self) -> Option<Size> {
-        self.child.size()
+        self.child
+            .size()
     }
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.computed_size(ctx)
+        self.child
+            .computed_size(ctx)
     }
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.content_size(ctx)
+        self.child
+            .content_size(ctx)
     }
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child.get_size_from_child()
+        self.child
+            .get_size_from_child()
     }
     fn invalidate_layout(&self) {
-        self.child.invalidate_layout();
+        self.child
+            .invalidate_layout();
     }
 }

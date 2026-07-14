@@ -1,4 +1,5 @@
-use syn::{LitStr, parse::Parse};
+use syn::LitStr;
+use syn::parse::Parse;
 
 pub struct UniqueKeyInput {
     pub(crate) prefix: Option<LitStr>,

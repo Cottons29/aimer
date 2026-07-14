@@ -1,9 +1,11 @@
+use std::path::Path;
+use std::process::Command;
+
+use anyhow::{Context, bail};
+
 use crate::config::AimerManifest;
 use crate::errors::AimerError;
 use crate::targets::Targets;
-use anyhow::{Context, bail};
-use std::path::Path;
-use std::process::Command;
 
 /// Non-interactive build entry point used by `aimer build`.
 ///
@@ -38,7 +40,10 @@ fn resolve_target(target: Option<String>) -> anyhow::Result<Targets> {
     let manifest_default = AimerManifest::load_from(Path::new("."))
         .ok()
         .flatten()
-        .and_then(|m| m.default_target().map(|s| s.to_string()));
+        .and_then(|m| {
+            m.default_target()
+                .map(|s| s.to_string())
+        });
     if let Some(default) = manifest_default {
         return Targets::try_from(default.as_str())
             .map_err(|_| AimerError::UnknownTarget(default).into());
@@ -55,7 +60,8 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
     let mut cmd = match target {
         Targets::Web => {
             let mut c = Command::new("trunk");
-            c.arg("build").current_dir("builds/web");
+            c.arg("build")
+                .current_dir("builds/web");
             if release {
                 c.arg("--release");
             }
@@ -63,7 +69,11 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
         }
         Targets::Android | Targets::AndroidSimulator => {
             let mut c = Command::new("cargo");
-            c.arg("ndk").arg("-t").arg("arm64-v8a").arg("build").arg("--lib");
+            c.arg("ndk")
+                .arg("-t")
+                .arg("arm64-v8a")
+                .arg("build")
+                .arg("--lib");
             if release {
                 c.arg("--release");
             }
@@ -71,7 +81,8 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
         }
         Targets::Macos => {
             let mut c = Command::new("cargo");
-            c.arg("build").args(["--target", "aarch64-apple-darwin", "--lib"]);
+            c.arg("build")
+                .args(["--target", "aarch64-apple-darwin", "--lib"]);
             if release {
                 c.arg("--release");
             }
@@ -95,7 +106,8 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
         }
         Targets::Windows | Targets::Linux => {
             let mut c = Command::new("cargo");
-            c.arg("build").arg("--lib");
+            c.arg("build")
+                .arg("--lib");
             if release {
                 c.arg("--release");
             }

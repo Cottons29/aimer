@@ -9,7 +9,9 @@ pub fn generate_raw_widget_impl(input: TokenStream) -> TokenStream {
     };
 
     let struct_name = &item_struct.ident;
-    let (impl_generics, ty_generics, where_clause) = item_struct.generics.split_for_impl();
+    let (impl_generics, ty_generics, where_clause) = item_struct
+        .generics
+        .split_for_impl();
 
     let output = quote! {
         #item_struct

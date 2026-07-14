@@ -1,5 +1,6 @@
-use aimer_color::prelude::Color as AimerColor;
 use std::ops::Mul;
+
+use aimer_color::prelude::Color as AimerColor;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Color {

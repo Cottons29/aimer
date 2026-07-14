@@ -1,10 +1,12 @@
-use crate::commands::run::cargo_build::CargoBuildTarget;
-use colored::Colorize;
-use crossterm::style::Stylize;
 use std::env::current_dir;
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::Command;
+
+use colored::Colorize;
+use crossterm::style::Stylize;
+
+use crate::commands::run::cargo_build::CargoBuildTarget;
 
 pub trait LogStyling {
     fn process_log(self) -> String;
@@ -19,7 +21,10 @@ pub fn get_project_root(allow_workspace: bool) -> Result<PathBuf, Box<dyn Error>
     }
 
     let output = command.output()?;
-    if !output.status.success() {
+    if !output
+        .status
+        .success()
+    {
         return Err("cargo locate-project failed".into());
     }
     let cargo_toml = String::from_utf8(output.stdout)?;
@@ -44,13 +49,17 @@ pub fn resolve_lib_path(lib_name: &str, rust_target: &str, target: CargoBuildTar
 impl LogStyling for String {
     fn process_log(self) -> String {
         if self.contains("[ERROR]") {
-            self.red().to_string()
+            self.red()
+                .to_string()
         } else if self.contains("[WARN]") {
-            self.yellow().to_string()
+            self.yellow()
+                .to_string()
         } else if self.contains("[DEBUG]") || self.contains("hot-reload") {
-            self.green().to_string()
+            self.green()
+                .to_string()
         } else if self.contains("[INFO]") {
-            self.bright_cyan().to_string()
+            self.bright_cyan()
+                .to_string()
         } else {
             self
         }
@@ -59,8 +68,9 @@ impl LogStyling for String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::env;
+
+    use super::*;
 
     #[test]
     fn test_finding_project_root() {
@@ -76,8 +86,14 @@ mod tests {
 
         let project_root = get_project_root(true);
         assert!(project_root.is_ok());
-        let is_pass = project_root.as_ref().unwrap() == &expected
-            || project_root.as_ref().unwrap() == &another_expected;
+        let is_pass = project_root
+            .as_ref()
+            .unwrap()
+            == &expected
+            || project_root
+                .as_ref()
+                .unwrap()
+                == &another_expected;
         assert!(is_pass, "Project root not found project_root: {:?}", project_root);
     }
 
@@ -114,7 +130,9 @@ mod tests {
     #[test]
     fn process_log_plain_text_unchanged() {
         let input = "just a normal message";
-        let result = input.to_string().process_log();
+        let result = input
+            .to_string()
+            .process_log();
         assert_eq!(result, input);
     }
 

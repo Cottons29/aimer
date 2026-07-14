@@ -1,14 +1,16 @@
-use crate::ImageResult::Success;
-use crate::img_widget::source::ImageSource;
-use crate::{ImageProvider, ImageResult};
+use std::cell::{Cell, UnsafeCell};
+use std::path::PathBuf;
+
 use aimer_attribute::Dimension;
 use aimer_container::ZeroSizedBox;
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::BoxFit;
 use aimer_widget::base::{BuildContext, Color, Colors, ResolvedSize, Size, Vec2d};
 use aimer_widget::{Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget};
-use std::cell::{Cell, UnsafeCell};
-use std::path::PathBuf;
+
+use crate::ImageResult::Success;
+use crate::img_widget::source::ImageSource;
+use crate::{ImageProvider, ImageResult};
 
 pub struct Image {
     pub path: PathBuf,
@@ -53,7 +55,10 @@ impl Image {
 impl Widget for Image {
     fn to_element(&self, _: &BuildContext) -> Box<dyn Element> {
         Box::new(RawImageWidget {
-            source: ImageSource::File(self.path.clone()),
+            source: ImageSource::File(
+                self.path
+                    .clone(),
+            ),
             size: Size { width: self.width, height: self.height },
             cache: LayoutCache::new(),
             fit: self.fit,
@@ -93,24 +98,34 @@ impl<P: ImageProvider> VisitorElement for RawImageWidget<P> {
 
 impl<P: ImageProvider> LayoutElement for RawImageWidget<P> {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let scale_bits = ctx.scale.to_bits();
-        if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
+        let scale_bits = ctx
+            .scale
+            .to_bits();
+        if let Some(cached) = self
+            .cache
+            .get_computed(ctx.box_constraint, scale_bits)
+        {
             return cached;
         }
 
-        let result = self.size.resolve(&ctx.parent_size, ctx.scale);
+        let result = self
+            .size
+            .resolve(&ctx.parent_size, ctx.scale);
 
-        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
+        self.cache
+            .set_computed(ctx.box_constraint, scale_bits, result);
 
         result
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.size.resolve(&ctx.parent_size, ctx.scale)
+        self.size
+            .resolve(&ctx.parent_size, ctx.scale)
     }
 
     fn invalidate_layout(&self) {
-        self.cache.invalidate();
+        self.cache
+            .invalidate();
     }
 }
 
@@ -119,7 +134,9 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
         #[cfg(debug_assertions)]
         {
             if aimer_widget::inspector_overlay::is_enabled() {
-                let (start_x, start_y) = ctx.canvas.get_transform_translation();
+                let (start_x, start_y) = ctx
+                    .canvas
+                    .get_transform_translation();
                 let size = self.content_size(ctx);
                 let end_x = start_x + size.width;
                 let end_y = start_y + size.height;
@@ -138,20 +155,36 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
             }
         }
         let size = self.computed_size(ctx);
-        let image_result = if let Some(result) = unsafe { &*self.cached_id.get() } {
+        let image_result = if let Some(result) = unsafe {
+            &*self
+                .cached_id
+                .get()
+        } {
             if result == &ImageResult::Loading {
-                let r = self.source.get_image(ctx);
+                let r = self
+                    .source
+                    .get_image(ctx);
                 if r != ImageResult::Loading {
-                    unsafe { *self.cached_id.get() = Some(r.clone()) };
+                    unsafe {
+                        *self
+                            .cached_id
+                            .get() = Some(r.clone())
+                    };
                 }
                 r
             } else {
                 result.clone()
             }
         } else {
-            let result = self.source.get_image(ctx);
+            let result = self
+                .source
+                .get_image(ctx);
             if result != ImageResult::Loading {
-                unsafe { *self.cached_id.get() = Some(result.clone()) };
+                unsafe {
+                    *self
+                        .cached_id
+                        .get() = Some(result.clone())
+                };
             }
             result
         };
@@ -159,12 +192,19 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
         match image_result {
             Success(id) => {
                 if self.keep_aspect_ratio {
-                    if let Some((iw, ih)) = ctx.canvas.get_image_size(id) {
+                    if let Some((iw, ih)) = ctx
+                        .canvas
+                        .get_image_size(id)
+                    {
                         let iw = iw as f32;
                         let ih = ih as f32;
                         if iw > 0.0 && ih > 0.0 {
-                            let target_w = size.width.max(0.0);
-                            let target_h = size.height.max(0.0);
+                            let target_w = size
+                                .width
+                                .max(0.0);
+                            let target_h = size
+                                .height
+                                .max(0.0);
                             let mut draw_pos = Vec2d { x: 0.0, y: 0.0 };
                             #[allow(unused_assignments)]
                             let mut draw_size = size;
@@ -207,7 +247,8 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                                     (w, h, true, true)
                                 }
                                 BoxFit::Fill => {
-                                    // With keep_aspect_ratio=true, prefer Contain semantics to avoid distortion
+                                    // With keep_aspect_ratio=true, prefer Contain semantics to
+                                    // avoid distortion
                                     let scale = scale_x.min(scale_y);
                                     let w = iw * scale * self.scale;
                                     let h = ih * scale * self.scale;
@@ -224,11 +265,15 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
 
                             if use_cover {
                                 // Clip to target box to emulate cover cropping
-                                ctx.canvas.set_clip(Vec2d { x: 0.0, y: 0.0 }, size);
-                                ctx.canvas.draw_image(id, draw_pos, draw_size);
-                                ctx.canvas.clear_clip();
+                                ctx.canvas
+                                    .set_clip(Vec2d { x: 0.0, y: 0.0 }, size);
+                                ctx.canvas
+                                    .draw_image(id, draw_pos, draw_size);
+                                ctx.canvas
+                                    .clear_clip();
                             } else {
-                                ctx.canvas.draw_image(id, draw_pos, draw_size);
+                                ctx.canvas
+                                    .draw_image(id, draw_pos, draw_size);
                             }
                         } else {
                             // Fallback: invalid intrinsic size
@@ -239,7 +284,8 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                                 y: (size.height - final_h) * 0.5,
                             };
                             let draw_size = ResolvedSize { width: final_w, height: final_h };
-                            ctx.canvas.draw_image(id, draw_pos, draw_size)
+                            ctx.canvas
+                                .draw_image(id, draw_pos, draw_size)
                         }
                     } else {
                         // Fallback when intrinsic size is unknown
@@ -250,7 +296,8 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                             y: (size.height - final_h) * 0.5,
                         };
                         let draw_size = ResolvedSize { width: final_w, height: final_h };
-                        ctx.canvas.draw_image(id, draw_pos, draw_size)
+                        ctx.canvas
+                            .draw_image(id, draw_pos, draw_size)
                     }
                 } else {
                     // Not preserving aspect ratio: fill allocated box
@@ -259,12 +306,16 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                     let draw_pos =
                         Vec2d { x: (size.width - final_w) * 0.5, y: (size.height - final_h) * 0.5 };
                     let draw_size = ResolvedSize { width: final_w, height: final_h };
-                    ctx.canvas.draw_image(id, draw_pos, draw_size)
+                    ctx.canvas
+                        .draw_image(id, draw_pos, draw_size)
                 }
             }
 
             ImageResult::Loading => {
-                self.loading_element.as_ref().unwrap_or(&ZeroSizedBox.to_element(ctx)).draw(ctx);
+                self.loading_element
+                    .as_ref()
+                    .unwrap_or(&ZeroSizedBox.to_element(ctx))
+                    .draw(ctx);
             }
 
             ImageResult::Error(_) => {
@@ -292,7 +343,8 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                         };
 
                         if rect_size.width > 0.0 && rect_size.height > 0.0 {
-                            ctx.canvas.fill_color_rect(pos, rect_size, color, [0.0; 4]);
+                            ctx.canvas
+                                .fill_color_rect(pos, rect_size, color, [0.0; 4]);
                         }
                     }
                 }

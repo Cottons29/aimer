@@ -1,13 +1,13 @@
-use crate::ZeroSizedBox;
-use crate::flex::raw_flex::RawFlex;
-use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 use aimer_attribute::CacheBounds;
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, Widget};
+use aimer_widget::{Element, EmptyWidget, Widget};
+
+use crate::flex::raw_flex::RawFlex;
+use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 
 /// A flex container that arranges its children in a vertical direction
-pub struct Column<W: Widget + 'static = Box<dyn Widget>> {
+pub struct Column<W = EmptyWidget> {
     vertical_alignment: BoxAlignment,
     horizontal_alignment: BoxAlignment,
     gaps: LayoutSpacing,
@@ -58,24 +58,20 @@ impl Column {
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow: self.overflow,
-            children: children.into_iter().collect(),
+            children: children
+                .into_iter()
+                .collect(),
         }
-    }
-
-    pub fn add_child<W: Widget + 'static>(mut self, child: W) -> Self {
-        self.children.push(Box::new(child));
-        self
-    }
-
-    pub fn insert_child<W: Widget + 'static>(mut self, index: usize, child: W) -> Self {
-        self.children.insert(index, Box::new(child));
-        self
     }
 }
 
 impl<W: Widget + 'static> Widget for Column<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
+        let children = self
+            .children
+            .iter()
+            .map(|c| c.to_element(ctx))
+            .collect();
         Box::new(RawFlex {
             direction: LayoutDirection::Column,
             vertical_alignment: self.vertical_alignment,
@@ -142,17 +138,21 @@ impl Row {
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow: self.overflow,
-            children: children.into_iter().collect(),
+            children: children
+                .into_iter()
+                .collect(),
         }
     }
 
     pub fn add_child<W: Widget + 'static>(mut self, child: W) -> Self {
-        self.children.push(Box::new(child));
+        self.children
+            .push(Box::new(child));
         self
     }
 
     pub fn insert_child<W: Widget + 'static>(mut self, index: usize, child: W) -> Self {
-        self.children.insert(index, Box::new(child));
+        self.children
+            .insert(index, Box::new(child));
         self
     }
 }
@@ -167,7 +167,11 @@ impl Row {
 
 impl<W: Widget + 'static> Widget for Row<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
+        let children = self
+            .children
+            .iter()
+            .map(|c| c.to_element(ctx))
+            .collect();
         Box::new(RawFlex {
             direction: LayoutDirection::Row,
             vertical_alignment: self.vertical_alignment,

@@ -1,3 +1,9 @@
+use std::net::IpAddr;
+use std::process::{Child, Command};
+use std::sync::{Arc, Mutex};
+
+use crossbeam::channel::Sender;
+
 use crate::commands::assemble::copy_assets_into;
 use crate::commands::run::Device;
 use crate::commands::run::cargo_build::{
@@ -5,10 +11,6 @@ use crate::commands::run::cargo_build::{
 };
 use crate::commands::run::console::{RunnerEvent, Status};
 use crate::commands::run::helpers::{build_log, set_status, spawn_streamed};
-use crossbeam::channel::Sender;
-use std::net::IpAddr;
-use std::process::{Child, Command};
-use std::sync::{Arc, Mutex};
 
 pub fn spawn_web_runner(
     _: Device,
@@ -37,7 +39,9 @@ pub fn spawn_web_runner(
     build_log(&tx, "Starting trunk server...");
 
     let mut trunk = Command::new("trunk");
-    trunk.arg("serve").current_dir("builds/web");
+    trunk
+        .arg("serve")
+        .current_dir("builds/web");
 
     if !spawn_streamed(
         trunk,

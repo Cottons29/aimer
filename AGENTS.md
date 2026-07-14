@@ -115,19 +115,6 @@ cargo test -p aimer_animation
 cargo test -p aimer_animation test_curve_linear
 ```
 
-> When you change a crate, run its own tests **and** the tests of downstream crates that depend on
-> it. Do not stop at the first crate.
-
-### Format & Lint
-
-```bash
-# Format (config in rustfmt.toml)
-cargo fmt --all
-
-# Lint; treat warnings as errors before submitting
-cargo clippy --all-targets --all-features -- -D warnings
-```
-
 ### CLI (end-user tooling)
 
 The `aimer` binary lives in `dev_tools/aimer_cli`. To run it locally:

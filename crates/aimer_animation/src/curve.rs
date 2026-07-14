@@ -139,7 +139,8 @@ fn cubic_bezier_y_for_x(x: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     bezier(t, y1, y2)
 }
 
-/// Evaluate cubic bezier at parameter t with control points p1, p2 (p0=0, p3=1).
+/// Evaluate cubic bezier at parameter t with control points p1, p2 (p0=0,
+/// p3=1).
 fn bezier(t: f32, p1: f32, p2: f32) -> f32 {
     let inv = 1.0 - t;
     3.0 * inv * inv * t * p1 + 3.0 * inv * t * t * p2 + t * t * t

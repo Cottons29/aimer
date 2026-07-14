@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use aimer::Dimension::Percent;
 use aimer::animation::{AnimatedSwitcher, Curve};
 use aimer::provider::media_query::MediaQuery;
@@ -6,7 +8,6 @@ use aimer::{
     AssetImage, BoxAlignment, BuildContext, Color, Column, Container, Dimension, Row, SizedBox,
     State, StateUpdater, StatefulWidget, Text, TextButton, Widget, widget,
 };
-use std::time::Duration;
 
 #[widget(Stateful)]
 pub struct TestFadingAnimation;
@@ -60,35 +61,46 @@ impl State<TestFadingAnimation> for SameLookingSectionState {
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
-        Container::new().color(Color::WHITE).padding(app_padding(ctx)).child(
-            Column::new().horizontal_alignment(BoxAlignment::Center).children(vec![
-                Container::new()
-                    .height(100)
-                    .child(
-                        Text::new("Consistence Looking").text_style(
-                            TextStyle::new()
-                                .font_size(mobile_title(ctx))
-                                .color(Color::BLACK)
-                                .font_weight(FontWeight::Bolder)
-                                .text_decoration(TextDecoration::Underline),
-                        ),
-                    )
-                    .boxed(),
-                SizedBox::new().height(24).boxed(),
-                Container::new()
-                    .height(if is_mobile(ctx) { 250 } else { 450 })
-                    .child(platform_image_switcher(self.current_index))
-                    .boxed(),
-                SizedBox::new().height(40).boxed(),
-                Row::new()
+        Container::new()
+            .color(Color::WHITE)
+            .padding(app_padding(ctx))
+            .child(
+                Column::new()
                     .horizontal_alignment(BoxAlignment::Center)
-                    .vertical_alignment(BoxAlignment::Center)
-                    .gaps(LayoutSpacing::horizontal(Spacing::Px(8)))
-                    .children(self.build_platform_button_list(ctx))
-                    .boxed(),
-                SizedBox::new().height(40).boxed(),
-            ]),
-        )
+                    .children(vec![
+                        Container::new()
+                            .height(100)
+                            .child(
+                                Text::new("Consistence Looking").text_style(
+                                    TextStyle::new()
+                                        .font_size(mobile_title(ctx))
+                                        .color(Color::BLACK)
+                                        .font_weight(FontWeight::Bolder)
+                                        .text_decoration(TextDecoration::Underline),
+                                ),
+                            )
+                            .boxed(),
+                        SizedBox::new()
+                            .height(24)
+                            .boxed(),
+                        Container::new()
+                            .height(if is_mobile(ctx) { 250 } else { 450 })
+                            .child(platform_image_switcher(self.current_index))
+                            .boxed(),
+                        SizedBox::new()
+                            .height(40)
+                            .boxed(),
+                        Row::new()
+                            .horizontal_alignment(BoxAlignment::Center)
+                            .vertical_alignment(BoxAlignment::Center)
+                            .gaps(LayoutSpacing::horizontal(Spacing::Px(8)))
+                            .children(self.build_platform_button_list(ctx))
+                            .boxed(),
+                        SizedBox::new()
+                            .height(40)
+                            .boxed(),
+                    ]),
+            )
     }
 }
 
@@ -99,7 +111,9 @@ impl SameLookingSectionState {
             .iter()
             .enumerate()
             .map({
-                let updater = self.state.clone();
+                let updater = self
+                    .state
+                    .clone();
                 move |(i, l)| {
                     let index = i;
                     let is_selected = index == selected;
@@ -133,7 +147,11 @@ impl SameLookingSectionState {
                             let updater = updater.clone();
                             move || {
                                 println!("animation demo: tab {index} pressed");
-                                if updater.read_state().current_index != index {
+                                if updater
+                                    .read_state()
+                                    .current_index
+                                    != index
+                                {
                                     updater.set_state(move |s| s.current_index = index);
                                 }
                             }

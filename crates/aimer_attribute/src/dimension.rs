@@ -1,25 +1,28 @@
-use crate::position::Vec2d;
-use crate::size::ResolvedSize;
 use std::cell::Cell;
 use std::ops::{Div, Mul};
 
+use crate::position::Vec2d;
+use crate::size::ResolvedSize;
+
 ///
-/// Represents a dimension type that can be used to define sizes in different units.
+/// Represents a dimension type that can be used to define sizes in different
+/// units.
 ///
 /// The `Dimension` enum supports two primary units:
 /// - Pixels (`Px`) - Defines the size in absolute pixel values.
-/// - Percent (`Percent`) - Defines the size as a percentage of a parent container.
+/// - Percent (`Percent`) - Defines the size as a percentage of a parent
+///   container.
 ///
-/// It also supports an automatic size value, `Auto`, which can be used when the size
-/// should be determined by layout or content rules.
+/// It also supports an automatic size value, `Auto`, which can be used when the
+/// size should be determined by layout or content rules.
 ///
 /// ### Conditional Compilation
-/// The `Px` and `Percent` variants are conditionally compiled to support different
-/// architectures:
-/// - For non-WebAssembly targets, `Px` and `Percent`
-///   use `f32` as the underlying type.
-/// - For WebAssembly targets, `Px` and `Percent` use `f64`
-///   as the underlying type.
+/// The `Px` and `Percent` variants are conditionally compiled to support
+/// different architectures:
+/// - For non-WebAssembly targets, `Px` and `Percent` use `f32` as the
+///   underlying type.
+/// - For WebAssembly targets, `Px` and `Percent` use `f64` as the underlying
+///   type.
 ///
 /// ### Traits
 /// The `Dimension` enum derives the following traits:
@@ -145,11 +148,14 @@ impl CacheBounds {
     }
 
     pub fn is_cached(&self) -> bool {
-        self.bound.get().is_some()
+        self.bound
+            .get()
+            .is_some()
     }
 
     pub fn get_bounds(&self) -> Option<Bounds> {
-        self.bound.get()
+        self.bound
+            .get()
     }
 
     pub fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
@@ -159,14 +165,19 @@ impl CacheBounds {
     }
 
     pub fn set_bounds(&self, bounds: Bounds) {
-        self.bound.set(Some(bounds));
+        self.bound
+            .set(Some(bounds));
     }
 
     pub fn set_size(&self, size: ResolvedSize) {
-        if let Some(mut bound) = self.bound.get() {
+        if let Some(mut bound) = self
+            .bound
+            .get()
+        {
             bound.width = size.width;
             bound.height = size.height;
-            self.bound.set(Some(bound));
+            self.bound
+                .set(Some(bound));
         }
     }
 
@@ -180,7 +191,12 @@ impl CacheBounds {
     }
 
     pub fn is_inside(&self, x: f32, y: f32) -> bool {
-        let Some(bound) = self.bound.get() else { return false };
+        let Some(bound) = self
+            .bound
+            .get()
+        else {
+            return false;
+        };
         bound.x <= x && x <= bound.x + bound.width && bound.y <= y && y <= bound.y + bound.height
     }
 }

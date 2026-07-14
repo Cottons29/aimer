@@ -1,3 +1,11 @@
+use std::fs;
+use std::net::IpAddr;
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+
+use crossbeam::channel::Sender;
+
 use crate::commands::run::Device;
 use crate::commands::run::cargo_build::{
     self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_app_log,
@@ -9,12 +17,6 @@ use crate::commands::run::helpers::{
     build_log, build_streamed, fail, host_arch, run_to_completion, set_status, spawn_streamed,
 };
 use crate::commands::run::utilities::resolve_lib_path;
-use crossbeam::channel::Sender;
-use std::fs;
-use std::net::IpAddr;
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
 
 /// The two flavours of the otherwise-identical iOS build/launch flow.
 #[derive(Clone, Copy)]
@@ -178,7 +180,9 @@ pub(crate) fn run_ios(
         }
     };
 
-    let bundle_id = String::from_utf8_lossy(&bundle_id_output.stdout).trim().to_string();
+    let bundle_id = String::from_utf8_lossy(&bundle_id_output.stdout)
+        .trim()
+        .to_string();
 
     if !launch_app(variant, &device, &bundle_id, &tx, &current_child_clone) {
         return;

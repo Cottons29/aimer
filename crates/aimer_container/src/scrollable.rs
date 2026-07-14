@@ -7,24 +7,24 @@ pub mod scroll_bar;
 pub mod scroll_behavior;
 pub mod scroll_storage;
 
-use controller::ScrollState;
-use controller::VelocityHistory;
-pub use controller::{DragMode, ScrollController};
-pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
+use std::cell::Cell;
+use std::rc::Rc;
 
-use crate::scrollable::raw_scroll::RawScrollableContainer;
-pub use crate::scrollable::scroll_bar::*;
 use aimer_attribute::CacheBounds;
 use aimer_attribute::position::Vec2d;
 #[allow(unused)]
 use aimer_macro::key;
 use aimer_utils::callback::Callback;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, Key, Widget};
-use std::cell::Cell;
-use std::rc::Rc;
+use aimer_widget::{Element, EmptyWidget, Key, Widget};
+pub use controller::{DragMode, ScrollController};
+use controller::{ScrollState, VelocityHistory};
+pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
 
-pub struct Scrollable<W: Widget + 'static> {
+use crate::scrollable::raw_scroll::RawScrollableContainer;
+pub use crate::scrollable::scroll_bar::*;
+
+pub struct Scrollable<W = EmptyWidget> {
     pub child: W,
     pub scroll_behavior: ScrollBehavior,
     pub axis: ScrollAxis,
@@ -32,8 +32,9 @@ pub struct Scrollable<W: Widget + 'static> {
     pub horizontal_scroll_bar: Option<ScrollBar>,
     /// Opt-in `PageStorage`-style identity. When set, the live scroll offset is
     /// saved under this key and restored if the `Scrollable` is fully torn down
-    /// and later re-created (e.g. a swapped tab). `None` = not remembered across
-    /// teardown (rebuild/resize is still preserved via reconciliation).
+    /// and later re-created (e.g. a swapped tab). `None` = not remembered
+    /// across teardown (rebuild/resize is still preserved via
+    /// reconciliation).
     pub key: Key,
     /// Optional app-held [`ScrollController`] for programmatic control. When
     /// `Some`, the app can read the live position and drive it with
@@ -43,9 +44,27 @@ pub struct Scrollable<W: Widget + 'static> {
     pub controller: Option<ScrollController>,
 }
 
-impl<W: Widget + 'static> Scrollable<W> {
-    pub fn new(child: W) -> Self {
+impl Default for Scrollable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Scrollable {
+    pub fn new() -> Self {
         Self {
+            child: EmptyWidget,
+            scroll_behavior: ScrollBehavior::default(),
+            axis: ScrollAxis::default(),
+            vertical_scroll_bar: Some(ScrollBar::default()),
+            horizontal_scroll_bar: Some(ScrollBar::default()),
+            key: key!(),
+            controller: None,
+        }
+    }
+
+    pub fn with_child<W: Widget>(child: W) -> Scrollable<W> {
+        Scrollable {
             child,
             scroll_behavior: ScrollBehavior::default(),
             axis: ScrollAxis::default(),
@@ -85,16 +104,44 @@ impl<W: Widget + 'static> Scrollable<W> {
         self.controller = Some(controller);
         self
     }
+
+    pub fn child<W: Widget>(self, child: W) -> Scrollable<W> {
+        Scrollable {
+            child,
+            scroll_behavior: self.scroll_behavior,
+            axis: self.axis,
+            key: self.key,
+            controller: self.controller,
+            vertical_scroll_bar: self.vertical_scroll_bar,
+            horizontal_scroll_bar: self.horizontal_scroll_bar,
+        }
+    }
 }
 
 impl<W: Widget> Widget for Scrollable<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let mut child_ctx = ctx.clone();
-        child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
-        child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
+        child_ctx
+            .box_constraint
+            .max_width = ctx
+            .box_constraint
+            .max_width;
+        child_ctx
+            .box_constraint
+            .max_height = ctx
+            .box_constraint
+            .max_height;
         match self.axis {
-            ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
-            ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
+            ScrollAxis::Vertical => {
+                child_ctx
+                    .box_constraint
+                    .max_height = f32::MAX
+            }
+            ScrollAxis::Horizontal => {
+                child_ctx
+                    .box_constraint
+                    .max_width = f32::MAX
+            }
         }
 
         // Seed the initial offset: prefer a previously stored position (survives a
@@ -104,8 +151,16 @@ impl<W: Widget> Widget for Scrollable<W> {
         let mut initial_offset = scroll_storage::read_offset(&self.key)
             .map(|logical| Vec2d { x: logical.x * ctx.scale, y: logical.y * ctx.scale })
             .unwrap_or(Vec2d {
-                x: self.scroll_behavior.scroll_offset.x * ctx.scale,
-                y: self.scroll_behavior.scroll_offset.y * ctx.scale,
+                x: self
+                    .scroll_behavior
+                    .scroll_offset
+                    .x
+                    * ctx.scale,
+                y: self
+                    .scroll_behavior
+                    .scroll_offset
+                    .y
+                    * ctx.scale,
             });
 
         // If an app-supplied controller is already attached (i.e. this is a
@@ -120,18 +175,30 @@ impl<W: Widget> Widget for Scrollable<W> {
             initial_offset = Vec2d { x: -logical.x * ctx.scale, y: -logical.y * ctx.scale };
         }
 
-        let child = self.child.to_element(&child_ctx);
+        let child = self
+            .child
+            .to_element(&child_ctx);
         let state = Rc::new(ScrollState {
             speed_multiplier: ctx.scale,
             scroll_offset: Cell::new(initial_offset),
-            storage_key: self.key.clone(),
+            storage_key: self
+                .key
+                .clone(),
             last_pointer_pos: Cell::new(None),
             drag_mode: Cell::new(DragMode::None),
             cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             cached_min_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             pointer_velocity: Cell::new(Vec2d {
-                x: self.scroll_behavior.velocity.x * ctx.scale,
-                y: self.scroll_behavior.velocity.y * ctx.scale,
+                x: self
+                    .scroll_behavior
+                    .velocity
+                    .x
+                    * ctx.scale,
+                y: self
+                    .scroll_behavior
+                    .velocity
+                    .y
+                    * ctx.scale,
             }),
             last_event_time: Cell::new(None),
             last_frame_time: Cell::new(None),

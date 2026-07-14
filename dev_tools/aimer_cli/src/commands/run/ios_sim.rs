@@ -1,10 +1,12 @@
-use crate::commands::run::Device;
-use crate::commands::run::console::RunnerEvent;
-use crate::commands::run::ios::{IosVariant, run_ios};
-use crossbeam::channel::Sender;
 use std::net::IpAddr;
 use std::process::Child;
 use std::sync::{Arc, Mutex};
+
+use crossbeam::channel::Sender;
+
+use crate::commands::run::Device;
+use crate::commands::run::console::RunnerEvent;
+use crate::commands::run::ios::{IosVariant, run_ios};
 
 pub fn spawn_ios_simulator_runner(
     device: Device,

@@ -1,12 +1,14 @@
-use crate::img_widget::image_widget::RawImageWidget;
-use crate::img_widget::source::ImageSource;
+use std::cell::{Cell, UnsafeCell};
+use std::collections::HashMap;
+
 use aimer_attribute::Dimension;
 use aimer_attribute::size::Size;
 use aimer_style::BoxFit;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, LayoutCache, Widget};
-use std::cell::{Cell, UnsafeCell};
-use std::collections::HashMap;
+
+use crate::img_widget::image_widget::RawImageWidget;
+use crate::img_widget::source::ImageSource;
 
 pub struct NetworkImage {
     pub url: String,
@@ -79,9 +81,19 @@ impl NetworkImage {
 impl Widget for NetworkImage {
     #[track_caller]
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let source = match self.header.as_ref() {
-            Some(header) => ImageSource::NetworkWithHeaders(self.url.clone(), header.clone()),
-            None => ImageSource::Network(self.url.clone()),
+        let source = match self
+            .header
+            .as_ref()
+        {
+            Some(header) => ImageSource::NetworkWithHeaders(
+                self.url
+                    .clone(),
+                header.clone(),
+            ),
+            None => ImageSource::Network(
+                self.url
+                    .clone(),
+            ),
         };
 
         // debug!("creating network image widget with url: {}", self.url);
@@ -91,8 +103,14 @@ impl Widget for NetworkImage {
             size: Size::new(self.width, self.height),
             fit: self.fit,
             keep_aspect_ratio: self.fit != BoxFit::Fill,
-            error_element: self.error_widget.as_ref().map(|w| w.to_element(ctx)),
-            loading_element: self.loading_widget.as_ref().map(|w| w.to_element(ctx)),
+            error_element: self
+                .error_widget
+                .as_ref()
+                .map(|w| w.to_element(ctx)),
+            loading_element: self
+                .loading_widget
+                .as_ref()
+                .map(|w| w.to_element(ctx)),
             cache: LayoutCache::new(),
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),

@@ -1,5 +1,6 @@
-use crate::size::ResolvedSize;
 use std::ops::{Add, Mul, Sub, SubAssign};
+
+use crate::size::ResolvedSize;
 
 macro_rules! impl_from_num {
     ($t:ty) => {
@@ -29,7 +30,14 @@ pub struct Vec2d {
 
 impl Vec2d {
     pub const fn round(self) -> Self {
-        Self { x: self.x.round(), y: self.y.round() }
+        Self {
+            x: self
+                .x
+                .round(),
+            y: self
+                .y
+                .round(),
+        }
     }
 }
 

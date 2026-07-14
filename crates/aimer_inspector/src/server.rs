@@ -8,18 +8,17 @@
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::module_inception)]
 pub mod server {
-    use crate::{InspectorMessage, InspectorState};
+    use std::net::IpAddr;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
     use aimer_widget::Element;
     use futures_util::{SinkExt, StreamExt};
-    use std::net::IpAddr;
-    use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    };
     use tokio::net::TcpListener;
     use tokio::sync::broadcast;
-    use tokio_tungstenite::tungstenite::Message;
-    use tokio_tungstenite::tungstenite::Utf8Bytes;
+    use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
+
+    use crate::{InspectorMessage, InspectorState};
 
     /// Shared inspector state accessible from the CLI server.
     #[derive(Clone)]
@@ -35,7 +34,8 @@ pub mod server {
     impl InspectorHandle {
         /// Returns `true` if the inspector is currently active.
         pub fn is_enabled(&self) -> bool {
-            self.enabled.load(Ordering::Relaxed)
+            self.enabled
+                .load(Ordering::Relaxed)
         }
 
         pub fn get_address(&self) -> String {
@@ -44,28 +44,42 @@ pub mod server {
 
         /// Toggle the inspector on/off and broadcast the new status.
         pub fn set_enabled(&self, enabled: bool) {
-            self.enabled.store(enabled, Ordering::Relaxed);
+            self.enabled
+                .store(enabled, Ordering::Relaxed);
             {
-                let mut s = self.state.lock().unwrap();
+                let mut s = self
+                    .state
+                    .lock()
+                    .unwrap();
                 s.enabled = enabled;
             }
             let msg = InspectorMessage::Status { enabled };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self.tx.send(json);
+                let _ = self
+                    .tx
+                    .send(json);
             }
         }
 
         /// Send a toggle command through the broadcast channel.
         pub fn send_toggle(&self) {
-            let new_val = !self.enabled.load(Ordering::Relaxed);
-            self.enabled.store(new_val, Ordering::Relaxed);
+            let new_val = !self
+                .enabled
+                .load(Ordering::Relaxed);
+            self.enabled
+                .store(new_val, Ordering::Relaxed);
             {
-                let mut s = self.state.lock().unwrap();
+                let mut s = self
+                    .state
+                    .lock()
+                    .unwrap();
                 s.enabled = new_val;
             }
             let msg = InspectorMessage::Status { enabled: new_val };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self.tx.send(json);
+                let _ = self
+                    .tx
+                    .send(json);
             }
         }
 
@@ -75,24 +89,34 @@ pub mod server {
                 return;
             }
             {
-                let mut s = self.state.lock().unwrap();
+                let mut s = self
+                    .state
+                    .lock()
+                    .unwrap();
                 s.tree = root.clone();
             }
             let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self.tx.send(json);
+                let _ = self
+                    .tx
+                    .send(json);
             }
         }
 
         /// Broadcast the currently hovered widget ID.
         pub fn broadcast_hovered(&self, id: Option<u64>) {
             {
-                let mut s = self.state.lock().unwrap();
+                let mut s = self
+                    .state
+                    .lock()
+                    .unwrap();
                 s.hovered_widget_id = id;
             }
             let msg = InspectorMessage::Hovered { id };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self.tx.send(json);
+                let _ = self
+                    .tx
+                    .send(json);
             }
         }
     }
@@ -111,7 +135,8 @@ pub mod server {
         }
 
         /// Start the WebSocket inspector server on the given port.
-        /// Returns an `InspectorHandle` that the CLI uses to read state and send commands.
+        /// Returns an `InspectorHandle` that the CLI uses to read state and
+        /// send commands.
         pub fn start(
             inspector_address: IpAddr,
             inspector_port: u16,
@@ -156,7 +181,8 @@ pub mod server {
                     }
                 })?;
 
-            // println!("[inspector] listening on {}:{}", inspector_address, inspector_port_draft);
+            // println!("[inspector] listening on {}:{}", inspector_address,
+            // inspector_port_draft);
 
             runtime.spawn(async move {
                 loop {
@@ -270,7 +296,9 @@ pub mod server {
                 });
                 crate::types::WidgetNode {
                     id,
-                    name: element.debug_name().to_string(),
+                    name: element
+                        .debug_name()
+                        .to_string(),
                     element_type: std::any::type_name_of_val(element)
                         .rsplit("::")
                         .next()
@@ -288,8 +316,8 @@ pub mod server {
         }
     }
 
-    /// App-side inspector handle that connects to the CLI server as a WebSocket client.
-    /// Used by the engine/app on all native targets.
+    /// App-side inspector handle that connects to the CLI server as a WebSocket
+    /// client. Used by the engine/app on all native targets.
     #[derive(Clone)]
     pub struct InspectorAppHandle {
         pub enabled: Arc<AtomicBool>,
@@ -299,7 +327,8 @@ pub mod server {
     impl InspectorAppHandle {
         /// Returns `true` if the inspector is currently active.
         pub fn is_enabled(&self) -> bool {
-            self.enabled.load(Ordering::Relaxed)
+            self.enabled
+                .load(Ordering::Relaxed)
         }
 
         /// Send a widget tree snapshot to the CLI server.
@@ -309,7 +338,9 @@ pub mod server {
             }
             let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self.tx.send(json);
+                let _ = self
+                    .tx
+                    .send(json);
             }
         }
 
@@ -317,11 +348,14 @@ pub mod server {
         pub fn broadcast_hovered(&self, id: Option<u64>) {
             let msg = InspectorMessage::Hovered { id };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self.tx.send(json);
+                let _ = self
+                    .tx
+                    .send(json);
             }
         }
 
-        /// Connect to the CLI inspector server and return an `InspectorAppHandle`.
+        /// Connect to the CLI inspector server and return an
+        /// `InspectorAppHandle`.
         pub fn connect(runtime: &tokio::runtime::Handle, address: IpAddr, port: u16) -> Self {
             let enabled = Arc::new(AtomicBool::new(false));
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -375,17 +409,17 @@ pub mod server {
 
 #[cfg(target_arch = "wasm32")]
 pub mod server {
-    use crate::{InspectorMessage, WidgetNode};
+    use std::cell::RefCell;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use aimer_widget::{Element, inspector_overlay};
     use serde::{Deserialize, Serialize};
-    use std::cell::RefCell;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
     use wasm_bindgen::JsCast;
     use wasm_bindgen::prelude::*;
     use web_sys::{MessageEvent, WebSocket};
+
+    use crate::{InspectorMessage, WidgetNode};
 
     #[derive(Clone)]
     pub struct InspectorHandle {
@@ -395,15 +429,21 @@ pub mod server {
 
     impl InspectorHandle {
         pub fn is_enabled(&self) -> bool {
-            self.enabled.load(Ordering::Relaxed)
+            self.enabled
+                .load(Ordering::Relaxed)
         }
 
         pub fn set_enabled(&self, enabled: bool) {
-            self.enabled.store(enabled, Ordering::Relaxed);
+            self.enabled
+                .store(enabled, Ordering::Relaxed);
             inspector_overlay::set_enabled(enabled);
             let msg = InspectorMessage::Status { enabled };
             if let Ok(json) = serde_json::to_string(&msg) {
-                if let Some(ws) = self.ws.borrow().as_ref() {
+                if let Some(ws) = self
+                    .ws
+                    .borrow()
+                    .as_ref()
+                {
                     if ws.ready_state() == 1 {
                         let _ = ws.send_with_str(&json);
                     }
@@ -417,7 +457,11 @@ pub mod server {
             }
             let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
-                if let Some(ws) = self.ws.borrow().as_ref() {
+                if let Some(ws) = self
+                    .ws
+                    .borrow()
+                    .as_ref()
+                {
                     if ws.ready_state() == 1 {
                         // WebSocket::OPEN
                         let _ = ws.send_with_str(&json);
@@ -429,7 +473,11 @@ pub mod server {
         pub fn broadcast_hovered(&self, id: Option<u64>) {
             let msg = InspectorMessage::Hovered { id };
             if let Ok(json) = serde_json::to_string(&msg) {
-                if let Some(ws) = self.ws.borrow().as_ref() {
+                if let Some(ws) = self
+                    .ws
+                    .borrow()
+                    .as_ref()
+                {
                     if ws.ready_state() == 1 {
                         let _ = ws.send_with_str(&json);
                     }
@@ -455,7 +503,10 @@ pub mod server {
         let enabled_msg = enabled.clone();
 
         let onmessage_callback = Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
-            if let Some(txt) = e.data().as_string() {
+            if let Some(txt) = e
+                .data()
+                .as_string()
+            {
                 if let Ok(msg) = serde_json::from_str::<InspectorMessage>(&txt) {
                     match msg {
                         InspectorMessage::Status { enabled } => {
@@ -468,7 +519,11 @@ pub mod server {
             }
         });
 
-        ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
+        ws.set_onmessage(Some(
+            onmessage_callback
+                .as_ref()
+                .unchecked_ref(),
+        ));
         onmessage_callback.forget();
 
         InspectorHandle { enabled, ws: ws_ref }
@@ -490,7 +545,9 @@ pub mod server {
             });
             WidgetNode {
                 id,
-                name: element.debug_name().to_string(),
+                name: element
+                    .debug_name()
+                    .to_string(),
                 element_type: std::any::type_name_of_val(element)
                     .rsplit("::")
                     .next()

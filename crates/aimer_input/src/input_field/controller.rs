@@ -29,9 +29,15 @@ unsafe impl Sync for TextFieldController {}
 impl Clone for TextFieldController {
     fn clone(&self) -> Self {
         Self {
-            text: self.text.clone(),
-            undo_stack: self.undo_stack.clone(),
-            redo_stack: self.redo_stack.clone(),
+            text: self
+                .text
+                .clone(),
+            undo_stack: self
+                .undo_stack
+                .clone(),
+            redo_stack: self
+                .redo_stack
+                .clone(),
         }
     }
 }
@@ -63,12 +69,18 @@ impl TextFieldController {
         }
     }
 
-    /// Returns a shared reference to the text stored within the current instance.
+    /// Returns a shared reference to the text stored within the current
+    /// instance.
     pub fn text(&self) -> &str {
-        unsafe { &*self.text.get() }
+        unsafe {
+            &*self
+                .text
+                .get()
+        }
     }
 
-    /// Consumes the content of the `text` field, returning its value while also clearing it.
+    /// Consumes the content of the `text` field, returning its value while also
+    /// clearing it.
     pub fn take(&self) -> String {
         self.save_undo();
         let s = unsafe { self.text_mut() };
@@ -80,10 +92,15 @@ impl TextFieldController {
     /// Provides mutable access to the `text` field of the current object.
     ///
     /// # Safety
-    /// The rendering pipeline is single-threaded, so concurrent access does not occur.
+    /// The rendering pipeline is single-threaded, so concurrent access does not
+    /// occur.
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn text_mut(&self) -> &mut String {
-        unsafe { &mut *self.text.get() }
+        unsafe {
+            &mut *self
+                .text
+                .get()
+        }
     }
 
     /// Sets the text content of the object.
@@ -94,14 +111,19 @@ impl TextFieldController {
         }
     }
 
-    /// Inserts a single character at a specified character offset within the text.
+    /// Inserts a single character at a specified character offset within the
+    /// text.
     ///
     /// # Safety
     /// Be careful about the index out of bounds or invalid utf-8 char.
     pub unsafe fn insert_char(&self, ch: impl Into<char>, offset: usize) {
         self.save_undo();
         let s = unsafe { self.text_mut() };
-        let byte_offset = s.char_indices().nth(offset).map(|(i, _)| i).unwrap_or(s.len());
+        let byte_offset = s
+            .char_indices()
+            .nth(offset)
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
         s.insert(byte_offset, ch.into());
     }
 
@@ -109,7 +131,10 @@ impl TextFieldController {
     pub fn delete_char(&self, offset: usize) {
         self.save_undo();
         let s = unsafe { self.text_mut() };
-        if let Some((byte_offset, _ch)) = s.char_indices().nth(offset) {
+        if let Some((byte_offset, _ch)) = s
+            .char_indices()
+            .nth(offset)
+        {
             s.remove(byte_offset);
         }
     }
@@ -118,27 +143,43 @@ impl TextFieldController {
     pub fn clear(&self) {
         self.save_undo();
         unsafe {
-            self.text_mut().clear();
+            self.text_mut()
+                .clear();
         }
     }
 
     /// Returns the number of characters in the text.
     pub fn char_count(&self) -> usize {
-        self.text().chars().count()
+        self.text()
+            .chars()
+            .count()
     }
 
     /// Returns the substring between two character offsets.
     pub fn get_range(&self, start: usize, end: usize) -> String {
-        self.text().chars().skip(start).take(end.saturating_sub(start)).collect()
+        self.text()
+            .chars()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .collect()
     }
 
-    /// Deletes characters in the range `[start, end)` and returns the removed text.
+    /// Deletes characters in the range `[start, end)` and returns the removed
+    /// text.
     pub fn delete_range(&self, start: usize, end: usize) -> String {
         self.save_undo();
         let removed = self.get_range(start, end);
         let s = unsafe { self.text_mut() };
-        let byte_start = s.char_indices().nth(start).map(|(i, _)| i).unwrap_or(s.len());
-        let byte_end = s.char_indices().nth(end).map(|(i, _)| i).unwrap_or(s.len());
+        let byte_start = s
+            .char_indices()
+            .nth(start)
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
+        let byte_end = s
+            .char_indices()
+            .nth(end)
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
         s.drain(byte_start..byte_end);
         removed
     }
@@ -147,7 +188,11 @@ impl TextFieldController {
     pub fn insert_str(&self, text: &str, offset: usize) {
         self.save_undo();
         let s = unsafe { self.text_mut() };
-        let byte_offset = s.char_indices().nth(offset).map(|(i, _)| i).unwrap_or(s.len());
+        let byte_offset = s
+            .char_indices()
+            .nth(offset)
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
         s.insert_str(byte_offset, text);
     }
 
@@ -159,8 +204,14 @@ impl TextFieldController {
     /// Snapshot the current text onto the undo stack and clear the redo stack.
     /// Called automatically before every mutation.
     fn save_undo(&self) {
-        let current = self.text().to_owned();
-        let undo = unsafe { &mut *self.undo_stack.get() };
+        let current = self
+            .text()
+            .to_owned();
+        let undo = unsafe {
+            &mut *self
+                .undo_stack
+                .get()
+        };
         // Avoid pushing duplicate snapshots back-to-back
         if undo.last() != Some(&current) {
             undo.push(current);
@@ -170,15 +221,31 @@ impl TextFieldController {
             }
         }
         // Any new mutation invalidates the redo history
-        unsafe { &mut *self.redo_stack.get() }.clear();
+        unsafe {
+            &mut *self
+                .redo_stack
+                .get()
+        }
+        .clear();
     }
 
-    /// Revert to the previous text state. Returns `true` if an undo was performed.
+    /// Revert to the previous text state. Returns `true` if an undo was
+    /// performed.
     pub fn undo(&self) -> bool {
-        let undo = unsafe { &mut *self.undo_stack.get() };
+        let undo = unsafe {
+            &mut *self
+                .undo_stack
+                .get()
+        };
         if let Some(prev) = undo.pop() {
-            let current = self.text().to_owned();
-            let redo = unsafe { &mut *self.redo_stack.get() };
+            let current = self
+                .text()
+                .to_owned();
+            let redo = unsafe {
+                &mut *self
+                    .redo_stack
+                    .get()
+            };
             redo.push(current);
             unsafe { *self.text_mut() = prev };
             true
@@ -187,12 +254,23 @@ impl TextFieldController {
         }
     }
 
-    /// Re-apply a previously undone text state. Returns `true` if a redo was performed.
+    /// Re-apply a previously undone text state. Returns `true` if a redo was
+    /// performed.
     pub fn redo(&self) -> bool {
-        let redo = unsafe { &mut *self.redo_stack.get() };
+        let redo = unsafe {
+            &mut *self
+                .redo_stack
+                .get()
+        };
         if let Some(next) = redo.pop() {
-            let current = self.text().to_owned();
-            let undo = unsafe { &mut *self.undo_stack.get() };
+            let current = self
+                .text()
+                .to_owned();
+            let undo = unsafe {
+                &mut *self
+                    .undo_stack
+                    .get()
+            };
             undo.push(current);
             unsafe { *self.text_mut() = next };
             true

@@ -1,3 +1,13 @@
+use std::env::current_dir;
+use std::io::{BufRead, BufReader};
+use std::net::IpAddr;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+use crossbeam::channel::Sender;
+
 use crate::commands::run::Device;
 use crate::commands::run::cargo_build::{
     self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_build_log,
@@ -8,14 +18,6 @@ use crate::commands::run::helpers::{
     build_log, build_streamed, fail, run_to_completion, set_status, spawn_streamed, stage_assets,
 };
 use crate::commands::run::utilities::resolve_lib_path;
-use crossbeam::channel::Sender;
-use std::env::current_dir;
-use std::io::{BufRead, BufReader};
-use std::net::IpAddr;
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 
 fn resolve_compatible_java_home() -> Option<String> {
     if cfg!(target_os = "macos") {
@@ -27,11 +29,17 @@ fn resolve_compatible_java_home() -> Option<String> {
             else {
                 continue;
             };
-            if !output.status.success() {
+            if !output
+                .status
+                .success()
+            {
                 continue;
             }
             if let Ok(path) = String::from_utf8(output.stdout) {
-                return Some(path.trim().to_string());
+                return Some(
+                    path.trim()
+                        .to_string(),
+                );
             }
         }
     }
@@ -43,7 +51,9 @@ fn parse_logcat_line(l: String) -> String {
     if l.contains("I/RustStdoutStderr")
         && let Some(item) = l.split_once("): ")
     {
-        return item.1.replace("       ", " ");
+        return item
+            .1
+            .replace("       ", " ");
     }
 
     match l.split_once("]") {
@@ -72,7 +82,9 @@ pub fn spawn_android_runner(
         }
     };
 
-    let abi = String::from_utf8_lossy(&abi_output.stdout).trim().to_string();
+    let abi = String::from_utf8_lossy(&abi_output.stdout)
+        .trim()
+        .to_string();
 
     let (rust_target, jni_dir_name) = match abi.as_str() {
         "x86_64" => ("x86_64-linux-android", "x86_64"),
@@ -100,7 +112,9 @@ pub fn spawn_android_runner(
         return;
     }
 
-    let current_dir = current_dir().unwrap().join("builds/android");
+    let current_dir = current_dir()
+        .unwrap()
+        .join("builds/android");
     build_log(&tx, format!("[Aimer] current_dir: {}", current_dir.display()));
 
     let lib_name = pkg_name.replace("-", "_");
@@ -127,7 +141,8 @@ pub fn spawn_android_runner(
     let gradlew_path = current_dir.join(gradlew);
 
     let mut cmd = Command::new(&gradlew_path);
-    cmd.arg("assembleDebug").current_dir(&current_dir);
+    cmd.arg("assembleDebug")
+        .current_dir(&current_dir);
 
     if let Some(java_home) = resolve_compatible_java_home() {
         build_log(&tx, format!("Using JAVA_HOME: {}", java_home));
@@ -175,7 +190,10 @@ pub fn spawn_android_runner(
             if !line.contains("applicationId") {
                 continue;
             }
-            if let Some(id) = line.split('"').nth(1) {
+            if let Some(id) = line
+                .split('"')
+                .nth(1)
+            {
                 app_id = id.to_string();
                 break;
             }
@@ -217,7 +235,9 @@ pub fn spawn_android_runner(
             .args(["-s", &device.id, "shell", "pidof", "-s", &app_id])
             .output()
         {
-            let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let out = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .to_string();
             if !out.is_empty() {
                 pid = out;
                 break;
@@ -243,7 +263,10 @@ pub fn spawn_android_runner(
         |stdout, tx| {
             thread::spawn(move || {
                 let reader = BufReader::new(stdout);
-                for line in reader.lines().map_while(Result::ok) {
+                for line in reader
+                    .lines()
+                    .map_while(Result::ok)
+                {
                     let _ = tx.send(RunnerEvent::AppLog(parse_logcat_line(line)));
                 }
             });
@@ -251,7 +274,10 @@ pub fn spawn_android_runner(
         |stderr, tx| {
             thread::spawn(move || {
                 let reader = BufReader::new(stderr);
-                for line in reader.lines().map_while(Result::ok) {
+                for line in reader
+                    .lines()
+                    .map_while(Result::ok)
+                {
                     let _ = tx.send(RunnerEvent::AppLog(parse_logcat_line(line)));
                 }
             });

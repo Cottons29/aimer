@@ -9,11 +9,13 @@ pub struct RenderContext<'a> {
     pub format: wgpu::TextureFormat,
 }
 
-/// Trait for user-defined render pipelines that can be plugged into the main renderer.
+/// Trait for user-defined render pipelines that can be plugged into the main
+/// renderer.
 ///
-/// Custom pipelines manage their own GPU resources (shader modules, bind groups,
-/// instance buffers, etc.) and are invoked during the render pass at the correct
-/// z-order position whenever a `DrawCommand::Custom` targets them by name.
+/// Custom pipelines manage their own GPU resources (shader modules, bind
+/// groups, instance buffers, etc.) and are invoked during the render pass at
+/// the correct z-order position whenever a `DrawCommand::Custom` targets them
+/// by name.
 ///
 /// # Usage
 ///
@@ -48,7 +50,8 @@ pub struct RenderContext<'a> {
 /// }
 /// ```
 pub trait CustomPipeline: Send + 'static {
-    /// A unique name identifying this pipeline (used for debug labels and lookup).
+    /// A unique name identifying this pipeline (used for debug labels and
+    /// lookup).
     fn name(&self) -> &str;
 
     /// Called once per frame before the render pass begins.

@@ -140,9 +140,9 @@ impl Color {
 
     /// Scales the brightness of this color by `strength`.
     ///
-    /// This is equivalent to [`Color::multiply`]: RGB channels are multiplied by
-    /// `strength`, clamped to valid channel values, and the alpha channel is
-    /// preserved.
+    /// This is equivalent to [`Color::multiply`]: RGB channels are multiplied
+    /// by `strength`, clamped to valid channel values, and the alpha
+    /// channel is preserved.
     pub const fn with_brightness(self, strength: f32) -> Self {
         self.multiply(strength)
     }
@@ -292,7 +292,9 @@ impl Color {
 }
 
 const fn float_to_channel(value: f32) -> u8 {
-    value.round().clamp(0.0, 255.0) as u8
+    value
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
 
 const fn lerp_channel(start: u8, end: u8, t: f32) -> u8 {
@@ -327,63 +329,123 @@ mod tests {
     use super::*;
     #[test]
     fn with_opacity_rgb() {
-        assert_eq!(Color::Rgb(10, 20, 30).with_opacity(128).as_u32(), 0x800A141E);
+        assert_eq!(
+            Color::Rgb(10, 20, 30)
+                .with_opacity(128)
+                .as_u32(),
+            0x800A141E
+        );
     }
 
     #[test]
     fn with_opacity_rgba_overrides_alpha() {
-        assert_eq!(Color::Rgba(10, 20, 30, 255).with_opacity(0).as_u32(), 0x000A141E);
+        assert_eq!(
+            Color::Rgba(10, 20, 30, 255)
+                .with_opacity(0)
+                .as_u32(),
+            0x000A141E
+        );
     }
 
     #[test]
     fn with_opacity_hex() {
-        assert_eq!(Color::Hex(0x112233).with_opacity(0x80).as_u32(), 0x80112233);
+        assert_eq!(
+            Color::Hex(0x112233)
+                .with_opacity(0x80)
+                .as_u32(),
+            0x80112233
+        );
     }
 
     #[test]
     fn with_opacity_hexa_overrides_alpha() {
-        assert_eq!(Color::HexA(0x112233FF).with_opacity(0x80).as_u32(), 0x80112233);
+        assert_eq!(
+            Color::HexA(0x112233FF)
+                .with_opacity(0x80)
+                .as_u32(),
+            0x80112233
+        );
     }
 
     #[test]
     fn with_opacity_gray() {
-        assert_eq!(Color::Gray8(0x40).with_opacity(0x80).as_u32(), 0x80404040);
+        assert_eq!(
+            Color::Gray8(0x40)
+                .with_opacity(0x80)
+                .as_u32(),
+            0x80404040
+        );
     }
 
     #[test]
     fn with_opacity_basic() {
-        assert_eq!(Color::Basic(Colors::Red).with_opacity(0x80).as_u32(), 0x80FF0000);
+        assert_eq!(
+            Color::Basic(Colors::Red)
+                .with_opacity(0x80)
+                .as_u32(),
+            0x80FF0000
+        );
     }
 
     #[test]
     fn with_opacity_transparent() {
-        assert_eq!(Color::Transparent.with_opacity(0x80).as_u32(), 0x80000000);
+        assert_eq!(
+            Color::Transparent
+                .with_opacity(0x80)
+                .as_u32(),
+            0x80000000
+        );
     }
 
     #[test]
     fn with_opacity_hsl() {
         // Red HSL -> alpha 0.5 * 255 rounds to 128 (0x80)
-        assert_eq!(Color::Hsl(0.0, 1.0, 0.5).with_opacity(128).as_u32(), 0x80FF0000);
+        assert_eq!(
+            Color::Hsl(0.0, 1.0, 0.5)
+                .with_opacity(128)
+                .as_u32(),
+            0x80FF0000
+        );
     }
 
     #[test]
     fn darken_scales_rgb_only() {
-        assert_eq!(Color::Rgba(100, 150, 200, 128).darken(0.5).as_u32(), 0x80324B64);
+        assert_eq!(
+            Color::Rgba(100, 150, 200, 128)
+                .darken(0.5)
+                .as_u32(),
+            0x80324B64
+        );
     }
 
     #[test]
     fn lighten_moves_rgb_toward_white() {
-        assert_eq!(Color::Rgb(100, 150, 200).lighten(0.5).as_u32(), 0xFFB2CBE4);
+        assert_eq!(
+            Color::Rgb(100, 150, 200)
+                .lighten(0.5)
+                .as_u32(),
+            0xFFB2CBE4
+        );
     }
 
     #[test]
     fn with_alpha_accepts_normalized_alpha() {
-        assert_eq!(Color::Rgb(10, 20, 30).with_alpha(0.5).as_u32(), 0x800A141E);
+        assert_eq!(
+            Color::Rgb(10, 20, 30)
+                .with_alpha(0.5)
+                .as_u32(),
+            0x800A141E
+        );
     }
 
     #[test]
     fn multiply_clamps_rgb_and_keeps_alpha() {
-        assert_eq!(Color::Rgba(100, 150, 200, 128).multiply(2.0).as_u32(), 0x80C8FFFF);
+        assert_eq!(
+            Color::Rgba(100, 150, 200, 128)
+                .multiply(2.0)
+                .as_u32(),
+            0x80C8FFFF
+        );
     }
 
     #[test]
@@ -391,27 +453,51 @@ mod tests {
         let red = Color::Rgb(255, 0, 0);
         let blue = Color::Rgba(0, 0, 255, 0);
 
-        assert_eq!(red.lerp(blue, 0.5).as_u32(), 0x80800080);
+        assert_eq!(
+            red.lerp(blue, 0.5)
+                .as_u32(),
+            0x80800080
+        );
         assert_eq!(red.blend(blue, 0.5), red.lerp(blue, 0.5));
     }
 
     #[test]
     fn invert_keeps_alpha() {
-        assert_eq!(Color::Rgba(10, 20, 30, 40).invert().as_u32(), 0x28F5EBE1);
+        assert_eq!(
+            Color::Rgba(10, 20, 30, 40)
+                .invert()
+                .as_u32(),
+            0x28F5EBE1
+        );
     }
 
     #[test]
     fn saturate_pushes_channels_away_from_gray() {
-        assert_eq!(Color::Rgb(100, 150, 200).saturate(0.5).as_u32(), 0xFF509BE6);
+        assert_eq!(
+            Color::Rgb(100, 150, 200)
+                .saturate(0.5)
+                .as_u32(),
+            0xFF509BE6
+        );
     }
 
     #[test]
     fn desaturate_moves_channels_toward_gray() {
-        assert_eq!(Color::Rgb(100, 150, 200).desaturate(0.5).as_u32(), 0xFF7992AB);
+        assert_eq!(
+            Color::Rgb(100, 150, 200)
+                .desaturate(0.5)
+                .as_u32(),
+            0xFF7992AB
+        );
     }
 
     #[test]
     fn grayscale_sets_rgb_to_luminance() {
-        assert_eq!(Color::Rgb(100, 150, 200).grayscale().as_u32(), 0xFF8D8D8D);
+        assert_eq!(
+            Color::Rgb(100, 150, 200)
+                .grayscale()
+                .as_u32(),
+            0xFF8D8D8D
+        );
     }
 }
