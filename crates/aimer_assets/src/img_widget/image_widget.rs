@@ -3,12 +3,12 @@ use crate::img_widget::source::ImageSource;
 use crate::{ImageProvider, ImageResult};
 use aimer_attribute::Dimension;
 use aimer_container::ZeroSizedBox;
+use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::BoxFit;
 use aimer_widget::base::{BuildContext, Color, Colors, ResolvedSize, Size, Vec2d};
 use aimer_widget::{Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget};
 use std::cell::{Cell, UnsafeCell};
 use std::path::PathBuf;
-use aimer_macro::{EventElement, Rebuildable};
 
 pub struct Image {
     pub path: PathBuf,
@@ -100,8 +100,7 @@ impl<P: ImageProvider> LayoutElement for RawImageWidget<P> {
 
         let result = self.size.resolve(&ctx.parent_size, ctx.scale);
 
-        self.cache
-            .set_computed(ctx.box_constraint, scale_bits, result);
+        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
 
         result
     }
@@ -113,8 +112,6 @@ impl<P: ImageProvider> LayoutElement for RawImageWidget<P> {
     fn invalidate_layout(&self) {
         self.cache.invalidate();
     }
-
-
 }
 
 impl<P: ImageProvider> Drawable for RawImageWidget<P> {
@@ -131,8 +128,11 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                 let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
                 let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
                 let cp = ctx.cursor_pos;
-                let is_hovered = cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y;
-                if is_hovered && let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
+                let is_hovered =
+                    cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y;
+                if is_hovered
+                    && let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write()
+                {
                     *hovered = Some((self.debug_name(), l_start, l_end));
                 }
             }
@@ -184,12 +184,20 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                                 }
                                 BoxFit::FitWidth => {
                                     let w = target_w * self.scale;
-                                    let h = if iw > 0.0 { w * (ih / iw) } else { target_h * self.scale };
+                                    let h = if iw > 0.0 {
+                                        w * (ih / iw)
+                                    } else {
+                                        target_h * self.scale
+                                    };
                                     (w, h, true, false)
                                 }
                                 BoxFit::FitHeight => {
                                     let h = target_h * self.scale;
-                                    let w = if ih > 0.0 { h * (iw / ih) } else { target_w * self.scale };
+                                    let w = if ih > 0.0 {
+                                        h * (iw / ih)
+                                    } else {
+                                        target_w * self.scale
+                                    };
                                     (w, h, true, false)
                                 }
                                 BoxFit::Cover => {
@@ -226,7 +234,10 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                             // Fallback: invalid intrinsic size
                             let final_w = size.width * self.scale;
                             let final_h = size.height * self.scale;
-                            let draw_pos = Vec2d { x: (size.width - final_w) * 0.5, y: (size.height - final_h) * 0.5 };
+                            let draw_pos = Vec2d {
+                                x: (size.width - final_w) * 0.5,
+                                y: (size.height - final_h) * 0.5,
+                            };
                             let draw_size = ResolvedSize { width: final_w, height: final_h };
                             ctx.canvas.draw_image(id, draw_pos, draw_size)
                         }
@@ -234,7 +245,10 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                         // Fallback when intrinsic size is unknown
                         let final_w = size.width * self.scale;
                         let final_h = size.height * self.scale;
-                        let draw_pos = Vec2d { x: (size.width - final_w) * 0.5, y: (size.height - final_h) * 0.5 };
+                        let draw_pos = Vec2d {
+                            x: (size.width - final_w) * 0.5,
+                            y: (size.height - final_h) * 0.5,
+                        };
                         let draw_size = ResolvedSize { width: final_w, height: final_h };
                         ctx.canvas.draw_image(id, draw_pos, draw_size)
                     }
@@ -242,17 +256,15 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                     // Not preserving aspect ratio: fill allocated box
                     let final_w = size.width * self.scale;
                     let final_h = size.height * self.scale;
-                    let draw_pos = Vec2d { x: (size.width - final_w) * 0.5, y: (size.height - final_h) * 0.5 };
+                    let draw_pos =
+                        Vec2d { x: (size.width - final_w) * 0.5, y: (size.height - final_h) * 0.5 };
                     let draw_size = ResolvedSize { width: final_w, height: final_h };
                     ctx.canvas.draw_image(id, draw_pos, draw_size)
                 }
             }
 
             ImageResult::Loading => {
-                self.loading_element
-                    .as_ref()
-                    .unwrap_or(&ZeroSizedBox.to_element(ctx))
-                    .draw(ctx);
+                self.loading_element.as_ref().unwrap_or(&ZeroSizedBox.to_element(ctx)).draw(ctx);
             }
 
             ImageResult::Error(_) => {
@@ -266,12 +278,18 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
 
                 for row in 0..rows {
                     for col in 0..cols {
-                        let color = if (row + col) % 2 == 0 { Color::Basic(Colors::Magenta) } else { Color::Basic(Colors::Black) };
+                        let color = if (row + col) % 2 == 0 {
+                            Color::Basic(Colors::Magenta)
+                        } else {
+                            Color::Basic(Colors::Black)
+                        };
 
                         let pos = Vec2d { x: col as f32 * grid_size, y: row as f32 * grid_size };
 
-                        let rect_size =
-                            ResolvedSize { width: grid_size.min(size.width - pos.x), height: grid_size.min(size.height - pos.y) };
+                        let rect_size = ResolvedSize {
+                            width: grid_size.min(size.width - pos.x),
+                            height: grid_size.min(size.height - pos.y),
+                        };
 
                         if rect_size.width > 0.0 && rect_size.height > 0.0 {
                             ctx.canvas.fill_color_rect(pos, rect_size, color, [0.0; 4]);

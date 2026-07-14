@@ -1,19 +1,21 @@
 use crate::ImageResult::Success;
 use crate::{ImageProvider, ImageResult};
+use aimer_utils::error;
+use aimer_widget::base::BuildContext;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use aimer_utils::{ error};
-use aimer_widget::base::BuildContext;
 type FileCacheMap = Mutex<HashMap<PathBuf, DiskImageState>>;
-static NETWORK_CACHE: Lazy<Mutex<HashMap<String, NetworkImageState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static NETWORK_CACHE: Lazy<Mutex<HashMap<String, NetworkImageState>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 pub(crate) static FILE_CACHE: Lazy<FileCacheMap> = Lazy::new(|| Mutex::new(HashMap::new()));
 /// Cache of decoded bundled assets, keyed by their registered lookup key.
 #[cfg(not(target_arch = "wasm32"))]
-static ASSET_CACHE: Lazy<Mutex<HashMap<String, DiskImageState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static ASSET_CACHE: Lazy<Mutex<HashMap<String, DiskImageState>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Clone, Debug)]
 enum NetworkImageState {
@@ -98,7 +100,9 @@ impl ImageProvider for ImageSource {
             ImageSource::Asset(key) => Self::load_asset_image(ctx, key),
             ImageSource::File(path) => Self::load_image(ctx, path),
             ImageSource::Network(url) => Self::load_network_image(ctx, url),
-            ImageSource::NetworkWithHeaders(url, headers) => Self::load_network_image_with_headers(ctx, url, headers),
+            ImageSource::NetworkWithHeaders(url, headers) => {
+                Self::load_network_image_with_headers(ctx, url, headers)
+            }
         }
     }
 }
@@ -130,10 +134,7 @@ impl ImageSource {
         // into view does not block the frame for hundreds of milliseconds.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            FILE_CACHE
-                .lock()
-                .unwrap()
-                .insert(path.clone(), DiskImageState::Loading);
+            FILE_CACHE.lock().unwrap().insert(path.clone(), DiskImageState::Loading);
             let path_buf = path.clone();
             let window = ctx.window;
             ctx.async_handle.spawn_blocking(move || {
@@ -207,10 +208,7 @@ impl ImageSource {
 
         // Cache miss: read + decode the asset off the render thread so scrolling
         // it into view does not block the frame.
-        ASSET_CACHE
-            .lock()
-            .unwrap()
-            .insert(key.to_string(), DiskImageState::Loading);
+        ASSET_CACHE.lock().unwrap().insert(key.to_string(), DiskImageState::Loading);
         let key_owned = key.to_string();
         let window = ctx.window;
         ctx.async_handle.spawn_blocking(move || {
@@ -221,7 +219,9 @@ impl ImageSource {
                         let (width, height) = (rgba.width(), rgba.height());
                         DiskImageState::Ready(rgba.into_raw(), width, height)
                     }
-                    Err(_) => DiskImageState::Error(format!("Failed to decode asset image '{key_owned}'")),
+                    Err(_) => {
+                        DiskImageState::Error(format!("Failed to decode asset image '{key_owned}'"))
+                    }
                 },
                 Err(err) => DiskImageState::Error(err),
             };
@@ -237,11 +237,7 @@ impl ImageSource {
     /// fetched asynchronously through the same machinery as network images.
     #[cfg(target_arch = "wasm32")]
     pub fn load_asset_image(ctx: &BuildContext, key: &str) -> ImageResult {
-        let url = if key.starts_with('/') {
-            key.to_string()
-        } else {
-            format!("/{key}")
-        };
+        let url = if key.starts_with('/') { key.to_string() } else { format!("/{key}") };
         Self::load_network_image(ctx, &url)
     }
 
@@ -257,9 +253,8 @@ impl ImageSource {
                 .ok_or("Android app handle not available")?;
             let manager = app.asset_manager();
             let cstr = CString::new(key).map_err(|e| format!("invalid asset key '{key}': {e}"))?;
-            let mut asset = manager
-                .open(&cstr)
-                .ok_or_else(|| format!("asset '{key}' not found in APK"))?;
+            let mut asset =
+                manager.open(&cstr).ok_or_else(|| format!("asset '{key}' not found in APK"))?;
             let mut buffer = Vec::new();
             asset
                 .read_to_end(&mut buffer)
@@ -296,7 +291,11 @@ impl ImageSource {
         paths
     }
 
-    pub fn load_network_image_with_headers(ctx: &BuildContext, url: &str, headers: &HashMap<String, String>) -> ImageResult {
+    pub fn load_network_image_with_headers(
+        ctx: &BuildContext,
+        url: &str,
+        headers: &HashMap<String, String>,
+    ) -> ImageResult {
         let mut cache = NETWORK_CACHE.lock().unwrap();
         match cache.get_mut(url) {
             Some(NetworkImageState::Loaded(id, width, height)) => {
@@ -336,7 +335,13 @@ impl ImageSource {
                     let url_clone = url.clone();
                     let window_clone = window;
                     wasm_bindgen_futures::spawn_local(async move {
-                        match Self::fetch_full_image_with_headers(&url_clone, &headers, window_clone).await {
+                        match Self::fetch_full_image_with_headers(
+                            &url_clone,
+                            &headers,
+                            window_clone,
+                        )
+                        .await
+                        {
                             Ok(_) => {}
                             Err(err) => {
                                 error!("Failed to fetch network image ({}): {}", url_clone, err);
@@ -353,7 +358,10 @@ impl ImageSource {
     }
 
     #[allow(dead_code)]
-    async fn fetch_full_image(url: &str, window: &'static winit::window::Window) -> Result<(), String> {
+    async fn fetch_full_image(
+        url: &str,
+        window: &'static winit::window::Window,
+    ) -> Result<(), String> {
         Self::fetch_full_image_with_headers(url, &HashMap::new(), window).await
     }
 
@@ -402,7 +410,10 @@ impl ImageSource {
 
     /// Fetch raw bytes with custom headers.
     #[cfg(target_arch = "wasm32")]
-    async fn fetch_bytes_with_headers(url: &str, headers: &HashMap<String, String>) -> Result<Vec<u8>, String> {
+    async fn fetch_bytes_with_headers(
+        url: &str,
+        headers: &HashMap<String, String>,
+    ) -> Result<Vec<u8>, String> {
         use wasm_bindgen::JsCast;
         use wasm_bindgen::prelude::*;
         use web_sys::Headers;
@@ -556,11 +567,7 @@ impl ImageSource {
             return Err(format!("HTTP error: {}", response.status()));
         }
 
-        let all_bytes = response
-            .bytes()
-            .await
-            .map_err(|_| "Failed to download bytes")?
-            .to_vec();
+        let all_bytes = response.bytes().await.map_err(|_| "Failed to download bytes")?.to_vec();
 
         match image::load_from_memory(&all_bytes) {
             Ok(image) => {

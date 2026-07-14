@@ -1,13 +1,11 @@
-
 pub mod img_widget;
 
-use std::fmt::{Debug};
+use aimer_widget::base::BuildContext;
+pub use img_widget::asset_image::AssetImage;
 pub use img_widget::image_widget::Image;
 pub use img_widget::network_image::NetworkImage;
-pub use img_widget::asset_image::AssetImage;
 pub use img_widget::source::ImageSource;
-use aimer_widget::base::BuildContext;
-
+use std::fmt::Debug;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImageResult {

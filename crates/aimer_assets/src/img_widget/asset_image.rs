@@ -1,4 +1,3 @@
-use std::cell::{Cell, UnsafeCell};
 use crate::img_widget::image_widget::RawImageWidget;
 use crate::img_widget::source::ImageSource;
 use aimer_attribute::Dimension;
@@ -6,6 +5,7 @@ use aimer_attribute::size::Size;
 use aimer_style::BoxFit;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, LayoutCache, Widget};
+use std::cell::{Cell, UnsafeCell};
 
 /// Displays an image bundled with the app and registered under `[assets]` in
 /// `aimer.toml`.
