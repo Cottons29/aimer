@@ -1,8 +1,8 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
-pub use aimer_cupid::text_pipeline::TextOverflowMode;
 pub use aimer_cupid::canvas::TextMetrics;
+pub use aimer_cupid::text_pipeline::TextOverflowMode;
 mod native_impl;
 
 pub trait CanvasRendering: Clone {
@@ -37,7 +37,15 @@ pub trait CanvasRendering: Clone {
     fn restore(&self);
     fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16);
     #[allow(clippy::too_many_arguments)]
-    fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32, font_weight: u16);
+    fn draw_text_wrapped(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        max_width: f32,
+        font_weight: u16,
+    );
     #[allow(clippy::too_many_arguments)]
     fn draw_text_with_overflow(
         &self,
@@ -53,7 +61,15 @@ pub trait CanvasRendering: Clone {
     /// Draw a styled text-decoration line (underline/overline/line-through).
     /// `pos`/`size` describe the band; `style` is `TextDecorationStyle::id`.
     #[allow(clippy::too_many_arguments)]
-    fn draw_text_decoration(&self, pos: Vec2d, size: ResolvedSize, color: Color, style: u32, thickness: f32, period: f32);
+    fn draw_text_decoration(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        style: u32,
+        thickness: f32,
+        period: f32,
+    );
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize);
     fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)>;
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize);
@@ -61,7 +77,14 @@ pub trait CanvasRendering: Clone {
     fn clear_clip(&self);
     fn measure_text(&self, text: &str, font_size: f32) -> f32;
     fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics;
-    fn stroke_rect(&self, pos: Vec2d, size: ResolvedSize, stroke_color: Color, stroke_width: f32, border_radius: [f32; 4]);
+    fn stroke_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        stroke_color: Color,
+        stroke_width: f32,
+        border_radius: [f32; 4],
+    );
     /// Draws a stroked rectangle with per-corner radii and per-side widths.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
     /// `stroke_width`: [top, right, bottom, left]
@@ -100,10 +123,22 @@ pub trait CanvasRendering: Clone {
         outline_color: Color,
     );
 
-    fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
+    fn fill_color_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+    );
     /// Draws a filled rectangle with per-corner border radii.
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
-    fn fill_color_rect_per_corner(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]);
+    fn fill_color_rect_per_corner(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+    );
     #[allow(clippy::too_many_arguments)]
     fn draw_shadow_rect(
         &self,
@@ -200,7 +235,15 @@ impl<'a> AimerCanvas<'a> {
         border_width: f32,
         border_color: Color,
     ) {
-        CanvasRendering::fill_rect_with_border(self.inner, pos, size, color, border_radius, border_width, border_color);
+        CanvasRendering::fill_rect_with_border(
+            self.inner,
+            pos,
+            size,
+            color,
+            border_radius,
+            border_width,
+            border_color,
+        );
     }
 
     /// Fills a rectangular area with per-corner border radii and per-side border widths.
@@ -273,7 +316,14 @@ impl<'a> AimerCanvas<'a> {
     /// Draws text at the specified position with the given font size and color.
     #[allow(dead_code)]
     #[inline]
-    pub fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16) {
+    pub fn draw_text(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        font_weight: u16,
+    ) {
         CanvasRendering::draw_text(self.inner, text, pos, font_size, color, font_weight);
     }
 
@@ -281,8 +331,24 @@ impl<'a> AimerCanvas<'a> {
     #[allow(dead_code)]
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_text_wrapped(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, max_width: f32, font_weight: u16) {
-        CanvasRendering::draw_text_wrapped(self.inner, text, pos, font_size, color, max_width, font_weight);
+    pub fn draw_text_wrapped(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        max_width: f32,
+        font_weight: u16,
+    ) {
+        CanvasRendering::draw_text_wrapped(
+            self.inner,
+            text,
+            pos,
+            font_size,
+            color,
+            max_width,
+            font_weight,
+        );
     }
 
     /// Draws text with explicit bounds and overflow behavior.
@@ -300,15 +366,35 @@ impl<'a> AimerCanvas<'a> {
         overflow: TextOverflowMode,
         font_weight: u16,
     ) {
-        CanvasRendering::draw_text_with_overflow(self.inner, text, pos, font_size, color, bounds_width, bounds_height, overflow, font_weight);
+        CanvasRendering::draw_text_with_overflow(
+            self.inner,
+            text,
+            pos,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+            font_weight,
+        );
     }
 
     /// Draws a styled text-decoration line (underline/overline/line-through).
     #[allow(dead_code)]
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_text_decoration(&self, pos: Vec2d, size: ResolvedSize, color: Color, style: u32, thickness: f32, period: f32) {
-        CanvasRendering::draw_text_decoration(self.inner, pos, size, color, style, thickness, period);
+    pub fn draw_text_decoration(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        style: u32,
+        thickness: f32,
+        period: f32,
+    ) {
+        CanvasRendering::draw_text_decoration(
+            self.inner, pos, size, color, style, thickness, period,
+        );
     }
 
     /// Draws an image identified by `image_id` at the specified position and size.
@@ -326,8 +412,8 @@ impl<'a> AimerCanvas<'a> {
 
     #[allow(dead_code)]
     #[inline]
-    pub fn load_image(&self, bytes:  &[u8], width: u32, height: u32) -> u32 {
-        CanvasRendering::load_image(self.inner, bytes,  width, height)
+    pub fn load_image(&self, bytes: &[u8], width: u32, height: u32) -> u32 {
+        CanvasRendering::load_image(self.inner, bytes, width, height)
     }
 
     /// Loads an image from the specified path with a predefined image ID.
@@ -388,7 +474,14 @@ impl<'a> AimerCanvas<'a> {
         stroke_width: f32,
         border_radius: [f32; 4],
     ) {
-        CanvasRendering::stroke_rect(self.inner, pos, size, stroke_color, stroke_width, border_radius);
+        CanvasRendering::stroke_rect(
+            self.inner,
+            pos,
+            size,
+            stroke_color,
+            stroke_width,
+            border_radius,
+        );
     }
 
     /// Draws a stroked rectangle with per-corner radii and per-side widths.
@@ -404,7 +497,14 @@ impl<'a> AimerCanvas<'a> {
         stroke_width: [f32; 4],
         border_radius: [f32; 4],
     ) {
-        CanvasRendering::stroke_rect_per_side(self.inner, pos, size, stroke_color, stroke_width, border_radius);
+        CanvasRendering::stroke_rect_per_side(
+            self.inner,
+            pos,
+            size,
+            stroke_color,
+            stroke_width,
+            border_radius,
+        );
     }
 
     /// Sets the global alpha (opacity) for subsequent draw commands.
@@ -502,13 +602,28 @@ impl<'a> AimerCanvas<'a> {
         inset: bool,
         side_params: [f32; 3],
     ) {
-        CanvasRendering::draw_shadow_rect(self.inner, pos, size, shadow_color, shadow_params, border_radius, inset, side_params);
+        CanvasRendering::draw_shadow_rect(
+            self.inner,
+            pos,
+            size,
+            shadow_color,
+            shadow_params,
+            border_radius,
+            inset,
+            side_params,
+        );
     }
 
     /// Draws a filled rectangle with a specific color.
     #[allow(dead_code)]
     #[inline]
-    pub fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]) {
+    pub fn fill_color_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+    ) {
         CanvasRendering::fill_color_rect(self.inner, pos, size, color, border_radius);
     }
 
@@ -516,7 +631,13 @@ impl<'a> AimerCanvas<'a> {
     /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
     #[allow(dead_code)]
     #[inline]
-    pub fn fill_color_rect_per_corner(&self, pos: Vec2d, size: ResolvedSize, color: Color, border_radius: [f32; 4]) {
+    pub fn fill_color_rect_per_corner(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+    ) {
         CanvasRendering::fill_color_rect_per_corner(self.inner, pos, size, color, border_radius);
     }
 }
