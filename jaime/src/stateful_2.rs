@@ -10,8 +10,7 @@ pub fn start_my_list() {
 }
 
 #[widget(Stateful)]
-pub struct MyList {
-}
+pub struct MyList {}
 
 impl MyList {
     pub fn new() -> Self {
@@ -41,7 +40,12 @@ impl Drop for ListItem {
 impl StatefulWidget for MyList {
     type State = MyListState;
     fn create_state(&self) -> Self::State {
-        MyListState { list: vec![], updater: StateUpdater::empty(), input_controller: TextFieldController::new(), is_cooldown: false }
+        MyListState {
+            list: vec![],
+            updater: StateUpdater::empty(),
+            input_controller: TextFieldController::new(),
+            is_cooldown: false,
+        }
     }
 }
 

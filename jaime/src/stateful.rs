@@ -1,7 +1,7 @@
+use aimer::AimerApp;
 use aimer::callback::VoidCallback;
 use aimer::macros::widget;
 use aimer::style::*;
-use aimer::AimerApp;
 use aimer::*;
 use std::sync::Arc;
 
@@ -64,7 +64,7 @@ impl State<CounterWidget> for CounterState {
         // debug!("self.count: {}", self.count);
         let updater = self.updater.clone();
         Container::new()
-            .color(Colors::Gray.into())
+            .color(Color::WHITE)
             .padding(LayoutSpacing { top: Spacing::Px(20), ..Default::default() })
             .child(
                 Flex::new()
@@ -72,15 +72,13 @@ impl State<CounterWidget> for CounterState {
                     .vertical_alignment(BoxAlignment::Center)
                     .horizontal_alignment(BoxAlignment::Center)
                     .children([
+                        Text::new("Widget with State")
+                            .text_style(TextStyle::new().font_size(25).color(Colors::Black))
+                            .boxed(),
                         SizedBox::new().height(50).boxed(),
-                        Text::new({
-                            format!(
-                                "Clicked: {}",
-                                self.count,
-                            )
-                        })
-                        .text_style(TextStyle::new().font_size(25).color(Colors::Black))
-                        .boxed(),
+                        Text::new(format!("Clicked: {}", self.count,))
+                            .text_style(TextStyle::new().font_size(25).color(Colors::Black))
+                            .boxed(),
                         SizedBox::new().height(50).boxed(),
                         Container::new()
                             .width(Dimension::Px(200.0))
@@ -89,17 +87,9 @@ impl State<CounterWidget> for CounterState {
                                 Button::new()
                                     .disabled(self.on_loading)
                                     .on_press_async(async move || {
-                                        updater.set_state(|state| state.on_loading = true);
-                                        match reqwest::get("https://example.com").await {
-                                            Ok(response) => {
-                                                println!("Response: {:?}", response)
-                                            }
-                                            Err(err) => {
-                                                println!("Error: {}", err);
-                                                return;
-                                            }
-                                        };
-                                        updater.set_state(|state| state.on_loading = false);
+                                        // updater.set_state(|state| state.on_loading = true);
+
+                                        // updater.set_state(|state| state.on_loading = false);
 
                                         println!(
                                             "Button pressed with state : {}",
@@ -111,9 +101,45 @@ impl State<CounterWidget> for CounterState {
                                     })
                                     .decoration(BoxDecoration::new().background_color(Color::BLUE))
                                     .child(
-                                        Text::new(if self.on_loading { "Loading..." } else { "Click Me" })
-                                            .text_align(TextAlign::MidCenter)
-                                            .text_style(TextStyle::new().color(Colors::Black)),
+                                        Text::new(if self.on_loading {
+                                            "Loading..."
+                                        } else {
+                                            "Click Me"
+                                        })
+                                        .text_align(TextAlign::MidCenter)
+                                        .text_style(TextStyle::new().color(Color::WHITE)),
+                                    )
+                                    .boxed(),
+                            )
+                            .boxed(),
+                        SizedBox::new().height(20).boxed(),
+                        Container::new()
+                            .width(Dimension::Px(200.0))
+                            .height(Dimension::Px(50.0))
+                            .child(
+                                Button::new()
+                                    .disabled(self.on_loading)
+                                    .on_press_async({
+                                        let updater = self.updater.clone();
+                                        async move || {
+                                            println!(
+                                                "Button pressed with state : {}",
+                                                updater.read_state().count
+                                            );
+                                            updater.set_state(|state| {
+                                                state.count -= 1;
+                                            });
+                                        }
+                                    })
+                                    .decoration(BoxDecoration::new().background_color(Color::BLUE))
+                                    .child(
+                                        Text::new(if self.on_loading {
+                                            "Loading..."
+                                        } else {
+                                            "Click Me"
+                                        })
+                                        .text_align(TextAlign::MidCenter)
+                                        .text_style(TextStyle::new().color(Color::WHITE)),
                                     )
                                     .boxed(),
                             )
