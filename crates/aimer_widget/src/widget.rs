@@ -7,9 +7,6 @@ use std::rc::Rc;
 pub mod stateful;
 pub mod stateless;
 
-
-
-
 pub trait Widget {
     fn key(&self) -> Option<crate::key::Key> {
         None
@@ -19,8 +16,10 @@ pub trait Widget {
         "Unknown"
     }
 
-
-    fn boxed(self) -> Box<dyn Widget> where Self: Sized + 'static {
+    fn boxed(self) -> Box<dyn Widget>
+    where
+        Self: Sized + 'static,
+    {
         Box::new(self)
     }
 
@@ -76,8 +75,13 @@ pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &
 
     // Bounding box stroke
     let stroke_color = Color::Rgba(0, 120, 255, 200);
-    ctx.canvas
-        .stroke_rect((0.0_f32, 0.0_f32).into(), ResolvedSize { width: w, height: h }, stroke_color, 1.5, [0.0; 4]);
+    ctx.canvas.stroke_rect(
+        (0.0_f32, 0.0_f32).into(),
+        ResolvedSize { width: w, height: h },
+        stroke_color,
+        1.5,
+        [0.0; 4],
+    );
 
     // Label
     let font_size = 10.0_f32;
@@ -86,8 +90,12 @@ pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &
     let label_h = font_size + 4.0;
 
     let bg_color = Color::Rgba(0, 0, 0, 180);
-    ctx.canvas
-        .fill_color_rect((0.0_f32, 0.0_f32).into(), ResolvedSize { width: label_w, height: label_h }, bg_color, [0.0; 4]);
+    ctx.canvas.fill_color_rect(
+        (0.0_f32, 0.0_f32).into(),
+        ResolvedSize { width: label_w, height: label_h },
+        bg_color,
+        [0.0; 4],
+    );
 
     let text_color = Color::Rgba(255, 255, 255, 255);
     ctx.canvas

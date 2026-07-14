@@ -20,7 +20,15 @@ pub trait LayoutElement: VisitorElement {
     /// calculate the size after apply layout
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.size()
-            .map(|s| s.resolve(&ResolvedSize { width: ctx.box_constraint.max_width, height: ctx.box_constraint.max_height }, ctx.scale))
+            .map(|s| {
+                s.resolve(
+                    &ResolvedSize {
+                        width: ctx.box_constraint.max_width,
+                        height: ctx.box_constraint.max_height,
+                    },
+                    ctx.scale,
+                )
+            })
             .unwrap_or(ctx.parent_size)
     }
 
