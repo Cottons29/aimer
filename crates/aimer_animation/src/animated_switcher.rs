@@ -140,8 +140,8 @@ impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T
             self.child_key = new.child_key.clone();
             self.in_controller.reset();
             self.out_controller.reset();
-            self.in_controller.forward();
-            self.out_controller.forward();
+            self.in_controller.forward_from_first_tick();
+            self.out_controller.forward_from_first_tick();
             request_next_frame();
         } else {
             self.current_child = new.current_child.clone();
@@ -331,6 +331,12 @@ mod tests {
             1,
             "transition startup must schedule its first frame"
         );
+        std::thread::sleep(Duration::from_millis(10));
+
+        assert_eq!(current.in_controller.tick(AnimInstant::now()), 0.0);
+        assert_eq!(current.out_controller.tick(AnimInstant::now()), 0.0);
+        assert!(current.in_controller.is_animating());
+        assert!(current.out_controller.is_animating());
     }
 
     #[test]
@@ -341,5 +347,170 @@ mod tests {
 
         assert!(current.old_child.is_none());
         assert!(!current.out_controller.is_animating());
+    }
+
+    // ─── End-to-end draw test: a keyed switcher across a "route" change ────
+    //
+    // Reproduces the website router: a top-level stateful widget rebuilds a
+    // keyed `AnimatedSwitcher` whose child changes with the active route. On a
+    // route change the switcher's live state must be carried across the parent
+    // rebuild (via keyed reconciliation) so `adopt_config_from` observes the
+    // new child key and starts a cross-fade. During that fade BOTH the outgoing
+    // and incoming children must be painted; if only the new child is painted,
+    // the switch is instant (the reported bug).
+    mod draw_transition {
+        use super::*;
+        use aimer_widget::{StatefulElement, base::BuildContext};
+        use std::cell::RefCell;
+        use std::collections::HashMap;
+        use std::rc::Rc;
+        use std::sync::RwLock;
+
+        /// A leaf that records the label it renders each time it is drawn, so a
+        /// test can see exactly which children reached the screen this frame.
+        struct RecordingLeaf {
+            label: &'static str,
+            drawn: Rc<RefCell<Vec<&'static str>>>,
+        }
+        impl VisitorElement for RecordingLeaf {
+            fn debug_name(&self) -> &'static str {
+                "RecordingLeaf"
+            }
+        }
+        impl Drawable for RecordingLeaf {
+            fn draw(&self, _ctx: &BuildContext) {
+                self.drawn.borrow_mut().push(self.label);
+            }
+        }
+        impl EventElement for RecordingLeaf {}
+        impl LayoutElement for RecordingLeaf {}
+        impl Rebuildable for RecordingLeaf {}
+
+        /// Widget wrapper around `RecordingLeaf` so it can be the switcher child.
+        struct RecordingPage {
+            label: &'static str,
+            drawn: Rc<RefCell<Vec<&'static str>>>,
+        }
+        impl Widget for RecordingPage {
+            fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+                Box::new(RecordingLeaf { label: self.label, drawn: self.drawn.clone() })
+            }
+            fn debug_name(&self) -> &'static str {
+                "RecordingPage"
+            }
+        }
+
+        fn route_label(route: usize) -> &'static str {
+            if route == 0 { "home" } else { "docs" }
+        }
+
+        /// A "router": rebuilding it with a new `route` swaps the switcher child.
+        struct RouterMock {
+            drawn: Rc<RefCell<Vec<&'static str>>>,
+        }
+        struct RouterMockState {
+            route: usize,
+            drawn: Rc<RefCell<Vec<&'static str>>>,
+            updater: StateUpdater<Self>,
+        }
+        impl StatefulWidget for RouterMock {
+            type State = RouterMockState;
+            fn create_state(&self) -> Self::State {
+                RouterMockState {
+                    route: 0,
+                    drawn: self.drawn.clone(),
+                    updater: StateUpdater::new(),
+                }
+            }
+        }
+        impl State<RouterMock> for RouterMockState {
+            fn init_state(&mut self, updater: StateUpdater<Self>) {
+                self.updater = updater;
+            }
+            fn build(&self, _ctx: &BuildContext) -> impl Widget {
+                let label = route_label(self.route);
+                AnimatedSwitcher::new(
+                    Duration::from_millis(50),
+                    Curve::Linear,
+                    RecordingPage { label, drawn: self.drawn.clone() }.boxed(),
+                )
+                .child_key(label)
+                .key("route-switcher")
+            }
+        }
+
+        fn dummy_window() -> &'static winit::window::Window {
+            const SIZE: usize = 16384;
+            static SLOT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let addr = *SLOT.get_or_init(|| {
+                let leaked: &'static mut [u8; SIZE] = Box::leak(Box::new([0u8; SIZE]));
+                leaked.as_mut_ptr() as usize
+            });
+            // SAFETY: pointer is never dereferenced by the code paths under test.
+            unsafe { &*(addr as *const winit::window::Window) }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        fn dummy_async_handle() -> tokio::runtime::Handle {
+            static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> =
+                std::sync::OnceLock::new();
+            let runtime = RUNTIME.get_or_init(|| {
+                tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+            });
+            let _guard = runtime.enter();
+            tokio::runtime::Handle::current()
+        }
+
+        fn dummy_build_context() -> BuildContext<'static> {
+            let canvas = {
+                let leaked: &'static aimer_canvas::InnerCanvas =
+                    Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+                aimer_canvas::Canvas::new(leaked)
+            };
+            BuildContext {
+                parent_size: Default::default(),
+                canvas,
+                scale: 1.0,
+                parent_pos: Default::default(),
+                cursor_pos: Default::default(),
+                box_constraint: Default::default(),
+                visible_rect: None,
+                window: dummy_window(),
+                #[cfg(not(target_arch = "wasm32"))]
+                async_handle: dummy_async_handle(),
+                inherited_states: Rc::new(RwLock::new(HashMap::new())),
+            }
+        }
+
+        #[test]
+        fn switching_route_cross_fades_instead_of_switching_instantly() {
+            let ctx = dummy_build_context();
+            let drawn: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+
+            let (router, updater) = StatefulElement::new_with_name(
+                &RouterMock { drawn: drawn.clone() },
+                &ctx,
+                "Router",
+                None,
+            );
+
+            // Initial frame: only the "home" page is painted.
+            drawn.borrow_mut().clear();
+            router.draw(&ctx);
+            assert_eq!(*drawn.borrow(), ["home"], "initial frame should paint only the home page");
+
+            // Navigate home -> docs, then draw the very next frame.
+            updater.set_state(|s| s.route = 1);
+            router.rebuild_if_dirty(&ctx);
+            drawn.borrow_mut().clear();
+            router.draw(&ctx);
+
+            let painted = drawn.borrow().clone();
+            assert!(
+                painted.contains(&"home") && painted.contains(&"docs"),
+                "a cross-fade must paint BOTH the outgoing (home) and incoming (docs) pages on the \
+                 first frame after navigation; instead only {painted:?} was painted (instant switch)"
+            );
+        }
     }
 }

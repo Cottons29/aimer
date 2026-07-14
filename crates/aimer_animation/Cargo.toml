@@ -17,3 +17,6 @@ aimer_canvas.workspace = true
 
 winit.workspace = true
 chrono.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

@@ -107,6 +107,19 @@ impl AnimationController {
         self.notify_if_changed(changed, AnimationStatus::Forward);
     }
 
+    /// Arm forward playback while deferring the elapsed-time clock until the
+    /// first [`Self::tick`]. This prevents widget construction between starting
+    /// an animation and rendering its first frame from consuming its duration.
+    pub fn forward_from_first_tick(&self) {
+        let changed = {
+            let mut state = self.state.lock().unwrap();
+            state.start_value = state.value;
+            state.start_time = None;
+            Self::set_status(&mut state, AnimationStatus::Forward)
+        };
+        self.notify_if_changed(changed, AnimationStatus::Forward);
+    }
+
     /// Start playing the animation in reverse from the current value.
     pub fn reverse(&self) {
         let changed = {
@@ -206,6 +219,9 @@ impl AnimationController {
         let (value, curve, notification) = {
             let mut state = self.state.lock().unwrap();
             let Some(start) = state.start_time else {
+                if matches!(state.status, AnimationStatus::Forward | AnimationStatus::Reverse) {
+                    state.start_time = Some(now);
+                }
                 return state.curve.transform(state.value);
             };
             if !matches!(state.status, AnimationStatus::Forward | AnimationStatus::Reverse) {

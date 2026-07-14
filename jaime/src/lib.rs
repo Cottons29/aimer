@@ -4,11 +4,13 @@ pub mod routing;
 mod starter;
 pub mod stateful;
 mod stateful_2;
+mod test_animation;
 
 #[allow(unused_imports)]
 use crate::animated::start_my_animated_list;
 #[allow(unused_imports)]
 use crate::stateful::start_counter;
+use crate::test_animation::TestFadingAnimation;
 use aimer::AimerApp;
 use aimer::style::*;
 use aimer::*;
@@ -19,7 +21,8 @@ use aimer::*;
 #[main]
 pub fn my_app() {
     // stateful_2::start_my_list();
-    start_counter();
+    // start_counter();
+    AimerApp::start(TestFadingAnimation)
 }
 #[allow(unused)]
 fn test_text() {

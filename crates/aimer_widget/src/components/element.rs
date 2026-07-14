@@ -113,6 +113,10 @@ impl Rebuildable for Box<dyn Element> {
         self.as_ref().rebuild_if_dirty(ctx)
     }
 
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        self.as_ref().option_any()
+    }
+
     fn mark_needs_rebuild(&self) {
         self.as_ref().mark_needs_rebuild()
     }
@@ -187,4 +191,36 @@ pub fn broadcast_event(root: &dyn Element, event: &ElementEvent) -> bool {
     }
 
     consumed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::any::Any;
+
+    struct DowncastableElement;
+
+    impl VisitorElement for DowncastableElement {
+        fn debug_name(&self) -> &'static str {
+            "DowncastableElement"
+        }
+    }
+
+    impl EventElement for DowncastableElement {}
+    impl LayoutElement for DowncastableElement {}
+    impl Drawable for DowncastableElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for DowncastableElement {
+        fn option_any(&self) -> Option<&dyn Any> {
+            Some(self)
+        }
+    }
+
+    #[test]
+    fn boxed_element_delegates_runtime_downcasting() {
+        let element: Box<dyn Element> = Box::new(DowncastableElement);
+
+        assert!(element.option_any().is_some_and(|value| value.is::<DowncastableElement>()));
+    }
 }
