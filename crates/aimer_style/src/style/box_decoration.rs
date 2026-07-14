@@ -87,7 +87,9 @@ impl Drawable for BoxDecoration {
         }
 
         // Draw combined background, border and outline if possible
-        if self.border.has_visible_border(box_width, box_height, scale) || self.outline.has_visible_outline(box_width, box_height, scale) {
+        if self.border.has_visible_border(box_width, box_height, scale)
+            || self.outline.has_visible_outline(box_width, box_height, scale)
+        {
             let b_widths = self.border.strokes(box_width, box_height, scale);
             let o_widths = self.outline.strokes(box_width, box_height, scale);
 
@@ -126,14 +128,25 @@ impl Drawable for BoxDecoration {
 
 impl BoxDecoration {
     /// Draws a box shadow using a single GPU draw call with SDF-based Gaussian blur.
-    fn draw_shadow(ctx: &BuildContext, shadow: &BoxShadow, box_width: f32, box_height: f32, radii: &[f32; 4]) {
+    fn draw_shadow(
+        ctx: &BuildContext,
+        shadow: &BoxShadow,
+        box_width: f32,
+        box_height: f32,
+        radii: &[f32; 4],
+    ) {
         // Early-out for fully transparent or invisible shadows
         if shadow.color == Color::Transparent {
             return;
         }
         let blur = shadow.blur.max(0.0);
         let spread = shadow.spread;
-        if blur == 0.0 && spread == 0.0 && shadow.offset_x == 0.0 && shadow.offset_y == 0.0 && !shadow.inset {
+        if blur == 0.0
+            && spread == 0.0
+            && shadow.offset_x == 0.0
+            && shadow.offset_y == 0.0
+            && !shadow.inset
+        {
             return;
         }
 

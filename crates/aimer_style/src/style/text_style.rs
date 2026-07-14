@@ -165,13 +165,23 @@ impl TextDecoration {
 
     /// No decoration. Kept as an associated constant so existing
     /// `TextDecoration::None` call sites keep working after the enum→struct change.
-    pub const None: Self =
-        Self { line: TextDecorationLine::NONE, style: TextDecorationStyle::Solid, color: None, thickness: None, offset: 0.0 };
+    pub const None: Self = Self {
+        line: TextDecorationLine::NONE,
+        style: TextDecorationStyle::Solid,
+        color: None,
+        thickness: None,
+        offset: 0.0,
+    };
 
     /// A plain solid underline (the previous default decoration). Kept as an
     /// associated constant for backward compatibility with `TextDecoration::Underline`.
-    pub const Underline: Self =
-        Self { line: TextDecorationLine::UNDERLINE, style: TextDecorationStyle::Solid, color: None, thickness: None, offset: 0.0 };
+    pub const Underline: Self = Self {
+        line: TextDecorationLine::UNDERLINE,
+        style: TextDecorationStyle::Solid,
+        color: None,
+        thickness: None,
+        offset: 0.0,
+    };
 
     pub const fn from_parts(line: TextDecorationLine, style: TextDecorationStyle) -> Self {
         Self { line, style, color: None, thickness: None, offset: 0.0 }
