@@ -10,7 +10,11 @@ pub struct ScrollTrack {
 
 impl Default for ScrollTrack {
     fn default() -> Self {
-        Self { width: Dimension::Auto, color: Colors::Transparent, hover_color: Colors::Transparent }
+        Self {
+            width: Dimension::Auto,
+            color: Colors::Transparent,
+            hover_color: Colors::Transparent,
+        }
     }
 }
 

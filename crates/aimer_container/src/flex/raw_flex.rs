@@ -1,10 +1,13 @@
+use crate::ZeroSizedBox;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_attribute::{BoxConstraint, CacheBounds};
 use aimer_macro::Rebuildable;
 use aimer_style::LayoutSpacing;
-use aimer_widget::{Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement, Widget, base::BuildContext};
-use crate::ZeroSizedBox;
+use aimer_widget::{
+    Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement, Widget,
+    base::BuildContext,
+};
 
 use crate::flex::flex_child::distribute_flex_space;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
@@ -66,7 +69,6 @@ impl<W: Widget + 'static> Flex<W> {
     }
 
     pub fn children<C: Widget>(self, children: impl IntoIterator<Item = C>) -> Flex<C> {
-
         Flex {
             direction: self.direction,
             vertical_alignment: self.vertical_alignment,
@@ -133,8 +135,10 @@ impl RawFlex {
     fn resole_gaps(&self, ctx: &BuildContext) -> (f32, f32) {
         let max_width = ctx.box_constraint.max_width;
         let max_height = ctx.box_constraint.max_height;
-        let gap_x = self.gaps.left.value(max_width, ctx.scale) + self.gaps.right.value(max_width, ctx.scale);
-        let gap_y = self.gaps.top.value(max_height, ctx.scale) + self.gaps.bottom.value(max_height, ctx.scale);
+        let gap_x = self.gaps.left.value(max_width, ctx.scale)
+            + self.gaps.right.value(max_width, ctx.scale);
+        let gap_y = self.gaps.top.value(max_height, ctx.scale)
+            + self.gaps.bottom.value(max_height, ctx.scale);
 
         (gap_x, gap_y)
     }
@@ -180,13 +184,19 @@ impl Drawable for RawFlex {
             if aimer_widget::inspector_overlay::is_enabled() {
                 let parent_pos: Vec2d = ctx.canvas.get_transform_translation().into();
 
-                self.cache_bound
-                    .save(ctx.scale, parent_pos.x, parent_pos.y, ctx.box_constraint.max_width, ctx.box_constraint.max_height);
+                self.cache_bound.save(
+                    ctx.scale,
+                    parent_pos.x,
+                    parent_pos.y,
+                    ctx.box_constraint.max_width,
+                    ctx.box_constraint.max_height,
+                );
 
                 let cp = ctx.cursor_pos;
                 if self.cache_bound.is_inside(cp.x, cp.y) {
                     let (l_start, l_end) = self.cache_bound.pos_start_end().unwrap();
-                    if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
+                    if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write()
+                    {
                         *hovered = Some((self.debug_name, l_start, l_end));
                     }
                 }
@@ -258,7 +268,9 @@ impl Drawable for RawFlex {
         }
 
         let remaining_main = match self.direction {
-            LayoutDirection::Row | LayoutDirection::Inherit => (max_w - sized_main - total_gap).max(0.0),
+            LayoutDirection::Row | LayoutDirection::Inherit => {
+                (max_w - sized_main - total_gap).max(0.0)
+            }
             LayoutDirection::Column => (max_h - sized_main - total_gap).max(0.0),
         };
         let flex_shares = distribute_flex_space(remaining_main, &weights);
@@ -324,7 +336,11 @@ impl Drawable for RawFlex {
             let mut is_visible = true;
             #[allow(clippy::collapsible_if)]
             if let Some((vx, vy, vw, vh)) = ctx.visible_rect {
-                if (offset_x) + (c_w) < vx || (offset_x) > vx + vw || (offset_y) + (c_h) < vy || (offset_y) > vy + vh {
+                if (offset_x) + (c_w) < vx
+                    || (offset_x) > vx + vw
+                    || (offset_y) + (c_h) < vy
+                    || (offset_y) > vy + vh
+                {
                     is_visible = false;
                 }
             }
@@ -336,8 +352,15 @@ impl Drawable for RawFlex {
                     scale: ctx.scale,
                     parent_pos: ctx.parent_pos,
                     cursor_pos: ctx.cursor_pos,
-                    box_constraint: BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: c_w, max_height: c_h },
-                    visible_rect: ctx.visible_rect.map(|(vx, vy, vw, vh)| (vx - offset_x, vy - offset_y, vw, vh)),
+                    box_constraint: BoxConstraint {
+                        min_width: 0.0,
+                        min_height: 0.0,
+                        max_width: c_w,
+                        max_height: c_h,
+                    },
+                    visible_rect: ctx
+                        .visible_rect
+                        .map(|(vx, vy, vw, vh)| (vx - offset_x, vy - offset_y, vw, vh)),
                     window: ctx.window,
                     #[cfg(not(target_arch = "wasm32"))]
                     async_handle: ctx.async_handle.clone(),
@@ -408,8 +431,8 @@ impl LayoutElement for RawFlex {
 
         let child_count = self.children.len();
 
-        let gap_x =
-            self.gaps.left.value(ctx.box_constraint.max_width, ctx.scale) + self.gaps.right.value(ctx.box_constraint.max_width, ctx.scale);
+        let gap_x = self.gaps.left.value(ctx.box_constraint.max_width, ctx.scale)
+            + self.gaps.right.value(ctx.box_constraint.max_width, ctx.scale);
         let gap_y = self.gaps.top.value(ctx.box_constraint.max_height, ctx.scale)
             + self.gaps.bottom.value(ctx.box_constraint.max_height, ctx.scale);
 

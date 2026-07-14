@@ -29,8 +29,8 @@ mod tests {
     use aimer_widget::Key;
     use aimer_widget::base::BuildContext;
     use aimer_widget::{
-        Drawable, Element, EventElement, LayoutElement, NamedWidget, Rebuildable, State, StateUpdater, StatefulElement,
-        StatefulWidget, StatelessElement, VisitorElement, Widget,
+        Drawable, Element, EventElement, LayoutElement, NamedWidget, Rebuildable, State,
+        StateUpdater, StatefulElement, StatefulWidget, StatelessElement, VisitorElement, Widget,
     };
     use std::any::{Any, TypeId};
     use std::cell::{Cell, RefCell};
@@ -100,14 +100,15 @@ mod tests {
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
             self.observers[self.index].set(if self.selected { 1 } else { 0 });
-            Container::new()
-                .height(32)
-                .child(crate::ZeroSizedBox)
+            Container::new().height(32).child(crate::ZeroSizedBox)
         }
     }
 
     fn button(index: usize, selected: bool, observers: Rc<Vec<Rc<Cell<i32>>>>) -> Box<dyn Widget> {
-        Box::new(NamedWidget::new(Box::new(ButtonLike { index, selected, observers }), "ButtonLike"))
+        Box::new(NamedWidget::new(
+            Box::new(ButtonLike { index, selected, observers }),
+            "ButtonLike",
+        ))
     }
 
     struct TabWidget {
@@ -158,21 +159,17 @@ mod tests {
             *self.live_updater.borrow_mut() = Some(self.updater.clone());
             // Content follows the selection (the image in the real app) AND a
             // Row of buttons whose highlight must follow the selection too.
-            Column::new()
-                .children(vec![
-                    Container::new()
-                        .height(180)
-                        .child(crate::ZeroSizedBox)
-                        .boxed(),
-                    Row::new()
-                        .children(vec![
-                            button(0, self.index == 0, self.button_observers.clone()),
-                            button(1, self.index == 1, self.button_observers.clone()),
-                            button(2, self.index == 2, self.button_observers.clone()),
-                            button(3, self.index == 3, self.button_observers.clone()),
-                        ])
-                        .boxed(),
-                ])
+            Column::new().children(vec![
+                Container::new().height(180).child(crate::ZeroSizedBox).boxed(),
+                Row::new()
+                    .children(vec![
+                        button(0, self.index == 0, self.button_observers.clone()),
+                        button(1, self.index == 1, self.button_observers.clone()),
+                        button(2, self.index == 2, self.button_observers.clone()),
+                        button(3, self.index == 3, self.button_observers.clone()),
+                    ])
+                    .boxed(),
+            ])
         }
     }
 
@@ -216,12 +213,18 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     fn dummy_async_handle() -> tokio::runtime::Handle {
         static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-        let runtime = RUNTIME.get_or_init(|| tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap());
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+        });
         let _guard = runtime.enter();
         tokio::runtime::Handle::current()
     }
 
-    fn dummy_build_context(width: f32, height: f32, visible_rect: Option<(f32, f32, f32, f32)>) -> BuildContext<'static> {
+    fn dummy_build_context(
+        width: f32,
+        height: f32,
+        visible_rect: Option<(f32, f32, f32, f32)>,
+    ) -> BuildContext<'static> {
         let canvas = {
             let leaked: &'static InnerCanvas = Box::leak(Box::new(InnerCanvas::new()));
             Canvas::new(leaked)
@@ -233,7 +236,12 @@ mod tests {
             scale: 1.0,
             parent_pos: Default::default(),
             cursor_pos: Default::default(),
-            box_constraint: BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: width, max_height: height },
+            box_constraint: BoxConstraint {
+                min_width: 0.0,
+                min_height: 0.0,
+                max_width: width,
+                max_height: height,
+            },
             visible_rect,
             window: dummy_window(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -243,10 +251,7 @@ mod tests {
     }
 
     fn placeholder_section(height: i32) -> Box<dyn Widget> {
-        Container::new()
-            .height(height)
-            .child(crate::ZeroSizedBox)
-            .boxed()
+        Container::new().height(height).child(crate::ZeroSizedBox).boxed()
     }
 
     fn build_home_page(
@@ -256,9 +261,7 @@ mod tests {
         button_observers: Rc<Vec<Rc<Cell<i32>>>>,
     ) -> Box<dyn Element> {
         Container::new()
-            .child(
-                Stack::new()
-                    .children(vec![
+            .child(Stack::new().children(vec![
                         Box::new(Positioned::new()
                             .top(0)
                             .left(0)
@@ -288,12 +291,13 @@ mod tests {
                                 )
                                 .axis(crate::ScrollAxis::Vertical)
                             )) as Box<dyn Widget>,
-                    ])
-            )
-        .to_element(ctx)
+                    ]))
+            .to_element(ctx)
     }
 
-    fn current_live_updater(live_updater: &Rc<RefCell<Option<StateUpdater<TabState>>>>) -> StateUpdater<TabState> {
+    fn current_live_updater(
+        live_updater: &Rc<RefCell<Option<StateUpdater<TabState>>>>,
+    ) -> StateUpdater<TabState> {
         live_updater
             .borrow()
             .as_ref()
@@ -305,15 +309,28 @@ mod tests {
         let initial_ctx = dummy_build_context(500.0, 600.0, None);
         let observer = Rc::new(Cell::new(usize::MAX));
         let live_updater = Rc::new(RefCell::new(None));
-        let button_observers: Rc<Vec<Rc<Cell<i32>>>> = Rc::new((0..4).map(|_| Rc::new(Cell::new(-1))).collect());
+        let button_observers: Rc<Vec<Rc<Cell<i32>>>> =
+            Rc::new((0..4).map(|_| Rc::new(Cell::new(-1))).collect());
 
-        let initial_child = build_home_page(&initial_ctx, observer.clone(), live_updater.clone(), button_observers.clone());
+        let initial_child = build_home_page(
+            &initial_ctx,
+            observer.clone(),
+            live_updater.clone(),
+            button_observers.clone(),
+        );
         let rebuild_observer = observer.clone();
         let rebuild_live_updater = live_updater.clone();
         let rebuild_button_observers = button_observers.clone();
         let driver = StatelessElement::new(
             initial_child,
-            move |ctx| build_home_page(ctx, rebuild_observer.clone(), rebuild_live_updater.clone(), rebuild_button_observers.clone()),
+            move |ctx| {
+                build_home_page(
+                    ctx,
+                    rebuild_observer.clone(),
+                    rebuild_live_updater.clone(),
+                    rebuild_button_observers.clone(),
+                )
+            },
             None,
             "Root",
         );
@@ -324,7 +341,11 @@ mod tests {
         current_live_updater(&live_updater).set_state(|state| state.index = 3);
         driver.draw(&initial_ctx);
 
-        assert_eq!(observer.get(), 3, "setup failed: observer should record the selected tab before resize");
+        assert_eq!(
+            observer.get(),
+            3,
+            "setup failed: observer should record the selected tab before resize"
+        );
         assert_eq!(
             current_live_updater(&live_updater).read(|state| state.index),
             3,
@@ -345,7 +366,8 @@ mod tests {
         let observer_after_resize = observer.get();
         let live_index_after_resize = current_live_updater(&live_updater).read(|state| state.index);
         let verdict = Verdict::classify(observer_after_resize, live_index_after_resize);
-        let button_highlight_after_resize: Vec<i32> = button_observers.iter().map(|o| o.get()).collect();
+        let button_highlight_after_resize: Vec<i32> =
+            button_observers.iter().map(|o| o.get()).collect();
 
         VariantResult {
             label: match (culled, resize_count) {
@@ -372,7 +394,12 @@ mod tests {
     /// variant.
     #[test]
     fn real_widget_resize_repro_keeps_selected_tab() {
-        let results = [run_variant(false, 1), run_variant(false, 2), run_variant(true, 1), run_variant(true, 2)];
+        let results = [
+            run_variant(false, 1),
+            run_variant(false, 2),
+            run_variant(true, 1),
+            run_variant(true, 2),
+        ];
 
         for result in &results {
             eprintln!(
@@ -577,7 +604,12 @@ mod tests {
     /// config must be refreshed to match the live selection.
     #[test]
     fn real_widget_resize_repro_keeps_button_highlight() {
-        let results = [run_variant(false, 1), run_variant(false, 2), run_variant(true, 1), run_variant(true, 2)];
+        let results = [
+            run_variant(false, 1),
+            run_variant(false, 2),
+            run_variant(true, 1),
+            run_variant(true, 2),
+        ];
 
         for result in &results {
             eprintln!("{} => buttons={:?}", result.label, result.button_highlight_after_resize);
@@ -613,14 +645,20 @@ mod tests {
     impl LayoutElement for MainAxisProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
             self.seen.set(ctx.box_constraint.max_width);
-            ResolvedSize { width: ctx.box_constraint.max_width, height: ctx.box_constraint.max_height }
+            ResolvedSize {
+                width: ctx.box_constraint.max_width,
+                height: ctx.box_constraint.max_height,
+            }
         }
     }
     impl Rebuildable for MainAxisProbe {}
 
-
     fn expanded_probe(flex: f32, seen: &Rc<Cell<f32>>) -> Box<dyn Element> {
-        Box::new(RawExpanded { child: MainAxisProbe { seen: seen.clone() }, flex, debug_name: "Expanded" })
+        Box::new(RawExpanded {
+            child: MainAxisProbe { seen: seen.clone() },
+            flex,
+            debug_name: "Expanded",
+        })
     }
 
     // A leaf element with a fixed intrinsic main-axis size that ignores the
@@ -714,10 +752,8 @@ mod tests {
         let ctx = dummy_build_context(300.0, 100.0, None);
         let c1 = Rc::new(Cell::new(0.0));
         let c2 = Rc::new(Cell::new(0.0));
-        let fixed: Box<dyn Element> = Container::new()
-            .width(60)
-            .child(crate::ZeroSizedBox)
-            .to_element(&ctx);
+        let fixed: Box<dyn Element> =
+            Container::new().width(60).child(crate::ZeroSizedBox).to_element(&ctx);
         let row = row_of(vec![fixed, expanded_probe(1.0, &c1), expanded_probe(2.0, &c2)]);
 
         let _ = row.computed_size(&ctx);
@@ -742,7 +778,11 @@ mod tests {
         let _ = row.computed_size(&ctx);
 
         // The Expanded must get the whole remaining 300 - 50 = 250, not (300)/2.
-        assert_eq!(exp.get(), 250.0, "the Expanded must fill ALL space left by the intrinsic-sized child");
+        assert_eq!(
+            exp.get(),
+            250.0,
+            "the Expanded must fill ALL space left by the intrinsic-sized child"
+        );
     }
 
     /// Two intrinsic (size-less) children and a single `Expanded`: the plain
@@ -753,7 +793,11 @@ mod tests {
         let a = Rc::new(Cell::new(0.0));
         let b = Rc::new(Cell::new(0.0));
         let exp = Rc::new(Cell::new(0.0));
-        let row = row_of(vec![intrinsic_probe(30.0, &a), intrinsic_probe(70.0, &b), expanded_probe(1.0, &exp)]);
+        let row = row_of(vec![
+            intrinsic_probe(30.0, &a),
+            intrinsic_probe(70.0, &b),
+            expanded_probe(1.0, &exp),
+        ]);
 
         let _ = row.computed_size(&ctx);
 

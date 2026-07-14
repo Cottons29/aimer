@@ -7,7 +7,6 @@ use aimer_widget::{Drawable, Element, LayoutElement};
 
 impl<E: Element> Drawable for RawScrollableContainer<E> {
     fn draw(&self, ctx: &BuildContext) {
-
         // println!("Scrollable drawing child: {})", self.child.debug_name() );
 
         let (raw_viewport_w, raw_viewport_h) = self.viewport_size(ctx);
@@ -79,14 +78,19 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // Write-back: persist the live position so a full teardown/re-create can
         // restore it (see `scroll_storage`). Stored in logical (unscaled) pixels
         // to survive a scale change. Only when the user opted in via `storage_key`.
-        crate::scrollable::scroll_storage::save_offset(&self.ctrl.storage_key, Vec2d { x: offset.x / ctx.scale, y: offset.y / ctx.scale });
+        crate::scrollable::scroll_storage::save_offset(
+            &self.ctrl.storage_key,
+            Vec2d { x: offset.x / ctx.scale, y: offset.y / ctx.scale },
+        );
 
         let offset = self.ctrl.visual_offset(offset);
 
         // Clip to viewport
         ctx.canvas.save();
-        ctx.canvas
-            .set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
+        ctx.canvas.set_clip(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width: viewport_w.round(), height: viewport_h.round() },
+        );
 
         // Translate by scroll offset.  Round to device pixels at every scale
         // so that child widget edges always land on exact device-pixel
@@ -115,8 +119,10 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         // Draw scrollbars on top, clipped to viewport
         ctx.canvas.save();
-        ctx.canvas
-            .set_clip(Vec2d { x: 0.0, y: 0.0 }, ResolvedSize { width: viewport_w.round(), height: viewport_h.round() });
+        ctx.canvas.set_clip(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width: viewport_w.round(), height: viewport_h.round() },
+        );
         {
             if let Some(ref vertical_bar) = self.vertical_scroll_bar
                 && matches!(self.ctrl.axis, ScrollAxis::Vertical)

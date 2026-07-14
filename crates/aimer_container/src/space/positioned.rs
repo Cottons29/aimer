@@ -1,9 +1,11 @@
+use crate::ZeroSizedBox;
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
-use crate::ZeroSizedBox;
+use aimer_widget::{
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+};
 
 #[allow(dead_code)]
 pub struct Positioned<W: Widget + 'static = ZeroSizedBox> {
@@ -39,7 +41,6 @@ impl Positioned {
 }
 
 impl<W: Widget + 'static> Positioned<W> {
-
     // pub fn box() -> Box<Self> {
     //     Box::new(Self::new())
     // }
@@ -148,8 +149,10 @@ pub struct RawPositionedElement<E: Element> {
 impl<E: Element> Drawable for RawPositionedElement<E> {
     fn draw(&self, ctx: &BuildContext) {
         // debug!("Positioned::draw");
-        let is_auto =
-            self.top == Dimension::Auto && self.left == Dimension::Auto && self.right == Dimension::Auto && self.bottom == Dimension::Auto;
+        let is_auto = self.top == Dimension::Auto
+            && self.left == Dimension::Auto
+            && self.right == Dimension::Auto
+            && self.bottom == Dimension::Auto;
 
         if is_auto && self.transform == Transform::None {
             self.child.draw(ctx);
@@ -167,13 +170,17 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             if self.left != Dimension::Auto {
                 offset_x = self.left.resolve(ctx.parent_size.width, ctx.scale);
             } else if self.right != Dimension::Auto {
-                offset_x = ctx.parent_size.width - self.right.resolve(ctx.parent_size.width, ctx.scale) - child_size.width;
+                offset_x = ctx.parent_size.width
+                    - self.right.resolve(ctx.parent_size.width, ctx.scale)
+                    - child_size.width;
             }
 
             if self.top != Dimension::Auto {
                 offset_y = self.top.resolve(ctx.parent_size.height, ctx.scale);
             } else if self.bottom != Dimension::Auto {
-                offset_y = ctx.parent_size.height - self.bottom.resolve(ctx.parent_size.height, ctx.scale) - child_size.height;
+                offset_y = ctx.parent_size.height
+                    - self.bottom.resolve(ctx.parent_size.height, ctx.scale)
+                    - child_size.height;
             }
         }
 
@@ -209,8 +216,11 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
         } else {
             let parent_pos = ctx.parent_pos;
 
-            let parent_size =
-                if let Some(size) = self.child.get_size_from_child() { size.resolve(&ctx.parent_size, ctx.scale) } else { ctx.parent_size };
+            let parent_size = if let Some(size) = self.child.get_size_from_child() {
+                size.resolve(&ctx.parent_size, ctx.scale)
+            } else {
+                ctx.parent_size
+            };
 
             let child_constraint = BoxConstraint {
                 min_width: 0.0,
@@ -224,7 +234,8 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             // for scroll culling) must be shifted by the same amount. Otherwise a
             // positioned block's top children (e.g. a title above a body) are
             // culled too early and disappear while the taller body survives.
-            let child_visible_rect = shift_visible_rect(ctx.visible_rect, offset_x, offset_y, &self.transform);
+            let child_visible_rect =
+                shift_visible_rect(ctx.visible_rect, offset_x, offset_y, &self.transform);
 
             let child_ctx = BuildContext {
                 parent_size,
@@ -343,16 +354,30 @@ mod tests {
 
         // A block near the top of the stack (offset 10px) whose title IS on screen
         // must keep its title after the fix, where the unshifted path wrongly culls it.
-        let top_block = shift_visible_rect(Some((0.0, 5.0, 1000.0, 600.0)), 0.0, 10.0, &Transform::None).unwrap();
+        let top_block =
+            shift_visible_rect(Some((0.0, 5.0, 1000.0, 600.0)), 0.0, 10.0, &Transform::None)
+                .unwrap();
         assert!(visible(0.0, 30.0, top_block), "on-screen title must not be culled");
     }
 
     #[test]
     fn shift_includes_translate_transform() {
-        let r = shift_visible_rect(Some((0.0, 100.0, 10.0, 10.0)), 5.0, 20.0, &Transform::Translate(1.0, 2.0)).unwrap();
+        let r = shift_visible_rect(
+            Some((0.0, 100.0, 10.0, 10.0)),
+            5.0,
+            20.0,
+            &Transform::Translate(1.0, 2.0),
+        )
+        .unwrap();
         assert_eq!(r, (-6.0, 78.0, 10.0, 10.0));
         // Scale/Rotate leave the rect untouched (conservative — never over-cull).
-        let s = shift_visible_rect(Some((0.0, 100.0, 10.0, 10.0)), 0.0, 0.0, &Transform::Scale(2.0, 2.0)).unwrap();
+        let s = shift_visible_rect(
+            Some((0.0, 100.0, 10.0, 10.0)),
+            0.0,
+            0.0,
+            &Transform::Scale(2.0, 2.0),
+        )
+        .unwrap();
         assert_eq!(s, (0.0, 100.0, 10.0, 10.0));
     }
 
@@ -382,7 +407,10 @@ mod tests {
         // `visit_children` is intentionally empty (no double-render).
         let mut visit_count = 0;
         positioned.visit_children(&mut |_| visit_count += 1);
-        assert_eq!(visit_count, 0, "visit_children must stay empty so draw() doesn't double-render");
+        assert_eq!(
+            visit_count, 0,
+            "visit_children must stay empty so draw() doesn't double-render"
+        );
 
         // `event_children` DOES surface the wrapped child — events still need
         // to reach it. The Rebuildable fix above must NOT change this.

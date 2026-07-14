@@ -17,10 +17,7 @@ pub struct Stack {
 
 impl Stack {
     pub fn new() -> Self {
-        Self {
-            children: Vec::new(),
-            direction: StackDirection::default(),
-        }
+        Self { children: Vec::new(), direction: StackDirection::default() }
     }
 
     pub fn children(mut self, children: Vec<Box<dyn Widget>>) -> Self {
@@ -101,4 +98,3 @@ impl VisitorElement for RawStackElement {
         "RawStackElement"
     }
 }
-

@@ -1,10 +1,10 @@
+use crate::ZeroSizedBox;
 use crate::flex::raw_flex::RawFlex;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 use aimer_attribute::CacheBounds;
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, Widget};
-use crate::ZeroSizedBox;
 
 /// A flex container that arranges its children in a vertical direction
 pub struct Column<W: Widget + 'static = Box<dyn Widget>> {
@@ -62,17 +62,15 @@ impl Column {
         }
     }
 
-
-    pub fn add_child<W: Widget + 'static>(mut self,child: W) -> Self {
-        self.children.push( Box::new(child));
+    pub fn add_child<W: Widget + 'static>(mut self, child: W) -> Self {
+        self.children.push(Box::new(child));
         self
     }
 
-    pub fn insert_child<W: Widget + 'static>(mut self ,index: usize, child: W) -> Self {
+    pub fn insert_child<W: Widget + 'static>(mut self, index: usize, child: W) -> Self {
         self.children.insert(index, Box::new(child));
         self
     }
-
 }
 
 impl<W: Widget + 'static> Widget for Column<W> {
@@ -101,7 +99,7 @@ pub struct Row<W: Widget + 'static = Box<dyn Widget>> {
     children: Vec<W>,
 }
 
-impl Default for Row{
+impl Default for Row {
     fn default() -> Self {
         Self::new()
     }
@@ -148,16 +146,15 @@ impl Row {
         }
     }
 
-    pub fn add_child<W: Widget + 'static>(mut self,child: W) -> Self {
-        self.children.push( Box::new(child));
+    pub fn add_child<W: Widget + 'static>(mut self, child: W) -> Self {
+        self.children.push(Box::new(child));
         self
     }
 
-    pub fn insert_child<W: Widget + 'static>(mut self ,index: usize, child: W) -> Self {
-       self.children.insert(index, Box::new(child));
+    pub fn insert_child<W: Widget + 'static>(mut self, index: usize, child: W) -> Self {
+        self.children.insert(index, Box::new(child));
         self
     }
-
 }
 //
 // impl<W: Widget + 'static> Iterator for Row<W> {
