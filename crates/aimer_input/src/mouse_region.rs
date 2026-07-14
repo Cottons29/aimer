@@ -2,11 +2,13 @@ use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
 use aimer_attribute::CacheBounds;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
+use aimer_events::window::request_animation_frame;
 use aimer_macro::Rebuildable;
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget, base::*};
+use aimer_widget::{
+    Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget, base::*,
+};
 use std::cell::Cell;
 use std::rc::Rc;
-use aimer_events::window::request_animation_frame;
 
 #[derive(Debug, Copy, Clone, Default)]
 pub enum PointerState {
@@ -94,7 +96,6 @@ impl<'a, E: Element> RawMouseRegion<'a, E> {
             if matches!(self.current_state.get(), PointerState::Outside) {
                 Self::execute_void_callback(&self.on_hover_enter);
                 self.current_state.set(PointerState::Inside);
-                
             }
         } else if matches!(self.current_state.get(), PointerState::Inside) {
             Self::execute_void_callback(&self.on_hover_exit);
@@ -116,9 +117,6 @@ impl<'a, E: Element> VisitorElement for RawMouseRegion<'a, E> {
 
 impl<'a, E: Element> EventElement for RawMouseRegion<'a, E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
-
-
-
         // println!("Event received: {:?}", event);
 
         // Hover tracking is a mouse-only concept. Touch input must NOT drive

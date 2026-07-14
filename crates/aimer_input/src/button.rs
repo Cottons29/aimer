@@ -1,15 +1,19 @@
 use crate::callback::VoidCallback;
 use crate::gesture::gesture_detector::GestureDetector;
-use crate::gesture::{DragCallback, DragUpdateCallback, ScaleCallback, ScrollCallback, SwipeCallback};
+use crate::gesture::{
+    DragCallback, DragUpdateCallback, ScaleCallback, ScrollCallback, SwipeCallback,
+};
 use crate::mouse_region::{MouseRegion, PointerState};
 use aimer_attribute::CacheBounds;
-use aimer_container::{Container, ZeroSizedBox};
+use aimer_container::Container;
 use aimer_style::BoxDecoration;
 use aimer_widget::base::{BuildContext, Color};
-use aimer_widget::{Element, State, StateUpdater, StatefulElement, StatefulWidget, Widget};
+use aimer_widget::{
+    Element, EmptyWidget, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
+};
 use std::cell::Cell;
-use std::rc::Rc;
 use std::future::Future;
+use std::rc::Rc;
 
 /// A clickable button widget with visual feedback.
 ///
@@ -17,7 +21,7 @@ use std::future::Future;
 /// provides gesture callbacks for tap, double-tap, long-press, right-click,
 /// swipe, scroll, and scale. It dims when disabled.
 #[allow(dead_code)]
-pub struct Button<W: Widget + 'static = ZeroSizedBox> {
+pub struct Button<W = EmptyWidget> {
     pub on_press: VoidCallback,
     pub on_long_press: VoidCallback,
     pub on_double_press: VoidCallback,
@@ -55,12 +59,12 @@ impl Button {
             on_right_press: VoidCallback::default(),
             decoration: BoxDecoration::default(),
             is_disabled: false,
-            child: Rc::new(ZeroSizedBox),
+            child: Rc::new(EmptyWidget),
         }
     }
 }
 
-impl<W: Widget + 'static> Button<W> {
+impl<W> Button<W> {
     pub fn on_press(mut self, on_press: impl Into<VoidCallback>) -> Self {
         self.on_press = on_press.into();
         self
@@ -185,8 +189,6 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
         self.state_updater = updater;
     }
 
-
-
     fn adopt_config_from(&mut self, new: &Self) {
         self.on_press = new.on_press.clone();
         self.is_disabled = new.is_disabled;
@@ -202,16 +204,16 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
 
         let mut decor = self.decoration.clone();
 
-        if self.is_hover && let Some(color) = decor.background_color {
+        if self.is_hover
+            && let Some(color) = decor.background_color
+        {
             decor.background_color = Some(color.lighten(0.2));
         }
 
         if self.is_disabled {
             decor.background_color = Option::from(Color::BLACK.with_opacity(120));
         }
-        let child = Container::new()
-            .box_decoration(decor)
-            .child(child as Rc<dyn Widget>);
+        let child = Container::new().box_decoration(decor).child(child as Rc<dyn Widget>);
 
         if self.is_disabled {
             return child.boxed();
@@ -226,7 +228,7 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
                     })
                 }
             }
-                .into(),
+            .into(),
             on_hover_exit: {
                 let updater = self.state_updater.clone();
                 move || {
@@ -235,15 +237,27 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
                     })
                 }
             }
-                .into(),
+            .into(),
             cursor: None,
             // current_state: state.accept_state.clone(),
             current_state: self.current_state.clone(),
             cached_bounds: CacheBounds::new(),
             child: GestureDetector {
-                on_tap: if self.is_disabled { VoidCallback::default() } else { self.on_press.clone() },
-                on_double_press: if self.is_disabled { VoidCallback::default() } else { self.on_double_press.clone() },
-                on_long_press: if self.is_disabled { VoidCallback::default() } else { self.on_long_press.clone() },
+                on_tap: if self.is_disabled {
+                    VoidCallback::default()
+                } else {
+                    self.on_press.clone()
+                },
+                on_double_press: if self.is_disabled {
+                    VoidCallback::default()
+                } else {
+                    self.on_double_press.clone()
+                },
+                on_long_press: if self.is_disabled {
+                    VoidCallback::default()
+                } else {
+                    self.on_long_press.clone()
+                },
                 on_drag_start: DragCallback::default(),
                 on_drag_update: DragUpdateCallback::default(),
                 on_drag_end: VoidCallback::default(),
@@ -253,6 +267,7 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
                 on_scale: ScaleCallback::default(),
                 child,
             },
-        }.boxed()
+        }
+        .boxed()
     }
 }

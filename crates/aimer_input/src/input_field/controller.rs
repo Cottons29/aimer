@@ -28,7 +28,11 @@ unsafe impl Sync for TextFieldController {}
 
 impl Clone for TextFieldController {
     fn clone(&self) -> Self {
-        Self { text: self.text.clone(), undo_stack: self.undo_stack.clone(), redo_stack: self.redo_stack.clone() }
+        Self {
+            text: self.text.clone(),
+            undo_stack: self.undo_stack.clone(),
+            redo_stack: self.redo_stack.clone(),
+        }
     }
 }
 

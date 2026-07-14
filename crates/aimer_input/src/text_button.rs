@@ -1,6 +1,8 @@
 use crate::callback::VoidCallback;
 use crate::gesture::gesture_detector::GestureDetector;
-use crate::gesture::{DragCallback, DragUpdateCallback, ScaleCallback, ScrollCallback, SwipeCallback};
+use crate::gesture::{
+    DragCallback, DragUpdateCallback, ScaleCallback, ScrollCallback, SwipeCallback,
+};
 use crate::mouse_region::{MouseRegion, SharedPointerState};
 use aimer_attribute::CacheBounds;
 use aimer_style::TextStyle;
@@ -142,11 +144,17 @@ impl State<TextButton> for ButtonState {
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
-        let mut text_style =
-            if self.disabled { self.widget.disabled_style } else { if self.hovered { self.widget.hover_style } else { self.widget.style } };
+        let mut text_style = if self.disabled {
+            self.widget.disabled_style
+        } else {
+            if self.hovered { self.widget.hover_style } else { self.widget.style }
+        };
 
-        let color =
-            if self.disabled { self.widget.disabled_color } else { if self.hovered { self.widget.hover_color } else { self.widget.color } };
+        let color = if self.disabled {
+            self.widget.disabled_color
+        } else {
+            if self.hovered { self.widget.hover_color } else { self.widget.color }
+        };
 
         if let Some(col) = color {
             text_style.color = col;
@@ -186,8 +194,7 @@ impl State<TextButton> for ButtonState {
                 on_swipe: SwipeCallback::default(),
                 on_scroll: ScrollCallback::default(),
                 on_scale: ScaleCallback::default(),
-                child: Text::new(self.widget.label.clone())
-                    .text_style(text_style),
+                child: Text::new(self.widget.label.clone()).text_style(text_style),
             },
         }
     }
