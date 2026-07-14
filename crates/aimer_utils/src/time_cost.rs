@@ -9,7 +9,8 @@ struct ExecGrouping {
     map: std::collections::HashMap<String, Vec<i64>>,
 }
 #[cfg(feature = "time-cost")]
-static mut EXEC_GROUPING: LazyCell<ExecGrouping> = LazyCell::new(|| ExecGrouping { map: Default::default() });
+static mut EXEC_GROUPING: LazyCell<ExecGrouping> =
+    LazyCell::new(|| ExecGrouping { map: Default::default() });
 
 #[cfg(feature = "time-cost")]
 #[macro_export]
@@ -33,7 +34,8 @@ macro_rules! time_cost {
 #[cfg(feature = "time-cost")]
 const MINIMUM_EXEC_TIME: Option<&str> = option_env!("MINIMUM_EXEC_TIME");
 #[cfg(feature = "time-cost")]
-static MINIMUM_EXEC_TIME_MS: LazyLock<i64> = LazyLock::new(|| MINIMUM_EXEC_TIME.unwrap_or("0").parse::<i64>().unwrap_or(0).max(0));
+static MINIMUM_EXEC_TIME_MS: LazyLock<i64> =
+    LazyLock::new(|| MINIMUM_EXEC_TIME.unwrap_or("0").parse::<i64>().unwrap_or(0).max(0));
 
 #[cfg(feature = "time-cost")]
 fn add_grouping(key: &str, val: i64) {
@@ -85,6 +87,9 @@ impl ExecTimes {
         let start = chrono::Local::now();
         f();
 
-        debug!("Used time: {} ms", chrono::Local::now().signed_duration_since(start).num_milliseconds());
+        debug!(
+            "Used time: {} ms",
+            chrono::Local::now().signed_duration_since(start).num_milliseconds()
+        );
     }
 }
