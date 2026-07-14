@@ -65,7 +65,8 @@ impl<R: Route> Navigator<R> {
     pub fn new(initial_route: R, routes: fn(R) -> Box<dyn Widget>) -> Self {
         // On WASM, try to restore the initial route from the browser URL
         #[cfg(target_arch = "wasm32")]
-        let initial_route = { browser_current_path().and_then(|path| R::parse(&path)).unwrap_or(initial_route) };
+        let initial_route =
+            { browser_current_path().and_then(|path| R::parse(&path)).unwrap_or(initial_route) };
         Self { initial_route, routes }
     }
 }
@@ -121,7 +122,8 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
             }) as Box<dyn FnMut(web_sys::PopStateEvent)>);
 
             if let Some(window) = web_sys::window() {
-                let _ = window.add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref());
+                let _ = window
+                    .add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref());
             }
 
             // Leak the closure so it stays alive for the lifetime of the app
@@ -246,7 +248,11 @@ impl<R: Route> NavigatorController<R> {
 impl<R: Route> StatefulWidget for Navigator<R> {
     type State = NavigatorState<R>;
     fn create_state(&self) -> Self::State {
-        NavigatorState::<R> { history: vec![self.initial_route.clone()], updater: StateUpdater::empty(), routes: self.routes }
+        NavigatorState::<R> {
+            history: vec![self.initial_route.clone()],
+            updater: StateUpdater::empty(),
+            routes: self.routes,
+        }
     }
 }
 
@@ -264,7 +270,11 @@ mod tests {
     #[test]
     fn redirect_reroutes_once_then_settles() {
         // "guarded" redirects to "login"; "login" does not redirect.
-        let result = resolve_redirect_chain("guarded", |r| if *r == "guarded" { Some("login") } else { None }, MAX_REDIRECT_HOPS);
+        let result = resolve_redirect_chain(
+            "guarded",
+            |r| if *r == "guarded" { Some("login") } else { None },
+            MAX_REDIRECT_HOPS,
+        );
         assert_eq!(result, "login");
     }
 
@@ -276,7 +286,11 @@ mod tests {
 
     #[test]
     fn redirect_chain_follows_multiple_hops() {
-        let result = resolve_redirect_chain(0, |n| if *n < 3 { Some(n + 1) } else { None }, MAX_REDIRECT_HOPS);
+        let result = resolve_redirect_chain(
+            0,
+            |n| if *n < 3 { Some(n + 1) } else { None },
+            MAX_REDIRECT_HOPS,
+        );
         assert_eq!(result, 3);
     }
 
