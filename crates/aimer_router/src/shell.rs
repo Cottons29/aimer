@@ -21,14 +21,20 @@ pub struct Shell {
 impl Shell {
     /// Create a shell from a `frame` widget (containing an `Outlet`) and a
     /// closure that builds the active child widget.
-    pub fn new(frame: impl Widget + 'static, child_builder: impl Fn(&BuildContext) -> Box<dyn Widget> + 'static) -> Self {
+    pub fn new(
+        frame: impl Widget + 'static,
+        child_builder: impl Fn(&BuildContext) -> Box<dyn Widget> + 'static,
+    ) -> Self {
         Self { frame: Box::new(frame), child_builder: Rc::new(child_builder) }
     }
 
     /// The Heap-allocated version of this `Shell::new`.
     /// Create a shell from a `frame` widget (containing an `Outlet`) and a
     /// closure that builds the active child widget.
-    pub fn boxing(frame: impl Widget + 'static, child_builder: impl Fn(&BuildContext) -> Box<dyn Widget> + 'static) -> Box<dyn Widget> {
+    pub fn boxing(
+        frame: impl Widget + 'static,
+        child_builder: impl Fn(&BuildContext) -> Box<dyn Widget> + 'static,
+    ) -> Box<dyn Widget> {
         Self::new(frame, child_builder).boxed()
     }
 
@@ -63,7 +69,9 @@ pub fn branch_push<R>(branches: &mut [Vec<R>], index: usize, route: R) {
 
 /// Pop branch `index`'s stack, guarded so a branch stack is never emptied.
 pub fn branch_pop<R>(branches: &mut [Vec<R>], index: usize) {
-    if let Some(branch) = branches.get_mut(index) && branch.len() > 1 {
+    if let Some(branch) = branches.get_mut(index)
+        && branch.len() > 1
+    {
         branch.pop();
     }
 }
@@ -89,7 +97,11 @@ impl<R: Route> StatefulShell<R> {
     ///
     /// `frame` builds the persistent layout (which must contain an `Outlet`) and
     /// `routes` builds the widget for a given child route.
-    pub fn new(initial_routes: Vec<R>, frame: fn(&BuildContext) -> Box<dyn Widget>, routes: fn(R) -> Box<dyn Widget>) -> Self {
+    pub fn new(
+        initial_routes: Vec<R>,
+        frame: fn(&BuildContext) -> Box<dyn Widget>,
+        routes: fn(R) -> Box<dyn Widget>,
+    ) -> Self {
         let branches = initial_routes.into_iter().map(|r| vec![r]).collect();
         Self { branches, active: 0, frame, routes }
     }
