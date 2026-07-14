@@ -159,7 +159,14 @@ impl DrawList {
         self.commands.push(cmd);
     }
 
-    pub fn fill_rect(&mut self, rect: Rect, color: Color, border_radius: [f32; 4], border_width: [f32; 4], border_color: Color) {
+    pub fn fill_rect(
+        &mut self,
+        rect: Rect,
+        color: Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
+        border_color: Color,
+    ) {
         self.commands.push(DrawCommand::FillRect {
             rect,
             color,
@@ -175,8 +182,10 @@ impl DrawList {
     /// `pipeline_name` must match `CustomPipeline::name()` of a registered pipeline.
     /// `data` is an arbitrary payload that will be forwarded to `CustomPipeline::prepare()`.
     pub fn draw_custom(&mut self, pipeline_name: impl Into<String>, data: impl Any + Send) {
-        self.commands
-            .push(DrawCommand::Custom { pipeline_name: pipeline_name.into(), data: Box::new(data) });
+        self.commands.push(DrawCommand::Custom {
+            pipeline_name: pipeline_name.into(),
+            data: Box::new(data),
+        });
     }
 
     pub fn draw_shadow_rect(
@@ -188,8 +197,14 @@ impl DrawList {
         inset: bool,
         side_params: [f32; 3],
     ) {
-        self.commands
-            .push(DrawCommand::DrawShadowRect { rect, shadow_color, shadow_params, border_radius, inset, side_params });
+        self.commands.push(DrawCommand::DrawShadowRect {
+            rect,
+            shadow_color,
+            shadow_params,
+            border_radius,
+            inset,
+            side_params,
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -203,8 +218,15 @@ impl DrawList {
         outline_width: [f32; 4],
         outline_color: Color,
     ) {
-        self.commands
-            .push(DrawCommand::FillRect { rect, color, border_radius, border_width, border_color, outline_width, outline_color });
+        self.commands.push(DrawCommand::FillRect {
+            rect,
+            color,
+            border_radius,
+            border_width,
+            border_color,
+            outline_width,
+            outline_color,
+        });
     }
 
     pub fn clear_rect(&mut self, rect: Rect) {
@@ -212,12 +234,27 @@ impl DrawList {
     }
 
     pub fn draw_image(&mut self, rect: Rect, texture_id: TextureId) {
-        self.commands
-            .push(DrawCommand::DrawImage { rect, texture_id });
+        self.commands.push(DrawCommand::DrawImage { rect, texture_id });
     }
 
-    pub fn draw_text(&mut self, position: Vec2d, text: Arc<str>, font_size: f32, color: Color, font_weight: u16) {
-        self.draw_text_with_overflow(position, text, font_size, color, None, None, TextOverflowMode::Clip, font_weight);
+    pub fn draw_text(
+        &mut self,
+        position: Vec2d,
+        text: Arc<str>,
+        font_size: f32,
+        color: Color,
+        font_weight: u16,
+    ) {
+        self.draw_text_with_overflow(
+            position,
+            text,
+            font_size,
+            color,
+            None,
+            None,
+            TextOverflowMode::Clip,
+            font_weight,
+        );
     }
     #[allow(clippy::too_many_arguments)]
     pub fn draw_text_with_overflow(
@@ -231,12 +268,34 @@ impl DrawList {
         overflow: TextOverflowMode,
         font_weight: u16,
     ) {
-        self.commands
-            .push(DrawCommand::DrawText { position, text, font_size, color, bounds_width, bounds_height, overflow, font_weight });
+        self.commands.push(DrawCommand::DrawText {
+            position,
+            text,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+            font_weight,
+        });
     }
 
-    pub fn draw_rich_text(&mut self, position: Vec2d, spans: Vec<RichTextSegment>, font_size: f32, color: Color) {
-        self.draw_rich_text_with_overflow(position, spans, font_size, color, None, None, TextOverflowMode::Clip);
+    pub fn draw_rich_text(
+        &mut self,
+        position: Vec2d,
+        spans: Vec<RichTextSegment>,
+        font_size: f32,
+        color: Color,
+    ) {
+        self.draw_rich_text_with_overflow(
+            position,
+            spans,
+            font_size,
+            color,
+            None,
+            None,
+            TextOverflowMode::Clip,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -250,23 +309,40 @@ impl DrawList {
         bounds_height: Option<f32>,
         overflow: TextOverflowMode,
     ) {
-        self.commands
-            .push(DrawCommand::DrawRichText { position, spans, font_size, color, bounds_width, bounds_height, overflow });
+        self.commands.push(DrawCommand::DrawRichText {
+            position,
+            spans,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+        });
     }
 
-    pub fn draw_text_decoration(&mut self, rect: Rect, color: Color, style: u32, thickness: f32, period: f32) {
-        self.commands
-            .push(DrawCommand::DrawTextDecoration { rect, color, style, thickness, period });
+    pub fn draw_text_decoration(
+        &mut self,
+        rect: Rect,
+        color: Color,
+        style: u32,
+        thickness: f32,
+        period: f32,
+    ) {
+        self.commands.push(DrawCommand::DrawTextDecoration {
+            rect,
+            color,
+            style,
+            thickness,
+            period,
+        });
     }
 
     pub fn push_clip(&mut self, rect: Rect) {
-        self.commands
-            .push(DrawCommand::PushClip { rect, border_radius: [0.0; 4] });
+        self.commands.push(DrawCommand::PushClip { rect, border_radius: [0.0; 4] });
     }
 
     pub fn push_clip_rounded(&mut self, rect: Rect, border_radius: [f32; 4]) {
-        self.commands
-            .push(DrawCommand::PushClip { rect, border_radius });
+        self.commands.push(DrawCommand::PushClip { rect, border_radius });
     }
 
     pub fn pop_clip(&mut self) {
@@ -303,15 +379,29 @@ impl DrawList {
         if self.has_texture_id(texture_id) {
             return texture_id;
         }
-        self.commands
-            .push(DrawCommand::LoadImage { bytes: bytes.to_vec(), texture_id, width, height });
+        self.commands.push(DrawCommand::LoadImage {
+            bytes: bytes.to_vec(),
+            texture_id,
+            width,
+            height,
+        });
         texture_id
     }
 
-    pub fn load_image_with_id(&mut self, texture_id: TextureId, bytes: &[u8], width: u32, height: u32) {
+    pub fn load_image_with_id(
+        &mut self,
+        texture_id: TextureId,
+        bytes: &[u8],
+        width: u32,
+        height: u32,
+    ) {
         self.set_texture_size(texture_id, width, height);
-        self.commands
-            .push(DrawCommand::LoadImageWithId { texture_id, bytes: bytes.to_vec(), width, height });
+        self.commands.push(DrawCommand::LoadImageWithId {
+            texture_id,
+            bytes: bytes.to_vec(),
+            width,
+            height,
+        });
     }
 
     pub fn set_texture_size(&mut self, texture_id: TextureId, width: u32, height: u32) {
@@ -334,22 +424,19 @@ impl DrawList {
     pub fn translate(&mut self, x: f32, y: f32) {
         let t = Mat3::translate(x, y);
         self.current_transform = self.current_transform.mul(&t);
-        self.commands
-            .push(DrawCommand::SetTransform { matrix: self.current_transform });
+        self.commands.push(DrawCommand::SetTransform { matrix: self.current_transform });
     }
 
     pub fn scale(&mut self, sx: f32, sy: f32) {
         let s = Mat3::scale(sx, sy);
         self.current_transform = self.current_transform.mul(&s);
-        self.commands
-            .push(DrawCommand::SetTransform { matrix: self.current_transform });
+        self.commands.push(DrawCommand::SetTransform { matrix: self.current_transform });
     }
 
     pub fn rotate(&mut self, radians: f32) {
         let r = Mat3::rotate(radians);
         self.current_transform = self.current_transform.mul(&r);
-        self.commands
-            .push(DrawCommand::SetTransform { matrix: self.current_transform });
+        self.commands.push(DrawCommand::SetTransform { matrix: self.current_transform });
     }
 
     pub fn current_transform(&self) -> &Mat3 {

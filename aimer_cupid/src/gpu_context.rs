@@ -1,5 +1,8 @@
 use aimer_utils::{debug, error, info};
-use wgpu::{Device, Instance, Limits, Queue, Surface, SurfaceColorSpace, SurfaceConfiguration, SurfaceTexture, TextureFormat};
+use wgpu::{
+    Device, Instance, Limits, Queue, Surface, SurfaceColorSpace, SurfaceConfiguration,
+    SurfaceTexture, TextureFormat,
+};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
@@ -40,7 +43,7 @@ impl<'w> GpuContext<'w> {
             }
             #[cfg(target_arch = "wasm32")]
             {
-                 wgpu::Backends::BROWSER_WEBGPU
+                wgpu::Backends::BROWSER_WEBGPU
             }
         };
 
@@ -148,7 +151,8 @@ impl<'w> GpuContext<'w> {
 
         debug!("Surface format: {:?}", caps.formats);
 
-        let selected_format = caps.formats.iter().find(|f| f.is_srgb()).copied().unwrap_or(caps.formats[0]);
+        let selected_format =
+            caps.formats.iter().find(|f| f.is_srgb()).copied().unwrap_or(caps.formats[0]);
 
         let is_srgb = selected_format.is_srgb();
 

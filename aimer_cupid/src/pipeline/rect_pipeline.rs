@@ -72,7 +72,11 @@ pub struct RectPipeline {
 impl RectPipeline {
     const INITIAL_CAPACITY: usize = 256;
 
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, pipeline_cache: Option<&wgpu::PipelineCache>) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        pipeline_cache: Option<&wgpu::PipelineCache>,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rect shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/rect.wgsl").into()),
@@ -90,7 +94,11 @@ impl RectPipeline {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
                 count: None,
             }],
         });
@@ -98,7 +106,10 @@ impl RectPipeline {
         let viewport_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rect viewport bind group"),
             layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: viewport_buffer.as_entire_binding() }],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: viewport_buffer.as_entire_binding(),
+            }],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -126,7 +137,10 @@ impl RectPipeline {
                 })],
                 compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
@@ -180,7 +194,11 @@ impl RectPipeline {
         let is_srgb_f32 = 2.0_f32;
         #[cfg(not(target_os = "android"))]
         let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
-        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
+        queue.write_buffer(
+            &self.viewport_buffer,
+            0,
+            bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
+        );
 
         let instance_count = self.instances.len();
         let stride = std::mem::size_of::<RectInstance>();
@@ -206,7 +224,11 @@ impl RectPipeline {
         }
 
         let byte_offset = (start_instance * stride) as u64;
-        queue.write_buffer(&self.instance_buffer, byte_offset, bytemuck::cast_slice(&self.instances));
+        queue.write_buffer(
+            &self.instance_buffer,
+            byte_offset,
+            bytemuck::cast_slice(&self.instances),
+        );
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);

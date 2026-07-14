@@ -70,7 +70,13 @@ enum MyWindowEvent {
 #[cfg(not(target_arch = "wasm32"))]
 impl<'w> App<'w> {
     fn new() -> Self {
-        Self { gpu: None, renderer: None, canvas: CupidCanvas::new(), window: None, texture_id: None }
+        Self {
+            gpu: None,
+            renderer: None,
+            canvas: CupidCanvas::new(),
+            window: None,
+            texture_id: None,
+        }
     }
 }
 
@@ -125,7 +131,13 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
         // wrapping width it is drawn with, so it renders from the warm cache on
         // the very first frame. The wrap width mirrors the draw call below
         // (`inner_size().width - 60.0`).
-        img_renderer.warm_text(&gpu.device, &gpu.queue, WELCOME_TEXT, 44.0, size.width as f32 - 60.0);
+        img_renderer.warm_text(
+            &gpu.device,
+            &gpu.queue,
+            WELCOME_TEXT,
+            44.0,
+            size.width as f32 - 60.0,
+        );
         debug!("Text warm-up complete");
         let image_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("image.png");
         debug!("Loading test image from {}", image_path.display());
@@ -133,9 +145,13 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
             .unwrap_or_else(|e| panic!("Failed to load {}: {e}", image_path.display()))
             .into_rgba8();
         let (img_w, img_h) = img.dimensions();
-        let tex_id = img_renderer
-            .image_pipeline
-            .upload_image(&gpu.device, &gpu.queue, img_w, img_h, img.as_raw());
+        let tex_id = img_renderer.image_pipeline.upload_image(
+            &gpu.device,
+            &gpu.queue,
+            img_w,
+            img_h,
+            img.as_raw(),
+        );
         debug!("Uploaded image to GPU");
 
         self.texture_id = Some(tex_id);
@@ -198,7 +214,8 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 };
 
                 let frame = match gpu.begin_frame() {
-                    wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+                    wgpu::CurrentSurfaceTexture::Success(f)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
                     _ => return,
                 };
 
@@ -287,15 +304,27 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 self.canvas.clear_clip();
 
                 ExecTimes::print_time(|| {
-                    renderer.render(&gpu.device, &gpu.queue, &view, width, height, gpu.is_srgb, &self.canvas.draw_list())
+                    renderer.render(
+                        &gpu.device,
+                        &gpu.queue,
+                        &view,
+                        width,
+                        height,
+                        gpu.is_srgb,
+                        &self.canvas.draw_list(),
+                    )
                 });
 
                 gpu.end_frame(frame);
                 #[cfg(debug_assertions)]
                 {
-                    debug!("#############################>Time Consume<#######################################");
+                    debug!(
+                        "#############################>Time Consume<#######################################"
+                    );
                     ExecTimes::cost_grouping();
-                    debug!("##################################################################################")
+                    debug!(
+                        "##################################################################################"
+                    )
                 }
             }
             _ => {}

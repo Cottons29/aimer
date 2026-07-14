@@ -16,7 +16,12 @@ impl AtlasRegion {
     pub fn uvs(&self, atlas_w: u32, atlas_h: u32) -> [f32; 4] {
         let aw = atlas_w as f32;
         let ah = atlas_h as f32;
-        [self.x as f32 / aw, self.y as f32 / ah, (self.x + self.width) as f32 / aw, (self.y + self.height) as f32 / ah]
+        [
+            self.x as f32 / aw,
+            self.y as f32 / ah,
+            (self.x + self.width) as f32 / aw,
+            (self.y + self.height) as f32 / ah,
+        ]
     }
 }
 
@@ -138,7 +143,11 @@ impl GlyphAtlas {
         }
     }
 
-    fn create_texture(device: &wgpu::Device, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+    fn create_texture(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("glyph atlas"),
             size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -148,7 +157,9 @@ impl GlyphAtlas {
             format: wgpu::TextureFormat::R8Unorm,
             // COPY_SRC lets `grow` preserve existing glyphs with a GPU
             // texture-to-texture copy instead of re-uploading from a CPU mirror.
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -195,7 +206,13 @@ impl GlyphAtlas {
 
         // Stage the glyph bitmap for the next `upload`. We keep only this glyph's
         // bytes (dropped after upload) rather than a full-size CPU mirror.
-        self.pending.push(PendingGlyph { x, y, width: glyph_w, height: glyph_h, data: bitmap.to_vec() });
+        self.pending.push(PendingGlyph {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+            data: bitmap.to_vec(),
+        });
 
         let region = AtlasRegion { x, y, width: glyph_w, height: glyph_h };
         self.cache.insert(key, region);
@@ -218,8 +235,16 @@ impl GlyphAtlas {
                     aspect: wgpu::TextureAspect::All,
                 },
                 &glyph.data,
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(glyph.width), rows_per_image: Some(glyph.height) },
-                wgpu::Extent3d { width: glyph.width, height: glyph.height, depth_or_array_layers: 1 },
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(glyph.width),
+                    rows_per_image: Some(glyph.height),
+                },
+                wgpu::Extent3d {
+                    width: glyph.width,
+                    height: glyph.height,
+                    depth_or_array_layers: 1,
+                },
             );
         }
     }
@@ -253,7 +278,9 @@ impl GlyphAtlas {
         // against the final dimensions. Glyphs staged this frame but not yet
         // uploaded remain in `self.pending` with their (still valid) positions
         // and are written to the new texture by the next `upload`.
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("glyph atlas grow") });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("glyph atlas grow"),
+        });
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
@@ -338,7 +365,11 @@ impl ColorGlyphAtlas {
         }
     }
 
-    fn create_texture(device: &wgpu::Device, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+    fn create_texture(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("color glyph atlas"),
             size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -347,7 +378,9 @@ impl ColorGlyphAtlas {
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
             // COPY_SRC enables GPU texture-to-texture preservation on grow.
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -388,7 +421,13 @@ impl ColorGlyphAtlas {
         };
 
         // Stage this glyph's RGBA8 bytes for the next `upload`; no full-size mirror.
-        self.pending.push(PendingGlyph { x, y, width: glyph_w, height: glyph_h, data: bitmap.to_vec() });
+        self.pending.push(PendingGlyph {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+            data: bitmap.to_vec(),
+        });
 
         let region = AtlasRegion { x, y, width: glyph_w, height: glyph_h };
         self.cache.insert(key, region);
@@ -413,7 +452,11 @@ impl ColorGlyphAtlas {
                     bytes_per_row: Some(glyph.width * Self::BYTES_PER_PIXEL),
                     rows_per_image: Some(glyph.height),
                 },
-                wgpu::Extent3d { width: glyph.width, height: glyph.height, depth_or_array_layers: 1 },
+                wgpu::Extent3d {
+                    width: glyph.width,
+                    height: glyph.height,
+                    depth_or_array_layers: 1,
+                },
             );
         }
     }
@@ -436,7 +479,9 @@ impl ColorGlyphAtlas {
         // Preserve already-uploaded glyphs with a GPU texture-to-texture copy
         // (no CPU mirror). Glyphs staged this frame stay in `self.pending` with
         // their still-valid positions and are written by the next `upload`.
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("color glyph atlas grow") });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("color glyph atlas grow"),
+        });
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
@@ -470,7 +515,6 @@ impl ColorGlyphAtlas {
         self.generation += 1;
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -513,7 +557,12 @@ mod tests {
     /// The previous `grow()` strategy: reset the packer to the *doubled* size and
     /// replay the old allocations. Because the width changed, the packer wraps
     /// rows differently than the preserved layout, so this is unsafe.
-    fn old_grow_next_allocation(regions: &[AtlasRegion], new_w: u32, new_h: u32, next: (u32, u32)) -> (u32, u32) {
+    fn old_grow_next_allocation(
+        regions: &[AtlasRegion],
+        new_w: u32,
+        new_h: u32,
+        next: (u32, u32),
+    ) -> (u32, u32) {
         let mut packer = ShelfPacker::new(new_w, new_h);
         let mut sorted = regions.to_vec();
         sorted.sort_by_key(|r| (r.y, r.x));
@@ -525,7 +574,12 @@ mod tests {
 
     /// The new `grow()` strategy: keep the packer at the doubled size but resume on
     /// a fresh shelf directly below the preserved content (`start_fresh_shelf_at`).
-    fn new_grow_next_allocation(old_h: u32, new_w: u32, new_h: u32, next: (u32, u32)) -> (u32, u32) {
+    fn new_grow_next_allocation(
+        old_h: u32,
+        new_w: u32,
+        new_h: u32,
+        next: (u32, u32),
+    ) -> (u32, u32) {
         let mut packer = ShelfPacker::new(new_w, new_h);
         packer.start_fresh_shelf_at(old_h);
         packer.allocate(next.0, next.1).unwrap()
@@ -542,7 +596,11 @@ mod tests {
         let pos = old_grow_next_allocation(&regions, 1024, 1024, next);
         let new_region = AtlasRegion { x: pos.0, y: pos.1, width: next.0, height: next.1 };
         let overlap = regions.iter().any(|r| overlaps(r, &new_region));
-        assert!(overlap, "expected replay-after-grow to overlap existing glyphs; got {:?}", new_region);
+        assert!(
+            overlap,
+            "expected replay-after-grow to overlap existing glyphs; got {:?}",
+            new_region
+        );
     }
 
     #[test]
@@ -555,9 +613,18 @@ mod tests {
         for &next in &[(40u32, 30u32), (1u32, 1u32), (300u32, 200u32)] {
             let pos = new_grow_next_allocation(old_h, 1024, 1024, next);
             let new_region = AtlasRegion { x: pos.0, y: pos.1, width: next.0, height: next.1 };
-            assert!(new_region.y >= old_h, "new glyph must start below preserved content: {:?}", new_region);
+            assert!(
+                new_region.y >= old_h,
+                "new glyph must start below preserved content: {:?}",
+                new_region
+            );
             for r in &regions {
-                assert!(!overlaps(r, &new_region), "new glyph overlapped a preserved glyph: {:?} vs {:?}", r, new_region);
+                assert!(
+                    !overlaps(r, &new_region),
+                    "new glyph overlapped a preserved glyph: {:?} vs {:?}",
+                    r,
+                    new_region
+                );
             }
         }
     }
