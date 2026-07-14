@@ -6,8 +6,8 @@ use objc::msg_send;
 
 use objc::sel;
 
-use objc::sel_impl;
 use aimer_utils::info;
+use objc::sel_impl;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 

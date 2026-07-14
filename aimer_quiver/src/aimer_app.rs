@@ -94,7 +94,10 @@ pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
     let text = String::from_utf8_lossy(bytes).to_string();
 
     let Some(proxy) = EVENT_PROXY.get() else {
-        aimer_utils::debug!("trigger_rust_insert_text: EVENT_PROXY not initialized yet (len={})", len);
+        aimer_utils::debug!(
+            "trigger_rust_insert_text: EVENT_PROXY not initialized yet (len={})",
+            len
+        );
         return;
     };
 
@@ -177,7 +180,9 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     info!("Initializing EventLoop...");
     #[cfg(not(target_os = "android"))]
-    let event_loop = EventLoop::<AimerCustomAppEvent>::with_user_event().build().expect("Failed to create EventLoop");
+    let event_loop = EventLoop::<AimerCustomAppEvent>::with_user_event()
+        .build()
+        .expect("Failed to create EventLoop");
 
     #[cfg(target_os = "android")]
     let event_loop = {
@@ -192,8 +197,10 @@ fn start_event_loop(widget: impl Widget + 'static) {
         // without an explicit reference, the linker may garbage-collect them out of
         // the final `cdylib`, which would make the soft-keyboard text bridge fail
         // with `UnsatisfiedLinkError`.
-        let _keep_jni: [*const (); 2] =
-            [Java_com_aimer_AimerActivity_nativeInsertText as *const (), Java_com_aimer_AimerActivity_nativeBackspace as *const ()];
+        let _keep_jni: [*const (); 2] = [
+            Java_com_aimer_AimerActivity_nativeInsertText as *const (),
+            Java_com_aimer_AimerActivity_nativeBackspace as *const (),
+        ];
         std::hint::black_box(_keep_jni);
 
         EventLoop::<AimerCustomAppEvent>::with_user_event()

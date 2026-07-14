@@ -50,7 +50,8 @@ pub mod render_ctx {
             };
 
             let frame = match gpu.begin_frame() {
-                wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+                wgpu::CurrentSurfaceTexture::Success(texture)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
                 _ => return false,
             };
 

@@ -6,16 +6,21 @@ use aimer_events::pointer::PointerSource;
 use aimer_utils::{ExecTimes, info};
 use aimer_widget::{broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent};
+use winit::event::{
+    ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent,
+};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 
 pub struct WindowEventHandler;
 
 impl WindowEventHandler {
-    pub(crate) fn handle_events(app: &mut AimerApplicationHandler, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-
-
+    pub(crate) fn handle_events(
+        app: &mut AimerApplicationHandler,
+        event_loop: &ActiveEventLoop,
+        _id: WindowId,
+        event: WindowEvent,
+    ) {
         match event {
             WindowEvent::CloseRequested => {
                 #[cfg(target_os = "macos")]
@@ -34,12 +39,17 @@ impl WindowEventHandler {
             WindowEvent::CursorLeft { .. } => Self::handle_cursor_left(app),
 
             WindowEvent::MouseInput { state, button, .. } => {
-                Self::handle_mouse_input(state, button, app) },
+                Self::handle_mouse_input(state, button, app)
+            }
 
             WindowEvent::ModifiersChanged(mods) => {
                 let state = mods.state();
-                app.current_modifiers =
-                    Modifiers { ctrl: state.control_key(), shift: state.shift_key(), alt: state.alt_key(), meta: state.super_key() };
+                app.current_modifiers = Modifiers {
+                    ctrl: state.control_key(),
+                    shift: state.shift_key(),
+                    alt: state.alt_key(),
+                    meta: state.super_key(),
+                };
             }
 
             WindowEvent::KeyboardInput { event, .. } => Self::handle_keyboard_input(event, app),
@@ -48,7 +58,7 @@ impl WindowEventHandler {
 
             WindowEvent::MouseWheel { delta, phase, .. } => {
                 Self::handle_mouse_wheel(delta, phase, app)
-            },
+            }
 
             WindowEvent::RedrawRequested => {
                 #[cfg(debug_assertions)]
@@ -57,10 +67,17 @@ impl WindowEventHandler {
                 app.render(event_loop);
             }
 
-            WindowEvent::Resized(size) =>
-            {
-                #[cfg(not(target_os = "ios"))]
-                Self::handle_resize(size, app, event_loop)
+            WindowEvent::Resized(size) => Self::handle_resize(size, app, event_loop),
+
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                Self::update_scale_factor(&mut app.window_scale, scale_factor);
+                if let Some(root) = &app.widget_root {
+                    root.invalidate_layout();
+                    aimer_widget::Rebuildable::mark_needs_rebuild(root.as_ref());
+                }
+                if let Some(window) = app.window {
+                    window.request_redraw();
+                }
             }
 
             WindowEvent::Focused(false) => {
@@ -73,9 +90,19 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_touch(item: Touch, app: &mut AimerApplicationHandler, _id: WindowId, _event: WindowEvent) {
+    fn update_scale_factor(window_scale: &mut f64, scale_factor: f64) {
+        *window_scale = scale_factor;
+    }
+
+    fn handle_touch(
+        item: Touch,
+        app: &mut AimerApplicationHandler,
+        _id: WindowId,
+        _event: WindowEvent,
+    ) {
         let scale = app.window_scale;
-        let pos = Vec2d { x: (item.location.x / scale) as f32, y: (item.location.y / scale) as f32 };
+        let pos =
+            Vec2d { x: (item.location.x / scale) as f32, y: (item.location.y / scale) as f32 };
         let touch_id = item.id;
 
         // All touch events are passed through with their finger ID.
@@ -102,7 +129,12 @@ impl WindowEventHandler {
                     // elements with an active drag (e.g. scrollable fling) receive
                     // the release event even when the finger lifts outside their
                     // bounds — the common case for a fast flick on touch screens.
-                    if matches!(&event, ElementEvent::PointerDown(_, _, _) | ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel) {
+                    if matches!(
+                        &event,
+                        ElementEvent::PointerDown(_, _, _)
+                            | ElementEvent::PointerUp(_, _, _)
+                            | ElementEvent::Cancel
+                    ) {
                         broadcast_event(root.as_ref(), &event);
                     }
                 }
@@ -157,7 +189,11 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_mouse_input(state: ElementState, button: MouseButton, app: &mut AimerApplicationHandler) {
+    fn handle_mouse_input(
+        state: ElementState,
+        button: MouseButton,
+        app: &mut AimerApplicationHandler,
+    ) {
         // Only handle left and right mouse buttons here.
         // Middle button and others are ignored for now.
         if !matches!(button, MouseButton::Left | MouseButton::Right) {
@@ -188,7 +224,12 @@ impl WindowEventHandler {
                 }
             }
             if !handled {
-                if matches!(&event, ElementEvent::PointerDown(_, _, _) | ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel) {
+                if matches!(
+                    &event,
+                    ElementEvent::PointerDown(_, _, _)
+                        | ElementEvent::PointerUp(_, _, _)
+                        | ElementEvent::Cancel
+                ) {
                     broadcast_event(root.as_ref(), &event);
                 }
             }
@@ -330,11 +371,20 @@ impl WindowEventHandler {
     /// as a sequence of `CharInput` events — one per `char`. This is the single
     /// path used for plain typed characters, web text input, and committed IME
     /// text, so CJK phrases and emoji are inserted correctly.
-    fn dispatch_text(text: &str, action: &KeyAction, modifiers: &Modifiers, app: &mut AimerApplicationHandler) {
+    fn dispatch_text(
+        text: &str,
+        action: &KeyAction,
+        modifiers: &Modifiers,
+        app: &mut AimerApplicationHandler,
+    ) {
         let Some(root) = &app.widget_root else { return };
         let mut handled = false;
         for ch in text.chars() {
-            let ev = ElementEvent::CharInput { ch, action: action.clone(), modifiers: modifiers.clone() };
+            let ev = ElementEvent::CharInput {
+                ch,
+                action: action.clone(),
+                modifiers: modifiers.clone(),
+            };
             handled |= dispatch_event(root.as_ref(), app.cursor_pos, &ev);
         }
         #[cfg(debug_assertions)]
@@ -382,12 +432,18 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_mouse_wheel(delta: MouseScrollDelta, phase: TouchPhase, app: &mut AimerApplicationHandler) {
+    fn handle_mouse_wheel(
+        delta: MouseScrollDelta,
+        phase: TouchPhase,
+        app: &mut AimerApplicationHandler,
+    ) {
         // debug!("Mouse wheel delta: {:?}", delta);
         let scroll_delta = match delta {
             MouseScrollDelta::LineDelta(x, y) => Vec2d { x: x * 20.0, y: y * 20.0 },
             // Scale trackpad (PixelDelta) down for more resistance / less sensitivity.
-            MouseScrollDelta::PixelDelta(pos) => Vec2d { x: pos.x as f32 * 0.85, y: pos.y as f32 * 0.85 },
+            MouseScrollDelta::PixelDelta(pos) => {
+                Vec2d { x: pos.x as f32 * 0.85, y: pos.y as f32 * 0.85 }
+            }
         };
 
         let event = ElementEvent::Scroll { delta: scroll_delta, phase };
@@ -406,21 +462,34 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_resize(size: PhysicalSize<u32>, app: &mut AimerApplicationHandler, event_loop: &ActiveEventLoop) {
+    #[cfg(any(test, target_os = "ios"))]
+    fn oriented_screen_size(
+        resize_size: PhysicalSize<u32>,
+        screen_size: (f64, f64),
+    ) -> PhysicalSize<u32> {
+        let (width, height) = screen_size;
+        if resize_size.width < resize_size.height {
+            PhysicalSize::new(width as u32, height as u32)
+        } else {
+            PhysicalSize::new(height as u32, width as u32)
+        }
+    }
+
+    fn handle_resize(
+        size: PhysicalSize<u32>,
+        app: &mut AimerApplicationHandler,
+        event_loop: &ActiveEventLoop,
+    ) {
         #[cfg(target_os = "ios")]
         aimer_utils::debug!("iOS handle_resize raw size: {size:?}");
         #[cfg(target_os = "ios")]
         let size = {
             use aimer_attribute::ResolvedSize;
-            let is_portrait = size.width < size.height;
             match crate::ios_screen::get_screen_resolution_pixels() {
                 Some((width, height)) => {
-                    app.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 });
-                    if is_portrait {
-                        PhysicalSize::new(width as u32, height as u32)
-                    } else {
-                        PhysicalSize::new(height as u32, width as u32)
-                    }
+                    app.native_window_size =
+                        Some(ResolvedSize { width: width as f32, height: height as f32 });
+                    Self::oriented_screen_size(size, (width, height))
                 }
                 None => {
                     if app.window.is_none() {
@@ -428,8 +497,7 @@ impl WindowEventHandler {
                     }
                     app.window.unwrap().inner_size()
                 }
-            };
-            PhysicalSize::new(1200, 2000)
+            }
         };
 
         #[cfg(target_os = "ios")]
@@ -471,5 +539,33 @@ impl WindowEventHandler {
         // new window size — visible as directional stretching when
         // dragging the right or bottom window edge.
         app.render(event_loop);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ios_screen_size_follows_resize_orientation() {
+        let screen_size = (1179.0, 2556.0);
+
+        assert_eq!(
+            WindowEventHandler::oriented_screen_size(PhysicalSize::new(390, 844), screen_size),
+            PhysicalSize::new(1179, 2556),
+        );
+        assert_eq!(
+            WindowEventHandler::oriented_screen_size(PhysicalSize::new(844, 390), screen_size),
+            PhysicalSize::new(2556, 1179),
+        );
+    }
+
+    #[test]
+    fn scale_factor_change_updates_window_scale() {
+        let mut window_scale = 1.0;
+
+        WindowEventHandler::update_scale_factor(&mut window_scale, 2.0);
+
+        assert_eq!(window_scale, 2.0);
     }
 }

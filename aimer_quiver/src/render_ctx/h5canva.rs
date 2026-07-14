@@ -89,7 +89,8 @@ pub mod render_ctx {
             };
 
             let frame = match state.gpu.begin_frame() {
-                wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+                wgpu::CurrentSurfaceTexture::Success(texture)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
                 _ => return false,
             };
 
@@ -102,9 +103,15 @@ pub mod render_ctx {
             draw_fn(&state.canvas, width, height);
 
             let draw_list = state.canvas.draw_list();
-            state
-                .renderer
-                .render(&state.gpu.device, &state.gpu.queue, &view, width, height, state.gpu.is_srgb, &draw_list);
+            state.renderer.render(
+                &state.gpu.device,
+                &state.gpu.queue,
+                &view,
+                width,
+                height,
+                state.gpu.is_srgb,
+                &draw_list,
+            );
 
             state.gpu.end_frame(frame);
             true
