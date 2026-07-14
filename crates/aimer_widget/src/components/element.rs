@@ -1,14 +1,15 @@
+use crate::Drawable;
 use crate::base::*;
 use crate::components::event_element::EventElement;
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
-use crate::Drawable;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 
-impl<T> Element for T where T: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable {}
+impl<T> Element for T where T: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable
+{}
 
 pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable {
     /// Converts the implementing instance into a `Box` containing a dynamic trait object of type `Element`.

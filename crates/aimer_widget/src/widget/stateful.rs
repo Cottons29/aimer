@@ -1,10 +1,12 @@
-use crate::{base::*, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
+use crate::{
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget, base::*,
+};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
 use aimer_utils::error;
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::any::Any;
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::panic::Location;
@@ -182,7 +184,11 @@ impl<S: 'static> StateUpdater<S> {
     /// }
     /// ```
     #[track_caller]
-    pub fn set_state_with<V: Clone + Send + 'static>(&self, value: &V, f: impl FnOnce(&mut S, V) + Send + 'static) {
+    pub fn set_state_with<V: Clone + Send + 'static>(
+        &self,
+        value: &V,
+        f: impl FnOnce(&mut S, V) + Send + 'static,
+    ) {
         let owned = value.clone();
         self.set_state(move |s| f(s, owned));
     }
@@ -361,7 +367,10 @@ impl StatefulElement {
         (element, updater)
     }
 
-    pub fn new<W: StatefulWidget + 'static>(widget: &W, ctx: &BuildContext) -> (Self, StateUpdater<W::State>)
+    pub fn new<W: StatefulWidget + 'static>(
+        widget: &W,
+        ctx: &BuildContext,
+    ) -> (Self, StateUpdater<W::State>)
     where
         W::State: 'static,
     {
@@ -370,7 +379,8 @@ impl StatefulElement {
 
         // Create the channel for state mutations.
         #[allow(clippy::type_complexity)]
-        let (tx, rx): (Sender<StateMutation<W::State>>, Receiver<StateMutation<W::State>>) = unbounded();
+        let (tx, rx): (Sender<StateMutation<W::State>>, Receiver<StateMutation<W::State>>) =
+            unbounded();
 
         let state_cell = Rc::new(SyncState(UnsafeCell::new(state)));
 
@@ -530,7 +540,39 @@ pub(crate) fn carry_stateful(old: &dyn Element, new: &dyn Element, ctx: &BuildCo
     let Some(new_ele) = new.option_any().and_then(|o| o.downcast_ref::<StatefulElement>()) else {
         return;
     };
+    if old_ele.debug_name.get() != new_ele.debug_name.get() || old_ele.key != new_ele.key {
+        return;
+    }
     new_ele.adopt_state_from(old_ele, ctx);
+}
+
+fn find_keyed_stateful<'a>(
+    element: &'a dyn Element,
+    key: &crate::key::Key,
+    debug_name: &'static str,
+) -> Option<&'a StatefulElement> {
+    if let Some(stateful) =
+        element.option_any().and_then(|value| value.downcast_ref::<StatefulElement>())
+        && stateful.key.as_ref() == Some(key)
+        && stateful.debug_name.get() == debug_name
+    {
+        return Some(stateful);
+    }
+
+    element_children(element)
+        .into_iter()
+        .find_map(|child| find_keyed_stateful(child, key, debug_name))
+}
+
+fn element_children(element: &dyn Element) -> smallvec::SmallVec<[&dyn Element; 8]> {
+    let mut children: smallvec::SmallVec<[&dyn Element; 8]> = smallvec::SmallVec::new();
+    element.event_children(&mut |child| children.push(child));
+    element.visit_children(&mut |child| {
+        if !children.iter().any(|existing| std::ptr::eq(*existing, child)) {
+            children.push(child);
+        }
+    });
+    children
 }
 
 /// Recurse into the matched children of an old and new element tree, letting
@@ -543,6 +585,25 @@ pub(crate) fn carry_stateful(old: &dyn Element, new: &dyn Element, ctx: &BuildCo
 /// scrollable containers — which hide children from event dispatch but expose
 /// them for layout — still get their nested stateful state carried across.
 pub(crate) fn carry_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    carry_child_state_from_root(old, new, old, ctx);
+}
+
+fn carry_child_state_from_root(
+    old: &dyn Element,
+    new: &dyn Element,
+    old_root: &dyn Element,
+    ctx: &BuildContext,
+) {
+    if let Some(new_stateful) =
+        new.option_any().and_then(|value| value.downcast_ref::<StatefulElement>())
+        && let Some(key) = new_stateful.key.as_ref()
+        && let Some(old_stateful) =
+            find_keyed_stateful(old_root, key, new_stateful.debug_name.get())
+    {
+        new_stateful.adopt_state_from(old_stateful, ctx);
+        return;
+    }
+
     // Adopt state at this level first.
     // println!("Before carry_stateful");
     carry_stateful(old, new, ctx);
@@ -550,35 +611,19 @@ pub(crate) fn carry_child_state(old: &dyn Element, new: &dyn Element, ctx: &Buil
 
     // Try event_children first (primary traversal for reconciliation).
     // println!("Step 1");
-    let mut old_children: smallvec::SmallVec<[&dyn Element; 8]> = smallvec::SmallVec::new();
-    // println!("Step 2");
-    old.event_children(&mut |c| old_children.push(c));
-    // println!("Step 3");
-
-    // Fall back to visit_children if event_children is empty.
-    // This handles elements like scrollable containers that hide children
-    // from event dispatch but expose them for layout/visiting.
-    if old_children.is_empty() {
-        old.visit_children(&mut |c| old_children.push(c));
-    }
+    let old_children = element_children(old);
     // println!("Step 4");
     if old_children.is_empty() {
         return;
     }
     // println!("Step 5");
 
-    let mut new_children: smallvec::SmallVec<[&dyn Element; 8]> = smallvec::SmallVec::new();
-    // println!("Step 6");
-    new.event_children(&mut |c| new_children.push(c));
-    // println!("Step 7");
-    if new_children.is_empty() {
-        new.visit_children(&mut |c| new_children.push(c));
-    }
+    let new_children = element_children(new);
     // println!("Step 8");
 
     for (old_child, new_child) in old_children.iter().zip(new_children.iter()) {
         // println!("Before call carry_child_state");
-        carry_child_state(*old_child, *new_child, ctx);
+        carry_child_state_from_root(*old_child, *new_child, old_root, ctx);
         // println!("After call carry_child_state");
     }
     // println!("Step 9");

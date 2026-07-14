@@ -1,5 +1,7 @@
 use crate::widget::stateful::{RebuildCallBack, SyncChild};
-use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget, base::*};
+use crate::{
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget, base::*,
+};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use std::cell::{Cell, UnsafeCell};
@@ -93,7 +95,11 @@ impl StatelessElement {
 
     /// Create a non-rebuildable wrapper. It never re-runs a `build()` of its own
     /// but still propagates dirty marking and rebuilds to its child.
-    pub fn wrapper(child: Box<dyn Element>, key: Option<crate::key::Key>, debug_name: &'static str) -> Self {
+    pub fn wrapper(
+        child: Box<dyn Element>,
+        key: Option<crate::key::Key>,
+        debug_name: &'static str,
+    ) -> Self {
         Self {
             child: SyncChild(UnsafeCell::new(child)),
             dirty: Rc::new(Cell::new(false)),
@@ -147,7 +153,12 @@ impl Drawable for StatelessElement {
                 self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y && let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write() {
+                if cp.x >= l_start.x
+                    && cp.x <= l_end.x
+                    && cp.y >= l_start.y
+                    && cp.y <= l_end.y
+                    && let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write()
+                {
                     *hovered = Some((self.debug_name, l_start, l_end));
                 }
             }
@@ -197,7 +208,6 @@ impl VisitorElement for StatelessElement {
         self.debug_name
     }
 }
-
 
 #[cfg(test)]
 mod tests {

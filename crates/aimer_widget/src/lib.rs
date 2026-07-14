@@ -6,13 +6,17 @@ pub mod page_storage;
 pub mod reconcile;
 mod widget;
 
+pub struct EmptyWidget;
+
 // #[cfg(debug_assertions)]
 pub mod inspector_overlay {
     use std::sync::RwLock;
     use std::sync::atomic::{AtomicBool, Ordering};
     pub static INSPECTOR_ENABLED: AtomicBool = AtomicBool::new(false);
     /// (name, start, end)
-    pub static HOVERED_WIDGET: RwLock<Option<(&'static str, crate::base::Vec2d, crate::base::Vec2d)>> = RwLock::new(None);
+    pub static HOVERED_WIDGET: RwLock<
+        Option<(&'static str, crate::base::Vec2d, crate::base::Vec2d)>,
+    > = RwLock::new(None);
     pub fn is_enabled() -> bool {
         INSPECTOR_ENABLED.load(Ordering::Relaxed)
     }
