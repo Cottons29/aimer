@@ -12,9 +12,3 @@ pub use wgpu_ctx::render_ctx::WgpuApi;
 pub type AimerRenderContext = WgpuApi;
 #[cfg(target_arch = "wasm32")]
 pub type AimerRenderContext = H5CanvasApi;
-
-
-
-
-
-

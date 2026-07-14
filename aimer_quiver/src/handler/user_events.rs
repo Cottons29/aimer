@@ -1,13 +1,20 @@
+use crate::aimer_app::AimerCustomAppEvent;
 use crate::handler::AimerApplicationHandler;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_widget::dispatch_event;
-use crate::aimer_app::AimerCustomAppEvent;
 
-pub(crate) fn handle_user_event(app: &mut AimerApplicationHandler, event: crate::aimer_app::AimerCustomAppEvent) {
+pub(crate) fn handle_user_event(
+    app: &mut AimerApplicationHandler,
+    event: crate::aimer_app::AimerCustomAppEvent,
+) {
     match event {
         AimerCustomAppEvent::ForceBackspace => {
             if let Some(root) = &app.widget_root {
-                let ev = ElementEvent::KeyInput { key: NamedKey::Backspace, action: KeyAction::Pressed, modifiers: Default::default() };
+                let ev = ElementEvent::KeyInput {
+                    key: NamedKey::Backspace,
+                    action: KeyAction::Pressed,
+                    modifiers: Default::default(),
+                };
                 let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                 #[cfg(debug_assertions)]
                 if app.inspector.is_enabled() {
@@ -24,7 +31,11 @@ pub(crate) fn handle_user_event(app: &mut AimerApplicationHandler, event: crate:
             if let Some(root) = &app.widget_root {
                 let mut handled_any = false;
                 for ch in text.chars() {
-                    let ev = ElementEvent::CharInput { ch, action: KeyAction::Pressed, modifiers: Default::default() };
+                    let ev = ElementEvent::CharInput {
+                        ch,
+                        action: KeyAction::Pressed,
+                        modifiers: Default::default(),
+                    };
                     let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                     #[cfg(debug_assertions)]
                     if app.inspector.is_enabled() {

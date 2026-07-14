@@ -10,9 +10,9 @@ use crate::handler;
 use crate::handler::event_handler::WindowEventHandler;
 use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
+use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_attribute::BoxConstraint;
 use aimer_inspector::InspectorOverlay;
 use aimer_utils::debug;
 use aimer_widget::base::BuildContext;
@@ -32,7 +32,12 @@ use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
 
 /// Walk the snapshot tree and find a node matching the hovered widget by name and bounds.
 #[cfg(debug_assertions)]
-fn find_hovered_node(node: &aimer_inspector::WidgetNode, name: &str, start: Vec2d, end: Vec2d) -> Option<u64> {
+fn find_hovered_node(
+    node: &aimer_inspector::WidgetNode,
+    name: &str,
+    start: Vec2d,
+    end: Vec2d,
+) -> Option<u64> {
     const EPS: f32 = 1.0;
     let w = end.x - start.x;
     let h = end.y - start.y;
@@ -90,7 +95,8 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
 
         #[cfg(target_os = "ios")]
         if let Some((width, height)) = crate::ios_screen::get_screen_resolution_pixels() {
-            self.native_window_size = Some(ResolvedSize { width: width as f32, height: height as f32 })
+            self.native_window_size =
+                Some(ResolvedSize { width: width as f32, height: height as f32 })
         };
 
         let window_attributes = {
@@ -155,7 +161,10 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
                 let fallback = self
                     .native_window_size
                     .map(|s| PhysicalSize::new(s.width as u32, s.height as u32))
-                    .or_else(|| crate::ios_screen::get_screen_resolution_pixels().map(|(w, h)| PhysicalSize::new(w as u32, h as u32)));
+                    .or_else(|| {
+                        crate::ios_screen::get_screen_resolution_pixels()
+                            .map(|(w, h)| PhysicalSize::new(w as u32, h as u32))
+                    });
                 if let Some(fallback) = fallback {
                     debug!("iOS zero window size, using native screen resolution: {fallback:?}");
                     size = fallback;
@@ -176,7 +185,11 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
         window.request_redraw();
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: crate::aimer_app::AimerCustomAppEvent) {
+    fn user_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        event: crate::aimer_app::AimerCustomAppEvent,
+    ) {
         // debug!("User event {:?}", event);
         handle_user_event(self, event);
     }
@@ -238,17 +251,16 @@ impl AimerApplicationHandler {
                 }
             });
 
-            let hovered_id = if let Ok(hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.read() {
-                if let Some((name, start, end)) = hovered.as_ref() {
-                    snapshot
-                        .as_ref()
-                        .and_then(|s| find_hovered_node(s, name, *start, *end))
+            let hovered_id =
+                if let Ok(hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.read() {
+                    if let Some((name, start, end)) = hovered.as_ref() {
+                        snapshot.as_ref().and_then(|s| find_hovered_node(s, name, *start, *end))
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
             self.inspector.broadcast_tree(snapshot);
             self.inspector.broadcast_hovered(hovered_id);
@@ -319,7 +331,12 @@ impl AimerApplicationHandler {
                 scale: window_scale as f32,
                 parent_pos: Default::default(),
                 cursor_pos,
-                box_constraint: BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: width as f32, max_height: height as f32 },
+                box_constraint: BoxConstraint {
+                    min_width: 0.0,
+                    min_height: 0.0,
+                    max_width: width as f32,
+                    max_height: height as f32,
+                },
                 visible_rect: None,
                 window,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -342,7 +359,12 @@ impl AimerApplicationHandler {
                     // always renders at the top layer above all widgets,
                     // unaffected by any residual transforms.
                     build_ctx.canvas.save();
-                    InspectorOverlay::draw(root.as_ref(), &build_ctx.canvas, cursor_pos, build_ctx.scale);
+                    InspectorOverlay::draw(
+                        root.as_ref(),
+                        &build_ctx.canvas,
+                        cursor_pos,
+                        build_ctx.scale,
+                    );
                     build_ctx.canvas.restore();
                 }
             }
