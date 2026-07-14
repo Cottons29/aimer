@@ -57,8 +57,6 @@ impl Color {
 }
 
 impl Color {
-
-
     pub const fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
         let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
         let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
@@ -101,7 +99,9 @@ impl Color {
                 let a = rgba & 0xFF;
                 (a << 24) | (r << 16) | (g << 8) | b
             }
-            Color::Grayscale(v, a) => ((a as u32) << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32),
+            Color::Grayscale(v, a) => {
+                ((a as u32) << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32)
+            }
             Color::Gray8(v) => (0xFF << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32),
             Color::Basic(named) => named.as_u32(),
             Color::Hsl(h, s, l) => {
@@ -164,7 +164,12 @@ impl Color {
         let amount = amount.clamp(0.0, 1.0);
         let (r, g, b, a) = self.to_rgba_components();
 
-        Self::from_rgba_components(lerp_channel(r, 255, amount), lerp_channel(g, 255, amount), lerp_channel(b, 255, amount), a)
+        Self::from_rgba_components(
+            lerp_channel(r, 255, amount),
+            lerp_channel(g, 255, amount),
+            lerp_channel(b, 255, amount),
+            a,
+        )
     }
 
     /// Returns this color with its alpha channel replaced by `alpha`.
@@ -209,7 +214,12 @@ impl Color {
         let (r1, g1, b1, a1) = self.to_rgba_components();
         let (r2, g2, b2, a2) = other.to_rgba_components();
 
-        Self::from_rgba_components(lerp_channel(r1, r2, t), lerp_channel(g1, g2, t), lerp_channel(b1, b2, t), lerp_channel(a1, a2, t))
+        Self::from_rgba_components(
+            lerp_channel(r1, r2, t),
+            lerp_channel(g1, g2, t),
+            lerp_channel(b1, b2, t),
+            lerp_channel(a1, a2, t),
+        )
     }
 
     /// Inverts this color's RGB channels.
@@ -244,12 +254,17 @@ impl Color {
     ///
     /// `amount` is clamped to `0.0..=1.0`, where `0.0` returns the original
     /// color and `1.0` returns a grayscale color with the original alpha.
-    pub const  fn desaturate(self, amount: f32) -> Self {
+    pub const fn desaturate(self, amount: f32) -> Self {
         let amount = amount.clamp(0.0, 1.0);
         let (r, g, b, a) = self.to_rgba_components();
         let gray = float_to_channel(luminance(r, g, b));
 
-        Self::from_rgba_components(lerp_channel(r, gray, amount), lerp_channel(g, gray, amount), lerp_channel(b, gray, amount), a)
+        Self::from_rgba_components(
+            lerp_channel(r, gray, amount),
+            lerp_channel(g, gray, amount),
+            lerp_channel(b, gray, amount),
+            a,
+        )
     }
 
     /// Converts this color to grayscale while preserving alpha.
@@ -263,7 +278,12 @@ impl Color {
     const fn to_rgba_components(self) -> (u8, u8, u8, u8) {
         let argb = self.as_u32();
 
-        (((argb >> 16) & 0xFF) as u8, ((argb >> 8) & 0xFF) as u8, (argb & 0xFF) as u8, ((argb >> 24) & 0xFF) as u8)
+        (
+            ((argb >> 16) & 0xFF) as u8,
+            ((argb >> 8) & 0xFF) as u8,
+            (argb & 0xFF) as u8,
+            ((argb >> 24) & 0xFF) as u8,
+        )
     }
 
     const fn from_rgba_components(r: u8, g: u8, b: u8, a: u8) -> Self {
