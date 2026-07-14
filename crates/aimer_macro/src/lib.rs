@@ -88,7 +88,10 @@ impl TryFrom<&str> for AttributeKind {
             "stateful" => Ok(AttributeKind::Stateful),
             "router" => Ok(AttributeKind::Router),
             "rawwidget" => Ok(AttributeKind::RawWidget),
-            _ => Err(syn::Error::new_spanned(value, "Only accepts `Stateless`, `Stateful`, `Router` or `RawWidget`")),
+            _ => Err(syn::Error::new_spanned(
+                value,
+                "Only accepts `Stateless`, `Stateful`, `Router` or `RawWidget`",
+            )),
         }
     }
 }
@@ -157,9 +160,12 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     let item_struct = match item {
         Item::Struct(s) => s,
         _ => {
-            return syn::Error::new_spanned(item, "Widget attribute expects a struct unless using Router")
-                .to_compile_error()
-                .into();
+            return syn::Error::new_spanned(
+                item,
+                "Widget attribute expects a struct unless using Router",
+            )
+            .to_compile_error()
+            .into();
         }
     };
 
