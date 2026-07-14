@@ -17,7 +17,11 @@ pub struct Text {
 
 impl Text {
     pub fn new(text: impl Into<Rc<str>>) -> Self {
-        Self { text: text.into(), text_align: TextAlign::default(), text_style: TextStyle::default() }
+        Self {
+            text: text.into(),
+            text_align: TextAlign::default(),
+            text_style: TextStyle::default(),
+        }
     }
 
     pub fn text(mut self, text: impl Into<Rc<str>>) -> Self {

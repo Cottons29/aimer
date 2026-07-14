@@ -18,10 +18,10 @@ pub struct RawTextWidget {
 
 impl RawTextWidget {
     fn font_size(&self, scale: f32) -> f32 {
-        let base = if self.text_style.font_size == 0 { 14.0 } else { self.text_style.font_size as f32 };
+        let base =
+            if self.text_style.font_size == 0 { 14.0 } else { self.text_style.font_size as f32 };
         base * scale
     }
-
 }
 
 impl Drawable for RawTextWidget {
@@ -39,7 +39,12 @@ impl Drawable for RawTextWidget {
                 let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
                 let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
                 let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x && cp.x <= l_end.x && cp.y >= l_start.y && cp.y <= l_end.y && let Ok(mut hovered) = inspector_overlay::HOVERED_WIDGET.write() {
+                if cp.x >= l_start.x
+                    && cp.x <= l_end.x
+                    && cp.y >= l_start.y
+                    && cp.y <= l_end.y
+                    && let Ok(mut hovered) = inspector_overlay::HOVERED_WIDGET.write()
+                {
                     *hovered = Some((self.debug_name(), l_start, l_end));
                 }
             }
@@ -47,11 +52,8 @@ impl Drawable for RawTextWidget {
         let font_size = self.font_size(ctx.scale);
         let width = ctx.parent_size.width;
         let height = ctx.parent_size.height;
-        let max_width = if matches!(self.text_style.text_overflow, TextOverflow::Wrap) {
-            width
-        } else {
-            0.0
-        };
+        let max_width =
+            if matches!(self.text_style.text_overflow, TextOverflow::Wrap) { width } else { 0.0 };
         let metrics = ctx.canvas.measure_text_metrics(&self.text, font_size, max_width);
         let text_width = metrics.width;
         let ascent = metrics.ascent;
@@ -59,7 +61,9 @@ impl Drawable for RawTextWidget {
 
         let x = match self.text_align {
             TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
-            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => (width - text_width) / 2.0,
+            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
+                (width - text_width) / 2.0
+            }
             TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => width - text_width,
         };
 
@@ -110,7 +114,14 @@ impl Drawable for RawTextWidget {
                 );
             }
             TextOverflow::Wrap => {
-                ctx.canvas.draw_text_wrapped(&self.text, (x, y).into(), font_size, color, width, font_weight);
+                ctx.canvas.draw_text_wrapped(
+                    &self.text,
+                    (x, y).into(),
+                    font_size,
+                    color,
+                    width,
+                    font_weight,
+                );
             }
             _ => {
                 ctx.canvas.draw_text(&self.text, (x, y).into(), font_size, color, font_weight);
@@ -127,7 +138,8 @@ impl Drawable for RawTextWidget {
             // Dedicated decoration color, else inherit the text color.
             let deco_color = decoration.color.unwrap_or(color);
             // User thickness/offset are logical px; scale them like the font.
-            let thickness = decoration.thickness.map(|t| t * scale).unwrap_or((font_size * 0.06).max(1.0));
+            let thickness =
+                decoration.thickness.map(|t| t * scale).unwrap_or((font_size * 0.06).max(1.0));
             let offset = decoration.offset * scale;
             let style_id = decoration.style.id();
 
@@ -198,8 +210,7 @@ impl LayoutElement for RawTextWidget {
             }
         };
 
-        self.cache
-            .set_computed(ctx.box_constraint, scale_bits, result);
+        self.cache.set_computed(ctx.box_constraint, scale_bits, result);
         result
     }
     fn invalidate_layout(&self) {
