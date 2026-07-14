@@ -1,7 +1,8 @@
-use crate::aimer_app::AimerCustomAppEvent;
-use crate::handler::AimerApplicationHandler;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_widget::dispatch_event;
+
+use crate::aimer_app::AimerCustomAppEvent;
+use crate::handler::AimerApplicationHandler;
 
 pub(crate) fn handle_user_event(
     app: &mut AimerApplicationHandler,
@@ -17,7 +18,7 @@ pub(crate) fn handle_user_event(
                 };
                 let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                 #[cfg(debug_assertions)]
-                if app.inspector.is_enabled() {
+                if app.inspector_enabled() {
                     handled = true;
                 }
                 if let Some(window) = &app.window
@@ -38,7 +39,7 @@ pub(crate) fn handle_user_event(
                     };
                     let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                     #[cfg(debug_assertions)]
-                    if app.inspector.is_enabled() {
+                    if app.inspector_enabled() {
                         handled = true;
                     }
                     handled_any |= handled;
@@ -67,7 +68,12 @@ pub(crate) fn handle_user_event(
                 // the same, proven mechanism used at startup, scoped to a couple
                 // of frames so the app still returns to idle immediately after.
                 const SETTLE_FRAMES: u8 = 3;
-                app.start_up_frames.set(app.start_up_frames.get().max(SETTLE_FRAMES));
+                app.start_up_frames
+                    .set(
+                        app.start_up_frames
+                            .get()
+                            .max(SETTLE_FRAMES),
+                    );
                 window.request_redraw();
             }
         }

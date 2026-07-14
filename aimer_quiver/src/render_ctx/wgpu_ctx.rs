@@ -14,13 +14,18 @@ pub mod render_ctx {
     }
 
     impl WgpuApi {
-        /// Returns true when the GPU context has been initialized and is usable.
+        /// Returns true when the GPU context has been initialized and is
+        /// usable.
         pub fn is_ready(&self) -> bool {
-            self.gpu.is_some()
+            self.gpu
+                .is_some()
         }
 
         pub fn initialize(&mut self, window: &'static Window, size: PhysicalSize<u32>) {
-            if self.gpu.is_some() {
+            if self
+                .gpu
+                .is_some()
+            {
                 self.resize(size);
                 return;
             }
@@ -36,7 +41,8 @@ pub mod render_ctx {
 
         pub fn resize(&mut self, size: PhysicalSize<u32>) {
             if let Some(gpu) = &mut self.gpu {
-                // debug!("WgpuApi::resize : Resizing GPU context to size: {} x {}", size.width, size.height);
+                // debug!("WgpuApi::resize : Resizing GPU context to size: {} x {}", size.width,
+                // size.height);
                 gpu.resize(size);
             }
         }
@@ -55,7 +61,9 @@ pub mod render_ctx {
                 _ => return false,
             };
 
-            let view = frame.texture.create_view(&Default::default());
+            let view = frame
+                .texture
+                .create_view(&Default::default());
 
             let width = gpu.width();
             let height = gpu.height();
