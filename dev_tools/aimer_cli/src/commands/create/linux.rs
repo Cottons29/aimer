@@ -16,11 +16,13 @@ Type=Application
 Categories=Utility;
 "#
         ),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Default application icon
     fs::write(
         dir.join("builds/linux/app.png"),
         include_bytes!("../../../templates/icons/icon_512.png"),
-    ).unwrap();
+    )
+    .unwrap();
 }

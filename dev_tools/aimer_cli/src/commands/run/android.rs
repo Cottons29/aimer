@@ -1,9 +1,12 @@
 use crate::commands::run::Device;
 use crate::commands::run::cargo_build::{
-    self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_build_log, stream_stdout_with_gradle_progress, wait_for_child,
+    self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_build_log,
+    stream_stdout_with_gradle_progress, wait_for_child,
 };
 use crate::commands::run::console::{RunnerEvent, Status};
-use crate::commands::run::helpers::{build_log, build_streamed, fail, run_to_completion, set_status, spawn_streamed, stage_assets};
+use crate::commands::run::helpers::{
+    build_log, build_streamed, fail, run_to_completion, set_status, spawn_streamed, stage_assets,
+};
 use crate::commands::run::utilities::resolve_lib_path;
 use crossbeam::channel::Sender;
 use std::env::current_dir;
@@ -69,9 +72,7 @@ pub fn spawn_android_runner(
         }
     };
 
-    let abi = String::from_utf8_lossy(&abi_output.stdout)
-        .trim()
-        .to_string();
+    let abi = String::from_utf8_lossy(&abi_output.stdout).trim().to_string();
 
     let (rust_target, jni_dir_name) = match abi.as_str() {
         "x86_64" => ("x86_64-linux-android", "x86_64"),
@@ -103,7 +104,11 @@ pub fn spawn_android_runner(
     build_log(&tx, format!("[Aimer] current_dir: {}", current_dir.display()));
 
     let lib_name = pkg_name.replace("-", "_");
-    let src_lib = resolve_lib_path(&lib_name, rust_target, CargoBuildTarget::Android { rust_target: rust_target.to_string() });
+    let src_lib = resolve_lib_path(
+        &lib_name,
+        rust_target,
+        CargoBuildTarget::Android { rust_target: rust_target.to_string() },
+    );
     let dest_dir = format!("builds/android/app/src/main/jniLibs/{}", jni_dir_name);
     let dest_lib = format!("{}/lib{}.so", dest_dir, lib_name);
 
@@ -152,7 +157,12 @@ pub fn spawn_android_runner(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    if !run_to_completion(install, &tx, "Failed to install", &format!("Failed to install on {}", device_name)) {
+    if !run_to_completion(
+        install,
+        &tx,
+        "Failed to install",
+        &format!("Failed to install on {}", device_name),
+    ) {
         return;
     }
 
@@ -173,7 +183,15 @@ pub fn spawn_android_runner(
     }
 
     let mut app_run = Command::new("adb");
-    app_run.args(["-s", &device.id, "shell", "am", "start", "-n", &format!("{}/com.aimer.AimerActivity", app_id)]);
+    app_run.args([
+        "-s",
+        &device.id,
+        "shell",
+        "am",
+        "start",
+        "-n",
+        &format!("{}/com.aimer.AimerActivity", app_id),
+    ]);
 
     if !spawn_streamed(
         app_run,

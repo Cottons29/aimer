@@ -115,7 +115,8 @@ pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>) {
                 for line in reader.lines().map_while(Result::ok) {
                     if line.contains("Compiling") {
                         compile_count = (compile_count + 5).min(99);
-                        let _ = tx_err.send(RunnerEvent::StatusChange(Status::Compiling(compile_count)));
+                        let _ = tx_err
+                            .send(RunnerEvent::StatusChange(Status::Compiling(compile_count)));
                     } else if line.contains("Finished") {
                         let _ = tx_err.send(RunnerEvent::StatusChange(Status::Compiling(100)));
                     }

@@ -38,11 +38,21 @@ fn spawn_runner(
 
     match pipeline::runner_for(target) {
         Some(runner) => {
-            let ctx = RunContext { device, pkg_name, tx, current_child: current_child_clone, inspector_address, inspector_port };
+            let ctx = RunContext {
+                device,
+                pkg_name,
+                tx,
+                current_child: current_child_clone,
+                inspector_address,
+                inspector_port,
+            };
             thread::spawn(move || runner.run(ctx));
         }
         None => {
-            let _ = tx.send(RunnerEvent::BuildLog(format!("Target {} is not yet supported for on-the-fly run.", target)));
+            let _ = tx.send(RunnerEvent::BuildLog(format!(
+                "Target {} is not yet supported for on-the-fly run.",
+                target
+            )));
             let _ = tx.send(RunnerEvent::StatusChange(Status::Idling));
         }
     }
@@ -106,9 +116,7 @@ fn hit_test(view: &PaneView, col: u16, row: u16) -> Option<(usize, usize)> {
     if view.visible_rows.is_empty() {
         return None;
     }
-    let cy = row
-        .saturating_sub(view.y)
-        .min(view.visible_rows.len() as u16 - 1) as usize;
+    let cy = row.saturating_sub(view.y).min(view.visible_rows.len() as u16 - 1) as usize;
     let cx = col.saturating_sub(view.x) as usize;
     let vr = view.visible_rows[cy];
     let within = if vr.len == 0 { 0 } else { cx.min(vr.len - 1) };
@@ -127,20 +135,23 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
     let mut state = AppState::new();
 
     // Starting inspector server
-    let inspector_runtime = Runtime::new().context("failed to start inspector server tokio runtime")?;
+    let inspector_runtime =
+        Runtime::new().context("failed to start inspector server tokio runtime")?;
 
     let inspector_server_address = match device.target {
         Targets::Ios | Targets::Android => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
         _ => IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
     };
 
-    let inspector_handle = match InspectorServer::start(inspector_server_address, 9229, inspector_runtime.handle()) {
-        Ok(handle) => handle,
-        Err(e) => {
-            let _ = tx.send(RunnerEvent::AppLog(format!("Failed to start inspector server: {}", e)));
-            return Err(anyhow::anyhow!("failed to start inspector server: {e}"));
-        }
-    };
+    let inspector_handle =
+        match InspectorServer::start(inspector_server_address, 9229, inspector_runtime.handle()) {
+            Ok(handle) => handle,
+            Err(e) => {
+                let _ = tx
+                    .send(RunnerEvent::AppLog(format!("Failed to start inspector server: {}", e)));
+                return Err(anyhow::anyhow!("failed to start inspector server: {e}"));
+            }
+        };
 
     let frames = ["⠋", "⠙", "⠚", "⠞", "⠖", "⠦", "⠴", "⠲", "⠳", "⠓"];
     let running_frame = ["▣", "▤", "▥", "▦", "▧", "▨", "▣", "▤", "▥", "▦"];
@@ -153,43 +164,49 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
     let progress_supported = terminal_supports_progress();
     let mut last_progress: Option<Status> = None;
 
-    let mut current_child = spawn_runner(device.clone(), pkg_name.clone(), tx.clone(), inspector_handle.address, inspector_handle.port);
+    let mut current_child = spawn_runner(
+        device.clone(),
+        pkg_name.clone(),
+        tx.clone(),
+        inspector_handle.address,
+        inspector_handle.port,
+    );
 
     // Hot-reload file watcher
-    let _watcher = {
-        let tx_watch = tx.clone();
-        let mut debounce_last = Instant::now();
-        let mut watcher = notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
-            if let Ok(event) = res {
-                use notify::EventKind;
-                match event.kind {
-                    EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
-                        let dominated_by_rs = event
-                            .paths
-                            .iter()
-                            .any(|p| p.extension().is_some_and(|ext| ext == "rs"));
-                        if dominated_by_rs {
-                            let now = Instant::now();
-                            if now.duration_since(debounce_last) > Duration::from_millis(500) {
-                                debounce_last = now;
-                                let _ = tx_watch.send(RunnerEvent::HotReload);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        })
-        .ok();
-        if let Some(ref mut w) = watcher {
-            let _ = w.watch(Path::new("src"), RecursiveMode::Recursive);
-            // Also watch crates/ if it exists
-            if Path::new("crates").exists() {
-                let _ = w.watch(Path::new("crates"), RecursiveMode::Recursive);
-            }
-        }
-        watcher
-    };
+    // let _watcher = {
+    //     let tx_watch = tx.clone();
+    //     let mut debounce_last = Instant::now();
+    //     let mut watcher = notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
+    //         if let Ok(event) = res {
+    //             use notify::EventKind;
+    //             match event.kind {
+    //                 EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
+    //                     let dominated_by_rs = event
+    //                         .paths
+    //                         .iter()
+    //                         .any(|p| p.extension().is_some_and(|ext| ext == "rs"));
+    //                     if dominated_by_rs {
+    //                         let now = Instant::now();
+    //                         if now.duration_since(debounce_last) > Duration::from_millis(500) {
+    //                             debounce_last = now;
+    //                             let _ = tx_watch.send(RunnerEvent::HotReload);
+    //                         }
+    //                     }
+    //                 }
+    //                 _ => {}
+    //             }
+    //         }
+    //     })
+    //     .ok();
+    //     if let Some(ref mut w) = watcher {
+    //         let _ = w.watch(Path::new("src"), RecursiveMode::Recursive);
+    //         // Also watch crates/ if it exists
+    //         if Path::new("crates").exists() {
+    //             let _ = w.watch(Path::new("crates"), RecursiveMode::Recursive);
+    //         }
+    //     }
+    //     watcher
+    // };
 
     loop {
         // Process all pending events
@@ -202,7 +219,9 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                     // Only trigger reload if app is currently running or idling
                     match state.status {
                         Status::Running | Status::Idling | Status::Error => {
-                            let _ = tx.send(RunnerEvent::AppLog("[hot-reload] File change detected, rebuilding...".to_string()));
+                            let _ = tx.send(RunnerEvent::AppLog(
+                                "[hot-reload] File change detected, rebuilding...".to_string(),
+                            ));
                             if device.target == Targets::Web {
                                 state.clear_build();
                                 state.status = Status::Compiling(0);
@@ -239,7 +258,15 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
         let inspector_state = inspector_handle.state.lock().unwrap().clone();
         let inspector_address = inspector_handle.get_address();
         terminal.draw(|f| {
-            ui::render(f, &mut state, &inspector_state, &inspector_address, &frames, &running_frame, frame_index);
+            ui::render(
+                f,
+                &mut state,
+                &inspector_state,
+                &inspector_address,
+                &frames,
+                &running_frame,
+                frame_index,
+            );
         })?;
 
         let timeout = tick_rate
@@ -292,7 +319,8 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                             }
                         }
 
-                        (KeyCode::Char('c'), KeyModifiers::SHIFT) | (KeyCode::Char('C'), KeyModifiers::SHIFT) => {
+                        (KeyCode::Char('c'), KeyModifiers::SHIFT)
+                        | (KeyCode::Char('C'), KeyModifiers::SHIFT) => {
                             state.clear_selection();
                             match state.pane {
                                 ConsoleType::App => state.app_logs.clear(),
@@ -323,10 +351,15 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                         // Ctrl+C / Cmd+C: copy the active selection if there is
                         // one, else fall back to copying the whole pane.
                         (KeyCode::Char('c') | KeyCode::Char('C'), m)
-                            if m.contains(KeyModifiers::CONTROL) || m.contains(KeyModifiers::SUPER) =>
+                            if m.contains(KeyModifiers::CONTROL)
+                                || m.contains(KeyModifiers::SUPER) =>
                         {
                             let text = state.selected_text().unwrap_or_else(|| {
-                                if state.pane == ConsoleType::Build { state.build_logs.join("\n") } else { state.app_logs.join("\n") }
+                                if state.pane == ConsoleType::Build {
+                                    state.build_logs.join("\n")
+                                } else {
+                                    state.app_logs.join("\n")
+                                }
                             });
                             if let Ok(mut clipboard) = Clipboard::new() {
                                 let _ = clipboard.set_text(text);
@@ -336,8 +369,11 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
 
                         (KeyCode::Char('c'), _) | (KeyCode::Char('C'), _) => {
                             if let Ok(mut clipboard) = Clipboard::new() {
-                                let logs =
-                                    if state.pane == ConsoleType::Build { state.build_logs.join("\n") } else { state.app_logs.join("\n") };
+                                let logs = if state.pane == ConsoleType::Build {
+                                    state.build_logs.join("\n")
+                                } else {
+                                    state.app_logs.join("\n")
+                                };
                                 let _ = clipboard.set_text(logs);
                             }
                         }
@@ -427,15 +463,21 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                         },
                         // Begin a selection at the clicked cell.
                         MouseEventKind::Down(MouseButton::Left) if state.selection_mode => {
-                            if let Some(pos) = state.last_view.as_ref().and_then(|v| hit_test(v, col, row)) {
+                            if let Some(pos) =
+                                state.last_view.as_ref().and_then(|v| hit_test(v, col, row))
+                            {
                                 state.selection = Some(Selection { anchor: pos, cursor: pos });
                                 state.selecting = true;
                             }
                         }
                         // Extend the selection while dragging, auto-scrolling at
                         // the top/bottom edges of the pane.
-                        MouseEventKind::Drag(MouseButton::Left) if state.selection_mode && state.selecting => {
-                            if let Some((vy, vh)) = state.last_view.as_ref().map(|v| (v.y, v.height)) {
+                        MouseEventKind::Drag(MouseButton::Left)
+                            if state.selection_mode && state.selecting =>
+                        {
+                            if let Some((vy, vh)) =
+                                state.last_view.as_ref().map(|v| (v.y, v.height))
+                            {
                                 if row < vy {
                                     match state.pane {
                                         ConsoleType::Build => state.build_pane.scroll_up(1),
@@ -450,7 +492,8 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                     }
                                 }
                             }
-                            if let Some(pos) = state.last_view.as_ref().and_then(|v| hit_test(v, col, row))
+                            if let Some(pos) =
+                                state.last_view.as_ref().and_then(|v| hit_test(v, col, row))
                                 && let Some(sel) = state.selection.as_mut()
                             {
                                 sel.cursor = pos;
@@ -489,49 +532,59 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
     let (tx, rx) = crossbeam::channel::unbounded();
 
     // Starting inspector server
-    let inspector_runtime = Runtime::new().context("failed to start inspector server tokio runtime")?;
+    let inspector_runtime =
+        Runtime::new().context("failed to start inspector server tokio runtime")?;
 
     let inspector_server_address = match device.target {
         Targets::Ios | Targets::Android => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
         _ => IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
     };
 
-    let inspector_handle = match InspectorServer::start(inspector_server_address, 9229, inspector_runtime.handle()) {
-        Ok(handle) => handle,
-        Err(e) => {
-            let _ = tx.send(RunnerEvent::AppLog(format!("Failed to start inspector server: {}", e)));
-            return Err(anyhow::anyhow!("failed to start inspector server: {e}"));
-        }
-    };
+    let inspector_handle =
+        match InspectorServer::start(inspector_server_address, 9229, inspector_runtime.handle()) {
+            Ok(handle) => handle,
+            Err(e) => {
+                let _ = tx
+                    .send(RunnerEvent::AppLog(format!("Failed to start inspector server: {}", e)));
+                return Err(anyhow::anyhow!("failed to start inspector server: {e}"));
+            }
+        };
 
-    let mut current_child = spawn_runner(device.clone(), pkg_name.clone(), tx.clone(), inspector_handle.address, inspector_handle.port);
+    let mut current_child = spawn_runner(
+        device.clone(),
+        pkg_name.clone(),
+        tx.clone(),
+        inspector_handle.address,
+        inspector_handle.port,
+    );
 
     // Hot-reload file watcher
     let _watcher = {
         let tx_watch = tx.clone();
         let mut debounce_last = Instant::now();
-        let mut watcher = notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
-            if let Ok(event) = res {
-                use notify::EventKind;
-                match event.kind {
-                    EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
-                        let dominated_by_rs = event
-                            .paths
-                            .iter()
-                            .any(|p| p.extension().is_some_and(|ext| ext == "rs"));
-                        if dominated_by_rs {
-                            let now = Instant::now();
-                            if now.duration_since(debounce_last) > Duration::from_millis(500) {
-                                debounce_last = now;
-                                let _ = tx_watch.send(RunnerEvent::HotReload);
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
+                if let Ok(event) = res {
+                    use notify::EventKind;
+                    match event.kind {
+                        EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
+                            let dominated_by_rs = event
+                                .paths
+                                .iter()
+                                .any(|p| p.extension().is_some_and(|ext| ext == "rs"));
+                            if dominated_by_rs {
+                                let now = Instant::now();
+                                if now.duration_since(debounce_last) > Duration::from_millis(500) {
+                                    debounce_last = now;
+                                    let _ = tx_watch.send(RunnerEvent::HotReload);
+                                }
                             }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
-        })
-        .ok();
+            })
+            .ok();
         if let Some(ref mut w) = watcher {
             let _ = w.watch(Path::new("src"), RecursiveMode::Recursive);
             if Path::new("crates").exists() {
@@ -542,7 +595,7 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
     };
 
     // Simple blocking event loop — print logs to stdout/stderr.
-    while let Ok(event) = rx.recv()  {
+    while let Ok(event) = rx.recv() {
         match event {
             RunnerEvent::BuildLog(msg) => {
                 eprintln!("[build] {}", msg);
@@ -550,18 +603,16 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
             RunnerEvent::AppLog(msg) => {
                 println!("{}", msg);
             }
-            RunnerEvent::StatusChange(status) => {
-                match &status {
-                    Status::Compiling(pct) => eprintln!("[status] Compiling {}%", pct),
-                    Status::Building(pct) => eprintln!("[status] Building {}%", pct),
-                    Status::Fetching(pct) => eprintln!("[status] Fetching {}%", pct),
-                    Status::Launching => eprintln!("[status] Launching..."),
-                    Status::Running => eprintln!("[status] Running"),
-                    Status::Error => eprintln!("[status] Error"),
-                    Status::Locking => eprintln!("[status] Locking..."),
-                    Status::Idling => {}
-                }
-            }
+            RunnerEvent::StatusChange(status) => match &status {
+                Status::Compiling(pct) => eprintln!("[status] Compiling {}%", pct),
+                Status::Building(pct) => eprintln!("[status] Building {}%", pct),
+                Status::Fetching(pct) => eprintln!("[status] Fetching {}%", pct),
+                Status::Launching => eprintln!("[status] Launching..."),
+                Status::Running => eprintln!("[status] Running"),
+                Status::Error => eprintln!("[status] Error"),
+                Status::Locking => eprintln!("[status] Locking..."),
+                Status::Idling => {}
+            },
             RunnerEvent::HotReload => {
                 eprintln!("[hot-reload] File change detected, rebuilding...");
                 if device.target == Targets::Web {

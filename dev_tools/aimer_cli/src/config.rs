@@ -86,8 +86,8 @@ impl AimerManifest {
         }
         let contents = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        let manifest: AimerManifest = toml::from_str(&contents)
-            .with_context(|| format!("parsing {}", path.display()))?;
+        let manifest: AimerManifest =
+            toml::from_str(&contents).with_context(|| format!("parsing {}", path.display()))?;
         Ok(Some(manifest))
     }
 
@@ -106,9 +106,7 @@ impl AimerManifest {
 
     /// Default build target declared in the manifest, if any.
     pub fn default_target(&self) -> Option<&str> {
-        self.build
-            .as_ref()
-            .and_then(|b| b.default_target.as_deref())
+        self.build.as_ref().and_then(|b| b.default_target.as_deref())
     }
 }
 
@@ -149,7 +147,8 @@ mod tests {
     #[test]
     fn manifest_round_trips() {
         let dir = tempfile::tempdir().unwrap();
-        let manifest = AimerManifest::new("my_app", "0.2.0", "a cool app", "alice", "com.example.myapp");
+        let manifest =
+            AimerManifest::new("my_app", "0.2.0", "a cool app", "alice", "com.example.myapp");
         manifest.write_to(dir.path()).unwrap();
 
         let loaded = AimerManifest::load_from(dir.path()).unwrap().unwrap();
@@ -229,11 +228,7 @@ mod tests {
     #[test]
     fn parse_cargo_package_name_works() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("Cargo.toml"),
-            "[package]\nname = \"pkg\"\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"pkg\"\n").unwrap();
         assert_eq!(parse_cargo_package_name(dir.path()), Some("pkg".to_string()));
     }
 }

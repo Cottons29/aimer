@@ -10,7 +10,9 @@ pub fn create(dir: &Path, name: &str, group: &str) {
 
     fs::write(
         macos_dir.join(format!("{}.xcodeproj/project.pbxproj", project_name)),
-        include_str!("../../../templates/macos/project.pbxproj.template").replace("${project_name}", project_name).replace("${project_name_lib}", &project_name_lib)
+        include_str!("../../../templates/macos/project.pbxproj.template")
+            .replace("${project_name}", project_name)
+            .replace("${project_name_lib}", &project_name_lib),
     )
     .unwrap();
 
@@ -22,7 +24,8 @@ pub fn create(dir: &Path, name: &str, group: &str) {
         include_str!("../../../templates/macos/info.plist.template")
             .replace("${project_name}", project_name)
             .replace("${group}", group),
-    ).unwrap();
+    )
+    .unwrap();
 
     fs::write(
         app_dir.join("main.swift"),
@@ -33,7 +36,8 @@ import Foundation
 func __generated_entrance_point()
 __generated_entrance_point()
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Default AppIcon asset catalog
     let appiconset_dir = app_dir.join("Assets.xcassets/AppIcon.appiconset");
@@ -123,5 +127,6 @@ __generated_entrance_point()
   }
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 }

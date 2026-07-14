@@ -24,5 +24,9 @@ pub fn create(dir: &Path, name: &str, group: &str) {
     .unwrap();
 
     // Default application icon
-    fs::write(dir.join("builds/windows/app.ico"), include_bytes!("../../../templates/icons/app.ico")).unwrap();
+    fs::write(
+        dir.join("builds/windows/app.ico"),
+        include_bytes!("../../../templates/icons/app.ico"),
+    )
+    .unwrap();
 }

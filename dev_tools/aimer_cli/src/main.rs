@@ -6,10 +6,10 @@ use std::env::set_current_dir;
 
 pub mod commands;
 pub mod config;
+pub mod console;
 pub mod errors;
 pub mod targets;
 pub mod tui;
-pub mod console;
 
 #[derive(Parser)]
 #[command(name = "aimer")]
@@ -33,8 +33,8 @@ fn init_logging(verbose: bool) {
     use tracing_subscriber::{EnvFilter, fmt};
 
     let default_level = if verbose { "debug" } else { "warn" };
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default_level));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
     let _ = fmt().with_env_filter(filter).with_target(false).try_init();
 }
 
@@ -103,8 +103,6 @@ enum Commands {
         target: MigrateTarget,
     },
 }
-
-
 
 fn main() -> anyhow::Result<()> {
     // Dynamic, self-updating shell completions. When the shell invokes the

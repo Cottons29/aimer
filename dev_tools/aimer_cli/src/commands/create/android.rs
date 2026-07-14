@@ -23,7 +23,8 @@ pub fn create(dir: &Path, name: &str, group: &str) {
     .unwrap();
 
     let gradlew_path = dir.join("builds/android/gradlew");
-    fs::write(&gradlew_path, include_str!("../../../templates/android/dot_gradle/gradlew")).unwrap();
+    fs::write(&gradlew_path, include_str!("../../../templates/android/dot_gradle/gradlew"))
+        .unwrap();
 
     #[cfg(unix)]
     {
@@ -33,7 +34,11 @@ pub fn create(dir: &Path, name: &str, group: &str) {
         }
     }
 
-    fs::write(dir.join("builds/android/gradlew.bat"), include_str!("../../../templates/android/dot_gradle/gradlew.bat")).unwrap();
+    fs::write(
+        dir.join("builds/android/gradlew.bat"),
+        include_str!("../../../templates/android/dot_gradle/gradlew.bat"),
+    )
+    .unwrap();
 
     fs::write(
         dir.join("builds/android/gradle/wrapper/gradle-wrapper.properties"),
@@ -71,7 +76,8 @@ plugins {
 
     fs::write(
         dir.join("builds/android/app/build.gradle.kts"),
-        include_str!("../../../templates/android/build.gradle.kts.template").replace("${group}", group),
+        include_str!("../../../templates/android/build.gradle.kts.template")
+            .replace("${group}", group),
     )
     .unwrap();
 
@@ -85,7 +91,10 @@ plugins {
 
     fs::write(
         dir.join("builds/android/app/src/main/res/values/strings.xml"),
-        format!("<resources>\n    <string name=\"app_name\">{}</string>\n</resources>\n", project_name),
+        format!(
+            "<resources>\n    <string name=\"app_name\">{}</string>\n</resources>\n",
+            project_name
+        ),
     )
     .unwrap();
 

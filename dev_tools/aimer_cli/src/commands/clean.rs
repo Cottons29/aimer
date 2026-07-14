@@ -20,7 +20,7 @@ pub fn execute() -> anyhow::Result<()> {
         if build.exists() {
             if build.is_dir() {
                 std::fs::remove_dir_all(build).context("removing build directory")?;
-            }else if build.is_file() {
+            } else if build.is_file() {
                 std::fs::remove_file(build).context("removing build file")?;
             }
 
@@ -32,10 +32,8 @@ pub fn execute() -> anyhow::Result<()> {
 
     // Delegate target/ cleanup to cargo so it respects workspace layout.
     if Path::new("Cargo.toml").exists() {
-        let status = Command::new("cargo")
-            .arg("clean")
-            .status()
-            .context("running `cargo clean`")?;
+        let status =
+            Command::new("cargo").arg("clean").status().context("running `cargo clean`")?;
         if status.success() {
             println!("Ran `cargo clean`.");
         } else {
