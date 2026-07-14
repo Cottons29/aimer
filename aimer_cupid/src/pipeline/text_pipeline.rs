@@ -4,15 +4,17 @@ mod glyph_outline;
 pub mod glyph_rasterizer;
 pub mod text_layout;
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use aimer_utils::time_cost;
+use bytemuck::{Pod, Zeroable};
+
 use crate::text_pipeline::glyph_atlas::{AtlasRegion, ColorGlyphAtlas, GlyphAtlas};
 use crate::text_pipeline::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
 use crate::text_pipeline::text_layout::{
     PositionedGlyph, ShapedText, layout_shaped_text, shape_text,
 };
-use aimer_utils::time_cost;
-use bytemuck::{Pod, Zeroable};
-use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Per-instance data for one glyph quad.
 #[repr(C)]
@@ -24,7 +26,8 @@ struct GlyphInstance {
     color: [f32; 4],
     /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
     clip_rect: [f32; 4],
-    /// Border radius for the clip rect: [top-left, top-right, bottom-right, bottom-left].
+    /// Border radius for the clip rect: [top-left, top-right, bottom-right,
+    /// bottom-left].
     clip_border_radius: [f32; 4],
     /// Horizontal shear factor for synthetic italic (tan of the slant angle).
     /// 0 = upright. The glyph shaders slant the quad by this, pinned at its
@@ -245,13 +248,15 @@ pub struct TextPipelineV2 {
     color_instance_buffer: wgpu::Buffer,
     color_instance_capacity: usize,
     color_instances: Vec<GlyphInstance>,
-    /// Decoration-line pipeline + its own instance list/buffer. Decoration quads
-    /// are drawn after the glyphs (see `render`) so lines layer with their text.
+    /// Decoration-line pipeline + its own instance list/buffer. Decoration
+    /// quads are drawn after the glyphs (see `render`) so lines layer with
+    /// their text.
     decoration_pipeline: wgpu::RenderPipeline,
     decoration_instance_buffer: wgpu::Buffer,
     decoration_instance_capacity: usize,
     decoration_instances: Vec<DecorationInstance>,
-    /// Track atlas generation to only rebuild bind group when atlas texture changes.
+    /// Track atlas generation to only rebuild bind group when atlas texture
+    /// changes.
     atlas_generation: u64,
     color_atlas_generation: u64,
     /// Cached viewport dimensions to skip redundant uniform writes.
@@ -262,8 +267,8 @@ pub struct TextPipelineV2 {
     /// draw calls) so memory does not grow unboundedly across scene changes.
     layout_cache: HashMap<LayoutCacheKey, Vec<PositionedGlyph>>,
     /// Width-independent shaping cache.  Resize may invalidate final positions
-    /// for wrapping/ellipsis text, but shaped glyph ids and advances only depend
-    /// on text content and font size.
+    /// for wrapping/ellipsis text, but shaped glyph ids and advances only
+    /// depend on text content and font size.
     shaping_cache: HashMap<ShapingCacheKey, ShapedText>,
     /// Per-request glyph ranges recorded during `prepare` so the renderer can
     /// draw a single text request at its own z-position (interleaved with
@@ -542,7 +547,10 @@ impl TextPipelineV2 {
         text: &str,
         font_size: f32,
     ) {
-        for (key, glyph) in self.rasterizer.preload_text(text, font_size) {
+        for (key, glyph) in self
+            .rasterizer
+            .preload_text(text, font_size)
+        {
             self.insert_rasterized_glyph(
                 device,
                 queue,
@@ -564,8 +572,8 @@ impl TextPipelineV2 {
     /// strings only pay `rustybuzz` shaping and never glyph rasterization.
     const COMMON_GLYPH_SET: &'static str = " 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
-    /// Insert a single rasterized glyph bitmap into the matching atlas, skipping
-    /// empty (zero-area) glyphs and glyphs already present.
+    /// Insert a single rasterized glyph bitmap into the matching atlas,
+    /// skipping empty (zero-area) glyphs and glyphs already present.
     #[allow(clippy::too_many_arguments)]
     fn insert_rasterized_glyph(
         &mut self,
@@ -581,11 +589,21 @@ impl TextPipelineV2 {
             return;
         }
         if is_color {
-            if self.color_atlas.get(&key).is_none() {
-                self.color_atlas.get_or_insert(device, queue, key, width, height, bitmap);
+            if self
+                .color_atlas
+                .get(&key)
+                .is_none()
+            {
+                self.color_atlas
+                    .get_or_insert(device, queue, key, width, height, bitmap);
             }
-        } else if self.atlas.get(&key).is_none() {
-            self.atlas.get_or_insert(device, queue, key, width, height, bitmap);
+        } else if self
+            .atlas
+            .get(&key)
+            .is_none()
+        {
+            self.atlas
+                .get_or_insert(device, queue, key, width, height, bitmap);
         }
     }
 
@@ -593,39 +611,50 @@ impl TextPipelineV2 {
     /// if either atlas texture was reallocated (generation changed). Shared by
     /// the warm-up paths and `preload_text`.
     fn flush_atlas(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.atlas.upload(queue);
-        self.color_atlas.upload(queue);
+        self.atlas
+            .upload(queue);
+        self.color_atlas
+            .upload(queue);
 
-        let atlas_gen = self.atlas.generation();
+        let atlas_gen = self
+            .atlas
+            .generation();
         if atlas_gen != self.atlas_generation {
             self.atlas_generation = atlas_gen;
             self.bind_group = Self::create_bind_group(
                 device,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
-                &self.atlas.view,
+                &self
+                    .atlas
+                    .view,
                 &self.sampler,
             );
         }
 
-        let color_gen = self.color_atlas.generation();
+        let color_gen = self
+            .color_atlas
+            .generation();
         if color_gen != self.color_atlas_generation {
             self.color_atlas_generation = color_gen;
             self.color_bind_group = Self::create_bind_group(
                 device,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
-                &self.color_atlas.view,
+                &self
+                    .color_atlas
+                    .view,
                 &self.sampler,
             );
         }
     }
 
-    /// Level 2 warm-up — pre-rasterize the common ASCII glyph set at each of the
-    /// supplied font sizes so the glyph atlas is already populated before the
-    /// first frame is drawn. Because rasterization (not shaping) is the heavier
-    /// per-glyph cost, this keeps even brand-new strings (numbers, usernames,
-    /// live text) cheap: they only pay shaping, never glyph rasterization.
+    /// Level 2 warm-up — pre-rasterize the common ASCII glyph set at each of
+    /// the supplied font sizes so the glyph atlas is already populated
+    /// before the first frame is drawn. Because rasterization (not shaping)
+    /// is the heavier per-glyph cost, this keeps even brand-new strings
+    /// (numbers, usernames, live text) cheap: they only pay shaping, never
+    /// glyph rasterization.
     pub fn warm_glyph_set(
         &mut self,
         device: &wgpu::Device,
@@ -633,7 +662,10 @@ impl TextPipelineV2 {
         font_sizes: &[f32],
     ) {
         for &font_size in font_sizes {
-            for (key, glyph) in self.rasterizer.preload_text(Self::COMMON_GLYPH_SET, font_size) {
+            for (key, glyph) in self
+                .rasterizer
+                .preload_text(Self::COMMON_GLYPH_SET, font_size)
+            {
                 self.insert_rasterized_glyph(
                     device,
                     queue,
@@ -656,9 +688,9 @@ impl TextPipelineV2 {
     /// shaping + rasterization cost (the 27–86 ms spikes) on first paint.
     ///
     /// `layout_width` must match the wrapping width the string will be drawn
-    /// with (0.0 for non-wrapping `Clip` text) for the layout cache to hit; even
-    /// if it differs the width-independent shaping cache still hits, so the
-    /// expensive shaping work is warmed regardless.
+    /// with (0.0 for non-wrapping `Clip` text) for the layout cache to hit;
+    /// even if it differs the width-independent shaping cache still hits,
+    /// so the expensive shaping work is warmed regardless.
     pub fn warm_text(
         &mut self,
         device: &wgpu::Device,
@@ -673,8 +705,8 @@ impl TextPipelineV2 {
 
     /// Shared core of [`warm_text`](Self::warm_text): shape + lay out `text`,
     /// populating both caches exactly like `prepare` does, then rasterize every
-    /// positioned glyph into the atlas. Does not upload/flush the atlas (callers
-    /// batch a single `flush_atlas` afterwards).
+    /// positioned glyph into the atlas. Does not upload/flush the atlas
+    /// (callers batch a single `flush_atlas` afterwards).
     fn warm_layout(
         &mut self,
         device: &wgpu::Device,
@@ -691,33 +723,54 @@ impl TextPipelineV2 {
         let glyphs: Vec<(GlyphKey, f32)> = {
             let shaping_cache = &mut self.shaping_cache;
             let rasterizer = &mut self.rasterizer;
-            let positioned = self.layout_cache.entry(cache_key).or_insert_with(|| {
-                let shaped_key = ShapingCacheKey::new(text, font_size);
-                let shaped_text = shaping_cache
-                    .entry(shaped_key)
-                    .or_insert_with(|| shape_text(rasterizer, text, font_size));
-                layout_shaped_text(rasterizer, shaped_text, 0.0, 0.0, layout_width)
-            });
-            positioned.iter().map(|pg| (pg.glyph_key, pg.font_size)).collect()
+            let positioned = self
+                .layout_cache
+                .entry(cache_key)
+                .or_insert_with(|| {
+                    let shaped_key = ShapingCacheKey::new(text, font_size);
+                    let shaped_text = shaping_cache
+                        .entry(shaped_key)
+                        .or_insert_with(|| shape_text(rasterizer, text, font_size));
+                    layout_shaped_text(rasterizer, shaped_text, 0.0, 0.0, layout_width)
+                });
+            positioned
+                .iter()
+                .map(|pg| (pg.glyph_key, pg.font_size))
+                .collect()
         };
 
         for (key, glyph_font_size) in glyphs {
             let (is_color, width, height) = {
-                let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
+                let rg = self
+                    .rasterizer
+                    .rasterize_key(key, glyph_font_size);
                 (rg.is_color, rg.width, rg.height)
             };
             if width == 0 || height == 0 {
                 continue;
             }
             if is_color {
-                if self.color_atlas.get(&key).is_none() {
-                    let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
+                if self
+                    .color_atlas
+                    .get(&key)
+                    .is_none()
+                {
+                    let rg = self
+                        .rasterizer
+                        .rasterize_key(key, glyph_font_size);
                     self.color_atlas
                         .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
                 }
-            } else if self.atlas.get(&key).is_none() {
-                let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
-                self.atlas.get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
+            } else if self
+                .atlas
+                .get(&key)
+                .is_none()
+            {
+                let rg = self
+                    .rasterizer
+                    .rasterize_key(key, glyph_font_size);
+                self.atlas
+                    .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
             }
         }
     }
@@ -732,12 +785,22 @@ impl TextPipelineV2 {
         requests: &[TextDrawRequest],
         decorations: &[TextDecorationDraw],
     ) {
-        self.instances.clear();
-        self.color_instances.clear();
-        self.decoration_instances.clear();
-        self.decoration_instances.extend(decorations.iter().map(|d| d.to_instance()));
-        self.request_ranges.clear();
-        self.request_ranges.reserve(requests.len());
+        self.instances
+            .clear();
+        self.color_instances
+            .clear();
+        self.decoration_instances
+            .clear();
+        self.decoration_instances
+            .extend(
+                decorations
+                    .iter()
+                    .map(|d| d.to_instance()),
+            );
+        self.request_ranges
+            .clear();
+        self.request_ranges
+            .reserve(requests.len());
 
         // Atlas regions recorded in lock-step with `self.instances` /
         // `self.color_instances`. UVs depend on the atlas dimensions, which can
@@ -764,27 +827,47 @@ impl TextPipelineV2 {
         // them by an absolute capacity, evicting wholesale just when the hard cap
         // is exceeded (rare) instead of on every request-count change. This keeps
         // steady-state frames on the ~1 ms full-hit path needed for 120+ fps.
-        if self.layout_cache.len() > Self::LAYOUT_CACHE_CAPACITY {
-            self.layout_cache.clear();
+        if self
+            .layout_cache
+            .len()
+            > Self::LAYOUT_CACHE_CAPACITY
+        {
+            self.layout_cache
+                .clear();
         }
 
-        if self.shaping_cache.len() > Self::SHAPING_CACHE_CAPACITY {
-            self.shaping_cache.clear();
+        if self
+            .shaping_cache
+            .len()
+            > Self::SHAPING_CACHE_CAPACITY
+        {
+            self.shaping_cache
+                .clear();
         }
 
         for req in requests {
             // Record the glyph ranges this request will own. Both instance lists
             // are appended to in request order, so the slice for this request is
             // `[start, len_after)` in each list.
-            let alpha_start = self.instances.len() as u32;
-            let color_start = self.color_instances.len() as u32;
+            let alpha_start = self
+                .instances
+                .len() as u32;
+            let color_start = self
+                .color_instances
+                .len() as u32;
 
             // Avoid cloning the span list on every frame (it ran even on a pure
             // cache hit). Borrow `req.spans` directly when present and only
             // allocate a one-element fallback when the request has no spans.
             let synthesized: [RichTextSpan; 1];
-            let spans: &[RichTextSpan] = if req.spans.is_empty() {
-                synthesized = [RichTextSpan::new(req.text.clone())];
+            let spans: &[RichTextSpan] = if req
+                .spans
+                .is_empty()
+            {
+                synthesized = [RichTextSpan::new(
+                    req.text
+                        .clone(),
+                )];
                 &synthesized
             } else {
                 &req.spans
@@ -795,15 +878,30 @@ impl TextPipelineV2 {
 
             time_cost!("RichTextSpanLoops", {
                 for span in spans {
-                    let font_size = span.font_size.unwrap_or(req.font_size);
-                    let color = span.color.unwrap_or(req.color);
+                    let font_size = span
+                        .font_size
+                        .unwrap_or(req.font_size);
+                    let color = span
+                        .color
+                        .unwrap_or(req.color);
                     // A weight of 600+ (semi-bold and up) is rendered bold.
-                    let is_bold = span.font_weight.or(req.font_weight).unwrap_or(400) >= 600;
+                    let is_bold = span
+                        .font_weight
+                        .or(req.font_weight)
+                        .unwrap_or(400)
+                        >= 600;
                     // ponytail: synthetic (faux) italic via a horizontal shear in
                     // the glyph shaders (0.25 ≈ 14°). Ceiling: not a real italic
                     // face (no cursive glyph forms, advances unchanged). Upgrade
                     // path: load a real italic/oblique face and key the atlas by it.
-                    let skew = if span.italic.unwrap_or(req.italic) { 0.25 } else { 0.0 };
+                    let skew = if span
+                        .italic
+                        .unwrap_or(req.italic)
+                    {
+                        0.25
+                    } else {
+                        0.0
+                    };
 
                     // Re-use the positioned glyph list from the previous frame when
                     // text content, font size, and wrapping width are all unchanged.
@@ -826,16 +924,28 @@ impl TextPipelineV2 {
                         time_cost!("TextPipelineV2::prepare - LayoutText", {
                             let shaping_cache = &mut self.shaping_cache;
                             let rasterizer = &mut self.rasterizer;
-                            self.layout_cache.entry(cache_key).or_insert_with(|| {
-                                let shaped_key = ShapingCacheKey::new(&span.text, font_size);
-                                let shaped_text =
-                                    shaping_cache.entry(shaped_key).or_insert_with(|| {
-                                        time_cost!("TextPipelineV2::prepare - ShapeText", || {
-                                            shape_text(rasterizer, &span.text, font_size)
-                                        })
-                                    });
-                                layout_shaped_text(rasterizer, shaped_text, 0.0, 0.0, layout_width)
-                            })
+                            self.layout_cache
+                                .entry(cache_key)
+                                .or_insert_with(|| {
+                                    let shaped_key = ShapingCacheKey::new(&span.text, font_size);
+                                    let shaped_text = shaping_cache
+                                        .entry(shaped_key)
+                                        .or_insert_with(|| {
+                                            time_cost!(
+                                                "TextPipelineV2::prepare - ShapeText",
+                                                || {
+                                                    shape_text(rasterizer, &span.text, font_size)
+                                                }
+                                            )
+                                        });
+                                    layout_shaped_text(
+                                        rasterizer,
+                                        shaped_text,
+                                        0.0,
+                                        0.0,
+                                        layout_width,
+                                    )
+                                })
                         });
 
                     for pg in positioned {
@@ -846,7 +956,9 @@ impl TextPipelineV2 {
                         // scalar fields here, so the immutable borrow ends quickly.
 
                         let (is_color, rg_width, rg_height) = {
-                            let rg = self.rasterizer.rasterize_key(key, pg.font_size);
+                            let rg = self
+                                .rasterizer
+                                .rasterize_key(key, pg.font_size);
                             (rg.is_color, rg.width, rg.height)
                         };
 
@@ -857,24 +969,36 @@ impl TextPipelineV2 {
                         // size — inserting a glyph here may `grow()` the atlas, which
                         // would invalidate UVs computed for earlier glyphs.
                         let (region, target_color_list) = if is_color {
-                            let region = if let Some(region) = self.color_atlas.get(&key) {
+                            let region = if let Some(region) = self
+                                .color_atlas
+                                .get(&key)
+                            {
                                 region
                             } else {
                                 // Cache hit on the rasterizer side — instant.
-                                let rg = self.rasterizer.rasterize_key(key, pg.font_size);
-                                self.color_atlas.get_or_insert(
-                                    device, queue, key, rg.width, rg.height, &rg.bitmap,
-                                )
+                                let rg = self
+                                    .rasterizer
+                                    .rasterize_key(key, pg.font_size);
+                                self.color_atlas
+                                    .get_or_insert(
+                                        device, queue, key, rg.width, rg.height, &rg.bitmap,
+                                    )
                             };
                             (region, true)
                         } else {
-                            let region = if let Some(region) = self.atlas.get(&key) {
+                            let region = if let Some(region) = self
+                                .atlas
+                                .get(&key)
+                            {
                                 region
                             } else {
-                                let rg = self.rasterizer.rasterize_key(key, pg.font_size);
-                                self.atlas.get_or_insert(
-                                    device, queue, key, rg.width, rg.height, &rg.bitmap,
-                                )
+                                let rg = self
+                                    .rasterizer
+                                    .rasterize_key(key, pg.font_size);
+                                self.atlas
+                                    .get_or_insert(
+                                        device, queue, key, rg.width, rg.height, &rg.bitmap,
+                                    )
                             };
                             (region, false)
                         };
@@ -907,10 +1031,12 @@ impl TextPipelineV2 {
                         };
 
                         if target_color_list {
-                            self.color_instances.push(instance);
+                            self.color_instances
+                                .push(instance);
                             color_regions.push(region);
                         } else {
-                            self.instances.push(instance);
+                            self.instances
+                                .push(instance);
                             alpha_regions.push(region);
                             if is_bold {
                                 // ponytail: synthetic (faux) bold via double-strike —
@@ -922,7 +1048,8 @@ impl TextPipelineV2 {
                                 // weight.
                                 let mut bold = instance;
                                 bold.position[0] += (pg.font_size * 0.03).max(0.5);
-                                self.instances.push(bold);
+                                self.instances
+                                    .push(bold);
                                 alpha_regions.push(region);
                             }
                         }
@@ -937,51 +1064,84 @@ impl TextPipelineV2 {
                 }
             });
 
-            self.request_ranges.push(TextRequestRange {
-                alpha_start,
-                alpha_end: self.instances.len() as u32,
-                color_start,
-                color_end: self.color_instances.len() as u32,
-            });
+            self.request_ranges
+                .push(TextRequestRange {
+                    alpha_start,
+                    alpha_end: self
+                        .instances
+                        .len() as u32,
+                    color_start,
+                    color_end: self
+                        .color_instances
+                        .len() as u32,
+                });
         }
 
         // Now that every glyph has been inserted, the atlases have reached
         // their final dimensions for this frame. Resolve UVs against those
         // final dimensions so glyphs inserted before a mid-frame `grow()` are
         // not left referencing stale (smaller) atlas sizes.
-        let (aw, ah) = (self.atlas.width, self.atlas.height);
-        for (instance, region) in self.instances.iter_mut().zip(alpha_regions.iter()) {
+        let (aw, ah) = (
+            self.atlas
+                .width,
+            self.atlas
+                .height,
+        );
+        for (instance, region) in self
+            .instances
+            .iter_mut()
+            .zip(alpha_regions.iter())
+        {
             instance.uv_rect = region.uvs(aw, ah);
         }
-        let (cw, ch) = (self.color_atlas.width, self.color_atlas.height);
-        for (instance, region) in self.color_instances.iter_mut().zip(color_regions.iter()) {
+        let (cw, ch) = (
+            self.color_atlas
+                .width,
+            self.color_atlas
+                .height,
+        );
+        for (instance, region) in self
+            .color_instances
+            .iter_mut()
+            .zip(color_regions.iter())
+        {
             instance.uv_rect = region.uvs(cw, ch);
         }
 
         // Upload both atlases if new glyphs were added.
-        self.atlas.upload(queue);
-        self.color_atlas.upload(queue);
+        self.atlas
+            .upload(queue);
+        self.color_atlas
+            .upload(queue);
 
         // Rebuild bind groups only when their atlas texture was recreated (grow).
-        let atlas_gen = self.atlas.generation();
+        let atlas_gen = self
+            .atlas
+            .generation();
         if atlas_gen != self.atlas_generation {
             self.atlas_generation = atlas_gen;
             self.bind_group = Self::create_bind_group(
                 device,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
-                &self.atlas.view,
+                &self
+                    .atlas
+                    .view,
                 &self.sampler,
             );
         }
-        let color_gen = self.color_atlas.generation();
+        let color_gen = self
+            .color_atlas
+            .generation();
         if color_gen != self.color_atlas_generation {
             self.color_atlas_generation = color_gen;
             self.color_bind_group = Self::create_bind_group(
                 device,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
-                &self.color_atlas.view,
+                &self
+                    .color_atlas
+                    .view,
                 &self.sampler,
             );
         }
@@ -1002,8 +1162,15 @@ impl TextPipelineV2 {
         }
 
         // Grow alpha instance buffer if needed.
-        if self.instances.len() > self.instance_capacity {
-            self.instance_capacity = self.instances.len().next_power_of_two();
+        if self
+            .instances
+            .len()
+            > self.instance_capacity
+        {
+            self.instance_capacity = self
+                .instances
+                .len()
+                .next_power_of_two();
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("text instance buffer"),
                 size: (self.instance_capacity * size_of::<GlyphInstance>()) as u64,
@@ -1013,8 +1180,15 @@ impl TextPipelineV2 {
         }
 
         // Grow color instance buffer if needed.
-        if self.color_instances.len() > self.color_instance_capacity {
-            self.color_instance_capacity = self.color_instances.len().next_power_of_two();
+        if self
+            .color_instances
+            .len()
+            > self.color_instance_capacity
+        {
+            self.color_instance_capacity = self
+                .color_instances
+                .len()
+                .next_power_of_two();
             self.color_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("text color instance buffer"),
                 size: (self.color_instance_capacity * size_of::<GlyphInstance>()) as u64,
@@ -1024,8 +1198,15 @@ impl TextPipelineV2 {
         }
 
         // Grow decoration instance buffer if needed.
-        if self.decoration_instances.len() > self.decoration_instance_capacity {
-            self.decoration_instance_capacity = self.decoration_instances.len().next_power_of_two();
+        if self
+            .decoration_instances
+            .len()
+            > self.decoration_instance_capacity
+        {
+            self.decoration_instance_capacity = self
+                .decoration_instances
+                .len()
+                .next_power_of_two();
             self.decoration_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("text decoration instance buffer"),
                 size: (self.decoration_instance_capacity * size_of::<DecorationInstance>()) as u64,
@@ -1035,17 +1216,26 @@ impl TextPipelineV2 {
         }
 
         // Upload instance data for all lists.
-        if !self.instances.is_empty() {
+        if !self
+            .instances
+            .is_empty()
+        {
             queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances));
         }
-        if !self.color_instances.is_empty() {
+        if !self
+            .color_instances
+            .is_empty()
+        {
             queue.write_buffer(
                 &self.color_instance_buffer,
                 0,
                 bytemuck::cast_slice(&self.color_instances),
             );
         }
-        if !self.decoration_instances.is_empty() {
+        if !self
+            .decoration_instances
+            .is_empty()
+        {
             queue.write_buffer(
                 &self.decoration_instance_buffer,
                 0,
@@ -1062,43 +1252,63 @@ impl TextPipelineV2 {
     /// belonging to a lower layer). `index` matches the request order passed to
     /// `prepare`.
     pub fn render_request(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
-        let Some(range) = self.request_ranges.get(index) else {
+        let Some(range) = self
+            .request_ranges
+            .get(index)
+        else {
             return;
         };
 
         if range.alpha_end > range.alpha_start {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+            pass.set_vertex_buffer(
+                0,
+                self.instance_buffer
+                    .slice(..),
+            );
             pass.draw(0..6, range.alpha_start..range.alpha_end);
         }
 
         if range.color_end > range.color_start {
             pass.set_pipeline(&self.color_pipeline);
             pass.set_bind_group(0, &self.color_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.color_instance_buffer.slice(..));
+            pass.set_vertex_buffer(
+                0,
+                self.color_instance_buffer
+                    .slice(..),
+            );
             pass.draw(0..6, range.color_start..range.color_end);
         }
     }
 
-    /// Draw a single decoration line (underline/overline/strike) at its position
-    /// in the draw stream so it layers with its text. One decoration request
-    /// maps to exactly one instance. Reuses the alpha `bind_group` (it only
-    /// needs the viewport uniform).
+    /// Draw a single decoration line (underline/overline/strike) at its
+    /// position in the draw stream so it layers with its text. One
+    /// decoration request maps to exactly one instance. Reuses the alpha
+    /// `bind_group` (it only needs the viewport uniform).
     pub fn render_decoration(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
-        if index >= self.decoration_instances.len() {
+        if index
+            >= self
+                .decoration_instances
+                .len()
+        {
             return;
         }
         pass.set_pipeline(&self.decoration_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.decoration_instance_buffer.slice(..));
+        pass.set_vertex_buffer(
+            0,
+            self.decoration_instance_buffer
+                .slice(..),
+        );
         let start = index as u32;
         pass.draw(0..6, start..start + 1);
     }
 
     /// Measure text width using the rasterizer.
     pub fn measure_text(&mut self, text: &str, font_size: f32) -> f32 {
-        self.rasterizer.measure_text(text, font_size)
+        self.rasterizer
+            .measure_text(text, font_size)
     }
 }
 

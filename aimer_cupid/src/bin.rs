@@ -1,4 +1,9 @@
 #[allow(unused_imports)]
+use std::path::PathBuf;
+#[allow(unused_imports)]
+use std::sync::OnceLock;
+
+#[allow(unused_imports)]
 use aimer_cupid::canvas::CupidCanvas;
 #[allow(unused_imports)]
 use aimer_cupid::gpu_context::GpuContext;
@@ -8,10 +13,6 @@ use aimer_cupid::renderer::Renderer;
 use aimer_cupid::utilities::Color;
 #[allow(unused_imports)]
 use aimer_utils::{ExecTimes, debug};
-#[allow(unused_imports)]
-use std::path::PathBuf;
-#[allow(unused_imports)]
-use std::sync::OnceLock;
 #[allow(unused_imports)]
 use winit::application::ApplicationHandler;
 #[allow(unused_imports)]
@@ -83,7 +84,10 @@ impl<'w> App<'w> {
 #[cfg(not(target_arch = "wasm32"))]
 impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if self
+            .window
+            .is_some()
+        {
             return;
         }
 
@@ -103,7 +107,9 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 .with_titlebar_buttons_hidden(false)
                 .with_fullsize_content_view(false)
         };
-        let window = event_loop.create_window(attrs).unwrap();
+        let window = event_loop
+            .create_window(attrs)
+            .unwrap();
         // window.set_min_inner_size(Some(winit::dpi::LogicalSize::new(1500, 700)));
         window.set_title(title);
 
@@ -145,13 +151,9 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
             .unwrap_or_else(|e| panic!("Failed to load {}: {e}", image_path.display()))
             .into_rgba8();
         let (img_w, img_h) = img.dimensions();
-        let tex_id = img_renderer.image_pipeline.upload_image(
-            &gpu.device,
-            &gpu.queue,
-            img_w,
-            img_h,
-            img.as_raw(),
-        );
+        let tex_id = img_renderer
+            .image_pipeline
+            .upload_image(&gpu.device, &gpu.queue, img_w, img_h, img.as_raw());
         debug!("Uploaded image to GPU");
 
         self.texture_id = Some(tex_id);
@@ -162,7 +164,10 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
         debug!("GPU context initialized");
         self.window = Some(window);
         debug!("Window initialized");
-        if let Some(window) = self.window.as_ref() {
+        if let Some(window) = self
+            .window
+            .as_ref()
+        {
             window.request_redraw();
         }
         debug!("App resumed");
@@ -171,7 +176,10 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
     fn user_event(&mut self, _: &ActiveEventLoop, event: MyWindowEvent) {
         match event {
             MyWindowEvent::FirstFrame => {
-                self.window.as_ref().unwrap().request_redraw();
+                self.window
+                    .as_ref()
+                    .unwrap()
+                    .request_redraw();
             }
         }
     }
@@ -189,7 +197,10 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                     // silently dropped if the window isn't fully on-screen yet.
                     // The first Resized event is the reliable signal that the
                     // window is visible and the surface is ready.
-                    if let Some(window) = self.window.as_ref() {
+                    if let Some(window) = self
+                        .window
+                        .as_ref()
+                    {
                         window.request_redraw();
                     }
                 }
@@ -197,7 +208,9 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
 
             WindowEvent::MouseInput { state, .. } => {
                 if ElementState::Pressed == state
-                    && let Some(window) = self.window.as_ref()
+                    && let Some(window) = self
+                        .window
+                        .as_ref()
                 {
                     window.request_redraw();
                 }
@@ -219,17 +232,21 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                     _ => return,
                 };
 
-                let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let view = frame
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
 
                 let width = gpu.width();
                 let height = gpu.height();
 
                 // Build draw commands using CupidCanvas
-                self.canvas.begin_frame();
+                self.canvas
+                    .begin_frame();
 
                 // Draw a blue background rect
                 // self.canvas
-                //     .fill_rect(20.0, 20.0, 300.0, 200.0, Color::new(0.2, 0.4, 0.8, 1.0), [10.0; 4]);
+                //     .fill_rect(20.0, 20.0, 300.0, 200.0, Color::new(0.2, 0.4, 0.8, 1.0),
+                // [10.0; 4]);
                 //
                 // // Draw a red rect
                 // self.canvas
@@ -276,32 +293,41 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 // self.canvas.restore();
 
                 // Draw text
-                // self.canvas.draw_text(30.0, 250.0, "Hello from Cupid!", 32.0, Color::black());
+                // self.canvas.draw_text(30.0, 250.0, "Hello from Cupid!", 32.0,
+                // Color::black());
                 //
                 // self.canvas
-                //     .draw_text(30.0, 300.0, "Wgpu-powered UI render engine", 20.0, Color::black());
+                //     .draw_text(30.0, 300.0, "Wgpu-powered UI render engine", 20.0,
+                // Color::black());
 
                 // Mixed CJK + color emoji line — verifies fixes A (no first-frame
                 // stall on CJK) and B/C (AppleColorEmoji renders alongside CJK).
-                // self.canvas.draw_text(30.0, 340.0, "អរគុណ 你哈皮  With State 你好 きみなと  👉", 44.0, Color::black());
-                // self.canvas
+                // self.canvas.draw_text(30.0, 340.0, "អរគុណ 你哈皮  With State 你好 きみなと
+                // 👉", 44.0, Color::black()); self.canvas
                 //     .draw_text(30.0, 740.0, "هَمْزَة عَلَى الأَلِفْ	", 44.0, Color::black());
-                self.canvas.draw_text_wrapped(
-                    30.0,
-                    30.0,
-                    WELCOME_TEXT,
-                    44.0,
-                    Color::black(),
-                    self.window.as_ref().unwrap().inner_size().width as f32 - 60.0,
-                    400,
-                );
+                self.canvas
+                    .draw_text_wrapped(
+                        30.0,
+                        30.0,
+                        WELCOME_TEXT,
+                        44.0,
+                        Color::black(),
+                        self.window
+                            .as_ref()
+                            .unwrap()
+                            .inner_size()
+                            .width as f32
+                            - 60.0,
+                        400,
+                    );
 
                 // Draw test image if available
                 // if let Some(tex_id) = self.texture_id {
                 //     self.canvas.draw_image(500.0, 200.0, 300.0, 300.0, tex_id);
                 // }
 
-                self.canvas.clear_clip();
+                self.canvas
+                    .clear_clip();
 
                 ExecTimes::print_time(|| {
                     renderer.render(
@@ -311,7 +337,9 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                         width,
                         height,
                         gpu.is_srgb,
-                        &self.canvas.draw_list(),
+                        &self
+                            .canvas
+                            .draw_list(),
                     )
                 });
 
@@ -345,11 +373,15 @@ fn main() {
         .build()
         .expect("Failed to create event loop");
 
-    MY_EVENT_PROXY.set(event_loop.create_proxy()).ok();
+    MY_EVENT_PROXY
+        .set(event_loop.create_proxy())
+        .ok();
     event_loop.set_control_flow(ControlFlow::Wait);
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut app = App::new();
-        event_loop.run_app(&mut app).unwrap();
+        event_loop
+            .run_app(&mut app)
+            .unwrap();
     }
 }

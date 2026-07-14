@@ -1,8 +1,10 @@
-use crate::commands::run::cargo_build::wait_for_child;
-use crate::commands::run::console::{RunnerEvent, Status};
-use crossbeam::channel::Sender;
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
+
+use crossbeam::channel::Sender;
+
+use crate::commands::run::cargo_build::wait_for_child;
+use crate::commands::run::console::{RunnerEvent, Status};
 
 /// Emit a build-log line. Thin wrapper over the `tx.send(BuildLog(..))` pattern
 /// that every runner repeats constantly.
@@ -68,7 +70,11 @@ pub fn spawn_streamed(
     stream_out: impl FnOnce(ChildStdout, Sender<RunnerEvent>),
     stream_err: impl FnOnce(ChildStderr, Sender<RunnerEvent>),
 ) -> bool {
-    let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+    let mut child = match cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
         Ok(child) => child,
         Err(e) => {
             build_log(tx, format!("{spawn_fail_msg}: {e}"));
@@ -77,20 +83,28 @@ pub fn spawn_streamed(
         }
     };
 
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
+    let stdout = child
+        .stdout
+        .take()
+        .unwrap();
+    let stderr = child
+        .stderr
+        .take()
+        .unwrap();
 
-    *current_child.lock().unwrap() = Some(child);
+    *current_child
+        .lock()
+        .unwrap() = Some(child);
 
     stream_out(stdout, tx.clone());
     stream_err(stderr, tx.clone());
     true
 }
 
-/// Run a streamed build step end to end: spawn it (see [`spawn_streamed`]), wait
-/// for completion, and verify success. Reports `spawn_fail_msg` if it cannot be
-/// launched and `build_fail_msg` if it exits with a non-zero status. Returns
-/// `true` only when the step finished successfully.
+/// Run a streamed build step end to end: spawn it (see [`spawn_streamed`]),
+/// wait for completion, and verify success. Reports `spawn_fail_msg` if it
+/// cannot be launched and `build_fail_msg` if it exits with a non-zero status.
+/// Returns `true` only when the step finished successfully.
 pub fn build_streamed(
     cmd: Command,
     tx: &Sender<RunnerEvent>,

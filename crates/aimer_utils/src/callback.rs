@@ -1,16 +1,17 @@
 pub mod callback_inner;
 
-pub use callback_inner::*;
 use std::any::type_name;
 use std::cell::UnsafeCell;
 use std::fmt::Debug;
 use std::rc::Rc;
+
+pub use callback_inner::*;
 ///
 /// A trait that defines the contract for executing a callback.
 ///
-/// This trait is designed to be implemented by types that manage a callback function,
-/// encapsulated within an `Option<RawInnerCallback>`. It provides a method to retrieve
-/// the inner callback reference.
+/// This trait is designed to be implemented by types that manage a callback
+/// function, encapsulated within an `Option<RawInnerCallback>`. It provides a
+/// method to retrieve the inner callback reference.
 ///
 /// # Associated Types
 /// - `Args`: The argument type(s) that the callback function will accept.
@@ -40,7 +41,6 @@ use std::rc::Rc;
 ///
 /// This trait provides a flexible mechanism for working with optional callbacks
 /// while allowing customization of input/output types.
-///
 pub trait CallbackExecutor {
     type Args;
     type Output;
@@ -52,12 +52,15 @@ pub trait CallbackExecutor {
 /// that can be invoked with specified arguments and returns a specified result.
 ///
 /// # Type Parameters
-/// - `Args`: The type of the arguments that the callback expects. Defaults to `()`.
-/// - `Return`: The type of the value that the callback returns. Defaults to `()`.
+/// - `Args`: The type of the arguments that the callback expects. Defaults to
+///   `()`.
+/// - `Return`: The type of the value that the callback returns. Defaults to
+///   `()`.
 ///
 /// # Fields
-/// - `inner`: An internal representation of the callback, typically used to store
-///   the function or closure that is executed when the callback is invoked.
+/// - `inner`: An internal representation of the callback, typically used to
+///   store the function or closure that is executed when the callback is
+///   invoked.
 ///
 /// # Example
 /// ```
@@ -66,14 +69,20 @@ pub trait CallbackExecutor {
 /// // Example of using a Callback with specific argument and return types
 /// let callback = Callback::from(|x: i32| x + 1);
 /// ```
-///
 pub struct Callback<Args = (), Return = ()> {
     inner: CallbackInner<Args, Return>,
 }
 
 impl<Args, Return> Callback<Args, Return> {
     pub fn callable(&self) -> Option<&Self> {
-        if self.inner.is_default() { None } else { Some(self) }
+        if self
+            .inner
+            .is_default()
+        {
+            None
+        } else {
+            Some(self)
+        }
     }
 
     /// Invoke a **synchronous** callback with `args`, returning its result.
@@ -84,7 +93,12 @@ impl<Args, Return> Callback<Args, Return> {
     pub fn call(&self, args: Args) -> Option<Return> {
         // SAFETY: mirrors the established `CallbackExecutor` access pattern —
         // the inner cell is only ever read here on the single UI thread.
-        match unsafe { (*self.inner.get()).as_ref() } {
+        match unsafe {
+            (*self
+                .inner
+                .get())
+            .as_ref()
+        } {
             Some(RawInnerCallback::Sync(f)) => Some(f(args)),
             _ => None,
         }
@@ -112,7 +126,11 @@ impl<Args, Return> Default for Callback<Args, Return> {
 
 impl<Args, Return> Clone for Callback<Args, Return> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self {
+            inner: self
+                .inner
+                .clone(),
+        }
     }
 }
 
@@ -140,7 +158,10 @@ where
         Self {
             inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
                 Box::new(move |args| {
-                    let f = f.lock().unwrap().take();
+                    let f = f
+                        .lock()
+                        .unwrap()
+                        .take();
                     if let Some(f) = f {
                         Box::pin(f(args))
                     } else {
@@ -156,13 +177,18 @@ impl<P, R> CallbackExecutor for Callback<P, R> {
     type Args = P;
     type Output = R;
     fn get(&self) -> &Option<RawInnerCallback<Self::Args, Self::Output>> {
-        unsafe { &*self.inner.get() }
+        unsafe {
+            &*self
+                .inner
+                .get()
+        }
     }
 }
 
 pub type VoidParamedFunction<R> = Callback<R, ()>;
 
-/// A struct representing a callback with no input and no output (void callback).
+/// A struct representing a callback with no input and no output (void
+/// callback).
 ///
 /// `VoidCallback` is a wrapper around `CallbackInner<(), ()>` that provides
 /// functionality for handling callbacks that neither take any arguments nor
@@ -173,8 +199,8 @@ pub type VoidParamedFunction<R> = Callback<R, ()>;
 /// - `Clone`: Enables the struct to be cloned.
 ///
 /// # Fields
-/// - `inner`: The inner implementation of the callback, stored
-///   as a `CallbackInner<(), ()>`.
+/// - `inner`: The inner implementation of the callback, stored as a
+///   `CallbackInner<(), ()>`.
 ///
 /// # Example
 /// ```
@@ -183,7 +209,6 @@ pub type VoidParamedFunction<R> = Callback<R, ()>;
 /// // Create a default instance of VoidCallback
 /// let callback = VoidCallback::default();
 /// ```
-///
 #[derive(Default, Clone)]
 pub struct VoidCallback {
     inner: CallbackInner<(), ()>,
@@ -191,10 +216,18 @@ pub struct VoidCallback {
 
 impl VoidCallback {
     pub fn callable(&self) -> Option<&Self> {
-        if self.inner.is_default() { None } else { Some(self) }
+        if self
+            .inner
+            .is_default()
+        {
+            None
+        } else {
+            Some(self)
+        }
     }
 
-    /// Create a `VoidCallback` from an async function (`fn() -> impl Future<Output=()>`).
+    /// Create a `VoidCallback` from an async function (`fn() -> impl
+    /// Future<Output=()>`).
     ///
     /// Unlike the `From<F>` impl (which requires `Fn()`), this accepts
     /// functions that return a `Future` — the callback stores the future
@@ -220,7 +253,10 @@ impl VoidCallback {
         Self {
             inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
                 Box::new(move |_| {
-                    let f = f.lock().unwrap().take();
+                    let f = f
+                        .lock()
+                        .unwrap()
+                        .take();
                     if let Some(f) = f { Box::pin(f()) } else { Box::pin(async {}) }
                 }),
             ))))),
@@ -233,7 +269,8 @@ unsafe impl Sync for VoidCallback {}
 
 impl Debug for VoidCallback {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VoidCallback() -> ()").finish()
+        f.debug_struct("VoidCallback() -> ()")
+            .finish()
     }
 }
 
@@ -262,7 +299,10 @@ where
         Self {
             inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
                 Box::new(move |_| {
-                    let f = f.lock().unwrap().take();
+                    let f = f
+                        .lock()
+                        .unwrap()
+                        .take();
                     if let Some(f) = f { Box::pin(f()) } else { Box::pin(async {}) }
                 }),
             ))))),
@@ -274,7 +314,11 @@ impl CallbackExecutor for VoidCallback {
     type Args = ();
     type Output = ();
     fn get(&self) -> &Option<RawInnerCallback<Self::Args, Self::Output>> {
-        unsafe { &*self.inner.get() }
+        unsafe {
+            &*self
+                .inner
+                .get()
+        }
     }
 }
 

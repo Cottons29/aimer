@@ -2,19 +2,20 @@ mod auto_trait_impl;
 mod codegen;
 mod unique_key;
 
-use crate::auto_trait_impl::auto_impl;
-use crate::codegen::router::RouterCodegen;
-use crate::codegen::{RawWidgetCodegen, StatefulWidgetCodegen, StatelessWidgetCodegen};
-use crate::unique_key::UniqueKeyInput;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Item, ItemFn, parse_macro_input};
 
+use crate::auto_trait_impl::auto_impl;
+use crate::codegen::router::RouterCodegen;
+use crate::codegen::{RawWidgetCodegen, StatefulWidgetCodegen, StatelessWidgetCodegen};
+use crate::unique_key::UniqueKeyInput;
+
 /// Attribute macro that marks the Aimer application entry point.
 ///
 /// Wraps the annotated function so it is callable from all supported targets:
-/// native (via a `#[no_mangle] extern "C"` symbol), Android (via `android_main`),
-/// and WebAssembly (via `#[wasm_bindgen]`).
+/// native (via a `#[no_mangle] extern "C"` symbol), Android (via
+/// `android_main`), and WebAssembly (via `#[wasm_bindgen]`).
 ///
 /// # Usage
 /// ```rust,ignore
@@ -28,10 +29,13 @@ use syn::{Item, ItemFn, parse_macro_input};
 ///
 /// # What is generated
 /// - The original function is kept as-is (marked `#[inline]`).
-/// - **Native** (`not(target_arch = "wasm32")`): a `#[no_mangle] pub extern "C" fn __generated_entrance_point()` that calls your function.
-/// - **Android** (`target_os = "android"`): an `android_main(app: AndroidApp)` that stores the
-///   `AndroidApp` handle in `ANDROID_APP` and then calls your function.
-/// - **WASM** (`target_arch = "wasm32"`): a `#[wasm_bindgen] pub fn __generated_entrance_point()` that calls your function.
+/// - **Native** (`not(target_arch = "wasm32")`): a `#[no_mangle] pub extern "C"
+///   fn __generated_entrance_point()` that calls your function.
+/// - **Android** (`target_os = "android"`): an `android_main(app: AndroidApp)`
+///   that stores the `AndroidApp` handle in `ANDROID_APP` and then calls your
+///   function.
+/// - **WASM** (`target_arch = "wasm32"`): a `#[wasm_bindgen] pub fn
+///   __generated_entrance_point()` that calls your function.
 ///
 /// # Notes
 /// - The macro does not accept any arguments; the `_attr` parameter is ignored.
@@ -39,7 +43,9 @@ use syn::{Item, ItemFn, parse_macro_input};
 #[proc_macro_attribute]
 pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_fn = parse_macro_input!(item as ItemFn);
-    let fn_name = &input_fn.sig.ident;
+    let fn_name = &input_fn
+        .sig
+        .ident;
 
     let expanded = quote! {
 
@@ -83,7 +89,10 @@ enum AttributeKind {
 impl TryFrom<&str> for AttributeKind {
     type Error = syn::Error;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value.to_lowercase().as_str() {
+        match value
+            .to_lowercase()
+            .as_str()
+        {
             "stateless" => Ok(AttributeKind::Stateless),
             "stateful" => Ok(AttributeKind::Stateful),
             "router" => Ok(AttributeKind::Router),
@@ -138,9 +147,15 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     }
 
     let args_str = args.to_string();
-    let is_stateful = args_str.to_lowercase().contains("stateful");
-    let is_router = args_str.to_lowercase().contains("router");
-    let is_raw_widget = args_str.to_lowercase().contains("rawwidget");
+    let is_stateful = args_str
+        .to_lowercase()
+        .contains("stateful");
+    let is_router = args_str
+        .to_lowercase()
+        .contains("router");
+    let is_raw_widget = args_str
+        .to_lowercase()
+        .contains("rawwidget");
 
     // Parse the input item
     let item = parse_macro_input!(input as Item);

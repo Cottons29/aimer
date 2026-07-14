@@ -9,10 +9,6 @@ crate-type = ["cdylib", "staticlib"]
 aimer = {path = ".."}
 webbrowser = "1.2.1"
 
-[[bin]]
-name = "website"
-path = "src/lib.rs"
-
 [profile.dev]
 debug = true
 

@@ -45,29 +45,40 @@ pub struct KeyframeAnimation<T: Animatable + Clone> {
 impl<T: Animatable + Clone> KeyframeAnimation<T> {
     /// Create a keyframe animation from a list of (fraction, keyframe) pairs.
     ///
-    /// Panics if `frames` is empty. Frames are sorted by fraction automatically.
+    /// Panics if `frames` is empty. Frames are sorted by fraction
+    /// automatically.
     pub fn new(mut frames: Vec<(f32, Keyframe<T>)>) -> Self {
         assert!(!frames.is_empty(), "KeyframeAnimation requires at least one keyframe");
-        frames.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        frames.sort_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap()
+        });
         Self { frames }
     }
 
     /// Create a keyframe animation from (fraction, value) pairs using linear
     /// interpolation between each pair.
     pub fn from_values(values: &[(f32, T)]) -> Self {
-        let frames = values.iter().map(|(f, v)| (*f, Keyframe::linear(v.clone()))).collect();
+        let frames = values
+            .iter()
+            .map(|(f, v)| (*f, Keyframe::linear(v.clone())))
+            .collect();
         Self::new(frames)
     }
 
     /// Create a keyframe animation from (fraction, value, curve) triples.
     pub fn with_curves(entries: &[(f32, T, Curve)]) -> Self {
-        let frames = entries.iter().map(|(f, v, c)| (*f, Keyframe::new(v.clone(), *c))).collect();
+        let frames = entries
+            .iter()
+            .map(|(f, v, c)| (*f, Keyframe::new(v.clone(), *c)))
+            .collect();
         Self::new(frames)
     }
 
     /// Evaluate the animation at progress `t` (0.0–1.0).
     ///
-    /// - If `t` is before the first keyframe, returns the first keyframe's value.
+    /// - If `t` is before the first keyframe, returns the first keyframe's
+    ///   value.
     /// - If `t` is after the last keyframe, returns the last keyframe's value.
     /// - Otherwise, interpolates between the two bounding keyframes.
     pub fn at(&self, t: f32) -> T {
@@ -75,39 +86,68 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
 
         // Before first keyframe
         if t <= self.frames[0].0 {
-            return self.frames[0].1.value.clone();
+            return self.frames[0]
+                .1
+                .value
+                .clone();
         }
 
         // After last keyframe
-        if t >= self.frames.last().unwrap().0 {
-            return self.frames.last().unwrap().1.value.clone();
+        if t >= self
+            .frames
+            .last()
+            .unwrap()
+            .0
+        {
+            return self
+                .frames
+                .last()
+                .unwrap()
+                .1
+                .value
+                .clone();
         }
 
         // Find bounding keyframes
-        for i in 0..self.frames.len() - 1 {
+        for i in 0..self
+            .frames
+            .len()
+            - 1
+        {
             let (f0, ref kf0) = self.frames[i];
             let (f1, ref kf1) = self.frames[i + 1];
 
             if t >= f0 && t <= f1 {
                 let range = f1 - f0;
                 let local_t = if range > 0.0 { (t - f0) / range } else { 0.0 };
-                let curved_t = kf1.curve.transform(local_t);
-                return kf0.value.lerp(&kf1.value, curved_t);
+                let curved_t = kf1
+                    .curve
+                    .transform(local_t);
+                return kf0
+                    .value
+                    .lerp(&kf1.value, curved_t);
             }
         }
 
         // Fallback (should not reach here)
-        self.frames.last().unwrap().1.value.clone()
+        self.frames
+            .last()
+            .unwrap()
+            .1
+            .value
+            .clone()
     }
 
     /// Returns the number of keyframes.
     pub fn len(&self) -> usize {
-        self.frames.len()
+        self.frames
+            .len()
     }
 
     /// Returns `true` if there are no keyframes.
     pub fn is_empty(&self) -> bool {
-        self.frames.is_empty()
+        self.frames
+            .is_empty()
     }
 }
 

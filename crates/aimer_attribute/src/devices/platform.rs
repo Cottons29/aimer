@@ -1,8 +1,10 @@
 ///
-/// Represents the various platforms that an application or system can operate on.
+/// Represents the various platforms that an application or system can operate
+/// on.
 ///
-/// This enum includes variants for commonly used operating systems and environments
-/// to help developers manage platform-specific behavior in their code.
+/// This enum includes variants for commonly used operating systems and
+/// environments to help developers manage platform-specific behavior in their
+/// code.
 ///
 /// # Variants
 ///
@@ -17,10 +19,12 @@
 ///
 /// * `Debug` - Enables formatting the enum using the `{:?}` formatter.
 /// * `Clone` - Allows creating a copy of the value.
-/// * `Copy` - Allows bitwise copying of the value, as long as all fields also implement `Copy`.
-/// * `PartialEq` - Enables equality comparisons between enum instances (`==` and `!=`).
-/// * `Eq` - Indicates that all instances of the enum can be checked for equality.
-///
+/// * `Copy` - Allows bitwise copying of the value, as long as all fields also
+///   implement `Copy`.
+/// * `PartialEq` - Enables equality comparisons between enum instances (`==`
+///   and `!=`).
+/// * `Eq` - Indicates that all instances of the enum can be checked for
+///   equality.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     Android,

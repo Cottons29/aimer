@@ -1,11 +1,13 @@
-use crate::commands::run::console::{RunnerEvent, Status};
-use crossbeam::channel::Sender;
 use std::io::{BufRead, BufReader, Read};
 use std::net::IpAddr;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+use crossbeam::channel::Sender;
+
+use crate::commands::run::console::{RunnerEvent, Status};
 
 pub enum CargoBuildTarget {
     Darwin,
@@ -35,12 +37,17 @@ pub fn spawn_cargo_build(
         }
         CargoBuildTarget::Android { rust_target } => {
             let mut c = Command::new("cargo");
-            c.arg("ndk").arg("-t").arg(rust_target).arg("build").arg("--lib");
+            c.arg("ndk")
+                .arg("-t")
+                .arg(rust_target)
+                .arg("build")
+                .arg("--lib");
             c
         }
         CargoBuildTarget::Darwin => {
             let mut c = Command::new("cargo");
-            c.arg("build").args(["--target", "aarch64-apple-darwin", "--lib"]);
+            c.arg("build")
+                .args(["--target", "aarch64-apple-darwin", "--lib"]);
             c
         }
         CargoBuildTarget::Ios { rust_target } | CargoBuildTarget::IosSim { rust_target } => {
@@ -53,7 +60,11 @@ pub fn spawn_cargo_build(
     cmd.env("DEFAULT_INSPECTOR_PORT", inspector_port.to_string());
     cmd.env("DEFAULT_INSPECTOR_ADDRESS", inspector_address.to_string());
 
-    let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+    let mut child = match cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
         Ok(child) => child,
         Err(e) => {
             let label = match target {
@@ -67,10 +78,18 @@ pub fn spawn_cargo_build(
         }
     };
 
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
+    let stdout = child
+        .stdout
+        .take()
+        .unwrap();
+    let stderr = child
+        .stderr
+        .take()
+        .unwrap();
 
-    *current_child.lock().unwrap() = Some(child);
+    *current_child
+        .lock()
+        .unwrap() = Some(child);
 
     stream_stdout_as_build_log(stdout, tx.clone());
     stream_stderr_with_cargo_progress(stderr, tx.clone());
@@ -80,7 +99,10 @@ pub fn spawn_cargo_build(
 pub fn stream_stdout_as_build_log(stdout: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        for l in reader.lines().map_while(Result::ok) {
+        for l in reader
+            .lines()
+            .map_while(Result::ok)
+        {
             let _ = tx.send(RunnerEvent::BuildLog(l));
         }
     });
@@ -97,7 +119,10 @@ pub fn stream_stderr_with_cargo_progress(
         let total_units = cargo_lock_package_count();
         let mut fetch_count = 0;
         let mut compile_count: usize = 0;
-        for l in reader.lines().map_while(Result::ok) {
+        for l in reader
+            .lines()
+            .map_while(Result::ok)
+        {
             if l.contains("Locking") || l.contains("Updating") {
                 let _ = tx.send(RunnerEvent::StatusChange(Status::Locking));
             } else if l.contains("Fetching")
@@ -118,15 +143,18 @@ pub fn stream_stderr_with_cargo_progress(
     });
 }
 
-/// Count the resolved packages in the workspace `Cargo.lock` (each `[[package]]`
-/// entry). This is used as an upper-bound denominator for the compile progress
-/// percentage. Walks up from the current directory to find the lock file and
-/// returns 0 when it can't be located, in which case the caller falls back to an
-/// asymptotic estimate.
+/// Count the resolved packages in the workspace `Cargo.lock` (each
+/// `[[package]]` entry). This is used as an upper-bound denominator for the
+/// compile progress percentage. Walks up from the current directory to find the
+/// lock file and returns 0 when it can't be located, in which case the caller
+/// falls back to an asymptotic estimate.
 fn cargo_lock_package_count() -> usize {
     fn count(path: &std::path::Path) -> Option<usize> {
         let contents = std::fs::read_to_string(path).ok()?;
-        let n = contents.lines().filter(|l| l.trim() == "[[package]]").count();
+        let n = contents
+            .lines()
+            .filter(|l| l.trim() == "[[package]]")
+            .count();
         if n > 0 { Some(n) } else { None }
     }
     let mut dir = std::env::current_dir().ok();
@@ -134,7 +162,9 @@ fn cargo_lock_package_count() -> usize {
         if let Some(n) = count(&d.join("Cargo.lock")) {
             return n;
         }
-        dir = d.parent().map(|p| p.to_path_buf());
+        dir = d
+            .parent()
+            .map(|p| p.to_path_buf());
     }
     0
 }
@@ -153,7 +183,10 @@ fn compile_progress(compiled: usize, total: usize) -> u8 {
 pub fn stream_stderr_as_build_log(stderr: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
-        for l in reader.lines().map_while(Result::ok) {
+        for l in reader
+            .lines()
+            .map_while(Result::ok)
+        {
             let _ = tx.send(RunnerEvent::BuildLog(l));
         }
     });
@@ -162,7 +195,10 @@ pub fn stream_stderr_as_build_log(stderr: impl Read + Send + 'static, tx: Sender
 pub fn stream_stdout_as_app_log(stdout: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        for l in reader.lines().map_while(Result::ok) {
+        for l in reader
+            .lines()
+            .map_while(Result::ok)
+        {
             let _ = tx.send(RunnerEvent::AppLog(l));
         }
     });
@@ -171,7 +207,10 @@ pub fn stream_stdout_as_app_log(stdout: impl Read + Send + 'static, tx: Sender<R
 pub fn stream_stderr_as_app_log(stderr: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
-        for l in reader.lines().map_while(Result::ok) {
+        for l in reader
+            .lines()
+            .map_while(Result::ok)
+        {
             let _ = tx.send(RunnerEvent::AppLog(l));
         }
     });
@@ -180,7 +219,10 @@ pub fn stream_stderr_as_app_log(stderr: impl Read + Send + 'static, tx: Sender<R
 pub fn stream_as_app_log_split_cr(pipe: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
     thread::spawn(move || {
         let reader = BufReader::new(pipe);
-        for l in reader.lines().map_while(Result::ok) {
+        for l in reader
+            .lines()
+            .map_while(Result::ok)
+        {
             for part in l.split('\r') {
                 if !part.is_empty() {
                     let _ = tx.send(RunnerEvent::AppLog(part.to_string()));
@@ -197,7 +239,10 @@ pub fn stream_stdout_with_xcode_progress(
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
         let mut build_count = 0;
-        for l in reader.lines().map_while(Result::ok) {
+        for l in reader
+            .lines()
+            .map_while(Result::ok)
+        {
             if l.contains("Compile") || l.contains("Process") || l.contains("Link") {
                 build_count = (build_count + 2).min(99);
                 let _ = tx.send(RunnerEvent::StatusChange(Status::Building(build_count)));
@@ -216,7 +261,10 @@ pub fn stream_stdout_with_gradle_progress(
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
         let mut build_count = 0;
-        for l in reader.lines().map_while(Result::ok) {
+        for l in reader
+            .lines()
+            .map_while(Result::ok)
+        {
             if l.contains("Task :") {
                 build_count = (build_count + 2).min(99);
                 let _ = tx.send(RunnerEvent::StatusChange(Status::Building(build_count)));
@@ -230,7 +278,9 @@ pub fn stream_stdout_with_gradle_progress(
 
 pub fn wait_for_child(current_child: &Arc<Mutex<Option<Child>>>) -> Option<ExitStatus> {
     loop {
-        let mut guard = current_child.lock().unwrap();
+        let mut guard = current_child
+            .lock()
+            .unwrap();
 
         let child = guard.as_mut()?;
 

@@ -10,9 +10,6 @@ pub mod renderer;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_fonts;
 
-pub use crate::text_pipeline::glyph_atlas;
-pub use crate::text_pipeline::glyph_rasterizer;
-pub use crate::text_pipeline::text_layout;
-pub use pipeline::image_pipeline;
-pub use pipeline::rect_pipeline;
-pub use pipeline::text_pipeline;
+pub use pipeline::{image_pipeline, rect_pipeline, text_pipeline};
+
+pub use crate::text_pipeline::{glyph_atlas, glyph_rasterizer, text_layout};

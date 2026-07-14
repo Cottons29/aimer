@@ -1,6 +1,7 @@
-use crate::single_child::sized_box::RawSizedBox;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, Widget};
+
+use crate::single_child::sized_box::RawSizedBox;
 
 #[allow(dead_code)]
 pub struct AspectRatio<W: Widget + 'static = crate::ZeroSizedBox> {
@@ -31,7 +32,9 @@ impl<W: Widget> Widget for AspectRatio<W> {
             width: Default::default(),
             height: Default::default(),
             color: Default::default(),
-            child: self.child.to_element(ctx),
+            child: self
+                .child
+                .to_element(ctx),
             cache: Default::default(),
             debug_name: "AspectRatio",
             bounds: std::cell::Cell::new(None),

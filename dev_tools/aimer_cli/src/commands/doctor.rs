@@ -1,6 +1,8 @@
-use crate::errors::AimerError;
-use colored::Colorize;
 use std::process::Command;
+
+use colored::Colorize;
+
+use crate::errors::AimerError;
 
 /// A required or optional external tool the CLI may shell out to.
 struct Tool {
@@ -26,7 +28,10 @@ pub fn is_tool_available(bin: &str, probe: &[&str]) -> bool {
     Command::new(bin)
         .args(probe)
         .output()
-        .map(|o| o.status.success())
+        .map(|o| {
+            o.status
+                .success()
+        })
         .unwrap_or(false)
 }
 
@@ -58,7 +63,12 @@ pub fn execute() -> anyhow::Result<()> {
 
     println!();
     if missing == 0 {
-        println!("{}", "All tools found. You're good to go!".green().bold());
+        println!(
+            "{}",
+            "All tools found. You're good to go!"
+                .green()
+                .bold()
+        );
     } else {
         println!(
             "{}",

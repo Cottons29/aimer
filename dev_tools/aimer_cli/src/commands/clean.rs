@@ -1,6 +1,7 @@
-use anyhow::Context;
 use std::path::Path;
 use std::process::Command;
+
+use anyhow::Context;
 
 /// Remove build artifacts: the `builds/` output tree and Cargo's `target/`.
 pub fn execute() -> anyhow::Result<()> {
@@ -32,8 +33,10 @@ pub fn execute() -> anyhow::Result<()> {
 
     // Delegate target/ cleanup to cargo so it respects workspace layout.
     if Path::new("Cargo.toml").exists() {
-        let status =
-            Command::new("cargo").arg("clean").status().context("running `cargo clean`")?;
+        let status = Command::new("cargo")
+            .arg("clean")
+            .status()
+            .context("running `cargo clean`")?;
         if status.success() {
             println!("Ran `cargo clean`.");
         } else {

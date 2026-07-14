@@ -1,6 +1,7 @@
+use aimer_attribute::{Dimension, ResolvedSize, Size, Vec2d};
+
 use crate::base::BuildContext;
 use crate::components::element::VisitorElement;
-use aimer_attribute::{Dimension, ResolvedSize, Size, Vec2d};
 
 pub trait LayoutElement: VisitorElement {
     /// Returning the position of the element inside their parent
@@ -23,8 +24,12 @@ pub trait LayoutElement: VisitorElement {
             .map(|s| {
                 s.resolve(
                     &ResolvedSize {
-                        width: ctx.box_constraint.max_width,
-                        height: ctx.box_constraint.max_height,
+                        width: ctx
+                            .box_constraint
+                            .max_width,
+                        height: ctx
+                            .box_constraint
+                            .max_height,
                     },
                     ctx.scale,
                 )
@@ -45,10 +50,10 @@ pub trait LayoutElement: VisitorElement {
     /// The flex factor of this element when it lives inside a flex container
     /// (`Row`, `Column`, `Flex`).
     ///
-    /// Returning `Some(factor)` marks the element as *flexible*: the flex parent
-    /// gives it a share of the remaining main-axis space proportional to
-    /// `factor` (see `Expanded`). Regular elements return `None` and are laid out
-    /// according to their own size.
+    /// Returning `Some(factor)` marks the element as *flexible*: the flex
+    /// parent gives it a share of the remaining main-axis space
+    /// proportional to `factor` (see `Expanded`). Regular elements return
+    /// `None` and are laid out according to their own size.
     fn flex(&self) -> Option<f32> {
         None
     }
@@ -64,7 +69,10 @@ pub trait LayoutElement: VisitorElement {
         let mut found = false;
 
         self.visit_children(&mut |item| {
-            if let Some(child_size) = item.size().or_else(|| item.get_size_from_child()) {
+            if let Some(child_size) = item
+                .size()
+                .or_else(|| item.get_size_from_child())
+            {
                 // For Px values, take the max; otherwise keep what we have
                 result_w = match (result_w, child_size.width) {
                     (Dimension::Px(a), Dimension::Px(b)) => Dimension::Px(a.max(b)),
@@ -92,11 +100,21 @@ pub trait LayoutElement: VisitorElement {
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        if self.size().is_none() || self.pos().is_none() {
+        if self
+            .size()
+            .is_none()
+            || self
+                .pos()
+                .is_none()
+        {
             return None;
         }
-        let start = self.pos().unwrap();
-        let size = self.size().unwrap();
+        let start = self
+            .pos()
+            .unwrap();
+        let size = self
+            .size()
+            .unwrap();
         let resolved = ResolvedSize {
             width: match size.width {
                 Dimension::Px(v) => v,

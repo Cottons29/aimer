@@ -3,8 +3,7 @@
 // ---------------------------------------------------------------------------
 
 use aimer::style::{BoxDecoration, FontWeight, TextAlign, TextStyle};
-use aimer::*;
-use aimer::{BuildContext, Widget, widget};
+use aimer::{BuildContext, Widget, widget, *};
 
 #[widget(Stateless)]
 #[derive(Clone)]
@@ -14,7 +13,11 @@ impl StatelessWidget for HoverableGetStartedButton {
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         Container::new().child(
             Button::new()
-                .decoration(BoxDecoration::new().background_color(Color::BLACK).border_radius(8))
+                .decoration(
+                    BoxDecoration::new()
+                        .background_color(Color::BLACK)
+                        .border_radius(8),
+                )
                 .on_press({
                     move || {
                         println!("Button pressed");
@@ -34,7 +37,9 @@ impl StatelessWidget for HoverableGetStartedButton {
                                     .width(24)
                                     .height(24),
                             ),
-                            SizedBox::new().width(20).boxed(),
+                            SizedBox::new()
+                                .width(20)
+                                .boxed(),
                             Text::new("Get Started!")
                                 .text_align(TextAlign::MidCenter)
                                 .text_style(

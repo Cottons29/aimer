@@ -1,5 +1,6 @@
-use aimer_utils::debug;
 use std::path::PathBuf;
+
+use aimer_utils::debug;
 
 /// Returns the platform-specific path for the pipeline cache file.
 fn cache_path() -> Option<PathBuf> {
@@ -9,7 +10,10 @@ fn cache_path() -> Option<PathBuf> {
     }
     #[cfg(not(target_os = "android"))]
     {
-        dirs::cache_dir().map(|d| d.join("aimer").join("pipeline_cache.bin"))
+        dirs::cache_dir().map(|d| {
+            d.join("aimer")
+                .join("pipeline_cache.bin")
+        })
     }
 }
 
@@ -33,7 +37,10 @@ fn load_cache_data() -> Option<Vec<u8>> {
 /// Returns `None` if the device does not support the `PIPELINE_CACHE` feature
 /// (currently Vulkan only).
 pub fn create_pipeline_cache(device: &wgpu::Device) -> Option<wgpu::PipelineCache> {
-    if !device.features().contains(wgpu::Features::PIPELINE_CACHE) {
+    if !device
+        .features()
+        .contains(wgpu::Features::PIPELINE_CACHE)
+    {
         debug!("Pipeline cache feature not supported on this device, skipping");
         return None;
     }
@@ -46,7 +53,8 @@ pub fn create_pipeline_cache(device: &wgpu::Device) -> Option<wgpu::PipelineCach
         fallback: true,
     };
 
-    // SAFETY: If `data` is Some, it was previously returned from `PipelineCache::get_data`.
+    // SAFETY: If `data` is Some, it was previously returned from
+    // `PipelineCache::get_data`.
     let cache = unsafe { device.create_pipeline_cache(&descriptor) };
     debug!("Pipeline cache created successfully");
     Some(cache)

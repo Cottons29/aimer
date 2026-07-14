@@ -29,9 +29,11 @@ pub async fn fetch_and_register_font_bytes(
     url: &str,
 ) -> Result<crate::text_layout::FontId, wasm_bindgen::JsValue> {
     let bytes = fetch_font_bytes(url).await?;
-    canvas.register_font_bytes(bytes).ok_or_else(|| {
-        wasm_bindgen::JsValue::from_str(&format!("failed to register font from {url}"))
-    })
+    canvas
+        .register_font_bytes(bytes)
+        .ok_or_else(|| {
+            wasm_bindgen::JsValue::from_str(&format!("failed to register font from {url}"))
+        })
 }
 
 #[cfg(target_arch = "wasm32")]

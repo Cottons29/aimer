@@ -64,8 +64,9 @@ impl TextDecorationLine {
     pub const UNDERLINE: Self = Self(1 << 0);
     pub const OVERLINE: Self = Self(1 << 1);
     pub const LINE_THROUGH: Self = Self(1 << 2);
-    /// Slants the glyphs (synthetic oblique) rather than drawing a line. Kept in
-    /// this bit-set so it combines with the real lines (e.g. underline + italic).
+    /// Slants the glyphs (synthetic oblique) rather than drawing a line. Kept
+    /// in this bit-set so it combines with the real lines (e.g. underline +
+    /// italic).
     pub const ITALIC: Self = Self(1 << 3);
 
     pub const fn bits(self) -> u8 {
@@ -89,7 +90,8 @@ impl core::ops::BitOr for TextDecorationLine {
     }
 }
 
-/// The stroke style of a decoration line, mirroring the CSS `text-decoration-style`.
+/// The stroke style of a decoration line, mirroring the CSS
+/// `text-decoration-style`.
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum TextDecorationStyle {
@@ -115,9 +117,10 @@ impl TextDecorationStyle {
     }
 }
 
-/// Full text-decoration description: which lines, their stroke style, an optional
-/// dedicated color (falling back to the text color), an optional thickness and a
-/// vertical offset. Replaces the old on/off `Underline`-only enum.
+/// Full text-decoration description: which lines, their stroke style, an
+/// optional dedicated color (falling back to the text color), an optional
+/// thickness and a vertical offset. Replaces the old on/off `Underline`-only
+/// enum.
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct TextDecoration {
@@ -164,7 +167,8 @@ impl TextDecoration {
     }
 
     /// No decoration. Kept as an associated constant so existing
-    /// `TextDecoration::None` call sites keep working after the enum→struct change.
+    /// `TextDecoration::None` call sites keep working after the enum→struct
+    /// change.
     pub const None: Self = Self {
         line: TextDecorationLine::NONE,
         style: TextDecorationStyle::Solid,
@@ -174,7 +178,8 @@ impl TextDecoration {
     };
 
     /// A plain solid underline (the previous default decoration). Kept as an
-    /// associated constant for backward compatibility with `TextDecoration::Underline`.
+    /// associated constant for backward compatibility with
+    /// `TextDecoration::Underline`.
     pub const Underline: Self = Self {
         line: TextDecorationLine::UNDERLINE,
         style: TextDecorationStyle::Solid,

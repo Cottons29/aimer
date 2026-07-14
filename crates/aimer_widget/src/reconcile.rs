@@ -24,7 +24,10 @@ struct ScrollableLikeWrapper {
 
 impl crate::VisitorElement for ScrollableLikeWrapper {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
     fn debug_name(&self) -> &'static str {
         "ScrollableLikeWrapper"
@@ -45,13 +48,14 @@ impl crate::Rebuildable for ScrollableLikeWrapper {}
 
 #[cfg(test)]
 mod tests {
+    use std::any::Any;
+
     use super::*;
     use crate::Drawable;
     use crate::components::event_element::EventElement;
     use crate::components::layout_element::LayoutElement;
     use crate::components::rebuildable::Rebuildable;
     use crate::components::visitor_element::VisitorElement;
-    use std::any::Any;
 
     // Minimal fake elements: all trait methods except the listed ones use defaults.
     struct Leaf(&'static str);
@@ -72,7 +76,10 @@ mod tests {
     struct Wrapper(Box<dyn Element>);
     impl VisitorElement for Wrapper {
         fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-            visitor(self.0.as_ref());
+            visitor(
+                self.0
+                    .as_ref(),
+            );
         }
         fn debug_name(&self) -> &'static str {
             "Wrapper"
@@ -109,7 +116,10 @@ mod tests {
     }
     impl VisitorElement for SplitTraversal {
         fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-            visitor(self.visual_child.as_ref());
+            visitor(
+                self.visual_child
+                    .as_ref(),
+            );
         }
         fn debug_name(&self) -> &'static str {
             "SplitTraversal"
@@ -120,7 +130,10 @@ mod tests {
     }
     impl EventElement for SplitTraversal {
         fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-            visitor(self.event_child.as_ref());
+            visitor(
+                self.event_child
+                    .as_ref(),
+            );
         }
     }
     impl LayoutElement for SplitTraversal {}
@@ -147,16 +160,17 @@ mod tests {
     // freshly-built `StatefulElement` with a different key silently drops the
     // user's state.
 
+    use std::any::TypeId;
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    use std::rc::Rc;
+    use std::sync::RwLock;
+
     use crate::Widget;
     use crate::key::Key;
     use crate::widget::stateful::{
         State, StateUpdater, StatefulElement, StatefulWidget, carry_child_state,
     };
-    use std::any::TypeId;
-    use std::cell::{Cell, RefCell};
-    use std::collections::HashMap;
-    use std::rc::Rc;
-    use std::sync::{OnceLock, RwLock};
 
     /// A no-op widget used as the inner child of a `StatefulElement` for tests.
     /// Its `to_element` does not touch `ctx` fields beyond borrowing them, so
@@ -229,7 +243,9 @@ mod tests {
         fn create_state(&self) -> Self::State {
             CounterState {
                 counter: 1,
-                observer: self.observer.clone(),
+                observer: self
+                    .observer
+                    .clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -242,8 +258,148 @@ mod tests {
             // Record the counter value the rebuild closure actually saw. This
             // is the only observable proof of which state cell a `StatefulElement`
             // is reading from after `adopt_state_from` rewires its `rebuild_fn`.
-            self.observer.set(self.counter);
+            self.observer
+                .set(self.counter);
             EmptyWidget
+        }
+    }
+
+    struct CounterParentWidget {
+        observer: Rc<Cell<usize>>,
+    }
+
+    struct CounterParentState {
+        observer: Rc<Cell<usize>>,
+        updater: StateUpdater<Self>,
+    }
+
+    impl StatefulWidget for CounterParentWidget {
+        type State = CounterParentState;
+
+        fn create_state(&self) -> Self::State {
+            CounterParentState {
+                observer: self
+                    .observer
+                    .clone(),
+                updater: StateUpdater::new(),
+            }
+        }
+    }
+
+    impl State<CounterParentWidget> for CounterParentState {
+        fn init_state(&mut self, updater: StateUpdater<Self>) {
+            self.updater = updater;
+        }
+
+        fn build(&self, ctx: &BuildContext) -> impl Widget {
+            let widget = CounterWidget {
+                observer: self
+                    .observer
+                    .clone(),
+            };
+            let (child, _) = StatefulElement::new_with_name(
+                &widget,
+                ctx,
+                "Counter",
+                Some(Key::Static("nested-counter")),
+            );
+            ElementWidget::new(child.boxed())
+        }
+    }
+
+    struct BuildRecordingCounterWidget {
+        builds: Rc<RefCell<Vec<usize>>>,
+        updater: Rc<RefCell<Option<StateUpdater<BuildRecordingCounterState>>>>,
+    }
+
+    struct BuildRecordingCounterState {
+        counter: usize,
+        builds: Rc<RefCell<Vec<usize>>>,
+        published_updater: Rc<RefCell<Option<StateUpdater<Self>>>>,
+        updater: StateUpdater<Self>,
+    }
+
+    impl StatefulWidget for BuildRecordingCounterWidget {
+        type State = BuildRecordingCounterState;
+
+        fn create_state(&self) -> Self::State {
+            BuildRecordingCounterState {
+                counter: 0,
+                builds: self
+                    .builds
+                    .clone(),
+                published_updater: self
+                    .updater
+                    .clone(),
+                updater: StateUpdater::new(),
+            }
+        }
+    }
+
+    impl State<BuildRecordingCounterWidget> for BuildRecordingCounterState {
+        fn init_state(&mut self, updater: StateUpdater<Self>) {
+            self.updater = updater.clone();
+            *self
+                .published_updater
+                .borrow_mut() = Some(updater);
+        }
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            self.builds
+                .borrow_mut()
+                .push(self.counter);
+            EmptyWidget
+        }
+    }
+
+    struct BuildRecordingParentWidget {
+        builds: Rc<RefCell<Vec<usize>>>,
+        child_updater: Rc<RefCell<Option<StateUpdater<BuildRecordingCounterState>>>>,
+    }
+
+    struct BuildRecordingParentState {
+        builds: Rc<RefCell<Vec<usize>>>,
+        child_updater: Rc<RefCell<Option<StateUpdater<BuildRecordingCounterState>>>>,
+        updater: StateUpdater<Self>,
+    }
+
+    impl StatefulWidget for BuildRecordingParentWidget {
+        type State = BuildRecordingParentState;
+
+        fn create_state(&self) -> Self::State {
+            BuildRecordingParentState {
+                builds: self
+                    .builds
+                    .clone(),
+                child_updater: self
+                    .child_updater
+                    .clone(),
+                updater: StateUpdater::new(),
+            }
+        }
+    }
+
+    impl State<BuildRecordingParentWidget> for BuildRecordingParentState {
+        fn init_state(&mut self, updater: StateUpdater<Self>) {
+            self.updater = updater;
+        }
+
+        fn build(&self, ctx: &BuildContext) -> impl Widget {
+            let child = BuildRecordingCounterWidget {
+                builds: self
+                    .builds
+                    .clone(),
+                updater: self
+                    .child_updater
+                    .clone(),
+            };
+            let (element, _) = StatefulElement::new_with_name(
+                &child,
+                ctx,
+                "BuildRecordingCounter",
+                Some(Key::Static("build-recording-counter")),
+            );
+            ElementWidget::new(element.boxed())
         }
     }
     #[allow(unused)]
@@ -272,10 +428,18 @@ mod tests {
             ConfigState {
                 config_label: self.label,
                 runtime: 0,
-                observed_label: self.observed_label.clone(),
-                observed_runtime: self.observed_runtime.clone(),
-                config_adoptions: self.config_adoptions.clone(),
-                live_updater: self.live_updater.clone(),
+                observed_label: self
+                    .observed_label
+                    .clone(),
+                observed_runtime: self
+                    .observed_runtime
+                    .clone(),
+                config_adoptions: self
+                    .config_adoptions
+                    .clone(),
+                live_updater: self
+                    .live_updater
+                    .clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -290,14 +454,26 @@ mod tests {
         // framework preserves this live state but must refresh the config from
         // the freshly-built widget.
         fn adopt_config_from(&mut self, new: &Self) {
-            self.config_adoptions.set(self.config_adoptions.get() + 1);
+            self.config_adoptions
+                .set(
+                    self.config_adoptions
+                        .get()
+                        + 1,
+                );
             self.config_label = new.config_label;
         }
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
-            self.observed_label.set(self.config_label);
-            self.observed_runtime.set(self.runtime);
-            *self.live_updater.borrow_mut() = Some(self.updater.clone());
+            self.observed_label
+                .set(self.config_label);
+            self.observed_runtime
+                .set(self.runtime);
+            *self
+                .live_updater
+                .borrow_mut() = Some(
+                self.updater
+                    .clone(),
+            );
             EmptyWidget
         }
     }
@@ -312,25 +488,6 @@ mod tests {
             .expect("live updater should be published from build()")
     }
 
-    /// Leak a zeroed buffer large enough to hold any `winit::window::Window`
-    /// on every supported target and cast it to `&Window`. The pointer is
-    /// never dereferenced — the reconcile code paths
-    /// (`try_update_element`, `StatefulElement::update_from_widget`) never
-    /// read through `ctx.window`, and the test widget's `build()` ignores it.
-    /// ponytail: known-unsafe test-only phantom; the alternative is a full
-    /// `winit::EventLoop` setup per test, which is heavier than the contract
-    /// we're testing.
-    fn dummy_window() -> &'static winit::window::Window {
-        const SIZE: usize = 16384;
-        static SLOT: OnceLock<usize> = OnceLock::new();
-        let addr = *SLOT.get_or_init(|| {
-            let leaked: &'static mut [u8; SIZE] = Box::leak(Box::new([0u8; SIZE]));
-            leaked.as_mut_ptr() as usize
-        });
-        // SAFETY: pointer is never dereferenced; see fn doc.
-        unsafe { &*(addr as *const winit::window::Window) }
-    }
-
     /// A tokio runtime handle for the non-wasm `async_handle` field. Built
     /// once via `OnceLock` so the leaked runtime outlives every test that
     /// constructs a `BuildContext`.
@@ -339,7 +496,10 @@ mod tests {
         use std::sync::OnceLock;
         static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
         let runtime = RUNTIME.get_or_init(|| {
-            tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
         });
         let _guard = runtime.enter();
         tokio::runtime::Handle::current()
@@ -362,7 +522,7 @@ mod tests {
             cursor_pos: Default::default(),
             box_constraint: Default::default(),
             visible_rect: None,
-            window: dummy_window(),
+            window: crate::base::WindowHandle::headless(Default::default(), 1.0),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: dummy_async_handle(),
             inherited_states: Rc::new(RwLock::new(HashMap::<TypeId, Rc<dyn Any>>::new())),
@@ -397,7 +557,8 @@ mod tests {
     }
     impl Drawable for RecordingLeaf {
         fn draw(&self, _ctx: &BuildContext) {
-            self.drawn.set(self.value);
+            self.drawn
+                .set(self.value);
         }
     }
     impl EventElement for RecordingLeaf {}
@@ -409,7 +570,10 @@ mod tests {
     struct DrawWrapper(Box<dyn Element>);
     impl VisitorElement for DrawWrapper {
         fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-            visitor(self.0.as_ref());
+            visitor(
+                self.0
+                    .as_ref(),
+            );
         }
         fn debug_name(&self) -> &'static str {
             "DrawWrapper"
@@ -417,12 +581,16 @@ mod tests {
     }
     impl Drawable for DrawWrapper {
         fn draw(&self, ctx: &BuildContext) {
-            self.0.draw(ctx);
+            self.0
+                .draw(ctx);
         }
     }
     impl EventElement for DrawWrapper {
         fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-            visitor(self.0.as_ref());
+            visitor(
+                self.0
+                    .as_ref(),
+            );
         }
     }
     impl LayoutElement for DrawWrapper {}
@@ -494,8 +662,12 @@ mod tests {
         fn create_state(&self) -> Self::State {
             DrawCounterState {
                 counter: 1,
-                drawn: self.drawn.clone(),
-                live_updater: self.live_updater.clone(),
+                drawn: self
+                    .drawn
+                    .clone(),
+                live_updater: self
+                    .live_updater
+                    .clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -505,11 +677,20 @@ mod tests {
             self.updater = updater;
         }
         fn build(&self, ctx: &BuildContext) -> impl Widget {
-            *self.live_updater.borrow_mut() = Some(self.updater.clone());
+            *self
+                .live_updater
+                .borrow_mut() = Some(
+                self.updater
+                    .clone(),
+            );
 
             // container -> row -> [ text-leaf(counter), nested stateful button ]
-            let leaf: Box<dyn Element> =
-                Box::new(RecordingLeaf { value: self.counter, drawn: self.drawn.clone() });
+            let leaf: Box<dyn Element> = Box::new(RecordingLeaf {
+                value: self.counter,
+                drawn: self
+                    .drawn
+                    .clone(),
+            });
             let (button, _ctor) =
                 StatefulElement::new_with_name(&NestedButtonWidget, ctx, "NestedButton", None);
             let row: Box<dyn Element> = Box::new(DrawRow(vec![leaf, button.boxed()]));
@@ -575,6 +756,129 @@ mod tests {
         carry_child_state(&old_tree, &new_tree, &ctx);
 
         assert_eq!(observer.get(), 7, "a stable key must preserve state across wrapper changes");
+    }
+
+    #[test]
+    fn keyed_state_prefers_the_copy_with_the_latest_mutation() {
+        let ctx = dummy_build_context();
+        let observer = Rc::new(Cell::new(0usize));
+        let key = Some(Key::Static("transition-retained-counter"));
+
+        let widget = CounterWidget { observer: observer.clone() };
+        let (stale_stateful, _) =
+            StatefulElement::new_with_name(&widget, &ctx, "Counter", key.clone());
+        let (live_stateful, live_updater) =
+            StatefulElement::new_with_name(&widget, &ctx, "Counter", key.clone());
+        live_updater.set_state(|state| state.counter = 7);
+        live_stateful.rebuild_if_dirty(&ctx);
+
+        let (replacement, _) = StatefulElement::new_with_name(&widget, &ctx, "Counter", key);
+        let old_tree = Branches(vec![stale_stateful.boxed(), live_stateful.boxed()]);
+        let new_tree = Wrapper(replacement.boxed());
+        carry_child_state(&old_tree, &new_tree, &ctx);
+
+        assert_eq!(
+            observer.get(),
+            7,
+            "a retained stale branch must not overwrite more recently mutated keyed state"
+        );
+    }
+
+    #[test]
+    fn keyed_replacement_never_builds_fresh_state_before_adoption() {
+        let ctx = dummy_build_context();
+        let builds = Rc::new(RefCell::new(Vec::new()));
+        let child_updater = Rc::new(RefCell::new(None));
+        let parent_widget = BuildRecordingParentWidget {
+            builds: builds.clone(),
+            child_updater: child_updater.clone(),
+        };
+        let (parent, parent_updater) =
+            StatefulElement::new_with_name(&parent_widget, &ctx, "BuildRecordingParent", None);
+
+        child_updater
+            .borrow()
+            .as_ref()
+            .expect("child updater should be published during the initial build")
+            .set_state(|state| state.counter = 2);
+        parent_updater.set_state(|_| {});
+        builds
+            .borrow_mut()
+            .clear();
+
+        parent.rebuild_if_dirty(&ctx);
+
+        assert!(
+            builds
+                .borrow()
+                .iter()
+                .all(|value| *value == 2),
+            "a keyed replacement must adopt live state before its first build: {:?}",
+            builds
+                .borrow()
+                .as_slice()
+        );
+    }
+
+    #[test]
+    fn keyed_state_rejects_an_older_copy_after_adopting_newer_state() {
+        let ctx = dummy_build_context();
+        let observer = Rc::new(Cell::new(0usize));
+        let key = Some(Key::Static("transition-retained-counter"));
+        let widget = CounterWidget { observer: observer.clone() };
+
+        let (stale_stateful, _) =
+            StatefulElement::new_with_name(&widget, &ctx, "Counter", key.clone());
+        let (live_stateful, live_updater) =
+            StatefulElement::new_with_name(&widget, &ctx, "Counter", key.clone());
+        live_updater.set_state(|state| state.counter = 7);
+        live_stateful.rebuild_if_dirty(&ctx);
+
+        let (replacement, _) = StatefulElement::new_with_name(&widget, &ctx, "Counter", key);
+        carry_child_state(&live_stateful, &replacement, &ctx);
+        assert_eq!(observer.get(), 7);
+        assert!(
+            !replacement.is_dirty(),
+            "eagerly materialized adopted state must not schedule a redundant rebuild"
+        );
+
+        carry_child_state(&stale_stateful, &replacement, &ctx);
+        assert_eq!(
+            observer.get(),
+            7,
+            "an older retained branch must not roll back state already adopted by the replacement"
+        );
+    }
+
+    #[test]
+    fn keyed_state_is_restored_after_a_stale_parent_is_adopted() {
+        let ctx = dummy_build_context();
+        let observer = Rc::new(Cell::new(0usize));
+        let parent_widget = CounterParentWidget { observer: observer.clone() };
+        let (stale_parent, _) =
+            StatefulElement::new_with_name(&parent_widget, &ctx, "CounterParent", None);
+
+        let counter_widget = CounterWidget { observer: observer.clone() };
+        let (live_counter, live_updater) = StatefulElement::new_with_name(
+            &counter_widget,
+            &ctx,
+            "Counter",
+            Some(Key::Static("nested-counter")),
+        );
+        live_updater.set_state(|state| state.counter = 7);
+        live_counter.rebuild_if_dirty(&ctx);
+
+        let (replacement_parent, _) =
+            StatefulElement::new_with_name(&parent_widget, &ctx, "CounterParent", None);
+        let old_tree = Branches(vec![stale_parent.boxed(), live_counter.boxed()]);
+        let new_tree = Wrapper(replacement_parent.boxed());
+        carry_child_state(&old_tree, &new_tree, &ctx);
+
+        assert_eq!(
+            observer.get(),
+            7,
+            "keyed descendants must be restored after positional parent adoption"
+        );
     }
 
     #[test]
@@ -786,7 +1090,9 @@ mod tests {
         fn create_state(&self) -> Self::State {
             SwitcherMockState {
                 child_key: self.child_key,
-                transitions: self.transitions.clone(),
+                transitions: self
+                    .transitions
+                    .clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -797,7 +1103,12 @@ mod tests {
         }
         fn adopt_config_from(&mut self, new: &Self) {
             if self.child_key != new.child_key {
-                self.transitions.set(self.transitions.get() + 1);
+                self.transitions
+                    .set(
+                        self.transitions
+                            .get()
+                            + 1,
+                    );
                 self.child_key = new.child_key;
             }
         }
@@ -823,9 +1134,16 @@ mod tests {
     }
     impl Widget for OutletMock {
         fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-            let slot = ctx.get_state::<RouteKeySlot>().expect("Shell must insert RouteKeySlot");
-            SwitcherMock { child_key: slot.0, transitions: self.transitions.clone() }
-                .to_element(ctx)
+            let slot = ctx
+                .get_state::<RouteKeySlot>()
+                .expect("Shell must insert RouteKeySlot");
+            SwitcherMock {
+                child_key: slot.0,
+                transitions: self
+                    .transitions
+                    .clone(),
+            }
+            .to_element(ctx)
         }
         fn debug_name(&self) -> &'static str {
             "Outlet"
@@ -855,8 +1173,12 @@ mod tests {
         fn create_state(&self) -> Self::State {
             NavMockState {
                 route: 0,
-                transitions: self.transitions.clone(),
-                header_observer: self.header_observer.clone(),
+                transitions: self
+                    .transitions
+                    .clone(),
+                header_observer: self
+                    .header_observer
+                    .clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -871,14 +1193,23 @@ mod tests {
             // Frame: a stateful header sibling + a content area holding the
             // Outlet, wrapped in container-like elements as in `AppShell`.
             let header = StatefulElement::new_with_name(
-                &CounterWidget { observer: self.header_observer.clone() },
+                &CounterWidget {
+                    observer: self
+                        .header_observer
+                        .clone(),
+                },
                 ctx,
                 "Counter",
                 None,
             )
             .0
             .boxed();
-            let outlet = OutletMock { transitions: self.transitions.clone() }.to_element(ctx);
+            let outlet = OutletMock {
+                transitions: self
+                    .transitions
+                    .clone(),
+            }
+            .to_element(ctx);
             let content: Box<dyn Element> = Box::new(DrawWrapper(Box::new(DrawWrapper(outlet))));
             let frame: Box<dyn Element> = Box::new(DrawRow(vec![header, content]));
             ElementWidget::new(frame)
@@ -967,9 +1298,10 @@ mod tests {
             self.updater = updater;
         }
         fn build(&self, ctx: &BuildContext) -> impl Widget {
-            ctx.get_state::<ProvidedValue>().expect(
-                "No provided value in context. Ancestor provider must build before descendant.",
-            );
+            ctx.get_state::<ProvidedValue>()
+                .expect(
+                    "No provided value in context. Ancestor provider must build before descendant.",
+                );
             EmptyWidget
         }
     }
@@ -986,9 +1318,9 @@ mod tests {
     ///
     /// The bug: `rebuild_if_dirty` propagated the rebuild down to the existing
     /// child subtree *before* running its own `build`, so a nested consumer (a
-    /// header calling `NavigatorController::of`) rebuilt against the empty fresh
-    /// context and panicked. This test drives that exact ordering and must not
-    /// panic.
+    /// header calling `NavigatorController::of`) rebuilt against the empty
+    /// fresh context and panicked. This test drives that exact ordering and
+    /// must not panic.
     #[test]
     fn provider_reprovides_inherited_state_before_children_rebuild_on_resize() {
         // Initial build: provider inserts the value, the consumer reads it.
@@ -1006,10 +1338,12 @@ mod tests {
     }
 
     mod resize_repro {
+        use std::cell::{Cell, RefCell};
+
+        use aimer_attribute::size::ResolvedSize;
+
         use super::*;
         use crate::widget::stateless::StatelessElement;
-        use aimer_attribute::size::ResolvedSize;
-        use std::cell::{Cell, RefCell};
 
         struct ResizeCounterWidget {
             observer: Rc<Cell<usize>>,
@@ -1029,8 +1363,12 @@ mod tests {
             fn create_state(&self) -> Self::State {
                 ResizeCounterState {
                     counter: 1,
-                    observer: self.observer.clone(),
-                    live_updater: self.live_updater.clone(),
+                    observer: self
+                        .observer
+                        .clone(),
+                    live_updater: self
+                        .live_updater
+                        .clone(),
                     updater: StateUpdater::new(),
                 }
             }
@@ -1042,8 +1380,14 @@ mod tests {
             }
 
             fn build(&self, _ctx: &BuildContext) -> impl Widget {
-                self.observer.set(self.counter);
-                *self.live_updater.borrow_mut() = Some(self.updater.clone());
+                self.observer
+                    .set(self.counter);
+                *self
+                    .live_updater
+                    .borrow_mut() = Some(
+                    self.updater
+                        .clone(),
+                );
                 EmptyWidget
             }
         }
@@ -1098,13 +1442,17 @@ mod tests {
 
         impl Drawable for FakeContainer {
             fn draw(&self, ctx: &BuildContext) {
-                self.child.draw(ctx);
+                self.child
+                    .draw(ctx);
             }
         }
 
         impl EventElement for FakeContainer {
             fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-                visitor(self.child.as_ref());
+                visitor(
+                    self.child
+                        .as_ref(),
+                );
             }
         }
 
@@ -1153,8 +1501,9 @@ mod tests {
                     if is_visible {
                         let mut child_ctx = ctx.clone();
                         child_ctx.parent_size = child_size;
-                        child_ctx.visible_rect =
-                            ctx.visible_rect.map(|(vx, vy, vw, vh)| (vx, vy - current_y, vw, vh));
+                        child_ctx.visible_rect = ctx
+                            .visible_rect
+                            .map(|(vx, vy, vw, vh)| (vx, vy - current_y, vw, vh));
                         child.draw(&child_ctx);
                     }
 
@@ -1253,29 +1602,36 @@ mod tests {
 
         impl Drawable for FakePositioned {
             fn draw(&self, ctx: &BuildContext) {
-                self.child.draw(ctx);
+                self.child
+                    .draw(ctx);
             }
         }
 
         impl EventElement for FakePositioned {
             fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-                visitor(self.child.as_ref());
+                visitor(
+                    self.child
+                        .as_ref(),
+                );
             }
         }
 
         impl LayoutElement for FakePositioned {
             fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-                self.child.computed_size(ctx)
+                self.child
+                    .computed_size(ctx)
             }
         }
 
         impl Rebuildable for FakePositioned {
             fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-                self.child.rebuild_if_dirty(ctx);
+                self.child
+                    .rebuild_if_dirty(ctx);
             }
 
             fn mark_needs_rebuild(&self) {
-                self.child.mark_needs_rebuild();
+                self.child
+                    .mark_needs_rebuild();
             }
         }
 
@@ -1293,7 +1649,10 @@ mod tests {
 
         impl VisitorElement for FakeScrollable {
             fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-                visitor(self.child.as_ref());
+                visitor(
+                    self.child
+                        .as_ref(),
+                );
             }
 
             fn debug_name(&self) -> &'static str {
@@ -1303,7 +1662,8 @@ mod tests {
 
         impl Drawable for FakeScrollable {
             fn draw(&self, ctx: &BuildContext) {
-                self.child.draw(ctx);
+                self.child
+                    .draw(ctx);
             }
         }
 
@@ -1313,7 +1673,8 @@ mod tests {
 
         impl LayoutElement for FakeScrollable {
             fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-                self.child.computed_size(ctx)
+                self.child
+                    .computed_size(ctx)
             }
         }
 
@@ -1525,7 +1886,9 @@ mod tests {
                     index: self.index,
                     selected: self.selected,
                     hovered: false,
-                    observer: self.observer.clone(),
+                    observer: self
+                        .observer
+                        .clone(),
                     updater: StateUpdater::new(),
                 }
             }
@@ -1547,7 +1910,8 @@ mod tests {
             fn build(&self, _ctx: &BuildContext) -> impl Widget {
                 // Record what this button believes its selection state is —
                 // this is what drives its visible highlight in the real app.
-                self.observer.set(if self.selected { 1 } else { 0 });
+                self.observer
+                    .set(if self.selected { 1 } else { 0 });
                 EmptyWidget
             }
         }

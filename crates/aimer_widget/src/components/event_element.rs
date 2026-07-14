@@ -1,6 +1,7 @@
+use aimer_events::element::ElementEvent;
+
 use crate::Element;
 use crate::components::element::VisitorElement;
-use aimer_events::element::ElementEvent;
 
 // Event capabilities
 pub trait EventElement: VisitorElement {
@@ -10,9 +11,10 @@ pub trait EventElement: VisitorElement {
         false
     }
 
-    /// Visit children for event dispatch. By default delegates to `visit_children`.
-    /// Override this when `visit_children` is not implemented (e.g. because the element
-    /// handles its own child rendering) but events still need to reach the children.
+    /// Visit children for event dispatch. By default delegates to
+    /// `visit_children`. Override this when `visit_children` is not
+    /// implemented (e.g. because the element handles its own child
+    /// rendering) but events still need to reach the children.
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.visit_children(visitor);
     }

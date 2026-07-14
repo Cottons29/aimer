@@ -1,6 +1,7 @@
-use clap::ValueEnum;
 use std::error::Error;
 use std::fmt::Display;
+
+use clap::ValueEnum;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, ValueEnum)]
 pub enum Targets {

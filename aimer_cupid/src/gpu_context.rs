@@ -22,7 +22,8 @@ impl<'w> GpuContext<'w> {
         pollster::block_on(Self::initialize_async(window, size))
     }
 
-    /// Async initializer usable on all targets (required on wasm where blocking is not allowed).
+    /// Async initializer usable on all targets (required on wasm where blocking
+    /// is not allowed).
     pub async fn initialize_async(window: &'w Window, size: PhysicalSize<u32>) -> Self {
         let backends = {
             #[cfg(target_os = "android")]
@@ -124,7 +125,10 @@ impl<'w> GpuContext<'w> {
 
         // Request PIPELINE_CACHE feature when available (Vulkan only).
         let mut features = wgpu::Features::default();
-        if adapter.features().contains(wgpu::Features::PIPELINE_CACHE) {
+        if adapter
+            .features()
+            .contains(wgpu::Features::PIPELINE_CACHE)
+        {
             features |= wgpu::Features::PIPELINE_CACHE;
         }
 
@@ -151,12 +155,18 @@ impl<'w> GpuContext<'w> {
 
         debug!("Surface format: {:?}", caps.formats);
 
-        let selected_format =
-            caps.formats.iter().find(|f| f.is_srgb()).copied().unwrap_or(caps.formats[0]);
+        let selected_format = caps
+            .formats
+            .iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(caps.formats[0]);
 
         let is_srgb = selected_format.is_srgb();
 
-        let max_dim = device.limits().max_texture_dimension_2d;
+        let max_dim = device
+            .limits()
+            .max_texture_dimension_2d;
 
         // Use `Fifo` (v-sync) so presentation is paced by the display/compositor
         // itself: `surface.present()` blocks until the next refresh slot, keeping
@@ -177,8 +187,14 @@ impl<'w> GpuContext<'w> {
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: selected_format,
-            width: size.width.max(1).min(max_dim),
-            height: size.height.max(1).min(max_dim),
+            width: size
+                .width
+                .max(1)
+                .min(max_dim),
+            height: size
+                .height
+                .max(1)
+                .min(max_dim),
             present_mode,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
@@ -192,27 +208,42 @@ impl<'w> GpuContext<'w> {
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width > 0 && size.height > 0 {
-            let max_dim = self.device.limits().max_texture_dimension_2d;
-            self.config.width = size.width.min(max_dim);
-            self.config.height = size.height.min(max_dim);
-            self.surface.configure(&self.device, &self.config);
+            let max_dim = self
+                .device
+                .limits()
+                .max_texture_dimension_2d;
+            self.config
+                .width = size
+                .width
+                .min(max_dim);
+            self.config
+                .height = size
+                .height
+                .min(max_dim);
+            self.surface
+                .configure(&self.device, &self.config);
         }
     }
 
     pub fn width(&self) -> u32 {
-        self.config.width
+        self.config
+            .width
     }
 
     pub fn height(&self) -> u32 {
-        self.config.height
+        self.config
+            .height
     }
 
     pub fn begin_frame(&self) -> wgpu::CurrentSurfaceTexture {
-        self.surface.get_current_texture()
+        self.surface
+            .get_current_texture()
     }
 
     pub fn end_frame(&self, frame: SurfaceTexture) {
-        // wgpu 30: presentation moved from `SurfaceTexture::present()` to `Queue::present()`.
-        self.queue.present(frame);
+        // wgpu 30: presentation moved from `SurfaceTexture::present()` to
+        // `Queue::present()`.
+        self.queue
+            .present(frame);
     }
 }

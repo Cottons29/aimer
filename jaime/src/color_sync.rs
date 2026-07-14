@@ -14,7 +14,8 @@ pub fn start_color_sync() {
 
 impl Widget for ColorSync {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        self.build(ctx).to_element(ctx)
+        self.build(ctx)
+            .to_element(ctx)
     }
 }
 
@@ -38,7 +39,12 @@ impl StatelessWidget for ColorSync {
         debug!("Loading the colors:");
         let children: Vec<Box<dyn Widget>> = colors
             .iter()
-            .map(|color| SizedBox::new().width(Dimension::Percent(100.0)).color(*color).boxed())
+            .map(|color| {
+                SizedBox::new()
+                    .width(Dimension::Percent(100.0))
+                    .color(*color)
+                    .boxed()
+            })
             .collect();
         Container::new()
             .padding(LayoutSpacing::all(Spacing::Px(10)))

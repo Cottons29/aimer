@@ -1,16 +1,18 @@
-//! Framework-level `PageStorage` — a keyed store that outlives the widget subtree.
+//! Framework-level `PageStorage` — a keyed store that outlives the widget
+//! subtree.
 //!
 //! A window resize (or a tab swap, an `if/else` branch flip, an unmounted list
 //! item) rebuilds and can fully tear down everything under a `Scrollable`,
-//! re-running each nested `StatefulWidget::create_state()`. Reconciliation carry
-//! only preserves state when the *old* element still exists to copy from, so it
-//! cannot survive a full teardown.
+//! re-running each nested `StatefulWidget::create_state()`. Reconciliation
+//! carry only preserves state when the *old* element still exists to copy from,
+//! so it cannot survive a full teardown.
 //!
 //! The framework already solves this for scroll position with a private,
 //! scroll-only `thread_local` map (`aimer_container`'s `scroll_storage`). This
-//! is the same mechanism, generalized and made public so **any** stateful widget
-//! can persist **any** value across a rebuild by parking it here — without each
-//! widget declaring its own `thread_local!`. It is Flutter's `PageStorage`.
+//! is the same mechanism, generalized and made public so **any** stateful
+//! widget can persist **any** value across a rebuild by parking it here —
+//! without each widget declaring its own `thread_local!`. It is Flutter's
+//! `PageStorage`.
 //!
 //! Usage — two lines, no per-widget `thread_local!`:
 //!
@@ -24,17 +26,19 @@
 //! page_storage::write("same-looking-tab", index);
 //! ```
 //!
-//! ponytail: the render pipeline is single-threaded, so this is a `thread_local`
-//! map with no lock — mirroring `scroll_storage`. Values are type-erased
-//! (`Box<dyn Any>`); a `read::<T>` for the wrong `T` returns `None` rather than
-//! panicking. Entries are never evicted, so an app that churns through unbounded
-//! unique keys grows this map without limit. Upgrade path: evict on an explicit
-//! dispose hook, or cap it with an LRU (same ceiling as `scroll_storage`).
+//! ponytail: the render pipeline is single-threaded, so this is a
+//! `thread_local` map with no lock — mirroring `scroll_storage`. Values are
+//! type-erased (`Box<dyn Any>`); a `read::<T>` for the wrong `T` returns `None`
+//! rather than panicking. Entries are never evicted, so an app that churns
+//! through unbounded unique keys grows this map without limit. Upgrade path:
+//! evict on an explicit dispose hook, or cap it with an LRU (same ceiling as
+//! `scroll_storage`).
 
-use crate::Key;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
+
+use crate::Key;
 
 thread_local! {
     static STORE: RefCell<HashMap<Key, Box<dyn Any>>> = RefCell::new(HashMap::new());
@@ -46,7 +50,8 @@ thread_local! {
 pub fn write<T: 'static>(key: impl Into<Key>, value: T) {
     let key = key.into();
     STORE.with(|m| {
-        m.borrow_mut().insert(key, Box::new(value));
+        m.borrow_mut()
+            .insert(key, Box::new(value));
     });
 }
 
@@ -55,7 +60,14 @@ pub fn write<T: 'static>(key: impl Into<Key>, value: T) {
 /// falls back to its own default on first build.
 pub fn read<T: Clone + 'static>(key: impl Into<Key>) -> Option<T> {
     let key = key.into();
-    STORE.with(|m| m.borrow().get(&key).and_then(|v| v.downcast_ref::<T>().cloned()))
+    STORE.with(|m| {
+        m.borrow()
+            .get(&key)
+            .and_then(|v| {
+                v.downcast_ref::<T>()
+                    .cloned()
+            })
+    })
 }
 
 /// Read the stored value for `key`, or `default` if nothing (of type `T`) is
@@ -69,7 +81,8 @@ pub fn read_or<T: Clone + 'static>(key: impl Into<Key>, default: T) -> T {
 pub fn remove(key: impl Into<Key>) {
     let key = key.into();
     STORE.with(|m| {
-        m.borrow_mut().remove(&key);
+        m.borrow_mut()
+            .remove(&key);
     });
 }
 

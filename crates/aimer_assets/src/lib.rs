@@ -1,11 +1,12 @@
 pub mod img_widget;
 
+use std::fmt::Debug;
+
 use aimer_widget::base::BuildContext;
 pub use img_widget::asset_image::AssetImage;
 pub use img_widget::image_widget::Image;
 pub use img_widget::network_image::NetworkImage;
 pub use img_widget::source::ImageSource;
-use std::fmt::Debug;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImageResult {
@@ -38,8 +39,9 @@ pub type LoadingResult = Result<u32, &'static str>;
 ///
 /// ```rust
 /// use aimer_assets::ImageResult;
-/// use self::aimer_assets::{ ImageProvider};
 /// use aimer_widget::components::context::BuildContext;
+///
+/// use self::aimer_assets::ImageProvider;
 /// #[derive(Clone, Debug)]
 /// struct MyImageProvider;
 ///
@@ -53,9 +55,8 @@ pub type LoadingResult = Result<u32, &'static str>;
 ///
 /// # Notes
 /// - The `ImageProvider` trait requires types to implement the `Clone` trait.
-/// - The `BuildContext` parameter represents the context used to determine the image
-///   and is expected to be provided by the caller.
-///
+/// - The `BuildContext` parameter represents the context used to determine the
+///   image and is expected to be provided by the caller.
 pub trait ImageProvider: Clone + Debug {
     fn get_image(&self, ctx: &BuildContext) -> ImageResult;
 }

@@ -3,7 +3,8 @@ use std::rc::Rc;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, Widget};
 
-/// Type-erased builder for the active child route rendered inside an [`Outlet`].
+/// Type-erased builder for the active child route rendered inside an
+/// [`Outlet`].
 pub type OutletChildBuilder = Rc<dyn Fn(&BuildContext) -> Box<dyn Widget>>;
 
 /// State injected by a [`crate::shell::Shell`] into the [`BuildContext`] so a

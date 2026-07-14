@@ -1,35 +1,41 @@
-use aimer_animation::AnimInstant;
-use aimer_attribute::position::Vec2d;
-use aimer_attribute::size::ResolvedSize;
-use aimer_widget::base::{BuildContext, Color, Colors};
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, VisitorElement};
 use std::cell::{Cell, UnsafeCell};
-
-use crate::input_field::controller::TextFieldController;
-use aimer_attribute::CacheBounds;
-use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
-use aimer_events::window::get_window;
-use aimer_macro::Rebuildable;
-use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
-use aimer_text::RawTextWidget;
-use aimer_widget::LayoutCache;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use aimer_animation::AnimInstant;
+use aimer_attribute::CacheBounds;
+use aimer_attribute::position::Vec2d;
+use aimer_attribute::size::ResolvedSize;
+use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
+use aimer_events::window::get_window;
+use aimer_macro::Rebuildable;
+use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
+use aimer_text::RawTextWidget;
+use aimer_widget::base::{BuildContext, Color, Colors};
+use aimer_widget::{Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement};
+
+use crate::input_field::controller::TextFieldController;
+
 /// Write text to the system clipboard.
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 fn clipboard_write(text: &str) {
     if let Ok(mut cb) = arboard::Clipboard::new() {
-        cb.set_text(text).ok();
+        cb.set_text(text)
+            .ok();
     }
 }
 
 /// Read text from the system clipboard.
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 fn clipboard_read() -> Option<String> {
-    arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok())
+    arboard::Clipboard::new()
+        .ok()
+        .and_then(|mut cb| {
+            cb.get_text()
+                .ok()
+        })
 }
 
 /// Clipboard stub for Android (not yet supported).
@@ -45,15 +51,18 @@ fn clipboard_read() -> Option<String> {
 #[cfg(target_arch = "wasm32")]
 fn clipboard_write(text: &str) {
     let Some(window) = web_sys::window() else { return };
-    let clipboard = window.navigator().clipboard();
+    let clipboard = window
+        .navigator()
+        .clipboard();
     let _ = clipboard.write_text(text);
 }
 
-/// Read text from the browser clipboard (synchronous fallback: returns None on wasm
-/// because the async Clipboard API cannot be awaited here).
+/// Read text from the browser clipboard (synchronous fallback: returns None on
+/// wasm because the async Clipboard API cannot be awaited here).
 #[cfg(target_arch = "wasm32")]
 fn clipboard_read() -> Option<String> {
-    // The web Clipboard API is async-only; we read from the hidden input as a fallback.
+    // The web Clipboard API is async-only; we read from the hidden input as a
+    // fallback.
     let window = web_sys::window()?;
     let document = window.document()?;
     let el = document.get_element_by_id("__aimer_hidden_input")?;
@@ -110,7 +119,7 @@ pub struct TextFieldCallback(Option<Rc<TextFieldCb>>);
 ///     .on_changed(AsyncTextFieldCallback(|text| async move {
 ///         println!("async changed: {text}");
 ///     }))
-///```
+/// ```
 #[derive(Default)]
 pub struct AsyncTextFieldCallback<F>(pub F);
 
@@ -139,7 +148,8 @@ impl TextFieldCallback {
 
     /// Returns `true` if a callback is set.
     pub fn is_some(&self) -> bool {
-        self.0.is_some()
+        self.0
+            .is_some()
     }
 }
 
@@ -176,7 +186,10 @@ where
 
 impl std::fmt::Debug for TextFieldCallback {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.0.is_some() {
+        if self
+            .0
+            .is_some()
+        {
             write!(f, "TextFieldCallback(Some(...))")
         } else {
             write!(f, "TextFieldCallback(None)")
@@ -277,32 +290,54 @@ impl Cursor {
     }
 
     pub fn offset(&self) -> usize {
-        unsafe { *self.offset.get() }
+        unsafe {
+            *self
+                .offset
+                .get()
+        }
     }
 
     pub fn set_offset(&self, offset: usize) {
         unsafe {
-            *self.offset.get() = offset;
+            *self
+                .offset
+                .get() = offset;
         }
     }
 
     pub fn is_visible(&self) -> bool {
-        unsafe { *self.visible.get() }
+        unsafe {
+            *self
+                .visible
+                .get()
+        }
     }
 
     fn set_visible(&self, v: bool) {
         unsafe {
-            *self.visible.get() = v;
+            *self
+                .visible
+                .get() = v;
         }
     }
 
     /// Toggle visibility if enough time has elapsed. Returns true if toggled.
     fn update_blink(&self) -> bool {
         let now = AnimInstant::now();
-        let last = unsafe { *self.last_blink.get() };
-        if now.duration_since(last).as_millis() as u64 >= self.blink_rate_ms {
+        let last = unsafe {
+            *self
+                .last_blink
+                .get()
+        };
+        if now
+            .duration_since(last)
+            .as_millis() as u64
+            >= self.blink_rate_ms
+        {
             unsafe {
-                *self.last_blink.get() = now;
+                *self
+                    .last_blink
+                    .get() = now;
             }
             let vis = self.is_visible();
             self.set_visible(!vis);
@@ -316,28 +351,37 @@ impl Cursor {
     fn reset_blink(&self) {
         self.set_visible(true);
         unsafe {
-            *self.last_blink.get() = AnimInstant::now();
+            *self
+                .last_blink
+                .get() = AnimInstant::now();
         }
     }
 
     /// Returns the selection anchor, if any.
     pub fn selection_anchor(&self) -> Option<usize> {
-        unsafe { *self.selection_anchor.get() }
+        unsafe {
+            *self
+                .selection_anchor
+                .get()
+        }
     }
 
     /// Set the selection anchor.
     pub fn set_selection_anchor(&self, anchor: Option<usize>) {
         unsafe {
-            *self.selection_anchor.get() = anchor;
+            *self
+                .selection_anchor
+                .get() = anchor;
         }
     }
 
     /// Returns the ordered (start, end) of the current selection, or `None`.
     pub fn selection_range(&self) -> Option<(usize, usize)> {
-        self.selection_anchor().map(|anchor| {
-            let offset = self.offset();
-            if anchor <= offset { (anchor, offset) } else { (offset, anchor) }
-        })
+        self.selection_anchor()
+            .map(|anchor| {
+                let offset = self.offset();
+                if anchor <= offset { (anchor, offset) } else { (offset, anchor) }
+            })
     }
 
     /// Clear the selection without moving the cursor.
@@ -403,22 +447,27 @@ impl RawTextField {
     }
 
     fn is_focused(&self) -> bool {
-        self.focused.get()
+        self.focused
+            .get()
     }
 
     fn set_focused(&self, focused: bool) {
-        self.focused.set(focused);
+        self.focused
+            .set(focused);
         if !focused {
-            self.blink_scheduled.set(false);
+            self.blink_scheduled
+                .set(false);
         }
     }
 
     fn is_hovered(&self) -> bool {
-        self.hovered.get()
+        self.hovered
+            .get()
     }
 
     fn set_hovered(&self, hovered: bool) {
-        self.hovered.set(hovered);
+        self.hovered
+            .set(hovered);
     }
 
     fn active_decoration(&self) -> &BoxDecoration {
@@ -450,12 +499,18 @@ impl RawTextField {
     }
 
     fn outline_strokes(&self, box_width: f32, box_height: f32, scale: f32) -> (f32, f32, f32, f32) {
-        self.active_decoration().outline.strokes(box_width, box_height, scale)
+        self.active_decoration()
+            .outline
+            .strokes(box_width, box_height, scale)
     }
 
     fn cursor_x_offset_canvas(&self, canvas: &aimer_canvas::Canvas, font_size: f32) -> f32 {
-        let text = self.controller.text();
-        let offset = self.cursor.offset();
+        let text = self
+            .controller
+            .text();
+        let offset = self
+            .cursor
+            .offset();
         let prefix: String = unicode_segmentation::UnicodeSegmentation::graphemes(text, true)
             .take(offset)
             .collect();
@@ -505,40 +560,60 @@ impl RawTextField {
 
     // ── Word / line selection helpers ────────────────────────────────
 
-    /// Select the word at the given grapheme offset using Unicode word boundaries.
+    /// Select the word at the given grapheme offset using Unicode word
+    /// boundaries.
     fn select_word_at(&self, grapheme_offset: usize) {
         use unicode_segmentation::UnicodeSegmentation;
-        let text = self.controller.text();
+        let text = self
+            .controller
+            .text();
         if text.is_empty() {
             return;
         }
 
         // Convert grapheme offset to byte offset
-        let byte_offset: usize = text.chars().take(grapheme_offset).map(|c| c.len_utf8()).sum();
+        let byte_offset: usize = text
+            .chars()
+            .take(grapheme_offset)
+            .map(|c| c.len_utf8())
+            .sum();
 
         // Find word boundaries
-        let word_bounds: Vec<(usize, &str)> = text.split_word_bound_indices().collect();
+        let word_bounds: Vec<(usize, &str)> = text
+            .split_word_bound_indices()
+            .collect();
 
         for &(start, segment) in &word_bounds {
             let end = start + segment.len();
             if byte_offset >= start && byte_offset < end {
-                let grapheme_start = text[..start].chars().count();
-                let grapheme_end = text[..end].chars().count();
-                self.cursor.set_selection_anchor(Some(grapheme_start));
-                self.cursor.set_offset(grapheme_end);
+                let grapheme_start = text[..start]
+                    .chars()
+                    .count();
+                let grapheme_end = text[..end]
+                    .chars()
+                    .count();
+                self.cursor
+                    .set_selection_anchor(Some(grapheme_start));
+                self.cursor
+                    .set_offset(grapheme_end);
                 return;
             }
         }
     }
 
-    /// Select the line (between newline characters) containing the given grapheme offset.
+    /// Select the line (between newline characters) containing the given
+    /// grapheme offset.
     fn select_line_at(&self, grapheme_offset: usize) {
-        let text = self.controller.text();
+        let text = self
+            .controller
+            .text();
         if text.is_empty() {
             return;
         }
 
-        let chars: Vec<char> = text.chars().collect();
+        let chars: Vec<char> = text
+            .chars()
+            .collect();
         let mut line_start = grapheme_offset;
         let mut line_end = grapheme_offset;
 
@@ -549,8 +624,10 @@ impl RawTextField {
             line_end += 1;
         }
 
-        self.cursor.set_selection_anchor(Some(line_start));
-        self.cursor.set_offset(line_end);
+        self.cursor
+            .set_selection_anchor(Some(line_start));
+        self.cursor
+            .set_offset(line_end);
     }
 
     /// Adjust `scroll_x` so the cursor is visible within `content_width`.
@@ -561,18 +638,27 @@ impl RawTextField {
         font_size: f32,
     ) {
         let cursor_x = self.cursor_x_offset_canvas(canvas, font_size);
-        let scroll = self.scroll_x.get();
+        let scroll = self
+            .scroll_x
+            .get();
 
         if cursor_x < scroll {
-            self.scroll_x.set(cursor_x.max(0.0));
+            self.scroll_x
+                .set(cursor_x.max(0.0));
         } else if cursor_x > scroll + content_width {
-            self.scroll_x.set((cursor_x - content_width).max(0.0));
+            self.scroll_x
+                .set((cursor_x - content_width).max(0.0));
         }
     }
 
     /// Count the number of lines in the text (newlines + 1).
     fn line_count(&self) -> usize {
-        self.controller.text().chars().filter(|&c| c == '\n').count() + 1
+        self.controller
+            .text()
+            .chars()
+            .filter(|&c| c == '\n')
+            .count()
+            + 1
     }
 }
 
@@ -599,22 +685,50 @@ fn wasm_request_keyboard(show: bool) {
                 .unchecked_into::<web_sys::HtmlInputElement>();
             el.set_id("__aimer_hidden_input");
             el.set_type("text");
-            el.set_attribute("autocapitalize", "off").ok();
-            el.set_attribute("autocomplete", "off").ok();
-            el.set_attribute("autocorrect", "off").ok();
-            el.set_attribute("spellcheck", "false").ok();
+            el.set_attribute("autocapitalize", "off")
+                .ok();
+            el.set_attribute("autocomplete", "off")
+                .ok();
+            el.set_attribute("autocorrect", "off")
+                .ok();
+            el.set_attribute("spellcheck", "false")
+                .ok();
             let style = el.style();
-            style.set_property("position", "fixed").ok();
-            style.set_property("opacity", "0").ok();
-            style.set_property("left", "-9999px").ok();
-            style.set_property("top", "0").ok();
-            style.set_property("width", "1px").ok();
-            style.set_property("height", "1px").ok();
-            style.set_property("border", "none").ok();
-            style.set_property("outline", "none").ok();
-            style.set_property("padding", "0").ok();
-            style.set_property("font-size", "16px").ok(); // prevents iOS zoom
-            document.body().unwrap().append_child(&el).ok();
+            style
+                .set_property("position", "fixed")
+                .ok();
+            style
+                .set_property("opacity", "0")
+                .ok();
+            style
+                .set_property("left", "-9999px")
+                .ok();
+            style
+                .set_property("top", "0")
+                .ok();
+            style
+                .set_property("width", "1px")
+                .ok();
+            style
+                .set_property("height", "1px")
+                .ok();
+            style
+                .set_property("border", "none")
+                .ok();
+            style
+                .set_property("outline", "none")
+                .ok();
+            style
+                .set_property("padding", "0")
+                .ok();
+            style
+                .set_property("font-size", "16px")
+                .ok(); // prevents iOS zoom
+            document
+                .body()
+                .unwrap()
+                .append_child(&el)
+                .ok();
 
             // Forward keydown events to the winit canvas so the framework
             // receives them through its normal WindowEvent::KeyboardInput path.
@@ -627,7 +741,8 @@ fn wasm_request_keyboard(show: bool) {
                         let Some(doc) = w.document() else { return };
                         let Some(canvas) = doc.get_element_by_id("aimer_app") else { return };
                         let new_evt = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(
-                            evt.type_().as_str(),
+                            evt.type_()
+                                .as_str(),
                             web_sys::KeyboardEventInit::new()
                                 .key(&evt.key())
                                 .code(&evt.code())
@@ -642,10 +757,17 @@ fn wasm_request_keyboard(show: bool) {
                                 .meta_key(evt.meta_key()),
                         )
                         .unwrap();
-                        canvas.dispatch_event(&new_evt).ok();
+                        canvas
+                            .dispatch_event(&new_evt)
+                            .ok();
                     },
                 );
-                el.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref()).ok();
+                el.add_event_listener_with_callback(
+                    "keydown",
+                    cb.as_ref()
+                        .unchecked_ref(),
+                )
+                .ok();
                 cb.forget();
             }
 
@@ -659,7 +781,8 @@ fn wasm_request_keyboard(show: bool) {
                         let Some(doc) = w.document() else { return };
                         let Some(canvas) = doc.get_element_by_id("aimer_app") else { return };
                         let new_evt = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(
-                            evt.type_().as_str(),
+                            evt.type_()
+                                .as_str(),
                             web_sys::KeyboardEventInit::new()
                                 .key(&evt.key())
                                 .code(&evt.code())
@@ -674,10 +797,17 @@ fn wasm_request_keyboard(show: bool) {
                                 .meta_key(evt.meta_key()),
                         )
                         .unwrap();
-                        canvas.dispatch_event(&new_evt).ok();
+                        canvas
+                            .dispatch_event(&new_evt)
+                            .ok();
                     },
                 );
-                el.add_event_listener_with_callback("keyup", cb.as_ref().unchecked_ref()).ok();
+                el.add_event_listener_with_callback(
+                    "keyup",
+                    cb.as_ref()
+                        .unchecked_ref(),
+                )
+                .ok();
                 cb.forget();
             }
 
@@ -699,7 +829,9 @@ fn wasm_request_keyboard(show: bool) {
                         let Some(canvas) = doc.get_element_by_id("aimer_app") else { return };
                         // Synthesize a keydown + keyup pair for each character so
                         // winit can translate them into KeyboardInput events.
-                        let chars: Vec<char> = data.chars().collect();
+                        let chars: Vec<char> = data
+                            .chars()
+                            .collect();
                         for ch in chars {
                             let key = ch.to_string();
                             for event_type in &["keydown", "keyup"] {
@@ -712,7 +844,9 @@ fn wasm_request_keyboard(show: bool) {
                                             .cancelable(true),
                                     )
                                     .unwrap();
-                                canvas.dispatch_event(&synth).ok();
+                                canvas
+                                    .dispatch_event(&synth)
+                                    .ok();
                             }
                         }
                         // Clear the hidden input so subsequent input events keep working.
@@ -722,7 +856,12 @@ fn wasm_request_keyboard(show: bool) {
                         }
                     },
                 );
-                el.add_event_listener_with_callback("input", cb.as_ref().unchecked_ref()).ok();
+                el.add_event_listener_with_callback(
+                    "input",
+                    cb.as_ref()
+                        .unchecked_ref(),
+                )
+                .ok();
                 cb.forget();
             }
 
@@ -753,7 +892,9 @@ fn wasm_request_keyboard(show: bool) {
                                             .cancelable(true),
                                     )
                                     .unwrap();
-                                canvas.dispatch_event(&synth).ok();
+                                canvas
+                                    .dispatch_event(&synth)
+                                    .ok();
                             }
                         }
                         // Clear the hidden input so the next composition starts clean.
@@ -763,8 +904,12 @@ fn wasm_request_keyboard(show: bool) {
                         }
                     },
                 );
-                el.add_event_listener_with_callback("compositionend", cb.as_ref().unchecked_ref())
-                    .ok();
+                el.add_event_listener_with_callback(
+                    "compositionend",
+                    cb.as_ref()
+                        .unchecked_ref(),
+                )
+                .ok();
                 cb.forget();
             }
 
@@ -774,9 +919,13 @@ fn wasm_request_keyboard(show: bool) {
 
     if show {
         input.set_value("");
-        input.focus().ok();
+        input
+            .focus()
+            .ok();
     } else {
-        input.blur().ok();
+        input
+            .blur()
+            .ok();
     }
 }
 
@@ -796,33 +945,52 @@ impl EventElement for RawTextField {
 
         match event {
             ElementEvent::PointerDown(pos, _, _) => {
-                let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
+                let is_inside = self
+                    .cached_bounds
+                    .is_inside(pos.x, pos.y);
 
                 if is_inside {
                     let was_focused = self.is_focused();
                     self.set_focused(true);
-                    self.mouse_held.set(true);
-                    self.cursor.clear_selection();
+                    self.mouse_held
+                        .set(true);
+                    self.cursor
+                        .clear_selection();
 
                     // Double/triple-click detection
                     let now = AnimInstant::now();
-                    let elapsed = now.duration_since(self.last_click_time.get());
-                    let prev_count = self.click_count.get();
+                    let elapsed = now.duration_since(
+                        self.last_click_time
+                            .get(),
+                    );
+                    let prev_count = self
+                        .click_count
+                        .get();
                     let new_count = if elapsed.as_millis() < 500 { prev_count + 1 } else { 1 };
-                    self.click_count.set(new_count);
-                    self.last_click_time.set(now);
+                    self.click_count
+                        .set(new_count);
+                    self.last_click_time
+                        .set(now);
 
                     // Defer cursor placement to draw() where canvas is available
-                    self.pending_click.set(Some(*pos));
-                    self.cursor.reset_blink();
+                    self.pending_click
+                        .set(Some(*pos));
+                    self.cursor
+                        .reset_blink();
 
                     if !was_focused {
-                        self.on_focus.call(self.controller.text());
+                        self.on_focus
+                            .call(
+                                self.controller
+                                    .text(),
+                            );
                     }
 
                     // Clear IME preedit on new click
-                    self.preedit_text.set(String::new());
-                    self.preedit_cursor.set(None);
+                    self.preedit_text
+                        .set(String::new());
+                    self.preedit_cursor
+                        .set(None);
 
                     #[cfg(target_os = "ios")]
                     ios_keyboard::show_keyboard();
@@ -835,7 +1003,10 @@ impl EventElement for RawTextField {
                     )))]
                     if let Some(w) = get_window() {
                         w.set_ime_allowed(true);
-                        if let Some((start, end)) = self.cached_bounds.pos_start_end() {
+                        if let Some((start, end)) = self
+                            .cached_bounds
+                            .pos_start_end()
+                        {
                             use winit::dpi::{LogicalPosition, LogicalSize};
                             let pos = LogicalPosition::new(start.x as f64, start.y as f64);
                             let size = LogicalSize::new(
@@ -850,8 +1021,13 @@ impl EventElement for RawTextField {
                     true
                 } else {
                     self.set_focused(false);
-                    self.mouse_held.set(false);
-                    self.on_blur.call(self.controller.text());
+                    self.mouse_held
+                        .set(false);
+                    self.on_blur
+                        .call(
+                            self.controller
+                                .text(),
+                        );
                     #[cfg(target_os = "ios")]
                     ios_keyboard::dismiss_keyboard();
                     #[cfg(target_os = "android")]
@@ -875,27 +1051,50 @@ impl EventElement for RawTextField {
                 // Enforce max_length: reject if at or over the limit
                 if let Some(max) = self.max_length {
                     // If there's a selection, the deleted chars free up space
-                    let selected_len =
-                        self.cursor.selection_range().map(|(s, e)| e - s).unwrap_or(0);
-                    if self.controller.char_count().saturating_sub(selected_len) >= max {
+                    let selected_len = self
+                        .cursor
+                        .selection_range()
+                        .map(|(s, e)| e - s)
+                        .unwrap_or(0);
+                    if self
+                        .controller
+                        .char_count()
+                        .saturating_sub(selected_len)
+                        >= max
+                    {
                         return false;
                     }
                 }
 
                 // If there is a selection, delete it first
-                if let Some((start, end)) = self.cursor.selection_range() {
-                    self.controller.delete_range(start, end);
-                    self.cursor.set_offset(start);
-                    self.cursor.clear_selection();
+                if let Some((start, end)) = self
+                    .cursor
+                    .selection_range()
+                {
+                    self.controller
+                        .delete_range(start, end);
+                    self.cursor
+                        .set_offset(start);
+                    self.cursor
+                        .clear_selection();
                 }
 
-                let offset = self.cursor.offset();
+                let offset = self
+                    .cursor
+                    .offset();
                 unsafe {
-                    self.controller.insert_char(*ch, offset);
+                    self.controller
+                        .insert_char(*ch, offset);
                 }
-                self.cursor.set_offset(offset + 1);
-                self.cursor.reset_blink();
-                self.on_changed.call(self.controller.text());
+                self.cursor
+                    .set_offset(offset + 1);
+                self.cursor
+                    .reset_blink();
+                self.on_changed
+                    .call(
+                        self.controller
+                            .text(),
+                    );
                 true
             }
             ElementEvent::KeyInput { key, action, modifiers } => {
@@ -913,26 +1112,47 @@ impl EventElement for RawTextField {
                     let result = match key {
                         NamedKey::Other(k) if k == "a" => {
                             // Select all
-                            self.cursor.set_selection_anchor(Some(0));
-                            self.cursor.set_offset(self.controller.char_count());
+                            self.cursor
+                                .set_selection_anchor(Some(0));
+                            self.cursor
+                                .set_offset(
+                                    self.controller
+                                        .char_count(),
+                                );
                             true
                         }
                         NamedKey::Other(k) if k == "c" => {
                             // Copy
-                            if let Some((start, end)) = self.cursor.selection_range() {
-                                let selected = self.controller.get_range(start, end);
+                            if let Some((start, end)) = self
+                                .cursor
+                                .selection_range()
+                            {
+                                let selected = self
+                                    .controller
+                                    .get_range(start, end);
                                 clipboard_write(&selected);
                             }
                             true
                         }
                         NamedKey::Other(k) if k == "x" && !self.read_only => {
                             // Cut
-                            if let Some((start, end)) = self.cursor.selection_range() {
-                                let selected = self.controller.delete_range(start, end);
+                            if let Some((start, end)) = self
+                                .cursor
+                                .selection_range()
+                            {
+                                let selected = self
+                                    .controller
+                                    .delete_range(start, end);
                                 clipboard_write(&selected);
-                                self.cursor.set_offset(start);
-                                self.cursor.clear_selection();
-                                self.on_changed.call(self.controller.text());
+                                self.cursor
+                                    .set_offset(start);
+                                self.cursor
+                                    .clear_selection();
+                                self.on_changed
+                                    .call(
+                                        self.controller
+                                            .text(),
+                                    );
                             }
                             true
                         }
@@ -940,103 +1160,203 @@ impl EventElement for RawTextField {
                             // Paste
                             if let Some(text) = clipboard_read() {
                                 // Delete selection first if any
-                                if let Some((start, end)) = self.cursor.selection_range() {
-                                    self.controller.delete_range(start, end);
-                                    self.cursor.set_offset(start);
-                                    self.cursor.clear_selection();
+                                if let Some((start, end)) = self
+                                    .cursor
+                                    .selection_range()
+                                {
+                                    self.controller
+                                        .delete_range(start, end);
+                                    self.cursor
+                                        .set_offset(start);
+                                    self.cursor
+                                        .clear_selection();
                                 }
-                                let offset = self.cursor.offset();
-                                let char_count = text.chars().count();
-                                self.controller.insert_str(&text, offset);
-                                self.cursor.set_offset(offset + char_count);
-                                self.on_changed.call(self.controller.text());
+                                let offset = self
+                                    .cursor
+                                    .offset();
+                                let char_count = text
+                                    .chars()
+                                    .count();
+                                self.controller
+                                    .insert_str(&text, offset);
+                                self.cursor
+                                    .set_offset(offset + char_count);
+                                self.on_changed
+                                    .call(
+                                        self.controller
+                                            .text(),
+                                    );
                             }
                             true
                         }
                         NamedKey::Other(k) if k == "z" && !modifiers.shift && !self.read_only => {
                             // Undo
-                            if self.controller.undo() {
-                                let len = self.controller.char_count();
-                                let off = self.cursor.offset();
+                            if self
+                                .controller
+                                .undo()
+                            {
+                                let len = self
+                                    .controller
+                                    .char_count();
+                                let off = self
+                                    .cursor
+                                    .offset();
                                 if off > len {
-                                    self.cursor.set_offset(len);
+                                    self.cursor
+                                        .set_offset(len);
                                 }
-                                self.on_changed.call(self.controller.text());
+                                self.on_changed
+                                    .call(
+                                        self.controller
+                                            .text(),
+                                    );
                             }
                             true
                         }
                         NamedKey::Other(k) if k == "z" && modifiers.shift && !self.read_only => {
                             // Redo (Ctrl+Shift+Z)
-                            if self.controller.redo() {
-                                let len = self.controller.char_count();
-                                let off = self.cursor.offset();
+                            if self
+                                .controller
+                                .redo()
+                            {
+                                let len = self
+                                    .controller
+                                    .char_count();
+                                let off = self
+                                    .cursor
+                                    .offset();
                                 if off > len {
-                                    self.cursor.set_offset(len);
+                                    self.cursor
+                                        .set_offset(len);
                                 }
-                                self.on_changed.call(self.controller.text());
+                                self.on_changed
+                                    .call(
+                                        self.controller
+                                            .text(),
+                                    );
                             }
                             true
                         }
                         NamedKey::Other(k) if k == "y" && !self.read_only => {
                             // Redo (Ctrl+Y — Windows convention)
-                            if self.controller.redo() {
-                                let len = self.controller.char_count();
-                                let off = self.cursor.offset();
+                            if self
+                                .controller
+                                .redo()
+                            {
+                                let len = self
+                                    .controller
+                                    .char_count();
+                                let off = self
+                                    .cursor
+                                    .offset();
                                 if off > len {
-                                    self.cursor.set_offset(len);
+                                    self.cursor
+                                        .set_offset(len);
                                 }
-                                self.on_changed.call(self.controller.text());
+                                self.on_changed
+                                    .call(
+                                        self.controller
+                                            .text(),
+                                    );
                             }
                             true
                         }
                         NamedKey::Enter => {
                             // Ctrl+Enter / Cmd+Enter: submit even in multi-line mode
-                            self.cursor.clear_selection();
-                            self.on_submitted.call(self.controller.text());
+                            self.cursor
+                                .clear_selection();
+                            self.on_submitted
+                                .call(
+                                    self.controller
+                                        .text(),
+                                );
                             true
                         }
                         _ => false,
                     };
                     if result {
-                        self.cursor.reset_blink();
+                        self.cursor
+                            .reset_blink();
                         return true;
                     }
                 }
 
                 let result = match key {
                     NamedKey::Backspace if !self.read_only => {
-                        if let Some((start, end)) = self.cursor.selection_range() {
-                            self.controller.delete_range(start, end);
-                            self.cursor.set_offset(start);
-                            self.cursor.clear_selection();
-                            self.on_changed.call(self.controller.text());
+                        if let Some((start, end)) = self
+                            .cursor
+                            .selection_range()
+                        {
+                            self.controller
+                                .delete_range(start, end);
+                            self.cursor
+                                .set_offset(start);
+                            self.cursor
+                                .clear_selection();
+                            self.on_changed
+                                .call(
+                                    self.controller
+                                        .text(),
+                                );
                         } else {
-                            let offset = self.cursor.offset();
+                            let offset = self
+                                .cursor
+                                .offset();
                             if offset > 0 {
-                                self.controller.delete_char(offset - 1);
-                                self.cursor.set_offset(offset - 1);
-                                self.on_changed.call(self.controller.text());
+                                self.controller
+                                    .delete_char(offset - 1);
+                                self.cursor
+                                    .set_offset(offset - 1);
+                                self.on_changed
+                                    .call(
+                                        self.controller
+                                            .text(),
+                                    );
                             }
                         }
                         true
                     }
                     NamedKey::Delete if !self.read_only => {
-                        if let Some((start, end)) = self.cursor.selection_range() {
-                            self.controller.delete_range(start, end);
-                            self.cursor.set_offset(start);
-                            self.cursor.clear_selection();
-                            self.on_changed.call(self.controller.text());
+                        if let Some((start, end)) = self
+                            .cursor
+                            .selection_range()
+                        {
+                            self.controller
+                                .delete_range(start, end);
+                            self.cursor
+                                .set_offset(start);
+                            self.cursor
+                                .clear_selection();
+                            self.on_changed
+                                .call(
+                                    self.controller
+                                        .text(),
+                                );
                         } else {
-                            let offset = self.cursor.offset();
-                            if offset < self.controller.char_count() {
-                                self.controller.delete_char(offset);
-                                self.on_changed.call(self.controller.text());
+                            let offset = self
+                                .cursor
+                                .offset();
+                            if offset
+                                < self
+                                    .controller
+                                    .char_count()
+                            {
+                                self.controller
+                                    .delete_char(offset);
+                                self.on_changed
+                                    .call(
+                                        self.controller
+                                            .text(),
+                                    );
                             }
                         }
                         true
                     }
                     NamedKey::Enter
-                        if !self.read_only && self.max_lines.is_some_and(|max| max > 1) =>
+                        if !self.read_only
+                            && self
+                                .max_lines
+                                .is_some_and(|max| max > 1) =>
                     {
                         // Multi-line mode: Enter inserts newline
                         if let Some(max) = self.max_lines
@@ -1045,68 +1365,123 @@ impl EventElement for RawTextField {
                             return true;
                         }
                         // Delete selection first
-                        if let Some((start, end)) = self.cursor.selection_range() {
-                            self.controller.delete_range(start, end);
-                            self.cursor.set_offset(start);
-                            self.cursor.clear_selection();
+                        if let Some((start, end)) = self
+                            .cursor
+                            .selection_range()
+                        {
+                            self.controller
+                                .delete_range(start, end);
+                            self.cursor
+                                .set_offset(start);
+                            self.cursor
+                                .clear_selection();
                         }
-                        let offset = self.cursor.offset();
+                        let offset = self
+                            .cursor
+                            .offset();
                         unsafe {
-                            self.controller.insert_char('\n', offset);
+                            self.controller
+                                .insert_char('\n', offset);
                         }
-                        self.cursor.set_offset(offset + 1);
-                        self.on_changed.call(self.controller.text());
+                        self.cursor
+                            .set_offset(offset + 1);
+                        self.on_changed
+                            .call(
+                                self.controller
+                                    .text(),
+                            );
                         true
                     }
                     NamedKey::Enter => {
                         // Single-line mode (or Ctrl+Enter in multi-line): submit
-                        self.cursor.clear_selection();
-                        self.on_submitted.call(self.controller.text());
+                        self.cursor
+                            .clear_selection();
+                        self.on_submitted
+                            .call(
+                                self.controller
+                                    .text(),
+                            );
                         true
                     }
                     NamedKey::ArrowLeft => {
-                        let offset = self.cursor.offset();
+                        let offset = self
+                            .cursor
+                            .offset();
                         if modifiers.shift {
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
+                            if self
+                                .cursor
+                                .selection_anchor()
+                                .is_none()
+                            {
+                                self.cursor
+                                    .set_selection_anchor(Some(offset));
                             }
                             if offset > 0 {
-                                self.cursor.set_offset(offset - 1);
+                                self.cursor
+                                    .set_offset(offset - 1);
                             }
                         } else {
-                            if let Some((start, _end)) = self.cursor.selection_range() {
-                                self.cursor.set_offset(start);
+                            if let Some((start, _end)) = self
+                                .cursor
+                                .selection_range()
+                            {
+                                self.cursor
+                                    .set_offset(start);
                             } else if offset > 0 {
-                                self.cursor.set_offset(offset - 1);
+                                self.cursor
+                                    .set_offset(offset - 1);
                             }
-                            self.cursor.clear_selection();
+                            self.cursor
+                                .clear_selection();
                         }
                         true
                     }
                     NamedKey::ArrowRight => {
-                        let offset = self.cursor.offset();
-                        let len = self.controller.char_count();
+                        let offset = self
+                            .cursor
+                            .offset();
+                        let len = self
+                            .controller
+                            .char_count();
                         if modifiers.shift {
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
+                            if self
+                                .cursor
+                                .selection_anchor()
+                                .is_none()
+                            {
+                                self.cursor
+                                    .set_selection_anchor(Some(offset));
                             }
                             if offset < len {
-                                self.cursor.set_offset(offset + 1);
+                                self.cursor
+                                    .set_offset(offset + 1);
                             }
                         } else {
-                            if let Some((_start, end)) = self.cursor.selection_range() {
-                                self.cursor.set_offset(end);
+                            if let Some((_start, end)) = self
+                                .cursor
+                                .selection_range()
+                            {
+                                self.cursor
+                                    .set_offset(end);
                             } else if offset < len {
-                                self.cursor.set_offset(offset + 1);
+                                self.cursor
+                                    .set_offset(offset + 1);
                             }
-                            self.cursor.clear_selection();
+                            self.cursor
+                                .clear_selection();
                         }
                         true
                     }
                     NamedKey::ArrowUp => {
-                        let text = self.controller.text();
-                        let offset = self.cursor.offset();
-                        let chars: Vec<char> = text.chars().collect();
+                        let text = self
+                            .controller
+                            .text();
+                        let offset = self
+                            .cursor
+                            .offset();
+                        let chars: Vec<char> = text
+                            .chars()
+                            .collect();
                         // Find start of current line
                         let line_start = chars[..offset]
                             .iter()
@@ -1127,19 +1502,32 @@ impl EventElement for RawTextField {
                         let prev_line_len = prev_line_end - prev_line_start;
                         let new_offset = prev_line_start + col.min(prev_line_len);
                         if modifiers.shift {
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
+                            if self
+                                .cursor
+                                .selection_anchor()
+                                .is_none()
+                            {
+                                self.cursor
+                                    .set_selection_anchor(Some(offset));
                             }
                         } else {
-                            self.cursor.clear_selection();
+                            self.cursor
+                                .clear_selection();
                         }
-                        self.cursor.set_offset(new_offset);
+                        self.cursor
+                            .set_offset(new_offset);
                         true
                     }
                     NamedKey::ArrowDown => {
-                        let text = self.controller.text();
-                        let offset = self.cursor.offset();
-                        let chars: Vec<char> = text.chars().collect();
+                        let text = self
+                            .controller
+                            .text();
+                        let offset = self
+                            .cursor
+                            .offset();
+                        let chars: Vec<char> = text
+                            .chars()
+                            .collect();
                         // Find end of current line
                         let line_end = chars[offset..]
                             .iter()
@@ -1165,43 +1553,76 @@ impl EventElement for RawTextField {
                         let next_line_len = next_line_end - next_line_start;
                         let new_offset = next_line_start + col.min(next_line_len);
                         if modifiers.shift {
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
+                            if self
+                                .cursor
+                                .selection_anchor()
+                                .is_none()
+                            {
+                                self.cursor
+                                    .set_selection_anchor(Some(offset));
                             }
                         } else {
-                            self.cursor.clear_selection();
+                            self.cursor
+                                .clear_selection();
                         }
-                        self.cursor.set_offset(new_offset);
+                        self.cursor
+                            .set_offset(new_offset);
                         true
                     }
                     NamedKey::Home => {
                         if modifiers.shift {
-                            let offset = self.cursor.offset();
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
+                            let offset = self
+                                .cursor
+                                .offset();
+                            if self
+                                .cursor
+                                .selection_anchor()
+                                .is_none()
+                            {
+                                self.cursor
+                                    .set_selection_anchor(Some(offset));
                             }
                         } else {
-                            self.cursor.clear_selection();
+                            self.cursor
+                                .clear_selection();
                         }
-                        self.cursor.set_offset(0);
+                        self.cursor
+                            .set_offset(0);
                         true
                     }
                     NamedKey::End => {
                         if modifiers.shift {
-                            let offset = self.cursor.offset();
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
+                            let offset = self
+                                .cursor
+                                .offset();
+                            if self
+                                .cursor
+                                .selection_anchor()
+                                .is_none()
+                            {
+                                self.cursor
+                                    .set_selection_anchor(Some(offset));
                             }
                         } else {
-                            self.cursor.clear_selection();
+                            self.cursor
+                                .clear_selection();
                         }
-                        self.cursor.set_offset(self.controller.char_count());
+                        self.cursor
+                            .set_offset(
+                                self.controller
+                                    .char_count(),
+                            );
                         true
                     }
                     NamedKey::Escape => {
-                        self.cursor.clear_selection();
+                        self.cursor
+                            .clear_selection();
                         self.set_focused(false);
-                        self.on_blur.call(self.controller.text());
+                        self.on_blur
+                            .call(
+                                self.controller
+                                    .text(),
+                            );
                         #[cfg(target_os = "ios")]
                         ios_keyboard::dismiss_keyboard();
                         #[cfg(target_os = "android")]
@@ -1211,15 +1632,22 @@ impl EventElement for RawTextField {
                     _ => false,
                 };
                 if result {
-                    self.cursor.reset_blink();
+                    self.cursor
+                        .reset_blink();
                 }
                 result
             }
             ElementEvent::PointerMove(pos, _, _) => {
-                let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
+                let is_inside = self
+                    .cached_bounds
+                    .is_inside(pos.x, pos.y);
                 let was_hovered = self.is_hovered();
                 if let Some(w) = get_window() {
-                    if is_inside || self.mouse_held.get() {
+                    if is_inside
+                        || self
+                            .mouse_held
+                            .get()
+                    {
                         w.set_cursor(winit::window::CursorIcon::Text);
                     } else {
                         w.set_cursor(winit::window::CursorIcon::Default);
@@ -1228,31 +1656,45 @@ impl EventElement for RawTextField {
                 self.set_hovered(is_inside);
 
                 // Drag-to-select: when mouse is held, defer position resolution to draw()
-                if self.mouse_held.get() {
-                    self.pending_click.set(Some(*pos));
+                if self
+                    .mouse_held
+                    .get()
+                {
+                    self.pending_click
+                        .set(Some(*pos));
                     return true;
                 }
 
                 was_hovered != is_inside
             }
             ElementEvent::PointerUp(_pos, _, _) => {
-                self.mouse_held.set(false);
+                self.mouse_held
+                    .set(false);
                 false
             }
             ElementEvent::ImePreedit { text, cursor } => {
                 if !self.is_focused() {
                     return false;
                 }
-                self.preedit_text.set(text.clone());
-                self.preedit_cursor.set(*cursor);
+                self.preedit_text
+                    .set(text.clone());
+                self.preedit_cursor
+                    .set(*cursor);
                 true
             }
             ElementEvent::Cancel => {
                 self.set_focused(false);
-                self.mouse_held.set(false);
-                self.on_blur.call(self.controller.text());
-                self.preedit_text.set(String::new());
-                self.preedit_cursor.set(None);
+                self.mouse_held
+                    .set(false);
+                self.on_blur
+                    .call(
+                        self.controller
+                            .text(),
+                    );
+                self.preedit_text
+                    .set(String::new());
+                self.preedit_cursor
+                    .set(None);
                 #[cfg(target_os = "ios")]
                 ios_keyboard::dismiss_keyboard();
                 #[cfg(target_os = "android")]
@@ -1275,22 +1717,27 @@ impl LayoutElement for RawTextField {
 
 impl Drawable for RawTextField {
     fn draw(&self, ctx: &BuildContext) {
-        ctx.canvas.save();
+        ctx.canvas
+            .save();
 
         let (box_width, box_height) = self.compute_dimensions(ctx);
         let scale = ctx.scale;
 
         // Translate inward by outline strokes so the outline has room to draw
         let (ol, ot, _or, _ob) = self.outline_strokes(box_width, box_height, scale);
-        ctx.canvas.translate((ol, ot).into());
+        ctx.canvas
+            .translate((ol, ot).into());
 
         // Cache absolute bounds for hit-testing
         let (abs_x, abs_y) = {
-            let (tx, ty) = ctx.canvas.get_transform_translation();
+            let (tx, ty) = ctx
+                .canvas
+                .get_transform_translation();
             (tx, ty)
         };
 
-        self.cached_bounds.save(scale, abs_x, abs_y, box_width, box_height);
+        self.cached_bounds
+            .save(scale, abs_x, abs_y, box_width, box_height);
 
         // --- Resolve active decoration ---
         let decoration = self.active_decoration();
@@ -1299,82 +1746,135 @@ impl Drawable for RawTextField {
         decoration.draw(ctx);
 
         // --- Padding ---
-        let pad_top = self.padding.top.value(box_height, scale);
-        let pad_bottom = self.padding.bottom.value(box_height, scale);
-        let pad_left = self.padding.left.value(box_width, scale);
-        let pad_right = self.padding.right.value(box_width, scale);
+        let pad_top = self
+            .padding
+            .top
+            .value(box_height, scale);
+        let pad_bottom = self
+            .padding
+            .bottom
+            .value(box_height, scale);
+        let pad_left = self
+            .padding
+            .left
+            .value(box_width, scale);
+        let pad_right = self
+            .padding
+            .right
+            .value(box_width, scale);
 
-        ctx.canvas.save();
-        let radii = decoration.border_radius.resolve(box_width, box_height, scale);
+        ctx.canvas
+            .save();
+        let radii = decoration
+            .border_radius
+            .resolve(box_width, box_height, scale);
         let clip_radii = [
             if radii[0] > 0.0 {
-                (radii[0] - pad_left.max(pad_top).min(radii[0])).max(0.0)
+                (radii[0]
+                    - pad_left
+                        .max(pad_top)
+                        .min(radii[0]))
+                .max(0.0)
             } else {
                 0.0
             },
             if radii[1] > 0.0 {
-                (radii[1] - pad_right.max(pad_top).min(radii[1])).max(0.0)
+                (radii[1]
+                    - pad_right
+                        .max(pad_top)
+                        .min(radii[1]))
+                .max(0.0)
             } else {
                 0.0
             },
             if radii[2] > 0.0 {
-                (radii[2] - pad_right.max(pad_bottom).min(radii[2])).max(0.0)
+                (radii[2]
+                    - pad_right
+                        .max(pad_bottom)
+                        .min(radii[2]))
+                .max(0.0)
             } else {
                 0.0
             },
             if radii[3] > 0.0 {
-                (radii[3] - pad_left.max(pad_bottom).min(radii[3])).max(0.0)
+                (radii[3]
+                    - pad_left
+                        .max(pad_bottom)
+                        .min(radii[3]))
+                .max(0.0)
             } else {
                 0.0
             },
         ];
-        ctx.canvas.set_clip_rounded(
-            (pad_left, pad_top).into(),
-            ResolvedSize {
-                width: (box_width - pad_left - pad_right).max(0.0),
-                height: (box_height - pad_top - pad_bottom).max(0.0),
-            },
-            clip_radii,
-        );
-        ctx.canvas.translate((pad_left, pad_top).into());
+        ctx.canvas
+            .set_clip_rounded(
+                (pad_left, pad_top).into(),
+                ResolvedSize {
+                    width: (box_width - pad_left - pad_right).max(0.0),
+                    height: (box_height - pad_top - pad_bottom).max(0.0),
+                },
+                clip_radii,
+            );
+        ctx.canvas
+            .translate((pad_left, pad_top).into());
 
         let content_height = (box_height - pad_top - pad_bottom).max(0.0);
         let content_width = (box_width - pad_left - pad_right).max(0.0);
 
-        let text = self.controller.text();
+        let text = self
+            .controller
+            .text();
         let is_empty = text.is_empty();
 
         let font_size = self.scaled_font_size(&self.text_style, scale);
 
         // --- Process pending click (deferred from on_event for canvas access) ---
-        if let Some(click_pos) = self.pending_click.take() {
+        if let Some(click_pos) = self
+            .pending_click
+            .take()
+        {
             let display_for_measure = if is_empty {
                 String::new()
             } else {
                 match self.input_type {
-                    InputType::Obscure => "\u{2022}".repeat(self.controller.char_count()),
+                    InputType::Obscure => "\u{2022}".repeat(
+                        self.controller
+                            .char_count(),
+                    ),
                     _ => text.to_string(),
                 }
             };
-            let text_width = ctx.canvas.measure_text(&display_for_measure, font_size);
+            let text_width = ctx
+                .canvas
+                .measure_text(&display_for_measure, font_size);
             let text_x = self.align_x(text_width, content_width);
 
             // click_pos is in logical (unscaled) coords; abs_x/pad_left/text_x
             // are in canvas (scaled) coords. Multiply by scale to align them.
             let click_canvas_x = click_pos.x * scale;
-            let rel_x = click_canvas_x - abs_x - pad_left - text_x + self.scroll_x.get();
+            let rel_x = click_canvas_x - abs_x - pad_left - text_x
+                + self
+                    .scroll_x
+                    .get();
 
             use unicode_segmentation::UnicodeSegmentation;
             let graphemes: Vec<&str> = if display_for_measure.is_empty() {
                 vec![]
             } else {
-                display_for_measure.graphemes(true).collect()
+                display_for_measure
+                    .graphemes(true)
+                    .collect()
             };
             let mut click_offset = graphemes.len(); // default: past end
             if !graphemes.is_empty() {
                 let mut acc_width = 0.0f32;
-                for (i, g) in graphemes.iter().enumerate() {
-                    let g_width = ctx.canvas.measure_text(g, font_size);
+                for (i, g) in graphemes
+                    .iter()
+                    .enumerate()
+                {
+                    let g_width = ctx
+                        .canvas
+                        .measure_text(g, font_size);
                     if rel_x <= acc_width + g_width / 2.0 {
                         click_offset = i;
                         break;
@@ -1384,23 +1884,36 @@ impl Drawable for RawTextField {
             }
 
             // Apply double/triple-click selection
-            let click_count = self.click_count.get();
+            let click_count = self
+                .click_count
+                .get();
             match click_count {
                 2 => self.select_word_at(click_offset),
                 3 => {
                     self.select_line_at(click_offset);
-                    self.click_count.set(0);
+                    self.click_count
+                        .set(0);
                 }
                 _ => {
                     // For drag-to-select: set anchor to the click position (not the old cursor)
                     // so the selection extends from the click point to the drag destination.
-                    if self.mouse_held.get() && self.cursor.selection_anchor().is_none() {
-                        self.cursor.set_selection_anchor(Some(click_offset));
+                    if self
+                        .mouse_held
+                        .get()
+                        && self
+                            .cursor
+                            .selection_anchor()
+                            .is_none()
+                    {
+                        self.cursor
+                            .set_selection_anchor(Some(click_offset));
                     }
-                    self.cursor.set_offset(click_offset);
+                    self.cursor
+                        .set_offset(click_offset);
                 }
             }
-            self.cursor.reset_blink();
+            self.cursor
+                .reset_blink();
         }
 
         // Context with parent_size set to the padded content area
@@ -1409,36 +1922,53 @@ impl Drawable for RawTextField {
 
         if is_empty {
             // --- Draw prompt (visible when field is empty) ---
-            if !self.prompt.is_empty() {
+            if !self
+                .prompt
+                .is_empty()
+            {
                 let prompt_widget =
                     self.build_text_widget(&self.prompt, &self.prompt_style, self.text_align);
                 prompt_widget.draw(&content_ctx);
-            } else if !self.hint.is_empty() {
+            } else if !self
+                .hint
+                .is_empty()
+            {
                 let hint_widget =
                     self.build_text_widget(&self.hint, &self.hint_style, self.text_align);
                 hint_widget.draw(&content_ctx);
             }
 
             // --- Draw cursor when field is empty but focused ---
-            if self.is_focused() && self.cursor.is_visible() {
+            if self.is_focused()
+                && self
+                    .cursor
+                    .is_visible()
+            {
                 let cursor_x = self.align_x(0.0, content_width);
                 let cursor_top = content_height * 0.15;
                 let cursor_bottom = content_height * 0.85;
                 let cursor_height = cursor_bottom - cursor_top;
-                let cursor_color: Color = self.cursor.color.into();
+                let cursor_color: Color = self
+                    .cursor
+                    .color
+                    .into();
                 let stroke_w = 1.5 * scale;
 
-                ctx.canvas.fill_color_rect(
-                    (cursor_x, cursor_top).into(),
-                    ResolvedSize { width: stroke_w, height: cursor_height },
-                    cursor_color,
-                    [0.0; 4],
-                );
+                ctx.canvas
+                    .fill_color_rect(
+                        (cursor_x, cursor_top).into(),
+                        ResolvedSize { width: stroke_w, height: cursor_height },
+                        cursor_color,
+                        [0.0; 4],
+                    );
             }
         } else {
             // --- Draw text ---
             let display = match self.input_type {
-                InputType::Obscure => "\u{2022}".repeat(self.controller.char_count()),
+                InputType::Obscure => "\u{2022}".repeat(
+                    self.controller
+                        .char_count(),
+                ),
                 _ => text.to_string(),
             };
 
@@ -1446,11 +1976,15 @@ impl Drawable for RawTextField {
 
             if is_multiline {
                 // --- Multi-line rendering ---
-                let lines: Vec<&str> = display.split('\n').collect();
+                let lines: Vec<&str> = display
+                    .split('\n')
+                    .collect();
                 // Use real font vertical metrics (ascent + descent + line_gap)
                 // instead of an approximate multiplier. The hardcoded 1.4× could
                 // clip descenders when the actual line height exceeds it.
-                let line_metrics = ctx.canvas.measure_text_metrics("", font_size, 0.0);
+                let line_metrics = ctx
+                    .canvas
+                    .measure_text_metrics("", font_size, 0.0);
                 let line_height = line_metrics.line_height;
                 let total_text_height = lines.len() as f32 * line_height;
                 let base_y = match self.text_align {
@@ -1466,15 +2000,25 @@ impl Drawable for RawTextField {
                 // Track grapheme offset for selection/cursor across lines
                 let mut grapheme_offset = 0usize;
 
-                for (line_idx, line) in lines.iter().enumerate() {
+                for (line_idx, line) in lines
+                    .iter()
+                    .enumerate()
+                {
                     let line_y = base_y + line_idx as f32 * line_height;
-                    let line_graphemes: usize = line.chars().count();
+                    let line_graphemes: usize = line
+                        .chars()
+                        .count();
 
-                    let line_width = ctx.canvas.measure_text(line, font_size);
+                    let line_width = ctx
+                        .canvas
+                        .measure_text(line, font_size);
                     let line_x = self.align_x(line_width, content_width);
 
                     // Draw selection highlight for this line
-                    if let Some((sel_start, sel_end)) = self.cursor.selection_range() {
+                    if let Some((sel_start, sel_end)) = self
+                        .cursor
+                        .selection_range()
+                    {
                         let line_start = grapheme_offset;
                         let line_end = grapheme_offset + line_graphemes;
 
@@ -1496,29 +2040,39 @@ impl Drawable for RawTextField {
                                     font_size,
                                 );
 
-                            ctx.canvas.fill_color_rect(
-                                (hl_x, line_y).into(),
-                                ResolvedSize { width: hl_end_x - hl_x, height: line_height },
-                                self.selection_color,
-                                [0.0; 4],
-                            );
+                            ctx.canvas
+                                .fill_color_rect(
+                                    (hl_x, line_y).into(),
+                                    ResolvedSize { width: hl_end_x - hl_x, height: line_height },
+                                    self.selection_color,
+                                    [0.0; 4],
+                                );
                         }
                     }
 
                     // Draw line text
-                    ctx.canvas.save();
-                    ctx.canvas.translate((0.0, line_y).into());
+                    ctx.canvas
+                        .save();
+                    ctx.canvas
+                        .translate((0.0, line_y).into());
                     let mut line_ctx = content_ctx.clone();
                     line_ctx.parent_size =
                         ResolvedSize { width: content_width, height: line_height };
                     let line_widget =
                         self.build_text_widget(line, &self.text_style, self.text_align);
                     line_widget.draw(&line_ctx);
-                    ctx.canvas.restore();
+                    ctx.canvas
+                        .restore();
 
                     // Draw cursor if on this line
-                    if self.is_focused() && self.cursor.is_visible() {
-                        let cursor_off = self.cursor.offset();
+                    if self.is_focused()
+                        && self
+                            .cursor
+                            .is_visible()
+                    {
+                        let cursor_off = self
+                            .cursor
+                            .offset();
                         if cursor_off >= grapheme_offset
                             && cursor_off <= grapheme_offset + line_graphemes
                         {
@@ -1532,18 +2086,22 @@ impl Drawable for RawTextField {
                                 );
                             let cursor_top = line_y + line_height * 0.15;
                             let cursor_bottom = line_y + line_height * 0.85;
-                            let cursor_color: Color = self.cursor.color.into();
+                            let cursor_color: Color = self
+                                .cursor
+                                .color
+                                .into();
                             let stroke_w = 1.5 * scale;
 
-                            ctx.canvas.fill_color_rect(
-                                (cursor_x, cursor_top).into(),
-                                ResolvedSize {
-                                    width: stroke_w,
-                                    height: cursor_bottom - cursor_top,
-                                },
-                                cursor_color,
-                                [0.0; 4],
-                            );
+                            ctx.canvas
+                                .fill_color_rect(
+                                    (cursor_x, cursor_top).into(),
+                                    ResolvedSize {
+                                        width: stroke_w,
+                                        height: cursor_bottom - cursor_top,
+                                    },
+                                    cursor_color,
+                                    [0.0; 4],
+                                );
                         }
                     }
 
@@ -1555,24 +2113,33 @@ impl Drawable for RawTextField {
                 }
             } else {
                 // --- Single-line rendering (with horizontal scroll) ---
-                let text_width = ctx.canvas.measure_text(&display, font_size);
+                let text_width = ctx
+                    .canvas
+                    .measure_text(&display, font_size);
                 let text_x = self.align_x(text_width, content_width);
 
                 // Ensure cursor is visible
                 self.ensure_cursor_visible(content_width, &ctx.canvas, font_size);
-                let scroll = self.scroll_x.get();
+                let scroll = self
+                    .scroll_x
+                    .get();
 
                 // Draw text — RawTextWidget handles alignment via text_align + parent_size.
                 // Apply scroll by translating the canvas so the visible portion aligns.
-                ctx.canvas.save();
-                ctx.canvas.translate((-scroll, 0.0).into());
+                ctx.canvas
+                    .save();
+                ctx.canvas
+                    .translate((-scroll, 0.0).into());
                 let text_widget =
                     self.build_text_widget(&display, &self.text_style, self.text_align);
                 text_widget.draw(&content_ctx);
-                ctx.canvas.restore();
+                ctx.canvas
+                    .restore();
 
                 // --- Draw selection highlight ---
-                if let Some((sel_start, sel_end)) = self.cursor.selection_range()
+                if let Some((sel_start, sel_end)) = self
+                    .cursor
+                    .selection_range()
                     && sel_start != sel_end
                 {
                     let highlight_x = text_x - scroll
@@ -1581,76 +2148,109 @@ impl Drawable for RawTextField {
                         + self.text_width_to_offset(&display, sel_end, &ctx.canvas, font_size);
                     let highlight_width = highlight_end_x - highlight_x;
 
-                    ctx.canvas.fill_color_rect(
-                        (highlight_x, 0.0).into(),
-                        ResolvedSize { width: highlight_width, height: content_height },
-                        self.selection_color,
-                        [0.0; 4],
-                    );
+                    ctx.canvas
+                        .fill_color_rect(
+                            (highlight_x, 0.0).into(),
+                            ResolvedSize { width: highlight_width, height: content_height },
+                            self.selection_color,
+                            [0.0; 4],
+                        );
                 }
 
                 // --- Draw cursor ---
-                if self.is_focused() && self.cursor.is_visible() {
+                if self.is_focused()
+                    && self
+                        .cursor
+                        .is_visible()
+                {
                     let cursor_x =
                         text_x - scroll + self.cursor_x_offset_canvas(&ctx.canvas, font_size);
                     let cursor_top = content_height * 0.15;
                     let cursor_bottom = content_height * 0.85;
                     let cursor_height = cursor_bottom - cursor_top;
-                    let cursor_color: Color = self.cursor.color.into();
+                    let cursor_color: Color = self
+                        .cursor
+                        .color
+                        .into();
                     let stroke_w = 1.5 * scale;
 
-                    ctx.canvas.fill_color_rect(
-                        (cursor_x, cursor_top).into(),
-                        ResolvedSize { width: stroke_w, height: cursor_height },
-                        cursor_color,
-                        [0.0; 4],
-                    );
+                    ctx.canvas
+                        .fill_color_rect(
+                            (cursor_x, cursor_top).into(),
+                            ResolvedSize { width: stroke_w, height: cursor_height },
+                            cursor_color,
+                            [0.0; 4],
+                        );
                 }
 
                 // --- Draw IME preedit text ---
-                let preedit = self.preedit_text.take();
+                let preedit = self
+                    .preedit_text
+                    .take();
                 if !preedit.is_empty() && self.is_focused() {
-                    self.preedit_text.set(preedit.clone());
+                    self.preedit_text
+                        .set(preedit.clone());
                     let cursor_x =
                         text_x - scroll + self.cursor_x_offset_canvas(&ctx.canvas, font_size);
-                    let preedit_width = ctx.canvas.measure_text(&preedit, font_size);
+                    let preedit_width = ctx
+                        .canvas
+                        .measure_text(&preedit, font_size);
 
                     // Draw preedit text at cursor position
-                    ctx.canvas.save();
-                    ctx.canvas.translate((cursor_x, 0.0).into());
+                    ctx.canvas
+                        .save();
+                    ctx.canvas
+                        .translate((cursor_x, 0.0).into());
                     let mut preedit_ctx = content_ctx.clone();
                     preedit_ctx.parent_size =
                         ResolvedSize { width: preedit_width, height: content_height };
                     let preedit_widget =
                         self.build_text_widget(&preedit, &self.text_style, self.text_align);
                     preedit_widget.draw(&preedit_ctx);
-                    ctx.canvas.restore();
+                    ctx.canvas
+                        .restore();
 
                     // Draw underline under preedit text
                     let underline_y = content_height * 0.85;
-                    let cursor_color: Color = self.cursor.color.into();
-                    ctx.canvas.fill_color_rect(
-                        (cursor_x, underline_y).into(),
-                        ResolvedSize { width: preedit_width, height: 1.0 * scale },
-                        cursor_color,
-                        [0.0; 4],
-                    );
+                    let cursor_color: Color = self
+                        .cursor
+                        .color
+                        .into();
+                    ctx.canvas
+                        .fill_color_rect(
+                            (cursor_x, underline_y).into(),
+                            ResolvedSize { width: preedit_width, height: 1.0 * scale },
+                            cursor_color,
+                            [0.0; 4],
+                        );
                 }
             }
         }
 
-        ctx.canvas.clear_clip();
-        ctx.canvas.restore(); // clip + translate
-        ctx.canvas.restore(); // outer save
+        ctx.canvas
+            .clear_clip();
+        ctx.canvas
+            .restore(); // clip + translate
+        ctx.canvas
+            .restore(); // outer save
 
         // Drive cursor blink: only schedule a new frame when the blink actually
         // toggled (~500ms interval) instead of every frame (~16ms). This reduces
         // focused rendering from ~60fps to ~2fps.
         if self.is_focused() {
-            let toggled = self.cursor.update_blink();
-            if toggled || !self.blink_scheduled.get() {
-                self.blink_scheduled.set(true);
-                let rate = self.cursor.blink_rate_ms;
+            let toggled = self
+                .cursor
+                .update_blink();
+            if toggled
+                || !self
+                    .blink_scheduled
+                    .get()
+            {
+                self.blink_scheduled
+                    .set(true);
+                let rate = self
+                    .cursor
+                    .blink_rate_ms;
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(rate));
                     aimer_events::window::request_animation_frame();

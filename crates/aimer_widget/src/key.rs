@@ -30,8 +30,9 @@ pub enum Key {
     /// are equal only if they originate from the same [`Key::unique()`] call.
     Object(usize),
 
-    /// Compile-time-based key. Matched by pointer/identity, not by value. use the `key!`
-    /// macro to generate a key that can keep the state across the builds
+    /// Compile-time-based key. Matched by pointer/identity, not by value. use
+    /// the `key!` macro to generate a key that can keep the state across
+    /// the builds
     Static(&'static str),
 }
 
@@ -62,8 +63,9 @@ impl Key {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use aimer_macro::key;
+
+    use super::*;
     #[test]
     fn test_unique() {
         let key1 = Key::unique();

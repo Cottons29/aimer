@@ -1,14 +1,16 @@
-use crate::input_field::controller::TextFieldController;
-use crate::input_field::raw_fields::{
-    Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback,
-};
+use std::cell::Cell;
+use std::sync::Arc;
+
 use aimer_animation::AnimInstant;
 use aimer_attribute::CacheBounds;
 use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{Element, Widget};
-use std::cell::Cell;
-use std::sync::Arc;
+
+use crate::input_field::controller::TextFieldController;
+use crate::input_field::raw_fields::{
+    Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback,
+};
 
 #[allow(dead_code)]
 ///
@@ -18,65 +20,78 @@ use std::sync::Arc;
 ///
 /// # Fields
 ///
-/// * `controller` - The `TextFieldController` instance to control the `TextField` widget.
-///   Defaults to the `TextFieldController` implementation.
+/// * `controller` - The `TextFieldController` instance to control the
+///   `TextField` widget. Defaults to the `TextFieldController` implementation.
 ///
-/// * `input_type` - Specifies the type of input allowed (e.g., text, number, password).
-///   Defaults to a default implementation of `InputType`.
+/// * `input_type` - Specifies the type of input allowed (e.g., text, number,
+///   password). Defaults to a default implementation of `InputType`.
 ///
-/// * `prompt` - The text prompt displayed when the `TextField` is empty. This field
-///   can be initialized using types that implement `Into<String>`.
+/// * `prompt` - The text prompt displayed when the `TextField` is empty. This
+///   field can be initialized using types that implement `Into<String>`.
 ///
-/// * `hint` - Hint text displayed within the `TextField` to provide user guidance.
-///   Can be initialized using types implementing `Into<String>`.
+/// * `hint` - Hint text displayed within the `TextField` to provide user
+///   guidance. Can be initialized using types implementing `Into<String>`.
 ///
-/// * `hint_style` - Styling applied to the hint text. Defaults to a `TextStyle` implementation.
+/// * `hint_style` - Styling applied to the hint text. Defaults to a `TextStyle`
+///   implementation.
 ///
-/// * `text_style` - Styling applied to the user-inputted text. Defaults to a `TextStyle` implementation.
+/// * `text_style` - Styling applied to the user-inputted text. Defaults to a
+///   `TextStyle` implementation.
 ///
-/// * `prompt_style` - Styling for the text prompt. Defaults to a `TextStyle` implementation.
+/// * `prompt_style` - Styling for the text prompt. Defaults to a `TextStyle`
+///   implementation.
 ///
-/// * `text_align` - The alignment of the text within the `TextField`. Defaults to a default implementation of `TextAlign`.
+/// * `text_align` - The alignment of the text within the `TextField`. Defaults
+///   to a default implementation of `TextAlign`.
 ///
-/// * `auto_focus` - Boolean indicating if the field should be automatically focused upon rendering. Defaults to `false`.
+/// * `auto_focus` - Boolean indicating if the field should be automatically
+///   focused upon rendering. Defaults to `false`.
 ///
-/// * `max_lines` - An optional maximum number of lines allowed for the text input. Defaults to `None`.
+/// * `max_lines` - An optional maximum number of lines allowed for the text
+///   input. Defaults to `None`.
 ///
-/// * `min_lines` - An optional minimum number of lines for the text input. Defaults to `None`.
+/// * `min_lines` - An optional minimum number of lines for the text input.
+///   Defaults to `None`.
 ///
-/// * `max_length` - An optional maximum number of characters allowed in the input. Defaults to `None`.
+/// * `max_length` - An optional maximum number of characters allowed in the
+///   input. Defaults to `None`.
 ///
 /// * `enable` - Indicates whether the `TextField` is enabled for interaction.
 ///   Defaults to `true`.
 ///
-/// * `expand` - Determines the expansion direction of the `TextField`.
-///   Defaults to a default implementation of `ExpandDirection`.
+/// * `expand` - Determines the expansion direction of the `TextField`. Defaults
+///   to a default implementation of `ExpandDirection`.
 ///
-/// * `decoration` - The default decoration applied to the `TextField`. Defaults to `BoxDecoration`.
+/// * `decoration` - The default decoration applied to the `TextField`. Defaults
+///   to `BoxDecoration`.
 ///
-/// * `hover_decoration` - The decoration applied to the `TextField` when hovered. Defaults to `None`.
+/// * `hover_decoration` - The decoration applied to the `TextField` when
+///   hovered. Defaults to `None`.
 ///
-/// * `focus_decoration` - The decoration applied to the `TextField` when it gains focus. Defaults to `None`.
+/// * `focus_decoration` - The decoration applied to the `TextField` when it
+///   gains focus. Defaults to `None`.
 ///
-/// * `disabled_decoration` - The decoration applied to the `TextField` when it is disabled. Defaults to `None`.
+/// * `disabled_decoration` - The decoration applied to the `TextField` when it
+///   is disabled. Defaults to `None`.
 ///
-/// * `cursor_color` - Color of the text cursor. Defaults to a default `Colors` implementation.
+/// * `cursor_color` - Color of the text cursor. Defaults to a default `Colors`
+///   implementation.
 ///
-/// * `on_changed` - Callback triggered when the input text changes. Accepts a `TextFieldCallback`
-///   which is wrapped with an `AsyncTextFieldCallback`.
+/// * `on_changed` - Callback triggered when the input text changes. Accepts a
+///   `TextFieldCallback` which is wrapped with an `AsyncTextFieldCallback`.
 ///
-/// * `on_submitted` - Callback triggered when the user submits the input (e.g., pressing Enter).
-///   Accepts a `TextFieldCallback` which is wrapped with an `AsyncTextFieldCallback`.
+/// * `on_submitted` - Callback triggered when the user submits the input (e.g.,
+///   pressing Enter). Accepts a `TextFieldCallback` which is wrapped with an
+///   `AsyncTextFieldCallback`.
 ///
-/// * `on_focus` - Callback triggered when the field gains focus.
-///   Accepts a `TextFieldCallback` which is wrapped with an `AsyncTextFieldCallback`.
+/// * `on_focus` - Callback triggered when the field gains focus. Accepts a
+///   `TextFieldCallback` which is wrapped with an `AsyncTextFieldCallback`.
 ///
-/// * `on_blur` - Callback triggered when the field loses focus.
-///   Accepts a `TextFieldCallback` which is wrapped with an `AsyncTextFieldCallback`.
+/// * `on_blur` - Callback triggered when the field loses focus. Accepts a
+///   `TextFieldCallback` which is wrapped with an `AsyncTextFieldCallback`.
 ///
 /// * `read_only` - When `true`, text cannot be modified via keyboard input.
 ///   Selection, copy, and cursor movement still work. Defaults to `false`.
-///
 ///
 pub struct TextField {
     controller: TextFieldController,
@@ -111,9 +126,15 @@ impl Widget for TextField {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawTextField {
             input_type: self.input_type,
-            controller: self.controller.clone(),
-            prompt: self.prompt.clone(),
-            hint: self.hint.clone(),
+            controller: self
+                .controller
+                .clone(),
+            prompt: self
+                .prompt
+                .clone(),
+            hint: self
+                .hint
+                .clone(),
             hint_style: self.hint_style,
             text_style: self.text_style,
             prompt_style: self.prompt_style,
@@ -125,18 +146,34 @@ impl Widget for TextField {
             enable: self.enable,
             expand: self.expand,
             cursor: Cursor::new(self.cursor_color),
-            decoration: self.decoration.clone(),
-            hover_decoration: self.hover_decoration.clone(),
-            focus_decoration: self.focus_decoration.clone(),
-            disabled_decoration: self.disabled_decoration.clone(),
+            decoration: self
+                .decoration
+                .clone(),
+            hover_decoration: self
+                .hover_decoration
+                .clone(),
+            focus_decoration: self
+                .focus_decoration
+                .clone(),
+            disabled_decoration: self
+                .disabled_decoration
+                .clone(),
             selection_color: self.selection_color,
             focused: Cell::new(self.auto_focus),
             hovered: Cell::new(false),
             cached_bounds: CacheBounds::new(),
-            on_changed: self.on_changed.clone(),
-            on_submitted: self.on_submitted.clone(),
-            on_focus: self.on_focus.clone(),
-            on_blur: self.on_blur.clone(),
+            on_changed: self
+                .on_changed
+                .clone(),
+            on_submitted: self
+                .on_submitted
+                .clone(),
+            on_focus: self
+                .on_focus
+                .clone(),
+            on_blur: self
+                .on_blur
+                .clone(),
             read_only: self.read_only,
             mouse_held: Cell::new(false),
             last_click_time: Cell::new(AnimInstant::now()),

@@ -1,7 +1,7 @@
 use aimer_attribute::BoxConstraint;
 use aimer_macro::{EventElement, LayoutElement, Rebuildable};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, LayoutElement, VisitorElement, Widget};
+use aimer_widget::{AnyWidget, Drawable, Element, LayoutElement, VisitorElement, Widget};
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum StackDirection {
@@ -10,9 +10,15 @@ pub enum StackDirection {
     Reverse,
     Inherit,
 }
-pub struct Stack {
-    pub children: Vec<Box<dyn Widget>>,
+pub struct Stack<W = AnyWidget> {
+    pub children: Vec<W>,
     pub direction: StackDirection,
+}
+
+impl Default for Stack {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Stack {
@@ -20,13 +26,18 @@ impl Stack {
         Self { children: Vec::new(), direction: StackDirection::default() }
     }
 
-    pub fn children(mut self, children: Vec<Box<dyn Widget>>) -> Self {
-        self.children = children;
-        self
+    pub fn children<W: Widget>(self, children: impl IntoIterator<Item = W>) -> Stack<W> {
+        Stack {
+            children: children
+                .into_iter()
+                .collect(),
+            direction: self.direction,
+        }
     }
 
     pub fn add_child(mut self, child: impl Widget + 'static) -> Self {
-        self.children.push(Box::new(child));
+        self.children
+            .push(Box::new(child));
         self
     }
 
@@ -38,7 +49,11 @@ impl Stack {
 
 impl Widget for Stack {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
+        let children = self
+            .children
+            .iter()
+            .map(|c| c.to_element(ctx))
+            .collect();
         Box::new(RawStackElement { children, direction: self.direction })
     }
 }
@@ -54,7 +69,9 @@ impl Drawable for RawStackElement {
         let content_size = self.content_size(ctx);
         let child_ctx = BuildContext {
             parent_size: content_size,
-            canvas: ctx.canvas.clone(),
+            canvas: ctx
+                .canvas
+                .clone(),
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             cursor_pos: ctx.cursor_pos,
@@ -65,18 +82,30 @@ impl Drawable for RawStackElement {
                 max_height: content_size.height,
             },
             visible_rect: ctx.visible_rect,
-            window: ctx.window,
+            window: ctx
+                .window
+                .clone(),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx.async_handle.clone(),
-            inherited_states: ctx.inherited_states.clone(),
+            async_handle: ctx
+                .async_handle
+                .clone(),
+            inherited_states: ctx
+                .inherited_states
+                .clone(),
         };
 
-        let mut sorted_children: Vec<_> = self.children.iter().collect();
+        let mut sorted_children: Vec<_> = self
+            .children
+            .iter()
+            .collect();
 
         sorted_children.sort_by_key(|child| child.layer());
 
         if self.direction == StackDirection::Reverse {
-            for child in sorted_children.iter().rev() {
+            for child in sorted_children
+                .iter()
+                .rev()
+            {
                 child.draw(&child_ctx);
             }
         } else {

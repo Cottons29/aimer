@@ -14,29 +14,27 @@ pub use space::stack::Stack;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::flex::Column;
-    use crate::flex::LayoutDirection;
-    use crate::flex::Row;
-    use crate::flex::flex_child::RawExpanded;
-    use crate::flex::raw_flex::RawFlex;
-    use crate::scrollable::raw_scroll::RawScrollableContainer;
-    use aimer_attribute::BoxConstraint;
-    use aimer_attribute::CacheBounds;
-    use aimer_attribute::size::ResolvedSize;
-    use aimer_canvas::{Canvas, InnerCanvas};
-    use aimer_macro::key;
-    use aimer_widget::Key;
-    use aimer_widget::base::BuildContext;
-    use aimer_widget::{
-        Drawable, Element, EventElement, LayoutElement, NamedWidget, Rebuildable, State,
-        StateUpdater, StatefulElement, StatefulWidget, StatelessElement, VisitorElement, Widget,
-    };
     use std::any::{Any, TypeId};
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
     use std::rc::Rc;
     use std::sync::{OnceLock, RwLock};
+
+    use aimer_attribute::size::ResolvedSize;
+    use aimer_attribute::{BoxConstraint, CacheBounds};
+    use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_macro::key;
+    use aimer_widget::base::BuildContext;
+    use aimer_widget::{
+        Drawable, Element, EventElement, Key, LayoutElement, NamedWidget, Rebuildable, State,
+        StateUpdater, StatefulElement, StatefulWidget, StatelessElement, VisitorElement, Widget,
+    };
+
+    use super::*;
+    use crate::flex::flex_child::RawExpanded;
+    use crate::flex::raw_flex::RawFlex;
+    use crate::flex::{Column, LayoutDirection, Row};
+    use crate::scrollable::raw_scroll::RawScrollableContainer;
 
     // ─── A faithful stand-in for a `TextButton` ───────────────────────────
     //
@@ -71,7 +69,9 @@ mod tests {
                 index: self.index,
                 selected: self.selected,
                 hovered: false,
-                observers: self.observers.clone(),
+                observers: self
+                    .observers
+                    .clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -100,7 +100,9 @@ mod tests {
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
             self.observers[self.index].set(if self.selected { 1 } else { 0 });
-            Container::new().height(32).child(crate::ZeroSizedBox)
+            Container::new()
+                .height(32)
+                .child(crate::ZeroSizedBox)
         }
     }
 
@@ -131,9 +133,15 @@ mod tests {
         fn create_state(&self) -> Self::State {
             TabState {
                 index: 0,
-                observer: self.observer.clone(),
-                live_updater: self.live_updater.clone(),
-                button_observers: self.button_observers.clone(),
+                observer: self
+                    .observer
+                    .clone(),
+                live_updater: self
+                    .live_updater
+                    .clone(),
+                button_observers: self
+                    .button_observers
+                    .clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -155,18 +163,47 @@ mod tests {
         }
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
-            self.observer.set(self.index);
-            *self.live_updater.borrow_mut() = Some(self.updater.clone());
+            self.observer
+                .set(self.index);
+            *self
+                .live_updater
+                .borrow_mut() = Some(
+                self.updater
+                    .clone(),
+            );
             // Content follows the selection (the image in the real app) AND a
             // Row of buttons whose highlight must follow the selection too.
             Column::new().children(vec![
-                Container::new().height(180).child(crate::ZeroSizedBox).boxed(),
+                Container::new()
+                    .height(180)
+                    .child(crate::ZeroSizedBox)
+                    .boxed(),
                 Row::new()
                     .children(vec![
-                        button(0, self.index == 0, self.button_observers.clone()),
-                        button(1, self.index == 1, self.button_observers.clone()),
-                        button(2, self.index == 2, self.button_observers.clone()),
-                        button(3, self.index == 3, self.button_observers.clone()),
+                        button(
+                            0,
+                            self.index == 0,
+                            self.button_observers
+                                .clone(),
+                        ),
+                        button(
+                            1,
+                            self.index == 1,
+                            self.button_observers
+                                .clone(),
+                        ),
+                        button(
+                            2,
+                            self.index == 2,
+                            self.button_observers
+                                .clone(),
+                        ),
+                        button(
+                            3,
+                            self.index == 3,
+                            self.button_observers
+                                .clone(),
+                        ),
                     ])
                     .boxed(),
             ])
@@ -200,21 +237,14 @@ mod tests {
         button_highlight_after_resize: Vec<i32>,
     }
 
-    fn dummy_window() -> &'static winit::window::Window {
-        const SIZE: usize = 16384;
-        static SLOT: OnceLock<usize> = OnceLock::new();
-        let addr = *SLOT.get_or_init(|| {
-            let leaked: &'static mut [u8; SIZE] = Box::leak(Box::new([0u8; SIZE]));
-            leaked.as_mut_ptr() as usize
-        });
-        unsafe { &*(addr as *const winit::window::Window) }
-    }
-
     #[cfg(not(target_arch = "wasm32"))]
     fn dummy_async_handle() -> tokio::runtime::Handle {
         static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
         let runtime = RUNTIME.get_or_init(|| {
-            tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
         });
         let _guard = runtime.enter();
         tokio::runtime::Handle::current()
@@ -243,7 +273,10 @@ mod tests {
                 max_height: height,
             },
             visible_rect,
-            window: dummy_window(),
+            window: aimer_widget::base::WindowHandle::headless(
+                winit::dpi::PhysicalSize::new(width as u32, height as u32),
+                1.0,
+            ),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: dummy_async_handle(),
             inherited_states: Rc::new(RwLock::new(HashMap::<TypeId, Rc<dyn Any>>::new())),
@@ -251,7 +284,10 @@ mod tests {
     }
 
     fn placeholder_section(height: i32) -> Box<dyn Widget> {
-        Container::new().height(height).child(crate::ZeroSizedBox).boxed()
+        Container::new()
+            .height(height)
+            .child(crate::ZeroSizedBox)
+            .boxed()
     }
 
     fn build_home_page(
@@ -269,15 +305,16 @@ mod tests {
                             .child(
                                 Container::new()
                                     .height(48)
-                                    .child(crate::ZeroSizedBox)
+                                    .child(ZeroSizedBox)
                             )) as Box<dyn Widget>,
                         Box::new(Positioned::new()
                             .top(0)
                             .left(0)
                             .layer(0)
                             .child(
-                                Scrollable::new(
-                                    Column::new()
+                                Scrollable::new()
+                                    .axis(ScrollAxis::Vertical)
+                                    .child(Column::new()
                                         .children(vec![
                                             placeholder_section(100),
                                             placeholder_section(100),
@@ -287,9 +324,8 @@ mod tests {
                                                 live_updater,
                                                 button_observers,
                                             }) as Box<dyn Widget>,
-                                        ])
-                                )
-                                .axis(crate::ScrollAxis::Vertical)
+                                        ]))
+
                             )) as Box<dyn Widget>,
                     ]))
             .to_element(ctx)
@@ -309,8 +345,11 @@ mod tests {
         let initial_ctx = dummy_build_context(500.0, 600.0, None);
         let observer = Rc::new(Cell::new(usize::MAX));
         let live_updater = Rc::new(RefCell::new(None));
-        let button_observers: Rc<Vec<Rc<Cell<i32>>>> =
-            Rc::new((0..4).map(|_| Rc::new(Cell::new(-1))).collect());
+        let button_observers: Rc<Vec<Rc<Cell<i32>>>> = Rc::new(
+            (0..4)
+                .map(|_| Rc::new(Cell::new(-1)))
+                .collect(),
+        );
 
         let initial_child = build_home_page(
             &initial_ctx,
@@ -366,8 +405,10 @@ mod tests {
         let observer_after_resize = observer.get();
         let live_index_after_resize = current_live_updater(&live_updater).read(|state| state.index);
         let verdict = Verdict::classify(observer_after_resize, live_index_after_resize);
-        let button_highlight_after_resize: Vec<i32> =
-            button_observers.iter().map(|o| o.get()).collect();
+        let button_highlight_after_resize: Vec<i32> = button_observers
+            .iter()
+            .map(|o| o.get())
+            .collect();
 
         VariantResult {
             label: match (culled, resize_count) {
@@ -426,8 +467,9 @@ mod tests {
 
     // Locate the `RawScrollableContainer` buried anywhere in an element tree so
     // a test can read its live scroll offset / cached scroll range.
-    // fn find_scrollable(el: &dyn Element) -> Option<&RawScrollableContainer<Box<dyn Element>>> {
-    //     if let Some(s) = el.as_any().downcast_ref::<RawScrollableContainer<Box<dyn Element>>>() {
+    // fn find_scrollable(el: &dyn Element) ->
+    // Option<&RawScrollableContainer<Box<dyn Element>>> {     if let Some(s) =
+    // el.as_any().downcast_ref::<RawScrollableContainer<Box<dyn Element>>>() {
     //         return Some(s);
     //     }
     //     let mut found: Option<&RawScrollableContainer<Box<dyn Element>>> = None;
@@ -448,151 +490,6 @@ mod tests {
     //     found
     // }
 
-    /// End-to-end regression for "the Scroll is not able to scroll with mouse
-    /// wheel or trackpad": build the real website layout
-    /// (`Container → Stack → Positioned → Scrollable → Column`) with content
-    /// taller than the viewport, draw it (which computes the scroll range and
-    /// bounds), then dispatch a wheel `Scroll` event exactly like the platform
-    /// layer does and assert the content actually moves.
-    // #[test]
-    // fn wheel_scroll_moves_content_in_website_layout() {
-    //     use aimer_attribute::position::Vec2d;
-    //     use aimer_events::element::{ElementEvent, TouchPhase};
-    //
-    //     // 500 × 600 viewport, content 2000 px tall → must be scrollable.
-    //     // Root at the `Positioned` (inside a `Stack`) exactly as the website
-    //     // nests it — this is the wrapping that recomputes the child's viewport
-    //     // constraint, the part suspected of collapsing the scroll range.
-    //     let ctx = dummy_build_context(500.0, 600.0, None);
-    //     let root = Stack!(
-    //         children: [
-    //             Positioned!(
-    //                 top: 0,
-    //                 left: 0,
-    //                 layer: 0,
-    //                 child: Scrollable!(
-    //                     axis: crate::ScrollAxis::Vertical,
-    //                     child: Column!(
-    //                         children: [placeholder_section(2000)]
-    //                     )
-    //                 )
-    //             )
-    //         ]
-    //     )
-    //     .to_element(&ctx);
-    //
-    //     // First frame: seeds cached scroll range, viewport bounds and cursor.
-    //     root.draw(&ctx);
-    //
-    //     let scr = find_scrollable(root.as_ref()).expect("the tree must contain a scrollable");
-    //     let max = scr.ctrl.cached_max_scroll.get();
-    //     assert!(
-    //         max.y > 0.0,
-    //         "content (2000px) is taller than the viewport (600px), so the scroll range must be positive; \
-    //          got max_scroll.y={} (a zero range means the Stack/Positioned wrapping collapsed the viewport)",
-    //         max.y
-    //     );
-    //
-    //     let before = scr.ctrl.scroll_offset.get().y;
-    //
-    //     // Dispatch a wheel scroll-down (negative delta = content moves up) at the
-    //     // viewport centre, exactly like the windowing layer's mouse-wheel path.
-    //     let handled = aimer_widget::dispatch_event(
-    //         root.as_ref(),
-    //         Vec2d { x: 250.0, y: 300.0 },
-    //         &ElementEvent::Scroll { delta: Vec2d { x: 0.0, y: -60.0 }, phase: TouchPhase::Moved },
-    //     );
-    //     assert!(handled, "the wheel Scroll event must be consumed by the scrollable");
-    //
-    //     let after = scr.ctrl.scroll_offset.get().y;
-    //     assert!(after < before, "a wheel scroll-down must move the offset (before={before}, after={after})");
-    //
-    //     // Simulate follow-up animation frames (momentum/spring settle). An
-    //     // in-range scroll must NOT spring back to the top — that would look
-    //     // like "the content can't be scrolled" even though the event fired.
-    //     for _ in 0..8 {
-    //         root.draw(&ctx);
-    //     }
-    //     let settled = scr.ctrl.scroll_offset.get().y;
-    //     assert!(
-    //         settled < -1.0,
-    //         "after scrolling down the content must stay scrolled (settled offset={settled}), not spring back to the top"
-    //     );
-    // }
-    //
-    // /// Regression for "the scroll is applied even when the pointer is over the
-    // /// `HeaderSection`": the website stacks a full-screen `Scrollable`
-    // /// (layer 0) under an opaque `HeaderSection` bar (layer 1). A wheel /
-    // /// trackpad scroll whose pointer sits on the header must be absorbed by the
-    // /// opaque header and must NOT reach — nor move — the `Scrollable` behind it;
-    // /// a scroll whose pointer sits on the exposed content below the header must
-    // /// still scroll.
-    // #[test]
-    // fn scroll_over_opaque_header_does_not_reach_scrollable_below() {
-    //     use aimer_attribute::position::Vec2d;
-    //     use aimer_events::element::{ElementEvent, TouchPhase};
-    //     use aimer_widget::base::Color;
-    //
-    //     let ctx = dummy_build_context(500.0, 600.0, None);
-    //     let root = Stack!(
-    //         children: [
-    //             // layer 0: the full-screen scrollable content.
-    //             Positioned!(
-    //                 top: 0,
-    //                 left: 0,
-    //                 layer: 0,
-    //                 child: Scrollable!(
-    //                     axis: crate::ScrollAxis::Vertical,
-    //                     child: Column!(
-    //                         children: [placeholder_section(2000)]
-    //                     )
-    //                 )
-    //             ),
-    //             // layer 1: an opaque header bar pinned to the top (0..100 px).
-    //             Positioned!(
-    //                 top: 0,
-    //                 left: 0,
-    //                 layer: 1,
-    //                 child: Container!(
-    //                     height: 100,
-    //                     color: Color::Rgba(255, 0, 0, 255),
-    //                     child: crate::ZeroSizedBox
-    //                 )
-    //             )
-    //         ]
-    //     )
-    //     .to_element(&ctx);
-    //
-    //     // First frame seeds the scroll range and every element's on-screen bounds.
-    //     root.draw(&ctx);
-    //
-    //     let scr = find_scrollable(root.as_ref()).expect("the tree must contain a scrollable");
-    //     assert!(scr.ctrl.cached_max_scroll.get().y > 0.0, "content must be taller than the viewport so it is scrollable");
-    //
-    //     // ── Scroll with the pointer ON the header (y = 50, inside 0..100). ──
-    //     let before_header = scr.ctrl.scroll_offset.get().y;
-    //     let handled_header = aimer_widget::dispatch_event(
-    //         root.as_ref(),
-    //         Vec2d { x: 250.0, y: 50.0 },
-    //         &ElementEvent::Scroll { delta: Vec2d { x: 0.0, y: -60.0 }, phase: TouchPhase::Moved },
-    //     );
-    //     assert!(handled_header, "the opaque header must consume (absorb) the scroll");
-    //     assert_eq!(scr.ctrl.scroll_offset.get().y, before_header, "a scroll over the opaque header must NOT move the scrollable behind it");
-    //
-    //     // ── Scroll with the pointer on the exposed content (y = 300, below the header). ──
-    //     let before_content = scr.ctrl.scroll_offset.get().y;
-    //     let handled_content = aimer_widget::dispatch_event(
-    //         root.as_ref(),
-    //         Vec2d { x: 250.0, y: 300.0 },
-    //         &ElementEvent::Scroll { delta: Vec2d { x: 0.0, y: -60.0 }, phase: TouchPhase::Moved },
-    //     );
-    //     assert!(handled_content, "a scroll over the exposed content must be consumed by the scrollable");
-    //     assert!(
-    //         scr.ctrl.scroll_offset.get().y < before_content,
-    //         "a scroll over the exposed content (below the header) must move the scrollable"
-    //     );
-    // }
-
     /// Regression for the reported "button active/selected highlight is stuck
     /// on the initially-selected tab after a window resize" bug.
     ///
@@ -600,8 +497,8 @@ mod tests {
     /// `real_widget_resize_repro_keeps_selected_tab`), but each platform button
     /// is its own `StatefulWidget` (`TextButton`) whose `State` mirrors the
     /// parent-provided `selected` prop. After picking tab 3 ("Android") and
-    /// resizing, ONLY button 3 must render highlighted — the buttons' `selected`
-    /// config must be refreshed to match the live selection.
+    /// resizing, ONLY button 3 must render highlighted — the buttons'
+    /// `selected` config must be refreshed to match the live selection.
     #[test]
     fn real_widget_resize_repro_keeps_button_highlight() {
         let results = [
@@ -644,10 +541,18 @@ mod tests {
     impl EventElement for MainAxisProbe {}
     impl LayoutElement for MainAxisProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-            self.seen.set(ctx.box_constraint.max_width);
+            self.seen
+                .set(
+                    ctx.box_constraint
+                        .max_width,
+                );
             ResolvedSize {
-                width: ctx.box_constraint.max_width,
-                height: ctx.box_constraint.max_height,
+                width: ctx
+                    .box_constraint
+                    .max_width,
+                height: ctx
+                    .box_constraint
+                    .max_height,
             }
         }
     }
@@ -681,8 +586,17 @@ mod tests {
     impl EventElement for IntrinsicProbe {}
     impl LayoutElement for IntrinsicProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-            self.seen.set(ctx.box_constraint.max_width);
-            ResolvedSize { width: self.intrinsic_width, height: ctx.box_constraint.max_height }
+            self.seen
+                .set(
+                    ctx.box_constraint
+                        .max_width,
+                );
+            ResolvedSize {
+                width: self.intrinsic_width,
+                height: ctx
+                    .box_constraint
+                    .max_height,
+            }
         }
     }
     impl Rebuildable for IntrinsicProbe {}
@@ -752,8 +666,10 @@ mod tests {
         let ctx = dummy_build_context(300.0, 100.0, None);
         let c1 = Rc::new(Cell::new(0.0));
         let c2 = Rc::new(Cell::new(0.0));
-        let fixed: Box<dyn Element> =
-            Container::new().width(60).child(crate::ZeroSizedBox).to_element(&ctx);
+        let fixed: Box<dyn Element> = Container::new()
+            .width(60)
+            .child(crate::ZeroSizedBox)
+            .to_element(&ctx);
         let row = row_of(vec![fixed, expanded_probe(1.0, &c1), expanded_probe(2.0, &c2)]);
 
         let _ = row.computed_size(&ctx);
@@ -763,10 +679,10 @@ mod tests {
         assert_eq!(c2.get(), 160.0, "flex=2 child gets 2/3 of the remaining 240px");
     }
 
-    /// Regression for the website header: a size-less intrinsic child (a `Text`)
-    /// next to an `Expanded` must NOT be treated as flexible. The text keeps its
-    /// intrinsic width and the `Expanded` fills *all* the remaining space, not
-    /// half of it.
+    /// Regression for the website header: a size-less intrinsic child (a
+    /// `Text`) next to an `Expanded` must NOT be treated as flexible. The
+    /// text keeps its intrinsic width and the `Expanded` fills *all* the
+    /// remaining space, not half of it.
     #[test]
     fn intrinsic_child_does_not_steal_flex_space_from_expanded() {
         let ctx = dummy_build_context(300.0, 100.0, None);

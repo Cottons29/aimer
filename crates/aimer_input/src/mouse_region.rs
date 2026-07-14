@@ -1,14 +1,15 @@
-use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
+use std::cell::Cell;
+use std::rc::Rc;
+
 use aimer_attribute::CacheBounds;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
 use aimer_events::window::request_animation_frame;
 use aimer_macro::Rebuildable;
-use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget, base::*,
-};
-use std::cell::Cell;
-use std::rc::Rc;
+use aimer_widget::base::*;
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget};
+
+use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
 
 #[derive(Debug, Copy, Clone, Default)]
 pub enum PointerState {
@@ -33,14 +34,26 @@ pub struct MouseRegion<W: Widget + 'static> {
 
 impl<W: Widget + 'static> Widget for MouseRegion<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self.child.to_element(ctx);
+        let child = self
+            .child
+            .to_element(ctx);
         RawMouseRegion {
-            on_hover_enter: self.on_hover_enter.clone(),
-            on_hover_exit: self.on_hover_exit.clone(),
+            on_hover_enter: self
+                .on_hover_enter
+                .clone(),
+            on_hover_exit: self
+                .on_hover_exit
+                .clone(),
             cursor: self.cursor,
-            current_state: self.current_state.clone(),
-            cached_bounds: self.cached_bounds.clone(),
-            window: ctx.window,
+            current_state: self
+                .current_state
+                .clone(),
+            cached_bounds: self
+                .cached_bounds
+                .clone(),
+            window: ctx
+                .window
+                .clone(),
             child,
         }
         .boxed()
@@ -57,17 +70,17 @@ impl<W: Widget + 'static> Widget for MouseRegion<W> {
 /// Event dispatch is handled manually: `event_children` returns empty so that
 /// `on_event` is called first, then events are forwarded to the child.
 #[derive(Rebuildable)]
-pub struct RawMouseRegion<'a, E: Element> {
+pub struct RawMouseRegion<E: Element> {
     pub(crate) on_hover_enter: VoidCallback,
     pub(crate) on_hover_exit: VoidCallback,
     pub(crate) cursor: Option<winit::window::CursorIcon>,
     pub(crate) current_state: Rc<Cell<PointerState>>,
     pub(crate) cached_bounds: CacheBounds,
     pub(crate) child: E,
-    pub(crate) window: &'a winit::window::Window,
+    pub(crate) window: WindowHandle,
 }
 
-impl<'a, E: Element> RawMouseRegion<'a, E> {
+impl<E: Element> RawMouseRegion<E> {
     fn execute_void_callback(cb: &VoidCallback) {
         if let Some(callback) = (*cb.get()).as_ref() {
             match callback {
@@ -93,19 +106,29 @@ impl<'a, E: Element> RawMouseRegion<'a, E> {
     /// otherwise stay un-hovered until the mouse moved again.
     fn sync_hover(&self, is_inside: bool) {
         if is_inside {
-            if matches!(self.current_state.get(), PointerState::Outside) {
+            if matches!(
+                self.current_state
+                    .get(),
+                PointerState::Outside
+            ) {
                 Self::execute_void_callback(&self.on_hover_enter);
-                self.current_state.set(PointerState::Inside);
+                self.current_state
+                    .set(PointerState::Inside);
             }
-        } else if matches!(self.current_state.get(), PointerState::Inside) {
+        } else if matches!(
+            self.current_state
+                .get(),
+            PointerState::Inside
+        ) {
             Self::execute_void_callback(&self.on_hover_exit);
-            self.current_state.set(PointerState::Outside);
+            self.current_state
+                .set(PointerState::Outside);
             request_animation_frame()
         }
     }
 }
 
-impl<'a, E: Element> VisitorElement for RawMouseRegion<'a, E> {
+impl<E: Element> VisitorElement for RawMouseRegion<E> {
     fn visit_children<'b>(&'b self, visitor: &mut dyn FnMut(&'b dyn Element)) {
         visitor(&self.child);
     }
@@ -115,7 +138,7 @@ impl<'a, E: Element> VisitorElement for RawMouseRegion<'a, E> {
     }
 }
 
-impl<'a, E: Element> EventElement for RawMouseRegion<'a, E> {
+impl<E: Element> EventElement for RawMouseRegion<E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
         // println!("Event received: {:?}", event);
 
@@ -130,26 +153,38 @@ impl<'a, E: Element> EventElement for RawMouseRegion<'a, E> {
             ElementEvent::PointerDown(p, src, _) if *src == PointerSource::Mouse => *p,
             ElementEvent::PointerUp(p, src, _) if *src == PointerSource::Mouse => *p,
             ElementEvent::PointerMove(p, src, _) if *src == PointerSource::Mouse => *p,
-            _ => return self.child.on_event(event),
+            _ => {
+                return self
+                    .child
+                    .on_event(event);
+            }
         };
 
         // println!("Event received: {:?}", event);
 
-        let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
+        let is_inside = self
+            .cached_bounds
+            .is_inside(pos.x, pos.y);
 
         // Update the cursor icon on every mouse event while over the region.
         if is_inside {
             if let Some(icon) = self.cursor {
-                self.window.set_cursor(icon);
+                self.window
+                    .set_cursor(icon);
             }
-        } else if self.cursor.is_some() {
-            self.window.set_cursor(winit::window::CursorIcon::Default);
+        } else if self
+            .cursor
+            .is_some()
+        {
+            self.window
+                .set_cursor(winit::window::CursorIcon::Default);
         }
 
         // Only fire callbacks on a state change between Enter <-> Exit,
         // not on every mouse event.
         self.sync_hover(is_inside);
-        self.child.on_event(event)
+        self.child
+            .on_event(event)
     }
 
     // Return empty — we manually forward to the child in on_event
@@ -157,25 +192,35 @@ impl<'a, E: Element> EventElement for RawMouseRegion<'a, E> {
     fn event_children<'b>(&'b self, _visitor: &mut dyn FnMut(&'b dyn Element)) {}
 }
 
-impl<'a, E: Element> LayoutElement for RawMouseRegion<'a, E> {
+impl<E: Element> LayoutElement for RawMouseRegion<E> {
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        let size = self.child.layout(ctx);
+        let size = self
+            .child
+            .layout(ctx);
         // Cache our own bounds from the canvas transform for hit-testing
-        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
-        self.cached_bounds.save(ctx.scale, abs_x, abs_y, size.width, size.height);
+        let (abs_x, abs_y) = ctx
+            .canvas
+            .get_transform_translation();
+        self.cached_bounds
+            .save(ctx.scale, abs_x, abs_y, size.width, size.height);
         size
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.computed_size(ctx)
+        self.child
+            .computed_size(ctx)
     }
 }
 
-impl<'a, E: Element> Drawable for RawMouseRegion<'a, E> {
+impl<E: Element> Drawable for RawMouseRegion<E> {
     fn draw(&self, ctx: &BuildContext<'_>) {
         // Update cached bounds from the current canvas position
-        let child_size = self.child.computed_size(ctx);
-        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
+        let child_size = self
+            .child
+            .computed_size(ctx);
+        let (abs_x, abs_y) = ctx
+            .canvas
+            .get_transform_translation();
         self.cached_bounds
             .save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
 
@@ -185,9 +230,12 @@ impl<'a, E: Element> Drawable for RawMouseRegion<'a, E> {
         // follows, so without this the button would lose its hover feedback
         // until the mouse moved again.
         let cursor = ctx.cursor_pos;
-        let is_inside = self.cached_bounds.is_inside(cursor.x, cursor.y);
+        let is_inside = self
+            .cached_bounds
+            .is_inside(cursor.x, cursor.y);
         self.sync_hover(is_inside);
 
-        self.child.draw(ctx);
+        self.child
+            .draw(ctx);
     }
 }

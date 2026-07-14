@@ -17,9 +17,9 @@ pub trait CanvasRendering: Clone {
         border_width: f32,
         border_color: Color,
     );
-    /// Draws a filled rectangle with per-corner border radii and per-side border widths.
-    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
-    /// `border_width`: [top, right, bottom, left]
+    /// Draws a filled rectangle with per-corner border radii and per-side
+    /// border widths. `border_radius`: [top-left, top-right, bottom-right,
+    /// bottom-left] `border_width`: [top, right, bottom, left]
     fn fill_rect_with_per_side_border(
         &self,
         pos: Vec2d,
@@ -110,7 +110,8 @@ pub trait CanvasRendering: Clone {
         outline_color: Color,
     );
     #[allow(clippy::too_many_arguments)]
-    /// Draws a filled rectangle with border and outline with per-corner/per-side control.
+    /// Draws a filled rectangle with border and outline with
+    /// per-corner/per-side control.
     fn fill_rect_with_border_and_outline_per_side(
         &self,
         pos: Vec2d,
@@ -180,9 +181,9 @@ impl<'a> AimerCanvas<'a> {
     /// Provides low level control to AimerCanvas
     ///
     /// # Safety
-    /// This function is marked as `unsafe` because it directly returns a reference
-    /// to an internal `Canvas` object. The caller need to write platform-specific code
-    /// for making platform-specific operations.
+    /// This function is marked as `unsafe` because it directly returns a
+    /// reference to an internal `Canvas` object. The caller need to write
+    /// platform-specific code for making platform-specific operations.
     ///
     /// # Returns
     /// * `&'a Canvas` - A reference to the internal `Canvas` object.
@@ -192,7 +193,6 @@ impl<'a> AimerCanvas<'a> {
     /// let canvas = my_object.get_canvas();
     /// // Ensure no mutable operations on `my_object` while using `canvas`.
     /// ```
-    ///
     unsafe fn get_canvas(&'a self) -> &'a Canvas {
         self.inner
     }
@@ -209,21 +209,24 @@ impl<'a> AimerCanvas<'a> {
 }
 
 impl<'a> AimerCanvas<'a> {
-    /// Prepares the canvas for a new frame, clearing any previous draw commands.
+    /// Prepares the canvas for a new frame, clearing any previous draw
+    /// commands.
     #[allow(dead_code)]
     #[inline]
     pub fn begin_frame(&self) {
         CanvasRendering::begin_frame(self.inner);
     }
 
-    /// Fills a rectangular area on the canvas with the specified position and size.
+    /// Fills a rectangular area on the canvas with the specified position and
+    /// size.
     #[allow(dead_code)]
     #[inline]
     pub fn fill_rect(&self, pos: Vec2d, size: ResolvedSize) {
         CanvasRendering::fill_rect(self.inner, pos, size);
     }
 
-    /// Fills a rectangular area with explicit color, border radius, border width, and border color.
+    /// Fills a rectangular area with explicit color, border radius, border
+    /// width, and border color.
     #[allow(dead_code)]
     #[inline]
     pub fn fill_rect_with_border(
@@ -246,9 +249,9 @@ impl<'a> AimerCanvas<'a> {
         );
     }
 
-    /// Fills a rectangular area with per-corner border radii and per-side border widths.
-    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
-    /// `border_width`: [top, right, bottom, left]
+    /// Fills a rectangular area with per-corner border radii and per-side
+    /// border widths. `border_radius`: [top-left, top-right, bottom-right,
+    /// bottom-left] `border_width`: [top, right, bottom, left]
     #[allow(dead_code)]
     #[inline]
     pub fn fill_rect_with_per_side_border(
@@ -271,7 +274,8 @@ impl<'a> AimerCanvas<'a> {
         );
     }
 
-    /// Clears a rectangular area on the canvas at the specified position and with the specified size.
+    /// Clears a rectangular area on the canvas at the specified position and
+    /// with the specified size.
     #[allow(dead_code)]
     #[inline]
     pub fn clear_rect(&self, pos: Vec2d, size: ResolvedSize) {
@@ -299,7 +303,8 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::rotate(self.inner, radians);
     }
 
-    /// Saves the entire state of the canvas by pushing the current state onto a stack.
+    /// Saves the entire state of the canvas by pushing the current state onto a
+    /// stack.
     #[allow(dead_code)]
     #[inline]
     pub fn save(&self) {
@@ -397,7 +402,8 @@ impl<'a> AimerCanvas<'a> {
         );
     }
 
-    /// Draws an image identified by `image_id` at the specified position and size.
+    /// Draws an image identified by `image_id` at the specified position and
+    /// size.
     #[allow(dead_code)]
     #[inline]
     pub fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize) {
@@ -423,7 +429,8 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::load_image_with_id(self.inner, image_id, bytes, width, height)
     }
 
-    /// Sets the intrinsic size of a texture. This is useful for preserving metadata across frames.
+    /// Sets the intrinsic size of a texture. This is useful for preserving
+    /// metadata across frames.
     pub fn set_texture_size(&self, image_id: u32, width: u32, height: u32) {
         CanvasRendering::set_texture_size(self.inner, image_id, width, height);
     }
@@ -435,7 +442,8 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::set_clip(self.inner, pos, size);
     }
 
-    /// Sets a rounded clipping rectangle. Drawing outside this rounded rect will be clipped.
+    /// Sets a rounded clipping rectangle. Drawing outside this rounded rect
+    /// will be clipped.
     #[allow(dead_code)]
     #[inline]
     pub fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: [f32; 4]) {
@@ -456,7 +464,8 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::measure_text(self.inner, text, font_size)
     }
 
-    /// Measures paragraph text metrics at the given font size and optional max width.
+    /// Measures paragraph text metrics at the given font size and optional max
+    /// width.
     #[allow(dead_code)]
     #[inline]
     pub fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics {
@@ -535,7 +544,8 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::get_transform_translation(self.inner)
     }
 
-    /// Draws a filled rectangle with border and outline in a single pass (no gap).
+    /// Draws a filled rectangle with border and outline in a single pass (no
+    /// gap).
     #[allow(dead_code, clippy::too_many_arguments)]
     #[inline]
     pub fn fill_rect_with_border_and_outline(
@@ -562,7 +572,8 @@ impl<'a> AimerCanvas<'a> {
         );
     }
 
-    /// Draws a filled rectangle with border and outline with per-corner/per-side control.
+    /// Draws a filled rectangle with border and outline with
+    /// per-corner/per-side control.
     #[allow(dead_code, clippy::too_many_arguments)]
     #[inline]
     pub fn fill_rect_with_border_and_outline_per_side(

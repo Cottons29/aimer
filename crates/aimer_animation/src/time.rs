@@ -3,8 +3,9 @@
 //! Uses `chrono::Utc::now()` which works on both native and WASM targets,
 //! unlike `std::time::Instant` which panics on WASM.
 
-use chrono::Utc;
 use std::time::Duration;
+
+use chrono::Utc;
 
 /// A cross-platform instant in time, suitable for animation frame timing.
 ///

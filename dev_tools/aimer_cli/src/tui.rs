@@ -1,9 +1,10 @@
+use std::io::stdout;
+
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use crossterm::{cursor, execute};
-use std::io::stdout;
 
 /// RAII guard that puts the terminal into raw mode and guarantees it is
 /// restored on drop — even if the surrounding code panics or returns early.

@@ -1,3 +1,11 @@
+use std::io::{BufRead, BufReader};
+use std::net::IpAddr;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+use crossbeam::channel::Sender;
+
 use crate::commands::run::Device;
 use crate::commands::run::android::spawn_android_runner;
 use crate::commands::run::console::{RunnerEvent, Status};
@@ -6,12 +14,6 @@ use crate::commands::run::ios_sim::spawn_ios_simulator_runner;
 use crate::commands::run::macos::spawn_macos_runner;
 use crate::commands::run::web::spawn_web_runner;
 use crate::targets::Targets;
-use crossbeam::channel::Sender;
-use std::io::{BufRead, BufReader};
-use std::net::IpAddr;
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::thread;
 
 /// Everything a per-target runner needs to build and launch the app.
 pub struct RunContext {
@@ -97,22 +99,34 @@ pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>) {
             }
         };
 
-        if let Some(stdout) = wasm_build.stdout.take() {
+        if let Some(stdout) = wasm_build
+            .stdout
+            .take()
+        {
             let tx_out = tx.clone();
             thread::spawn(move || {
                 let reader = BufReader::new(stdout);
-                for line in reader.lines().map_while(Result::ok) {
+                for line in reader
+                    .lines()
+                    .map_while(Result::ok)
+                {
                     let _ = tx_out.send(RunnerEvent::BuildLog(line));
                 }
             });
         }
 
-        if let Some(stderr) = wasm_build.stderr.take() {
+        if let Some(stderr) = wasm_build
+            .stderr
+            .take()
+        {
             let tx_err = tx.clone();
             thread::spawn(move || {
                 let reader = BufReader::new(stderr);
                 let mut compile_count = 0;
-                for line in reader.lines().map_while(Result::ok) {
+                for line in reader
+                    .lines()
+                    .map_while(Result::ok)
+                {
                     if line.contains("Compiling") {
                         compile_count = (compile_count + 5).min(99);
                         let _ = tx_err

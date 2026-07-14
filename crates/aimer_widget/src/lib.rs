@@ -6,7 +6,20 @@ pub mod page_storage;
 pub mod reconcile;
 mod widget;
 
+/// An Empty Widget that using as placeholder
+///
+/// ## Example
+///
+/// ```rust ignore
+/// pub struct MyWidget<W = EmptyWidget> {
+///     child: W,
+///     // any fields here
+/// }
+/// ```
 pub struct EmptyWidget;
+
+/// An alias of Box<dyn Widget>
+pub type AnyWidget = Box<dyn Widget>;
 
 // #[cfg(debug_assertions)]
 pub mod inspector_overlay {
@@ -33,18 +46,19 @@ pub use crate::components::rebuildable::Rebuildable;
 pub use crate::components::visitor_element::VisitorElement;
 
 pub mod base {
-    pub use crate::components::context::BuildContext;
     pub use aimer_attribute::dimension::Dimension;
     pub use aimer_attribute::position::Vec2d;
     pub use aimer_attribute::size::{ResolvedSize, Size};
     pub use aimer_color::prelude::*;
-}
-pub use crate::key::Key;
-pub use crate::widget::Widget;
 
-pub use crate::components::element::{broadcast_event, dispatch_event};
-pub use crate::layout_cache::LayoutCache;
-pub use crate::widget::stateful::{State, StateUpdater, StatefulElement, StatefulWidget};
-pub use crate::widget::stateless::{NamedWidget, StatelessElement, StatelessWidget};
+    pub use crate::components::context::{BuildContext, WindowHandle};
+}
 pub use aimer_canvas::TextOverflowMode;
 pub use aimer_macro::{main, widget};
+
+pub use crate::components::element::{broadcast_event, dispatch_event};
+pub use crate::key::Key;
+pub use crate::layout_cache::LayoutCache;
+pub use crate::widget::Widget;
+pub use crate::widget::stateful::{State, StateUpdater, StatefulElement, StatefulWidget};
+pub use crate::widget::stateless::{NamedWidget, StatelessElement, StatelessWidget};

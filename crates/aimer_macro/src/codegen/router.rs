@@ -14,8 +14,9 @@ fn split_template(tpl: &str) -> (String, Option<String>) {
     }
 }
 
-/// Parse a query template into `(key, value)` pairs where the value is usually a
-/// `{placeholder}`. `"q={q}&page={page}"` -> `[("q","{q}"), ("page","{page}")]`.
+/// Parse a query template into `(key, value)` pairs where the value is usually
+/// a `{placeholder}`. `"q={q}&page={page}"` -> `[("q","{q}"),
+/// ("page","{page}")]`.
 fn query_pairs(query: &Option<String>) -> Vec<(String, String)> {
     let Some(query) = query else {
         return Vec::new();
@@ -57,7 +58,10 @@ impl RouterCodegen {
             let mut new_attrs = Vec::new();
             #[allow(clippy::collapsible_if)]
             for attr in &variant.attrs {
-                if attr.path().is_ident("route") {
+                if attr
+                    .path()
+                    .is_ident("route")
+                {
                     if let Ok(exprs) =
                         attr.parse_args_with(Punctuated::<Expr, Token![,]>::parse_terminated)
                     {
@@ -68,7 +72,10 @@ impl RouterCodegen {
                                 }
                                 Expr::Assign(assign) => {
                                     if let Expr::Path(ep) = &*assign.left {
-                                        if ep.path.is_ident("name") {
+                                        if ep
+                                            .path
+                                            .is_ident("name")
+                                        {
                                             if let Expr::Lit(ExprLit {
                                                 lit: Lit::Str(lit_str),
                                                 ..
@@ -89,7 +96,10 @@ impl RouterCodegen {
                             }
                         }
                     }
-                } else if attr.path().is_ident("routes") {
+                } else if attr
+                    .path()
+                    .is_ident("routes")
+                {
                     if let Ok(meta) =
                         attr.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)
                     {
@@ -105,7 +115,10 @@ impl RouterCodegen {
                             }
                         }
                     } else if let Meta::List(ml) = &attr.meta {
-                        if let Ok(expr_array) = parse2::<ExprArray>(ml.tokens.clone()) {
+                        if let Ok(expr_array) = parse2::<ExprArray>(
+                            ml.tokens
+                                .clone(),
+                        ) {
                             for elem in expr_array.elems {
                                 if let Expr::Lit(ExprLit { lit: Lit::Str(lit_str), .. }) = elem {
                                     routes.push(lit_str.value());
@@ -113,7 +126,10 @@ impl RouterCodegen {
                             }
                         }
                     }
-                } else if attr.path().is_ident("shell") {
+                } else if attr
+                    .path()
+                    .is_ident("shell")
+                {
                     is_shell = true;
                     if let Ok(exprs) =
                         attr.parse_args_with(Punctuated::<Expr, Token![,]>::parse_terminated)
@@ -125,7 +141,10 @@ impl RouterCodegen {
                                 }
                                 Expr::Assign(assign) => {
                                     if let Expr::Path(ep) = &*assign.left {
-                                        if ep.path.is_ident("name") {
+                                        if ep
+                                            .path
+                                            .is_ident("name")
+                                        {
                                             if let Expr::Lit(ExprLit {
                                                 lit: Lit::Str(lit_str),
                                                 ..
@@ -140,17 +159,26 @@ impl RouterCodegen {
                             }
                         }
                     }
-                } else if attr.path().is_ident("redirect") {
+                } else if attr
+                    .path()
+                    .is_ident("redirect")
+                {
                     if let Ok(metas) =
                         attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
                     {
                         for m in metas {
                             if let Meta::NameValue(nv) = m {
-                                if nv.path.is_ident("guard") {
+                                if nv
+                                    .path
+                                    .is_ident("guard")
+                                {
                                     if let Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) = &nv.value {
                                         redirect_guard = Some(s.value());
                                     }
-                                } else if nv.path.is_ident("to") {
+                                } else if nv
+                                    .path
+                                    .is_ident("to")
+                                {
                                     if let Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) = &nv.value {
                                         redirect_to = Some(s.value());
                                     }
@@ -168,10 +196,25 @@ impl RouterCodegen {
             if is_shell {
                 let prefix = shell_prefix
                     .clone()
-                    .unwrap_or_else(|| format!("/{}", variant_name.to_string().to_lowercase()));
+                    .unwrap_or_else(|| {
+                        format!(
+                            "/{}",
+                            variant_name
+                                .to_string()
+                                .to_lowercase()
+                        )
+                    });
                 match &variant.fields {
-                    Fields::Unnamed(f) if f.unnamed.len() == 1 => {
-                        let child_ty = &f.unnamed.first().unwrap().ty;
+                    Fields::Unnamed(f)
+                        if f.unnamed
+                            .len()
+                            == 1 =>
+                    {
+                        let child_ty = &f
+                            .unnamed
+                            .first()
+                            .unwrap()
+                            .ty;
                         let prefix_slash = format!("{}/", prefix);
 
                         format_arms.push(quote! {
@@ -209,7 +252,12 @@ impl RouterCodegen {
             }
 
             if routes.is_empty() {
-                routes.push(format!("/{}", variant_name.to_string().to_lowercase()));
+                routes.push(format!(
+                    "/{}",
+                    variant_name
+                        .to_string()
+                        .to_lowercase()
+                ));
             }
 
             let first_route = &routes[0];
@@ -219,15 +267,28 @@ impl RouterCodegen {
             // ---- format() ----
             match &variant.fields {
                 Fields::Named(fields) => {
-                    let field_names: Vec<_> = fields.named.iter().map(|f| &f.ident).collect();
+                    let field_names: Vec<_> = fields
+                        .named
+                        .iter()
+                        .map(|f| &f.ident)
+                        .collect();
                     let bind_pattern = quote! { Self::#variant_name { #(#field_names),* } };
 
                     let mut path_replaces = Vec::new();
                     let mut query_pushes = Vec::new();
-                    for field in fields.named.iter() {
-                        let fname = field.ident.as_ref().unwrap();
+                    for field in fields
+                        .named
+                        .iter()
+                    {
+                        let fname = field
+                            .ident
+                            .as_ref()
+                            .unwrap();
                         let placeholder = format!("{{{}}}", fname);
-                        if let Some((key, _)) = qpairs.iter().find(|(_, v)| *v == placeholder) {
+                        if let Some((key, _)) = qpairs
+                            .iter()
+                            .find(|(_, v)| *v == placeholder)
+                        {
                             query_pushes
                                 .push(quote! { __q.push((#key.to_string(), #fname.to_string())); });
                         } else {
@@ -248,8 +309,11 @@ impl RouterCodegen {
                     });
                 }
                 Fields::Unnamed(fields) => {
-                    let field_names: Vec<_> =
-                        (0..fields.unnamed.len()).map(|i| format_ident!("arg_{}", i)).collect();
+                    let field_names: Vec<_> = (0..fields
+                        .unnamed
+                        .len())
+                        .map(|i| format_ident!("arg_{}", i))
+                        .collect();
                     let bind_pattern = quote! { Self::#variant_name( #(#field_names),* ) };
 
                     format_arms.push(quote! {
@@ -281,7 +345,11 @@ impl RouterCodegen {
                 // ---- resolve_named() ----
                 match &variant.fields {
                     Fields::Named(fields) => {
-                        let field_names: Vec<_> = fields.named.iter().map(|f| &f.ident).collect();
+                        let field_names: Vec<_> = fields
+                            .named
+                            .iter()
+                            .map(|f| &f.ident)
+                            .collect();
                         let extracts = fields.named.iter().map(|f| {
                             let fname = f.ident.as_ref().unwrap();
                             quote! {
@@ -296,14 +364,20 @@ impl RouterCodegen {
                         });
                     }
                     Fields::Unnamed(fields) => {
-                        let arg_names: Vec<_> =
-                            (0..fields.unnamed.len()).map(|i| format_ident!("arg_{}", i)).collect();
-                        let extracts = arg_names.iter().enumerate().map(|(i, name)| {
-                            let key = i.to_string();
-                            quote! {
-                                let #name = params.get(#key).and_then(|v| v.parse().ok())?;
-                            }
-                        });
+                        let arg_names: Vec<_> = (0..fields
+                            .unnamed
+                            .len())
+                            .map(|i| format_ident!("arg_{}", i))
+                            .collect();
+                        let extracts = arg_names
+                            .iter()
+                            .enumerate()
+                            .map(|(i, name)| {
+                                let key = i.to_string();
+                                quote! {
+                                    let #name = params.get(#key).and_then(|v| v.parse().ok())?;
+                                }
+                            });
                         resolve_arms.push(quote! {
                             #name => {
                                 #(#extracts)*
@@ -339,12 +413,18 @@ impl RouterCodegen {
             for route in &routes {
                 let (route_path, route_query) = split_template(route);
                 let route_qpairs = query_pairs(&route_query);
-                let template_segments: Vec<&str> = route_path.split('/').collect();
+                let template_segments: Vec<&str> = route_path
+                    .split('/')
+                    .collect();
                 let n_segments = template_segments.len();
 
                 let parse_arm = match &variant.fields {
                     Fields::Named(fields) => {
-                        let field_names: Vec<_> = fields.named.iter().map(|f| &f.ident).collect();
+                        let field_names: Vec<_> = fields
+                            .named
+                            .iter()
+                            .map(|f| &f.ident)
+                            .collect();
 
                         let static_checks: Vec<_> = template_segments
                             .iter()
@@ -376,7 +456,9 @@ impl RouterCodegen {
                         }
                     }
                     Fields::Unnamed(fields) => {
-                        let n_fields = fields.unnamed.len();
+                        let n_fields = fields
+                            .unnamed
+                            .len();
                         let placeholder_indices: Vec<usize> = template_segments
                             .iter()
                             .enumerate()
@@ -391,10 +473,13 @@ impl RouterCodegen {
                             .map(|(i, s)| quote! { parts[#i] == #s })
                             .collect();
 
-                        let arg_names: Vec<_> =
-                            (0..n_fields).map(|i| format_ident!("arg_{}", i)).collect();
-                        let field_extracts =
-                            arg_names.iter().zip(placeholder_indices.iter()).map(|(name, idx)| {
+                        let arg_names: Vec<_> = (0..n_fields)
+                            .map(|i| format_ident!("arg_{}", i))
+                            .collect();
+                        let field_extracts = arg_names
+                            .iter()
+                            .zip(placeholder_indices.iter())
+                            .map(|(name, idx)| {
                                 quote! {
                                     let #name = parts[#idx].parse().ok()?;
                                 }

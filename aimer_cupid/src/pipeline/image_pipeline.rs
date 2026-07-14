@@ -1,7 +1,9 @@
-use crate::utilities::TextureId;
-use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
+
+use bytemuck::{Pod, Zeroable};
 use wgpu::ShaderSource;
+
+use crate::utilities::TextureId;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -12,7 +14,8 @@ pub struct ImageInstance {
     pub uv_scale: [f32; 2],
     /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
     pub clip_rect: [f32; 4],
-    /// Border radius for the clip rect: [top-left, top-right, bottom-right, bottom-left].
+    /// Border radius for the clip rect: [top-left, top-right, bottom-right,
+    /// bottom-left].
     pub clip_border_radius: [f32; 4],
     pub alpha: f32,
 }
@@ -222,12 +225,14 @@ impl ImagePipeline {
     }
 
     pub fn has_texture(&self, id: TextureId) -> bool {
-        self.textures.contains_key(&id)
+        self.textures
+            .contains_key(&id)
     }
 
     /// Upload RGBA8 image data only if the texture ID does not already exist.
-    /// Returns `true` if a new texture was uploaded, `false` if it already existed.
-    /// Uses a single HashMap lookup instead of `has_texture` + `upload_image_with_id`.
+    /// Returns `true` if a new texture was uploaded, `false` if it already
+    /// existed. Uses a single HashMap lookup instead of `has_texture` +
+    /// `upload_image_with_id`.
     pub fn upload_if_absent(
         &mut self,
         device: &wgpu::Device,
@@ -238,7 +243,10 @@ impl ImagePipeline {
         data: &[u8],
     ) -> bool {
         use std::collections::hash_map::Entry;
-        match self.textures.entry(id) {
+        match self
+            .textures
+            .entry(id)
+        {
             Entry::Occupied(_) => false,
             Entry::Vacant(vacant) => {
                 // Use create_texture + write_texture instead of create_texture_with_data
@@ -338,8 +346,13 @@ impl ImagePipeline {
         data: &[u8],
     ) {
         // In-place update if the texture exists and dimensions match.
-        if let Some(entry) = self.textures.get(&id) {
-            let size = entry.texture.size();
+        if let Some(entry) = self
+            .textures
+            .get(&id)
+        {
+            let size = entry
+                .texture
+                .size();
             if size.width == width && size.height == height {
                 queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
@@ -402,7 +415,8 @@ impl ImagePipeline {
             ],
         });
 
-        self.textures.insert(id, TextureEntry { bind_group, texture });
+        self.textures
+            .insert(id, TextureEntry { bind_group, texture });
     }
 
     /// Draw a batch of instances with the same texture_id.
@@ -418,7 +432,10 @@ impl ImagePipeline {
             return;
         }
 
-        let entry = match self.textures.get(&texture_id) {
+        let entry = match self
+            .textures
+            .get(&texture_id)
+        {
             Some(e) => e,
             None => return,
         };
@@ -446,13 +463,18 @@ impl ImagePipeline {
 
         let byte_offset = (self.frame_instance_offset * size_of::<ImageInstance>()) as u64;
 
-        // Viewport uniform is written once in `begin_frame` — no per-batch write needed.
+        // Viewport uniform is written once in `begin_frame` — no per-batch write
+        // needed.
         queue.write_buffer(&self.instance_buffer, byte_offset, bytemuck::cast_slice(instances));
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_bind_group(1, &entry.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
+        pass.set_vertex_buffer(
+            0,
+            self.instance_buffer
+                .slice(byte_offset..),
+        );
         pass.draw(0..6, 0..instances.len() as u32);
 
         self.frame_instance_offset = end;

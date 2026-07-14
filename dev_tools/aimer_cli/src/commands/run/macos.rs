@@ -1,3 +1,9 @@
+use std::net::IpAddr;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+
+use crossbeam::channel::Sender;
+
 use crate::commands::run::Device;
 use crate::commands::run::cargo_build::{
     self, CargoBuildTarget, stream_stderr_as_app_log, stream_stderr_as_build_log,
@@ -8,10 +14,6 @@ use crate::commands::run::helpers::{
     build_log, build_streamed, fail, host_arch, set_status, spawn_streamed,
 };
 use crate::commands::run::utilities::resolve_lib_path;
-use crossbeam::channel::Sender;
-use std::net::IpAddr;
-use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
 
 pub fn spawn_macos_runner(
     _device: Device,
@@ -91,7 +93,9 @@ pub fn spawn_macos_runner(
         format!("builds/macos/build/Debug/{}.app/Contents/MacOS/{}", pkg_name, pkg_name);
 
     let mut app_run = Command::new(&app_exec_path);
-    app_run.stdout(Stdio::piped()).stderr(Stdio::piped());
+    app_run
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     if !spawn_streamed(
         app_run,

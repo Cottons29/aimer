@@ -1,10 +1,12 @@
-use crate::Cli;
+use std::io::{self, Write};
+use std::path::PathBuf;
+
 use anyhow::{Context, anyhow};
 use clap::CommandFactory;
 use clap_complete::Shell;
 use clap_complete::env::Shells;
-use std::io::{self, Write};
-use std::path::PathBuf;
+
+use crate::Cli;
 
 /// Environment variable the generated scripts use to ask the binary for
 /// completions at completion time. Must match the variable inspected by
@@ -20,10 +22,13 @@ const COMPLETE_VAR: &str = "COMPLETE";
 ///
 /// When `install` is false the script is written to stdout (so it can be
 /// `source`d). When `install` is true the script is written to the shell's
-/// conventional per-user completion directory and an activation hint is printed.
+/// conventional per-user completion directory and an activation hint is
+/// printed.
 pub fn execute(shell: Shell, install: bool) -> anyhow::Result<()> {
     let cmd = Cli::command();
-    let bin_name = cmd.get_name().to_string();
+    let bin_name = cmd
+        .get_name()
+        .to_string();
 
     // Map the requested shell to its dynamic-completion adapter.
     let shell_name = shell.to_string();
@@ -46,10 +51,18 @@ pub fn execute(shell: Shell, install: bool) -> anyhow::Result<()> {
     }
 
     let target = install_target(shell, &bin_name)?;
-    std::fs::create_dir_all(&target.dir)
-        .with_context(|| format!("creating completion directory {}", target.dir.display()))?;
+    std::fs::create_dir_all(&target.dir).with_context(|| {
+        format!(
+            "creating completion directory {}",
+            target
+                .dir
+                .display()
+        )
+    })?;
 
-    let path = target.dir.join(&target.file_name);
+    let path = target
+        .dir
+        .join(&target.file_name);
     let mut file = std::fs::File::create(&path)
         .with_context(|| format!("writing completion script to {}", path.display()))?;
     completer
@@ -97,7 +110,9 @@ fn data_dir() -> anyhow::Result<PathBuf> {
             return Ok(p);
         }
     }
-    Ok(home_dir()?.join(".local").join("share"))
+    Ok(home_dir()?
+        .join(".local")
+        .join("share"))
 }
 
 /// Compute the install location and activation hint for the given shell.
@@ -107,16 +122,23 @@ fn install_target(shell: Shell, bin: &str) -> anyhow::Result<InstallTarget> {
             dir: {
                 println!(
                     "Fish config dir: {}",
-                    config_dir()?.join("fish").join("completions").display()
+                    config_dir()?
+                        .join("fish")
+                        .join("completions")
+                        .display()
                 );
-                config_dir()?.join("fish").join("completions")
+                config_dir()?
+                    .join("fish")
+                    .join("completions")
             },
             file_name: format!("{bin}.fish"),
             // fish autoloads from this directory; just start a new shell.
             hint: Some("Restart your shell (or run `exec fish`) to load completions.".into()),
         }),
         Shell::Zsh => Ok(InstallTarget {
-            dir: home_dir()?.join(".zsh").join("completions"),
+            dir: home_dir()?
+                .join(".zsh")
+                .join("completions"),
             file_name: format!("_{bin}"),
             hint: Some(
                 "Add this to ~/.zshrc (once), then restart your shell:\n  \
@@ -126,7 +148,9 @@ fn install_target(shell: Shell, bin: &str) -> anyhow::Result<InstallTarget> {
             ),
         }),
         Shell::Bash => Ok(InstallTarget {
-            dir: data_dir()?.join("bash-completion").join("completions"),
+            dir: data_dir()?
+                .join("bash-completion")
+                .join("completions"),
             file_name: bin.to_string(),
             hint: Some(
                 "Requires the `bash-completion` package. Restart your shell to load completions."

@@ -1,8 +1,10 @@
-use crate::commands::version::VersionCommand;
-use crate::targets::{MigrateTarget, Targets};
+use std::env::set_current_dir;
+
 use anyhow::Context;
 use clap::{CommandFactory, Parser, Subcommand};
-use std::env::set_current_dir;
+
+use crate::commands::version::VersionCommand;
+use crate::targets::{MigrateTarget, Targets};
 
 pub mod commands;
 pub mod config;
@@ -35,7 +37,10 @@ fn init_logging(verbose: bool) {
     let default_level = if verbose { "debug" } else { "warn" };
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
-    let _ = fmt().with_env_filter(filter).with_target(false).try_init();
+    let _ = fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .try_init();
 }
 
 #[derive(Subcommand)]
@@ -46,7 +51,8 @@ enum Commands {
         project_name: String,
     },
 
-    /// Run the project (interactive picker, or scriptable with --target/--device)
+    /// Run the project (interactive picker, or scriptable with
+    /// --target/--device)
     Run {
         /// Build/run for this target without showing the picker
         #[arg(short, long, value_enum)]
@@ -55,7 +61,8 @@ enum Commands {
         #[arg(short, long)]
         device: Option<String>,
         /// Disable the interactive TUI and print logs to stdout/stderr instead.
-        /// Useful when running from an IDE or CI where no terminal is available.
+        /// Useful when running from an IDE or CI where no terminal is
+        /// available.
         #[arg(long)]
         no_tui: bool,
     },
@@ -156,7 +163,11 @@ fn main() -> anyhow::Result<()> {
             commands::completions::execute(*shell, *install)?;
         }
         Some(Commands::Migrate { target }) => {
-            commands::migrate::execute(target.as_str().to_string())?;
+            commands::migrate::execute(
+                target
+                    .as_str()
+                    .to_string(),
+            )?;
         }
         None => {
             Cli::parse_from(["aimer", "--help"]);

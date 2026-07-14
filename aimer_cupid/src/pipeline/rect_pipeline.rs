@@ -6,7 +6,8 @@ pub struct RectInstance {
     pub position: [f32; 2],
     pub size: [f32; 2],
     pub color: [f32; 4],
-    /// Per-corner border radius: [top-left, top-right, bottom-right, bottom-left]
+    /// Per-corner border radius: [top-left, top-right, bottom-right,
+    /// bottom-left]
     pub border_radius: [f32; 4],
     /// Per-side border width: [top, right, bottom, left]
     pub border_width: [f32; 4],
@@ -16,7 +17,8 @@ pub struct RectInstance {
     pub outline_color: [f32; 4],
     /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
     pub clip_rect: [f32; 4],
-    /// Border radius for the clip rect: [top-left, top-right, bottom-right, bottom-left].
+    /// Border radius for the clip rect: [top-left, top-right, bottom-right,
+    /// bottom-left].
     pub clip_border_radius: [f32; 4],
     /// Shadow parameters: [offset_x, offset_y, blur, spread]
     pub shadow_params: [f32; 4],
@@ -166,11 +168,13 @@ impl RectPipeline {
     }
 
     pub fn push(&mut self, instance: RectInstance) {
-        self.instances.push(instance);
+        self.instances
+            .push(instance);
     }
 
     pub fn clear(&mut self) {
-        self.instances.clear();
+        self.instances
+            .clear();
         // A fresh frame starts writing at the beginning of the instance buffer.
         self.frame_instance_offset = 0;
     }
@@ -184,7 +188,10 @@ impl RectPipeline {
         height: u32,
         is_srgb: bool,
     ) {
-        if self.instances.is_empty() {
+        if self
+            .instances
+            .is_empty()
+        {
             return;
         }
 
@@ -200,7 +207,9 @@ impl RectPipeline {
             bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
         );
 
-        let instance_count = self.instances.len();
+        let instance_count = self
+            .instances
+            .len();
         let stride = std::mem::size_of::<RectInstance>();
         // Write this batch *after* any batches already flushed this frame so that
         // earlier draw calls keep reading their own data. Reusing offset 0 for
@@ -232,10 +241,15 @@ impl RectPipeline {
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
+        pass.set_vertex_buffer(
+            0,
+            self.instance_buffer
+                .slice(byte_offset..),
+        );
         pass.draw(0..6, 0..instance_count as u32);
 
         self.frame_instance_offset += instance_count;
-        self.instances.clear();
+        self.instances
+            .clear();
     }
 }

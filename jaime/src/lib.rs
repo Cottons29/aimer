@@ -6,30 +6,36 @@ pub mod stateful;
 mod stateful_2;
 mod test_animation;
 
+use aimer::style::*;
+#[allow(unused_imports)]
+use aimer::*;
+use aimer::{AimerApp, *};
+
 #[allow(unused_imports)]
 use crate::animated::start_my_animated_list;
 #[allow(unused_imports)]
 use crate::stateful::start_counter;
 use crate::test_animation::TestFadingAnimation;
-use aimer::AimerApp;
-use aimer::style::*;
-use aimer::*;
-#[allow(unused_imports)]
-use aimer::*;
 
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
     // stateful_2::start_my_list();
     // start_counter();
-    AimerApp::start(TestFadingAnimation)
+    // AimerApp::start(Container::new().child(Row::new().children([
+    //     Expanded::new().child(TestFadingAnimation),
+    //     Expanded::new().child(TestFadingAnimation),
+    // ])))
+    test_positioned()
 }
 #[allow(unused)]
 fn test_text() {
-    AimerApp::start(Scrollable::new(
-            Container::new()
-                .child(Text::new(
-r#"
+    AimerApp::start(
+        Scrollable::new()
+            .axis(ScrollAxis::Vertical)
+            .child(Container::new()
+        .child(Text::new(
+            r#"
                 English — Hello / Hi               Khmer — សួស្តី (Suosdei)               French — BonjourEnglish — Hello / Hi
                 Spanish — Hola                            Portuguese — Olá                          Italian — Ciao
                 German — Hallo                            Dutch — Hallo                             Swedish — Hej
@@ -49,115 +55,167 @@ r#"
                 Latin — Salve                             Hawaiian — Aloha                          Māori — Kia ora
                 អរគុណ 你哈皮  With State 你好 きみなと  👉
 "#)
-                    .text_style(TextStyle::new()
-                        .text_overflow(TextOverflow::Clip)
-                        .font_size(16)
-                        .color(Colors::Black)
-                        .font_weight(FontWeight::Thin))
-            )
-        ).axis(ScrollAxis::Vertical)
+            .text_style(TextStyle::new()
+                .text_overflow(TextOverflow::Clip)
+                .font_size(16)
+                .color(Colors::Black)
+                .font_weight(FontWeight::Thin))
+        )
+    )
     )
 }
 
 #[allow(unused)]
 fn test_positioned() {
-    AimerApp::start(Container::new().child(Stack::new().children(vec![
-                Positioned::new()
-                    .top(80.0)
-                    .left(80.0)
-                    .child(
-                        Container::new()
-                            .box_decoration(BoxDecoration::new()
-                                .border(BoxBorder::all(
-                                    BorderSlice::new()
-                                        .style(BorderStyle::Solid)
-                                        .stroke(Stroke::Px(30.0))
-                                        .color(Colors::Black),
-                                ))
-                                .outline(BoxOutline::all(
-                                    BorderSlice::new()
-                                        .style(BorderStyle::Solid)
-                                        .stroke(Stroke::Px(3.0))
-                                        .color(Colors::Black),
-                                ))
-                                .border_radius((55, 6, 25, 6))
-                                .background_color(Colors::Red)
-                                .box_shadow(vec![BoxShadow::new()
-                                    .color(Colors::Black.alpha(120))
-                                    .blur(10.0)
-                                    .inset(true)]))
-                            .width(Dimension::Px(400.0))
-                            .height(Dimension::Px(400.0))
-                            .child(Text::new("Hello, World!")
-                                .text_style(TextStyle::new()
-                                    .color(Colors::Black)))
-                    ).boxed()
-            ])))
+    AimerApp::start(
+        Container::new()
+            .color(Color::WHITE)
+            .child(
+                Stack::new().children([
+                    Positioned::new()
+                        .top(80.0)
+                        .left(80.0)
+                        .child(
+                            Container::new()
+                                .box_decoration(
+                                    BoxDecoration::new()
+                                        .border(BoxBorder::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .stroke(Stroke::Px(30.0))
+                                                .color(Colors::Black),
+                                        ))
+                                        .outline(BoxOutline::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .stroke(Stroke::Px(3.0))
+                                                .color(Colors::Black),
+                                        ))
+                                        .border_radius((55, 6, 25, 6))
+                                        .background_color(Colors::Red)
+                                        .box_shadow(vec![
+                                            BoxShadow::new()
+                                                .color(Colors::Black.alpha(120))
+                                                .blur(10.0)
+                                                .inset(true),
+                                        ]),
+                                )
+                                .width(Dimension::Px(400.0))
+                                .height(Dimension::Px(400.0))
+                                .child(
+                                    Text::new("Hello, World!")
+                                        .text_style(TextStyle::new().color(Colors::Black)),
+                                ),
+                        )
+                        .boxed(),
+                    Positioned::new()
+                        .top(280.0)
+                        .left(180.0)
+                        .child(
+                            Container::new()
+                                .box_decoration(
+                                    BoxDecoration::new()
+                                        .border(BoxBorder::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .stroke(Stroke::Px(30.0))
+                                                .color(Colors::Black),
+                                        ))
+                                        .outline(BoxOutline::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .stroke(Stroke::Px(3.0))
+                                                .color(Colors::Black),
+                                        ))
+                                        .border_radius((55, 6, 25, 6))
+                                        .background_color(Colors::Red)
+                                        .box_shadow(vec![
+                                            BoxShadow::new()
+                                                .color(Colors::Black.alpha(120))
+                                                .blur(10.0)
+                                                .inset(true),
+                                        ]),
+                                )
+                                .width(Dimension::Px(400.0))
+                                .height(Dimension::Px(400.0))
+                                .child(
+                                    Text::new("Hello, World!")
+                                        .text_style(TextStyle::new().color(Colors::Black)),
+                                ),
+                        )
+                        .boxed(),
+                ]),
+            ),
+    )
 }
 
 #[allow(unused)]
 fn test_border_outline() {
     AimerApp::start(
-        Container::new().padding(LayoutSpacing::all(Spacing::Px(50))).child(
-            Container::new().child(
-                Container::new().padding(LayoutSpacing::all(Spacing::Px(10))).child(
-                    TextField::new()
+        Container::new()
+            .padding(LayoutSpacing::all(Spacing::Px(50)))
+            .child(
+                Container::new().child(
+                    Container::new()
                         .padding(LayoutSpacing::all(Spacing::Px(10)))
-                        .controller(TextFieldController::new())
-                        .text_align(TextAlign::MidLeft)
-                        .input_type(InputType::Text)
-                        .prompt("Input any here....")
-                        .decoration(
-                            BoxDecoration::new()
-                                .background_color(Colors::Gray.alpha(140))
-                                .border(BoxBorder::all(
-                                    BorderSlice::new()
-                                        .style(BorderStyle::Solid)
-                                        .color(Colors::Black)
-                                        .stroke(2),
-                                ))
-                                .outline(BoxOutline::all(
-                                    BorderSlice::new()
-                                        .style(BorderStyle::Solid)
-                                        .color(Colors::Black)
-                                        .stroke(2),
-                                )),
-                        )
-                        .hover_decoration(
-                            BoxDecoration::new()
-                                .background_color(Colors::Gray.alpha(70))
-                                .border(BoxBorder::all(
-                                    BorderSlice::new()
-                                        .style(BorderStyle::Solid)
-                                        .color(Colors::Black)
-                                        .stroke(2),
-                                ))
-                                .outline(BoxOutline::all(
-                                    BorderSlice::new()
-                                        .style(BorderStyle::Solid)
-                                        .color(Colors::Green)
-                                        .stroke(2),
-                                )),
-                        )
-                        .focus_decoration(
-                            BoxDecoration::new()
-                                .background_color(Colors::Gray.alpha(100))
-                                .border(BoxBorder::all(
-                                    BorderSlice::new()
-                                        .style(BorderStyle::Solid)
-                                        .color(Colors::Green)
-                                        .stroke(2),
-                                ))
-                                .outline(BoxOutline::all(
-                                    BorderSlice::new()
-                                        .style(BorderStyle::Solid)
-                                        .color(Colors::Black)
-                                        .stroke(2),
-                                )),
+                        .child(
+                            TextField::new()
+                                .padding(LayoutSpacing::all(Spacing::Px(10)))
+                                .controller(TextFieldController::new())
+                                .text_align(TextAlign::MidLeft)
+                                .input_type(InputType::Text)
+                                .prompt("Input any here....")
+                                .decoration(
+                                    BoxDecoration::new()
+                                        .background_color(Colors::Gray.alpha(140))
+                                        .border(BoxBorder::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .color(Colors::Black)
+                                                .stroke(2),
+                                        ))
+                                        .outline(BoxOutline::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .color(Colors::Black)
+                                                .stroke(2),
+                                        )),
+                                )
+                                .hover_decoration(
+                                    BoxDecoration::new()
+                                        .background_color(Colors::Gray.alpha(70))
+                                        .border(BoxBorder::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .color(Colors::Black)
+                                                .stroke(2),
+                                        ))
+                                        .outline(BoxOutline::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .color(Colors::Green)
+                                                .stroke(2),
+                                        )),
+                                )
+                                .focus_decoration(
+                                    BoxDecoration::new()
+                                        .background_color(Colors::Gray.alpha(100))
+                                        .border(BoxBorder::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .color(Colors::Green)
+                                                .stroke(2),
+                                        ))
+                                        .outline(BoxOutline::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .color(Colors::Black)
+                                                .stroke(2),
+                                        )),
+                                ),
                         ),
                 ),
             ),
-        ),
     )
 }
 
@@ -174,7 +232,11 @@ pub fn test_scrollable() {
                     .child(
                         Text::new(format!("Item {}", i))
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed()
             } else {
@@ -194,7 +256,11 @@ pub fn test_scrollable() {
                     .child(
                         Text::new(format!("Item {}", i))
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed()
             }
@@ -213,7 +279,11 @@ pub fn test_scrollable() {
                     .child(
                         Text::new(format!("Item {}", i))
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed()
             } else {
@@ -233,15 +303,23 @@ pub fn test_scrollable() {
                     .child(
                         Text::new(format!("Item {}", i))
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed()
             }
         })
         .collect();
-    let content = Column::new().horizontal_alignment(BoxAlignment::Center).children(items);
+    let content = Column::new()
+        .horizontal_alignment(BoxAlignment::Center)
+        .children(items);
 
-    let content_2 = Column::new().horizontal_alignment(BoxAlignment::Center).children(items_2);
+    let content_2 = Column::new()
+        .horizontal_alignment(BoxAlignment::Center)
+        .children(items_2);
     let scrollbar = ScrollBar {
         track: ScrollTrack {
             width: Dimension::Px(2.0),
@@ -267,7 +345,11 @@ pub fn test_scrollable() {
                     .child(
                         Text::new("This is header")
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed(),
                 Row::new()
@@ -275,17 +357,19 @@ pub fn test_scrollable() {
                         Container::new()
                             .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
                             .child(
-                                Scrollable::new(content)
+                                Scrollable::new()
                                     .axis(ScrollAxis::Vertical)
-                                    .vertical_scroll_bar(Some(scrollbar)),
+                                    .vertical_scroll_bar(Some(scrollbar))
+                                    .child(content),
                             )
                             .boxed(),
                         Container::new()
                             .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
                             .child(
-                                Scrollable::new(content_2)
+                                Scrollable::new()
                                     .axis(ScrollAxis::Vertical)
-                                    .vertical_scroll_bar(Some(scrollbar)),
+                                    .vertical_scroll_bar(Some(scrollbar))
+                                    .child(content_2),
                             )
                             .boxed(),
                     ])
@@ -296,7 +380,11 @@ pub fn test_scrollable() {
                     .child(
                         Text::new("This is footer")
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed(),
             ])
@@ -328,7 +416,11 @@ fn test_scrollable_row() {
                     .child(
                         Text::new(format!("Item {}", i))
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed()
             } else {
@@ -348,13 +440,19 @@ fn test_scrollable_row() {
                     .child(
                         Text::new(format!("Item {}", i))
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed()
             }
         })
         .collect();
-    let content = Row::new().vertical_alignment(BoxAlignment::Center).children(items);
+    let content = Row::new()
+        .vertical_alignment(BoxAlignment::Center)
+        .children(items);
     let scrollbar = ScrollBar {
         track: ScrollTrack {
             width: Dimension::Px(2.0),
@@ -380,15 +478,20 @@ fn test_scrollable_row() {
                     .child(
                         Text::new("This is header")
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed(),
                 Container::new()
                     .padding(LayoutSpacing::all(Spacing::Px(10)))
                     .child(
-                        Scrollable::new(content)
+                        Scrollable::new()
                             .axis(ScrollAxis::Horizontal)
-                            .vertical_scroll_bar(Some(scrollbar)),
+                            .vertical_scroll_bar(Some(scrollbar))
+                            .child(content),
                     )
                     .boxed(),
                 Container::new()
@@ -397,7 +500,11 @@ fn test_scrollable_row() {
                     .child(
                         Text::new("This is footer")
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed(),
             ])
@@ -429,7 +536,9 @@ fn test_image() {
                     )
                     .padding(LayoutSpacing::all(Spacing::Px(10)))
                     .child(
-                        AssetImage::new("assets/my_image.png").fit(BoxFit::FitWidth).scale(1.1_f32),
+                        AssetImage::new("assets/my_image.png")
+                            .fit(BoxFit::FitWidth)
+                            .scale(1.1_f32),
                     ),
             ),
     )

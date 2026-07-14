@@ -1,8 +1,7 @@
 use std::fs;
-use std::path::Path;
-
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 
 pub fn create(dir: &Path, name: &str, group: &str) {
     fs::create_dir_all(dir.join("builds/android/app/src/main/java/com/example/app")).unwrap();

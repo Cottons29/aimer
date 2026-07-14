@@ -1,5 +1,6 @@
-use crate::callback::VoidParamedFunction;
 use aimer_events::pointer::PointerPosition;
+
+use crate::callback::VoidParamedFunction;
 pub mod gesture_detector;
 
 pub(crate) const DOUBLE_TAP_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
@@ -68,9 +69,11 @@ pub enum GestureEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use aimer_events::pointer::{PointerPosition, PointerSource};
     use std::sync::Arc;
+
+    use aimer_events::pointer::{PointerPosition, PointerSource};
+
+    use super::*;
 
     #[test]
     fn test_tap_callback_called() {
@@ -136,7 +139,8 @@ mod tests {
         let a = PointerPosition { x: 0.0, y: 0.0, source: PointerSource::Mouse, id: 0 };
         let b = PointerPosition { x: 3.0, y: 4.0, source: PointerSource::Mouse, id: 0 };
         // distance is private, but midpoint is too — test via the module
-        // These are simple geometry functions, tested implicitly through gesture detection.
+        // These are simple geometry functions, tested implicitly through gesture
+        // detection.
         assert!(true);
     }
 }

@@ -1,10 +1,11 @@
-use crate::canvas::CanvasRendering;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 use aimer_cupid::canvas::CupidCanvas;
 use aimer_cupid::text_pipeline::TextOverflowMode;
 use aimer_cupid::utilities::Color as CupidColor;
+
+use crate::canvas::CanvasRendering;
 
 #[allow(dead_code)]
 impl CanvasRendering for CupidCanvas {

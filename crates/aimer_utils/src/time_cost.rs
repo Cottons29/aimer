@@ -1,8 +1,9 @@
-use crate::debug;
 #[cfg(feature = "time-cost")]
 use std::cell::LazyCell;
 #[cfg(feature = "time-cost")]
 use std::sync::LazyLock;
+
+use crate::debug;
 
 #[cfg(feature = "time-cost")]
 struct ExecGrouping {
@@ -34,15 +35,24 @@ macro_rules! time_cost {
 #[cfg(feature = "time-cost")]
 const MINIMUM_EXEC_TIME: Option<&str> = option_env!("MINIMUM_EXEC_TIME");
 #[cfg(feature = "time-cost")]
-static MINIMUM_EXEC_TIME_MS: LazyLock<i64> =
-    LazyLock::new(|| MINIMUM_EXEC_TIME.unwrap_or("0").parse::<i64>().unwrap_or(0).max(0));
+static MINIMUM_EXEC_TIME_MS: LazyLock<i64> = LazyLock::new(|| {
+    MINIMUM_EXEC_TIME
+        .unwrap_or("0")
+        .parse::<i64>()
+        .unwrap_or(0)
+        .max(0)
+});
 
 #[cfg(feature = "time-cost")]
 fn add_grouping(key: &str, val: i64) {
-    let key = key.trim().replace("|-", "");
+    let key = key
+        .trim()
+        .replace("|-", "");
     let group = unsafe { &raw mut EXEC_GROUPING.map };
     let group = unsafe { &mut *group };
-    let times = group.entry(key.to_string()).or_default();
+    let times = group
+        .entry(key.to_string())
+        .or_default();
     times.push(val);
 }
 
@@ -56,7 +66,9 @@ impl ExecTimes {
             let group = unsafe { &raw mut EXEC_GROUPING.map };
             let group = unsafe { &mut *group };
             for (label, times) in group.iter() {
-                let sum = times.iter().sum::<i64>();
+                let sum = times
+                    .iter()
+                    .sum::<i64>();
                 debug!("{:<5}ms -> {}", sum, label);
             }
             group.clear();
@@ -68,7 +80,9 @@ impl ExecTimes {
     pub fn no_param<T>(label: &str, f: impl FnOnce() -> T) -> T {
         let start = chrono::Local::now();
         let res = f();
-        let delta = chrono::Local::now().signed_duration_since(start).num_milliseconds();
+        let delta = chrono::Local::now()
+            .signed_duration_since(start)
+            .num_milliseconds();
         if delta < *MINIMUM_EXEC_TIME_MS {
             return res;
         }
@@ -89,7 +103,9 @@ impl ExecTimes {
 
         debug!(
             "Used time: {} ms",
-            chrono::Local::now().signed_duration_since(start).num_milliseconds()
+            chrono::Local::now()
+                .signed_duration_since(start)
+                .num_milliseconds()
         );
     }
 }
