@@ -52,7 +52,7 @@ members = [
     "crates/aimer_text",
     "crates/aimer_macro",
     "jaime"
-, "crates/aimer_provider", "dev_tools/aimer_lsp", "crates/aimer_sdk"]
+, "crates/aimer_provider",  "crates/aimer_sdk"]
 
 
 [workspace.dependencies]
@@ -78,16 +78,16 @@ aimer_provider = {path = "crates/aimer_provider"}
 
 #############
 
-web-sys = { version = "0.3.102", features = ["CanvasRenderingContext2d", "DomMatrix", "TextMetrics"] }
-wasm-bindgen-futures = "0.4.75"
-js-sys = "0.3.102"
-wasm-bindgen = "0.2.125"
+web-sys = { version = "0.3.103", features = ["CanvasRenderingContext2d", "DomMatrix", "TextMetrics"] }
+wasm-bindgen-futures = "0.4.76"
+js-sys = "0.3.103"
+wasm-bindgen = "0.2.126"
 console_error_panic_hook = "0.1.7"
 winit = { version = "0.30.12", features = ["android-native-activity"] }
 raw-window-handle = "0.6.2"
-syn = { version = "2.0.117", features = ["full"] }
+syn = { version = "2.0.118", features = ["full"] }
 proc-macro2 = { version = "1.0.106" }
-quote = "1.0.45"
+quote = "1.0.46"
 chrono = "0.4.45"
 web-time = "1.1.0"
 objc = { version = "0.2.7" }
@@ -96,7 +96,7 @@ fxhash = "0.2.1"
 crossbeam = "0.8.4"
 colored = "3.1.1"
 tokio = "1.52.3"
-crossbeam-channel = "0.5.15"
+crossbeam-channel = "0.5.16"
 once_cell = "1.21.4"
 smallvec = "1.13.2"
 url = "2.5.8"
@@ -107,35 +107,35 @@ ndk-glue = "0.7.0"
 ndk = "0.9.0"
 ndk-context = "0.1.1"
 wgpu = {version =  "30.0.0" }
-pollster = "0.4"
-bytemuck = { version = "1", features = ["derive"] }
-fontdue = "0.9"
+pollster = "1.0.1"
+bytemuck = { version = "1.25.1", features = ["derive"] }
+fontdue = "0.9.3"
 rustybuzz = "0.20.1"
 unicode-bidi = "0.3.18"
 unicode-linebreak = "0.1.5"
-unicode-segmentation = "1.12.0"
+unicode-segmentation = "1.13.3"
 image = { version = "0.25.10" }
-font-kit = "0.14"
+font-kit = "0.14.3"
 core-foundation-sys = "0.8.7"
-reqwest = { version = "0.13.2", default-features = false, features = ["native-tls", "http2"] }
-openssl = { version = "0.10", features = ["vendored"] }
-uuid = {version = "1.23.4", features = ["js","v4"]}
+reqwest = { version = "0.13.4", default-features = false, features = ["native-tls", "http2"] }
+openssl = { version = "0.10.81", features = ["vendored"] }
+uuid = {version = "1.23.5", features = ["js","v4"]}
 ttf-parser = "0.25.1"
 dirs = "6.0.0"
 # Aimer cli dependencies
 crossterm = "0.29.0"
-clap = { version = "4.5.60", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 inquire = "0.9.4"
-ratatui = "0.30.0"
+ratatui = "0.30.2"
 ansi-to-tui = "8.0.1"
 arboard = "3.6.1"
-clap_complete = { version = "4.6.5", features = ["unstable-dynamic"] }
+clap_complete = { version = "4.6.7", features = ["unstable-dynamic"] }
 notify = "9.0.0-rc.4"
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 thiserror = "2.0.18"
-toml = "1.1"
+toml = "1.1.2+spec-1.1.0"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tempfile = "3.27.0"
 sha2 = "0.11.0"
 hex = "0.4.3"
