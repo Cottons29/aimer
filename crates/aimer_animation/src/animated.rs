@@ -3,7 +3,9 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
+use aimer_widget::{
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -70,7 +72,13 @@ impl<T: Widget + 'static> Widget for Animated<T> {
         // Create a StateUpdater-like mechanism: we use a shared dirty flag + window ref
         // to request redraws while the animation is running.
         let window: &'static winit::window::Window = ctx.window;
-        Box::new(AnimatedElement { child: child_element, controller, effect: self.effect, animating, window })
+        Box::new(AnimatedElement {
+            child: child_element,
+            controller,
+            effect: self.effect,
+            animating,
+            window,
+        })
     }
 }
 
@@ -93,7 +101,7 @@ impl Drawable for AnimatedElement {
     fn draw(&self, ctx: &BuildContext) {
         let now = AnimInstant::now();
         let curved_value = {
-            let mut ctrl = self.controller.lock().unwrap();
+            let ctrl = self.controller.lock().unwrap();
 
             let v = ctrl.tick(now);
             self.animating.store(ctrl.is_animating(), Ordering::Relaxed);
@@ -125,8 +133,7 @@ impl AnimatedElement {
         let child_size = self.child.computed_size(ctx);
         let w = child_size.width;
         let h = child_size.height;
-        ctx.canvas
-            .set_clip((0.0, 0.0).into(), ResolvedSize { width: w, height: h });
+        ctx.canvas.set_clip((0.0, 0.0).into(), ResolvedSize { width: w, height: h });
     }
 
     fn apply_effect(&self, ctx: &BuildContext, t: f32) {

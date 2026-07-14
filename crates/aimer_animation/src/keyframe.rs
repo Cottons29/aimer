@@ -55,19 +55,13 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
     /// Create a keyframe animation from (fraction, value) pairs using linear
     /// interpolation between each pair.
     pub fn from_values(values: &[(f32, T)]) -> Self {
-        let frames = values
-            .iter()
-            .map(|(f, v)| (*f, Keyframe::linear(v.clone())))
-            .collect();
+        let frames = values.iter().map(|(f, v)| (*f, Keyframe::linear(v.clone()))).collect();
         Self::new(frames)
     }
 
     /// Create a keyframe animation from (fraction, value, curve) triples.
     pub fn with_curves(entries: &[(f32, T, Curve)]) -> Self {
-        let frames = entries
-            .iter()
-            .map(|(f, v, c)| (*f, Keyframe::new(v.clone(), *c)))
-            .collect();
+        let frames = entries.iter().map(|(f, v, c)| (*f, Keyframe::new(v.clone(), *c))).collect();
         Self::new(frames)
     }
 
@@ -143,11 +137,7 @@ mod tests {
 
     #[test]
     fn test_three_keyframes() {
-        let anim = KeyframeAnimation::from_values(&[
-            (0.0, 0.0f32),
-            (0.5, 100.0),
-            (1.0, 0.0),
-        ]);
+        let anim = KeyframeAnimation::from_values(&[(0.0, 0.0f32), (0.5, 100.0), (1.0, 0.0)]);
         assert!((anim.at(0.0) - 0.0).abs() < 1e-9);
         assert!((anim.at(0.25) - 50.0).abs() < 1e-9);
         assert!((anim.at(0.5) - 100.0).abs() < 1e-9);
@@ -184,10 +174,8 @@ mod tests {
 
     #[test]
     fn test_tuple_keyframes() {
-        let anim = KeyframeAnimation::from_values(&[
-            (0.0, (0.0f32, 0.0f32)),
-            (1.0, (100.0, 200.0)),
-        ]);
+        let anim =
+            KeyframeAnimation::from_values(&[(0.0, (0.0f32, 0.0f32)), (1.0, (100.0, 200.0))]);
         let r = anim.at(0.5);
         assert!((r.0 - 50.0).abs() < 1e-9);
         assert!((r.1 - 100.0).abs() < 1e-9);

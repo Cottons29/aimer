@@ -5,8 +5,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
-    Widget,
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -55,7 +54,7 @@ macro_rules! impl_transition_element {
             fn draw(&self, ctx: &BuildContext) {
                 let now = AnimInstant::now();
                 let curved_value = {
-                    let mut ctrl = self.controller.lock().unwrap();
+                    let ctrl = self.controller.lock().unwrap();
                     let v = ctrl.tick(now);
                     self.animating.store(ctrl.is_animating(), Ordering::Relaxed);
                     v
@@ -73,30 +72,48 @@ macro_rules! impl_transition_element {
         }
 
         impl VisitorElement for $name {
-            fn debug_name(&self) -> &'static str { $debug }
+            fn debug_name(&self) -> &'static str {
+                $debug
+            }
             fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
                 visitor(self.child.as_ref());
             }
         }
 
         impl EventElement for $name {
-            fn on_event(&self, event: &ElementEvent) -> bool { self.child.on_event(event) }
+            fn on_event(&self, event: &ElementEvent) -> bool {
+                self.child.on_event(event)
+            }
             fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
                 visitor(self.child.as_ref());
             }
         }
 
         impl Rebuildable for $name {
-            fn rebuild_if_dirty(&self, ctx: &BuildContext) { self.child.rebuild_if_dirty(ctx); }
+            fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+                self.child.rebuild_if_dirty(ctx);
+            }
         }
 
         impl LayoutElement for $name {
-            fn pos(&self) -> Option<Vec2d> { self.child.pos() }
-            fn size(&self) -> Option<Size> { self.child.size() }
-            fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.computed_size(ctx) }
-            fn content_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.content_size(ctx) }
-            fn get_size_from_child(&self) -> Option<Size> { self.child.get_size_from_child() }
-            fn invalidate_layout(&self) { self.child.invalidate_layout(); }
+            fn pos(&self) -> Option<Vec2d> {
+                self.child.pos()
+            }
+            fn size(&self) -> Option<Size> {
+                self.child.size()
+            }
+            fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+                self.child.computed_size(ctx)
+            }
+            fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+                self.child.content_size(ctx)
+            }
+            fn get_size_from_child(&self) -> Option<Size> {
+                self.child.get_size_from_child()
+            }
+            fn invalidate_layout(&self) {
+                self.child.invalidate_layout();
+            }
         }
     };
 }
@@ -156,7 +173,7 @@ impl Drawable for SlideTransitionElement {
     fn draw(&self, ctx: &BuildContext) {
         let now = AnimInstant::now();
         let curved_value = {
-            let mut ctrl = self.controller.lock().unwrap();
+            let ctrl = self.controller.lock().unwrap();
             let v = ctrl.tick(now);
             self.animating.store(ctrl.is_animating(), Ordering::Relaxed);
             v
@@ -179,30 +196,48 @@ impl Drawable for SlideTransitionElement {
 }
 
 impl VisitorElement for SlideTransitionElement {
-    fn debug_name(&self) -> &'static str { "SlideTransitionElement" }
+    fn debug_name(&self) -> &'static str {
+        "SlideTransitionElement"
+    }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
     }
 }
 
 impl EventElement for SlideTransitionElement {
-    fn on_event(&self, event: &ElementEvent) -> bool { self.child.on_event(event) }
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        self.child.on_event(event)
+    }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
     }
 }
 
 impl Rebuildable for SlideTransitionElement {
-    fn rebuild_if_dirty(&self, ctx: &BuildContext) { self.child.rebuild_if_dirty(ctx); }
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.child.rebuild_if_dirty(ctx);
+    }
 }
 
 impl LayoutElement for SlideTransitionElement {
-    fn pos(&self) -> Option<Vec2d> { self.child.pos() }
-    fn size(&self) -> Option<Size> { self.child.size() }
-    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.computed_size(ctx) }
-    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.content_size(ctx) }
-    fn get_size_from_child(&self) -> Option<Size> { self.child.get_size_from_child() }
-    fn invalidate_layout(&self) { self.child.invalidate_layout(); }
+    fn pos(&self) -> Option<Vec2d> {
+        self.child.pos()
+    }
+    fn size(&self) -> Option<Size> {
+        self.child.size()
+    }
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child.computed_size(ctx)
+    }
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child.content_size(ctx)
+    }
+    fn get_size_from_child(&self) -> Option<Size> {
+        self.child.get_size_from_child()
+    }
+    fn invalidate_layout(&self) {
+        self.child.invalidate_layout();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +280,7 @@ impl Drawable for ScaleTransitionElement {
     fn draw(&self, ctx: &BuildContext) {
         let now = AnimInstant::now();
         let curved_value = {
-            let mut ctrl = self.controller.lock().unwrap();
+            let ctrl = self.controller.lock().unwrap();
             let v = ctrl.tick(now);
             self.animating.store(ctrl.is_animating(), Ordering::Relaxed);
             v
@@ -268,30 +303,48 @@ impl Drawable for ScaleTransitionElement {
 }
 
 impl VisitorElement for ScaleTransitionElement {
-    fn debug_name(&self) -> &'static str { "ScaleTransitionElement" }
+    fn debug_name(&self) -> &'static str {
+        "ScaleTransitionElement"
+    }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
     }
 }
 
 impl EventElement for ScaleTransitionElement {
-    fn on_event(&self, event: &ElementEvent) -> bool { self.child.on_event(event) }
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        self.child.on_event(event)
+    }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
     }
 }
 
 impl Rebuildable for ScaleTransitionElement {
-    fn rebuild_if_dirty(&self, ctx: &BuildContext) { self.child.rebuild_if_dirty(ctx); }
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.child.rebuild_if_dirty(ctx);
+    }
 }
 
 impl LayoutElement for ScaleTransitionElement {
-    fn pos(&self) -> Option<Vec2d> { self.child.pos() }
-    fn size(&self) -> Option<Size> { self.child.size() }
-    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.computed_size(ctx) }
-    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.content_size(ctx) }
-    fn get_size_from_child(&self) -> Option<Size> { self.child.get_size_from_child() }
-    fn invalidate_layout(&self) { self.child.invalidate_layout(); }
+    fn pos(&self) -> Option<Vec2d> {
+        self.child.pos()
+    }
+    fn size(&self) -> Option<Size> {
+        self.child.size()
+    }
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child.computed_size(ctx)
+    }
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child.content_size(ctx)
+    }
+    fn get_size_from_child(&self) -> Option<Size> {
+        self.child.get_size_from_child()
+    }
+    fn invalidate_layout(&self) {
+        self.child.invalidate_layout();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -336,7 +389,7 @@ impl Drawable for RotationTransitionElement {
     fn draw(&self, ctx: &BuildContext) {
         let now = AnimInstant::now();
         let curved_value = {
-            let mut ctrl = self.controller.lock().unwrap();
+            let ctrl = self.controller.lock().unwrap();
             let v = ctrl.tick(now);
             self.animating.store(ctrl.is_animating(), Ordering::Relaxed);
             v
@@ -361,28 +414,46 @@ impl Drawable for RotationTransitionElement {
 }
 
 impl VisitorElement for RotationTransitionElement {
-    fn debug_name(&self) -> &'static str { "RotationTransitionElement" }
+    fn debug_name(&self) -> &'static str {
+        "RotationTransitionElement"
+    }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
     }
 }
 
 impl EventElement for RotationTransitionElement {
-    fn on_event(&self, event: &ElementEvent) -> bool { self.child.on_event(event) }
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        self.child.on_event(event)
+    }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
     }
 }
 
 impl Rebuildable for RotationTransitionElement {
-    fn rebuild_if_dirty(&self, ctx: &BuildContext) { self.child.rebuild_if_dirty(ctx); }
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.child.rebuild_if_dirty(ctx);
+    }
 }
 
 impl LayoutElement for RotationTransitionElement {
-    fn pos(&self) -> Option<Vec2d> { self.child.pos() }
-    fn size(&self) -> Option<Size> { self.child.size() }
-    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.computed_size(ctx) }
-    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize { self.child.content_size(ctx) }
-    fn get_size_from_child(&self) -> Option<Size> { self.child.get_size_from_child() }
-    fn invalidate_layout(&self) { self.child.invalidate_layout(); }
+    fn pos(&self) -> Option<Vec2d> {
+        self.child.pos()
+    }
+    fn size(&self) -> Option<Size> {
+        self.child.size()
+    }
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child.computed_size(ctx)
+    }
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child.content_size(ctx)
+    }
+    fn get_size_from_child(&self) -> Option<Size> {
+        self.child.get_size_from_child()
+    }
+    fn invalidate_layout(&self) {
+        self.child.invalidate_layout();
+    }
 }
