@@ -14,5 +14,13 @@ pub fn spawn_ios_simulator_runner(
     inspector_address: IpAddr,
     inspector_port: u16,
 ) {
-    run_ios(IosVariant::Simulator, device, pkg_name, tx, current_child_clone, inspector_address, inspector_port);
+    run_ios(
+        IosVariant::Simulator,
+        device,
+        pkg_name,
+        tx,
+        current_child_clone,
+        inspector_address,
+        inspector_port,
+    );
 }

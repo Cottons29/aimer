@@ -1,10 +1,12 @@
 use crate::commands::run::Device;
 use crate::commands::run::cargo_build::{
-    self, CargoBuildTarget, stream_stderr_as_app_log, stream_stderr_as_build_log, stream_stdout_as_app_log,
-    stream_stdout_with_xcode_progress, wait_for_child,
+    self, CargoBuildTarget, stream_stderr_as_app_log, stream_stderr_as_build_log,
+    stream_stdout_as_app_log, stream_stdout_with_xcode_progress, wait_for_child,
 };
 use crate::commands::run::console::{RunnerEvent, Status};
-use crate::commands::run::helpers::{build_log, build_streamed, fail, host_arch, set_status, spawn_streamed};
+use crate::commands::run::helpers::{
+    build_log, build_streamed, fail, host_arch, set_status, spawn_streamed,
+};
 use crate::commands::run::utilities::resolve_lib_path;
 use crossbeam::channel::Sender;
 use std::net::IpAddr;
@@ -22,11 +24,16 @@ pub fn spawn_macos_runner(
     set_status(&tx, Status::Compiling(0));
     build_log(&tx, "Compiling static library...");
 
-    let status =
-        match cargo_build::spawn_cargo_build(&CargoBuildTarget::Darwin, &tx, &current_child_clone, inspector_address, inspector_port) {
-            Some(s) => s,
-            None => return,
-        };
+    let status = match cargo_build::spawn_cargo_build(
+        &CargoBuildTarget::Darwin,
+        &tx,
+        &current_child_clone,
+        inspector_address,
+        inspector_port,
+    ) {
+        Some(s) => s,
+        None => return,
+    };
 
     if !status.success() {
         fail(&tx, "Cargo build failed.");
@@ -80,7 +87,8 @@ pub fn spawn_macos_runner(
     set_status(&tx, Status::Launching);
     build_log(&tx, "Launching macOS app...");
 
-    let app_exec_path = format!("builds/macos/build/Debug/{}.app/Contents/MacOS/{}", pkg_name, pkg_name);
+    let app_exec_path =
+        format!("builds/macos/build/Debug/{}.app/Contents/MacOS/{}", pkg_name, pkg_name);
 
     let mut app_run = Command::new(&app_exec_path);
     app_run.stdout(Stdio::piped()).stderr(Stdio::piped());

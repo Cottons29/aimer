@@ -33,7 +33,7 @@ pub fn get_project_root(allow_workspace: bool) -> Result<PathBuf, Box<dyn Error>
 
 pub fn resolve_lib_path(lib_name: &str, rust_target: &str, target: CargoBuildTarget) -> String {
     let extension = match target {
-        CargoBuildTarget::Darwin | CargoBuildTarget::Ios {..} => ".a",
+        CargoBuildTarget::Darwin | CargoBuildTarget::Ios { .. } => ".a",
         _ => ".so",
     };
     let project_root = get_project_root(true).unwrap_or_else(|_| current_dir().unwrap());
@@ -76,9 +76,9 @@ mod tests {
 
         let project_root = get_project_root(true);
         assert!(project_root.is_ok());
-        let is_pass = project_root.as_ref().unwrap() == &expected || project_root.as_ref().unwrap() == &another_expected;
+        let is_pass = project_root.as_ref().unwrap() == &expected
+            || project_root.as_ref().unwrap() == &another_expected;
         assert!(is_pass, "Project root not found project_root: {:?}", project_root);
-
     }
 
     #[test]

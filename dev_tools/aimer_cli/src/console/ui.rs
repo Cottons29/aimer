@@ -1,3 +1,5 @@
+use crate::console::state::{VisualRow, strip_ansi};
+use crate::console::{AppState, ConsoleType, PaneView, Selection, Status};
 use aimer_inspector::{InspectorState, render_tree_lines_with_ids};
 use ansi_to_tui::IntoText;
 use ratatui::{
@@ -7,8 +9,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
-use crate::console::state::{strip_ansi, VisualRow};
-use crate::console::{AppState, ConsoleType, PaneView, Selection, Status};
 
 /// Render the full console UI as a function of the current [`AppState`] and the
 /// latest inspector snapshot. Pane scroll positions are clamped here as a side
@@ -55,20 +55,30 @@ pub fn render(
     };
     let inspector_title = format!("Inspector{}", inspector_status);
 
-    let build_block = Block::default()
-        .borders(Borders::ALL)
-        .title("Build Logs")
-        .border_style(Style::default().fg(if state.pane == ConsoleType::Build { Color::Yellow } else { Color::White }));
+    let build_block = Block::default().borders(Borders::ALL).title("Build Logs").border_style(
+        Style::default().fg(if state.pane == ConsoleType::Build {
+            Color::Yellow
+        } else {
+            Color::White
+        }),
+    );
 
-    let app_block = Block::default()
-        .borders(Borders::ALL)
-        .title("App Logs")
-        .border_style(Style::default().fg(if state.pane == ConsoleType::App { Color::Yellow } else { Color::White }));
+    let app_block = Block::default().borders(Borders::ALL).title("App Logs").border_style(
+        Style::default().fg(if state.pane == ConsoleType::App {
+            Color::Yellow
+        } else {
+            Color::White
+        }),
+    );
 
     let inspector_block = Block::default()
         .borders(Borders::ALL)
         .title(inspector_title)
-        .border_style(Style::default().fg(if state.pane == ConsoleType::Inspector { Color::Cyan } else { Color::White }));
+        .border_style(Style::default().fg(if state.pane == ConsoleType::Inspector {
+            Color::Cyan
+        } else {
+            Color::White
+        }));
 
     let area = chunks[0];
     let height = area.height.saturating_sub(2) as usize;
@@ -80,7 +90,11 @@ pub fn render(
     // selection mode publishes one (see `build_selection_view`).
     state.last_view = None;
 
-    let calc_scroll = |logs: &[Line], height: usize, width: usize, requested_scroll: usize| -> (usize, u16, u16) {
+    let calc_scroll = |logs: &[Line],
+                       height: usize,
+                       width: usize,
+                       requested_scroll: usize|
+     -> (usize, u16, u16) {
         if logs.is_empty() {
             return (0, 0, 0);
         }
@@ -129,7 +143,8 @@ pub fn render(
             state.last_view = Some(view);
             f.render_widget(Paragraph::new(rendered).block(build_block), area);
         } else {
-            let (start, skip_top, new_scroll) = calc_scroll(&build_text, height, width, state.build_pane.scroll as usize);
+            let (start, skip_top, new_scroll) =
+                calc_scroll(&build_text, height, width, state.build_pane.scroll as usize);
             state.build_pane.scroll = new_scroll;
             let p = Paragraph::new(build_text[start..].to_vec())
                 .block(build_block)
@@ -153,7 +168,8 @@ pub fn render(
             state.last_view = Some(view);
             f.render_widget(Paragraph::new(rendered).block(app_block), area);
         } else {
-            let (start, skip_top, new_scroll) = calc_scroll(&app_text, height, width, state.app_pane.scroll as usize);
+            let (start, skip_top, new_scroll) =
+                calc_scroll(&app_text, height, width, state.app_pane.scroll as usize);
             state.app_pane.scroll = new_scroll;
             let p = Paragraph::new(app_text[start..].to_vec())
                 .block(app_block)
@@ -173,7 +189,12 @@ pub fn render(
         } else {
             let mut tree_ids: Vec<u64> = Vec::new();
             match &inspector_state.tree {
-                Some(root) => render_tree_lines_with_ids(root, &mut tree_lines, &mut tree_ids, state.inspector_full_tree),
+                Some(root) => render_tree_lines_with_ids(
+                    root,
+                    &mut tree_lines,
+                    &mut tree_ids,
+                    state.inspector_full_tree,
+                ),
                 None => tree_lines.push("No widget tree received yet.".to_string()),
             }
             // Auto-move cursor to hovered widget
@@ -192,7 +213,8 @@ pub fn render(
         if (state.inspector_cursor as u16) < state.inspector_pane.scroll {
             state.inspector_pane.scroll = state.inspector_cursor as u16;
         } else if state.inspector_cursor as u16 >= state.inspector_pane.scroll + height as u16 {
-            state.inspector_pane.scroll = (state.inspector_cursor as u16).saturating_sub(height as u16 - 1);
+            state.inspector_pane.scroll =
+                (state.inspector_cursor as u16).saturating_sub(height as u16 - 1);
         }
         let highlight_style = Style::default().bg(Color::DarkGray).fg(Color::White);
         let inspector_text: Vec<Line> = tree_lines
@@ -253,7 +275,10 @@ pub fn render(
     let controls_line = Line::from(vec![
         Span::styled("[r] ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
         Span::raw("reload | "),
-        Span::styled("[Shift+Q] ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Shift+Q] ",
+            Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
+        ),
         Span::raw("exit | "),
         // Span::styled("[c] ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
         // Span::raw("copy | "),
@@ -371,11 +396,8 @@ fn build_selection_view(
         let mut buf_style: Option<Style> = None;
         for i in 0..vr.len {
             let (ch, base) = src[vr.start + i];
-            let style = if is_selected(vr.line, vr.start + i) {
-                base.patch(highlight)
-            } else {
-                base
-            };
+            let style =
+                if is_selected(vr.line, vr.start + i) { base.patch(highlight) } else { base };
             match buf_style {
                 Some(s) if s == style => buf.push(ch),
                 _ => {

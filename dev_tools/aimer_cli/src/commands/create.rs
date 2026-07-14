@@ -8,7 +8,10 @@ pub mod window;
 use crate::config::AimerManifest;
 use crate::errors::AimerError;
 use anyhow::Context;
-use inquire::{ui::{Color, RenderConfig, Styled}, Confirm, MultiSelect, Text};
+use inquire::{
+    Confirm, MultiSelect, Text,
+    ui::{Color, RenderConfig, Styled},
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -21,7 +24,9 @@ macro_rules! prompt_abortable {
                     println!("press 'ctrl + c' again to exit");
                     crossterm::terminal::enable_raw_mode().unwrap();
                     if let Ok(crossterm::event::Event::Key(event)) = crossterm::event::read() {
-                        if event.code == crossterm::event::KeyCode::Char('c') && event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                        if event.code == crossterm::event::KeyCode::Char('c')
+                            && event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                        {
                             crossterm::terminal::disable_raw_mode().unwrap();
                             std::process::exit(1);
                         }
@@ -61,8 +66,13 @@ pub fn execute(project_name: &str) -> anyhow::Result<()> {
     let description = prompt_abortable!(Text::new("Description:"));
     let version = prompt_abortable!(Text::new("Version:").with_default("0.1.0"));
     let author = prompt_abortable!(Text::new("Author:"));
-    let group = prompt_abortable!(Text::new("Group (e.g. com.example.app):").with_default("com.example.app"));
-    let targets = prompt_abortable!(MultiSelect::new("Targets:", vec!["macos", "windows", "linux", "android", "ios", "web"]));
+    let group = prompt_abortable!(
+        Text::new("Group (e.g. com.example.app):").with_default("com.example.app")
+    );
+    let targets = prompt_abortable!(MultiSelect::new(
+        "Targets:",
+        vec!["macos", "windows", "linux", "android", "ios", "web"]
+    ));
 
     println!(
         "\nProject config:\n- Name: {}\n- Version: {}\n- Description: {}\n- Author: {}\n- Group: {}\n- Targets: {:?}",
@@ -82,7 +92,9 @@ pub fn execute(project_name: &str) -> anyhow::Result<()> {
 
     // Run the scaffold inside a helper so that any failure cleans up the
     // partially created directory instead of leaving it behind.
-    if let Err(err) = scaffold(&dir, project_name, &version, &description, &author, &group, &targets) {
+    if let Err(err) =
+        scaffold(&dir, project_name, &version, &description, &author, &group, &targets)
+    {
         let _ = fs::remove_dir_all(&dir);
         return Err(err).with_context(|| format!("failed to create project '{project_name}'"));
     }
@@ -166,9 +178,8 @@ fn scaffold(
 /// characters that are reserved on common filesystems.
 pub fn validate_project_name(name: &str) -> Result<(), AimerError> {
     const RESERVED: &[char] = &[':', '*', '?', '"', '<', '>', '|'];
-    let reject = |reason: &str| {
-        Err(AimerError::InvalidProjectName(name.to_string(), reason.to_string()))
-    };
+    let reject =
+        |reason: &str| Err(AimerError::InvalidProjectName(name.to_string(), reason.to_string()));
 
     if name.trim().is_empty() {
         return reject("name must not be empty");
@@ -235,7 +246,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("myapp");
 
-        scaffold(&dir, "myapp", "0.2.0", "a test app", "tester", "com.example.myapp", &["web"]).unwrap();
+        scaffold(&dir, "myapp", "0.2.0", "a test app", "tester", "com.example.myapp", &["web"])
+            .unwrap();
 
         // Core files and directories are present.
         assert!(dir.join("src/lib.rs").exists(), "missing src/lib.rs");
@@ -247,10 +259,7 @@ mod tests {
         assert!(dir.join("builds/web").is_dir(), "missing builds/web");
 
         // Generated Cargo.toml parses and carries the right package name.
-        assert_eq!(
-            crate::config::parse_cargo_package_name(&dir),
-            Some("myapp".to_string())
-        );
+        assert_eq!(crate::config::parse_cargo_package_name(&dir), Some("myapp".to_string()));
 
         // aimer.toml round-trips with the collected metadata.
         let manifest = AimerManifest::load_from(&dir).unwrap().unwrap();

@@ -122,7 +122,11 @@ fn sync_trunk_copy_entries_in(dir: &Path) -> anyhow::Result<()> {
 ///
 /// Split out from [`copy_assets_into`] so the copy logic can be unit-tested
 /// against explicit roots without mutating the process-wide current directory.
-fn copy_files(files: &[String], src_root: &Path, dest_root: &Path) -> anyhow::Result<AssetCopyReport> {
+fn copy_files(
+    files: &[String],
+    src_root: &Path,
+    dest_root: &Path,
+) -> anyhow::Result<AssetCopyReport> {
     let mut report = AssetCopyReport::default();
     if files.is_empty() {
         return Ok(report);
@@ -140,10 +144,12 @@ fn copy_files(files: &[String], src_root: &Path, dest_root: &Path) -> anyhow::Re
             continue;
         }
         if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
         }
-        std::fs::copy(&src, &dest)
-            .with_context(|| format!("copying asset '{}' -> '{}'", src.display(), dest.display()))?;
+        std::fs::copy(&src, &dest).with_context(|| {
+            format!("copying asset '{}' -> '{}'", src.display(), dest.display())
+        })?;
         report.copied.push(rel.clone());
     }
     Ok(report)
@@ -206,20 +212,14 @@ mod tests {
         std::fs::write(&src, b"PNG-CHANGED").unwrap();
         let report = copy_files(&files, src_root.path(), dest.path()).unwrap();
         assert_eq!(report.copied, ["assets/logo.png".to_string()]);
-        assert_eq!(
-            std::fs::read(dest.path().join("assets/logo.png")).unwrap(),
-            b"PNG-CHANGED"
-        );
+        assert_eq!(std::fs::read(dest.path().join("assets/logo.png")).unwrap(), b"PNG-CHANGED");
     }
 
     // ── sync_trunk_copy_entries ─────────────────────────────────────────
 
     /// Helper: set up a temp project with an `aimer.toml` and a
     /// `builds/web/Trunk.toml`, then run `sync_trunk_copy_entries_in`.
-    fn setup_trunk_sync(
-        aimer_assets: Option<&str>,
-        trunk_initial: &str,
-    ) -> tempfile::TempDir {
+    fn setup_trunk_sync(aimer_assets: Option<&str>, trunk_initial: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let web_dir = dir.path().join("builds/web");
         std::fs::create_dir_all(&web_dir).unwrap();

@@ -1,11 +1,14 @@
+use crate::commands::run::Device;
 use crate::commands::run::cargo_build::{
-    self, stream_as_app_log_split_cr, stream_stderr_as_app_log, stream_stderr_as_build_log, stream_stdout_as_app_log, stream_stdout_with_xcode_progress,
-    wait_for_child, CargoBuildTarget,
+    self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_app_log,
+    stream_stderr_as_build_log, stream_stdout_as_app_log, stream_stdout_with_xcode_progress,
+    wait_for_child,
 };
 use crate::commands::run::console::{RunnerEvent, Status};
-use crate::commands::run::helpers::{build_log, build_streamed, fail, host_arch, run_to_completion, set_status, spawn_streamed};
+use crate::commands::run::helpers::{
+    build_log, build_streamed, fail, host_arch, run_to_completion, set_status, spawn_streamed,
+};
 use crate::commands::run::utilities::resolve_lib_path;
-use crate::commands::run::Device;
 use crossbeam::channel::Sender;
 use std::fs;
 use std::net::IpAddr;
@@ -28,7 +31,15 @@ pub fn spawn_ios_runner(
     inspector_address: IpAddr,
     inspector_port: u16,
 ) {
-    run_ios(IosVariant::Device, device, pkg_name, tx, current_child_clone, inspector_address, inspector_port);
+    run_ios(
+        IosVariant::Device,
+        device,
+        pkg_name,
+        tx,
+        current_child_clone,
+        inspector_address,
+        inspector_port,
+    );
 }
 
 /// Shared iOS build → package → launch pipeline used by both the physical
@@ -47,11 +58,22 @@ pub(crate) fn run_ios(
     let (rust_target, sdk, build_target, debug_subdir) = match variant {
         IosVariant::Device => {
             let rust_target = "aarch64-apple-ios";
-            (rust_target, "iphoneos", CargoBuildTarget::Ios { rust_target: rust_target.to_string() }, "Debug-iphoneos")
+            (
+                rust_target,
+                "iphoneos",
+                CargoBuildTarget::Ios { rust_target: rust_target.to_string() },
+                "Debug-iphoneos",
+            )
         }
         IosVariant::Simulator => {
-            let rust_target = if xcode_arch == "x86_64" { "x86_64-apple-ios" } else { "aarch64-apple-ios-sim" };
-            (rust_target, "iphonesimulator", CargoBuildTarget::IosSim { rust_target: rust_target.to_string() }, "Debug-iphonesimulator")
+            let rust_target =
+                if xcode_arch == "x86_64" { "x86_64-apple-ios" } else { "aarch64-apple-ios-sim" };
+            (
+                rust_target,
+                "iphonesimulator",
+                CargoBuildTarget::IosSim { rust_target: rust_target.to_string() },
+                "Debug-iphonesimulator",
+            )
         }
     };
 
@@ -62,14 +84,18 @@ pub(crate) fn run_ios(
         if app.exists() {
             fs::remove_dir_all(app).unwrap();
         }
-
     }
-
 
     set_status(&tx, Status::Compiling(0));
     build_log(&tx, format!("Compiling static library for {}...", rust_target));
 
-    let status = match cargo_build::spawn_cargo_build(&build_target, &tx, &current_child_clone, inspector_address, inspector_port) {
+    let status = match cargo_build::spawn_cargo_build(
+        &build_target,
+        &tx,
+        &current_child_clone,
+        inspector_address,
+        inspector_port,
+    ) {
         Some(s) => s,
         None => return,
     };
@@ -81,7 +107,11 @@ pub(crate) fn run_ios(
 
     let lib_name = pkg_name.replace("-", "_");
     // let src_lib = format!("target/{}/debug/lib{}.a", rust_target, lib_name);
-    let src_lib = resolve_lib_path(&lib_name, rust_target, CargoBuildTarget::Ios { rust_target: rust_target.to_string() });
+    let src_lib = resolve_lib_path(
+        &lib_name,
+        rust_target,
+        CargoBuildTarget::Ios { rust_target: rust_target.to_string() },
+    );
     let dest_dir = "builds/ios/Libraries";
     let dest_lib = format!("{}/lib{}.a", dest_dir, lib_name);
 
@@ -124,10 +154,6 @@ pub(crate) fn run_ios(
 
     set_status(&tx, Status::Launching);
 
-
-
-
-
     if crate::commands::assets::copy_assets_into(&app_path).is_err() {
         fail(&tx, format!("Failed to copy assets into {}", app_path));
         return;
@@ -152,9 +178,7 @@ pub(crate) fn run_ios(
         }
     };
 
-    let bundle_id = String::from_utf8_lossy(&bundle_id_output.stdout)
-        .trim()
-        .to_string();
+    let bundle_id = String::from_utf8_lossy(&bundle_id_output.stdout).trim().to_string();
 
     if !launch_app(variant, &device, &bundle_id, &tx, &current_child_clone) {
         return;
@@ -168,7 +192,12 @@ pub(crate) fn run_ios(
 }
 
 /// Install the freshly built `.app` onto the device or simulator.
-fn install_app(variant: IosVariant, device: &Device, app_path: &str, tx: &Sender<RunnerEvent>) -> bool {
+fn install_app(
+    variant: IosVariant,
+    device: &Device,
+    app_path: &str,
+    tx: &Sender<RunnerEvent>,
+) -> bool {
     match variant {
         IosVariant::Device => {
             let device_name = &device.name;
@@ -194,7 +223,12 @@ fn install_app(variant: IosVariant, device: &Device, app_path: &str, tx: &Sender
             let mut install = Command::new("xcrun");
             install.args(["simctl", "install", &device.id, app_path]);
 
-            run_to_completion(install, tx, "Failed to install app", "Failed to install on Simulator.")
+            run_to_completion(
+                install,
+                tx,
+                "Failed to install app",
+                "Failed to install on Simulator.",
+            )
         }
     }
 }
@@ -213,7 +247,17 @@ fn launch_app(
 
             let mut launch = Command::new("xcrun");
             launch
-                .args(["devicectl", "device", "process", "launch", "--terminate-existing", "--console", "--device", &device.id, bundle_id])
+                .args([
+                    "devicectl",
+                    "device",
+                    "process",
+                    "launch",
+                    "--terminate-existing",
+                    "--console",
+                    "--device",
+                    &device.id,
+                    bundle_id,
+                ])
                 .env("TERM", "dumb");
 
             spawn_streamed(

@@ -18,13 +18,10 @@ use tracing::info;
 /// `aimer run` pipeline, but runs synchronously with inherited stdio so it is
 /// friendly to CI logs.
 pub fn execute(platform: String, release: bool) -> anyhow::Result<()> {
-    let target =
-        Targets::try_from(platform.as_str()).map_err(|_| AimerError::UnknownTarget(platform.clone()))?;
+    let target = Targets::try_from(platform.as_str())
+        .map_err(|_| AimerError::UnknownTarget(platform.clone()))?;
 
-    println!(
-        "Assembling '{target}' bundle in {} mode...",
-        profile_name(release)
-    );
+    println!("Assembling '{target}' bundle in {} mode...", profile_name(release));
 
     let pkg_name = resolve_package_name(Path::new("."));
 
@@ -60,9 +57,7 @@ fn gradle_task(release: bool) -> &'static str {
 /// fails to start or exits with a non-zero status.
 fn run_step(mut cmd: Command, action: &str) -> anyhow::Result<()> {
     cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to start {action}"))?;
+    let status = cmd.status().with_context(|| format!("failed to start {action}"))?;
     if !status.success() {
         bail!("{action} failed");
     }
@@ -87,7 +82,8 @@ fn artifact_path(rust_target: &str, lib_name: &str, release: bool, extension: &s
 fn copy_lib(src: &str, dest_dir: &str, lib_file: &str) -> anyhow::Result<()> {
     std::fs::create_dir_all(dest_dir).with_context(|| format!("creating {dest_dir}"))?;
     let dest = format!("{dest_dir}/{lib_file}");
-    std::fs::copy(src, &dest).with_context(|| format!("copying static library '{src}' -> '{dest}'"))?;
+    std::fs::copy(src, &dest)
+        .with_context(|| format!("copying static library '{src}' -> '{dest}'"))?;
     println!("Copied library to {dest}");
     Ok(())
 }
@@ -131,7 +127,6 @@ fn assemble_macos(pkg_name: &str, release: bool) -> anyhow::Result<String> {
         std::fs::remove_dir_all(artifact_path)?;
     }
 
-
     let mut xcode = Command::new("xcodebuild");
     xcode
         .arg("-project")
@@ -146,7 +141,6 @@ fn assemble_macos(pkg_name: &str, release: bool) -> anyhow::Result<String> {
         .current_dir("builds/macos");
     run_step(xcode, "xcodebuild for macOS")?;
 
-
     copy_assets_into(&format!("{artifact}/Contents/Resources"))?;
     Ok(artifact)
 }
@@ -156,11 +150,8 @@ fn assemble_ios(pkg_name: &str, target: Targets, release: bool) -> anyhow::Resul
     let arch = host_arch();
     let (rust_target, sdk, subdir_suffix) = match target {
         Targets::IosSimulator => {
-            let rust_target = if arch == "x86_64" {
-                "x86_64-apple-ios"
-            } else {
-                "aarch64-apple-ios-sim"
-            };
+            let rust_target =
+                if arch == "x86_64" { "x86_64-apple-ios" } else { "aarch64-apple-ios-sim" };
             (rust_target, "iphonesimulator", "iphonesimulator")
         }
         _ => ("aarch64-apple-ios", "iphoneos", "iphoneos"),
@@ -206,12 +197,7 @@ fn assemble_android(pkg_name: &str, release: bool) -> anyhow::Result<String> {
     let lib_name = pkg_name.replace('-', "_");
 
     let mut cargo = Command::new("cargo");
-    cargo
-        .arg("ndk")
-        .arg("-t")
-        .arg(jni_dir)
-        .arg("build")
-        .arg("--lib");
+    cargo.arg("ndk").arg("-t").arg(jni_dir).arg("build").arg("--lib");
     if release {
         cargo.arg("--release");
     }
@@ -227,9 +213,7 @@ fn assemble_android(pkg_name: &str, release: bool) -> anyhow::Result<String> {
     // Stage assets into the APK's `assets/` source set before Gradle packs it.
     copy_assets_into("builds/android/app/src/main/assets")?;
 
-    let android_dir = current_dir()
-        .context("resolving current directory")?
-        .join("builds/android");
+    let android_dir = current_dir().context("resolving current directory")?.join("builds/android");
     let gradlew = if cfg!(windows) { "gradlew.bat" } else { "gradlew" };
 
     let mut gradle = Command::new(android_dir.join(gradlew));
@@ -301,10 +285,7 @@ fn assemble_desktop(target: Targets, release: bool) -> anyhow::Result<String> {
 fn resolve_compatible_java_home() -> Option<String> {
     if cfg!(target_os = "macos") {
         for version in ["17", "21", "23", "11"] {
-            let Ok(output) = Command::new("/usr/libexec/java_home")
-                .arg("-v")
-                .arg(version)
-                .output()
+            let Ok(output) = Command::new("/usr/libexec/java_home").arg("-v").arg(version).output()
             else {
                 continue;
             };

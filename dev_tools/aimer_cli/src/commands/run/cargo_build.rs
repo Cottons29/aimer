@@ -35,11 +35,7 @@ pub fn spawn_cargo_build(
         }
         CargoBuildTarget::Android { rust_target } => {
             let mut c = Command::new("cargo");
-            c.arg("ndk")
-                .arg("-t")
-                .arg(rust_target)
-                .arg("build")
-                .arg("--lib");
+            c.arg("ndk").arg("-t").arg(rust_target).arg("build").arg("--lib");
             c
         }
         CargoBuildTarget::Darwin => {
@@ -90,7 +86,10 @@ pub fn stream_stdout_as_build_log(stdout: impl Read + Send + 'static, tx: Sender
     });
 }
 
-pub fn stream_stderr_with_cargo_progress(stderr: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
+pub fn stream_stderr_with_cargo_progress(
+    stderr: impl Read + Send + 'static,
+    tx: Sender<RunnerEvent>,
+) {
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
         // Resolved package count gives the compile progress a real denominator,
@@ -101,7 +100,10 @@ pub fn stream_stderr_with_cargo_progress(stderr: impl Read + Send + 'static, tx:
         for l in reader.lines().map_while(Result::ok) {
             if l.contains("Locking") || l.contains("Updating") {
                 let _ = tx.send(RunnerEvent::StatusChange(Status::Locking));
-            } else if l.contains("Fetching") || l.contains("Downloading") || l.contains("Downloaded") {
+            } else if l.contains("Fetching")
+                || l.contains("Downloading")
+                || l.contains("Downloaded")
+            {
                 fetch_count = (fetch_count + 1).min(99);
                 let _ = tx.send(RunnerEvent::StatusChange(Status::Fetching(fetch_count)));
             } else if l.contains("Compiling") {
@@ -188,7 +190,10 @@ pub fn stream_as_app_log_split_cr(pipe: impl Read + Send + 'static, tx: Sender<R
     });
 }
 
-pub fn stream_stdout_with_xcode_progress(stdout: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
+pub fn stream_stdout_with_xcode_progress(
+    stdout: impl Read + Send + 'static,
+    tx: Sender<RunnerEvent>,
+) {
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
         let mut build_count = 0;
@@ -204,7 +209,10 @@ pub fn stream_stdout_with_xcode_progress(stdout: impl Read + Send + 'static, tx:
     });
 }
 
-pub fn stream_stdout_with_gradle_progress(stdout: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
+pub fn stream_stdout_with_gradle_progress(
+    stdout: impl Read + Send + 'static,
+    tx: Sender<RunnerEvent>,
+) {
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
         let mut build_count = 0;
@@ -222,7 +230,6 @@ pub fn stream_stdout_with_gradle_progress(stdout: impl Read + Send + 'static, tx
 
 pub fn wait_for_child(current_child: &Arc<Mutex<Option<Child>>>) -> Option<ExitStatus> {
     loop {
-
         let mut guard = current_child.lock().unwrap();
 
         let child = guard.as_mut()?;
@@ -230,7 +237,7 @@ pub fn wait_for_child(current_child: &Arc<Mutex<Option<Child>>>) -> Option<ExitS
         if let Ok(Some(status)) = child.try_wait() {
             return Some(status);
         }
-        
+
         drop(guard);
         thread::sleep(Duration::from_millis(100));
     }

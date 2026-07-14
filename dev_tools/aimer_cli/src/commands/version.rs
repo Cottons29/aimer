@@ -44,7 +44,11 @@ impl VersionCommand {
 
         let build_time = option_env!("AIMER_BUILD_TIME").unwrap_or("undefined");
         let formatted_buildtime = format!("Build Time: {}", build_time.green().bold());
-        let formatted_version = format!("Current Version is {} ({})", VERSION.to_string().green().bold(), current_os_name.green());
+        let formatted_version = format!(
+            "Current Version is {} ({})",
+            VERSION.to_string().green().bold(),
+            current_os_name.green()
+        );
 
         // let flutter_version_line = String::new();
 
@@ -79,15 +83,16 @@ impl VersionCommand {
         println!();
         for (i, line) in lines.iter().enumerate() {
             let color_index = i * gradient.len() / total;
-            println!(" {}     {}", line.color(gradient[color_index]), messages.get(i).unwrap_or(&"".to_string()));
+            println!(
+                " {}     {}",
+                line.color(gradient[color_index]),
+                messages.get(i).unwrap_or(&"".to_string())
+            );
         }
     }
 
     fn get_rust_version() -> Option<String> {
-        let output = std::process::Command::new("rustc")
-            .arg("--version")
-            .output()
-            .ok()?;
+        let output = std::process::Command::new("rustc").arg("--version").output().ok()?;
 
         if !output.status.success() {
             return None;
@@ -100,10 +105,7 @@ impl VersionCommand {
     }
 
     fn get_cargo_version() -> Option<String> {
-        let output = std::process::Command::new("cargo")
-            .arg("--version")
-            .output()
-            .ok()?;
+        let output = std::process::Command::new("cargo").arg("--version").output().ok()?;
 
         if !output.status.success() {
             return None;

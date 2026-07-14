@@ -46,10 +46,12 @@ pub fn execute(shell: Shell, install: bool) -> anyhow::Result<()> {
     }
 
     let target = install_target(shell, &bin_name)?;
-    std::fs::create_dir_all(&target.dir).with_context(|| format!("creating completion directory {}", target.dir.display()))?;
+    std::fs::create_dir_all(&target.dir)
+        .with_context(|| format!("creating completion directory {}", target.dir.display()))?;
 
     let path = target.dir.join(&target.file_name);
-    let mut file = std::fs::File::create(&path).with_context(|| format!("writing completion script to {}", path.display()))?;
+    let mut file = std::fs::File::create(&path)
+        .with_context(|| format!("writing completion script to {}", path.display()))?;
     completer
         .write_registration(COMPLETE_VAR, &bin_name, &bin_name, completer_bin, &mut file)
         .with_context(|| format!("writing completion script to {}", path.display()))?;
@@ -103,7 +105,10 @@ fn install_target(shell: Shell, bin: &str) -> anyhow::Result<InstallTarget> {
     match shell {
         Shell::Fish => Ok(InstallTarget {
             dir: {
-                println!("Fish config dir: {}", config_dir()?.join("fish").join("completions").display());
+                println!(
+                    "Fish config dir: {}",
+                    config_dir()?.join("fish").join("completions").display()
+                );
                 config_dir()?.join("fish").join("completions")
             },
             file_name: format!("{bin}.fish"),
@@ -123,7 +128,10 @@ fn install_target(shell: Shell, bin: &str) -> anyhow::Result<InstallTarget> {
         Shell::Bash => Ok(InstallTarget {
             dir: data_dir()?.join("bash-completion").join("completions"),
             file_name: bin.to_string(),
-            hint: Some("Requires the `bash-completion` package. Restart your shell to load completions.".into()),
+            hint: Some(
+                "Requires the `bash-completion` package. Restart your shell to load completions."
+                    .into(),
+            ),
         }),
         other => Err(anyhow!(
             "--install is not supported for {other}; pipe the output to the right location, e.g. \

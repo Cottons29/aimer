@@ -100,7 +100,15 @@ pub fn build_streamed(
     stream_out: impl FnOnce(ChildStdout, Sender<RunnerEvent>),
     stream_err: impl FnOnce(ChildStderr, Sender<RunnerEvent>),
 ) -> bool {
-    if !spawn_streamed(cmd, tx, current_child, spawn_fail_msg, Status::Error, stream_out, stream_err) {
+    if !spawn_streamed(
+        cmd,
+        tx,
+        current_child,
+        spawn_fail_msg,
+        Status::Error,
+        stream_out,
+        stream_err,
+    ) {
         return false;
     }
 
