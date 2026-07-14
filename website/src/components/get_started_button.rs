@@ -4,7 +4,7 @@
 
 use aimer::style::{BoxDecoration, FontWeight, TextAlign, TextStyle};
 use aimer::*;
-use aimer::{widget, BuildContext, Widget};
+use aimer::{BuildContext, Widget, widget};
 
 #[widget(Stateless)]
 #[derive(Clone)]
@@ -12,11 +12,9 @@ pub struct HoverableGetStartedButton {}
 
 impl StatelessWidget for HoverableGetStartedButton {
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
-        Container::new()
-            .child(Button::new()
-                .decoration(BoxDecoration::new()
-                    .background_color(Color::BLACK)
-                    .border_radius(8))
+        Container::new().child(
+            Button::new()
+                .decoration(BoxDecoration::new().background_color(Color::BLACK).border_radius(8))
                 .on_press({
                     move || {
                         println!("Button pressed");
@@ -26,25 +24,28 @@ impl StatelessWidget for HoverableGetStartedButton {
                         }
                     }
                 })
-                .child(Row::new()
-                    .vertical_alignment(BoxAlignment::Center)
-                    .horizontal_alignment(BoxAlignment::Center)
-                    .children(vec![
-                        Box::new(AssetImage::new("assets/github-svgrepo-com.png")
-                            .width(24)
-                            .height(24)),
-
-                        SizedBox::new().width(20).boxed(),
-
-                        Text::new("Get Started!")
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new()
-                                .color(Color::WHITE)
-                                .font_size(18)
-                                .font_weight(FontWeight::Bold))
-                            .boxed(),
-                    ])
-                )
-            )
+                .child(
+                    Row::new()
+                        .vertical_alignment(BoxAlignment::Center)
+                        .horizontal_alignment(BoxAlignment::Center)
+                        .children(vec![
+                            Box::new(
+                                AssetImage::new("assets/github-svgrepo-com.png")
+                                    .width(24)
+                                    .height(24),
+                            ),
+                            SizedBox::new().width(20).boxed(),
+                            Text::new("Get Started!")
+                                .text_align(TextAlign::MidCenter)
+                                .text_style(
+                                    TextStyle::new()
+                                        .color(Color::WHITE)
+                                        .font_size(18)
+                                        .font_weight(FontWeight::Bold),
+                                )
+                                .boxed(),
+                        ]),
+                ),
+        )
     }
 }

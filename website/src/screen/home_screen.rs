@@ -1,9 +1,15 @@
 use crate::components::get_started_button::HoverableGetStartedButton;
 use crate::components::same_looking::SameLookingSection;
-use aimer::style::{BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextDecoration, TextDecorationLine, TextDecorationStyle, TextOverflow, TextStyle};
-use aimer::*;
-use aimer::{widget, BuildContext, Container, Dimension, Positioned, ScrollController, State, StateUpdater, StatefulWidget, Text, Widget};
 use crate::utils::{app_padding, is_mobile, mobile_title, resp_position};
+use aimer::style::{
+    BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextDecoration, TextDecorationLine,
+    TextDecorationStyle, TextOverflow, TextStyle,
+};
+use aimer::*;
+use aimer::{
+    BuildContext, Container, Dimension, Positioned, ScrollController, State, StateUpdater,
+    StatefulWidget, Text, Widget, widget,
+};
 
 #[widget(Stateful)]
 #[derive(Clone)]
@@ -41,17 +47,16 @@ impl State<HomePage> for HomePageState {
         // The persistent header lives in the app shell above this page, so the
         // home page only renders its scrollable content in the shell's content
         // area.
-        Container::new()
-            .color(Color::WHITE)
-            .child(Scrollable::new(Column::new()
-                    .children(vec![
-                        hero_section(ctx),
-                        why_aimer_section(ctx),
-                        polished_tooling_section(ctx),
-                        Box::new(SameLookingSection{}),
-                    ]))
-                .controller(self.controller.clone())
-                .axis(ScrollAxis::Vertical))
+        Container::new().color(Color::WHITE).child(
+            Scrollable::new(Column::new().children(vec![
+                hero_section(ctx),
+                why_aimer_section(ctx),
+                polished_tooling_section(ctx),
+                Box::new(SameLookingSection {}),
+            ]))
+            .controller(self.controller.clone())
+            .axis(ScrollAxis::Vertical),
+        )
     }
 }
 
@@ -66,7 +71,6 @@ impl State<HomePage> for HomePageState {
 //
 //     ]
 // )
-
 
 /// The hero section: a large underlined `Aimer` title, a tagline paragraph,
 /// a `Get Started` button and a version label on a white background.
@@ -132,26 +136,32 @@ fn hero_section(ctx: &BuildContext) -> Box<dyn Widget> {
 /// weight is not visually distinct.
 fn word(text: &str, bold: bool) -> Box<dyn Widget> {
     Text::new(text.to_string())
-        .text_style(TextStyle::new()
-            .font_size(16)
-            .color(if bold { Color::WHITE } else { Color::Rgb(180, 180, 180) })
-            .font_weight(if bold { FontWeight::Bolder } else { FontWeight::Normal }))
+        .text_style(
+            TextStyle::new()
+                .font_size(16)
+                .color(if bold { Color::WHITE } else { Color::Rgb(180, 180, 180) })
+                .font_weight(if bold { FontWeight::Bolder } else { FontWeight::Normal }),
+        )
         .boxed()
 }
 
 /// A feature block: a bold white title above a body of inline-emphasized text.
-fn feature_block(title: &str, body: Box<dyn Widget>, top: impl Into<Dimension>, left: impl Into<Dimension>) -> Box<dyn Widget> {
+fn feature_block(
+    title: &str,
+    body: Box<dyn Widget>,
+    top: impl Into<Dimension>,
+    left: impl Into<Dimension>,
+) -> Box<dyn Widget> {
     Positioned::new()
         .top(top)
         .left(left)
-        .child(Container::new()
-            // width: 250,
-            // height: 100,
-            // color: Color::WHITE.with_opacity(5),
-            .margin(LayoutSpacing::new().bottom(Spacing::Px(14)))
-            .child(Column::new()
-                .horizontal_alignment(BoxAlignment::Start)
-                .children(vec![
+        .child(
+            Container::new()
+                // width: 250,
+                // height: 100,
+                // color: Color::WHITE.with_opacity(5),
+                .margin(LayoutSpacing::new().bottom(Spacing::Px(14)))
+                .child(Column::new().horizontal_alignment(BoxAlignment::Start).children(vec![
                     Text::new(title.to_string())
                         .text_style(TextStyle::new()
                             .font_size(24)
@@ -160,8 +170,7 @@ fn feature_block(title: &str, body: Box<dyn Widget>, top: impl Into<Dimension>, 
                         .boxed(),
                     SizedBox::new().height(10).boxed(),
                     body,
-                ])
-            )
+                ])),
         )
         .boxed()
 }
@@ -170,12 +179,9 @@ fn feature_block(title: &str, body: Box<dyn Widget>, top: impl Into<Dimension>, 
 /// and five feature blocks laid out in two columns with bold inline words.
 fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
     Container::new()
-        .box_decoration(BoxDecoration::new()
-            .background_color(Color::BLACK))
+        .box_decoration(BoxDecoration::new().background_color(Color::BLACK))
         .padding(app_padding(ctx))
-        .child(Column::new()
-            .horizontal_alignment(BoxAlignment::Start)
-            .children(vec![
+        .child(Column::new().horizontal_alignment(BoxAlignment::Start).children(vec![
                 Text::new("Why Aimer ?")
                     .text_style(TextStyle::new()
                         .font_size(mobile_title(ctx))
@@ -276,8 +282,7 @@ fn why_aimer_section(ctx: &BuildContext) -> Box<dyn Widget> {
                         ])
                     )
                     .boxed(),
-            ])
-        )
+            ]))
         .boxed()
 }
 
@@ -288,27 +293,30 @@ fn polished_tooling_section(ctx: &BuildContext) -> Box<dyn Widget> {
     Container::new()
         .padding(app_padding(ctx))
         .box_decoration(BoxDecoration::new().background_color(Color::Rgb(40, 44, 52)))
-        .child(Column::new()
-            .horizontal_alignment(BoxAlignment::Start)
-            .vertical_alignment(BoxAlignment::Start)
-            .children(vec![
-                SizedBox::new().height(12).boxed(),
-                Container::new()
-                    .height(100)
-                    .child(Text::new("Polished Tooling")
-                        .text_style(TextStyle::new()
-                            .font_size(mobile_title(ctx))
-                            .color(Color::YELLOW)
-                            .font_weight(FontWeight::Bolder)
-                            .text_decoration(TextDecoration::Underline)))
-                    .boxed(),
-                Container::new()
-                    .height(if is_mobile(ctx) { 250 } else { 450 })
-                    .child(AssetImage::new("assets/polished_tooling.png"))
-                    .boxed(),
-
-                SizedBox::new().height(48).boxed(),
-            ])
+        .child(
+            Column::new()
+                .horizontal_alignment(BoxAlignment::Start)
+                .vertical_alignment(BoxAlignment::Start)
+                .children(vec![
+                    SizedBox::new().height(12).boxed(),
+                    Container::new()
+                        .height(100)
+                        .child(
+                            Text::new("Polished Tooling").text_style(
+                                TextStyle::new()
+                                    .font_size(mobile_title(ctx))
+                                    .color(Color::YELLOW)
+                                    .font_weight(FontWeight::Bolder)
+                                    .text_decoration(TextDecoration::Underline),
+                            ),
+                        )
+                        .boxed(),
+                    Container::new()
+                        .height(if is_mobile(ctx) { 250 } else { 450 })
+                        .child(AssetImage::new("assets/polished_tooling.png"))
+                        .boxed(),
+                    SizedBox::new().height(48).boxed(),
+                ]),
         )
         .boxed()
 }

@@ -1,6 +1,6 @@
 use aimer::router::Outlet;
 use aimer::*;
-use aimer::{widget, BuildContext, Widget};
+use aimer::{BuildContext, Widget, widget};
 
 use crate::components::header::HeaderSection;
 
@@ -22,17 +22,13 @@ pub struct AppShell {
 
 impl StatelessWidget for AppShell {
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
-        Container::new()
-            .color(Color::WHITE)
-            .child(Column::new()
-                .children(vec![
+        Container::new().color(Color::WHITE).child(Column::new().children(vec![
                     Box::new(HeaderSection { show_logo: true, active_tab: self.active_tab }),
                     Expanded::new()
                         .child(Container::new()
                             .color(Color::WHITE)
                             .child(Outlet))
                         .boxed(),
-                ])
-            )
+                ]))
     }
 }
