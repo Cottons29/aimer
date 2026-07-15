@@ -7,7 +7,7 @@ use aimer_container::Container;
 use aimer_style::BoxDecoration;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    Element, EmptyWidget, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
+    Element, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
 };
 
 use crate::callback::VoidCallback;
@@ -23,7 +23,7 @@ use crate::mouse_region::{MouseRegion, PointerState};
 /// provides gesture callbacks for tap, double-tap, long-press, right-click,
 /// swipe, scroll, and scale. It dims when disabled.
 #[allow(dead_code)]
-pub struct Button<W = EmptyWidget> {
+pub struct Button<W = RequiredChild> {
     pub on_press: VoidCallback,
     pub on_long_press: VoidCallback,
     pub on_double_press: VoidCallback,
@@ -61,7 +61,7 @@ impl Button {
             on_right_press: VoidCallback::default(),
             decoration: BoxDecoration::default(),
             is_disabled: false,
-            child: Rc::new(EmptyWidget),
+            child: Rc::new(RequiredChild),
         }
     }
 }

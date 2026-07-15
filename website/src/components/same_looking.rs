@@ -86,7 +86,7 @@ impl State<SameLookingSection> for SameLookingSectionState {
         {
             // no need to change this
             TEST_STATE_UPDATED.fetch_or(self.current_index == 1, Ordering::Relaxed);
-            // no need to change this because i need to know the current index after resie
+            // no need to change this because i need to know the current index after resize
             CURRENT_INDEX.store(self.current_index, Ordering::Relaxed);
         }
         eprintln!("Current index: {}", self.current_index);

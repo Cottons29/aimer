@@ -5,9 +5,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
-use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
-};
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild, VisitorElement, Widget};
 
 use crate::controller::AnimationController;
 use crate::time::AnimInstant;
@@ -53,11 +51,24 @@ impl AnimationEffect {
 ///     my_child_widget,
 /// )
 /// ```
-pub struct Animated<T: Widget + 'static> {
+pub struct Animated<T = RequiredChild> {
     pub controller: AnimationController,
     pub effect: AnimationEffect,
     pub child: T,
 }
+//
+// impl Animated {
+//     pub fn new() -> Self {
+//         Self {
+//             controller: AnimationController::new(),
+//             effect: AnimationEffect::Opacity { from: 0.0, to: 1.0 },
+//             child: RequiredChild,
+//         }
+//     }
+// }
+
+
+
 
 impl<T: Widget> Animated<T> {
     pub fn new(controller: AnimationController, effect: AnimationEffect, child: T) -> Self {
@@ -85,13 +96,8 @@ impl<T: Widget + 'static> Widget for Animated<T> {
         let window = ctx
             .window
             .clone();
-        Box::new(AnimatedElement {
-            child: child_element,
-            controller,
-            effect: self.effect,
-            animating,
-            window,
-        })
+        AnimatedElement { child: child_element, controller, effect: self.effect, animating, window }
+            .boxed()
     }
 }
 

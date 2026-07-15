@@ -269,8 +269,8 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             };
 
             // The child is drawn after translating the canvas by the position
-            // offset (and any translate transform), so the visibility rect (used
-            // for scroll culling) must be shifted by the same amount. Otherwise a
+            // offset (and any translation transform), so the visibility rect (used
+            // for scroll culling) must be shifted by the same amount. Otherwise, a
             // positioned block's top children (e.g. a title above a body) are
             // culled too early and disappear while the taller body survives.
             let child_visible_rect =

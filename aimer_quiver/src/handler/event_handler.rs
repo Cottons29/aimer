@@ -2,7 +2,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerSource;
 use aimer_utils::{ExecTimes, info};
-use aimer_widget::{broadcast_event, dispatch_event};
+use aimer_widget::{broadcast_event, dispatch_event, Widget};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
     ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent,
@@ -21,8 +21,8 @@ pub(crate) enum HeadlessEventAction {
 }
 
 impl WindowEventHandler {
-    pub(crate) fn handle_events(
-        app: &mut AimerApplicationHandler,
+    pub(crate) fn handle_events<W: Widget+ 'static>(
+        app: &mut AimerApplicationHandler<W>,
         event_loop: &ActiveEventLoop,
         _id: WindowId,
         event: WindowEvent,
@@ -96,8 +96,8 @@ impl WindowEventHandler {
         }
     }
 
-    pub(crate) fn handle_headless_event(
-        app: &mut AimerApplicationHandler,
+    pub(crate) fn handle_headless_event<W: Widget+ 'static>(
+        app: &mut AimerApplicationHandler<W>,
         event: WindowEvent,
     ) -> HeadlessEventAction {
         match event {
@@ -167,7 +167,7 @@ impl WindowEventHandler {
         *window_scale = scale_factor;
     }
 
-    fn handle_touch(item: Touch, app: &mut AimerApplicationHandler) {
+    fn handle_touch<W: Widget+ 'static>(item: Touch, app: &mut AimerApplicationHandler<W>) {
         let scale = app.window_scale;
         let pos = Vec2d {
             x: (item
@@ -221,7 +221,7 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_cursor_move(position: PhysicalPosition<f64>, app: &mut AimerApplicationHandler) {
+    fn handle_cursor_move<W: Widget+ 'static>(position: PhysicalPosition<f64>, app: &mut AimerApplicationHandler<W>) {
         let scale = app.window_scale as f32;
         let new_pos = Vec2d { x: position.x as f32 / scale, y: position.y as f32 / scale };
         let dx = (new_pos.x
@@ -247,7 +247,7 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_cursor_left(app: &mut AimerApplicationHandler) {
+    fn handle_cursor_left<W: Widget+ 'static>(app: &mut AimerApplicationHandler<W>) {
         // The cursor left the window. First, broadcast a Cancel to terminate any
         // active drag (e.g. scrollable content drag, scrollbar thumb drag).
         // Without this, the subsequent PointerMove at f32::MIN would compute an
@@ -273,10 +273,10 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_mouse_input(
+    fn handle_mouse_input<W: Widget+ 'static>(
         state: ElementState,
         button: MouseButton,
-        app: &mut AimerApplicationHandler,
+        app: &mut AimerApplicationHandler<W>,
     ) {
         // Only handle left and right mouse buttons here.
         // Middle button and others are ignored for now.
@@ -323,7 +323,7 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_keyboard_input(event: KeyEvent, app: &mut AimerApplicationHandler) {
+    fn handle_keyboard_input<W: Widget+ 'static>(event: KeyEvent, app: &mut AimerApplicationHandler<W>) {
         use winit::event::ElementState;
         use winit::keyboard::{Key, NamedKey as WinitNamedKey};
 
@@ -458,11 +458,11 @@ impl WindowEventHandler {
     /// as a sequence of `CharInput` events — one per `char`. This is the single
     /// path used for plain typed characters, web text input, and committed IME
     /// text, so CJK phrases and emoji are inserted correctly.
-    fn dispatch_text(
+    fn dispatch_text<W: Widget+ 'static>(
         text: &str,
         action: &KeyAction,
         modifiers: &Modifiers,
-        app: &mut AimerApplicationHandler,
+        app: &mut AimerApplicationHandler<W>,
     ) {
         let Some(root) = &app.widget_root else { return };
         let mut handled = false;
@@ -491,7 +491,7 @@ impl WindowEventHandler {
     /// While a composition is active (`Ime::Preedit`) raw key strokes are
     /// suppressed in `handle_keyboard_input`; the finished text arrives through
     /// `Ime::Commit` and is inserted via the normal text path.
-    fn handle_ime(ime: Ime, app: &mut AimerApplicationHandler) {
+    fn handle_ime<W: Widget+ 'static>(ime: Ime, app: &mut AimerApplicationHandler<W>) {
         info!("IME : {ime:?}");
         match ime {
             Ime::Enabled => {
@@ -521,10 +521,10 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_mouse_wheel(
+    fn handle_mouse_wheel<W: Widget+ 'static>(
         delta: MouseScrollDelta,
         phase: TouchPhase,
-        app: &mut AimerApplicationHandler,
+        app: &mut AimerApplicationHandler<W>,
     ) {
         // debug!("Mouse wheel delta: {:?}", delta);
         let scroll_delta = match delta {
@@ -564,9 +564,9 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_resize(
+    fn handle_resize<W: Widget+ 'static>(
         size: PhysicalSize<u32>,
-        app: &mut AimerApplicationHandler,
+        app: &mut AimerApplicationHandler<W>,
         event_loop: &ActiveEventLoop,
     ) {
         #[cfg(target_os = "ios")]
@@ -625,7 +625,7 @@ impl WindowEventHandler {
         app.render(event_loop);
     }
 
-    fn apply_resize(size: PhysicalSize<u32>, app: &mut AimerApplicationHandler) {
+    fn apply_resize<W: Widget+ 'static>(size: PhysicalSize<u32>, app: &mut AimerApplicationHandler<W>) {
         app.pending_resize = Some(size);
 
         if let Some(root) = &app.widget_root {

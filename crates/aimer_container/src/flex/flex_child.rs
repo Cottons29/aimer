@@ -1,7 +1,7 @@
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, LayoutElement, VisitorElement, Widget};
+use aimer_widget::{Drawable, Element, RequiredChild, LayoutElement, VisitorElement, Widget};
 
 use crate::ZeroSizedBox;
 
@@ -27,7 +27,7 @@ use crate::ZeroSizedBox;
 ///         Expanded::new().flex(2).child(Container::new().color(Colors::Blue)),
 ///     ])
 /// ```
-pub struct Expanded<W: Widget + 'static = ZeroSizedBox> {
+pub struct Expanded<W = RequiredChild> {
     /// The flex factor: the child's share of the free main-axis space is
     /// `flex / sum_of_all_flex_factors`. Defaults to `1.0`.
     flex: f32,
@@ -43,14 +43,14 @@ impl Default for Expanded {
 
 impl Expanded {
     pub fn new() -> Self {
-        Self { flex: 1.0, child: ZeroSizedBox }
+        Self { flex: 1.0, child: RequiredChild }
     }
 
     pub fn flex(mut self, flex: f32) -> Self {
         self.flex = flex;
         self
     }
-
+    /// Make Expanded became a valid Widget implementation
     pub fn child<W: Widget + 'static>(self, child: W) -> Expanded<W> {
         Expanded { child, flex: self.flex }
     }
