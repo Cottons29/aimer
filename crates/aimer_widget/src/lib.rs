@@ -40,6 +40,10 @@ pub mod inspector_overlay {
     }
 }
 
+pub use crate::components::diagnostics::{
+    ErrorElement, ErrorWidget, OverflowEdges, OverflowIndicator, detect_overflow,
+    paint_overflow_indicator,
+};
 pub use crate::components::drawable::Drawable;
 pub use crate::components::element::Element;
 pub use crate::components::event_element::EventElement;
