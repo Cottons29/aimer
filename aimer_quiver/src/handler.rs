@@ -60,11 +60,11 @@ fn find_hovered_node(
     None
 }
 
-pub struct AimerApplicationHandler {
+pub struct AimerApplicationHandler<W: Widget+ 'static> {
     pub window: Option<&'static Window>,
     pub render_ctx: AimerRenderContext,
     pub widget_root: Option<Box<dyn Element>>,
-    pub pending_widget: Option<Box<dyn Widget>>,
+    pub pending_widget: Option<W>,
     pub cursor_pos: Vec2d,
     pub current_modifiers: aimer_events::element::Modifiers,
     pub ime_composing: bool,
@@ -87,7 +87,7 @@ pub struct AimerApplicationHandler {
     pub inspector_redraw_frames: Cell<u8>,
 }
 
-impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicationHandler {
+impl<W: Widget+ 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicationHandler<W> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "android")]
         {
@@ -261,7 +261,7 @@ impl ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicat
     }
 }
 #[allow(dead_code)]
-impl AimerApplicationHandler {
+impl<W: Widget+ 'static> AimerApplicationHandler<W> {
     #[cfg(debug_assertions)]
     pub(crate) fn inspector_enabled(&self) -> bool {
         self.inspector
@@ -294,7 +294,7 @@ impl AimerApplicationHandler {
                 .map(|root| {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        aimer_inspector::InspectorServer::snapshot_tree(root.as_ref())
+                        aimer_inspector::InspectorServer::snapshot_tree(root)
                     }
                     #[cfg(target_arch = "wasm32")]
                     {

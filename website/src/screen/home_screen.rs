@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use aimer::style::{
@@ -6,8 +5,8 @@ use aimer::style::{
     TextDecorationStyle, TextOverflow, TextStyle,
 };
 use aimer::{
-    BuildContext, Container, Dimension, Positioned, ScrollController, State, StateUpdater,
-    StatefulWidget, Text, Widget, widget, *,
+    widget, BuildContext, Container, Dimension, Positioned, ScrollController, State,
+    StateUpdater, StatefulWidget, Text, Widget, *,
 };
 
 use crate::components::get_started_button::HoverableGetStartedButton;
@@ -209,101 +208,98 @@ fn why_aimer_section(ctx: &BuildContext) -> AnyWidget {
                     Container::new()
                         .height(Dimension::Px(500.0))
                         .child(
-                            Stack::new()
-                                .children([
-                                    feature_block(
-                                        "Type Safety",
-                                        Column::new()
-                                            .horizontal_alignment(BoxAlignment::Start)
-                                            .children(vec![
-                                                Row::new().children(vec![
-                                                    word("Build UIs with ", false),
-                                                    word("Rust's", true),
-                                                    word(" type system.", false),
-                                                ]),
-                                                Row::new().children(vec![
-                                                    word("Catch errors at ", false),
-                                                    word("compile time", true),
-                                                    word(".", false),
-                                                ]),
-                                            ])
-                                            .boxed(),
-                                        resp_position(ctx, 16.0, 3.0),
-                                        resp_position(ctx, 12.0, 0.0),
-                                    ),
-                                    feature_block(
-                                        "Mobile & Desktop",
-                                        Column::new()
-                                            .horizontal_alignment(BoxAlignment::Start)
-                                            .children([
-                                                Row::new().children(vec![
-                                                    word("Runs on ", false),
-                                                    word("macOS", true),
-                                                    word(", ", false),
-                                                    word("iOS", true),
-                                                    word(", ", false),
-                                                    word("Android", true),
-                                                    word(",", false),
-                                                ]),
-                                                Row::new().children(vec![
-                                                    word("and ", false),
-                                                    word("Web", true),
-                                                    word(". ", false),
-                                                    word("Windows", true),
-                                                    word(" & ", false),
-                                                    word("Linux", true),
-                                                    word(" soon.", false),
-                                                ]),
-                                            ])
-                                            .boxed(),
-                                        resp_position(ctx, 45.0, 23.0),
-                                        resp_position(ctx, 2.0, 0.0),
-                                    ),
-                                    feature_block(
-                                        "Performance",
-                                        Row::new()
-                                            .children(vec![
-                                                word("GPU-accelerated rendering via ", false),
-                                                word("Cupid", true),
+                            Stack::new().children([
+                                feature_block(
+                                    "Type Safety",
+                                    Column::new()
+                                        .horizontal_alignment(BoxAlignment::Start)
+                                        .children(vec![
+                                            Row::new().children(vec![
+                                                word("Build UIs with ", false),
+                                                word("Rust's", true),
+                                                word(" type system.", false),
+                                            ]),
+                                            Row::new().children(vec![
+                                                word("Catch errors at ", false),
+                                                word("compile time", true),
+                                                word(".", false),
+                                            ]),
+                                        ])
+                                        .boxed(),
+                                    resp_position(ctx, 16.0, 3.0),
+                                    resp_position(ctx, 12.0, 0.0),
+                                ),
+                                feature_block(
+                                    "Mobile & Desktop",
+                                    Column::new()
+                                        .horizontal_alignment(BoxAlignment::Start)
+                                        .children([
+                                            Row::new().children(vec![
+                                                word("Runs on ", false),
+                                                word("macOS", true),
+                                                word(", ", false),
+                                                word("iOS", true),
+                                                word(", ", false),
+                                                word("Android", true),
+                                                word(",", false),
+                                            ]),
+                                            Row::new().children(vec![
+                                                word("and ", false),
+                                                word("Web", true),
+                                                word(". ", false),
+                                                word("Windows", true),
                                                 word(" & ", false),
-                                                word("wgpu", true),
-                                                word(".", false),
-                                            ])
-                                            .boxed(),
-                                        resp_position(ctx, 72.0, 46.0),
-                                        resp_position(ctx, 32.0, 0.0),
-                                    ),
-                                    feature_block(
-                                        "Crates",
-                                        Row::new()
-                                            .children(vec![
-                                                word("Modular crates, available on ", false),
-                                                word("crates.io", true),
-                                                word(".", false),
-                                            ])
-                                            .boxed(),
-                                        resp_position(ctx, 34.0, 63.0),
-                                        resp_position(ctx, 52.0, 0.0),
-                                    ),
-                                    feature_block(
-                                        "Consistence Looking",
-                                        Column::new()
-                                            .horizontal_alignment(BoxAlignment::Start)
-                                            .children(vec![
-                                                Row::new().children(vec![
-                                                    word("The same widget tree looks ", false),
-                                                    word("identical", true),
-                                                ]),
-                                                Row::new().children(vec![word(
-                                                    "everywhere it runs.",
-                                                    false,
-                                                )]),
-                                            ])
-                                            .boxed(),
-                                        resp_position(ctx, 2.0, 78.0),
-                                        resp_position(ctx, 52.0, 0.0),
-                                    ),
-                                ]),
+                                                word("Linux", true),
+                                                word(" soon.", false),
+                                            ]),
+                                        ])
+                                        .boxed(),
+                                    resp_position(ctx, 45.0, 23.0),
+                                    resp_position(ctx, 2.0, 0.0),
+                                ),
+                                feature_block(
+                                    "Performance",
+                                    Row::new()
+                                        .children(vec![
+                                            word("GPU-accelerated rendering via ", false),
+                                            word("Cupid", true),
+                                            word(" & ", false),
+                                            word("wgpu", true),
+                                            word(".", false),
+                                        ])
+                                        .boxed(),
+                                    resp_position(ctx, 72.0, 46.0),
+                                    resp_position(ctx, 32.0, 0.0),
+                                ),
+                                feature_block(
+                                    "Crates",
+                                    Row::new()
+                                        .children(vec![
+                                            word("Modular crates, available on ", false),
+                                            word("crates.io", true),
+                                            word(".", false),
+                                        ])
+                                        .boxed(),
+                                    resp_position(ctx, 34.0, 63.0),
+                                    resp_position(ctx, 52.0, 0.0),
+                                ),
+                                feature_block(
+                                    "Consistence Looking",
+                                    Column::new()
+                                        .horizontal_alignment(BoxAlignment::Start)
+                                        .children(vec![
+                                            Row::new().children(vec![
+                                                word("The same widget tree looks ", false),
+                                                word("identical", true),
+                                            ]),
+                                            Row::new()
+                                                .children(vec![word("everywhere it runs.", false)]),
+                                        ])
+                                        .boxed(),
+                                    resp_position(ctx, 2.0, 78.0),
+                                    resp_position(ctx, 52.0, 0.0),
+                                ),
+                            ]),
                         )
                         .boxed(),
                 ]),

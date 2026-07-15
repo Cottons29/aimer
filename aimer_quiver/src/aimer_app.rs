@@ -187,16 +187,16 @@ impl Default for HeadlessOptions {
 
 /// A running Aimer application that builds, lays out, draws, and handles events
 /// without creating a native window or a `winit` event loop.
-pub struct HeadlessAimerApp {
-    app: AimerApplicationHandler,
+pub struct HeadlessAimerApp<W : Widget+ 'static> {
+    app: AimerApplicationHandler<W>,
     canvas: aimer_canvas::InnerCanvas,
     window: WindowHandle,
     size: PhysicalSize<u32>,
     exit_requested: bool,
 }
 
-impl HeadlessAimerApp {
-    fn new(widget: impl Widget + 'static, options: HeadlessOptions) -> Self {
+impl<W : Widget+ 'static> HeadlessAimerApp<W> {
+    fn new(widget: W, options: HeadlessOptions) -> HeadlessAimerApp<W> {
         let scale_factor = if options
             .scale_factor
             .is_finite()
@@ -216,7 +216,7 @@ impl HeadlessAimerApp {
                 window: None,
                 render_ctx: AimerRenderContext::default(),
                 widget_root: None,
-                pending_widget: Some(Box::new(widget)),
+                pending_widget: Some(widget),
                 cursor_pos: Vec2d::default(),
                 current_modifiers: Default::default(),
                 ime_composing: false,
@@ -389,16 +389,16 @@ impl HeadlessAimerApp {
     }
 }
 
-impl<T: Widget + 'static> AimerApp<T> {
-    pub fn start(widget: T) {
+impl<W: Widget + 'static> AimerApp<W> {
+    pub fn start(widget: W) {
         start_event_loop(widget);
     }
 
-    pub fn start_headless(widget: T) -> HeadlessAimerApp {
+    pub fn start_headless(widget: W) -> HeadlessAimerApp<W> {
         Self::start_headless_with(widget, HeadlessOptions::default())
     }
 
-    pub fn start_headless_with(widget: T, options: HeadlessOptions) -> HeadlessAimerApp {
+    pub fn start_headless_with(widget: W, options: HeadlessOptions) -> HeadlessAimerApp<W> {
         HeadlessAimerApp::new(widget, options)
     }
 }
@@ -494,7 +494,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
         window: None,
         render_ctx: AimerRenderContext::default(),
         widget_root: None,
-        pending_widget: Some(Box::new(widget)),
+        pending_widget: Some(widget),
         cursor_pos: Vec2d { x: 0.0, y: 0.0 },
         current_modifiers: Default::default(),
         ime_composing: false,

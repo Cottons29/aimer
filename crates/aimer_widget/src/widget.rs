@@ -3,7 +3,7 @@ use std::rc::Rc;
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_attribute::size::ResolvedSize;
 
-use crate::Element;
+use crate::{AnyElement, AnyWidget, Element};
 use crate::base::BuildContext;
 
 pub mod stateful;
@@ -13,12 +13,13 @@ pub trait Widget {
     fn key(&self) -> Option<crate::key::Key> {
         None
     }
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element>;
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement;
+
     fn debug_name(&self) -> &'static str {
         "Unknown"
     }
 
-    fn boxed(self) -> Box<dyn Widget>
+    fn boxed(self) -> AnyWidget
     where
         Self: Sized + 'static,
     {
@@ -37,7 +38,7 @@ impl Widget for Box<dyn Widget> {
         self.as_ref()
             .key()
     }
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         self.as_ref()
             .to_element(ctx)
     }

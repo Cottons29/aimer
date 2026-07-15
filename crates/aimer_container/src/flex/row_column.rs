@@ -1,13 +1,13 @@
 use aimer_attribute::CacheBounds;
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, EmptyWidget, Widget};
+use aimer_widget::{Element, RequiredChild, Widget};
 
 use crate::flex::raw_flex::RawFlex;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 
 /// A flex container that arranges its children in a vertical direction
-pub struct Column<W = EmptyWidget> {
+pub struct Column<W = RequiredChild> {
     vertical_alignment: BoxAlignment,
     horizontal_alignment: BoxAlignment,
     gaps: LayoutSpacing,

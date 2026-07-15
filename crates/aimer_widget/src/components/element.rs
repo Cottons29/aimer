@@ -108,17 +108,7 @@ impl LayoutElement for Box<dyn Element> {
         self.as_ref()
             .invalidate_layout()
     }
-
-    // Delegate to the inner concrete element instead of falling back to the
-    // trait default. The default `pos_start_end` is derived from `pos()` +
-    // `size()`, but many elements (containers, stateful/stateless elements)
-    // never report an absolute `pos()` and instead override `pos_start_end`
-    // directly to return the on-screen bounds they record while drawing. Since
-    // children are almost always held as `Box<dyn Element>`, forgetting to
-    // delegate here made every boxed element report `None`, so `dispatch_event`
-    // fell into its "no position" branch and invoked `on_event` regardless of
-    // the pointer location — e.g. an opaque header on a top `Stack` layer
-    // swallowed scrolls across the entire window instead of only over itself.
+    
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.as_ref()
             .pos_start_end()

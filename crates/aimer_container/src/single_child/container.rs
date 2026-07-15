@@ -6,13 +6,11 @@ use aimer_macro::Rebuildable;
 pub use aimer_style::*;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EmptyWidget, EventElement, LayoutCache, LayoutElement, VisitorElement,
+    Drawable, Element, RequiredChild, EventElement, LayoutCache, LayoutElement, VisitorElement,
     Widget,
 };
 
-use crate::ZeroSizedBox;
-
-pub struct Container<T = EmptyWidget> {
+pub struct Container<T = RequiredChild> {
     pub(crate) width: Dimension,
     pub(crate) height: Dimension,
     pub padding: LayoutSpacing,
@@ -37,7 +35,7 @@ impl Container {
             margin: LayoutSpacing::default(),
             box_decoration: BoxDecoration::default(),
             color: None,
-            child: EmptyWidget,
+            child: RequiredChild,
         }
     }
 

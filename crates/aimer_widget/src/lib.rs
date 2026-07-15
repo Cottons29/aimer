@@ -16,7 +16,10 @@ mod widget;
 ///     // any fields here
 /// }
 /// ```
-pub struct EmptyWidget;
+pub struct RequiredChild;
+
+
+pub type AnyElement = Box<dyn Element>;
 
 /// An alias of Box<dyn Widget>
 pub type AnyWidget = Box<dyn Widget>;

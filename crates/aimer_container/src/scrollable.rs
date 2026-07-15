@@ -16,7 +16,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_macro::key;
 use aimer_utils::callback::Callback;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, EmptyWidget, Key, Widget};
+use aimer_widget::{Element, RequiredChild, Key, Widget};
 pub use controller::{DragMode, ScrollController};
 use controller::{ScrollState, VelocityHistory};
 pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
@@ -24,7 +24,7 @@ pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
 use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
 
-pub struct Scrollable<W = EmptyWidget> {
+pub struct Scrollable<W = RequiredChild> {
     pub child: W,
     pub scroll_behavior: ScrollBehavior,
     pub axis: ScrollAxis,
@@ -53,7 +53,7 @@ impl Default for Scrollable {
 impl Scrollable {
     pub fn new() -> Self {
         Self {
-            child: EmptyWidget,
+            child: RequiredChild,
             scroll_behavior: ScrollBehavior::default(),
             axis: ScrollAxis::default(),
             vertical_scroll_bar: Some(ScrollBar::default()),
