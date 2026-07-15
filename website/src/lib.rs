@@ -46,6 +46,9 @@ mod test {
         // sleep(Duration::from_millis(500));
         // app.send_window_event(WindowEvent::Resized(PhysicalSize::new(1000, 800)));
         assert!(TEST_STATE_UPDATED.load(Ordering::Relaxed));
-        assert_eq!(CURRENT_INDEX.load(Ordering::Relaxed), 1)
+        assert_eq!(CURRENT_INDEX.load(Ordering::Relaxed), 1);
+
+        app.send_window_event(WindowEvent::Resized(PhysicalSize::new(390, 844)));
+        app.render_frame();
     }
 }

@@ -6,7 +6,7 @@ use aimer::style::{TextAlign, TextStyle};
 use aimer::*;
 
 use crate::components::app_shell::AppShell;
-use crate::screen::docs_screen::DocsPage;
+use crate::screen::blog::DocsPage;
 use crate::screen::home_screen::HomePage;
 use crate::screen::learn_screen::LearnPage;
 
