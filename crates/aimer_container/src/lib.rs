@@ -4,6 +4,7 @@ pub mod scrollable;
 mod single_child;
 pub mod space;
 
+pub use grid::*;
 pub use scrollable::scroll_behavior::*;
 pub use scrollable::*;
 pub use single_child::aspecratio::{AspectRatio, RatioOption};

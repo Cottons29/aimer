@@ -25,4 +25,5 @@ tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
 
 [dev-dependencies]
 aimer_canvas.workspace = true
+aimer_cupid.workspace = true
 winit.workspace = true
