@@ -1,3 +1,4 @@
+mod grid;
 pub mod raw_grid;
 
 pub struct GridTemplate {

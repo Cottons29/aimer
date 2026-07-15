@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use aimer_animation::time::AnimInstant;
+use aimer_animation::AnimInstant;
 use aimer_attribute::CacheBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};

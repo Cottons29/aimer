@@ -1,10 +1,10 @@
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
-use aimer_widget::{dispatch_event, Widget};
+use aimer_widget::{Widget, dispatch_event};
 
 use crate::aimer_app::AimerCustomAppEvent;
 use crate::handler::AimerApplicationHandler;
 
-pub(crate) fn handle_user_event<W: Widget+ 'static>(
+pub(crate) fn handle_user_event<W: Widget + 'static>(
     app: &mut AimerApplicationHandler<W>,
     event: AimerCustomAppEvent,
 ) {

@@ -4,7 +4,7 @@ use aimer_attribute::Dimension;
 use aimer_attribute::size::Size;
 use aimer_style::BoxFit;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, LayoutCache, Widget};
+use aimer_widget::{AnyWidget, Element, LayoutCache, Widget};
 
 use crate::img_widget::image_widget::RawImageWidget;
 use crate::img_widget::source::ImageSource;
@@ -17,13 +17,13 @@ use crate::img_widget::source::ImageSource;
 /// through [`ImageSource::Asset`]: from the APK on Android, the app bundle on
 /// iOS/macOS, the project directory during desktop development, and via `fetch`
 /// from the site root on web.
-pub struct AssetImage {
+pub struct AssetImage{
     pub key: String,
     pub width: Dimension,
     pub height: Dimension,
     pub fit: BoxFit,
-    pub error_widget: Option<Box<dyn Widget>>,
-    pub loading_widget: Option<Box<dyn Widget>>,
+    pub error_widget: Option<AnyWidget>,
+    pub loading_widget: Option<AnyWidget>,
     pub scale: f32,
 }
 

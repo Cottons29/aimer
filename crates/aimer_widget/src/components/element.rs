@@ -108,7 +108,7 @@ impl LayoutElement for Box<dyn Element> {
         self.as_ref()
             .invalidate_layout()
     }
-    
+
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.as_ref()
             .pos_start_end()

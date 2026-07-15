@@ -187,7 +187,7 @@ impl Default for HeadlessOptions {
 
 /// A running Aimer application that builds, lays out, draws, and handles events
 /// without creating a native window or a `winit` event loop.
-pub struct HeadlessAimerApp<W : Widget+ 'static> {
+pub struct HeadlessAimerApp<W: Widget + 'static> {
     app: AimerApplicationHandler<W>,
     canvas: aimer_canvas::InnerCanvas,
     window: WindowHandle,
@@ -195,7 +195,7 @@ pub struct HeadlessAimerApp<W : Widget+ 'static> {
     exit_requested: bool,
 }
 
-impl<W : Widget+ 'static> HeadlessAimerApp<W> {
+impl<W: Widget + 'static> HeadlessAimerApp<W> {
     fn new(widget: W, options: HeadlessOptions) -> HeadlessAimerApp<W> {
         let scale_factor = if options
             .scale_factor

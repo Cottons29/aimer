@@ -5,8 +5,8 @@ use aimer::style::{
     TextDecorationStyle, TextOverflow, TextStyle,
 };
 use aimer::{
-    widget, BuildContext, Container, Dimension, Positioned, ScrollController, State,
-    StateUpdater, StatefulWidget, Text, Widget, *,
+    BuildContext, Container, Dimension, Positioned, ScrollController, State, StateUpdater,
+    StatefulWidget, Text, Widget, widget, *,
 };
 
 use crate::components::get_started_button::HoverableGetStartedButton;
@@ -34,16 +34,7 @@ impl StatefulWidget for HomePage {
     type State = HomePageState;
 
     fn create_state(&self) -> Self::State {
-        let controller = ScrollController::new();
-        controller.on_scroll(|item: Vec2d| {
-            if item.y > 150.0 {
-                SHOW_ICON.store(true, Ordering::Relaxed);
-            } else {
-                SHOW_ICON.store(false, Ordering::Relaxed);
-            }
-            // println!("Show icon: {}", SHOW_ICON.load(Ordering::Relaxed));
-        });
-        HomePageState { controller, updater: StateUpdater::new() }
+        HomePageState { controller: ScrollController::new(), updater: StateUpdater::new() }
     }
 }
 
@@ -52,6 +43,19 @@ impl State<HomePage> for HomePageState {
     where
         Self: Sized,
     {
+        let controller = &self.controller;
+        let updater_clone = updater.clone();
+        controller.on_scroll(move |item: Vec2d| {
+            let has_change = SHOW_ICON.load(Ordering::Relaxed);
+            if item.y > 150.0 {
+                SHOW_ICON.store(true, Ordering::Relaxed);
+            } else {
+                SHOW_ICON.store(false, Ordering::Relaxed);
+            }
+            if has_change != SHOW_ICON.load(Ordering::Relaxed) {
+                updater_clone.set_state(|_| {})
+            }
+        });
         self.updater = updater;
     }
 
@@ -153,13 +157,14 @@ fn feature_block(
     left: impl Into<Dimension>,
 ) -> AnyWidget {
     Positioned::new()
+        // .layer(1)
         .top(top)
         .left(left)
         .child(
             Container::new()
                 // width: 250,
                 // height: 100,
-                // color: Color::WHITE.with_opacity(5),
+                // .color( Color::WHITE.with_opacity(50))
                 .margin(LayoutSpacing::new().bottom(Spacing::Px(14)))
                 .child(
                     Column::new()
@@ -212,6 +217,7 @@ fn why_aimer_section(ctx: &BuildContext) -> AnyWidget {
                                 feature_block(
                                     "Type Safety",
                                     Column::new()
+                                        .overflow(OverflowBehavior::Wrap)
                                         .horizontal_alignment(BoxAlignment::Start)
                                         .children(vec![
                                             Row::new().children(vec![
