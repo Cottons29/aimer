@@ -53,8 +53,7 @@ impl BoxDecoration {
     }
 
     pub fn add_shadow(mut self, shadow: BoxShadow) -> Self {
-        self.box_shadow
-            .push(shadow);
+        self.box_shadow.push(shadow);
         self
     }
 
@@ -74,12 +73,8 @@ impl BoxDecoration {
 
 impl Drawable for BoxDecoration {
     fn draw(&self, ctx: &BuildContext) {
-        let box_width = ctx
-            .parent_size
-            .width;
-        let box_height = ctx
-            .parent_size
-            .height;
+        let box_width = ctx.parent_size.width;
+        let box_height = ctx.parent_size.height;
         let scale = ctx.scale;
 
         let radii = self
@@ -167,9 +162,7 @@ impl BoxDecoration {
         if shadow.color == Color::Transparent {
             return;
         }
-        let blur = shadow
-            .blur
-            .max(0.0);
+        let blur = shadow.blur.max(0.0);
         let spread = shadow.spread;
         if blur == 0.0
             && spread == 0.0
@@ -180,18 +173,15 @@ impl BoxDecoration {
             return;
         }
 
-        let side_params = shadow
-            .side
-            .to_shader_params();
-        ctx.canvas
-            .draw_shadow_rect(
-                Vec2d { x: 0.0, y: 0.0 },
-                ResolvedSize { width: box_width, height: box_height },
-                shadow.color,
-                [shadow.offset_x, shadow.offset_y, blur, spread],
-                *radii,
-                shadow.inset,
-                [side_params.0, side_params.1, side_params.2],
-            );
+        let side_params = shadow.side.to_shader_params();
+        ctx.canvas.draw_shadow_rect(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width: box_width, height: box_height },
+            shadow.color,
+            [shadow.offset_x, shadow.offset_y, blur, spread],
+            *radii,
+            shadow.inset,
+            [side_params.0, side_params.1, side_params.2],
+        );
     }
 }

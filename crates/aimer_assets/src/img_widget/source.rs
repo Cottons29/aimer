@@ -22,7 +22,7 @@ static ASSET_CACHE: Lazy<Mutex<HashMap<String, DiskImageState>>> =
 #[derive(Clone, Debug)]
 enum NetworkImageState {
     Loading,
-    Ready(Vec<u8>, u32, u32),
+    Ready(Vec<u8>, u32, u32, u32, u32),
     Loaded(u32, u32, u32),
     Error(String),
 }
@@ -41,9 +41,43 @@ enum NetworkImageState {
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) enum DiskImageState {
     Loading,
-    Ready(Vec<u8>, u32, u32),
+    Ready(Vec<u8>, u32, u32, u32, u32),
     Loaded(u32, u32, u32),
     Error(String),
+}
+
+const BROWSER_IMAGE_MAX_DIMENSION: u32 = 2048;
+
+fn constrained_browser_image_size(width: u32, height: u32) -> (u32, u32) {
+    if width <= BROWSER_IMAGE_MAX_DIMENSION && height <= BROWSER_IMAGE_MAX_DIMENSION {
+        return (width, height);
+    }
+
+    if width >= height {
+        (
+            BROWSER_IMAGE_MAX_DIMENSION,
+            ((height as u64 * BROWSER_IMAGE_MAX_DIMENSION as u64) / width as u64).max(1) as u32,
+        )
+    } else {
+        (
+            ((width as u64 * BROWSER_IMAGE_MAX_DIMENSION as u64) / height as u64).max(1) as u32,
+            BROWSER_IMAGE_MAX_DIMENSION,
+        )
+    }
+}
+
+fn image_mime_type(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        "image/png"
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg"
+    } else if bytes.starts_with(&[0x47, 0x49, 0x46]) {
+        "image/gif"
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else {
+        "image/png"
+    }
 }
 
 ///
@@ -113,25 +147,23 @@ impl ImageProvider for ImageSource {
 impl ImageSource {
     pub fn load_image(ctx: &BuildContext, path: &PathBuf) -> ImageResult {
         {
-            let mut cache = FILE_CACHE
-                .lock()
-                .unwrap();
+            let mut cache = FILE_CACHE.lock().unwrap();
             match cache.get_mut(path) {
                 Some(DiskImageState::Loaded(id, width, height)) => {
                     ctx.canvas
                         .set_texture_size(*id, *width, *height);
                     return Success(*id);
                 }
-                Some(DiskImageState::Ready(bytes, width, height)) => {
+                Some(DiskImageState::Ready(bytes, upload_width, upload_height, width, height)) => {
                     // Decoded on a background thread; upload to the GPU here (on
                     // the render thread, where the canvas/GPU lives) and cache id.
                     let id = ctx
                         .canvas
-                        .load_image(bytes, *width, *height);
+                        .load_image(bytes, *upload_width, *upload_height);
+                    ctx.canvas
+                        .set_texture_size(id, *width, *height);
                     let (w, h) = (*width, *height);
-                    *cache
-                        .get_mut(path)
-                        .unwrap() = DiskImageState::Loaded(id, w, h);
+                    *cache.get_mut(path).unwrap() = DiskImageState::Loaded(id, w, h);
                     return Success(id);
                 }
                 Some(DiskImageState::Loading) => return ImageResult::Loading,
@@ -149,16 +181,14 @@ impl ImageSource {
                 .unwrap()
                 .insert(path.clone(), DiskImageState::Loading);
             let path_buf = path.clone();
-            let window = ctx
-                .window
-                .clone();
+            let window = ctx.window.clone();
             ctx.async_handle
                 .spawn_blocking(move || {
                     let state = match image::open(&path_buf) {
                         Ok(image) => {
                             let rgba = image.to_rgba8();
                             let (width, height) = (rgba.width(), rgba.height());
-                            DiskImageState::Ready(rgba.into_raw(), width, height)
+                            DiskImageState::Ready(rgba.into_raw(), width, height, width, height)
                         }
                         Err(_) => DiskImageState::Error("Failed to load image".into()),
                     };
@@ -179,17 +209,15 @@ impl ImageSource {
                 .lock()
                 .unwrap()
                 .insert(path.clone(), DiskImageState::Loading);
-            let url = path
-                .to_string_lossy()
-                .to_string();
+            let url = path.to_string_lossy().to_string();
             let path_buf = path.clone();
-            let window = ctx
-                .window
-                .clone();
+            let window = ctx.window.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let state = match Self::fetch_bytes(&url).await {
                     Ok(bytes) => match Self::decode_image_browser(&bytes).await {
-                        Ok((rgba, w, h)) => DiskImageState::Ready(rgba, w, h),
+                        Ok((rgba, upload_w, upload_h, w, h)) => {
+                            DiskImageState::Ready(rgba, upload_w, upload_h, w, h)
+                        }
                         Err(e) => DiskImageState::Error(e),
                     },
                     Err(e) => DiskImageState::Error(e),
@@ -216,24 +244,22 @@ impl ImageSource {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load_asset_image(ctx: &BuildContext, key: &str) -> ImageResult {
         {
-            let mut cache = ASSET_CACHE
-                .lock()
-                .unwrap();
+            let mut cache = ASSET_CACHE.lock().unwrap();
             match cache.get_mut(key) {
                 Some(DiskImageState::Loaded(id, width, height)) => {
                     ctx.canvas
                         .set_texture_size(*id, *width, *height);
                     return Success(*id);
                 }
-                Some(DiskImageState::Ready(bytes, width, height)) => {
+                Some(DiskImageState::Ready(bytes, upload_width, upload_height, width, height)) => {
                     // Decoded on a background thread; upload on the render thread.
                     let id = ctx
                         .canvas
-                        .load_image(bytes, *width, *height);
+                        .load_image(bytes, *upload_width, *upload_height);
+                    ctx.canvas
+                        .set_texture_size(id, *width, *height);
                     let (w, h) = (*width, *height);
-                    *cache
-                        .get_mut(key)
-                        .unwrap() = DiskImageState::Loaded(id, w, h);
+                    *cache.get_mut(key).unwrap() = DiskImageState::Loaded(id, w, h);
                     return Success(id);
                 }
                 Some(DiskImageState::Loading) => return ImageResult::Loading,
@@ -249,9 +275,7 @@ impl ImageSource {
             .unwrap()
             .insert(key.to_string(), DiskImageState::Loading);
         let key_owned = key.to_string();
-        let window = ctx
-            .window
-            .clone();
+        let window = ctx.window.clone();
         ctx.async_handle
             .spawn_blocking(move || {
                 let state = match Self::load_asset_bytes(&key_owned) {
@@ -259,7 +283,7 @@ impl ImageSource {
                         Ok(image) => {
                             let rgba = image.to_rgba8();
                             let (width, height) = (rgba.width(), rgba.height());
-                            DiskImageState::Ready(rgba.into_raw(), width, height)
+                            DiskImageState::Ready(rgba.into_raw(), width, height, width, height)
                         }
                         Err(_) => DiskImageState::Error(format!(
                             "Failed to decode asset image '{key_owned}'"
@@ -346,23 +370,21 @@ impl ImageSource {
         url: &str,
         headers: &HashMap<String, String>,
     ) -> ImageResult {
-        let mut cache = NETWORK_CACHE
-            .lock()
-            .unwrap();
+        let mut cache = NETWORK_CACHE.lock().unwrap();
         match cache.get_mut(url) {
             Some(NetworkImageState::Loaded(id, width, height)) => {
                 ctx.canvas
                     .set_texture_size(*id, *width, *height);
                 Success(*id)
             }
-            Some(NetworkImageState::Ready(bytes, width, height)) => {
+            Some(NetworkImageState::Ready(bytes, upload_width, upload_height, width, height)) => {
                 let id = ctx
                     .canvas
-                    .load_image(bytes, *width, *height);
+                    .load_image(bytes, *upload_width, *upload_height);
+                ctx.canvas
+                    .set_texture_size(id, *width, *height);
                 let (w, h) = (*width, *height);
-                *cache
-                    .get_mut(url)
-                    .unwrap() = NetworkImageState::Loaded(id, w, h);
+                *cache.get_mut(url).unwrap() = NetworkImageState::Loaded(id, w, h);
                 Success(id)
             }
             Some(NetworkImageState::Loading) => ImageResult::Loading,
@@ -371,33 +393,27 @@ impl ImageSource {
                 cache.insert(url.to_string(), NetworkImageState::Loading);
                 let url = url.to_string();
                 let headers = headers.clone();
-                let window = ctx
-                    .window
-                    .clone();
+                let window = ctx.window.clone();
 
                 #[cfg(not(target_arch = "wasm32"))]
-                ctx.async_handle
-                    .spawn(async move {
-                        match Self::fetch_full_image_with_headers(&url, &headers, window.clone())
-                            .await
-                        {
-                            Ok(_) => {}
-                            Err(err) => {
-                                error!("Error to fetch network image : {}", err);
-                                // error!("Image URL: {url}");
-                                let mut cache = NETWORK_CACHE
-                                    .lock()
-                                    .unwrap();
-                                cache.insert(url, NetworkImageState::Error(err.to_string()));
-                                window.request_redraw();
-                            }
+                ctx.async_handle.spawn(async move {
+                    match Self::fetch_full_image_with_headers(&url, &headers, window.clone()).await
+                    {
+                        Ok(_) => {}
+                        Err(err) => {
+                            error!("Error to fetch network image : {}", err);
+                            // error!("Image URL: {url}");
+                            let mut cache = NETWORK_CACHE.lock().unwrap();
+                            cache.insert(url, NetworkImageState::Error(err.to_string()));
+                            window.request_redraw();
                         }
-                    });
+                    }
+                });
 
                 #[cfg(target_arch = "wasm32")]
                 {
                     let url_clone = url.clone();
-                    let window_clone = window;
+                    let window_clone = window.clone();
                     wasm_bindgen_futures::spawn_local(async move {
                         match Self::fetch_full_image_with_headers(
                             &url_clone,
@@ -409,11 +425,9 @@ impl ImageSource {
                             Ok(_) => {}
                             Err(err) => {
                                 error!("Failed to fetch network image ({}): {}", url_clone, err);
-                                let mut cache = NETWORK_CACHE
-                                    .lock()
-                                    .unwrap();
+                                let mut cache = NETWORK_CACHE.lock().unwrap();
                                 cache.insert(url_clone, NetworkImageState::Error(err.to_string()));
-                                window_clone.request_redraw();
+                                window.request_redraw();
                             }
                         }
                     });
@@ -440,12 +454,14 @@ impl ImageSource {
             Self::fetch_bytes_with_headers(url, maps).await?
         };
 
-        let (rgba, width, height) = Self::decode_image_browser(&bytes).await?;
+        let (rgba, upload_width, upload_height, width, height) =
+            Self::decode_image_browser(&bytes).await?;
 
-        let mut cache = NETWORK_CACHE
-            .lock()
-            .unwrap();
-        cache.insert(url.to_string(), NetworkImageState::Ready(rgba, width, height));
+        let mut cache = NETWORK_CACHE.lock().unwrap();
+        cache.insert(
+            url.to_string(),
+            NetworkImageState::Ready(rgba, upload_width, upload_height, width, height),
+        );
         drop(cache);
         window.request_redraw();
 
@@ -518,79 +534,59 @@ impl ImageSource {
     }
 
     /// Decode raw image bytes (PNG/JPEG/WebP/GIF) to RGBA using the browser's
-    /// native decoder via `HtmlImageElement` + `OffscreenCanvas`. This is
-    /// dramatically faster than the Rust `image` crate compiled to wasm and
-    /// runs asynchronously without blocking the main thread.
+    /// native decoder via `createImageBitmap` + `OffscreenCanvas`.
     #[cfg(target_arch = "wasm32")]
-    async fn decode_image_browser(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    async fn decode_image_browser(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32, u32, u32), String> {
         use wasm_bindgen::JsCast;
-        use wasm_bindgen::prelude::*;
 
-        // Detect mime type from magic bytes so the browser can decode.
-        let mime = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-            "image/png"
-        } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-            "image/jpeg"
-        } else if bytes.starts_with(&[0x47, 0x49, 0x46]) {
-            "image/gif"
-        } else if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-            "image/webp"
-        } else {
-            "image/png" // fallback — let the browser try
-        };
-
-        // Create a Blob with the correct mime type.
         let blob_parts = js_sys::Array::new();
         blob_parts.push(&js_sys::Uint8Array::from(bytes));
-        let mut blob_opts = web_sys::BlobPropertyBag::new();
-        blob_opts.set_type(mime);
+        let blob_opts = web_sys::BlobPropertyBag::new();
+        blob_opts.set_type(image_mime_type(bytes));
         let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&blob_parts, &blob_opts)
             .map_err(|e| format!("Blob creation failed: {:?}", e))?;
-        let obj_url = web_sys::Url::create_object_url_with_blob(&blob)
-            .map_err(|e| format!("Object URL creation failed: {:?}", e))?;
 
-        // Load the image via HtmlImageElement (async, browser-native decode).
-        let img = web_sys::HtmlImageElement::new()
-            .map_err(|e| format!("Image element creation failed: {:?}", e))?;
-        img.set_src(&obj_url);
+        // createImageBitmap asks the browser to decode asynchronously, rather
+        // than completing HtmlImageElement decoding on the event loop.
+        let window = web_sys::window().ok_or("No window found")?;
+        let bitmap = wasm_bindgen_futures::JsFuture::from(
+            window
+                .create_image_bitmap_with_blob(&blob)
+                .map_err(|e| format!("Image bitmap creation failed: {:?}", e))?,
+        )
+        .await
+        .map_err(|e| format!("Image decode failed: {:?}", e))?
+        .dyn_into::<web_sys::ImageBitmap>()
+        .map_err(|e| format!("Image bitmap cast failed: {:?}", e))?;
+        let w = bitmap.width();
+        let h = bitmap.height();
+        let (upload_width, upload_height) = constrained_browser_image_size(w, h);
 
-        let img_ref = img.clone();
-        let promise = js_sys::Promise::new(&mut |resolve, reject| {
-            let onload_img = img_ref.clone();
-            let onload = Closure::once(move || {
-                let _ = onload_img; // prevent premature GC
-                resolve
-                    .call0(&JsValue::undefined())
-                    .unwrap();
-            });
-            img_ref.set_onload(Some(
-                onload
-                    .as_ref()
-                    .unchecked_ref(),
-            ));
-            onload.forget();
-
-            let onerror = Closure::once(move || {
-                reject
-                    .call1(&JsValue::undefined(), &JsValue::from_str("Image load failed"))
-                    .unwrap();
-            });
-            img_ref.set_onerror(Some(
-                onerror
-                    .as_ref()
-                    .unchecked_ref(),
-            ));
-            onerror.forget();
-        });
-        wasm_bindgen_futures::JsFuture::from(promise)
+        let bitmap = if (upload_width, upload_height) == (w, h) {
+            bitmap
+        } else {
+            let options = web_sys::ImageBitmapOptions::new();
+            options.set_resize_width(upload_width);
+            options.set_resize_height(upload_height);
+            options.set_resize_quality(web_sys::ResizeQuality::High);
+            let resized = wasm_bindgen_futures::JsFuture::from(
+                window
+                    .create_image_bitmap_with_image_bitmap_and_image_bitmap_options(
+                        &bitmap, &options,
+                    )
+                    .map_err(|e| format!("Image bitmap resize failed: {:?}", e))?,
+            )
             .await
-            .map_err(|e| format!("Image load failed: {:?}", e))?;
+            .map_err(|e| format!("Image bitmap resize failed: {:?}", e))?
+            .dyn_into::<web_sys::ImageBitmap>()
+            .map_err(|e| format!("Resized image bitmap cast failed: {:?}", e))?;
+            bitmap.close();
+            resized
+        };
 
-        let w = img.natural_width();
-        let h = img.natural_height();
-
-        // Draw to OffscreenCanvas and read back RGBA pixels.
-        let canvas = web_sys::OffscreenCanvas::new(w, h)
+        // Let the browser scale before pixel readback. This avoids copying the
+        // full decoded image into WASM only to resize it again on the render path.
+        let canvas = web_sys::OffscreenCanvas::new(upload_width, upload_height)
             .map_err(|e| format!("OffscreenCanvas creation failed: {:?}", e))?;
         let ctx = canvas
             .get_context("2d")
@@ -598,17 +594,15 @@ impl ImageSource {
             .ok_or("No 2d context")?
             .dyn_into::<web_sys::OffscreenCanvasRenderingContext2d>()
             .map_err(|e| format!("Context cast failed: {:?}", e))?;
-        ctx.draw_image_with_html_image_element(&img, 0.0, 0.0)
+        ctx.draw_image_with_image_bitmap(&bitmap, 0.0, 0.0)
             .map_err(|e| format!("drawImage failed: {:?}", e))?;
         let image_data = ctx
-            .get_image_data(0.0, 0.0, w as f64, h as f64)
+            .get_image_data(0.0, 0.0, upload_width as f64, upload_height as f64)
             .map_err(|e| format!("getImageData failed: {:?}", e))?;
-        let rgba = image_data
-            .data()
-            .to_vec();
+        let rgba = image_data.data().to_vec();
 
-        web_sys::Url::revoke_object_url(&obj_url).ok();
-        Ok((rgba, w, h))
+        bitmap.close();
+        Ok((rgba, upload_width, upload_height, w, h))
     }
 
     #[cfg(target_os = "android")]
@@ -651,10 +645,7 @@ impl ImageSource {
                 // format!("Failed to fetch image: {}", e)
             })?;
 
-        if !response
-            .status()
-            .is_success()
-        {
+        if !response.status().is_success() {
             return Err(format!("HTTP error: {}", response.status()));
         }
 
@@ -674,7 +665,10 @@ impl ImageSource {
                 let mut cache = NETWORK_CACHE
                     .lock()
                     .map_err(|err| format!("Failed to lock network cache: {}", err))?;
-                cache.insert(url.to_string(), NetworkImageState::Ready(rgba_bytes, width, height));
+                cache.insert(
+                    url.to_string(),
+                    NetworkImageState::Ready(rgba_bytes, width, height, width, height),
+                );
                 drop(cache);
                 window.request_redraw();
                 Ok(())
@@ -684,5 +678,30 @@ impl ImageSource {
                 Err("Failed to decode image".into())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{constrained_browser_image_size, image_mime_type};
+
+    #[test]
+    fn detects_browser_supported_image_mime_types() {
+        assert_eq!(image_mime_type(b"\x89PNG\r\n\x1a\n"), "image/png");
+        assert_eq!(image_mime_type(b"\xff\xd8\xff\xe0"), "image/jpeg");
+        assert_eq!(image_mime_type(b"GIF89a"), "image/gif");
+        assert_eq!(image_mime_type(b"RIFF\x04\x00\x00\x00WEBP"), "image/webp");
+    }
+
+    #[test]
+    fn unknown_image_data_uses_browser_decode_fallback() {
+        assert_eq!(image_mime_type(b"unknown"), "image/png");
+    }
+
+    #[test]
+    fn browser_decode_constrains_oversized_images_before_pixel_readback() {
+        assert_eq!(constrained_browser_image_size(4096, 2048), (2048, 1024));
+        assert_eq!(constrained_browser_image_size(2048, 4096), (1024, 2048));
+        assert_eq!(constrained_browser_image_size(1024, 512), (1024, 512));
     }
 }

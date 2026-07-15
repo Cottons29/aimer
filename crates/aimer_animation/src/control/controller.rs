@@ -1,8 +1,8 @@
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
+use crate::local_cell::LocalCell;
 use crate::primitives::curve::Curve;
 use crate::primitives::time::AnimInstant;
+use std::rc::Rc;
+use std::time::Duration;
 
 /// The current status of an animation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,13 +34,13 @@ pub trait StatusListener: Send + Sync {
 ///
 /// Register a [`StatusListener`] to be notified when the animation status
 /// changes (e.g. when it completes or is dismissed). Listeners are stored as
-/// `Arc<dyn StatusListener>` so the controller remains `Clone`-able. Clones are
+/// `Rc<dyn StatusListener>` so the controller remains `Clone`-able. Clones are
 /// handles to the same playback state, allowing a widget and its owner to
 /// control one animation.
 #[derive(Clone)]
 pub struct AnimationController {
-    state: Arc<Mutex<ControllerState>>,
-    listeners: Arc<Mutex<Vec<Arc<dyn StatusListener>>>>,
+    state: Rc<LocalCell<ControllerState>>,
+    listeners: Rc<LocalCell<Vec<Rc<dyn StatusListener>>>>,
 }
 
 #[derive(Debug)]
@@ -57,18 +57,16 @@ struct ControllerState {
 
 impl std::fmt::Debug for AnimationController {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let state = self
-            .state
-            .lock()
-            .unwrap();
-        f.debug_struct("AnimationController")
-            .field("duration", &state.duration)
-            .field("curve", &state.curve)
-            .field("value", &state.value)
-            .field("status", &state.status)
-            .field("repeat", &state.repeat)
-            .field("auto_reverse", &state.auto_reverse)
-            .finish()
+        self.state.with(|state| {
+            f.debug_struct("AnimationController")
+                .field("duration", &state.duration)
+                .field("curve", &state.curve)
+                .field("value", &state.value)
+                .field("status", &state.status)
+                .field("repeat", &state.repeat)
+                .field("auto_reverse", &state.auto_reverse)
+                .finish()
+        })
     }
 }
 
@@ -76,7 +74,7 @@ impl AnimationController {
     /// Create a new controller with the given duration and curve.
     pub fn new(duration: Duration, curve: Curve) -> Self {
         Self {
-            state: Arc::new(Mutex::new(ControllerState {
+            state: Rc::new(LocalCell::new(ControllerState {
                 duration,
                 curve,
                 value: 0.0,
@@ -86,7 +84,7 @@ impl AnimationController {
                 repeat: false,
                 auto_reverse: false,
             })),
-            listeners: Arc::new(Mutex::new(Vec::new())),
+            listeners: Rc::new(LocalCell::new(Vec::new())),
         }
     }
 
@@ -97,24 +95,18 @@ impl AnimationController {
 
     /// Register a status listener. The listener will be called whenever
     /// the animation status changes during `tick()`.
-    pub fn add_status_listener(&self, listener: Arc<dyn StatusListener>) {
+    pub fn add_status_listener(&self, listener: Rc<dyn StatusListener>) {
         self.listeners
-            .lock()
-            .unwrap()
-            .push(listener);
+            .with_mut(|listeners| listeners.push(listener));
     }
 
     /// Start playing the animation forward from the current value.
     pub fn forward(&self) {
-        let changed = {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap();
+        let changed = self.state.with_mut(|state| {
             state.start_value = state.value;
             state.start_time = Some(AnimInstant::now());
-            Self::set_status(&mut state, AnimationStatus::Forward)
-        };
+            Self::set_status(state, AnimationStatus::Forward)
+        });
         self.notify_if_changed(changed, AnimationStatus::Forward);
     }
 
@@ -122,44 +114,32 @@ impl AnimationController {
     /// first [`Self::tick`]. This prevents widget construction between starting
     /// an animation and rendering its first frame from consuming its duration.
     pub fn forward_from_first_tick(&self) {
-        let changed = {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap();
+        let changed = self.state.with_mut(|state| {
             state.start_value = state.value;
             state.start_time = None;
-            Self::set_status(&mut state, AnimationStatus::Forward)
-        };
+            Self::set_status(state, AnimationStatus::Forward)
+        });
         self.notify_if_changed(changed, AnimationStatus::Forward);
     }
 
     /// Start playing the animation in reverse from the current value.
     pub fn reverse(&self) {
-        let changed = {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap();
+        let changed = self.state.with_mut(|state| {
             state.start_value = state.value;
             state.start_time = Some(AnimInstant::now());
-            Self::set_status(&mut state, AnimationStatus::Reverse)
-        };
+            Self::set_status(state, AnimationStatus::Reverse)
+        });
         self.notify_if_changed(changed, AnimationStatus::Reverse);
     }
 
     /// Reset the animation to the beginning (value = 0, dismissed).
     pub fn reset(&self) {
-        let changed = {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap();
+        let changed = self.state.with_mut(|state| {
             state.value = 0.0;
             state.start_value = 0.0;
             state.start_time = None;
-            Self::set_status(&mut state, AnimationStatus::Dismissed)
-        };
+            Self::set_status(state, AnimationStatus::Dismissed)
+        });
         self.notify_if_changed(changed, AnimationStatus::Dismissed);
     }
 
@@ -171,81 +151,59 @@ impl AnimationController {
 
     pub fn duration(&self) -> Duration {
         self.state
-            .lock()
-            .unwrap()
-            .duration
+            .with(|state| state.duration)
     }
 
     pub fn set_duration(&self, duration: Duration) {
         self.state
-            .lock()
-            .unwrap()
-            .duration = duration;
+            .with_mut(|state| state.duration = duration);
     }
 
     pub fn curve(&self) -> Curve {
         self.state
-            .lock()
-            .unwrap()
-            .curve
+            .with(|state| state.curve)
     }
 
     pub fn set_curve(&self, curve: Curve) {
         self.state
-            .lock()
-            .unwrap()
-            .curve = curve;
+            .with_mut(|state| state.curve = curve);
     }
 
     pub fn value(&self) -> f32 {
         self.state
-            .lock()
-            .unwrap()
-            .value
+            .with(|state| state.value)
     }
 
     pub fn set_value(&self, value: f32) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap();
-        state.value = value.clamp(0.0, 1.0);
-        state.start_value = state.value;
+        self.state.with_mut(|state| {
+            state.value = value.clamp(0.0, 1.0);
+            state.start_value = state.value;
+        });
     }
 
     pub fn status(&self) -> AnimationStatus {
         self.state
-            .lock()
-            .unwrap()
-            .status
+            .with(|state| state.status)
     }
 
     pub fn repeat(&self) -> bool {
         self.state
-            .lock()
-            .unwrap()
-            .repeat
+            .with(|state| state.repeat)
     }
 
     pub fn set_repeat(&self, repeat: bool) {
         self.state
-            .lock()
-            .unwrap()
-            .repeat = repeat;
+            .with_mut(|state| state.repeat = repeat);
     }
 
     pub fn auto_reverse(&self) -> bool {
         self.state
-            .lock()
-            .unwrap()
-            .auto_reverse
+            .with(|state| state.auto_reverse)
     }
 
     pub fn set_auto_reverse(&self, auto_reverse: bool) {
         self.state
-            .lock()
-            .unwrap()
-            .auto_reverse = auto_reverse;
+            .with_mut(|state| state.auto_reverse = auto_reverse);
     }
 
     fn set_status(state: &mut ControllerState, new_status: AnimationStatus) -> bool {
@@ -259,12 +217,8 @@ impl AnimationController {
 
     fn notify_if_changed(&self, changed: bool, status: AnimationStatus) {
         if changed {
-            for listener in self
-                .listeners
-                .lock()
-                .unwrap()
-                .iter()
-            {
+            let listeners = self.listeners.with(Clone::clone);
+            for listener in &listeners {
                 listener.on_status_changed(status);
             }
         }
@@ -276,39 +230,22 @@ impl AnimationController {
     /// updated to `Completed` or `Dismissed` and `is_animating()` returns
     /// false.
     pub fn tick(&self, now: AnimInstant) -> f32 {
-        let (value, curve, notification) = {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap();
+        let (value, curve, notification) = self.state.with_mut(|state| {
             let Some(start) = state.start_time else {
                 if matches!(state.status, AnimationStatus::Forward | AnimationStatus::Reverse) {
                     state.start_time = Some(now);
                 }
-                return state
-                    .curve
-                    .transform(state.value);
+                return (state.value, state.curve, None);
             };
             if !matches!(state.status, AnimationStatus::Forward | AnimationStatus::Reverse) {
-                return state
-                    .curve
-                    .transform(state.value);
+                return (state.value, state.curve, None);
             }
 
             let elapsed = now
                 .duration_since(start)
                 .as_secs_f32();
-            let linear_delta = if state
-                .duration
-                .is_zero()
-            {
-                1.0
-            } else {
-                elapsed
-                    / state
-                        .duration
-                        .as_secs_f32()
-            };
+            let linear_delta =
+                if state.duration.is_zero() { 1.0 } else { elapsed / state.duration.as_secs_f32() };
             let status = state.status;
             let mut notification = None;
 
@@ -318,7 +255,7 @@ impl AnimationController {
                     if state.value >= 1.0 {
                         if state.repeat {
                             if state.auto_reverse {
-                                if Self::set_status(&mut state, AnimationStatus::Reverse) {
+                                if Self::set_status(state, AnimationStatus::Reverse) {
                                     notification = Some(AnimationStatus::Reverse);
                                 }
                                 state.start_value = 1.0;
@@ -329,7 +266,7 @@ impl AnimationController {
                             state.start_time = Some(now);
                         } else {
                             state.start_time = None;
-                            if Self::set_status(&mut state, AnimationStatus::Completed) {
+                            if Self::set_status(state, AnimationStatus::Completed) {
                                 notification = Some(AnimationStatus::Completed);
                             }
                         }
@@ -340,7 +277,7 @@ impl AnimationController {
                     if state.value <= 0.0 {
                         if state.repeat {
                             if state.auto_reverse {
-                                if Self::set_status(&mut state, AnimationStatus::Forward) {
+                                if Self::set_status(state, AnimationStatus::Forward) {
                                     notification = Some(AnimationStatus::Forward);
                                 }
                                 state.start_value = 0.0;
@@ -351,7 +288,7 @@ impl AnimationController {
                             state.start_time = Some(now);
                         } else {
                             state.start_time = None;
-                            if Self::set_status(&mut state, AnimationStatus::Dismissed) {
+                            if Self::set_status(state, AnimationStatus::Dismissed) {
                                 notification = Some(AnimationStatus::Dismissed);
                             }
                         }
@@ -361,7 +298,7 @@ impl AnimationController {
             }
 
             (state.value, state.curve, notification)
-        };
+        });
 
         if let Some(status) = notification {
             self.notify_if_changed(true, status);
@@ -456,29 +393,19 @@ mod tests {
             }
         }
 
-        let listener = Arc::new(TestListener(AtomicU8::new(0)));
+        let listener = Rc::new(TestListener(AtomicU8::new(0)));
         let ctrl = AnimationController::with_millis(100, Curve::Linear);
         ctrl.add_status_listener(listener.clone());
 
         ctrl.forward();
-        assert_eq!(
-            listener
-                .0
-                .load(Ordering::Relaxed),
-            1
-        ); // Forward
+        assert_eq!(listener.0.load(Ordering::Relaxed), 1); // Forward
 
         let start = AnimInstant::now();
         let end = start + Duration::from_millis(150);
         ctrl.tick(end);
 
         // Two transitions: Forward → (no change in tick) → Completed
-        assert_eq!(
-            listener
-                .0
-                .load(Ordering::Relaxed),
-            2
-        );
+        assert_eq!(listener.0.load(Ordering::Relaxed), 2);
         assert_eq!(ctrl.status(), AnimationStatus::Completed);
     }
 
@@ -492,18 +419,13 @@ mod tests {
             }
         }
 
-        let listener = Arc::new(TestListener(AtomicU8::new(0)));
+        let listener = Rc::new(TestListener(AtomicU8::new(0)));
         let ctrl = AnimationController::with_millis(100, Curve::Linear);
         ctrl.add_status_listener(listener.clone());
 
         let ctrl2 = ctrl.clone();
         ctrl2.forward();
-        assert_eq!(
-            listener
-                .0
-                .load(Ordering::Relaxed),
-            1
-        );
+        assert_eq!(listener.0.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -514,10 +436,7 @@ mod tests {
         first.forward();
         let halfway = first
             .state
-            .lock()
-            .unwrap()
-            .start_time
-            .unwrap()
+            .with(|state| state.start_time.unwrap())
             + Duration::from_millis(50);
         first.tick(halfway);
 
@@ -536,10 +455,7 @@ mod tests {
 
         let halfway_through_remaining = ctrl
             .state
-            .lock()
-            .unwrap()
-            .start_time
-            .unwrap()
+            .with(|state| state.start_time.unwrap())
             + Duration::from_millis(30);
         let value = ctrl.tick(halfway_through_remaining);
 
@@ -554,10 +470,7 @@ mod tests {
 
         let halfway_through_remaining = ctrl
             .state
-            .lock()
-            .unwrap()
-            .start_time
-            .unwrap()
+            .with(|state| state.start_time.unwrap())
             + Duration::from_millis(30);
         let value = ctrl.tick(halfway_through_remaining);
 
@@ -571,10 +484,7 @@ mod tests {
 
         let quarter = ctrl
             .state
-            .lock()
-            .unwrap()
-            .start_time
-            .unwrap()
+            .with(|state| state.start_time.unwrap())
             + Duration::from_micros(125);
         let value = ctrl.tick(quarter);
 

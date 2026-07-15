@@ -37,18 +37,13 @@ impl OverflowBehavior {
     fn apply_overflow_behave(&self, ctx: &BuildContext) {
         match self {
             Self::Hidden => {
-                ctx.canvas
-                    .set_clip(
-                        Vec2d { x: 0.0, y: 0.0 },
-                        ResolvedSize {
-                            width: ctx
-                                .box_constraint
-                                .max_width,
-                            height: ctx
-                                .box_constraint
-                                .max_height,
-                        },
-                    );
+                ctx.canvas.set_clip(
+                    Vec2d { x: 0.0, y: 0.0 },
+                    ResolvedSize {
+                        width: ctx.box_constraint.max_width,
+                        height: ctx.box_constraint.max_height,
+                    },
+                );
             }
             Self::Wrap | Self::Visible => {}
         }

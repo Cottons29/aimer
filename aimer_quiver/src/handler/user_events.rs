@@ -68,12 +68,11 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
                 // the same, proven mechanism used at startup, scoped to a couple
                 // of frames so the app still returns to idle immediately after.
                 const SETTLE_FRAMES: u8 = 3;
-                app.start_up_frames
-                    .set(
-                        app.start_up_frames
-                            .get()
-                            .max(SETTLE_FRAMES),
-                    );
+                app.start_up_frames.set(
+                    app.start_up_frames
+                        .get()
+                        .max(SETTLE_FRAMES),
+                );
                 window.request_redraw();
             }
         }

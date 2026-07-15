@@ -153,16 +153,13 @@ impl DrawList {
     }
 
     pub fn clear(&mut self) {
-        self.commands
-            .clear();
-        self.transform_stack
-            .clear();
+        self.commands.clear();
+        self.transform_stack.clear();
         self.current_transform = Mat3::identity();
     }
 
     pub fn push(&mut self, cmd: DrawCommand) {
-        self.commands
-            .push(cmd);
+        self.commands.push(cmd);
     }
 
     pub fn fill_rect(
@@ -431,10 +428,7 @@ impl DrawList {
     }
 
     pub fn restore(&mut self) {
-        if let Some(prev) = self
-            .transform_stack
-            .pop()
-        {
+        if let Some(prev) = self.transform_stack.pop() {
             self.current_transform = prev;
             self.commands
                 .push(DrawCommand::PopTransform);
@@ -443,27 +437,21 @@ impl DrawList {
 
     pub fn translate(&mut self, x: f32, y: f32) {
         let t = Mat3::translate(x, y);
-        self.current_transform = self
-            .current_transform
-            .mul(&t);
+        self.current_transform = self.current_transform.mul(&t);
         self.commands
             .push(DrawCommand::SetTransform { matrix: self.current_transform });
     }
 
     pub fn scale(&mut self, sx: f32, sy: f32) {
         let s = Mat3::scale(sx, sy);
-        self.current_transform = self
-            .current_transform
-            .mul(&s);
+        self.current_transform = self.current_transform.mul(&s);
         self.commands
             .push(DrawCommand::SetTransform { matrix: self.current_transform });
     }
 
     pub fn rotate(&mut self, radians: f32) {
         let r = Mat3::rotate(radians);
-        self.current_transform = self
-            .current_transform
-            .mul(&r);
+        self.current_transform = self.current_transform.mul(&r);
         self.commands
             .push(DrawCommand::SetTransform { matrix: self.current_transform });
     }

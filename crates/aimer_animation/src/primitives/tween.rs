@@ -24,8 +24,7 @@ impl<T: Animatable> Tween<T> {
 
     /// Interpolate between `begin` and `end` at progress `t` (0.0–1.0).
     pub fn lerp(&self, t: f32) -> T {
-        self.begin
-            .lerp(&self.end, t)
+        self.begin.lerp(&self.end, t)
     }
 }
 

@@ -45,9 +45,7 @@ static MINIMUM_EXEC_TIME_MS: LazyLock<i64> = LazyLock::new(|| {
 
 #[cfg(feature = "time-cost")]
 fn add_grouping(key: &str, val: i64) {
-    let key = key
-        .trim()
-        .replace("|-", "");
+    let key = key.trim().replace("|-", "");
     let group = unsafe { &raw mut EXEC_GROUPING.map };
     let group = unsafe { &mut *group };
     let times = group
@@ -66,9 +64,7 @@ impl ExecTimes {
             let group = unsafe { &raw mut EXEC_GROUPING.map };
             let group = unsafe { &mut *group };
             for (label, times) in group.iter() {
-                let sum = times
-                    .iter()
-                    .sum::<i64>();
+                let sum = times.iter().sum::<i64>();
                 debug!("{:<5}ms -> {}", sum, label);
             }
             group.clear();

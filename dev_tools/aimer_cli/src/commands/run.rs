@@ -56,16 +56,11 @@ fn fetch_devices() -> Vec<Device> {
         .args(["devices", "-l"])
         .output()
     {
-        if output
-            .status
-            .success()
-        {
+        if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if line.contains(" device ") || line.contains(" emulator ") {
-                    let parts: Vec<&str> = line
-                        .split_whitespace()
-                        .collect();
+                    let parts: Vec<&str> = line.split_whitespace().collect();
                     if let Some(id) = parts.first() {
                         let connection_type =
                             if id.contains('.') && id.contains(':') { "Wireless" } else { "Wired" };
@@ -84,10 +79,7 @@ fn fetch_devices() -> Vec<Device> {
                             .output();
 
                         if let Ok(output) = pretty_name_cmd {
-                            if output
-                                .status
-                                .success()
-                            {
+                            if output.status.success() {
                                 let output_str = String::from_utf8_lossy(&output.stdout);
                                 if let Some(name) = output_str
                                     .split_whitespace()
@@ -115,17 +107,12 @@ fn fetch_devices() -> Vec<Device> {
         .args(["simctl", "list", "devices"])
         .output()
     {
-        if output
-            .status
-            .success()
-        {
+        if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if line.contains("(Booted)") {
                     if let Some(start) = line.find('(') {
-                        let name = line[..start]
-                            .trim()
-                            .to_string();
+                        let name = line[..start].trim().to_string();
                         let rest = &line[start..];
                         let mut id = "".to_string();
                         if let Some(udid_start) = rest.find('(') {
@@ -146,14 +133,9 @@ fn fetch_devices() -> Vec<Device> {
         .args(["devicectl", "list", "devices"])
         .output()
     {
-        if output
-            .status
-            .success()
-        {
+        if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let lines: Vec<&str> = stdout
-                .lines()
-                .collect();
+            let lines: Vec<&str> = stdout.lines().collect();
             let mut in_devices = false;
             for line in lines {
                 if line.starts_with("---------") {
@@ -163,18 +145,11 @@ fn fetch_devices() -> Vec<Device> {
                 if in_devices && !line.is_empty() {
                     let parts: Vec<&str> = line
                         .split("   ")
-                        .filter(|s| {
-                            !s.trim()
-                                .is_empty()
-                        })
+                        .filter(|s| !s.trim().is_empty())
                         .collect();
                     if parts.len() >= 4 {
-                        let name = parts[0]
-                            .trim()
-                            .to_string();
-                        let identifier = parts[2]
-                            .trim()
-                            .to_string();
+                        let name = parts[0].trim().to_string();
+                        let identifier = parts[2].trim().to_string();
                         let state = parts[3].trim();
                         if state.to_lowercase() == "available" {
                             let connection_type = if parts[1]
@@ -208,10 +183,7 @@ fn fetch_devices() -> Vec<Device> {
         .args(["xctrace", "list", "devices"])
         .output()
     {
-        if output
-            .status
-            .success()
-        {
+        if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut is_offline = false;
             let mut is_simulator = false;
@@ -226,9 +198,7 @@ fn fetch_devices() -> Vec<Device> {
                 } else if !line.is_empty() && !is_offline && !is_simulator {
                     if let Some(start) = line.rfind('(') {
                         if let Some(end) = line.rfind(')') {
-                            let name = line[..start]
-                                .trim()
-                                .to_string();
+                            let name = line[..start].trim().to_string();
                             let id = line[start + 1..end].to_string();
                             if !id.contains("-") || id.len() == 40 || id.len() == 25 {
                                 devices.push(Device {
@@ -248,10 +218,7 @@ fn fetch_devices() -> Vec<Device> {
     let mut seen_ids = std::collections::HashSet::new();
     for dev in devices {
         if !seen_ids.contains(&dev.id) {
-            seen_ids.insert(
-                dev.id
-                    .clone(),
-            );
+            seen_ids.insert(dev.id.clone());
             unique_devices.push(dev);
         }
     }
@@ -375,9 +342,7 @@ fn pick_device(devices_arc: &Arc<Mutex<Vec<Device>>>) -> anyhow::Result<Option<D
             .map_err(|_| anyhow::anyhow!("device list mutex was poisoned"))?
             .clone();
         if selected_index >= devices.len() {
-            selected_index = devices
-                .len()
-                .saturating_sub(1);
+            selected_index = devices.len().saturating_sub(1);
         }
 
         // Render menu
@@ -392,10 +357,7 @@ fn pick_device(devices_arc: &Arc<Mutex<Vec<Device>>>) -> anyhow::Result<Option<D
             stdout,
             "\x1b[36m◆\x1b[0m  \x1b[1mSelect a device to launch (Press 'q' to quit):\x1b[0m\r"
         )?;
-        for (i, device) in devices
-            .iter()
-            .enumerate()
-        {
+        for (i, device) in devices.iter().enumerate() {
             execute!(stdout, cursor::MoveToColumn(0))?;
             if i == selected_index {
                 execute!(stdout, SetForegroundColor(Color::DarkGrey))?;
@@ -428,17 +390,11 @@ fn pick_device(devices_arc: &Arc<Mutex<Vec<Device>>>) -> anyhow::Result<Option<D
                     selected_index = if selected_index > 0 {
                         selected_index - 1
                     } else {
-                        devices
-                            .len()
-                            .saturating_sub(1)
+                        devices.len().saturating_sub(1)
                     };
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    selected_index = if selected_index
-                        < devices
-                            .len()
-                            .saturating_sub(1)
-                    {
+                    selected_index = if selected_index < devices.len().saturating_sub(1) {
                         selected_index + 1
                     } else {
                         0
@@ -595,9 +551,7 @@ mod tests {
             .iter()
             .map(|d| &d.id)
             .collect();
-        let unique: std::collections::HashSet<_> = ids
-            .iter()
-            .collect();
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
         assert_eq!(ids.len(), unique.len(), "Device list contains duplicates");
     }
 

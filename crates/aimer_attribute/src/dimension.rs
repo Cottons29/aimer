@@ -148,14 +148,11 @@ impl CacheBounds {
     }
 
     pub fn is_cached(&self) -> bool {
-        self.bound
-            .get()
-            .is_some()
+        self.bound.get().is_some()
     }
 
     pub fn get_bounds(&self) -> Option<Bounds> {
-        self.bound
-            .get()
+        self.bound.get()
     }
 
     pub fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
@@ -165,19 +162,14 @@ impl CacheBounds {
     }
 
     pub fn set_bounds(&self, bounds: Bounds) {
-        self.bound
-            .set(Some(bounds));
+        self.bound.set(Some(bounds));
     }
 
     pub fn set_size(&self, size: ResolvedSize) {
-        if let Some(mut bound) = self
-            .bound
-            .get()
-        {
+        if let Some(mut bound) = self.bound.get() {
             bound.width = size.width;
             bound.height = size.height;
-            self.bound
-                .set(Some(bound));
+            self.bound.set(Some(bound));
         }
     }
 
@@ -191,10 +183,7 @@ impl CacheBounds {
     }
 
     pub fn is_inside(&self, x: f32, y: f32) -> bool {
-        let Some(bound) = self
-            .bound
-            .get()
-        else {
+        let Some(bound) = self.bound.get() else {
             return false;
         };
         bound.x <= x && x <= bound.x + bound.width && bound.y <= y && y <= bound.y + bound.height

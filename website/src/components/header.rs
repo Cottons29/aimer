@@ -48,9 +48,7 @@ impl State<HeaderSection> for HeaderState {
 
         // println!("show_icon: {}", show_icon);
         let children = vec![
-            SizedBox::new()
-                .width(16)
-                .boxed(),
+            SizedBox::new().width(16).boxed(),
             if show_icon {
                 Text::new("Aimer")
                     .text_style(
@@ -62,13 +60,9 @@ impl State<HeaderSection> for HeaderState {
                     )
                     .boxed()
             } else {
-                SizedBox::new()
-                    .width(100)
-                    .boxed()
+                SizedBox::new().width(100).boxed()
             },
-            SizedBox::new()
-                .width(16)
-                .boxed(),
+            SizedBox::new().width(16).boxed(),
             Expanded::new()
                 .child(
                     Container::new().child(
@@ -80,9 +74,7 @@ impl State<HeaderSection> for HeaderState {
                     ),
                 )
                 .boxed(),
-            SizedBox::new()
-                .width(16)
-                .boxed(),
+            SizedBox::new().width(16).boxed(),
         ];
 
         Container::new()

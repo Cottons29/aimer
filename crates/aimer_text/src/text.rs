@@ -42,8 +42,7 @@ impl Text {
     }
 
     pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
-        self.text_style
-            .text_overflow = text_overflow;
+        self.text_style.text_overflow = text_overflow;
         self
     }
 
@@ -60,9 +59,7 @@ impl Widget for Text {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         // println!("Creating text widget : {:?}", self.text);
         RawTextWidget {
-            text: self
-                .text
-                .clone(),
+            text: self.text.clone(),
             text_style: self.text_style,
             text_align: self.text_align,
             cache: LayoutCache::new(),

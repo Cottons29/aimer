@@ -16,14 +16,11 @@ pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
     let struct_name_str = struct_name.to_string();
 
     // Detect if the struct has a `key` field
-    let has_key = item_struct
-        .fields
-        .iter()
-        .any(|f| {
-            f.ident
-                .as_ref()
-                .is_some_and(|i| i == "key")
-        });
+    let has_key = item_struct.fields.iter().any(|f| {
+        f.ident
+            .as_ref()
+            .is_some_and(|i| i == "key")
+    });
 
     let key_pass = if has_key {
         quote! { self.key.clone() }

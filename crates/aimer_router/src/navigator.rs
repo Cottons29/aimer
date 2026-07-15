@@ -55,11 +55,7 @@ pub(crate) fn browser_replace_state(path: &str) {
 
 #[cfg(target_arch = "wasm32")]
 fn browser_current_path() -> Option<String> {
-    web_sys::window().and_then(|w| {
-        w.location()
-            .pathname()
-            .ok()
-    })
+    web_sys::window().and_then(|w| w.location().pathname().ok())
 }
 
 pub struct Navigator<R>
@@ -96,34 +92,21 @@ impl<R: Route> NavigatorState<R> {
     pub fn push(&self, route: R) {
         #[cfg(target_arch = "wasm32")]
         browser_push_state(&route.format());
-        self.updater
-            .set_state(|state| {
-                state
-                    .history
-                    .push(route);
-            });
+        self.updater.set_state(|state| {
+            state.history.push(route);
+        });
     }
 
     pub fn pop(&self) {
-        self.updater
-            .set_state(|state| {
-                if state
-                    .history
-                    .len()
-                    > 1
-                {
-                    state
-                        .history
-                        .pop();
-                    #[cfg(target_arch = "wasm32")]
-                    if let Some(prev) = state
-                        .history
-                        .last()
-                    {
-                        browser_replace_state(&prev.format());
-                    }
+        self.updater.set_state(|state| {
+            if state.history.len() > 1 {
+                state.history.pop();
+                #[cfg(target_arch = "wasm32")]
+                if let Some(prev) = state.history.last() {
+                    browser_replace_state(&prev.format());
                 }
-            });
+            }
+        });
     }
 }
 
@@ -135,11 +118,7 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
         {
             let updater_clone = updater;
             let closure = Closure::wrap(Box::new(move |_event: web_sys::PopStateEvent| {
-                if let Some(path) = web_sys::window().and_then(|w| {
-                    w.location()
-                        .pathname()
-                        .ok()
-                }) {
+                if let Some(path) = web_sys::window().and_then(|w| w.location().pathname().ok()) {
                     if let Some(route) = R::parse(&path) {
                         updater_clone.set_state(|state| {
                             // Replace the history stack with just this route
@@ -154,12 +133,8 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
             }) as Box<dyn FnMut(web_sys::PopStateEvent)>);
 
             if let Some(window) = web_sys::window() {
-                let _ = window.add_event_listener_with_callback(
-                    "popstate",
-                    closure
-                        .as_ref()
-                        .unchecked_ref(),
-                );
+                let _ = window
+                    .add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref());
             }
 
             // Leak the closure so it stays alive for the lifetime of the app
@@ -174,38 +149,23 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
         // `NavigatorController::of` (`get_state::<NavigatorController<R>>()`).
         ctx.insert_state(NavigatorController {
             push_fn: {
-                let updater = self
-                    .updater
-                    .clone();
+                let updater = self.updater.clone();
                 Rc::new(move |route: R| {
                     #[cfg(target_arch = "wasm32")]
                     browser_push_state(&route.format());
                     updater.set_state(|state| {
-                        state
-                            .history
-                            .push(route);
+                        state.history.push(route);
                     });
                 })
             },
             pop_fn: {
-                let updater = self
-                    .updater
-                    .clone();
+                let updater = self.updater.clone();
                 Rc::new(move || {
                     updater.set_state(|state| {
-                        if state
-                            .history
-                            .len()
-                            > 1
-                        {
-                            state
-                                .history
-                                .pop();
+                        if state.history.len() > 1 {
+                            state.history.pop();
                             #[cfg(target_arch = "wasm32")]
-                            if let Some(prev) = state
-                                .history
-                                .last()
-                            {
+                            if let Some(prev) = state.history.last() {
                                 browser_replace_state(&prev.format());
                             }
                         }
@@ -213,15 +173,11 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
                 })
             },
             can_pop_fn: {
-                let history = self
-                    .history
-                    .clone();
+                let history = self.history.clone();
                 Rc::new(move || history.len() > 1)
             },
             history_len_fn: {
-                let history = self
-                    .history
-                    .clone();
+                let history = self.history.clone();
                 Rc::new(move || history.len())
             },
         });
@@ -253,18 +209,10 @@ pub struct NavigatorController<R> {
 impl<R> Clone for NavigatorController<R> {
     fn clone(&self) -> Self {
         NavigatorController {
-            push_fn: self
-                .push_fn
-                .clone(),
-            pop_fn: self
-                .pop_fn
-                .clone(),
-            can_pop_fn: self
-                .can_pop_fn
-                .clone(),
-            history_len_fn: self
-                .history_len_fn
-                .clone(),
+            push_fn: self.push_fn.clone(),
+            pop_fn: self.pop_fn.clone(),
+            can_pop_fn: self.can_pop_fn.clone(),
+            history_len_fn: self.history_len_fn.clone(),
         }
     }
 }
@@ -316,10 +264,7 @@ impl<R: Route> StatefulWidget for Navigator<R> {
     type State = NavigatorState<R>;
     fn create_state(&self) -> Self::State {
         NavigatorState::<R> {
-            history: vec![
-                self.initial_route
-                    .clone(),
-            ],
+            history: vec![self.initial_route.clone()],
             updater: StateUpdater::empty(),
             routes: self.routes,
         }

@@ -34,26 +34,14 @@ pub struct MouseRegion<W: Widget + 'static> {
 
 impl<W: Widget + 'static> Widget for MouseRegion<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self
-            .child
-            .to_element(ctx);
+        let child = self.child.to_element(ctx);
         RawMouseRegion {
-            on_hover_enter: self
-                .on_hover_enter
-                .clone(),
-            on_hover_exit: self
-                .on_hover_exit
-                .clone(),
+            on_hover_enter: self.on_hover_enter.clone(),
+            on_hover_exit: self.on_hover_exit.clone(),
             cursor: self.cursor,
-            current_state: self
-                .current_state
-                .clone(),
-            cached_bounds: self
-                .cached_bounds
-                .clone(),
-            window: ctx
-                .window
-                .clone(),
+            current_state: self.current_state.clone(),
+            cached_bounds: self.cached_bounds.clone(),
+            window: ctx.window.clone(),
             child,
         }
         .boxed()
@@ -106,20 +94,12 @@ impl<E: Element> RawMouseRegion<E> {
     /// otherwise stay un-hovered until the mouse moved again.
     fn sync_hover(&self, is_inside: bool) {
         if is_inside {
-            if matches!(
-                self.current_state
-                    .get(),
-                PointerState::Outside
-            ) {
+            if matches!(self.current_state.get(), PointerState::Outside) {
                 Self::execute_void_callback(&self.on_hover_enter);
                 self.current_state
                     .set(PointerState::Inside);
             }
-        } else if matches!(
-            self.current_state
-                .get(),
-            PointerState::Inside
-        ) {
+        } else if matches!(self.current_state.get(), PointerState::Inside) {
             Self::execute_void_callback(&self.on_hover_exit);
             self.current_state
                 .set(PointerState::Outside);
@@ -154,9 +134,7 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
             ElementEvent::PointerUp(p, src, _) if *src == PointerSource::Mouse => *p,
             ElementEvent::PointerMove(p, src, _) if *src == PointerSource::Mouse => *p,
             _ => {
-                return self
-                    .child
-                    .on_event(event);
+                return self.child.on_event(event);
             }
         };
 
@@ -169,13 +147,9 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
         // Update the cursor icon on every mouse event while over the region.
         if is_inside {
             if let Some(icon) = self.cursor {
-                self.window
-                    .set_cursor(icon);
+                self.window.set_cursor(icon);
             }
-        } else if self
-            .cursor
-            .is_some()
-        {
+        } else if self.cursor.is_some() {
             self.window
                 .set_cursor(winit::window::CursorIcon::Default);
         }
@@ -183,8 +157,7 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
         // Only fire callbacks on a state change between Enter <-> Exit,
         // not on every mouse event.
         self.sync_hover(is_inside);
-        self.child
-            .on_event(event)
+        self.child.on_event(event)
     }
 
     // Return empty — we manually forward to the child in on_event
@@ -194,9 +167,7 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
 
 impl<E: Element> LayoutElement for RawMouseRegion<E> {
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        let size = self
-            .child
-            .layout(ctx);
+        let size = self.child.layout(ctx);
         // Cache our own bounds from the canvas transform for hit-testing
         let (abs_x, abs_y) = ctx
             .canvas
@@ -207,17 +178,14 @@ impl<E: Element> LayoutElement for RawMouseRegion<E> {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child
-            .computed_size(ctx)
+        self.child.computed_size(ctx)
     }
 }
 
 impl<E: Element> Drawable for RawMouseRegion<E> {
     fn draw(&self, ctx: &BuildContext<'_>) {
         // Update cached bounds from the current canvas position
-        let child_size = self
-            .child
-            .computed_size(ctx);
+        let child_size = self.child.computed_size(ctx);
         let (abs_x, abs_y) = ctx
             .canvas
             .get_transform_translation();
@@ -235,7 +203,6 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
             .is_inside(cursor.x, cursor.y);
         self.sync_hover(is_inside);
 
-        self.child
-            .draw(ctx);
+        self.child.draw(ctx);
     }
 }

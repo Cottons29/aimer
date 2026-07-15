@@ -71,9 +71,7 @@ fn docs_entry(title: &str, body: &str) -> Box<dyn Widget> {
                                 .font_weight(FontWeight::Bold),
                         )
                         .boxed(),
-                    SizedBox::new()
-                        .height(8)
-                        .boxed(),
+                    SizedBox::new().height(8).boxed(),
                     Text::new(body.to_string())
                         .text_style(
                             TextStyle::new()

@@ -29,21 +29,11 @@ fn execute_in(target: String, dir: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("resolving project directory {}", dir.display()))?;
     let dir = canonical.as_path();
 
-    let name = manifest
-        .package
-        .name
-        .clone();
-    let group = if manifest
-        .package
-        .group
-        .is_empty()
-    {
+    let name = manifest.package.name.clone();
+    let group = if manifest.package.group.is_empty() {
         "com.example.app".to_string()
     } else {
-        manifest
-            .package
-            .group
-            .clone()
+        manifest.package.group.clone()
     };
 
     match target.as_str() {
@@ -101,9 +91,7 @@ fn migrate_platform(
     group: &str,
     create_fn: &dyn Fn(&Path, &str, &str),
 ) -> anyhow::Result<()> {
-    let platform_dir = dir
-        .join("builds")
-        .join(platform);
+    let platform_dir = dir.join("builds").join(platform);
     if platform_dir.exists() {
         fs::remove_dir_all(&platform_dir)
             .with_context(|| format!("removing builds/{platform}/"))?;

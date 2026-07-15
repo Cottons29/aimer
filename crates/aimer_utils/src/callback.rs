@@ -75,14 +75,7 @@ pub struct Callback<Args = (), Return = ()> {
 
 impl<Args, Return> Callback<Args, Return> {
     pub fn callable(&self) -> Option<&Self> {
-        if self
-            .inner
-            .is_default()
-        {
-            None
-        } else {
-            Some(self)
-        }
+        if self.inner.is_default() { None } else { Some(self) }
     }
 
     /// Invoke a **synchronous** callback with `args`, returning its result.
@@ -93,12 +86,7 @@ impl<Args, Return> Callback<Args, Return> {
     pub fn call(&self, args: Args) -> Option<Return> {
         // SAFETY: mirrors the established `CallbackExecutor` access pattern —
         // the inner cell is only ever read here on the single UI thread.
-        match unsafe {
-            (*self
-                .inner
-                .get())
-            .as_ref()
-        } {
+        match unsafe { (*self.inner.get()).as_ref() } {
             Some(RawInnerCallback::Sync(f)) => Some(f(args)),
             _ => None,
         }
@@ -126,11 +114,7 @@ impl<Args, Return> Default for Callback<Args, Return> {
 
 impl<Args, Return> Clone for Callback<Args, Return> {
     fn clone(&self) -> Self {
-        Self {
-            inner: self
-                .inner
-                .clone(),
-        }
+        Self { inner: self.inner.clone() }
     }
 }
 
@@ -158,10 +142,7 @@ where
         Self {
             inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
                 Box::new(move |args| {
-                    let f = f
-                        .lock()
-                        .unwrap()
-                        .take();
+                    let f = f.lock().unwrap().take();
                     if let Some(f) = f {
                         Box::pin(f(args))
                     } else {
@@ -177,11 +158,7 @@ impl<P, R> CallbackExecutor for Callback<P, R> {
     type Args = P;
     type Output = R;
     fn get(&self) -> &Option<RawInnerCallback<Self::Args, Self::Output>> {
-        unsafe {
-            &*self
-                .inner
-                .get()
-        }
+        unsafe { &*self.inner.get() }
     }
 }
 
@@ -216,14 +193,7 @@ pub struct VoidCallback {
 
 impl VoidCallback {
     pub fn callable(&self) -> Option<&Self> {
-        if self
-            .inner
-            .is_default()
-        {
-            None
-        } else {
-            Some(self)
-        }
+        if self.inner.is_default() { None } else { Some(self) }
     }
 
     /// Create a `VoidCallback` from an async function (`fn() -> impl
@@ -253,10 +223,7 @@ impl VoidCallback {
         Self {
             inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
                 Box::new(move |_| {
-                    let f = f
-                        .lock()
-                        .unwrap()
-                        .take();
+                    let f = f.lock().unwrap().take();
                     if let Some(f) = f { Box::pin(f()) } else { Box::pin(async {}) }
                 }),
             ))))),
@@ -299,10 +266,7 @@ where
         Self {
             inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
                 Box::new(move |_| {
-                    let f = f
-                        .lock()
-                        .unwrap()
-                        .take();
+                    let f = f.lock().unwrap().take();
                     if let Some(f) = f { Box::pin(f()) } else { Box::pin(async {}) }
                 }),
             ))))),
@@ -314,11 +278,7 @@ impl CallbackExecutor for VoidCallback {
     type Args = ();
     type Output = ();
     fn get(&self) -> &Option<RawInnerCallback<Self::Args, Self::Output>> {
-        unsafe {
-            &*self
-                .inner
-                .get()
-        }
+        unsafe { &*self.inner.get() }
     }
 }
 

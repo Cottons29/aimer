@@ -45,9 +45,7 @@ impl Align {
 impl<W: Widget + 'static> Widget for Align<W> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         Box::new(RawAlign {
-            child: self
-                .child
-                .to_element(ctx),
+            child: self.child.to_element(ctx),
             layer: self.layer,
             alignment: self.alignment,
         })
@@ -79,9 +77,7 @@ struct RawAlign {
 
 impl Drawable for RawAlign {
     fn draw(&self, ctx: &BuildContext) {
-        let child_size = self
-            .child
-            .computed_size(ctx);
+        let child_size = self.child.computed_size(ctx);
         let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);
         let mut child_ctx = ctx.clone();
         child_ctx.parent_size = child_size;
@@ -95,31 +91,25 @@ impl Drawable for RawAlign {
             .visible_rect
             .map(|(x, y, width, height)| (x - offset_x, y - offset_y, width, height));
 
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
         ctx.canvas
             .translate(Vec2d { x: offset_x, y: offset_y });
-        self.child
-            .draw(&child_ctx);
-        ctx.canvas
-            .restore();
+        self.child.draw(&child_ctx);
+        ctx.canvas.restore();
     }
 }
 
 impl LayoutElement for RawAlign {
     fn size(&self) -> Option<Size> {
-        self.child
-            .size()
+        self.child.size()
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child
-            .computed_size(ctx)
+        self.child.computed_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child
-            .content_size(ctx)
+        self.child.content_size(ctx)
     }
 
     fn layer(&self) -> u32 {
@@ -127,17 +117,13 @@ impl LayoutElement for RawAlign {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
 }
 
 impl VisitorElement for RawAlign {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {

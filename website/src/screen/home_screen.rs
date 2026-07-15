@@ -65,10 +65,7 @@ impl State<HomePage> for HomePageState {
             .child(
                 Scrollable::new()
                     .key(key!())
-                    .controller(
-                        self.controller
-                            .clone(),
-                    )
+                    .controller(self.controller.clone())
                     .axis(ScrollAxis::Vertical)
                     .child(Column::new().children(vec![
                         hero_section(ctx),
@@ -178,9 +175,7 @@ fn feature_block(
                                         .font_weight(FontWeight::Bold),
                                 )
                                 .boxed(),
-                            SizedBox::new()
-                                .height(10)
-                                .boxed(),
+                            SizedBox::new().height(10).boxed(),
                             body,
                         ]),
                 ),
@@ -207,9 +202,7 @@ fn why_aimer_section(ctx: &BuildContext) -> AnyWidget {
                                 .text_decoration(TextDecoration::Underline),
                         )
                         .boxed(),
-                    SizedBox::new()
-                        .height(48)
-                        .boxed(),
+                    SizedBox::new().height(48).boxed(),
                     Container::new()
                         .height(Dimension::Px(500.0))
                         .child(
@@ -325,9 +318,7 @@ fn polished_tooling_section(ctx: &BuildContext) -> AnyWidget {
                 .horizontal_alignment(BoxAlignment::Start)
                 .vertical_alignment(BoxAlignment::Start)
                 .children(vec![
-                    SizedBox::new()
-                        .height(12)
-                        .boxed(),
+                    SizedBox::new().height(12).boxed(),
                     Container::new()
                         .height(100)
                         .child(
@@ -344,9 +335,7 @@ fn polished_tooling_section(ctx: &BuildContext) -> AnyWidget {
                         .height(if is_mobile(ctx) { 250 } else { 450 })
                         .child(AssetImage::new("assets/polished_tooling.png"))
                         .boxed(),
-                    SizedBox::new()
-                        .height(48)
-                        .boxed(),
+                    SizedBox::new().height(48).boxed(),
                 ]),
         )
         .boxed()
