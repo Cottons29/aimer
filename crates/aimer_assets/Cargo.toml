@@ -32,4 +32,4 @@ reqwest = { workspace = true }
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 wasm-bindgen.workspace = true
-web-sys = { workspace = true, features = [ "Response", "Window", "Blob", "Url", "HtmlImageElement","RequestInit","Headers","OffscreenCanvas","OffscreenCanvasRenderingContext2d","ImageData"] }
+web-sys = { workspace = true, features = [ "Response", "Window", "Blob", "ImageBitmap", "ImageBitmapOptions", "ResizeQuality", "RequestInit", "Headers", "OffscreenCanvas", "OffscreenCanvasRenderingContext2d", "ImageData" ] }

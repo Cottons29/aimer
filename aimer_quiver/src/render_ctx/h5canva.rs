@@ -34,24 +34,17 @@ pub mod render_ctx {
         /// Returns true when the async GPU init has completed and the context
         /// is usable.
         pub fn is_ready(&self) -> bool {
-            self.state
-                .borrow()
-                .is_some()
+            self.state.borrow().is_some()
         }
 
         pub fn initialize(&mut self, window: &'static Window, size: PhysicalSize<u32>) {
             // Append the winit canvas to the DOM
             if let Some(canvas) = window.canvas() {
                 let web_window = web_sys::window().unwrap();
-                let document = web_window
-                    .document()
-                    .unwrap();
-                let body = document
-                    .body()
-                    .unwrap();
+                let document = web_window.document().unwrap();
+                let body = document.body().unwrap();
                 info!("Creating canvas...");
-                body.append_child(&canvas)
-                    .unwrap();
+                body.append_child(&canvas).unwrap();
                 canvas
                     .set_attribute("id", "aimer_app")
                     .unwrap();
@@ -75,9 +68,7 @@ pub mod render_ctx {
             }
 
             // Spawn async GPU initialization
-            let state = self
-                .state
-                .clone();
+            let state = self.state.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 info!("Initializing GPU context (wasm)...");
                 let gpu = GpuContext::initialize_async(window, size).await;
@@ -91,32 +82,21 @@ pub mod render_ctx {
         }
 
         pub fn resize(&mut self, size: PhysicalSize<u32>) {
-            if let Some(state) = self
-                .state
-                .borrow_mut()
-                .as_mut()
-            {
-                state
-                    .gpu
-                    .resize(size);
+            if let Some(state) = self.state.borrow_mut().as_mut() {
+                state.gpu.resize(size);
             }
         }
 
         /// Render a frame using the GPU pipeline, matching the native WgpuApi
         /// interface.
         pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> bool {
-            let mut state_ref = self
-                .state
-                .borrow_mut();
+            let mut state_ref = self.state.borrow_mut();
             let state = match state_ref.as_mut() {
                 Some(s) => s,
                 None => return false, // GPU not ready yet
             };
 
-            let frame = match state
-                .gpu
-                .begin_frame()
-            {
+            let frame = match state.gpu.begin_frame() {
                 wgpu::CurrentSurfaceTexture::Success(texture)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
                 _ => return false,
@@ -126,42 +106,24 @@ pub mod render_ctx {
                 .texture
                 .create_view(&Default::default());
 
-            let width = state
-                .gpu
-                .width();
-            let height = state
-                .gpu
-                .height();
+            let width = state.gpu.width();
+            let height = state.gpu.height();
 
-            state
-                .canvas
-                .begin_frame();
+            state.canvas.begin_frame();
             draw_fn(&state.canvas, width, height);
 
-            let draw_list = state
-                .canvas
-                .draw_list();
-            state
-                .renderer
-                .render(
-                    &state
-                        .gpu
-                        .device,
-                    &state
-                        .gpu
-                        .queue,
-                    &view,
-                    width,
-                    height,
-                    state
-                        .gpu
-                        .is_srgb,
-                    &draw_list,
-                );
+            let draw_list = state.canvas.draw_list();
+            state.renderer.render(
+                &state.gpu.device,
+                &state.gpu.queue,
+                &view,
+                width,
+                height,
+                state.gpu.is_srgb,
+                &draw_list,
+            );
 
-            state
-                .gpu
-                .end_frame(frame);
+            state.gpu.end_frame(frame);
             true
         }
     }

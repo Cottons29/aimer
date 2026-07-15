@@ -45,9 +45,7 @@ impl WindowHandle {
         match self {
             Self::Native(window) => window.inner_size(),
             Self::Headless(state) => winit::dpi::PhysicalSize::new(
-                state
-                    .width
-                    .load(Ordering::Relaxed),
+                state.width.load(Ordering::Relaxed),
                 state
                     .height
                     .load(Ordering::Relaxed),
@@ -176,10 +174,6 @@ impl<'a> BuildContext<'a> {
             .read()
             .unwrap()
             .get(&TypeId::of::<T>())
-            .and_then(|arc| {
-                arc.clone()
-                    .downcast::<T>()
-                    .ok()
-            })
+            .and_then(|arc| arc.clone().downcast::<T>().ok())
     }
 }

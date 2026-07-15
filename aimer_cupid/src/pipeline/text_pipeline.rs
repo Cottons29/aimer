@@ -597,11 +597,7 @@ impl TextPipelineV2 {
                 self.color_atlas
                     .get_or_insert(device, queue, key, width, height, bitmap);
             }
-        } else if self
-            .atlas
-            .get(&key)
-            .is_none()
-        {
+        } else if self.atlas.get(&key).is_none() {
             self.atlas
                 .get_or_insert(device, queue, key, width, height, bitmap);
         }
@@ -611,39 +607,29 @@ impl TextPipelineV2 {
     /// if either atlas texture was reallocated (generation changed). Shared by
     /// the warm-up paths and `preload_text`.
     fn flush_atlas(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.atlas
-            .upload(queue);
-        self.color_atlas
-            .upload(queue);
+        self.atlas.upload(queue);
+        self.color_atlas.upload(queue);
 
-        let atlas_gen = self
-            .atlas
-            .generation();
+        let atlas_gen = self.atlas.generation();
         if atlas_gen != self.atlas_generation {
             self.atlas_generation = atlas_gen;
             self.bind_group = Self::create_bind_group(
                 device,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
-                &self
-                    .atlas
-                    .view,
+                &self.atlas.view,
                 &self.sampler,
             );
         }
 
-        let color_gen = self
-            .color_atlas
-            .generation();
+        let color_gen = self.color_atlas.generation();
         if color_gen != self.color_atlas_generation {
             self.color_atlas_generation = color_gen;
             self.color_bind_group = Self::create_bind_group(
                 device,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
-                &self
-                    .color_atlas
-                    .view,
+                &self.color_atlas.view,
                 &self.sampler,
             );
         }
@@ -761,11 +747,7 @@ impl TextPipelineV2 {
                     self.color_atlas
                         .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
                 }
-            } else if self
-                .atlas
-                .get(&key)
-                .is_none()
-            {
+            } else if self.atlas.get(&key).is_none() {
                 let rg = self
                     .rasterizer
                     .rasterize_key(key, glyph_font_size);
@@ -785,20 +767,15 @@ impl TextPipelineV2 {
         requests: &[TextDrawRequest],
         decorations: &[TextDecorationDraw],
     ) {
-        self.instances
-            .clear();
-        self.color_instances
-            .clear();
-        self.decoration_instances
-            .clear();
-        self.decoration_instances
-            .extend(
-                decorations
-                    .iter()
-                    .map(|d| d.to_instance()),
-            );
-        self.request_ranges
-            .clear();
+        self.instances.clear();
+        self.color_instances.clear();
+        self.decoration_instances.clear();
+        self.decoration_instances.extend(
+            decorations
+                .iter()
+                .map(|d| d.to_instance()),
+        );
+        self.request_ranges.clear();
         self.request_ranges
             .reserve(requests.len());
 
@@ -827,47 +804,27 @@ impl TextPipelineV2 {
         // them by an absolute capacity, evicting wholesale just when the hard cap
         // is exceeded (rare) instead of on every request-count change. This keeps
         // steady-state frames on the ~1 ms full-hit path needed for 120+ fps.
-        if self
-            .layout_cache
-            .len()
-            > Self::LAYOUT_CACHE_CAPACITY
-        {
-            self.layout_cache
-                .clear();
+        if self.layout_cache.len() > Self::LAYOUT_CACHE_CAPACITY {
+            self.layout_cache.clear();
         }
 
-        if self
-            .shaping_cache
-            .len()
-            > Self::SHAPING_CACHE_CAPACITY
-        {
-            self.shaping_cache
-                .clear();
+        if self.shaping_cache.len() > Self::SHAPING_CACHE_CAPACITY {
+            self.shaping_cache.clear();
         }
 
         for req in requests {
             // Record the glyph ranges this request will own. Both instance lists
             // are appended to in request order, so the slice for this request is
             // `[start, len_after)` in each list.
-            let alpha_start = self
-                .instances
-                .len() as u32;
-            let color_start = self
-                .color_instances
-                .len() as u32;
+            let alpha_start = self.instances.len() as u32;
+            let color_start = self.color_instances.len() as u32;
 
             // Avoid cloning the span list on every frame (it ran even on a pure
             // cache hit). Borrow `req.spans` directly when present and only
             // allocate a one-element fallback when the request has no spans.
             let synthesized: [RichTextSpan; 1];
-            let spans: &[RichTextSpan] = if req
-                .spans
-                .is_empty()
-            {
-                synthesized = [RichTextSpan::new(
-                    req.text
-                        .clone(),
-                )];
+            let spans: &[RichTextSpan] = if req.spans.is_empty() {
+                synthesized = [RichTextSpan::new(req.text.clone())];
                 &synthesized
             } else {
                 &req.spans
@@ -881,9 +838,7 @@ impl TextPipelineV2 {
                     let font_size = span
                         .font_size
                         .unwrap_or(req.font_size);
-                    let color = span
-                        .color
-                        .unwrap_or(req.color);
+                    let color = span.color.unwrap_or(req.color);
                     // A weight of 600+ (semi-bold and up) is rendered bold.
                     let is_bold = span
                         .font_weight
@@ -894,14 +849,7 @@ impl TextPipelineV2 {
                     // the glyph shaders (0.25 ≈ 14°). Ceiling: not a real italic
                     // face (no cursive glyph forms, advances unchanged). Upgrade
                     // path: load a real italic/oblique face and key the atlas by it.
-                    let skew = if span
-                        .italic
-                        .unwrap_or(req.italic)
-                    {
-                        0.25
-                    } else {
-                        0.0
-                    };
+                    let skew = if span.italic.unwrap_or(req.italic) { 0.25 } else { 0.0 };
 
                     // Re-use the positioned glyph list from the previous frame when
                     // text content, font size, and wrapping width are all unchanged.
@@ -969,36 +917,28 @@ impl TextPipelineV2 {
                         // size — inserting a glyph here may `grow()` the atlas, which
                         // would invalidate UVs computed for earlier glyphs.
                         let (region, target_color_list) = if is_color {
-                            let region = if let Some(region) = self
-                                .color_atlas
-                                .get(&key)
-                            {
+                            let region = if let Some(region) = self.color_atlas.get(&key) {
                                 region
                             } else {
                                 // Cache hit on the rasterizer side — instant.
                                 let rg = self
                                     .rasterizer
                                     .rasterize_key(key, pg.font_size);
-                                self.color_atlas
-                                    .get_or_insert(
-                                        device, queue, key, rg.width, rg.height, &rg.bitmap,
-                                    )
+                                self.color_atlas.get_or_insert(
+                                    device, queue, key, rg.width, rg.height, &rg.bitmap,
+                                )
                             };
                             (region, true)
                         } else {
-                            let region = if let Some(region) = self
-                                .atlas
-                                .get(&key)
-                            {
+                            let region = if let Some(region) = self.atlas.get(&key) {
                                 region
                             } else {
                                 let rg = self
                                     .rasterizer
                                     .rasterize_key(key, pg.font_size);
-                                self.atlas
-                                    .get_or_insert(
-                                        device, queue, key, rg.width, rg.height, &rg.bitmap,
-                                    )
+                                self.atlas.get_or_insert(
+                                    device, queue, key, rg.width, rg.height, &rg.bitmap,
+                                )
                             };
                             (region, false)
                         };
@@ -1031,12 +971,10 @@ impl TextPipelineV2 {
                         };
 
                         if target_color_list {
-                            self.color_instances
-                                .push(instance);
+                            self.color_instances.push(instance);
                             color_regions.push(region);
                         } else {
-                            self.instances
-                                .push(instance);
+                            self.instances.push(instance);
                             alpha_regions.push(region);
                             if is_bold {
                                 // ponytail: synthetic (faux) bold via double-strike —
@@ -1048,8 +986,7 @@ impl TextPipelineV2 {
                                 // weight.
                                 let mut bold = instance;
                                 bold.position[0] += (pg.font_size * 0.03).max(0.5);
-                                self.instances
-                                    .push(bold);
+                                self.instances.push(bold);
                                 alpha_regions.push(region);
                             }
                         }
@@ -1067,13 +1004,9 @@ impl TextPipelineV2 {
             self.request_ranges
                 .push(TextRequestRange {
                     alpha_start,
-                    alpha_end: self
-                        .instances
-                        .len() as u32,
+                    alpha_end: self.instances.len() as u32,
                     color_start,
-                    color_end: self
-                        .color_instances
-                        .len() as u32,
+                    color_end: self.color_instances.len() as u32,
                 });
         }
 
@@ -1081,12 +1014,7 @@ impl TextPipelineV2 {
         // their final dimensions for this frame. Resolve UVs against those
         // final dimensions so glyphs inserted before a mid-frame `grow()` are
         // not left referencing stale (smaller) atlas sizes.
-        let (aw, ah) = (
-            self.atlas
-                .width,
-            self.atlas
-                .height,
-        );
+        let (aw, ah) = (self.atlas.width, self.atlas.height);
         for (instance, region) in self
             .instances
             .iter_mut()
@@ -1094,12 +1022,7 @@ impl TextPipelineV2 {
         {
             instance.uv_rect = region.uvs(aw, ah);
         }
-        let (cw, ch) = (
-            self.color_atlas
-                .width,
-            self.color_atlas
-                .height,
-        );
+        let (cw, ch) = (self.color_atlas.width, self.color_atlas.height);
         for (instance, region) in self
             .color_instances
             .iter_mut()
@@ -1109,39 +1032,29 @@ impl TextPipelineV2 {
         }
 
         // Upload both atlases if new glyphs were added.
-        self.atlas
-            .upload(queue);
-        self.color_atlas
-            .upload(queue);
+        self.atlas.upload(queue);
+        self.color_atlas.upload(queue);
 
         // Rebuild bind groups only when their atlas texture was recreated (grow).
-        let atlas_gen = self
-            .atlas
-            .generation();
+        let atlas_gen = self.atlas.generation();
         if atlas_gen != self.atlas_generation {
             self.atlas_generation = atlas_gen;
             self.bind_group = Self::create_bind_group(
                 device,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
-                &self
-                    .atlas
-                    .view,
+                &self.atlas.view,
                 &self.sampler,
             );
         }
-        let color_gen = self
-            .color_atlas
-            .generation();
+        let color_gen = self.color_atlas.generation();
         if color_gen != self.color_atlas_generation {
             self.color_atlas_generation = color_gen;
             self.color_bind_group = Self::create_bind_group(
                 device,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
-                &self
-                    .color_atlas
-                    .view,
+                &self.color_atlas.view,
                 &self.sampler,
             );
         }
@@ -1162,11 +1075,7 @@ impl TextPipelineV2 {
         }
 
         // Grow alpha instance buffer if needed.
-        if self
-            .instances
-            .len()
-            > self.instance_capacity
-        {
+        if self.instances.len() > self.instance_capacity {
             self.instance_capacity = self
                 .instances
                 .len()
@@ -1180,11 +1089,7 @@ impl TextPipelineV2 {
         }
 
         // Grow color instance buffer if needed.
-        if self
-            .color_instances
-            .len()
-            > self.color_instance_capacity
-        {
+        if self.color_instances.len() > self.color_instance_capacity {
             self.color_instance_capacity = self
                 .color_instances
                 .len()
@@ -1198,11 +1103,7 @@ impl TextPipelineV2 {
         }
 
         // Grow decoration instance buffer if needed.
-        if self
-            .decoration_instances
-            .len()
-            > self.decoration_instance_capacity
-        {
+        if self.decoration_instances.len() > self.decoration_instance_capacity {
             self.decoration_instance_capacity = self
                 .decoration_instances
                 .len()
@@ -1216,16 +1117,10 @@ impl TextPipelineV2 {
         }
 
         // Upload instance data for all lists.
-        if !self
-            .instances
-            .is_empty()
-        {
+        if !self.instances.is_empty() {
             queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances));
         }
-        if !self
-            .color_instances
-            .is_empty()
-        {
+        if !self.color_instances.is_empty() {
             queue.write_buffer(
                 &self.color_instance_buffer,
                 0,
@@ -1252,21 +1147,14 @@ impl TextPipelineV2 {
     /// belonging to a lower layer). `index` matches the request order passed to
     /// `prepare`.
     pub fn render_request(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
-        let Some(range) = self
-            .request_ranges
-            .get(index)
-        else {
+        let Some(range) = self.request_ranges.get(index) else {
             return;
         };
 
         if range.alpha_end > range.alpha_start {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(
-                0,
-                self.instance_buffer
-                    .slice(..),
-            );
+            pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
             pass.draw(0..6, range.alpha_start..range.alpha_end);
         }
 
@@ -1287,11 +1175,7 @@ impl TextPipelineV2 {
     /// decoration request maps to exactly one instance. Reuses the alpha
     /// `bind_group` (it only needs the viewport uniform).
     pub fn render_decoration(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
-        if index
-            >= self
-                .decoration_instances
-                .len()
-        {
+        if index >= self.decoration_instances.len() {
             return;
         }
         pass.set_pipeline(&self.decoration_pipeline);

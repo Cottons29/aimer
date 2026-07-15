@@ -163,11 +163,7 @@ fn main() -> anyhow::Result<()> {
             commands::completions::execute(*shell, *install)?;
         }
         Some(Commands::Migrate { target }) => {
-            commands::migrate::execute(
-                target
-                    .as_str()
-                    .to_string(),
-            )?;
+            commands::migrate::execute(target.as_str().to_string())?;
         }
         None => {
             Cli::parse_from(["aimer", "--help"]);

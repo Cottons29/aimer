@@ -17,7 +17,7 @@ use crate::img_widget::source::ImageSource;
 /// through [`ImageSource::Asset`]: from the APK on Android, the app bundle on
 /// iOS/macOS, the project directory during desktop development, and via `fetch`
 /// from the site root on web.
-pub struct AssetImage{
+pub struct AssetImage {
     pub key: String,
     pub width: Dimension,
     pub height: Dimension,
@@ -74,10 +74,7 @@ impl AssetImage {
 impl Widget for AssetImage {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawImageWidget {
-            source: ImageSource::Asset(
-                self.key
-                    .clone(),
-            ),
+            source: ImageSource::Asset(self.key.clone()),
             size: Size::new(self.width, self.height),
             fit: self.fit,
             keep_aspect_ratio: self.fit != BoxFit::Fill,

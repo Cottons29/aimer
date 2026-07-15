@@ -35,9 +35,7 @@ console.{namespace}(`{log}`);
 pub fn log(msg: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let label = "INFO "
-            .bold()
-            .bright_cyan();
+        let label = "INFO ".bold().bright_cyan();
         let colored_msg = msg.bright_cyan();
         println!("[{}] {}", label, colored_msg);
     }
@@ -61,9 +59,7 @@ pub fn log(msg: &str) {
 pub fn warn(msg: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let label = "WARN "
-            .bold()
-            .yellow();
+        let label = "WARN ".bold().yellow();
         let colored_msg = msg.yellow();
         println!("[{}] {}", label, colored_msg);
     }
@@ -87,9 +83,7 @@ pub fn warn(msg: &str) {
 pub fn error(msg: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let label = "ERROR"
-            .bold()
-            .red();
+        let label = "ERROR".bold().red();
         let colored_msg = msg.red();
         println!("[{}] {}", label, colored_msg);
     }
@@ -113,9 +107,7 @@ pub fn error(msg: &str) {
 pub fn debug(msg: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let label = "DEBUG"
-            .bold()
-            .green();
+        let label = "DEBUG".bold().green();
         let colored_msg = msg.bright_green();
         println!("[{}] {}", label, colored_msg);
     }

@@ -184,10 +184,7 @@ pub fn validate_project_name(name: &str) -> Result<(), AimerError> {
     let reject =
         |reason: &str| Err(AimerError::InvalidProjectName(name.to_string(), reason.to_string()));
 
-    if name
-        .trim()
-        .is_empty()
-    {
+    if name.trim().is_empty() {
         return reject("name must not be empty");
     }
     if name == "." || name == ".." {
@@ -253,49 +250,19 @@ mod tests {
     #[test]
     fn scaffold_creates_expected_tree() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp
-            .path()
-            .join("myapp");
+        let dir = tmp.path().join("myapp");
 
         scaffold(&dir, "myapp", "0.2.0", "a test app", "tester", "com.example.myapp", &["web"])
             .unwrap();
 
         // Core files and directories are present.
-        assert!(
-            dir.join("src/lib.rs")
-                .exists(),
-            "missing src/lib.rs"
-        );
-        assert!(
-            dir.join("build.rs")
-                .exists(),
-            "missing build.rs"
-        );
-        assert!(
-            dir.join("Cargo.toml")
-                .exists(),
-            "missing Cargo.toml"
-        );
-        assert!(
-            dir.join("aimer.toml")
-                .exists(),
-            "missing aimer.toml"
-        );
-        assert!(
-            dir.join(".gitignore")
-                .exists(),
-            "missing .gitignore"
-        );
-        assert!(
-            dir.join("README.md")
-                .exists(),
-            "missing README.md"
-        );
-        assert!(
-            dir.join("builds/web")
-                .is_dir(),
-            "missing builds/web"
-        );
+        assert!(dir.join("src/lib.rs").exists(), "missing src/lib.rs");
+        assert!(dir.join("build.rs").exists(), "missing build.rs");
+        assert!(dir.join("Cargo.toml").exists(), "missing Cargo.toml");
+        assert!(dir.join("aimer.toml").exists(), "missing aimer.toml");
+        assert!(dir.join(".gitignore").exists(), "missing .gitignore");
+        assert!(dir.join("README.md").exists(), "missing README.md");
+        assert!(dir.join("builds/web").is_dir(), "missing builds/web");
 
         // Generated Cargo.toml parses and carries the right package name.
         assert_eq!(crate::config::parse_cargo_package_name(&dir), Some("myapp".to_string()));
@@ -304,36 +271,11 @@ mod tests {
         let manifest = AimerManifest::load_from(&dir)
             .unwrap()
             .unwrap();
-        assert_eq!(
-            manifest
-                .package
-                .name,
-            "myapp"
-        );
-        assert_eq!(
-            manifest
-                .package
-                .version,
-            "0.2.0"
-        );
-        assert_eq!(
-            manifest
-                .package
-                .description,
-            "a test app"
-        );
-        assert_eq!(
-            manifest
-                .package
-                .author,
-            "tester"
-        );
-        assert_eq!(
-            manifest
-                .package
-                .group,
-            "com.example.myapp"
-        );
+        assert_eq!(manifest.package.name, "myapp");
+        assert_eq!(manifest.package.version, "0.2.0");
+        assert_eq!(manifest.package.description, "a test app");
+        assert_eq!(manifest.package.author, "tester");
+        assert_eq!(manifest.package.group, "com.example.myapp");
     }
 
     #[test]
@@ -341,9 +283,7 @@ mod tests {
         // Mirrors `execute`: a failed scaffold leaves a directory the caller can
         // remove. Here we just verify scaffolding then removing leaves nothing.
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp
-            .path()
-            .join("throwaway");
+        let dir = tmp.path().join("throwaway");
         scaffold(&dir, "throwaway", "0.1.0", "", "", "com.example.throwaway", &[]).unwrap();
         assert!(dir.exists());
         std::fs::remove_dir_all(&dir).unwrap();

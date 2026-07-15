@@ -1,9 +1,87 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::ShaderSource;
 
 use crate::utilities::TextureId;
+
+fn constrained_texture_size(width: u32, height: u32, max_dimension: u32) -> (u32, u32) {
+    if width <= max_dimension && height <= max_dimension {
+        return (width, height);
+    }
+
+    if width >= height {
+        (max_dimension, ((height as u64 * max_dimension as u64) / width as u64).max(1) as u32)
+    } else {
+        (((width as u64 * max_dimension as u64) / height as u64).max(1) as u32, max_dimension)
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn resize_rgba8_nearest(
+    source_width: u32,
+    source_height: u32,
+    data: &[u8],
+    target_width: u32,
+    target_height: u32,
+) -> Vec<u8> {
+    let mut resized = vec![0; target_width as usize * target_height as usize * 4];
+    let source_offsets = (0..target_width as usize)
+        .map(|target_x| target_x * source_width as usize / target_width as usize * 4)
+        .collect::<Vec<_>>();
+    for (target_y, row) in resized
+        .chunks_exact_mut(target_width as usize * 4)
+        .enumerate()
+    {
+        let source_y = target_y * source_height as usize / target_height as usize;
+        let source_row_offset = source_y * source_width as usize * 4;
+        for (pixel, source_x_offset) in row
+            .chunks_exact_mut(4)
+            .zip(&source_offsets)
+        {
+            let source_offset = source_row_offset + source_x_offset;
+            pixel.copy_from_slice(&data[source_offset..source_offset + 4]);
+        }
+    }
+    resized
+}
+
+fn constrain_rgba8<'a>(
+    width: u32,
+    height: u32,
+    data: &'a [u8],
+    max_dimension: u32,
+) -> (u32, u32, Cow<'a, [u8]>) {
+    let expected_len = (width as u64)
+        .checked_mul(height as u64)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .and_then(|bytes| usize::try_from(bytes).ok());
+    if width == 0 || height == 0 || max_dimension == 0 || expected_len != Some(data.len()) {
+        return (1, 1, Cow::Owned(vec![0; 4]));
+    }
+
+    let (target_width, target_height) = constrained_texture_size(width, height, max_dimension);
+    if (target_width, target_height) == (width, height) {
+        return (width, height, Cow::Borrowed(data));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    let resized = resize_rgba8_nearest(width, height, data, target_width, target_height);
+    #[cfg(not(target_arch = "wasm32"))]
+    let resized = {
+        let source = image::RgbaImage::from_raw(width, height, data.to_vec())
+            .expect("validated RGBA image dimensions must match the data length");
+        image::imageops::resize(
+            &source,
+            target_width,
+            target_height,
+            image::imageops::FilterType::Lanczos3,
+        )
+        .into_raw()
+    };
+    (target_width, target_height, Cow::Owned(resized))
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -225,8 +303,7 @@ impl ImagePipeline {
     }
 
     pub fn has_texture(&self, id: TextureId) -> bool {
-        self.textures
-            .contains_key(&id)
+        self.textures.contains_key(&id)
     }
 
     /// Upload RGBA8 image data only if the texture ID does not already exist.
@@ -243,12 +320,17 @@ impl ImagePipeline {
         data: &[u8],
     ) -> bool {
         use std::collections::hash_map::Entry;
-        match self
-            .textures
-            .entry(id)
-        {
+        match self.textures.entry(id) {
             Entry::Occupied(_) => false,
             Entry::Vacant(vacant) => {
+                let (width, height, data) = constrain_rgba8(
+                    width,
+                    height,
+                    data,
+                    device
+                        .limits()
+                        .max_texture_dimension_2d,
+                );
                 // Use create_texture + write_texture instead of create_texture_with_data
                 // so the copy is deferred to the GPU timeline (non-blocking).
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -268,7 +350,7 @@ impl ImagePipeline {
                         origin: wgpu::Origin3d::ZERO,
                         aspect: wgpu::TextureAspect::All,
                     },
-                    data,
+                    data.as_ref(),
                     wgpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(4 * width),
@@ -345,14 +427,18 @@ impl ImagePipeline {
         height: u32,
         data: &[u8],
     ) {
+        let (width, height, data) = constrain_rgba8(
+            width,
+            height,
+            data,
+            device
+                .limits()
+                .max_texture_dimension_2d,
+        );
+
         // In-place update if the texture exists and dimensions match.
-        if let Some(entry) = self
-            .textures
-            .get(&id)
-        {
-            let size = entry
-                .texture
-                .size();
+        if let Some(entry) = self.textures.get(&id) {
+            let size = entry.texture.size();
             if size.width == width && size.height == height {
                 queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
@@ -361,7 +447,7 @@ impl ImagePipeline {
                         origin: wgpu::Origin3d::ZERO,
                         aspect: wgpu::TextureAspect::All,
                     },
-                    data,
+                    data.as_ref(),
                     wgpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(4 * width),
@@ -390,7 +476,7 @@ impl ImagePipeline {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            data,
+            data.as_ref(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * width),
@@ -432,10 +518,7 @@ impl ImagePipeline {
             return;
         }
 
-        let entry = match self
-            .textures
-            .get(&texture_id)
-        {
+        let entry = match self.textures.get(&texture_id) {
             Some(e) => e,
             None => return,
         };
@@ -498,5 +581,45 @@ mod tests {
         };
 
         assert_eq!(instance.alpha, 0.35);
+    }
+
+    #[test]
+    fn texture_size_preserves_aspect_ratio_when_width_exceeds_limit() {
+        assert_eq!(constrained_texture_size(2170, 1085, 2048), (2048, 1024));
+    }
+
+    #[test]
+    fn texture_size_preserves_aspect_ratio_when_height_exceeds_limit() {
+        assert_eq!(constrained_texture_size(1085, 2170, 2048), (1024, 2048));
+    }
+
+    #[test]
+    fn texture_size_keeps_dimensions_within_limit() {
+        assert_eq!(constrained_texture_size(2048, 1024, 2048), (2048, 1024));
+    }
+
+    #[test]
+    fn oversized_rgba8_data_is_resized_to_the_constrained_dimensions() {
+        let data = vec![255; 4 * 10 * 5];
+        let (width, height, resized) = constrain_rgba8(10, 5, &data, 4);
+
+        assert_eq!((width, height), (4, 2));
+        assert_eq!(resized.len(), 4 * 4 * 2);
+    }
+
+    #[test]
+    fn integer_nearest_resize_maps_destination_pixels_to_source_pixels() {
+        let data = vec![1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255];
+
+        assert_eq!(resize_rgba8_nearest(4, 1, &data, 2, 1), vec![1, 0, 0, 255, 3, 0, 0, 255],);
+        assert_eq!(resize_rgba8_nearest(1, 4, &data, 1, 2), vec![1, 0, 0, 255, 3, 0, 0, 255],);
+    }
+
+    #[test]
+    fn malformed_rgba8_data_uses_a_transparent_placeholder() {
+        let (width, height, data) = constrain_rgba8(10, 5, &[255; 4], 4);
+
+        assert_eq!((width, height), (1, 1));
+        assert_eq!(data.as_ref(), &[0; 4]);
     }
 }

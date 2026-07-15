@@ -45,10 +45,7 @@ where
     fn from(ac: AsyncCallback<F>) -> Self {
         let f = std::sync::Mutex::new(Some(ac.0));
         RawInnerCallback::Async(Box::new(move |param| {
-            let f = f
-                .lock()
-                .unwrap()
-                .take();
+            let f = f.lock().unwrap().take();
             if let Some(f) = f {
                 Box::pin(f(param))
             } else {
@@ -81,8 +78,7 @@ thread_local! {
 
 impl<P, R> CallbackInner<P, R> {
     pub fn get(&self) -> *mut Option<RawInnerCallback<P, R>> {
-        self.0
-            .get()
+        self.0.get()
     }
 
     /// Returns `true` if this is the default (empty) sentinel.
@@ -111,10 +107,7 @@ impl<P, R> Default for CallbackInner<P, R> {
 
 impl<P, R> Clone for CallbackInner<P, R> {
     fn clone(&self) -> Self {
-        CallbackInner(
-            self.0
-                .clone(),
-        )
+        CallbackInner(self.0.clone())
     }
 }
 
@@ -133,10 +126,7 @@ where
         let f = std::sync::Mutex::new(Some(ac.0));
         CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(Box::new(
             move |param| {
-                let f = f
-                    .lock()
-                    .unwrap()
-                    .take();
+                let f = f.lock().unwrap().take();
                 if let Some(f) = f {
                     Box::pin(f(param))
                 } else {

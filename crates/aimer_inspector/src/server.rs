@@ -47,17 +47,12 @@ pub mod server {
             self.enabled
                 .store(enabled, Ordering::Relaxed);
             {
-                let mut s = self
-                    .state
-                    .lock()
-                    .unwrap();
+                let mut s = self.state.lock().unwrap();
                 s.enabled = enabled;
             }
             let msg = InspectorMessage::Status { enabled };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
 
@@ -69,17 +64,12 @@ pub mod server {
             self.enabled
                 .store(new_val, Ordering::Relaxed);
             {
-                let mut s = self
-                    .state
-                    .lock()
-                    .unwrap();
+                let mut s = self.state.lock().unwrap();
                 s.enabled = new_val;
             }
             let msg = InspectorMessage::Status { enabled: new_val };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
 
@@ -89,34 +79,24 @@ pub mod server {
                 return;
             }
             {
-                let mut s = self
-                    .state
-                    .lock()
-                    .unwrap();
+                let mut s = self.state.lock().unwrap();
                 s.tree = root.clone();
             }
             let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
 
         /// Broadcast the currently hovered widget ID.
         pub fn broadcast_hovered(&self, id: Option<u64>) {
             {
-                let mut s = self
-                    .state
-                    .lock()
-                    .unwrap();
+                let mut s = self.state.lock().unwrap();
                 s.hovered_widget_id = id;
             }
             let msg = InspectorMessage::Hovered { id };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
     }
@@ -296,9 +276,7 @@ pub mod server {
                 });
                 crate::types::WidgetNode {
                     id,
-                    name: element
-                        .debug_name()
-                        .to_string(),
+                    name: element.debug_name().to_string(),
                     element_type: std::any::type_name_of_val(element)
                         .rsplit("::")
                         .next()
@@ -338,9 +316,7 @@ pub mod server {
             }
             let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
 
@@ -348,9 +324,7 @@ pub mod server {
         pub fn broadcast_hovered(&self, id: Option<u64>) {
             let msg = InspectorMessage::Hovered { id };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
 
@@ -439,11 +413,7 @@ pub mod server {
             inspector_overlay::set_enabled(enabled);
             let msg = InspectorMessage::Status { enabled };
             if let Ok(json) = serde_json::to_string(&msg) {
-                if let Some(ws) = self
-                    .ws
-                    .borrow()
-                    .as_ref()
-                {
+                if let Some(ws) = self.ws.borrow().as_ref() {
                     if ws.ready_state() == 1 {
                         let _ = ws.send_with_str(&json);
                     }
@@ -457,11 +427,7 @@ pub mod server {
             }
             let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
-                if let Some(ws) = self
-                    .ws
-                    .borrow()
-                    .as_ref()
-                {
+                if let Some(ws) = self.ws.borrow().as_ref() {
                     if ws.ready_state() == 1 {
                         // WebSocket::OPEN
                         let _ = ws.send_with_str(&json);
@@ -473,11 +439,7 @@ pub mod server {
         pub fn broadcast_hovered(&self, id: Option<u64>) {
             let msg = InspectorMessage::Hovered { id };
             if let Ok(json) = serde_json::to_string(&msg) {
-                if let Some(ws) = self
-                    .ws
-                    .borrow()
-                    .as_ref()
-                {
+                if let Some(ws) = self.ws.borrow().as_ref() {
                     if ws.ready_state() == 1 {
                         let _ = ws.send_with_str(&json);
                     }
@@ -503,10 +465,7 @@ pub mod server {
         let enabled_msg = enabled.clone();
 
         let onmessage_callback = Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
-            if let Some(txt) = e
-                .data()
-                .as_string()
-            {
+            if let Some(txt) = e.data().as_string() {
                 if let Ok(msg) = serde_json::from_str::<InspectorMessage>(&txt) {
                     match msg {
                         InspectorMessage::Status { enabled } => {
@@ -545,9 +504,7 @@ pub mod server {
             });
             WidgetNode {
                 id,
-                name: element
-                    .debug_name()
-                    .to_string(),
+                name: element.debug_name().to_string(),
                 element_type: std::any::type_name_of_val(element)
                     .rsplit("::")
                     .next()

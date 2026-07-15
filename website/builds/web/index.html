@@ -6,35 +6,15 @@
     <title>Aimer's Website</title>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <link data-trunk rel="copy-dir" href="assets"/>
-    <!-- The wasm is compiled with `+atomics,+bulk-memory` (see .cargo/config.toml)
-         plus rustc's default wasm features (sign-ext, nontrapping-float-to-int, ...),
-         so in `--release` Trunk's bundled wasm-opt aborts validation ("Atomic
-         operations require threads [--enable-threads]", then "all used features
-         should be allowed") unless told those features are on. `--all-features`
-         allows every feature so validation matches whatever rustc emitted;
-         `data-wasm-opt-params` (release-only) forwards it to wasm-opt. -->
-    <link data-trunk rel="rust" href="../../Cargo.toml" data-wasm-opt="z" />
+    <link data-trunk rel="rust" href="../../Cargo.toml" />
 </head>
 <style>
-
-    /* Fill the screen the way normal HTML content does. iOS Safari does NOT
-       paint a full-viewport element that is `position: absolute`/`fixed` and
-       sized in `dvh` behind the address bar / home-indicator strips, which
-       left white bars at the top and bottom. A plain in-flow block on a
-       `height: 100%` chain (html -> body -> canvas) behaves like ordinary page
-       content and reaches edge to edge under `viewport-fit=cover`. */
     html, body {
         width: 100%;
         height: 100%;
         margin: 0;
         padding: 0;
         overflow: hidden;
-        /* The "white bars" at the top/bottom on iPhone Safari were the page's
-           default white background showing through in the safe-area strips
-           (behind the status bar / home indicator) and during the address-bar
-           show/hide transition, wherever the canvas doesn't paint. Painting the
-           page itself the app's dark color removes the white so those strips
-           blend with the app instead of flashing white. */
         background: #000;
     }
 
@@ -43,16 +23,9 @@
     #aimer_app {
         display: block;
         width: 100%;
-        /* `height: 100%` resolves a hair short of the visual viewport on iOS
-           Safari when the toolbar is up, leaving a thin gap above the toolbar
-           where the (now black) page background shows. `100dvh` tracks the live
-           visual viewport and closes that gap; `100%` stays as the fallback for
-           engines without dvh. */
         height: 100%;
         height: 100dvh;
         outline: none;
-        /* Black backdrop for the moment before WebGPU paints the first frame,
-           so the canvas never flashes the default white. */
         background: #000;
     }
 </style>

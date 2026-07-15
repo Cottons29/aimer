@@ -1,5 +1,5 @@
 use std::cell::{Cell, UnsafeCell};
-use std::sync::Arc;
+use std::rc::Rc;
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
@@ -30,7 +30,7 @@ type AnimatedElementBuilder = dyn Fn(f32, &BuildContext) -> Box<dyn Element>;
 /// ```
 pub struct AnimatedBuilder {
     pub controller: AnimationController,
-    builder: Arc<AnimatedElementBuilder>,
+    builder: Rc<AnimatedElementBuilder>,
 }
 
 impl AnimatedBuilder {
@@ -39,8 +39,7 @@ impl AnimatedBuilder {
         F: Fn(f32) -> W + 'static,
         W: Widget,
     {
-        let builder =
-            Arc::new(move |value: f32, ctx: &BuildContext| builder(value).to_element(ctx));
+        let builder = Rc::new(move |value: f32, ctx: &BuildContext| builder(value).to_element(ctx));
         Self { controller, builder }
     }
 }
@@ -50,23 +49,14 @@ impl Widget for AnimatedBuilder {
         let curved_value = self
             .controller
             .curve()
-            .transform(
-                self.controller
-                    .value(),
-            );
+            .transform(self.controller.value());
         let child = (self.builder)(curved_value, ctx);
-        let window = ctx
-            .window
-            .clone();
+        let window = ctx.window.clone();
 
         Box::new(AnimatedBuilderElement {
             child: UnsafeCell::new(child),
-            controller: self
-                .controller
-                .clone(),
-            builder: self
-                .builder
-                .clone(),
+            controller: self.controller.clone(),
+            builder: self.builder.clone(),
             last_value: Cell::new(curved_value),
             window,
         })
@@ -82,7 +72,7 @@ impl Widget for AnimatedBuilder {
 struct AnimatedBuilderElement {
     child: UnsafeCell<Box<dyn Element>>,
     controller: AnimationController,
-    builder: Arc<AnimatedElementBuilder>,
+    builder: Rc<AnimatedElementBuilder>,
     last_value: Cell<f32>,
     window: WindowHandle,
 }
@@ -96,48 +86,23 @@ impl Drawable for AnimatedBuilderElement {
         let curved_value = self
             .controller
             .tick(AnimInstant::now());
-        if curved_value
-            != self
-                .last_value
-                .get()
-        {
+        if curved_value != self.last_value.get() {
             let child = (self.builder)(curved_value, ctx);
-            unsafe {
-                *self
-                    .child
-                    .get() = child
-            };
-            self.last_value
-                .set(curved_value);
+            unsafe { *self.child.get() = child };
+            self.last_value.set(curved_value);
         }
 
-        unsafe {
-            &*self
-                .child
-                .get()
-        }
-        .draw(ctx);
+        unsafe { &*self.child.get() }.draw(ctx);
 
-        if self
-            .controller
-            .is_animating()
-        {
-            self.window
-                .request_redraw();
+        if self.controller.is_animating() {
+            self.window.request_redraw();
         }
     }
 }
 
 impl VisitorElement for AnimatedBuilderElement {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            unsafe {
-                &*self
-                    .child
-                    .get()
-            }
-            .as_ref(),
-        );
+        visitor(unsafe { &*self.child.get() }.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {
@@ -147,89 +112,42 @@ impl VisitorElement for AnimatedBuilderElement {
 
 impl EventElement for AnimatedBuilderElement {
     fn on_event(&self, event: &ElementEvent) -> bool {
-        unsafe {
-            &*self
-                .child
-                .get()
-        }
-        .on_event(event)
+        unsafe { &*self.child.get() }.on_event(event)
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            unsafe {
-                &*self
-                    .child
-                    .get()
-            }
-            .as_ref(),
-        );
+        visitor(unsafe { &*self.child.get() }.as_ref());
     }
 }
 
 impl Rebuildable for AnimatedBuilderElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        unsafe {
-            &*self
-                .child
-                .get()
-        }
-        .rebuild_if_dirty(ctx);
+        unsafe { &*self.child.get() }.rebuild_if_dirty(ctx);
     }
 }
 
 impl LayoutElement for AnimatedBuilderElement {
     fn pos(&self) -> Option<Vec2d> {
-        unsafe {
-            &*self
-                .child
-                .get()
-        }
-        .pos()
+        unsafe { &*self.child.get() }.pos()
     }
 
     fn size(&self) -> Option<Size> {
-        unsafe {
-            &*self
-                .child
-                .get()
-        }
-        .size()
+        unsafe { &*self.child.get() }.size()
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        unsafe {
-            &*self
-                .child
-                .get()
-        }
-        .computed_size(ctx)
+        unsafe { &*self.child.get() }.computed_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        unsafe {
-            &*self
-                .child
-                .get()
-        }
-        .content_size(ctx)
+        unsafe { &*self.child.get() }.content_size(ctx)
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        unsafe {
-            &*self
-                .child
-                .get()
-        }
-        .get_size_from_child()
+        unsafe { &*self.child.get() }.get_size_from_child()
     }
 
     fn invalidate_layout(&self) {
-        unsafe {
-            &*self
-                .child
-                .get()
-        }
-        .invalidate_layout();
+        unsafe { &*self.child.get() }.invalidate_layout();
     }
 }

@@ -168,13 +168,11 @@ impl RectPipeline {
     }
 
     pub fn push(&mut self, instance: RectInstance) {
-        self.instances
-            .push(instance);
+        self.instances.push(instance);
     }
 
     pub fn clear(&mut self) {
-        self.instances
-            .clear();
+        self.instances.clear();
         // A fresh frame starts writing at the beginning of the instance buffer.
         self.frame_instance_offset = 0;
     }
@@ -188,10 +186,7 @@ impl RectPipeline {
         height: u32,
         is_srgb: bool,
     ) {
-        if self
-            .instances
-            .is_empty()
-        {
+        if self.instances.is_empty() {
             return;
         }
 
@@ -207,9 +202,7 @@ impl RectPipeline {
             bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
         );
 
-        let instance_count = self
-            .instances
-            .len();
+        let instance_count = self.instances.len();
         let stride = std::mem::size_of::<RectInstance>();
         // Write this batch *after* any batches already flushed this frame so that
         // earlier draw calls keep reading their own data. Reusing offset 0 for
@@ -249,7 +242,6 @@ impl RectPipeline {
         pass.draw(0..6, 0..instance_count as u32);
 
         self.frame_instance_offset += instance_count;
-        self.instances
-            .clear();
+        self.instances.clear();
     }
 }

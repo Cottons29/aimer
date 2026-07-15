@@ -68,15 +68,15 @@ impl State<SameLookingSection> for SameLookingSectionState {
         let is_clicked = TEST_CLICKED.load(Ordering::Relaxed);
         // eprintln!("is clicked: {}", is_clicked);
 
-        if !is_clicked {
-            spawn(move || {
-                sleep(Duration::from_millis(150));
-                TEST_CLICKED.store(true, Ordering::Relaxed);
-                updater_2.set_state(|s| s.current_index = 1);
-
-                eprintln!("Clicked selected index to 2");
-            });
-        }
+        // if !is_clicked {
+        //     spawn(move || {
+        //         sleep(Duration::from_millis(150));
+        //         TEST_CLICKED.store(true, Ordering::Relaxed);
+        //         updater_2.set_state(|s| s.current_index = 1);
+        //
+        //         eprintln!("Clicked selected index to 2");
+        //     });
+        // }
 
         self.state = updater;
     }
@@ -109,25 +109,19 @@ impl State<SameLookingSection> for SameLookingSectionState {
                                 ),
                             )
                             .boxed(),
-                        SizedBox::new()
-                            .height(24)
-                            .boxed(),
+                        SizedBox::new().height(24).boxed(),
                         Container::new()
                             .height(if is_mobile(ctx) { 250 } else { 450 })
                             .child(platform_image_switcher(self.current_index))
                             .boxed(),
-                        SizedBox::new()
-                            .height(40)
-                            .boxed(),
+                        SizedBox::new().height(40).boxed(),
                         Row::new()
                             .horizontal_alignment(BoxAlignment::Center)
                             .vertical_alignment(BoxAlignment::Center)
                             .gaps(LayoutSpacing::horizontal(Spacing::Px(8)))
                             .children(self.build_platform_button_list(ctx))
                             .boxed(),
-                        SizedBox::new()
-                            .height(40)
-                            .boxed(),
+                        SizedBox::new().height(40).boxed(),
                     ]),
             )
     }
@@ -140,9 +134,7 @@ impl SameLookingSectionState {
             .iter()
             .enumerate()
             .map({
-                let updater = self
-                    .state
-                    .clone();
+                let updater = self.state.clone();
                 move |(i, l)| {
                     let index = i;
                     let is_selected = index == selected;
@@ -176,11 +168,7 @@ impl SameLookingSectionState {
                             let updater = updater.clone();
                             move || {
                                 // println!("Tab {} pressed", index);
-                                if updater
-                                    .read_state()
-                                    .current_index
-                                    != index
-                                {
+                                if updater.read_state().current_index != index {
                                     updater.set_state(move |s| s.current_index = index);
                                 }
                             }

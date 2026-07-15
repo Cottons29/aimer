@@ -171,9 +171,7 @@ impl GlyphAtlas {
 
     /// Look up a cached glyph region without inserting.
     pub fn get(&self, key: &GlyphKey) -> Option<AtlasRegion> {
-        self.cache
-            .get(key)
-            .copied()
+        self.cache.get(key).copied()
     }
 
     /// Returns the current atlas generation (incremented on texture recreate).
@@ -192,10 +190,7 @@ impl GlyphAtlas {
         glyph_h: u32,
         bitmap: &[u8],
     ) -> AtlasRegion {
-        if let Some(region) = self
-            .cache
-            .get(&key)
-        {
+        if let Some(region) = self.cache.get(&key) {
             return *region;
         }
 
@@ -216,12 +211,16 @@ impl GlyphAtlas {
 
         // Stage the glyph bitmap for the next `upload`. We keep only this glyph's
         // bytes (dropped after upload) rather than a full-size CPU mirror.
-        self.pending
-            .push(PendingGlyph { x, y, width: glyph_w, height: glyph_h, data: bitmap.to_vec() });
+        self.pending.push(PendingGlyph {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+            data: bitmap.to_vec(),
+        });
 
         let region = AtlasRegion { x, y, width: glyph_w, height: glyph_h };
-        self.cache
-            .insert(key, region);
+        self.cache.insert(key, region);
         region
     }
 
@@ -229,16 +228,10 @@ impl GlyphAtlas {
     /// drop the staged bytes. Each glyph is written directly at its packed
     /// position, so no full-size CPU buffer is materialized.
     pub fn upload(&mut self, queue: &wgpu::Queue) {
-        if self
-            .pending
-            .is_empty()
-        {
+        if self.pending.is_empty() {
             return;
         }
-        for glyph in self
-            .pending
-            .drain(..)
-        {
+        for glyph in self.pending.drain(..) {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
@@ -272,8 +265,7 @@ impl GlyphAtlas {
         // texture are simply never referenced again (the cache is cleared, so
         // every glyph is re-inserted and re-uploaded on demand).
         if self.width >= Self::MAX_SIZE {
-            self.cache
-                .clear();
+            self.cache.clear();
             self.packer = ShelfPacker::new(self.width, self.height);
             return;
         }
@@ -402,9 +394,7 @@ impl ColorGlyphAtlas {
     }
 
     pub fn get(&self, key: &GlyphKey) -> Option<AtlasRegion> {
-        self.cache
-            .get(key)
-            .copied()
+        self.cache.get(key).copied()
     }
 
     pub fn generation(&self) -> u64 {
@@ -421,10 +411,7 @@ impl ColorGlyphAtlas {
         glyph_h: u32,
         bitmap: &[u8],
     ) -> AtlasRegion {
-        if let Some(region) = self
-            .cache
-            .get(&key)
-        {
+        if let Some(region) = self.cache.get(&key) {
             return *region;
         }
 
@@ -442,26 +429,24 @@ impl ColorGlyphAtlas {
         };
 
         // Stage this glyph's RGBA8 bytes for the next `upload`; no full-size mirror.
-        self.pending
-            .push(PendingGlyph { x, y, width: glyph_w, height: glyph_h, data: bitmap.to_vec() });
+        self.pending.push(PendingGlyph {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+            data: bitmap.to_vec(),
+        });
 
         let region = AtlasRegion { x, y, width: glyph_w, height: glyph_h };
-        self.cache
-            .insert(key, region);
+        self.cache.insert(key, region);
         region
     }
 
     pub fn upload(&mut self, queue: &wgpu::Queue) {
-        if self
-            .pending
-            .is_empty()
-        {
+        if self.pending.is_empty() {
             return;
         }
-        for glyph in self
-            .pending
-            .drain(..)
-        {
+        for glyph in self.pending.drain(..) {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
@@ -488,8 +473,7 @@ impl ColorGlyphAtlas {
         // At the size cap: evict and repack into the existing texture rather than
         // allocating a larger one (see `GlyphAtlas::grow`).
         if self.width >= Self::MAX_SIZE {
-            self.cache
-                .clear();
+            self.cache.clear();
             self.packer = ShelfPacker::new(self.width, self.height);
             return;
         }

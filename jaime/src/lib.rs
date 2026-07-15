@@ -26,7 +26,8 @@ pub fn my_app() {
     //     Expanded::new().child(TestFadingAnimation),
     //     Expanded::new().child(TestFadingAnimation),
     // ])))
-    test_positioned()
+    // test_positioned()
+    test_image()
 }
 #[allow(unused)]
 fn test_text() {

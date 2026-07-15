@@ -1,5 +1,5 @@
 use std::cell::UnsafeCell;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::time::Duration;
 
 use aimer_attribute::position::Vec2d;
@@ -37,7 +37,7 @@ fn request_next_frame() {
 /// )
 /// ```
 pub struct AnimatedSwitcher<T: Widget + 'static> {
-    pub child: Arc<T>,
+    pub child: Rc<T>,
     pub duration: Duration,
     pub curve: Curve,
     /// Optional separate curve for the outgoing child. Defaults to `curve`.
@@ -49,7 +49,7 @@ pub struct AnimatedSwitcher<T: Widget + 'static> {
 impl<T: Widget> AnimatedSwitcher<T> {
     pub fn new(duration: Duration, curve: Curve, child: T) -> Self {
         Self {
-            child: Arc::new(child),
+            child: Rc::new(child),
             duration,
             curve,
             switch_out_curve: None,
@@ -83,17 +83,12 @@ impl<T: Widget + 'static> StatefulWidget for AnimatedSwitcher<T> {
         let in_controller = AnimationController::new(self.duration, self.curve);
         in_controller.set_value(1.0);
         AnimatedSwitcherState {
-            current_child: self
-                .child
-                .clone(),
+            current_child: self.child.clone(),
             old_child: None,
             child_key: self
                 .transition_key
                 .clone()
-                .or_else(|| {
-                    self.child
-                        .key()
-                }),
+                .or_else(|| self.child.key()),
             duration: self.duration,
             curve: self.curve,
             switch_out_curve: self
@@ -112,8 +107,7 @@ impl<T: Widget + 'static> StatefulWidget for AnimatedSwitcher<T> {
 
 impl<T: Widget + 'static> Widget for AnimatedSwitcher<T> {
     fn key(&self) -> Option<Key> {
-        self.widget_key
-            .clone()
+        self.widget_key.clone()
     }
 
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
@@ -125,8 +119,8 @@ impl<T: Widget + 'static> Widget for AnimatedSwitcher<T> {
 
 #[doc(hidden)]
 pub struct AnimatedSwitcherState<T: Widget + 'static> {
-    current_child: Arc<T>,
-    old_child: Option<Arc<T>>,
+    current_child: Rc<T>,
+    old_child: Option<Rc<T>>,
     child_key: Option<Key>,
     duration: Duration,
     curve: Curve,
@@ -155,59 +149,38 @@ impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T
             .set_curve(new.switch_out_curve);
 
         if self.child_key != new.child_key {
-            self.old_child = Some(
-                self.current_child
-                    .clone(),
-            );
-            self.current_child = new
-                .current_child
-                .clone();
-            self.child_key = new
-                .child_key
-                .clone();
-            self.in_controller
-                .reset();
-            self.out_controller
-                .reset();
+            self.old_child = Some(self.current_child.clone());
+            self.current_child = new.current_child.clone();
+            self.child_key = new.child_key.clone();
+            self.in_controller.reset();
+            self.out_controller.reset();
             self.in_controller
                 .forward_from_first_tick();
             self.out_controller
                 .forward_from_first_tick();
             request_next_frame();
         } else {
-            self.current_child = new
-                .current_child
-                .clone();
+            self.current_child = new.current_child.clone();
         }
     }
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         AnimatedSwitcherFrame {
-            current_child: self
-                .current_child
-                .clone(),
-            old_child: if self
-                .out_controller
-                .is_animating()
-            {
-                self.old_child
-                    .clone()
+            current_child: self.current_child.clone(),
+            old_child: if self.out_controller.is_animating() {
+                self.old_child.clone()
             } else {
                 None
             },
-            in_controller: self
-                .in_controller
-                .clone(),
-            out_controller: self
-                .out_controller
-                .clone(),
+            in_controller: self.in_controller.clone(),
+            out_controller: self.out_controller.clone(),
         }
     }
 }
 
 struct AnimatedSwitcherFrame<T: Widget + 'static> {
-    current_child: Arc<T>,
-    old_child: Option<Arc<T>>,
+    current_child: Rc<T>,
+    old_child: Option<Rc<T>>,
     in_controller: AnimationController,
     out_controller: AnimationController,
 }
@@ -215,20 +188,14 @@ struct AnimatedSwitcherFrame<T: Widget + 'static> {
 impl<T: Widget + 'static> Widget for AnimatedSwitcherFrame<T> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(AnimatedSwitcherElement {
-            current_child: self
-                .current_child
-                .to_element(ctx),
+            current_child: self.current_child.to_element(ctx),
             old_child: UnsafeCell::new(
                 self.old_child
                     .as_ref()
                     .map(|child| child.to_element(ctx)),
             ),
-            in_controller: self
-                .in_controller
-                .clone(),
-            out_controller: self
-                .out_controller
-                .clone(),
+            in_controller: self.in_controller.clone(),
+            out_controller: self.out_controller.clone(),
         })
     }
 }
@@ -248,53 +215,30 @@ impl Drawable for AnimatedSwitcherElement {
         let now = AnimInstant::now();
 
         // Tick both controllers
-        let in_value = self
-            .in_controller
-            .tick(now);
-        let out_value = self
-            .out_controller
-            .tick(now);
+        let in_value = self.in_controller.tick(now);
+        let out_value = self.out_controller.tick(now);
 
         // Draw old child (fading out)
-        if let Some(old) = unsafe {
-            &*self
-                .old_child
-                .get()
-        } && out_value < 1.0
+        if let Some(old) = unsafe { &*self.old_child.get() }
+            && out_value < 1.0
         {
-            ctx.canvas
-                .save();
+            ctx.canvas.save();
             ctx.canvas
                 .set_alpha(1.0 - out_value);
             old.draw(ctx);
-            ctx.canvas
-                .restore();
+            ctx.canvas.restore();
         }
 
         // Draw new child (fading in)
-        ctx.canvas
-            .save();
-        ctx.canvas
-            .set_alpha(in_value);
-        self.current_child
-            .draw(ctx);
-        ctx.canvas
-            .restore();
+        ctx.canvas.save();
+        ctx.canvas.set_alpha(in_value);
+        self.current_child.draw(ctx);
+        ctx.canvas.restore();
 
-        if self
-            .in_controller
-            .is_animating()
-            || self
-                .out_controller
-                .is_animating()
-        {
+        if self.in_controller.is_animating() || self.out_controller.is_animating() {
             request_next_frame();
         } else if out_value >= 1.0 {
-            unsafe {
-                *self
-                    .old_child
-                    .get() = None
-            };
+            unsafe { *self.old_child.get() = None };
         }
     }
 }
@@ -305,15 +249,8 @@ impl VisitorElement for AnimatedSwitcherElement {
     }
 
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.current_child
-                .as_ref(),
-        );
-        if let Some(old) = unsafe {
-            &*self
-                .old_child
-                .get()
-        } {
+        visitor(self.current_child.as_ref());
+        if let Some(old) = unsafe { &*self.old_child.get() } {
             visitor(old.as_ref());
         }
     }
@@ -321,15 +258,11 @@ impl VisitorElement for AnimatedSwitcherElement {
 
 impl EventElement for AnimatedSwitcherElement {
     fn on_event(&self, event: &ElementEvent) -> bool {
-        self.current_child
-            .on_event(event)
+        self.current_child.on_event(event)
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.current_child
-                .as_ref(),
-        );
+        visitor(self.current_child.as_ref());
     }
 }
 
@@ -337,11 +270,7 @@ impl Rebuildable for AnimatedSwitcherElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         self.current_child
             .rebuild_if_dirty(ctx);
-        if let Some(old) = unsafe {
-            &*self
-                .old_child
-                .get()
-        } {
+        if let Some(old) = unsafe { &*self.old_child.get() } {
             old.rebuild_if_dirty(ctx);
         }
     }
@@ -349,13 +278,11 @@ impl Rebuildable for AnimatedSwitcherElement {
 
 impl LayoutElement for AnimatedSwitcherElement {
     fn pos(&self) -> Option<Vec2d> {
-        self.current_child
-            .pos()
+        self.current_child.pos()
     }
 
     fn size(&self) -> Option<Size> {
-        self.current_child
-            .size()
+        self.current_child.size()
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -381,6 +308,7 @@ impl LayoutElement for AnimatedSwitcherElement {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -389,10 +317,7 @@ mod tests {
 
     impl Widget for TestWidget {
         fn key(&self) -> Option<Key> {
-            Some(Key::Value(
-                self.0
-                    .to_owned(),
-            ))
+            Some(Key::Value(self.0.to_owned()))
         }
 
         fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
@@ -409,22 +334,13 @@ mod tests {
     fn initial_child_is_shown_without_starting_a_transition() {
         let current = state("initial");
 
-        assert_eq!(
-            current
-                .in_controller
-                .value(),
-            1.0
-        );
+        assert_eq!(current.in_controller.value(), 1.0);
         assert!(
             !current
                 .in_controller
                 .is_animating()
         );
-        assert!(
-            current
-                .old_child
-                .is_none()
-        );
+        assert!(current.old_child.is_none());
     }
 
     #[test]
@@ -438,11 +354,7 @@ mod tests {
 
         current.adopt_config_from(&state("second"));
 
-        assert!(
-            current
-                .old_child
-                .is_some()
-        );
+        assert!(current.old_child.is_some());
         assert_eq!(current.child_key, Some(Key::Value("second".to_owned())));
         assert!(
             current
@@ -491,11 +403,7 @@ mod tests {
 
         current.adopt_config_from(&state("same"));
 
-        assert!(
-            current
-                .old_child
-                .is_none()
-        );
+        assert!(current.old_child.is_none());
         assert!(
             !current
                 .out_controller
@@ -553,12 +461,7 @@ mod tests {
         }
         impl Widget for RecordingPage {
             fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-                Box::new(RecordingLeaf {
-                    label: self.label,
-                    drawn: self
-                        .drawn
-                        .clone(),
-                })
+                Box::new(RecordingLeaf { label: self.label, drawn: self.drawn.clone() })
             }
             fn debug_name(&self) -> &'static str {
                 "RecordingPage"
@@ -584,9 +487,7 @@ mod tests {
             fn create_state(&self) -> Self::State {
                 RouterMockState {
                     route: 0,
-                    drawn: self
-                        .drawn
-                        .clone(),
+                    drawn: self.drawn.clone(),
                     updater: StateUpdater::new(),
                 }
             }
@@ -600,13 +501,7 @@ mod tests {
                 AnimatedSwitcher::new(
                     Duration::from_millis(50),
                     Curve::Linear,
-                    RecordingPage {
-                        label,
-                        drawn: self
-                            .drawn
-                            .clone(),
-                    }
-                    .boxed(),
+                    RecordingPage { label, drawn: self.drawn.clone() }.boxed(),
                 )
                 .child_key(label)
                 .key("route-switcher")
@@ -661,23 +556,17 @@ mod tests {
             );
 
             // Initial frame: only the "home" page is painted.
-            drawn
-                .borrow_mut()
-                .clear();
+            drawn.borrow_mut().clear();
             router.draw(&ctx);
             assert_eq!(*drawn.borrow(), ["home"], "initial frame should paint only the home page");
 
             // Navigate home -> docs, then draw the very next frame.
             updater.set_state(|s| s.route = 1);
             router.rebuild_if_dirty(&ctx);
-            drawn
-                .borrow_mut()
-                .clear();
+            drawn.borrow_mut().clear();
             router.draw(&ctx);
 
-            let painted = drawn
-                .borrow()
-                .clone();
+            let painted = drawn.borrow().clone();
             assert!(
                 painted.contains(&"home") && painted.contains(&"docs"),
                 "a cross-fade must paint BOTH the outgoing (home) and incoming (docs) pages on the \

@@ -59,12 +59,8 @@ impl Expanded {
 impl<W: Widget + 'static> Widget for Expanded<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawExpanded {
-            child: self
-                .child
-                .to_element(ctx),
-            flex: self
-                .flex
-                .max(0.0),
+            child: self.child.to_element(ctx),
+            flex: self.flex.max(0.0),
             debug_name: "Expanded",
         })
     }
@@ -96,8 +92,7 @@ impl<E: Element> RawExpanded<E> {
 
 impl<E: Element> Drawable for RawExpanded<E> {
     fn draw(&self, ctx: &BuildContext) {
-        self.child
-            .draw(ctx);
+        self.child.draw(ctx);
     }
 }
 
@@ -113,15 +108,9 @@ impl<E: Element> VisitorElement for RawExpanded<E> {
 
 impl<E: Element> LayoutElement for RawExpanded<E> {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let child = self
-            .child
-            .computed_size(ctx);
-        let max_w = ctx
-            .box_constraint
-            .max_width;
-        let max_h = ctx
-            .box_constraint
-            .max_height;
+        let child = self.child.computed_size(ctx);
+        let max_w = ctx.box_constraint.max_width;
+        let max_h = ctx.box_constraint.max_height;
 
         // Fill every bounded axis; fall back to the child on unbounded axes
         // (e.g. inside a `Scrollable`) where there is no space to expand into.
@@ -143,8 +132,7 @@ impl<E: Element> LayoutElement for RawExpanded<E> {
     }
 
     fn invalidate_layout(&self) {
-        self.child
-            .invalidate_layout();
+        self.child.invalidate_layout();
     }
 }
 /// Distribute `remaining` main-axis space across children according to their

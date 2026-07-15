@@ -29,17 +29,11 @@ fn resolve_compatible_java_home() -> Option<String> {
             else {
                 continue;
             };
-            if !output
-                .status
-                .success()
-            {
+            if !output.status.success() {
                 continue;
             }
             if let Ok(path) = String::from_utf8(output.stdout) {
-                return Some(
-                    path.trim()
-                        .to_string(),
-                );
+                return Some(path.trim().to_string());
             }
         }
     }
@@ -51,9 +45,7 @@ fn parse_logcat_line(l: String) -> String {
     if l.contains("I/RustStdoutStderr")
         && let Some(item) = l.split_once("): ")
     {
-        return item
-            .1
-            .replace("       ", " ");
+        return item.1.replace("       ", " ");
     }
 
     match l.split_once("]") {
@@ -190,10 +182,7 @@ pub fn spawn_android_runner(
             if !line.contains("applicationId") {
                 continue;
             }
-            if let Some(id) = line
-                .split('"')
-                .nth(1)
-            {
+            if let Some(id) = line.split('"').nth(1) {
                 app_id = id.to_string();
                 break;
             }
