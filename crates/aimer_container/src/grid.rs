@@ -1,7 +1,5 @@
 mod grid;
-pub mod raw_grid;
+pub(crate) mod raw_grid;
 
-pub struct GridTemplate {
-    pub row: u32,
-    pub column: u32,
-}
+pub use grid::{Grid, GridAlignment, GridItem, GridOverflow};
+pub use raw_grid::{GridError, GridPlacement, GridTrack};
