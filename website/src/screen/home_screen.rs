@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use aimer::style::{
-    BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextDecoration, TextDecorationLine,
-    TextDecorationStyle, TextOverflow, TextStyle,
+    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing, Spacing,
+    TextDecoration, TextDecorationLine, TextDecorationStyle, TextOverflow, TextStyle,
 };
 use aimer::{
     BuildContext, Container, Dimension, Positioned, ScrollController, State, StateUpdater,
@@ -306,10 +306,66 @@ fn why_aimer_section(ctx: &BuildContext) -> AnyWidget {
         .boxed()
 }
 
-/// The `Polished Tooling` section: a dark-slate background with a yellow
-/// underlined heading, the TUI screenshot on the left and a description with
-/// bold inline words on the right.
+fn tooling_grid_tracks(mobile: bool) -> (Vec<GridTrack>, Vec<GridTrack>) {
+    if mobile {
+        (vec![GridTrack::Fr(1.0)], vec![GridTrack::Auto; 6])
+    } else {
+        (vec![GridTrack::Fr(1.0); 3], vec![GridTrack::Auto; 2])
+    }
+}
+
+const TOOLING_FEATURES: [(&str, &str); 6] = [
+    ("create", "Scaffold a new Aimer app with its workspace, assets, and platform files ready."),
+    ("run", "Launch on desktop, web, or a connected device from one consistent command."),
+    ("build", "Compile optimized artifacts for the platform and profile you choose."),
+    ("doctor", "Check toolchains, platform dependencies, and devices with actionable diagnostics.",),
+    ("assemble", "Package release-ready bundles from your compiled Aimer application."),
+    ("migrate", "Keep existing projects aligned as Aimer templates and APIs evolve."),
+];
+
+fn tooling_card(title: &str, description: &str, mobile: bool) -> AnyWidget {
+    let border = BorderSlice::new()
+        .stroke(Dimension::Px(1.0))
+        .color(Color::WHITE.with_opacity(72))
+        .style(BorderStyle::Solid);
+
+    Container::new()
+        .height(Dimension::Px(if mobile { 160.0 } else { 200.0 }))
+        .padding(LayoutSpacing::all(Spacing::Px(if mobile { 20 } else { 28 })))
+        .box_decoration(BoxDecoration::new().border(BoxBorder::all(border)))
+        .child(
+            Column::new()
+                .horizontal_alignment(BoxAlignment::Start)
+                .children([
+                    Text::new(title.to_string())
+                        .text_style(
+                            TextStyle::new()
+                                .font_size(if mobile { 21 } else { 24 })
+                                .color(Color::YELLOW)
+                                .font_weight(FontWeight::Bolder)
+                                .text_decoration(TextDecoration::Underline),
+                        )
+                        .boxed(),
+                    SizedBox::new().height(14).boxed(),
+                    Text::new(description.to_string())
+                        .text_style(
+                            TextStyle::new()
+                                .font_size(if mobile { 15 } else { 17 })
+                                .color(Color::WHITE.with_opacity(210))
+                                .text_overflow(TextOverflow::Wrap),
+                        )
+                        .boxed(),
+                ]),
+        )
+        .boxed()
+}
+
+/// The `Polished Tooling` section: six `aimer_cli` capabilities in a
+/// responsive three-by-two grid that becomes a single column on mobile.
 fn polished_tooling_section(ctx: &BuildContext) -> AnyWidget {
+    let mobile = is_mobile(ctx);
+    let (columns, rows) = tooling_grid_tracks(mobile);
+
     Container::new()
         .padding(app_padding(ctx))
         .box_decoration(BoxDecoration::new().background_color(Color::Rgb(40, 44, 52)))
@@ -331,12 +387,37 @@ fn polished_tooling_section(ctx: &BuildContext) -> AnyWidget {
                             ),
                         )
                         .boxed(),
-                    Container::new()
-                        .height(if is_mobile(ctx) { 250 } else { 450 })
-                        .child(AssetImage::new("assets/polished_tooling.png"))
+                    Grid::new()
+                        .columns(columns)
+                        .rows(rows)
+                        .children(
+                            TOOLING_FEATURES
+                                .into_iter()
+                                .map(|(title, description)| {
+                                    GridItem::new(tooling_card(title, description, mobile))
+                                })
+                                .collect::<Vec<_>>(),
+                        )
                         .boxed(),
                     SizedBox::new().height(48).boxed(),
                 ]),
         )
         .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TOOLING_FEATURES, tooling_grid_tracks};
+
+    #[test]
+    fn tooling_grid_uses_three_columns_on_desktop_and_one_on_mobile() {
+        let (desktop_columns, desktop_rows) = tooling_grid_tracks(false);
+        let (mobile_columns, mobile_rows) = tooling_grid_tracks(true);
+
+        assert_eq!(desktop_columns.len(), 3);
+        assert_eq!(desktop_rows.len(), 2);
+        assert_eq!(mobile_columns.len(), 1);
+        assert_eq!(mobile_rows.len(), 6);
+        assert_eq!(TOOLING_FEATURES.len(), 6);
+    }
 }
