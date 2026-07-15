@@ -1,0 +1,106 @@
+use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_macro::{EventElement, Rebuildable};
+use aimer_widget::base::BuildContext;
+use aimer_widget::{Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget};
+
+pub struct Opacity<W = RequiredChild> {
+    child: W,
+    opacity: f32,
+}
+
+impl Opacity {
+    pub fn new() -> Self {
+        Self { child: RequiredChild, opacity: 1.0 }
+    }
+
+    pub fn opacity(mut self, opacity: f32) -> Self {
+        self.opacity = normalized_opacity(opacity);
+        self
+    }
+
+    pub fn child<W: Widget>(self, child: W) -> Opacity<W> {
+        Opacity { child, opacity: self.opacity }
+    }
+}
+
+impl Default for Opacity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<W: Widget + 'static> Widget for Opacity<W> {
+    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+        Box::new(RawOpacity {
+            child: self.child.to_element(ctx),
+            opacity: normalized_opacity(self.opacity),
+        })
+    }
+}
+
+fn normalized_opacity(opacity: f32) -> f32 {
+    if opacity.is_nan() { 1.0 } else { opacity.clamp(0.0, 1.0) }
+}
+
+#[derive(EventElement, Rebuildable)]
+struct RawOpacity {
+    child: Box<dyn Element>,
+    opacity: f32,
+}
+
+impl Drawable for RawOpacity {
+    fn draw(&self, ctx: &BuildContext) {
+        ctx.canvas.set_alpha(self.opacity);
+        self.child.draw(ctx);
+        ctx.canvas.restore_alpha();
+    }
+}
+
+impl LayoutElement for RawOpacity {
+    fn size(&self) -> Option<Size> {
+        self.child.size()
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child.computed_size(ctx)
+    }
+
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child.content_size(ctx)
+    }
+
+    fn layer(&self) -> u32 {
+        self.child.layer()
+    }
+
+    fn flex(&self) -> Option<f32> {
+        self.child.flex()
+    }
+
+    fn get_size_from_child(&self) -> Option<Size> {
+        self.child.get_size_from_child()
+    }
+}
+
+impl VisitorElement for RawOpacity {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "Opacity"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalized_opacity;
+
+    #[test]
+    fn opacity_is_clamped_to_valid_canvas_range() {
+        assert_eq!(normalized_opacity(-0.25), 0.0);
+        assert_eq!(normalized_opacity(0.4), 0.4);
+        assert_eq!(normalized_opacity(1.25), 1.0);
+        assert_eq!(normalized_opacity(f32::NAN), 1.0);
+    }
+}

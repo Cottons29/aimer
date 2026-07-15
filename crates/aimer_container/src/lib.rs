@@ -6,9 +6,12 @@ pub mod space;
 
 pub use scrollable::scroll_behavior::*;
 pub use scrollable::*;
+pub use single_child::aspecratio::{AspectRatio, RatioOption};
 pub use single_child::container::Container;
+pub use single_child::opacity::Opacity;
 pub use single_child::sized_box::SizedBox;
 pub use single_child::zero_size_box::ZeroSizedBox;
+pub use space::align::{Align, Alignment};
 pub use space::positioned::Positioned;
 pub use space::stack::Stack;
 
@@ -44,7 +47,8 @@ mod tests {
 
     impl Drawable for MeasuredPositionedChild {
         fn draw(&self, ctx: &BuildContext) {
-            self.observed_parent_size.set(ctx.parent_size);
+            self.observed_parent_size
+                .set(ctx.parent_size);
         }
     }
 
@@ -756,9 +760,7 @@ mod tests {
         let ctx = dummy_build_context(1000.0, 500.0, None);
         let observed_parent_size = Rc::new(Cell::new(ResolvedSize::default()));
         let positioned = RawPositionedElement {
-            child: MeasuredPositionedChild {
-                observed_parent_size: observed_parent_size.clone(),
-            },
+            child: MeasuredPositionedChild { observed_parent_size: observed_parent_size.clone() },
             position: Default::default(),
             left: 12.into(),
             top: 16.into(),

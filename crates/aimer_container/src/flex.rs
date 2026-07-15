@@ -35,7 +35,6 @@ pub enum OverflowBehavior {
 
 impl OverflowBehavior {
     fn apply_overflow_behave(&self, ctx: &BuildContext) {
-        #[allow(clippy::single_match)]
         match self {
             Self::Hidden => {
                 ctx.canvas
@@ -51,7 +50,7 @@ impl OverflowBehavior {
                         },
                     );
             }
-            _ => (),
+            Self::Wrap | Self::Visible => {}
         }
     }
 }

@@ -35,7 +35,7 @@ pub mod macros {
 
 // Styling re-export
 pub mod style {
-    pub use aimer_animation::curve::Curve;
+    pub use aimer_animation::primitives::curve::Curve;
     pub use aimer_animation::{AnimationEffect, AnimationStatus};
     pub use aimer_color::prelude::{Color, Colors};
     pub use aimer_container::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};

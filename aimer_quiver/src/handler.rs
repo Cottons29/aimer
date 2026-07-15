@@ -60,7 +60,7 @@ fn find_hovered_node(
     None
 }
 
-pub struct AimerApplicationHandler<W: Widget+ 'static> {
+pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub window: Option<&'static Window>,
     pub render_ctx: AimerRenderContext,
     pub widget_root: Option<Box<dyn Element>>,
@@ -87,7 +87,9 @@ pub struct AimerApplicationHandler<W: Widget+ 'static> {
     pub inspector_redraw_frames: Cell<u8>,
 }
 
-impl<W: Widget+ 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEvent> for AimerApplicationHandler<W> {
+impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEvent>
+    for AimerApplicationHandler<W>
+{
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "android")]
         {
@@ -261,7 +263,7 @@ impl<W: Widget+ 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEven
     }
 }
 #[allow(dead_code)]
-impl<W: Widget+ 'static> AimerApplicationHandler<W> {
+impl<W: Widget + 'static> AimerApplicationHandler<W> {
     #[cfg(debug_assertions)]
     pub(crate) fn inspector_enabled(&self) -> bool {
         self.inspector

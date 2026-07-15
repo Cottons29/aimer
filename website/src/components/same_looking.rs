@@ -89,7 +89,7 @@ impl State<SameLookingSection> for SameLookingSectionState {
             // no need to change this because i need to know the current index after resize
             CURRENT_INDEX.store(self.current_index, Ordering::Relaxed);
         }
-        eprintln!("Current index: {}", self.current_index);
+        // eprintln!("Current index: {}", self.current_index);
         Container::new()
             .color(Color::WHITE)
             .padding(app_padding(ctx))

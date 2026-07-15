@@ -18,7 +18,6 @@ mod widget;
 /// ```
 pub struct RequiredChild;
 
-
 pub type AnyElement = Box<dyn Element>;
 
 /// An alias of Box<dyn Widget>

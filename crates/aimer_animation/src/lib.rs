@@ -1,31 +1,22 @@
-pub mod animatable;
-pub mod animated;
-pub mod animated_builder;
-pub mod animated_switcher;
-pub mod controller;
-pub mod curve;
-pub mod group;
-pub mod implicit_animation;
-pub mod keyframe;
-pub mod morph_transition;
-pub mod time;
-pub mod transition;
-pub mod tween;
+pub mod control;
+pub mod primitives;
+pub mod widgets;
 
 // Core primitives
-pub use animatable::Animatable;
-// Widget layer
-pub use animated::{Animated, AnimationEffect};
-pub use animated_builder::AnimatedBuilder;
-pub use animated_switcher::AnimatedSwitcher;
-pub use controller::{AnimationController, AnimationStatus, StatusListener};
-pub use curve::Curve;
+pub use primitives::AnimInstant;
+pub use primitives::Animatable;
+pub use primitives::Curve;
+pub use primitives::{AnimatableExt, Tween};
+
 // Animation orchestration
-pub use group::{ParallelAnimation, SequentialAnimation, StaggeredAnimation};
-pub use implicit_animation::ImplicitAnimatedBuilder;
-// Keyframe animation
-pub use keyframe::{Keyframe, KeyframeAnimation};
-pub use morph_transition::{MorphTransition, Rgba};
-pub use time::AnimInstant;
-pub use transition::{FadeTransition, RotationTransition, ScaleTransition, SlideTransition};
-pub use tween::{AnimatableExt, Tween};
+pub use control::{AnimationController, AnimationStatus, StatusListener};
+pub use control::{Keyframe, KeyframeAnimation};
+pub use control::{ParallelAnimation, SequentialAnimation, StaggeredAnimation};
+
+// Widget layer
+pub use widgets::AnimatedBuilder;
+pub use widgets::AnimatedSwitcher;
+pub use widgets::ImplicitAnimatedBuilder;
+pub use widgets::{Animated, AnimationEffect};
+pub use widgets::{FadeTransition, RotationTransition, ScaleTransition, SlideTransition};
+pub use widgets::{MorphTransition, Rgba};
