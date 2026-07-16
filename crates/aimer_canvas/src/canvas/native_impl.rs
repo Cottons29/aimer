@@ -2,8 +2,10 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 use aimer_cupid::canvas::CupidCanvas;
+use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 use aimer_cupid::text_pipeline::TextOverflowMode;
 use aimer_cupid::utilities::Color as CupidColor;
+use std::sync::Arc;
 
 use crate::canvas::CanvasRendering;
 
@@ -167,6 +169,17 @@ impl CanvasRendering for CupidCanvas {
     #[inline]
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize) {
         CupidCanvas::draw_image(self, pos.x, pos.y, size.width, size.height, image_id);
+    }
+
+    #[inline]
+    fn draw_svg(
+        &self,
+        scene: Arc<SvgScene>,
+        pos: Vec2d,
+        size: ResolvedSize,
+        overrides: Arc<[SvgNodeStyleOverride]>,
+    ) {
+        CupidCanvas::draw_svg(self, scene, pos.x, pos.y, size.width, size.height, overrides);
     }
 
     #[inline]
@@ -409,6 +422,10 @@ impl CanvasRendering for CupidCanvas {
 
     fn load_image_with_id(&self, image_id: u32, bytes: &[u8], width: u32, height: u32) {
         self.load_image_with_id(image_id, bytes, width, height)
+    }
+
+    fn remove_texture(&self, image_id: u32) {
+        self.remove_texture(image_id)
     }
 
     #[inline]

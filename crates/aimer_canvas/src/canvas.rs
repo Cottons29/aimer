@@ -2,7 +2,9 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 pub use aimer_cupid::canvas::TextMetrics;
+use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 pub use aimer_cupid::text_pipeline::TextOverflowMode;
+use std::sync::Arc;
 mod native_impl;
 
 pub trait CanvasRendering: Clone {
@@ -71,6 +73,13 @@ pub trait CanvasRendering: Clone {
         period: f32,
     );
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize);
+    fn draw_svg(
+        &self,
+        scene: Arc<SvgScene>,
+        pos: Vec2d,
+        size: ResolvedSize,
+        overrides: Arc<[SvgNodeStyleOverride]>,
+    );
     fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)>;
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize);
     fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: [f32; 4]);
@@ -158,6 +167,7 @@ pub trait CanvasRendering: Clone {
     fn set_italic(&self, _italic: bool) {}
     fn load_image(&self, bytes: &[u8], width: u32, height: u32) -> u32;
     fn load_image_with_id(&self, image_id: u32, bytes: &[u8], width: u32, height: u32);
+    fn remove_texture(&self, image_id: u32);
     fn set_texture_size(&self, image_id: u32, width: u32, height: u32);
     fn get_transform_translation(&self) -> (f32, f32) {
         (0.0, 0.0)
@@ -410,6 +420,17 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::draw_image(self.inner, image_id, pos, size);
     }
 
+    #[inline]
+    pub fn draw_svg(
+        &self,
+        scene: Arc<SvgScene>,
+        pos: Vec2d,
+        size: ResolvedSize,
+        overrides: Arc<[SvgNodeStyleOverride]>,
+    ) {
+        CanvasRendering::draw_svg(self.inner, scene, pos, size, overrides);
+    }
+
     #[allow(dead_code)]
     #[inline]
     pub fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)> {
@@ -427,6 +448,11 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn load_image_with_id(&self, image_id: u32, bytes: &[u8], width: u32, height: u32) {
         CanvasRendering::load_image_with_id(self.inner, image_id, bytes, width, height)
+    }
+
+    /// Releases the GPU texture and its cached size metadata.
+    pub fn remove_texture(&self, image_id: u32) {
+        CanvasRendering::remove_texture(self.inner, image_id);
     }
 
     /// Sets the intrinsic size of a texture. This is useful for preserving

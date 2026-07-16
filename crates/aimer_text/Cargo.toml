@@ -9,4 +9,12 @@ aimer_attribute.workspace = true
 aimer_color.workspace = true
 aimer_widget.workspace = true
 aimer_style.workspace = true
+aimer_events.workspace = true
+aimer_utils.workspace = true
 unicode-segmentation.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["rt"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures.workspace = true

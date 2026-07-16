@@ -6,9 +6,8 @@ pub mod mouse_region;
 /// re-exported here so existing `aimer_input::callback::*` paths keep working.
 pub use aimer_utils::callback;
 pub mod button;
-mod text_button;
 
-pub use text_button::TextButton;
+pub use aimer_text::TextButton;
 
 pub mod input {
     pub use crate::input_field::controller::*;
