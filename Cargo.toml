@@ -26,6 +26,7 @@ aimer_style.workspace = true
 aimer_text.workspace = true
 aimer_macro.workspace = true
 aimer_provider.workspace = true
+aimer_svg.workspace = true
 
 
 [workspace]
@@ -52,7 +53,7 @@ members = [
     "crates/aimer_text",
     "crates/aimer_macro",
     "jaime"
-, "crates/aimer_provider",  "crates/aimer_sdk", "website_backend"]
+    , "crates/aimer_provider", "crates/aimer_sdk", "website_backend", "crates/aimer_markdown", "crates/aimer_svg"]
 
 
 [workspace.dependencies]
@@ -73,7 +74,8 @@ aimer_assets = { path = "crates/aimer_assets" }
 aimer_style = { path = "crates/aimer_style" }
 aimer_text = { path = "crates/aimer_text" }
 aimer_macro = { path = "crates/aimer_macro" }
-aimer_provider = {path = "crates/aimer_provider"}
+aimer_provider = { path = "crates/aimer_provider" }
+aimer_svg = { path = "crates/aimer_svg" }
 
 
 #############
@@ -119,9 +121,20 @@ font-kit = "0.14.3"
 core-foundation-sys = "0.8.7"
 reqwest = { version = "0.13.4", default-features = false, features = ["native-tls", "http2"] }
 openssl = { version = "0.10.81", features = ["vendored"] }
-uuid = {version = "1.23.5", features = ["js","v4"]}
+uuid = { version = "1.23.5", features = ["js", "v4"] }
 ttf-parser = "0.25.1"
 dirs = "6.0.0"
+markdown = "1.0.0"
+lyon = "1.0.19"
+usvg = { version = "0.47.0", default-features = false }
+naga = { version = "30.0.0", features = ["wgsl-in"] }
+
+
+
+
+
+
+
 # Aimer cli dependencies
 crossterm = "0.29.0"
 clap = { version = "4.6.1", features = ["derive"] }
@@ -139,7 +152,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tempfile = "3.27.0"
 sha2 = "0.11.0"
 hex = "0.4.3"
-rustls-platform-verifier = {version = "0.7.0", features = ["jni"]}
+rustls-platform-verifier = { version = "0.7.0", features = ["jni"] }
 bitflags = "2.13.0"
 
 [profile.release]
@@ -147,6 +160,6 @@ opt-level = 3
 debug-assertions = false
 codegen-units = 1
 lto = true
-split-debuginfo="packed"
+split-debuginfo = "packed"
 panic = "abort"
-strip="symbols"
+strip = "symbols"
