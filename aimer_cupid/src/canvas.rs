@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use aimer_font::{FontFamily, FontStyle, FontWeight};
+
 use crate::draw_cmd::DrawList;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
@@ -25,6 +27,9 @@ struct TextMetricsKey {
     text: String,
     font_size_tenths: u32,
     max_width_tenths: u32,
+    font_family: FontFamily,
+    font_style: FontStyle,
+    font_weight: u16,
 }
 
 #[derive(Clone)]
@@ -170,9 +175,41 @@ impl CupidCanvas {
         color: Color,
         font_weight: u16,
     ) {
+        self.draw_text_styled(
+            x,
+            y,
+            text,
+            font_size,
+            color,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            font_weight,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_styled(
+        &self,
+        x: f32,
+        y: f32,
+        text: &str,
+        font_size: f32,
+        color: Color,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
         self.draw_list
             .borrow_mut()
-            .draw_text(Vec2d::new(x, y), Arc::from(text), font_size, color, font_weight);
+            .draw_text_styled(
+                Vec2d::new(x, y),
+                Arc::from(text),
+                font_size,
+                color,
+                font_family,
+                font_style,
+                font_weight,
+            );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -186,6 +223,32 @@ impl CupidCanvas {
         max_width: f32,
         font_weight: u16,
     ) {
+        self.draw_text_wrapped_styled(
+            x,
+            y,
+            text,
+            font_size,
+            color,
+            max_width,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            font_weight,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_wrapped_styled(
+        &self,
+        x: f32,
+        y: f32,
+        text: &str,
+        font_size: f32,
+        color: Color,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
         self.draw_list
             .borrow_mut()
             .draw_text_with_overflow(
@@ -196,6 +259,8 @@ impl CupidCanvas {
                 Some(max_width),
                 None,
                 TextOverflowMode::Wrap,
+                font_family,
+                font_style,
                 font_weight,
             );
     }
@@ -213,6 +278,36 @@ impl CupidCanvas {
         overflow: TextOverflowMode,
         font_weight: u16,
     ) {
+        self.draw_text_with_overflow_styled(
+            x,
+            y,
+            text,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            font_weight,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_with_overflow_styled(
+        &self,
+        x: f32,
+        y: f32,
+        text: &str,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
         self.draw_list
             .borrow_mut()
             .draw_text_with_overflow(
@@ -223,6 +318,8 @@ impl CupidCanvas {
                 Some(bounds_width),
                 Some(bounds_height),
                 overflow,
+                font_family,
+                font_style,
                 font_weight,
             );
     }
@@ -275,16 +372,61 @@ impl CupidCanvas {
 
     /// Measure text width using the cached text rasterizer.
     pub fn measure_text(&self, text: &str, font_size: f32) -> f32 {
+        self.measure_text_styled(
+            text,
+            font_size,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        )
+    }
+
+    pub fn measure_text_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> f32 {
         self.rasterizer
             .borrow_mut()
-            .measure_text(text, font_size)
+            .measure_text_for_family(
+                text,
+                font_size,
+                font_family,
+                FontWeight::Value(u32::from(font_weight)),
+                font_style,
+            )
     }
 
     pub fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics {
+        self.measure_text_metrics_styled(
+            text,
+            font_size,
+            max_width,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        )
+    }
+
+    pub fn measure_text_metrics_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> TextMetrics {
         let key = TextMetricsKey {
             text: text.to_string(),
             font_size_tenths: (font_size * 10.0) as u32,
             max_width_tenths: (max_width.max(0.0) * 10.0) as u32,
+            font_family,
+            font_style,
+            font_weight,
         };
         if let Some(metrics) = self
             .metrics_cache
@@ -295,7 +437,9 @@ impl CupidCanvas {
         }
 
         let mut rasterizer = self.rasterizer.borrow_mut();
-        let (ascent, descent, line_gap) = rasterizer.line_metrics(font_size);
+        let weight = FontWeight::Value(u32::from(font_weight));
+        let (ascent, descent, line_gap) =
+            rasterizer.line_metrics_for_family(font_size, font_family, weight, font_style);
         let line_height = ascent - descent + line_gap;
         let mut width = 0.0_f32;
         let mut current_width = 0.0_f32;
@@ -316,7 +460,8 @@ impl CupidCanvas {
                 continue;
             }
 
-            let glyph_width = rasterizer.advance_width(c, font_size);
+            let glyph_width =
+                rasterizer.advance_width_for_family(c, font_size, font_family, weight, font_style);
 
             // Track the last whitespace position as the preferred break point.
             if c.is_whitespace() {
@@ -627,6 +772,37 @@ impl CupidCanvas {
 impl Default for CupidCanvas {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod family_metrics_tests {
+    use aimer_font::{FontFamily, FontStyle, FontWeight};
+
+    use super::CupidCanvas;
+
+    #[test]
+    fn metrics_cache_isolated_by_selected_family() {
+        let canvas = CupidCanvas::new();
+        let sans = canvas.measure_text_metrics_styled(
+            "Mi",
+            20.0,
+            0.0,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+        let mono = canvas.measure_text_metrics_styled(
+            "Mi",
+            20.0,
+            0.0,
+            FontFamily::MONOSPACE,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+
+        assert_ne!(sans.width, mono.width);
+        assert_eq!(canvas.metrics_cache.borrow().len(), 2);
     }
 }
 

@@ -76,6 +76,29 @@ impl FontRecord {
         })
     }
 
+    pub(crate) fn from_shared_bytes(id: FontId, bytes: Arc<[u8]>) -> Option<Self> {
+        let face = ttf_parser::Face::parse(bytes.as_ref(), 0).ok()?;
+        let is_color = Self::face_is_color(&face);
+        let font = if !is_color && bytes.len() as u64 <= Self::FONTDUE_MAX_BYTES {
+            fontdue::Font::from_bytes(bytes.as_ref(), fontdue::FontSettings::default())
+                .ok()
+                .map(Arc::new)
+        } else {
+            None
+        };
+        let byte_len = bytes.len() as u64;
+
+        Some(Self {
+            id,
+            bytes: Some(bytes),
+            font,
+            byte_len: Some(byte_len),
+            collection_index: 0,
+            _path: None,
+            is_color,
+        })
+    }
+
     pub(crate) fn should_use_fontdue(&self) -> bool {
         #[cfg(any(target_os = "ios", target_os = "macos"))]
         if self._path.is_some() {

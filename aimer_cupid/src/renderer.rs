@@ -66,6 +66,10 @@ fn apply_alpha(mut color: [f32; 4], alpha: f32) -> [f32; 4] {
     color
 }
 
+fn has_renderable_dimensions(width: u32, height: u32) -> bool {
+    width > 0 && height > 0
+}
+
 struct ResolvedCmd {
     kind: ResolvedKind,
 }
@@ -328,17 +332,22 @@ impl Renderer {
         draw_list: &DrawList,
     ) {
         self.transform_stack.clear();
-        let mut current_transform = Mat3::identity();
-        let mut alpha_state = AlphaState::new();
-        // Canvas-level italic state applied to plain `DrawText` (rich text carries
-        // italic per span). Reset each frame; toggled by `SetItalic`.
-        let mut current_italic = false;
         self.clip_stack.clear();
         self.text_requests.clear();
         self.decoration_requests.clear();
         self.svg_items.clear();
         self.resolved.clear();
         self.textures_to_remove.clear();
+
+        if !has_renderable_dimensions(width, height) {
+            return;
+        }
+
+        let mut current_transform = Mat3::identity();
+        let mut alpha_state = AlphaState::new();
+        // Canvas-level italic state applied to plain `DrawText` (rich text carries
+        // italic per span). Reset each frame; toggled by `SetItalic`.
+        let mut current_italic = false;
 
         for cmd in draw_list.commands() {
             match cmd {
@@ -493,6 +502,8 @@ impl Renderer {
                     bounds_width,
                     bounds_height,
                     overflow,
+                    font_family,
+                    font_style,
                     font_weight,
                 } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
@@ -508,6 +519,8 @@ impl Renderer {
                             bounds_height: bounds_height.unwrap_or(height as f32 - ty),
                             overflow: *overflow,
                             line_height: None,
+                            font_family: *font_family,
+                            font_style: *font_style,
                             font_weight: Some(*font_weight),
                             italic: current_italic,
                             clip_rect: clip_to_array(self.clip_stack.last()),
@@ -543,6 +556,8 @@ impl Renderer {
                             bounds_height: bounds_height.unwrap_or(height as f32 - ty),
                             overflow: *overflow,
                             line_height: None,
+                            font_family: aimer_font::FontFamily::SANS_SERIF,
+                            font_style: aimer_font::FontStyle::Normal,
                             font_weight: None,
                             italic: false,
                             clip_rect: clip_to_array(self.clip_stack.last()),
@@ -1002,6 +1017,14 @@ mod tests {
     #[test]
     fn apply_alpha_multiplies_existing_color_opacity() {
         assert_eq!(apply_alpha([0.1, 0.2, 0.3, 0.8], 0.25), [0.1, 0.2, 0.3, 0.2]);
+    }
+
+    #[test]
+    fn render_dimensions_require_nonzero_width_and_height() {
+        assert!(has_renderable_dimensions(1, 1));
+        assert!(!has_renderable_dimensions(0, 1));
+        assert!(!has_renderable_dimensions(1, 0));
+        assert!(!has_renderable_dimensions(0, 0));
     }
 
     #[test]

@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
+use aimer_font::{FontFamily, FontRegistry, FontStyle, FontWeight, bundled_monospace_bytes};
 use aimer_utils::time_cost;
 use swash::FontRef;
 use swash::scale::{Render, ScaleContext, Source};
@@ -16,6 +17,7 @@ use crate::text_pipeline::glyph_outline::{ColrOutlineBuilder, rasterize_outline_
 
 /// Embedded primary font (Roboto) — covers Latin and common scripts.
 const PRIMARY_FONT: &[u8] = include_bytes!("../../../fonts/GoogleSans-Regular.ttf");
+const MONOSPACE_FONT_ID: FontId = 0x7fff_fffe;
 // const JAPANESE_FONT: &[u8] =
 // include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf");
 /// A rasterized glyph bitmap with its metrics.
@@ -102,6 +104,16 @@ fn primary_font_record() -> FontRecord {
     PRIMARY_FONT_RECORD
         .get_or_init(|| {
             FontRecord::from_static_bytes(0, PRIMARY_FONT).expect("failed to load primary font")
+        })
+        .clone()
+}
+
+fn monospace_font_record() -> FontRecord {
+    static MONOSPACE_FONT_RECORD: OnceLock<FontRecord> = OnceLock::new();
+    MONOSPACE_FONT_RECORD
+        .get_or_init(|| {
+            FontRecord::from_static_bytes(MONOSPACE_FONT_ID, bundled_monospace_bytes())
+                .expect("failed to load bundled monospace font")
         })
         .clone()
 }
@@ -475,6 +487,7 @@ fn rasterize_color_glyph(
 pub struct GlyphRasterizer {
     /// Primary font (Roboto) for Latin/common glyphs.
     primary: FontRecord,
+    family_faces: Vec<FamilyFontRecord>,
     /// Fallback fonts for extended Unicode coverage (CJK, etc.).
     /// Loaded lazily on first encounter of a glyph not in the primary font,
     /// to avoid the massive memory cost (~800MB) of parsing large CJK fonts
@@ -499,6 +512,49 @@ pub struct GlyphRasterizer {
     shape_buffer: Option<rustybuzz::UnicodeBuffer>,
 }
 
+struct FamilyFontRecord {
+    family: FontFamily,
+    weight: u16,
+    style: FontStyle,
+    record: FontRecord,
+}
+
+fn registered_family_faces() -> Vec<FamilyFontRecord> {
+    let mut faces = vec![FamilyFontRecord {
+        family: FontFamily::MONOSPACE,
+        weight: FontWeight::Normal.numeric(),
+        style: FontStyle::Normal,
+        record: monospace_font_record(),
+    }];
+    faces.extend(
+        FontRegistry::faces()
+            .into_iter()
+            .filter_map(|face| {
+                Some(FamilyFontRecord {
+                    family: face.family,
+                    weight: face.weight,
+                    style: face.style,
+                    record: FontRecord::from_shared_bytes(face.face_id, face.bytes)?,
+                })
+            }),
+    );
+    faces
+}
+
+fn family_style_distance(requested: FontStyle, candidate: FontStyle) -> u8 {
+    if requested == candidate {
+        0
+    } else if candidate == FontStyle::Normal {
+        1
+    } else if matches!(requested, FontStyle::Oblique | FontStyle::ObliqueDeg(_))
+        && matches!(candidate, FontStyle::Oblique | FontStyle::ObliqueDeg(_))
+    {
+        2
+    } else {
+        3
+    }
+}
+
 impl GlyphRasterizer {
     const BITMAP_CACHE_CAPACITY_BYTES: usize = 8 * 1024 * 1024;
 
@@ -508,6 +564,7 @@ impl GlyphRasterizer {
 
         Self {
             primary,
+            family_faces: registered_family_faces(),
             fallbacks: None, // loaded lazily on first miss
             enable_fallbacks: true,
             cache: HashMap::new(),
@@ -526,6 +583,7 @@ impl GlyphRasterizer {
         let primary = primary_font_record();
         Self {
             primary,
+            family_faces: registered_family_faces(),
             fallbacks: None,
             enable_fallbacks: false,
             cache: HashMap::new(),
@@ -547,6 +605,99 @@ impl GlyphRasterizer {
 
     pub fn primary_font_id(&self) -> FontId {
         self.primary.id
+    }
+
+    pub fn font_id_for_family(
+        &mut self,
+        family: FontFamily,
+        weight: FontWeight,
+        style: FontStyle,
+    ) -> FontId {
+        self.family_record(family, weight, style)
+            .map_or(self.primary.id, |record| record.id)
+    }
+
+    pub fn glyph_key_for_family_codepoint(
+        &mut self,
+        codepoint: char,
+        font_size: f32,
+        family: FontFamily,
+        weight: FontWeight,
+        style: FontStyle,
+    ) -> GlyphKey {
+        if let Some((font_id, glyph_id)) = self
+            .family_record(family, weight, style)
+            .and_then(|record| {
+                record
+                    .glyph_index(codepoint)
+                    .map(|glyph_id| (record.id, glyph_id))
+            })
+        {
+            return GlyphKey::new(font_id, glyph_id, font_size);
+        }
+
+        self.glyph_key_for_codepoint(codepoint, font_size)
+    }
+
+    pub fn advance_width_for_family(
+        &mut self,
+        codepoint: char,
+        font_size: f32,
+        family: FontFamily,
+        weight: FontWeight,
+        style: FontStyle,
+    ) -> f32 {
+        let key = self.glyph_key_for_family_codepoint(codepoint, font_size, family, weight, style);
+        if let Some(width) = self.advance_cache.get(&key) {
+            return *width;
+        }
+        let width = self
+            .select_font_for_key(key)
+            .advance_width_for_glyph(key.glyph_id, font_size)
+            .unwrap_or(0.0);
+        self.advance_cache
+            .insert(key, width);
+        width
+    }
+
+    pub fn measure_text_for_family(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        family: FontFamily,
+        weight: FontWeight,
+        style: FontStyle,
+    ) -> f32 {
+        text.chars()
+            .map(|codepoint| {
+                self.advance_width_for_family(codepoint, font_size, family, weight, style)
+            })
+            .sum()
+    }
+
+    fn family_record(
+        &self,
+        family: FontFamily,
+        weight: FontWeight,
+        style: FontStyle,
+    ) -> Option<&FontRecord> {
+        if family == FontFamily::SANS_SERIF {
+            return Some(&self.primary);
+        }
+        let numeric_weight = weight.numeric();
+        self.family_faces
+            .iter()
+            .filter(|face| face.family == family)
+            .min_by_key(|face| {
+                (
+                    family_style_distance(style, face.style),
+                    face.weight
+                        .abs_diff(numeric_weight),
+                    face.weight,
+                    face.record.id,
+                )
+            })
+            .map(|face| &face.record)
     }
 
     pub fn register_font_bytes(&mut self, bytes: Vec<u8>) -> Option<FontId> {
@@ -641,6 +792,12 @@ impl GlyphRasterizer {
     fn select_font_for_key(&mut self, key: GlyphKey) -> &mut FontRecord {
         if key.font_id == self.primary.id {
             &mut self.primary
+        } else if let Some(index) = self
+            .family_faces
+            .iter()
+            .position(|face| face.record.id == key.font_id)
+        {
+            &mut self.family_faces[index].record
         } else {
             self.fallbacks
                 .as_mut()
@@ -860,10 +1017,28 @@ impl GlyphRasterizer {
     /// Returns line metrics (ascent, descent, line_gap) for the given font
     /// size. Uses the primary font for consistent line spacing.
     pub fn line_metrics(&self, font_size: f32) -> (f32, f32, f32) {
-        let Some(data) = self.primary.bytes.as_ref() else {
+        self.line_metrics_for_family(
+            font_size,
+            FontFamily::SANS_SERIF,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        )
+    }
+
+    pub fn line_metrics_for_family(
+        &self,
+        font_size: f32,
+        family: FontFamily,
+        weight: FontWeight,
+        style: FontStyle,
+    ) -> (f32, f32, f32) {
+        let record = self
+            .family_record(family, weight, style)
+            .unwrap_or(&self.primary);
+        let Some(data) = record.bytes.as_ref() else {
             return (font_size * 0.8, font_size * -0.2, 0.0);
         };
-        let Some(face) = ttf_parser::Face::parse(data.as_ref(), self.primary.collection_index).ok()
+        let Some(face) = ttf_parser::Face::parse(data.as_ref(), record.collection_index).ok()
         else {
             return (font_size * 0.8, font_size * -0.2, 0.0);
         };
@@ -897,6 +1072,23 @@ impl GlyphRasterizer {
         cluster: &str,
         font_size: f32,
     ) -> Vec<(GlyphKey, f32, f32, f32)> {
+        self.shape_cluster_for_family(
+            cluster,
+            font_size,
+            FontFamily::SANS_SERIF,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        )
+    }
+
+    pub fn shape_cluster_for_family(
+        &mut self,
+        cluster: &str,
+        font_size: f32,
+        family: FontFamily,
+        weight: FontWeight,
+        style: FontStyle,
+    ) -> Vec<(GlyphKey, f32, f32, f32)> {
         // Find the font for the first base (non-combining) codepoint of this cluster.
         let base_char = cluster
             .chars()
@@ -906,19 +1098,9 @@ impl GlyphRasterizer {
             return Vec::new();
         }
 
-        // Trigger fallback loading if needed.
-        if self
-            .primary
-            .glyph_index(base_char)
-            .is_none()
-            && !self
-                .unsupported_codepoints
-                .contains(&base_char)
-        {
-            self.ensure_fallbacks();
-        }
-
-        let font_id = self.font_id_for_codepoint(base_char);
+        let font_id = self
+            .glyph_key_for_family_codepoint(base_char, font_size, family, weight, style)
+            .font_id;
 
         // Retrieve cached font bytes for this font_id, populating the cache on
         // first access.  This avoids a file read (or Arc<[u8]> clone followed by
@@ -927,24 +1109,30 @@ impl GlyphRasterizer {
             .font_bytes_cache
             .contains_key(&font_id)
         {
-            let bytes: Option<Arc<[u8]>> = if font_id == self.primary.id {
-                self.primary.bytes.clone()
-            } else {
-                self.fallbacks
-                    .as_ref()
-                    .and_then(|fbs| {
-                        fbs.iter()
-                            .find(|fb| fb.id == font_id)
-                    })
-                    .and_then(|fb| {
-                        if let Some(b) = &fb.bytes {
-                            Some(b.clone())
-                        } else {
-                            fb.read_data()
-                                .map(|v| Arc::from(v.into_boxed_slice()))
-                        }
-                    })
-            };
+            let bytes: Option<Arc<[u8]>> = self
+                .family_faces
+                .iter()
+                .find(|face| face.record.id == font_id)
+                .and_then(|face| face.record.bytes.clone())
+                .or_else(|| {
+                    if font_id == self.primary.id {
+                        return self.primary.bytes.clone();
+                    }
+                    self.fallbacks
+                        .as_ref()
+                        .and_then(|fbs| {
+                            fbs.iter()
+                                .find(|fb| fb.id == font_id)
+                        })
+                        .and_then(|fb| {
+                            if let Some(b) = &fb.bytes {
+                                Some(b.clone())
+                            } else {
+                                fb.read_data()
+                                    .map(|v| Arc::from(v.into_boxed_slice()))
+                            }
+                        })
+                });
             if let Some(b) = bytes {
                 self.font_bytes_cache
                     .insert(font_id, b);
@@ -957,18 +1145,24 @@ impl GlyphRasterizer {
         };
 
         // Shape the cluster with rustybuzz.
-        let collection_index = if font_id == self.primary.id {
-            self.primary.collection_index
-        } else {
-            self.fallbacks
-                .as_ref()
-                .and_then(|fbs| {
-                    fbs.iter()
-                        .find(|fb| fb.id == font_id)
-                })
-                .map(|fb| fb.collection_index)
-                .unwrap_or(0)
-        };
+        let collection_index = self
+            .family_faces
+            .iter()
+            .find(|face| face.record.id == font_id)
+            .map(|face| face.record.collection_index)
+            .unwrap_or_else(|| {
+                if font_id == self.primary.id {
+                    return self.primary.collection_index;
+                }
+                self.fallbacks
+                    .as_ref()
+                    .and_then(|fbs| {
+                        fbs.iter()
+                            .find(|fb| fb.id == font_id)
+                    })
+                    .map(|fb| fb.collection_index)
+                    .unwrap_or(0)
+            });
 
         // Improvement A: reuse a cached `rustybuzz::Face` for this font_id to
         // avoid re-parsing all font tables on every cluster.
@@ -1031,6 +1225,152 @@ impl GlyphRasterizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aimer_font::{FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight};
+
+    #[test]
+    fn registered_families_resolve_consistently_across_rasterizers() {
+        let family = FontRegistry::register(FontRegistration {
+            family: "cupid-family-resolution-test",
+            bytes: PRIMARY_FONT,
+            weight: FontWeight::Normal,
+            style: FontStyle::Normal,
+        })
+        .unwrap();
+        FontRegistry::register(FontRegistration {
+            family: "cupid-family-resolution-test",
+            bytes: PRIMARY_FONT,
+            weight: FontWeight::Bold,
+            style: FontStyle::Normal,
+        })
+        .unwrap();
+        FontRegistry::register(FontRegistration {
+            family: "cupid-family-resolution-test",
+            bytes: PRIMARY_FONT,
+            weight: FontWeight::Normal,
+            style: FontStyle::Italic,
+        })
+        .unwrap();
+
+        let mut first = GlyphRasterizer::new();
+        let mut second = GlyphRasterizer::new();
+        let normal = first.font_id_for_family(family, FontWeight::Normal, FontStyle::Normal);
+        let bold = first.font_id_for_family(family, FontWeight::Bold, FontStyle::Normal);
+        let nearest_bold =
+            first.font_id_for_family(family, FontWeight::Value(600), FontStyle::Normal);
+        let italic = first.font_id_for_family(family, FontWeight::Bold, FontStyle::Italic);
+
+        assert_ne!(normal, bold);
+        assert_eq!(nearest_bold, bold);
+        assert_ne!(italic, bold);
+        assert_eq!(second.font_id_for_family(family, FontWeight::Bold, FontStyle::Normal), bold);
+
+        let key = first.glyph_key_for_family_codepoint(
+            'A',
+            16.0,
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        assert_eq!(key.font_id, normal);
+    }
+
+    #[test]
+    fn generic_families_are_distinct_and_renderable() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let sans = rasterizer.font_id_for_family(
+            FontFamily::SANS_SERIF,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        let monospace = rasterizer.font_id_for_family(
+            FontFamily::MONOSPACE,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+
+        assert_eq!(sans, rasterizer.primary_font_id());
+        assert_ne!(monospace, sans);
+        let key = rasterizer.glyph_key_for_family_codepoint(
+            'M',
+            16.0,
+            FontFamily::MONOSPACE,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        assert_eq!(key.font_id, monospace);
+        assert!(
+            rasterizer
+                .rasterize_key(key, 16.0)
+                .width
+                > 0
+        );
+    }
+
+    #[test]
+    fn family_measurement_and_shaping_use_the_same_face() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let mono_i = rasterizer.advance_width_for_family(
+            'i',
+            20.0,
+            FontFamily::MONOSPACE,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        let mono_m = rasterizer.advance_width_for_family(
+            'M',
+            20.0,
+            FontFamily::MONOSPACE,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        assert!((mono_i - mono_m).abs() < 0.001);
+
+        let measured = rasterizer.measure_text_for_family(
+            "Mi",
+            20.0,
+            FontFamily::MONOSPACE,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        let shaped_width: f32 = rasterizer
+            .shape_cluster_for_family(
+                "Mi",
+                20.0,
+                FontFamily::MONOSPACE,
+                FontWeight::Normal,
+                FontStyle::Normal,
+            )
+            .iter()
+            .map(|(_, advance, _, _)| advance)
+            .sum();
+        assert!((measured - shaped_width).abs() < 0.001);
+    }
+
+    #[test]
+    fn selected_family_missing_glyph_uses_existing_unicode_fallback_chain() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let fallback_id = rasterizer
+            .register_font_bytes(
+                include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf").to_vec(),
+            )
+            .expect("the bundled CJK fallback should register");
+
+        let key = rasterizer.glyph_key_for_family_codepoint(
+            '你',
+            16.0,
+            FontFamily::MONOSPACE,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+
+        assert_eq!(key.font_id, fallback_id);
+        assert!(
+            rasterizer
+                .rasterize_key(key, 16.0)
+                .width
+                > 0
+        );
+    }
 
     #[test]
     fn primary_font_bytes_are_shared_between_rasterizers() {

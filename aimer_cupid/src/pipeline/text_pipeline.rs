@@ -7,6 +7,7 @@ pub mod text_layout;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use aimer_font::{FontFamily, FontStyle, FontWeight};
 use aimer_utils::time_cost;
 use bytemuck::{Pod, Zeroable};
 
@@ -14,7 +15,7 @@ use crate::pipeline::image_pipeline::InstanceBufferPolicy;
 use crate::text_pipeline::glyph_atlas::{AtlasRegion, ColorGlyphAtlas, GlyphAtlas};
 use crate::text_pipeline::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
 use crate::text_pipeline::text_layout::{
-    PositionedGlyph, ShapedText, layout_shaped_text, shape_text,
+    PositionedGlyph, ShapedText, layout_shaped_text, shape_text_styled,
 };
 
 /// Per-instance data for one glyph quad.
@@ -142,6 +143,8 @@ pub struct TextDrawRequest {
     pub bounds_height: f32,
     pub overflow: TextOverflowMode,
     pub line_height: Option<f32>,
+    pub font_family: FontFamily,
+    pub font_style: FontStyle,
     pub font_weight: Option<u16>,
     pub italic: bool,
     pub clip_rect: [f32; 4],
@@ -180,34 +183,62 @@ pub enum TextOverflowMode {
 
 /// Key used to memoize the output of `layout_text` across frames.
 /// Uses integer bit-representations of f32 values to implement Hash + Eq.
-#[derive(Hash, Eq, PartialEq, Clone)]
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
 struct LayoutCacheKey {
     text: String,
     /// `font_size` × 100, rounded, stored as u32 to make it hashable.
     font_size_u32: u32,
     /// `bounds_width` × 100, rounded, stored as u32.
     bounds_width_u32: u32,
+    font_family: FontFamily,
+    font_style: FontStyle,
+    font_weight: u16,
 }
 
-#[derive(Hash, Eq, PartialEq, Clone)]
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
 struct ShapingCacheKey {
     text: String,
     /// `font_size` × 100, rounded, stored as u32 to make it hashable.
     font_size_u32: u32,
+    font_family: FontFamily,
+    font_style: FontStyle,
+    font_weight: u16,
 }
 
 impl ShapingCacheKey {
-    fn new(text: &str, font_size: f32) -> Self {
-        Self { text: text.to_owned(), font_size_u32: (font_size * 100.0).round() as u32 }
+    fn new(
+        text: &str,
+        font_size: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> Self {
+        Self {
+            text: text.to_owned(),
+            font_size_u32: (font_size * 100.0).round() as u32,
+            font_family,
+            font_style,
+            font_weight,
+        }
     }
 }
 
 impl LayoutCacheKey {
-    fn new(text: &str, font_size: f32, bounds_width: f32) -> Self {
+    fn new(
+        text: &str,
+        font_size: f32,
+        bounds_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> Self {
         Self {
             text: text.to_owned(),
             font_size_u32: (font_size * 100.0).round() as u32,
             bounds_width_u32: (bounds_width * 100.0).round() as u32,
+            font_family,
+            font_style,
+            font_weight,
         }
     }
 }
@@ -704,7 +735,14 @@ impl TextPipelineV2 {
         font_size: f32,
         layout_width: f32,
     ) {
-        let cache_key = LayoutCacheKey::new(text, font_size, layout_width);
+        let cache_key = LayoutCacheKey::new(
+            text,
+            font_size,
+            layout_width,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
 
         // Populate (or reuse) the layout/shaping caches, mirroring the hot path
         // in `prepare`, then snapshot the glyph keys so the cache borrow ends
@@ -716,10 +754,25 @@ impl TextPipelineV2 {
                 .layout_cache
                 .entry(cache_key)
                 .or_insert_with(|| {
-                    let shaped_key = ShapingCacheKey::new(text, font_size);
+                    let shaped_key = ShapingCacheKey::new(
+                        text,
+                        font_size,
+                        FontFamily::SANS_SERIF,
+                        FontStyle::Normal,
+                        FontWeight::Normal.numeric(),
+                    );
                     let shaped_text = shaping_cache
                         .entry(shaped_key)
-                        .or_insert_with(|| shape_text(rasterizer, text, font_size));
+                        .or_insert_with(|| {
+                            shape_text_styled(
+                                rasterizer,
+                                text,
+                                font_size,
+                                FontFamily::SANS_SERIF,
+                                FontWeight::Normal,
+                                FontStyle::Normal,
+                            )
+                        });
                     layout_shaped_text(rasterizer, shaped_text, 0.0, 0.0, layout_width)
                 });
             positioned
@@ -844,12 +897,12 @@ impl TextPipelineV2 {
                         .font_size
                         .unwrap_or(req.font_size);
                     let color = span.color.unwrap_or(req.color);
-                    // A weight of 600+ (semi-bold and up) is rendered bold.
-                    let is_bold = span
+                    let font_weight = span
                         .font_weight
                         .or(req.font_weight)
-                        .unwrap_or(400)
-                        >= 600;
+                        .unwrap_or(FontWeight::Normal.numeric());
+                    // A weight of 600+ (semi-bold and up) is rendered bold.
+                    let is_bold = font_weight >= 600;
                     // ponytail: synthetic (faux) italic via a horizontal shear in
                     // the glyph shaders (0.25 ≈ 14°). Ceiling: not a real italic
                     // face (no cursive glyph forms, advances unchanged). Upgrade
@@ -870,7 +923,14 @@ impl TextPipelineV2 {
                         TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
                         TextOverflowMode::Clip => 0.0,
                     };
-                    let cache_key = LayoutCacheKey::new(&span.text, font_size, layout_width);
+                    let cache_key = LayoutCacheKey::new(
+                        &span.text,
+                        font_size,
+                        layout_width,
+                        req.font_family,
+                        req.font_style,
+                        font_weight,
+                    );
                     // Layout is always computed at origin (0, 0) so the cached
                     // positions are purely relative and can be shifted cheaply.
                     let positioned: &[PositionedGlyph] =
@@ -880,14 +940,27 @@ impl TextPipelineV2 {
                             self.layout_cache
                                 .entry(cache_key)
                                 .or_insert_with(|| {
-                                    let shaped_key = ShapingCacheKey::new(&span.text, font_size);
+                                    let shaped_key = ShapingCacheKey::new(
+                                        &span.text,
+                                        font_size,
+                                        req.font_family,
+                                        req.font_style,
+                                        font_weight,
+                                    );
                                     let shaped_text = shaping_cache
                                         .entry(shaped_key)
                                         .or_insert_with(|| {
                                             time_cost!(
                                                 "TextPipelineV2::prepare - ShapeText",
                                                 || {
-                                                    shape_text(rasterizer, &span.text, font_size)
+                                                    shape_text_styled(
+                                                        rasterizer,
+                                                        &span.text,
+                                                        font_size,
+                                                        req.font_family,
+                                                        FontWeight::Value(u32::from(font_weight)),
+                                                        req.font_style,
+                                                    )
                                                 }
                                             )
                                         });
@@ -1245,7 +1318,46 @@ impl TextPipelineV2 {
 
 #[cfg(test)]
 mod tests {
-    use super::TextDecorationDraw;
+    use aimer_font::{FontFamily, FontStyle, FontWeight};
+
+    use super::{LayoutCacheKey, ShapingCacheKey, TextDecorationDraw};
+
+    #[test]
+    fn text_cache_keys_isolate_font_families_and_variants() {
+        let sans_layout = LayoutCacheKey::new(
+            "same",
+            16.0,
+            100.0,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+        let mono_layout = LayoutCacheKey::new(
+            "same",
+            16.0,
+            100.0,
+            FontFamily::MONOSPACE,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+        assert_ne!(sans_layout, mono_layout);
+
+        let normal_shape = ShapingCacheKey::new(
+            "same",
+            16.0,
+            FontFamily::MONOSPACE,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+        let italic_shape = ShapingCacheKey::new(
+            "same",
+            16.0,
+            FontFamily::MONOSPACE,
+            FontStyle::Italic,
+            FontWeight::Normal.numeric(),
+        );
+        assert_ne!(normal_shape, italic_shape);
+    }
 
     // Guards the CPU->GPU packing of a decoration line: `params` must be
     // [style_id, thickness, period, band_height] and geometry must map to the
