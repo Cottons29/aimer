@@ -214,7 +214,7 @@ impl Renderer {
                     self.transform_stack
                         .push(current_transform);
                     alpha_state.save();
-                    current_transform = *matrix;
+                    current_transform = matrix.pixel_aligned();
                 }
                 DrawCommand::PopTransform => {
                     if let Some(prev) = self.transform_stack.pop() {
@@ -462,7 +462,7 @@ impl Renderer {
                         .push(ResolvedCmd { kind: ResolvedKind::TextDecoration(deco_idx) });
                 }
                 DrawCommand::SetTransform { matrix } => {
-                    current_transform = *matrix;
+                    current_transform = matrix.pixel_aligned();
                 }
                 DrawCommand::SetAlpha { alpha } => {
                     alpha_state.set(*alpha);
