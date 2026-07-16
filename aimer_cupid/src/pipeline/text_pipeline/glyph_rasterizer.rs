@@ -500,6 +500,8 @@ pub struct GlyphRasterizer {
 }
 
 impl GlyphRasterizer {
+    const BITMAP_CACHE_CAPACITY_BYTES: usize = 8 * 1024 * 1024;
+
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let primary = primary_font_record();
@@ -736,6 +738,7 @@ impl GlyphRasterizer {
                 }
             });
 
+            self.make_bitmap_capacity_for(glyph.bitmap.capacity());
             self.advance_cache
                 .insert(key, glyph.advance_width);
             self.cache.insert(key, glyph);
@@ -744,6 +747,56 @@ impl GlyphRasterizer {
         self.cache
             .get(&key)
             .expect("glyph was just inserted")
+    }
+
+    pub fn rasterize_bitmap_key(&mut self, key: GlyphKey, font_size: f32) -> &RasterizedGlyph {
+        if self
+            .cache
+            .get(&key)
+            .is_some_and(|glyph| glyph.width > 0 && glyph.height > 0 && glyph.bitmap.is_empty())
+        {
+            self.cache.remove(&key);
+        }
+        self.rasterize_key(key, font_size)
+    }
+
+    pub fn release_bitmap(&mut self, key: GlyphKey) {
+        if let Some(glyph) = self.cache.get_mut(&key) {
+            glyph.bitmap.clear();
+            glyph.bitmap.shrink_to_fit();
+        }
+    }
+
+    fn make_bitmap_capacity_for(&mut self, incoming_bytes: usize) {
+        let mut retained_bytes = self.bitmap_cache_bytes();
+        if retained_bytes.saturating_add(incoming_bytes) <= Self::BITMAP_CACHE_CAPACITY_BYTES {
+            return;
+        }
+
+        for glyph in self.cache.values_mut() {
+            retained_bytes = retained_bytes.saturating_sub(glyph.bitmap.capacity());
+            glyph.bitmap.clear();
+            glyph.bitmap.shrink_to_fit();
+            if retained_bytes.saturating_add(incoming_bytes) <= Self::BITMAP_CACHE_CAPACITY_BYTES {
+                break;
+            }
+        }
+    }
+
+    pub fn bitmap_cache_bytes(&self) -> usize {
+        self.cache
+            .values()
+            .map(|glyph| glyph.bitmap.capacity())
+            .sum()
+    }
+
+    pub fn cached_glyph_count(&self) -> usize {
+        self.cache.len()
+    }
+
+    #[cfg(test)]
+    fn cached_glyph(&self, key: GlyphKey) -> Option<&RasterizedGlyph> {
+        self.cache.get(&key)
     }
 
     pub fn glyph_metrics_for_key(&mut self, key: GlyphKey, font_size: f32) -> RasterizedGlyph {
@@ -760,7 +813,7 @@ impl GlyphRasterizer {
 
             let key = self.glyph_key_for_codepoint(c, font_size);
             let glyph = self
-                .rasterize_key(key, font_size)
+                .rasterize_bitmap_key(key, font_size)
                 .clone();
             glyphs.push((key, glyph));
         }
@@ -1237,5 +1290,52 @@ mod tests {
                 "'😀' bitmap must be RGBA8 (4 bytes per pixel)"
             );
         }
+    }
+
+    #[test]
+    fn uploaded_glyph_bitmap_can_be_released_without_losing_metrics() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let key = rasterizer.glyph_key_for_codepoint('A', 24.0);
+        let expected = rasterizer
+            .rasterize_key(key, 24.0)
+            .clone();
+        assert!(!expected.bitmap.is_empty());
+
+        rasterizer.release_bitmap(key);
+
+        let cached = rasterizer
+            .cached_glyph(key)
+            .unwrap();
+        assert!(cached.bitmap.is_empty());
+        assert_eq!(cached.width, expected.width);
+        assert_eq!(cached.height, expected.height);
+        assert_eq!(cached.advance_width, expected.advance_width);
+    }
+
+    #[test]
+    fn bitmap_cache_pruning_keeps_metrics_and_releases_pixel_capacity() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let key = GlyphKey::new(rasterizer.primary_font_id(), 1, 16.0);
+        rasterizer.cache.insert(
+            key,
+            RasterizedGlyph {
+                bitmap: vec![255; 1024],
+                width: 32,
+                height: 32,
+                offset_x: 1.0,
+                offset_y: 2.0,
+                advance_width: 12.0,
+                is_color: false,
+            },
+        );
+
+        rasterizer.make_bitmap_capacity_for(GlyphRasterizer::BITMAP_CACHE_CAPACITY_BYTES);
+
+        let cached = rasterizer
+            .cached_glyph(key)
+            .unwrap();
+        assert!(cached.bitmap.is_empty());
+        assert_eq!((cached.width, cached.height), (32, 32));
+        assert_eq!(cached.advance_width, 12.0);
     }
 }

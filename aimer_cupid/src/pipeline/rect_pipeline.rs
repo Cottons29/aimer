@@ -1,5 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 
+use super::image_pipeline::InstanceBufferPolicy;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct RectInstance {
@@ -59,7 +61,7 @@ pub struct RectPipeline {
     viewport_buffer: wgpu::Buffer,
     viewport_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
-    instance_capacity: usize,
+    instance_policy: InstanceBufferPolicy,
     instances: Vec<RectInstance>,
     /// Number of instances already written to `instance_buffer` during the
     /// current frame. The pipeline may be flushed multiple times per frame
@@ -144,7 +146,7 @@ impl RectPipeline {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: crate::pipeline::multisample_state(),
             multiview_mask: None,
             cache: pipeline_cache,
         });
@@ -161,7 +163,7 @@ impl RectPipeline {
             viewport_buffer,
             viewport_bind_group,
             instance_buffer,
-            instance_capacity: Self::INITIAL_CAPACITY,
+            instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
             instances: Vec::new(),
             frame_instance_offset: 0,
         }
@@ -175,6 +177,25 @@ impl RectPipeline {
         self.instances.clear();
         // A fresh frame starts writing at the beginning of the instance buffer.
         self.frame_instance_offset = 0;
+    }
+
+    pub fn begin_frame(&mut self, device: &wgpu::Device) {
+        let previous_capacity = self.instance_policy.capacity();
+        self.instance_policy
+            .record_usage(self.frame_instance_offset);
+        if self.instance_policy.capacity() != previous_capacity {
+            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rect instance buffer (resized)"),
+                size: (self.instance_policy.capacity() * size_of::<RectInstance>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+        self.clear();
+    }
+
+    pub fn instance_buffer_bytes(&self) -> u64 {
+        (self.instance_policy.capacity() * size_of::<RectInstance>()) as u64
     }
 
     pub fn flush(
@@ -215,11 +236,12 @@ impl RectPipeline {
         // fit. Allocating a new buffer is safe mid-frame: previously recorded
         // draws keep a reference to the old buffer (with their data intact),
         // while this and subsequent batches use the new one.
-        if required > self.instance_capacity {
-            self.instance_capacity = required.next_power_of_two();
+        if required > self.instance_policy.capacity() {
+            self.instance_policy
+                .grow_to_fit(required);
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("rect instance buffer"),
-                size: (self.instance_capacity * stride) as u64,
+                size: (self.instance_policy.capacity() * stride) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });

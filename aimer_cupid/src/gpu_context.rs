@@ -1,4 +1,6 @@
-use aimer_utils::{debug, error, info, warn};
+#[cfg(target_arch = "wasm32")]
+use aimer_utils::warn;
+use aimer_utils::{debug, error, info};
 use wgpu::{
     Device, Instance, Limits, Queue, Surface, SurfaceColorSpace, SurfaceConfiguration,
     SurfaceTexture, TextureFormat,

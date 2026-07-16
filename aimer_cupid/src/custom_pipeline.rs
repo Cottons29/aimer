@@ -7,6 +7,9 @@ pub struct RenderContext<'a> {
     pub height: u32,
     pub is_srgb: bool,
     pub format: wgpu::TextureFormat,
+    /// Sample count used by the renderer's color attachment. Custom render
+    /// pipelines must use the same count.
+    pub sample_count: u32,
 }
 
 /// Trait for user-defined render pipelines that can be plugged into the main
@@ -59,7 +62,8 @@ pub trait CustomPipeline: Send + 'static {
     fn prepare(&mut self, ctx: &RenderContext);
 
     /// Called during the render pass to issue draw calls.
-    /// The render pass already has the correct color attachment set up.
+    /// The render pass already has the correct color attachment set up. The
+    /// render pipeline must use `RenderContext::sample_count`.
     fn render<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>);
 
     /// Whether this pipeline has any work to do this frame.

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use aimer_utils::time_cost;
 use bytemuck::{Pod, Zeroable};
 
+use crate::pipeline::image_pipeline::InstanceBufferPolicy;
 use crate::text_pipeline::glyph_atlas::{AtlasRegion, ColorGlyphAtlas, GlyphAtlas};
 use crate::text_pipeline::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
 use crate::text_pipeline::text_layout::{
@@ -241,19 +242,19 @@ pub struct TextPipelineV2 {
     color_bind_group: wgpu::BindGroup,
     sampler: wgpu::Sampler,
     instance_buffer: wgpu::Buffer,
-    instance_capacity: usize,
+    instance_policy: InstanceBufferPolicy,
     instances: Vec<GlyphInstance>,
     /// Sibling buffer + scratch list for color glyph quads (drawn in a second
     /// pass after the alpha glyphs so they layer on top of the same line).
     color_instance_buffer: wgpu::Buffer,
-    color_instance_capacity: usize,
+    color_instance_policy: InstanceBufferPolicy,
     color_instances: Vec<GlyphInstance>,
     /// Decoration-line pipeline + its own instance list/buffer. Decoration
     /// quads are drawn after the glyphs (see `render`) so lines layer with
     /// their text.
     decoration_pipeline: wgpu::RenderPipeline,
     decoration_instance_buffer: wgpu::Buffer,
-    decoration_instance_capacity: usize,
+    decoration_instance_policy: InstanceBufferPolicy,
     decoration_instances: Vec<DecorationInstance>,
     /// Track atlas generation to only rebuild bind group when atlas texture
     /// changes.
@@ -402,7 +403,7 @@ impl TextPipelineV2 {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: crate::pipeline::multisample_state(),
             multiview_mask: None,
             cache: pipeline_cache,
         });
@@ -431,7 +432,7 @@ impl TextPipelineV2 {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: crate::pipeline::multisample_state(),
             multiview_mask: None,
             cache: pipeline_cache,
         });
@@ -460,7 +461,7 @@ impl TextPipelineV2 {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: crate::pipeline::multisample_state(),
             multiview_mask: None,
             cache: pipeline_cache,
         });
@@ -498,14 +499,14 @@ impl TextPipelineV2 {
             color_bind_group,
             sampler,
             instance_buffer,
-            instance_capacity: Self::INITIAL_CAPACITY,
+            instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
             instances: Vec::new(),
             color_instance_buffer,
-            color_instance_capacity: Self::INITIAL_CAPACITY,
+            color_instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
             color_instances: Vec::new(),
             decoration_pipeline,
             decoration_instance_buffer,
-            decoration_instance_capacity: Self::INITIAL_CAPACITY,
+            decoration_instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
             decoration_instances: Vec::new(),
             atlas_generation: 0,
             color_atlas_generation: 0,
@@ -560,6 +561,7 @@ impl TextPipelineV2 {
                 glyph.height,
                 &glyph.bitmap,
             );
+            self.rasterizer.release_bitmap(key);
         }
 
         self.flush_atlas(device, queue);
@@ -661,6 +663,7 @@ impl TextPipelineV2 {
                     glyph.height,
                     &glyph.bitmap,
                 );
+                self.rasterizer.release_bitmap(key);
             }
         }
 
@@ -743,16 +746,18 @@ impl TextPipelineV2 {
                 {
                     let rg = self
                         .rasterizer
-                        .rasterize_key(key, glyph_font_size);
+                        .rasterize_bitmap_key(key, glyph_font_size);
                     self.color_atlas
                         .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
+                    self.rasterizer.release_bitmap(key);
                 }
             } else if self.atlas.get(&key).is_none() {
                 let rg = self
                     .rasterizer
-                    .rasterize_key(key, glyph_font_size);
+                    .rasterize_bitmap_key(key, glyph_font_size);
                 self.atlas
                     .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
+                self.rasterizer.release_bitmap(key);
             }
         }
     }
@@ -923,10 +928,12 @@ impl TextPipelineV2 {
                                 // Cache hit on the rasterizer side — instant.
                                 let rg = self
                                     .rasterizer
-                                    .rasterize_key(key, pg.font_size);
-                                self.color_atlas.get_or_insert(
+                                    .rasterize_bitmap_key(key, pg.font_size);
+                                let region = self.color_atlas.get_or_insert(
                                     device, queue, key, rg.width, rg.height, &rg.bitmap,
-                                )
+                                );
+                                self.rasterizer.release_bitmap(key);
+                                region
                             };
                             (region, true)
                         } else {
@@ -935,10 +942,12 @@ impl TextPipelineV2 {
                             } else {
                                 let rg = self
                                     .rasterizer
-                                    .rasterize_key(key, pg.font_size);
-                                self.atlas.get_or_insert(
+                                    .rasterize_bitmap_key(key, pg.font_size);
+                                let region = self.atlas.get_or_insert(
                                     device, queue, key, rg.width, rg.height, &rg.bitmap,
-                                )
+                                );
+                                self.rasterizer.release_bitmap(key);
+                                region
                             };
                             (region, false)
                         };
@@ -1074,43 +1083,55 @@ impl TextPipelineV2 {
             );
         }
 
-        // Grow alpha instance buffer if needed.
-        if self.instances.len() > self.instance_capacity {
-            self.instance_capacity = self
-                .instances
-                .len()
-                .next_power_of_two();
+        let previous_capacity = self.instance_policy.capacity();
+        self.instance_policy
+            .record_usage(self.instances.len());
+        if self.instance_policy.capacity() != previous_capacity {
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("text instance buffer"),
-                size: (self.instance_capacity * size_of::<GlyphInstance>()) as u64,
+                size: (self.instance_policy.capacity() * size_of::<GlyphInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
 
-        // Grow color instance buffer if needed.
-        if self.color_instances.len() > self.color_instance_capacity {
-            self.color_instance_capacity = self
-                .color_instances
-                .len()
-                .next_power_of_two();
+        let previous_color_capacity = self
+            .color_instance_policy
+            .capacity();
+        self.color_instance_policy
+            .record_usage(self.color_instances.len());
+        if self
+            .color_instance_policy
+            .capacity()
+            != previous_color_capacity
+        {
             self.color_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("text color instance buffer"),
-                size: (self.color_instance_capacity * size_of::<GlyphInstance>()) as u64,
+                size: (self
+                    .color_instance_policy
+                    .capacity()
+                    * size_of::<GlyphInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
 
-        // Grow decoration instance buffer if needed.
-        if self.decoration_instances.len() > self.decoration_instance_capacity {
-            self.decoration_instance_capacity = self
-                .decoration_instances
-                .len()
-                .next_power_of_two();
+        let previous_decoration_capacity = self
+            .decoration_instance_policy
+            .capacity();
+        self.decoration_instance_policy
+            .record_usage(self.decoration_instances.len());
+        if self
+            .decoration_instance_policy
+            .capacity()
+            != previous_decoration_capacity
+        {
             self.decoration_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("text decoration instance buffer"),
-                size: (self.decoration_instance_capacity * size_of::<DecorationInstance>()) as u64,
+                size: (self
+                    .decoration_instance_policy
+                    .capacity()
+                    * size_of::<DecorationInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -1137,6 +1158,32 @@ impl TextPipelineV2 {
                 bytemuck::cast_slice(&self.decoration_instances),
             );
         }
+    }
+
+    pub fn instance_buffer_bytes(&self) -> u64 {
+        (self.instance_policy.capacity() * size_of::<GlyphInstance>()) as u64
+            + (self
+                .color_instance_policy
+                .capacity()
+                * size_of::<GlyphInstance>()) as u64
+            + (self
+                .decoration_instance_policy
+                .capacity()
+                * size_of::<DecorationInstance>()) as u64
+    }
+
+    pub fn glyph_bitmap_cache_bytes(&self) -> usize {
+        self.rasterizer
+            .bitmap_cache_bytes()
+    }
+
+    pub fn glyph_atlas_bytes(&self) -> u64 {
+        self.atlas.memory_bytes() + self.color_atlas.memory_bytes()
+    }
+
+    pub fn cached_glyph_count(&self) -> usize {
+        self.rasterizer
+            .cached_glyph_count()
     }
 
     /// Draw a single text request's glyphs at the current point in the render
