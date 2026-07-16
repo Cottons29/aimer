@@ -1,15 +1,18 @@
+use std::ops::Range;
 use std::rc::Rc;
 
-use aimer_style::{FontStyle, FontWeight, TextDecoration, TextStyle};
+use aimer_style::{FontFamily, FontStyle, FontWeight, TextDecoration, TextStyle};
 use aimer_widget::base::Color;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Default)]
 pub struct SpanStyle {
     pub font_size: Option<u32>,
+    pub font_family: Option<FontFamily>,
     pub font_style: Option<FontStyle>,
     pub font_weight: Option<FontWeight>,
     pub color: Option<Color>,
+    pub background_color: Option<Color>,
     pub text_decoration: Option<TextDecoration>,
 }
 
@@ -17,15 +20,22 @@ impl SpanStyle {
     pub const fn new() -> Self {
         Self {
             font_size: None,
+            font_family: None,
             font_style: None,
             font_weight: None,
             color: None,
+            background_color: None,
             text_decoration: None,
         }
     }
 
     pub const fn font_size(mut self, font_size: u32) -> Self {
         self.font_size = Some(font_size);
+        self
+    }
+
+    pub const fn font_family(mut self, font_family: FontFamily) -> Self {
+        self.font_family = Some(font_family);
         self
     }
 
@@ -44,6 +54,12 @@ impl SpanStyle {
         self
     }
 
+    /// Overrides the inherited inline background without affecting layout.
+    pub const fn background_color(mut self, background_color: Color) -> Self {
+        self.background_color = Some(background_color);
+        self
+    }
+
     pub const fn text_decoration(mut self, text_decoration: TextDecoration) -> Self {
         self.text_decoration = Some(text_decoration);
         self
@@ -54,6 +70,9 @@ impl SpanStyle {
             font_size: self
                 .font_size
                 .unwrap_or(inherited.font_size),
+            font_family: self
+                .font_family
+                .unwrap_or(inherited.font_family),
             font_style: self
                 .font_style
                 .unwrap_or(inherited.font_style),
@@ -63,6 +82,9 @@ impl SpanStyle {
             color: self
                 .color
                 .unwrap_or(inherited.color),
+            background_color: self
+                .background_color
+                .or(inherited.background_color),
             text_overflow: inherited.text_overflow,
             text_decoration: self
                 .text_decoration
@@ -155,6 +177,7 @@ pub(crate) struct SpanLayout {
 pub(crate) struct SpanLayoutFragment {
     pub span_index: usize,
     pub text: String,
+    pub source_range: Option<Range<usize>>,
     pub line: usize,
     pub x: f32,
     pub width: f32,
@@ -168,9 +191,12 @@ pub(crate) fn layout_resolved_spans(
     let mut fragments: Vec<SpanLayoutFragment> = Vec::new();
     let mut line = 0;
     let mut x = 0.0;
+    let mut span_start = 0;
 
     for (span_index, span) in spans.iter().enumerate() {
-        for grapheme in span.text.graphemes(true) {
+        for (grapheme_start, grapheme) in span.text.grapheme_indices(true) {
+            let source_range =
+                span_start + grapheme_start..span_start + grapheme_start + grapheme.len();
             if grapheme == "\n" {
                 line += 1;
                 x = 0.0;
@@ -189,10 +215,15 @@ pub(crate) fn layout_resolved_spans(
             {
                 last.text.push_str(grapheme);
                 last.width += width;
+                last.source_range
+                    .as_mut()
+                    .expect("source text fragments have a range")
+                    .end = source_range.end;
             } else {
                 fragments.push(SpanLayoutFragment {
                     span_index,
                     text: grapheme.to_owned(),
+                    source_range: Some(source_range),
                     line,
                     x,
                     width,
@@ -200,6 +231,7 @@ pub(crate) fn layout_resolved_spans(
             }
             x += width;
         }
+        span_start += span.text.len();
     }
 
     SpanLayout { fragments, line_count: line + 1 }
@@ -242,6 +274,9 @@ pub(crate) fn ellipsize_first_line(
         {
             last.text.truncate(start);
             last.width -= measure(&grapheme, &spans[last.span_index].style);
+            if let Some(source_range) = &mut last.source_range {
+                source_range.end -= grapheme.len();
+            }
         }
         if last.text.is_empty() {
             layout.fragments.pop();
@@ -257,6 +292,7 @@ pub(crate) fn ellipsize_first_line(
             .push(SpanLayoutFragment {
                 span_index,
                 text: "…".to_owned(),
+                source_range: None,
                 line: 0,
                 x: 0.0,
                 width: ellipsis_width,
@@ -267,7 +303,7 @@ pub(crate) fn ellipsize_first_line(
 
 #[cfg(test)]
 mod tests {
-    use aimer_style::{FontWeight, TextStyle};
+    use aimer_style::{FontFamily, FontWeight, TextStyle};
     use aimer_widget::base::Color;
 
     use super::*;
@@ -302,6 +338,38 @@ mod tests {
     }
 
     #[test]
+    fn nested_spans_inherit_and_override_font_family() {
+        let custom = FontFamily::MONOSPACE;
+        let flattened = TextSpan::new("parent")
+            .style(SpanStyle::new().font_family(custom))
+            .children([
+                TextSpan::new(" inherited"),
+                TextSpan::new(" sans").style(SpanStyle::new().font_family(FontFamily::SANS_SERIF)),
+            ])
+            .flatten(&TextStyle::default());
+
+        assert_eq!(flattened[0].style.font_family, custom);
+        assert_eq!(flattened[1].style.font_family, custom);
+        assert_eq!(flattened[2].style.font_family, FontFamily::SANS_SERIF);
+    }
+
+    #[test]
+    fn nested_spans_inherit_and_override_background_color() {
+        let flattened = TextSpan::new("parent")
+            .style(SpanStyle::new().background_color(Color::RED))
+            .children([
+                TextSpan::new(" inherited"),
+                TextSpan::new(" blue").style(SpanStyle::new().background_color(Color::BLUE)),
+            ])
+            .flatten(&TextStyle::default());
+
+        assert_eq!(flattened[0].style.background_color, Some(Color::RED));
+        assert_eq!(flattened[1].style.background_color, Some(Color::RED));
+        assert_eq!(flattened[2].style.background_color, Some(Color::BLUE));
+        assert_eq!(TextStyle::default().background_color, None);
+    }
+
+    #[test]
     fn link_target_is_inherited_by_nested_text() {
         let root = TextSpan::root([TextSpan::new("")
             .link("https://aimer.dev")
@@ -318,6 +386,33 @@ mod tests {
                 .iter()
                 .all(|span| span.link.as_deref() == Some("https://aimer.dev"))
         );
+    }
+
+    #[test]
+    fn layout_fragments_retain_global_unicode_source_ranges_across_spans() {
+        let spans = vec![
+            ResolvedTextSpan::plain(Rc::from("aé"), TextStyle::default()),
+            ResolvedTextSpan::plain(Rc::from("👩‍💻b"), TextStyle::default()),
+        ];
+
+        let layout = layout_resolved_spans(&spans, 2.0, |_, _| 1.0);
+
+        assert_eq!(layout.fragments.len(), 2);
+        assert_eq!(layout.fragments[0].text, "aé");
+        assert_eq!(layout.fragments[0].source_range, Some(0..3));
+        assert_eq!(layout.fragments[1].text, "👩‍💻b");
+        assert_eq!(layout.fragments[1].source_range, Some(3..15));
+    }
+
+    #[test]
+    fn source_ranges_include_explicit_newlines_between_visible_fragments() {
+        let spans = vec![ResolvedTextSpan::plain(Rc::from("first\nsecond"), TextStyle::default())];
+
+        let layout = layout_resolved_spans(&spans, 0.0, |text, _| text.len() as f32);
+
+        assert_eq!(layout.fragments.len(), 2);
+        assert_eq!(layout.fragments[0].source_range, Some(0..5));
+        assert_eq!(layout.fragments[1].source_range, Some(6..12));
     }
 
     #[test]

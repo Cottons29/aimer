@@ -13,6 +13,11 @@ aimer_events.workspace = true
 aimer_utils.workspace = true
 unicode-segmentation.workspace = true
 
+[dev-dependencies]
+aimer_canvas.workspace = true
+aimer_cupid.workspace = true
+winit.workspace = true
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["rt"] }
 
