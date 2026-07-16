@@ -1,39 +1,5 @@
 use aimer_color::prelude::{Color, Colors};
-
-#[allow(dead_code)]
-#[derive(Default, Clone, Copy)]
-pub enum FontStyle {
-    #[default]
-    Normal,
-    Italic,
-    Oblique,
-    ObliqueDeg(i32),
-}
-#[allow(dead_code)]
-#[derive(Default, Clone, Copy)]
-pub enum FontWeight {
-    VeryThin,
-    Thin,
-    #[default]
-    Normal,
-    Bold,
-    Bolder,
-    Value(u32),
-}
-
-impl FontWeight {
-    /// Numeric CSS-style weight (100–900). 400 is normal, 700 is bold.
-    pub fn numeric(self) -> u16 {
-        match self {
-            FontWeight::VeryThin => 100,
-            FontWeight::Thin => 300,
-            FontWeight::Normal => 400,
-            FontWeight::Bold => 700,
-            FontWeight::Bolder => 900,
-            FontWeight::Value(v) => v.clamp(1, 1000) as u16,
-        }
-    }
-}
+pub use aimer_font::{FontFamily, FontStyle, FontWeight};
 
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy)]
@@ -233,9 +199,11 @@ pub enum TextAlign {
 #[derive(Clone, Copy)]
 pub struct TextStyle {
     pub font_size: u32,
+    pub font_family: FontFamily,
     pub font_style: FontStyle,
     pub font_weight: FontWeight,
     pub color: Color,
+    pub background_color: Option<Color>,
     pub text_overflow: TextOverflow,
     pub text_decoration: TextDecoration,
 }
@@ -249,6 +217,11 @@ impl TextStyle {
 
     pub fn font_size(mut self, font_size: u32) -> Self {
         self.font_size = font_size;
+        self
+    }
+
+    pub const fn font_family(mut self, font_family: FontFamily) -> Self {
+        self.font_family = font_family;
         self
     }
 
@@ -267,6 +240,13 @@ impl TextStyle {
         self
     }
 
+    /// Sets an inherited inline background. It does not add padding or change
+    /// text metrics; transparent colors are not painted.
+    pub const fn background_color(mut self, color: Color) -> Self {
+        self.background_color = Some(color);
+        self
+    }
+
     pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
         self.text_overflow = text_overflow;
         self
@@ -282,9 +262,11 @@ impl Default for TextStyle {
     fn default() -> Self {
         Self {
             font_size: 13,
+            font_family: FontFamily::SANS_SERIF,
             font_style: FontStyle::Normal,
             font_weight: FontWeight::Normal,
             color: Colors::Black.into(),
+            background_color: None,
             text_overflow: TextOverflow::Clip,
             text_decoration: TextDecoration::None,
         }
@@ -303,7 +285,15 @@ pub enum TextOverflow {
 
 #[cfg(test)]
 mod tests {
-    use super::{FontWeight, TextDecorationLine};
+    use super::{FontFamily, FontWeight, TextDecorationLine, TextStyle};
+
+    #[test]
+    fn text_style_selects_a_font_family() {
+        let style = TextStyle::new().font_family(FontFamily::MONOSPACE);
+
+        assert_eq!(style.font_family, FontFamily::MONOSPACE);
+        assert_eq!(TextStyle::default().font_family, FontFamily::SANS_SERIF);
+    }
 
     // Guards the ITALIC bit: it must combine with real lines (e.g. underline)
     // without colliding, since the text widget reads it via `contains` to decide
