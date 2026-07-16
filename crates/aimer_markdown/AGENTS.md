@@ -26,3 +26,90 @@ AimerMarkdown is a Rust library that provides a set of tools for render the Mark
 - [ ] Parse Markdown into an internal document tree.
 - [ ] Map block nodes to Aimer layout widgets and inline nodes to rich-text spans.
 - [ ] Add a configurable theme, link callback, image resolver, and selectable/copyable code blocks.
+
+# Main Markdown Syntax Reference
+
+````
+
+
+
+# Headings
+# H1
+## H2
+### H3
+#### H4
+##### H5
+###### H6
+
+# Emphasis
+*italic* or _italic_
+**bold** or __bold__
+***bold italic***
+~~strikethrough~~
+
+# Lists
+- Unordered item
+* Also unordered
++ Also unordered
+1. Ordered item
+2. Ordered item
+
+# Task Lists
+- [x] Completed task
+- [ ] Incomplete task
+
+# Links
+[link text](https://example.com)
+[link text](https://example.com "optional title")
+<https://example.com>  (autolink)
+
+# Images
+![alt text](image.jpg)
+![alt text](image.jpg "optional title")
+
+# Blockquotes
+> This is a quote
+>> Nested quote
+
+# Code
+`inline code`
+
+```
+fenced code block
+```
+
+```python
+# fenced code block with syntax highlighting
+```
+
+    indented code block (4 spaces)
+
+# Horizontal Rule
+---
+***
+___
+
+# Line Breaks
+Paragraph one.
+
+Paragraph two (blank line = new paragraph).
+
+Line one  
+Line two (two trailing spaces = line break)
+
+# Tables
+| Header 1 | Header 2 |
+|----------|----------|
+| Cell 1   | Cell 2   |
+| Cell 3   | Cell 4   |
+
+# Footnotes
+Here is a footnote reference[^1].
+
+[^1]: Footnote text.
+
+# Escaping Characters
+\* not italic \*
+
+
+````
