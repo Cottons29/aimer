@@ -59,7 +59,16 @@ impl Drawable for RawTextWidget {
             if matches!(self.text_style.text_overflow, TextOverflow::Wrap) { width } else { 0.0 };
         let metrics = ctx
             .canvas
-            .measure_text_metrics(&self.text, font_size, max_width);
+            .measure_text_metrics_styled(
+                &self.text,
+                font_size,
+                max_width,
+                self.text_style.font_family,
+                self.text_style.font_style,
+                self.text_style
+                    .font_weight
+                    .numeric(),
+            );
         let text_width = metrics.width;
         let ascent = metrics.ascent;
         let descent = -metrics.descent;
@@ -103,42 +112,58 @@ impl Drawable for RawTextWidget {
                 let width = ctx.parent_size.width;
                 ctx.canvas
                     .set_clip((0.0, 0.0).into(), ResolvedSize { width, height });
-                ctx.canvas.draw_text_wrapped(
-                    &self.text,
-                    (x, y).into(),
-                    font_size,
-                    color,
-                    width,
-                    font_weight,
-                );
+                ctx.canvas
+                    .draw_text_wrapped_styled(
+                        &self.text,
+                        (x, y).into(),
+                        font_size,
+                        color,
+                        width,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
+                        font_weight,
+                    );
                 ctx.canvas.clear_clip();
                 ctx.canvas.restore();
             }
             TextOverflow::Ellipsis => {
-                ctx.canvas.draw_text_with_overflow(
-                    &self.text,
-                    (x, y).into(),
-                    font_size,
-                    color,
-                    width,
-                    height,
-                    TextOverflowMode::Ellipsis,
-                    font_weight,
-                );
+                ctx.canvas
+                    .draw_text_with_overflow_styled(
+                        &self.text,
+                        (x, y).into(),
+                        font_size,
+                        color,
+                        width,
+                        height,
+                        TextOverflowMode::Ellipsis,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
+                        font_weight,
+                    );
             }
             TextOverflow::Wrap => {
-                ctx.canvas.draw_text_wrapped(
+                ctx.canvas
+                    .draw_text_wrapped_styled(
+                        &self.text,
+                        (x, y).into(),
+                        font_size,
+                        color,
+                        width,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
+                        font_weight,
+                    );
+            }
+            _ => {
+                ctx.canvas.draw_text_styled(
                     &self.text,
                     (x, y).into(),
                     font_size,
                     color,
-                    width,
+                    self.text_style.font_family,
+                    self.text_style.font_style,
                     font_weight,
                 );
-            }
-            _ => {
-                ctx.canvas
-                    .draw_text(&self.text, (x, y).into(), font_size, color, font_weight);
             }
         }
 
@@ -230,14 +255,32 @@ impl LayoutElement for RawTextWidget {
                 };
                 let metrics = ctx
                     .canvas
-                    .measure_text_metrics(&self.text, font_size, width);
+                    .measure_text_metrics_styled(
+                        &self.text,
+                        font_size,
+                        width,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
+                        self.text_style
+                            .font_weight
+                            .numeric(),
+                    );
 
                 ResolvedSize { width, height: metrics.height.ceil() }
             }
             _ => {
                 let metrics = ctx
                     .canvas
-                    .measure_text_metrics(&self.text, font_size, 0.0);
+                    .measure_text_metrics_styled(
+                        &self.text,
+                        font_size,
+                        0.0,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
+                        self.text_style
+                            .font_weight
+                            .numeric(),
+                    );
                 ResolvedSize { width: metrics.width.ceil(), height: metrics.height.ceil() }
             }
         };
