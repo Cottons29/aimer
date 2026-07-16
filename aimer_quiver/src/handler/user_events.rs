@@ -53,7 +53,7 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
         }
         AimerCustomAppEvent::FrameReady => {
             if let Some(window) = &app.window {
-                println!("FrameReady");
+                // println!("FrameReady");
                 // const SETTLE_FRAMES: u8 = 3;
                 // app.start_up_frames.set(
                 //     app.start_up_frames
