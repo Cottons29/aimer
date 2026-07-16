@@ -5,6 +5,7 @@ use aimer_cupid::canvas::CupidCanvas;
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 use aimer_cupid::text_pipeline::TextOverflowMode;
 use aimer_cupid::utilities::Color as CupidColor;
+use aimer_font::{FontFamily, FontStyle};
 use std::sync::Arc;
 
 use crate::canvas::CanvasRendering;
@@ -119,6 +120,30 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
+    fn draw_text_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        CupidCanvas::draw_text_styled(
+            self,
+            pos.x,
+            pos.y,
+            text,
+            font_size,
+            CupidColor::from(color),
+            font_family,
+            font_style,
+            font_weight,
+        );
+    }
+
+    #[inline]
     fn draw_text_wrapped(
         &self,
         text: &str,
@@ -136,6 +161,32 @@ impl CanvasRendering for CupidCanvas {
             font_size,
             CupidColor::from(color),
             max_width,
+            font_weight,
+        );
+    }
+
+    #[inline]
+    fn draw_text_wrapped_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        CupidCanvas::draw_text_wrapped_styled(
+            self,
+            pos.x,
+            pos.y,
+            text,
+            font_size,
+            CupidColor::from(color),
+            max_width,
+            font_family,
+            font_style,
             font_weight,
         );
     }
@@ -162,6 +213,36 @@ impl CanvasRendering for CupidCanvas {
             bounds_width,
             bounds_height,
             overflow,
+            font_weight,
+        );
+    }
+
+    #[inline]
+    fn draw_text_with_overflow_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        CupidCanvas::draw_text_with_overflow_styled(
+            self,
+            pos.x,
+            pos.y,
+            text,
+            font_size,
+            CupidColor::from(color),
+            bounds_width,
+            bounds_height,
+            overflow,
+            font_family,
+            font_style,
             font_weight,
         );
     }
@@ -208,6 +289,25 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
+    fn measure_text_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> f32 {
+        CupidCanvas::measure_text_styled(
+            self,
+            text,
+            font_size,
+            font_family,
+            font_style,
+            font_weight,
+        )
+    }
+
+    #[inline]
     fn measure_text_metrics(
         &self,
         text: &str,
@@ -215,6 +315,27 @@ impl CanvasRendering for CupidCanvas {
         max_width: f32,
     ) -> crate::canvas::TextMetrics {
         CupidCanvas::measure_text_metrics(self, text, font_size, max_width)
+    }
+
+    #[inline]
+    fn measure_text_metrics_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> crate::canvas::TextMetrics {
+        CupidCanvas::measure_text_metrics_styled(
+            self,
+            text,
+            font_size,
+            max_width,
+            font_family,
+            font_style,
+            font_weight,
+        )
     }
 
     #[inline]

@@ -4,6 +4,7 @@ use aimer_color::prelude::Color;
 pub use aimer_cupid::canvas::TextMetrics;
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 pub use aimer_cupid::text_pipeline::TextOverflowMode;
+use aimer_font::{FontFamily, FontStyle};
 use std::sync::Arc;
 mod native_impl;
 
@@ -39,6 +40,20 @@ pub trait CanvasRendering: Clone {
     fn restore(&self);
     fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16);
     #[allow(clippy::too_many_arguments)]
+    fn draw_text_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        let _ = (font_family, font_style);
+        self.draw_text(text, pos, font_size, color, font_weight);
+    }
+    #[allow(clippy::too_many_arguments)]
     fn draw_text_wrapped(
         &self,
         text: &str,
@@ -48,6 +63,21 @@ pub trait CanvasRendering: Clone {
         max_width: f32,
         font_weight: u16,
     );
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_wrapped_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        let _ = (font_family, font_style);
+        self.draw_text_wrapped(text, pos, font_size, color, max_width, font_weight);
+    }
     #[allow(clippy::too_many_arguments)]
     fn draw_text_with_overflow(
         &self,
@@ -60,6 +90,32 @@ pub trait CanvasRendering: Clone {
         overflow: TextOverflowMode,
         font_weight: u16,
     );
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_with_overflow_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        let _ = (font_family, font_style);
+        self.draw_text_with_overflow(
+            text,
+            pos,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+            font_weight,
+        );
+    }
     /// Draw a styled text-decoration line (underline/overline/line-through).
     /// `pos`/`size` describe the band; `style` is `TextDecorationStyle::id`.
     #[allow(clippy::too_many_arguments)]
@@ -85,7 +141,30 @@ pub trait CanvasRendering: Clone {
     fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: [f32; 4]);
     fn clear_clip(&self);
     fn measure_text(&self, text: &str, font_size: f32) -> f32;
+    fn measure_text_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> f32 {
+        let _ = (font_family, font_style, font_weight);
+        self.measure_text(text, font_size)
+    }
     fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics;
+    fn measure_text_metrics_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> TextMetrics {
+        let _ = (font_family, font_style, font_weight);
+        self.measure_text_metrics(text, font_size, max_width)
+    }
     fn stroke_rect(
         &self,
         pos: Vec2d,
@@ -342,6 +421,30 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::draw_text(self.inner, text, pos, font_size, color, font_weight);
     }
 
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        CanvasRendering::draw_text_styled(
+            self.inner,
+            text,
+            pos,
+            font_size,
+            color,
+            font_family,
+            font_style,
+            font_weight,
+        );
+    }
+
     /// Draws wrapped text constrained to `max_width`.
     #[allow(dead_code)]
     #[inline]
@@ -362,6 +465,32 @@ impl<'a> AimerCanvas<'a> {
             font_size,
             color,
             max_width,
+            font_weight,
+        );
+    }
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_wrapped_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        CanvasRendering::draw_text_wrapped_styled(
+            self.inner,
+            text,
+            pos,
+            font_size,
+            color,
+            max_width,
+            font_family,
+            font_style,
             font_weight,
         );
     }
@@ -390,6 +519,36 @@ impl<'a> AimerCanvas<'a> {
             bounds_width,
             bounds_height,
             overflow,
+            font_weight,
+        );
+    }
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_with_overflow_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        CanvasRendering::draw_text_with_overflow_styled(
+            self.inner,
+            text,
+            pos,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+            font_family,
+            font_style,
             font_weight,
         );
     }
@@ -490,12 +649,52 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::measure_text(self.inner, text, font_size)
     }
 
+    #[inline]
+    pub fn measure_text_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> f32 {
+        CanvasRendering::measure_text_styled(
+            self.inner,
+            text,
+            font_size,
+            font_family,
+            font_style,
+            font_weight,
+        )
+    }
+
     /// Measures paragraph text metrics at the given font size and optional max
     /// width.
     #[allow(dead_code)]
     #[inline]
     pub fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics {
         CanvasRendering::measure_text_metrics(self.inner, text, font_size, max_width)
+    }
+
+    #[inline]
+    pub fn measure_text_metrics_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> TextMetrics {
+        CanvasRendering::measure_text_metrics_styled(
+            self.inner,
+            text,
+            font_size,
+            max_width,
+            font_family,
+            font_style,
+            font_weight,
+        )
     }
 
     /// Draws a stroked (outline-only) rectangle.
