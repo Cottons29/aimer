@@ -8,6 +8,9 @@ pub use aimer_color::prelude::*;
 pub use aimer_container::flex::row_column::*;
 pub use aimer_container::flex::*;
 pub use aimer_container::*;
+pub use aimer_font::{
+    FontError, FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight,
+};
 pub use aimer_input::button::Button;
 pub use aimer_input::callback::{AsyncCallback, CallbackInner, RawInnerCallback};
 pub use aimer_input::input::*;
