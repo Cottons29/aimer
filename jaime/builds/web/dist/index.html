@@ -1,14 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Jaime</title>
-    
-    
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <title>Aimer's Website</title>
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  
+  
 <script type="module">
-import init, * as bindings from '/jaime-24c736349f2255d2.js';
-const wasm = await init({ module_or_path: '/jaime-24c736349f2255d2_bg.wasm' });
+import init, * as bindings from '/jaime-de412ca4f35b4013.js';
+const wasm = await init({ module_or_path: '/jaime-de412ca4f35b4013_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -17,20 +18,30 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="/jaime-24c736349f2255d2.js" crossorigin="anonymous" integrity="sha384-/Y2gnhTonqMS+kntdL9iGQcNm2D/FbIfFRu0/uR3IRBm4DC3QZyymCPbg+74jt0L"><link rel="preload" href="/jaime-24c736349f2255d2_bg.wasm" crossorigin="anonymous" integrity="sha384-gx7sBW0YBEGKp/RZTNCSI0cSX27RPhRMBqG6hmuuPgrFF/jPGWuHmOgKsdIofjrj" as="fetch" type="application/wasm"></head>
-  <style>
-    #aimer_app {
-         position: absolute;
-         top: 0;
-         left: 0;
-         width: 100vw;
-         height: 100vh;
-         outline: none;
-     }
-  </style>
-  <body>
-    <div id="aimer_app"></div>
-  <script>"use strict";
+<link rel="modulepreload" href="/jaime-de412ca4f35b4013.js" crossorigin="anonymous" integrity="sha384-NZzPudPYU6BFDLbwDO2hmOZwfOeDTcbWtkSzOOKBq9gH+q15hJ37PWZCAXRtT2Sq"><link rel="preload" href="/jaime-de412ca4f35b4013_bg.wasm" crossorigin="anonymous" integrity="sha384-bxptbHQenC47kD0m6F1H7KysMllniG75nBiP81Z5lZE1hxtvpAcsafc4N98gJbHM" as="fetch" type="application/wasm"></head>
+<style>
+  html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #000;
+  }
+
+  /* The winit/wasm renderer creates the <canvas>, appends it to <body> and
+     sets id="aimer_app" on it, so this rule styles that canvas. */
+  #aimer_app {
+      display: block;
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      outline: none;
+      background: #000;
+  }
+</style>
+<body>
+<script>"use strict";
 
 (function () {
 
@@ -160,4 +171,8 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 })()
 </script></body>
+
+<script>
+
+</script>
 </html>

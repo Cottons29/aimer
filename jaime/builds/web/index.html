@@ -1,23 +1,38 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Jaime</title>
-    <link data-trunk rel="copy-dir" href="assets" />
-    <link data-trunk rel="rust" href="../../Cargo.toml" data-wasm-opt="z" />
-  </head>
-  <style>
-    #aimer_app {
-         position: absolute;
-         top: 0;
-         left: 0;
-         width: 100vw;
-         height: 100vh;
-         outline: none;
-     }
-  </style>
-  <body>
-    <div id="aimer_app"></div>
-  </body>
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <title>Aimer's Website</title>
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link data-trunk rel="copy-dir" href="assets"/>
+  <link data-trunk rel="rust" href="../../Cargo.toml" />
+</head>
+<style>
+  html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #000;
+  }
+
+  /* The winit/wasm renderer creates the <canvas>, appends it to <body> and
+     sets id="aimer_app" on it, so this rule styles that canvas. */
+  #aimer_app {
+      display: block;
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      outline: none;
+      background: #000;
+  }
+</style>
+<body>
+</body>
+
+<script>
+
+</script>
 </html>
