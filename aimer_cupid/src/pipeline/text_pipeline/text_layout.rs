@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use aimer_font::{FontFamily, FontStyle, FontWeight};
 use aimer_utils::time_cost;
 use unicode_bidi::BidiInfo;
 use unicode_linebreak::{BreakOpportunity, linebreaks};
@@ -677,8 +678,26 @@ fn apply_ellipsis(
 }
 
 pub fn shape_text(rasterizer: &mut GlyphRasterizer, text: &str, font_size: f32) -> ShapedText {
+    shape_text_styled(
+        rasterizer,
+        text,
+        font_size,
+        FontFamily::SANS_SERIF,
+        FontWeight::Normal,
+        FontStyle::Normal,
+    )
+}
+
+pub fn shape_text_styled(
+    rasterizer: &mut GlyphRasterizer,
+    text: &str,
+    font_size: f32,
+    font_family: FontFamily,
+    font_weight: FontWeight,
+    font_style: FontStyle,
+) -> ShapedText {
     let (ascent, _descent, line_gap) = time_cost!("text_layout::LayoutText - line_metrics", {
-        rasterizer.line_metrics(font_size)
+        rasterizer.line_metrics_for_family(font_size, font_family, font_weight, font_style)
     });
     let line_height = ascent - _descent + line_gap;
 
@@ -701,7 +720,13 @@ pub fn shape_text(rasterizer: &mut GlyphRasterizer, text: &str, font_size: f32) 
                 // Shape each grapheme cluster once.  The resulting advances and
                 // glyph keys are independent from wrapping width, so resize can
                 // reuse them and only recompute positions.
-                let glyphs = rasterizer.shape_cluster(cluster, font_size);
+                let glyphs = rasterizer.shape_cluster_for_family(
+                    cluster,
+                    font_size,
+                    font_family,
+                    font_weight,
+                    font_style,
+                );
                 if glyphs.is_empty() {
                     return None;
                 }

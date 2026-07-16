@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use aimer_font::{FontFamily, FontStyle};
+
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
 use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
@@ -55,6 +57,8 @@ pub enum DrawCommand {
         bounds_width: Option<f32>,
         bounds_height: Option<f32>,
         overflow: TextOverflowMode,
+        font_family: FontFamily,
+        font_style: FontStyle,
         font_weight: u16,
     },
     DrawRichText {
@@ -274,6 +278,28 @@ impl DrawList {
         color: Color,
         font_weight: u16,
     ) {
+        self.draw_text_styled(
+            position,
+            text,
+            font_size,
+            color,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            font_weight,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_styled(
+        &mut self,
+        position: Vec2d,
+        text: Arc<str>,
+        font_size: f32,
+        color: Color,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
         self.draw_text_with_overflow(
             position,
             text,
@@ -282,6 +308,8 @@ impl DrawList {
             None,
             None,
             TextOverflowMode::Clip,
+            font_family,
+            font_style,
             font_weight,
         );
     }
@@ -295,6 +323,8 @@ impl DrawList {
         bounds_width: Option<f32>,
         bounds_height: Option<f32>,
         overflow: TextOverflowMode,
+        font_family: FontFamily,
+        font_style: FontStyle,
         font_weight: u16,
     ) {
         self.commands
@@ -306,6 +336,8 @@ impl DrawList {
                 bounds_width,
                 bounds_height,
                 overflow,
+                font_family,
+                font_style,
                 font_weight,
             });
     }
@@ -520,6 +552,8 @@ impl Default for DrawList {
 mod memory_tests {
     use super::*;
 
+    use aimer_font::{FontFamily, FontStyle};
+
     use crate::svg::{SvgScene, SvgViewport};
 
     #[test]
@@ -557,5 +591,29 @@ mod memory_tests {
         assert!(matches!(list.commands()[0], DrawCommand::FillRect { .. }));
         assert!(matches!(list.commands()[1], DrawCommand::Svg { .. }));
         assert!(matches!(list.commands()[2], DrawCommand::DrawImage { .. }));
+    }
+
+    #[test]
+    fn styled_text_command_retains_face_selection() {
+        let mut list = DrawList::new();
+        list.draw_text_styled(
+            Vec2d::new(1.0, 2.0),
+            Arc::from("code"),
+            16.0,
+            Color::black(),
+            FontFamily::MONOSPACE,
+            FontStyle::Italic,
+            700,
+        );
+
+        assert!(matches!(
+            list.commands().last(),
+            Some(DrawCommand::DrawText {
+                font_family: FontFamily::MONOSPACE,
+                font_style: FontStyle::Italic,
+                font_weight: 700,
+                ..
+            })
+        ));
     }
 }

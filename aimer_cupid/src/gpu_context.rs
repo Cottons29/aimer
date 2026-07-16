@@ -8,7 +8,7 @@ use wgpu::{
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-fn surface_size(size: PhysicalSize<u32>, max_dimension: u32) -> PhysicalSize<u32> {
+fn render_dimensions(size: PhysicalSize<u32>, max_dimension: u32) -> PhysicalSize<u32> {
     if size.width <= max_dimension && size.height <= max_dimension {
         return size;
     }
@@ -29,6 +29,11 @@ fn surface_size(size: PhysicalSize<u32>, max_dimension: u32) -> PhysicalSize<u32
 #[cfg(any(target_arch = "wasm32", test))]
 fn wasm_gpu_backends() -> [wgpu::Backends; 2] {
     [wgpu::Backends::BROWSER_WEBGPU, wgpu::Backends::GL]
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn browser_required_limits(adapter_limits: Limits) -> Limits {
+    Limits::downlevel_webgl2_defaults().using_resolution(adapter_limits)
 }
 
 async fn create_gpu<'w>(
@@ -98,7 +103,7 @@ async fn create_gpu<'w>(
     #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
     let limit = Limits::default();
     #[cfg(target_arch = "wasm32")]
-    let limit = Limits::downlevel_webgl2_defaults();
+    let limit = browser_required_limits(adapter.limits());
 
     let mut features = wgpu::Features::default();
     if adapter
@@ -210,7 +215,7 @@ impl<'w> GpuContext<'w> {
 
         let present_mode = wgpu::PresentMode::Fifo;
 
-        let backing_size = surface_size(size, max_dim);
+        let backing_size = render_dimensions(size, max_dim);
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: selected_format,
@@ -241,7 +246,7 @@ impl<'w> GpuContext<'w> {
                 .device
                 .limits()
                 .max_texture_dimension_2d;
-            let backing_size = surface_size(size, max_dim);
+            let backing_size = render_dimensions(size, max_dim);
             self.config.width = backing_size.width;
             self.config.height = backing_size.height;
             self.viewport_size = size;
@@ -251,11 +256,11 @@ impl<'w> GpuContext<'w> {
     }
 
     pub fn width(&self) -> u32 {
-        self.viewport_size.width
+        self.config.width
     }
 
     pub fn height(&self) -> u32 {
-        self.viewport_size.height
+        self.config.height
     }
 
     pub fn begin_frame(&self) -> wgpu::CurrentSurfaceTexture {
@@ -279,9 +284,27 @@ mod tests {
     }
 
     #[test]
+    fn browser_limits_preserve_the_adapter_texture_resolution() {
+        let adapter_limits = Limits {
+            max_texture_dimension_1d: 8192,
+            max_texture_dimension_2d: 8192,
+            max_texture_dimension_3d: 2048,
+            max_texture_array_layers: 512,
+            ..Limits::downlevel_webgl2_defaults()
+        };
+
+        let limits = browser_required_limits(adapter_limits);
+
+        assert_eq!(limits.max_texture_dimension_1d, 8192);
+        assert_eq!(limits.max_texture_dimension_2d, 8192);
+        assert_eq!(limits.max_texture_dimension_3d, 2048);
+        assert_eq!(limits.max_texture_array_layers, 256);
+    }
+
+    #[test]
     fn surface_size_preserves_aspect_ratio_when_width_exceeds_limit() {
         assert_eq!(
-            surface_size(PhysicalSize::new(3072, 1728), 2048),
+            render_dimensions(PhysicalSize::new(3072, 1728), 2048),
             PhysicalSize::new(2048, 1152)
         );
     }
@@ -289,7 +312,7 @@ mod tests {
     #[test]
     fn surface_size_preserves_aspect_ratio_when_height_exceeds_limit() {
         assert_eq!(
-            surface_size(PhysicalSize::new(1728, 3072), 2048),
+            render_dimensions(PhysicalSize::new(1728, 3072), 2048),
             PhysicalSize::new(1152, 2048)
         );
     }
@@ -297,8 +320,16 @@ mod tests {
     #[test]
     fn surface_size_keeps_dimensions_within_limit() {
         assert_eq!(
-            surface_size(PhysicalSize::new(2048, 1024), 2048),
+            render_dimensions(PhysicalSize::new(2048, 1024), 2048),
             PhysicalSize::new(2048, 1024)
+        );
+    }
+
+    #[test]
+    fn render_dimensions_use_the_limited_surface_size() {
+        assert_eq!(
+            render_dimensions(PhysicalSize::new(2294, 1290), 2048),
+            PhysicalSize::new(2048, 1151)
         );
     }
 }

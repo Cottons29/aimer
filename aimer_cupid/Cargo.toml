@@ -12,6 +12,7 @@ name = "cupid"
 aimer_utils = {workspace = true, features = []}
 #aimer_utils = {workspace = true, features = ["time-cost"]}
 aimer_color.workspace = true
+aimer_font.workspace = true
 
 
 
