@@ -8,4 +8,5 @@ aimer_macro.workspace = true
 aimer_attribute.workspace = true
 aimer_color.workspace = true
 aimer_widget.workspace = true
+aimer_font.workspace = true
 bitflags.workspace = true
