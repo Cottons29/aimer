@@ -179,6 +179,10 @@ impl GlyphAtlas {
         self.generation
     }
 
+    pub fn memory_bytes(&self) -> u64 {
+        self.width as u64 * self.height as u64
+    }
+
     /// Look up or insert a glyph into the atlas. Returns the atlas region.
     /// `bitmap` must be `width * height` bytes (grayscale alpha).
     pub fn get_or_insert(
@@ -399,6 +403,10 @@ impl ColorGlyphAtlas {
 
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub fn memory_bytes(&self) -> u64 {
+        self.width as u64 * self.height as u64 * Self::BYTES_PER_PIXEL as u64
     }
 
     /// `bitmap` must be `width * height * 4` bytes (non-premultiplied RGBA8).

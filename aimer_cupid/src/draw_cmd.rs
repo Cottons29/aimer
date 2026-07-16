@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
 use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
 
@@ -108,9 +109,17 @@ pub enum DrawCommand {
         width: u32,
         height: u32,
     },
+    RemoveTexture {
+        texture_id: TextureId,
+    },
     DrawImage {
         rect: Rect,
         texture_id: TextureId,
+    },
+    Svg {
+        scene: Arc<SvgScene>,
+        destination: Rect,
+        overrides: Arc<[SvgNodeStyleOverride]>,
     },
     SetTransform {
         matrix: Mat3,
@@ -245,6 +254,16 @@ impl DrawList {
     pub fn draw_image(&mut self, rect: Rect, texture_id: TextureId) {
         self.commands
             .push(DrawCommand::DrawImage { rect, texture_id });
+    }
+
+    pub fn draw_svg(
+        &mut self,
+        scene: Arc<SvgScene>,
+        destination: Rect,
+        overrides: Arc<[SvgNodeStyleOverride]>,
+    ) {
+        self.commands
+            .push(DrawCommand::Svg { scene, destination, overrides });
     }
 
     pub fn draw_text(
@@ -420,6 +439,13 @@ impl DrawList {
             .insert(texture_id, (width, height));
     }
 
+    pub fn remove_texture(&mut self, texture_id: TextureId) {
+        self.texture_sizes
+            .remove(&texture_id);
+        self.commands
+            .push(DrawCommand::RemoveTexture { texture_id });
+    }
+
     pub fn save(&mut self) {
         self.transform_stack
             .push(self.current_transform);
@@ -487,5 +513,49 @@ impl DrawList {
 impl Default for DrawList {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+
+    use crate::svg::{SvgScene, SvgViewport};
+
+    #[test]
+    fn removing_a_texture_clears_metadata_and_records_gpu_release() {
+        let mut list = DrawList::new();
+        list.set_texture_size(42, 640, 480);
+
+        list.remove_texture(42);
+
+        assert_eq!(list.get_texture_size(42), None);
+        assert!(matches!(
+            list.commands().last(),
+            Some(DrawCommand::RemoveTexture { texture_id: 42 })
+        ));
+    }
+
+    #[test]
+    fn svg_commands_remain_interleaved_with_other_primitives() {
+        let scene = Arc::new(SvgScene {
+            viewport: SvgViewport { width: 10.0, height: 10.0 },
+            nodes: Arc::from([]),
+            geometries: Arc::from([]),
+        });
+        let mut list = DrawList::new();
+        list.fill_rect(
+            Rect::new(0.0, 0.0, 2.0, 2.0),
+            Color::red(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        list.draw_svg(scene, Rect::new(2.0, 2.0, 10.0, 10.0), Arc::from([]));
+        list.draw_image(Rect::new(12.0, 12.0, 2.0, 2.0), 7);
+
+        assert!(matches!(list.commands()[0], DrawCommand::FillRect { .. }));
+        assert!(matches!(list.commands()[1], DrawCommand::Svg { .. }));
+        assert!(matches!(list.commands()[2], DrawCommand::DrawImage { .. }));
     }
 }

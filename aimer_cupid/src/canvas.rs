@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::draw_cmd::DrawList;
+use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
 use crate::utilities::{Color, Rect, TextureId, Vec2d};
@@ -230,6 +231,20 @@ impl CupidCanvas {
         self.draw_list
             .borrow_mut()
             .draw_image(Rect::new(x, y, width, height), texture_id);
+    }
+
+    pub fn draw_svg(
+        &self,
+        scene: Arc<SvgScene>,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        overrides: Arc<[SvgNodeStyleOverride]>,
+    ) {
+        self.draw_list
+            .borrow_mut()
+            .draw_svg(scene, Rect::new(x, y, width, height), overrides);
     }
 
     /// Draw a styled text-decoration line. `(x, y)` is the band top-left,
@@ -584,6 +599,12 @@ impl CupidCanvas {
         self.draw_list
             .borrow_mut()
             .load_image_with_id(texture_id, bytes, width, height)
+    }
+
+    pub fn remove_texture(&self, texture_id: TextureId) {
+        self.draw_list
+            .borrow_mut()
+            .remove_texture(texture_id);
     }
 
     pub fn set_texture_size(&self, texture_id: TextureId, width: u32, height: u32) {

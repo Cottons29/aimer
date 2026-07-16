@@ -1,10 +1,15 @@
+use std::sync::Arc;
+
 use aimer_utils::{debug, time_cost};
 
 use crate::custom_pipeline::{CustomPipeline, CustomPipelineSlot, RenderContext};
 use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
+use crate::pipeline::RENDER_SAMPLE_COUNT;
 use crate::pipeline_cache;
 use crate::rect_pipeline::{RectInstance, RectPipeline};
+use crate::svg::{SvgNodeStyleOverride, SvgScene};
+use crate::svg_pipeline::SvgPipeline;
 use crate::text_pipeline::{RichTextSpan, TextDecorationDraw, TextDrawRequest, TextPipelineV2};
 use crate::utilities::{Mat3, Rect};
 
@@ -77,15 +82,88 @@ enum ResolvedKind {
     Text(usize),
     /// Index into `decoration_requests` (one instance per decoration).
     TextDecoration(usize),
+    Svg(usize),
     Custom {
         pipeline_index: usize,
     },
+}
+
+pub struct SvgRenderItem {
+    pub scene: Arc<SvgScene>,
+    pub destination: Rect,
+    pub overrides: Arc<[SvgNodeStyleOverride]>,
+    pub world_transform: Mat3,
+    pub clip_rect: [f32; 4],
+    pub clip_border_radius: [f32; 4],
+    pub opacity: f32,
+}
+
+fn resolve_svg_item(
+    scene: Arc<SvgScene>,
+    destination: Rect,
+    overrides: Arc<[SvgNodeStyleOverride]>,
+    world_transform: Mat3,
+    clip: Option<&ClipState>,
+    opacity: f32,
+) -> SvgRenderItem {
+    SvgRenderItem {
+        scene,
+        destination,
+        overrides,
+        world_transform,
+        clip_rect: clip_to_array(clip),
+        clip_border_radius: clip_border_radius(clip),
+        opacity,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RendererMemoryStats {
+    pub image_texture_count: usize,
+    pub image_texture_bytes: u64,
+    pub glyph_atlas_bytes: u64,
+    pub glyph_bitmap_cache_entries: usize,
+    pub glyph_bitmap_cache_bytes: usize,
+    pub instance_buffer_bytes: u64,
+    pub svg_geometry_cpu_bytes: u64,
+    pub svg_geometry_gpu_bytes: u64,
+    pub svg_instance_buffer_bytes: u64,
+    pub multisample_target_bytes: u64,
+}
+
+struct MultisampleTarget {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    width: u32,
+    height: u32,
+}
+
+impl MultisampleTarget {
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat, width: u32, height: u32) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cupid multisample color target"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: RENDER_SAMPLE_COUNT,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self { _texture: texture, view, width, height }
+    }
+
+    fn bytes(&self) -> u64 {
+        self.width as u64 * self.height as u64 * RENDER_SAMPLE_COUNT as u64 * 4
+    }
 }
 
 pub struct Renderer {
     pub rect_pipeline: RectPipeline,
     pub text_pipeline: TextPipelineV2,
     pub image_pipeline: ImagePipeline,
+    pub svg_pipeline: SvgPipeline,
     pipeline_cache: Option<wgpu::PipelineCache>,
     custom_pipelines: Vec<CustomPipelineSlot>,
     surface_format: wgpu::TextureFormat,
@@ -94,7 +172,10 @@ pub struct Renderer {
     clip_stack: Vec<ClipState>,
     text_requests: Vec<TextDrawRequest>,
     decoration_requests: Vec<TextDecorationDraw>,
+    svg_items: Vec<SvgRenderItem>,
     resolved: Vec<ResolvedCmd>,
+    textures_to_remove: Vec<u32>,
+    multisample_target: Option<MultisampleTarget>,
 }
 
 impl Renderer {
@@ -107,6 +188,7 @@ impl Renderer {
             rect_pipeline: RectPipeline::new(device, format, cache.as_ref()),
             text_pipeline: TextPipelineV2::new(device, format, cache.as_ref()),
             image_pipeline: ImagePipeline::new(device, format, cache.as_ref()),
+            svg_pipeline: SvgPipeline::new(device, format, cache.as_ref()),
             pipeline_cache: cache,
             custom_pipelines: Vec::new(),
             surface_format: format,
@@ -114,7 +196,10 @@ impl Renderer {
             clip_stack: Vec::new(),
             text_requests: Vec::new(),
             decoration_requests: Vec::new(),
+            svg_items: Vec::new(),
             resolved: Vec::new(),
+            textures_to_remove: Vec::new(),
+            multisample_target: None,
         };
 
         let end = chrono::Utc::now().timestamp_millis();
@@ -134,6 +219,51 @@ impl Renderer {
     /// pipelines).
     pub fn surface_format(&self) -> wgpu::TextureFormat {
         self.surface_format
+    }
+
+    pub fn memory_stats(&self) -> RendererMemoryStats {
+        RendererMemoryStats {
+            image_texture_count: self.image_pipeline.texture_count(),
+            image_texture_bytes: self.image_pipeline.texture_bytes(),
+            glyph_atlas_bytes: self
+                .text_pipeline
+                .glyph_atlas_bytes(),
+            glyph_bitmap_cache_entries: self
+                .text_pipeline
+                .cached_glyph_count(),
+            glyph_bitmap_cache_bytes: self
+                .text_pipeline
+                .glyph_bitmap_cache_bytes(),
+            instance_buffer_bytes: self
+                .rect_pipeline
+                .instance_buffer_bytes()
+                + self
+                    .image_pipeline
+                    .instance_buffer_bytes()
+                + self
+                    .text_pipeline
+                    .instance_buffer_bytes()
+                + self
+                    .svg_pipeline
+                    .instance_buffer_bytes(),
+            svg_geometry_cpu_bytes: self
+                .svg_pipeline
+                .cpu_geometry_bytes(),
+            svg_geometry_gpu_bytes: self
+                .svg_pipeline
+                .gpu_geometry_bytes(),
+            svg_instance_buffer_bytes: self
+                .svg_pipeline
+                .instance_buffer_bytes(),
+            multisample_target_bytes: self
+                .multisample_target
+                .as_ref()
+                .map_or(0, MultisampleTarget::bytes),
+        }
+    }
+
+    pub fn clear_svg_resources(&mut self) {
+        self.svg_pipeline.clear_resources();
     }
 
     pub fn preload_text(
@@ -206,7 +336,9 @@ impl Renderer {
         self.clip_stack.clear();
         self.text_requests.clear();
         self.decoration_requests.clear();
+        self.svg_items.clear();
         self.resolved.clear();
+        self.textures_to_remove.clear();
 
         for cmd in draw_list.commands() {
             match cmd {
@@ -461,6 +593,20 @@ impl Renderer {
                     self.resolved
                         .push(ResolvedCmd { kind: ResolvedKind::TextDecoration(deco_idx) });
                 }
+                DrawCommand::Svg { scene, destination, overrides } => {
+                    let index = self.svg_items.len();
+                    self.svg_items
+                        .push(resolve_svg_item(
+                            scene.clone(),
+                            *destination,
+                            overrides.clone(),
+                            current_transform,
+                            self.clip_stack.last(),
+                            alpha_state.current(),
+                        ));
+                    self.resolved
+                        .push(ResolvedCmd { kind: ResolvedKind::Svg(index) });
+                }
                 DrawCommand::SetTransform { matrix } => {
                     current_transform = matrix.pixel_aligned();
                 }
@@ -499,6 +645,10 @@ impl Renderer {
                 DrawCommand::LoadImageWithId { texture_id, bytes, width, height } => {
                     self.image_pipeline
                         .upload_image_with_id(device, queue, *texture_id, *width, *height, bytes);
+                }
+                DrawCommand::RemoveTexture { texture_id } => {
+                    self.textures_to_remove
+                        .push(*texture_id);
                 }
                 DrawCommand::DrawShadowRect {
                     rect,
@@ -587,6 +737,7 @@ impl Renderer {
                 height,
                 is_srgb,
                 format: self.surface_format,
+                sample_count: RENDER_SAMPLE_COUNT,
             };
             for slot in &mut self.custom_pipelines {
                 if slot.pipeline.has_work() {
@@ -607,20 +758,32 @@ impl Renderer {
             ))
         }
 
+        self.svg_pipeline
+            .prepare(device, queue, &self.svg_items, width, height, is_srgb);
+
         // Create encoder and render pass
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("cupid render encoder"),
         });
 
+        let target = self
+            .multisample_target
+            .get_or_insert_with(|| {
+                MultisampleTarget::new(device, self.surface_format, width, height)
+            });
+        if target.width != width || target.height != height {
+            *target = MultisampleTarget::new(device, self.surface_format, width, height);
+        }
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("cupid render pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    resolve_target: None,
+                    view: &target.view,
+                    resolve_target: Some(view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
+                        store: wgpu::StoreOp::Discard,
                     },
                     depth_slice: None,
                 })],
@@ -637,7 +800,8 @@ impl Renderer {
             // single pass at the very end, which made it float above every rect
             // regardless of z-order (e.g. a `Stack`'s upper layer could not cover
             // text drawn by a lower layer) — it is now interleaved like the rest.
-            self.rect_pipeline.clear();
+            self.rect_pipeline
+                .begin_frame(device);
 
             // Size the image instance buffer for *all* image instances of this
             // frame up-front and reset its per-frame write offset, so that each
@@ -741,6 +905,24 @@ impl Renderer {
                         self.text_pipeline
                             .render_decoration(&mut pass, index);
                     }
+                    ResolvedKind::Svg(index) => {
+                        self.rect_pipeline
+                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        if let Some(tid) = current_texture_id.take()
+                            && !image_batch.is_empty()
+                        {
+                            self.image_pipeline.draw_batch(
+                                device,
+                                queue,
+                                &mut pass,
+                                tid,
+                                &image_batch,
+                            );
+                            image_batch.clear();
+                        }
+                        self.svg_pipeline
+                            .draw_item(&mut pass, *index);
+                    }
                     ResolvedKind::Custom { pipeline_index } => {
                         // Flush pending built-in batches to maintain z-order
                         self.rect_pipeline
@@ -781,6 +963,10 @@ impl Renderer {
                 .flush(device, queue, &mut pass, width, height, is_srgb);
         }
         queue.submit(std::iter::once(encoder.finish()));
+        for texture_id in self.textures_to_remove.drain(..) {
+            self.image_pipeline
+                .remove_texture(texture_id);
+        }
     }
 }
 
@@ -792,6 +978,10 @@ impl Drop for Renderer {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use crate::svg::{SvgScene, SvgViewport};
+
     use super::*;
 
     #[test]
@@ -821,5 +1011,43 @@ mod tests {
         assert_eq!(state.current(), 1.0);
         state.set(-1.0);
         assert_eq!(state.current(), 0.0);
+    }
+
+    #[test]
+    fn svg_item_captures_transform_clip_alpha_and_destination() {
+        let scene = Arc::new(SvgScene {
+            viewport: SvgViewport { width: 24.0, height: 12.0 },
+            nodes: Arc::from([]),
+            geometries: Arc::from([]),
+        });
+        let transform = Mat3::translate(10.4, 20.6)
+            .mul(&Mat3::scale(2.0, 3.0))
+            .pixel_aligned();
+        let clip = ClipState { rect: Rect::new(4.0, 5.0, 30.0, 40.0), border_radius: [3.0; 4] };
+        let destination = Rect::new(1.0, 2.0, 48.0, 24.0);
+
+        let item = resolve_svg_item(
+            scene.clone(),
+            destination,
+            Arc::from([]),
+            transform,
+            Some(&clip),
+            0.4,
+        );
+
+        assert!(Arc::ptr_eq(&item.scene, &scene));
+        assert_eq!(
+            [
+                item.destination.x,
+                item.destination.y,
+                item.destination.width,
+                item.destination.height
+            ],
+            [1.0, 2.0, 48.0, 24.0]
+        );
+        assert_eq!(item.world_transform.cols, transform.cols);
+        assert_eq!(item.clip_rect, [4.0, 5.0, 30.0, 40.0]);
+        assert_eq!(item.clip_border_radius, [3.0; 4]);
+        assert_eq!(item.opacity, 0.4);
     }
 }
