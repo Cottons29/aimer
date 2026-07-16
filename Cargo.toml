@@ -27,6 +27,7 @@ aimer_text.workspace = true
 aimer_macro.workspace = true
 aimer_provider.workspace = true
 aimer_svg.workspace = true
+aimer_font.workspace = true
 
 
 [workspace]
@@ -50,6 +51,7 @@ members = [
     "crates/aimer_inspector",
     "crates/aimer_assets",
     "crates/aimer_style",
+    "crates/aimer_font",
     "crates/aimer_text",
     "crates/aimer_macro",
     "jaime"
@@ -72,6 +74,7 @@ aimer_inspector = { path = "crates/aimer_inspector" }
 aimer_cupid = { path = "aimer_cupid" }
 aimer_assets = { path = "crates/aimer_assets" }
 aimer_style = { path = "crates/aimer_style" }
+aimer_font = { path = "crates/aimer_font" }
 aimer_text = { path = "crates/aimer_text" }
 aimer_macro = { path = "crates/aimer_macro" }
 aimer_provider = { path = "crates/aimer_provider" }
@@ -80,7 +83,7 @@ aimer_svg = { path = "crates/aimer_svg" }
 
 #############
 
-web-sys = { version = "0.3.103", features = ["CanvasRenderingContext2d", "DomMatrix", "TextMetrics"] }
+web-sys = { version = "0.3.103", features = ["CanvasRenderingContext2d", "Clipboard", "DomMatrix", "Navigator", "TextMetrics", "Window"] }
 wasm-bindgen-futures = "0.4.76"
 js-sys = "0.3.103"
 wasm-bindgen = "0.2.126"
