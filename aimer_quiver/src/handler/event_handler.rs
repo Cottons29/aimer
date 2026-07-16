@@ -1,7 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerSource;
-use aimer_utils::{ExecTimes, info};
+use aimer_utils::{ExecTimes, debug, info};
 use aimer_widget::{Widget, broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
@@ -13,6 +13,8 @@ use winit::window::WindowId;
 use crate::handler::AimerApplicationHandler;
 
 pub struct WindowEventHandler;
+
+pub(crate) const CURSOR_OUTSIDE_POSITION: Vec2d = Vec2d { x: f32::MIN, y: f32::MIN };
 
 pub(crate) enum HeadlessEventAction {
     None,
@@ -27,6 +29,7 @@ impl WindowEventHandler {
         _id: WindowId,
         event: WindowEvent,
     ) {
+        // debug!("======> Event: {event:?}");
         match event {
             WindowEvent::CloseRequested => {
                 #[cfg(target_os = "macos")]
@@ -43,6 +46,8 @@ impl WindowEventHandler {
             WindowEvent::CursorMoved { position, .. } => Self::handle_cursor_move(position, app),
 
             WindowEvent::CursorLeft { .. } => Self::handle_cursor_left(app),
+
+            WindowEvent::CursorEntered { .. } => Self::handle_cursor_entered(app),
 
             WindowEvent::MouseInput { state, button, .. } => {
                 Self::handle_mouse_input(state, button, app)
@@ -86,8 +91,9 @@ impl WindowEventHandler {
                 }
             }
 
-            WindowEvent::Focused(false) => {
-                if let Some(root) = &app.widget_root {
+            WindowEvent::Focused(is_focus) => {
+                let Some(root) = &app.widget_root else { return };
+                if is_focus {
                     broadcast_event(root.as_ref(), &ElementEvent::Cancel);
                 }
             }
@@ -112,6 +118,10 @@ impl WindowEventHandler {
             }
             WindowEvent::CursorLeft { .. } => {
                 Self::handle_cursor_left(app);
+                HeadlessEventAction::None
+            }
+            WindowEvent::CursorEntered { .. } => {
+                Self::handle_cursor_entered(app);
                 HeadlessEventAction::None
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -235,28 +245,21 @@ impl WindowEventHandler {
     }
 
     fn handle_cursor_left<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) {
-        // The cursor left the window. First, broadcast a Cancel to terminate any
-        // active drag (e.g. scrollable content drag, scrollbar thumb drag).
-        // Without this, the subsequent PointerMove at f32::MIN would compute an
-        // enormous delta from the last real cursor position, jumping the scroll
-        // offset by millions of pixels — making the content appear to vanish.
-        let off_screen = Vec2d { x: f32::MIN, y: f32::MIN };
+        app.cursor_pos = CURSOR_OUTSIDE_POSITION;
         if let Some(root) = &app.widget_root {
-            broadcast_event(root.as_ref(), &ElementEvent::Cancel);
-        }
-
-        // Then dispatch a pointer move at a position that is outside every
-        // element's bounds so that hover-tracking elements (e.g. `MouseRegion`)
-        // see `is_inside == false` and fire their hover-exit transition.
-        // Without this, a region whose bounds reach the window edge would stay
-        // stuck in `RegionAcceptState::Enter` forever.
-        app.cursor_pos = off_screen;
-        if let Some(root) = &app.widget_root {
-            let event = ElementEvent::PointerMove(off_screen, PointerSource::Mouse, 0);
-            let _handled = dispatch_event(root.as_ref(), off_screen, &event);
+            broadcast_event(root.as_ref(), &ElementEvent::PointerExited(PointerSource::Mouse, 0));
             if let Some(window) = &app.window {
                 window.request_redraw();
             }
+        }
+    }
+
+    fn handle_cursor_entered<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) {
+        // CursorEntered carries no coordinates. Keep hover disabled until the
+        // following CursorMoved supplies a valid position.
+        app.cursor_pos = CURSOR_OUTSIDE_POSITION;
+        if let Some(window) = &app.window {
+            window.request_redraw();
         }
     }
 
@@ -646,3 +649,4 @@ mod tests {
         assert_eq!(window_scale, 2.0);
     }
 }
+

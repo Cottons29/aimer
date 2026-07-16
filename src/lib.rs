@@ -14,7 +14,10 @@ pub use aimer_input::input::*;
 pub use aimer_input::*;
 pub use aimer_macro::{key, main};
 pub use aimer_quiver as quiver;
-pub use aimer_quiver::{self, AimerApp, HeadlessAimerApp, HeadlessOptions};
+pub use aimer_quiver::{
+    self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions,
+    set_first_frame_rendered_callback,
+};
 pub use aimer_text::Text;
 pub use aimer_widget::base::BuildContext;
 pub use aimer_widget::{self, Key, State, StatefulWidget, StatelessWidget, Widget, *};

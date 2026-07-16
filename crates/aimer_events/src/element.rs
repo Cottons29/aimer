@@ -48,6 +48,8 @@ pub enum ElementEvent {
     PointerUp(Vec2d, PointerSource, u64),
     /// Pointer move. The `u64` is the touch finger ID (0 for mouse).
     PointerMove(Vec2d, PointerSource, u64),
+    /// Pointer left the window. The `u64` is the pointer ID (0 for mouse).
+    PointerExited(PointerSource, u64),
     Scroll {
         delta: Vec2d,
         phase: TouchPhase,

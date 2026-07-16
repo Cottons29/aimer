@@ -122,6 +122,15 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
         // println!("Event received: {:?}", event);
 
+        if matches!(event, ElementEvent::PointerExited(PointerSource::Mouse, _)) {
+            if self.cursor.is_some() {
+                self.window
+                    .set_cursor(winit::window::CursorIcon::Default);
+            }
+            self.sync_hover(false);
+            return self.child.on_event(event);
+        }
+
         // Hover tracking is a mouse-only concept. Touch input must NOT drive
         // `sync_hover`: firing `on_hover_enter` on a touch `PointerDown` calls
         // the Button's `set_state`, which marks the subtree dirty and rebuilds
@@ -204,5 +213,53 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
         self.sync_hover(is_inside);
 
         self.child.draw(ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::any::Any;
+
+    use aimer_widget::Rebuildable;
+    use aimer_widget::base::WindowHandle;
+    use winit::dpi::PhysicalSize;
+
+    use super::*;
+
+    struct TestElement;
+
+    impl VisitorElement for TestElement {
+        fn debug_name(&self) -> &'static str {
+            "TestElement"
+        }
+    }
+
+    impl EventElement for TestElement {}
+    impl LayoutElement for TestElement {}
+    impl Drawable for TestElement {
+        fn draw(&self, _ctx: &BuildContext<'_>) {}
+    }
+    impl Rebuildable for TestElement {
+        fn option_any(&self) -> Option<&dyn Any> {
+            Some(self)
+        }
+    }
+
+    #[test]
+    fn pointer_exit_transitions_hover_state_without_a_synthetic_move() {
+        let current_state = Rc::new(Cell::new(PointerState::Inside));
+        let region = RawMouseRegion {
+            on_hover_enter: VoidCallback::default(),
+            on_hover_exit: VoidCallback::default(),
+            cursor: None,
+            current_state: current_state.clone(),
+            cached_bounds: CacheBounds::new(),
+            child: TestElement,
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+        };
+
+        region.on_event(&ElementEvent::PointerExited(PointerSource::Mouse, 0));
+
+        assert!(matches!(current_state.get(), PointerState::Outside));
     }
 }

@@ -1,4 +1,4 @@
-use aimer_utils::{debug, error, info};
+use aimer_utils::{debug, error, info, warn};
 use wgpu::{
     Device, Instance, Limits, Queue, Surface, SurfaceColorSpace, SurfaceConfiguration,
     SurfaceTexture, TextureFormat,
@@ -36,7 +36,7 @@ async fn create_gpu<'w>(
 ) -> Result<(Device, Queue, Surface<'w>, wgpu::Adapter), String> {
     #[cfg(not(target_os = "android"))]
     let _ = size;
-    debug!("GPU backends: {:?}", backends);
+    // debug!("GPU backends: {:?}", backends);
 
     let instance = Instance::new(wgpu::InstanceDescriptor {
         backends,
@@ -46,13 +46,13 @@ async fn create_gpu<'w>(
         display: None,
     });
 
-    debug!("GPU instance: {:?}", instance);
+    // debug!("GPU instance: {:?}", instance);
 
     let surface = instance
         .create_surface(window)
         .map_err(|err| format!("failed to create surface: {err}"))?;
 
-    debug!("Surface: {:?}", surface);
+    // debug!("Surface: {:?}", surface);
 
     let adapter = match instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -150,7 +150,7 @@ impl<'w> GpuContext<'w> {
                         break;
                     }
                     Err(err) => {
-                        error!("GPU initialization with {:?} failed: {}", backend, err);
+                        warn!("GPU initialization with {:?} failed, Trying other Backend", backend);
                         failures.push(format!("{backend:?}: {err}"));
                     }
                 }
@@ -189,9 +189,9 @@ impl<'w> GpuContext<'w> {
                 std::process::exit(1);
             });
 
-        let caps = surface.get_capabilities(&adapter);
+        debug!("Current Activated Backend: {:?}", adapter.get_info().backend);
 
-        debug!("Surface format: {:?}", caps.formats);
+        let caps = surface.get_capabilities(&adapter);
 
         let selected_format = caps
             .formats
@@ -206,22 +206,8 @@ impl<'w> GpuContext<'w> {
             .limits()
             .max_texture_dimension_2d;
 
-        // Use `Fifo` (v-sync) so presentation is paced by the display/compositor
-        // itself: `surface.present()` blocks until the next refresh slot, keeping
-        // frames in phase with the panel. This replaces the old
-        // `Mailbox`/`Immediate` render-ahead modes that were only honored when the
-        // surface owned the scanout (fullscreen); in windowed mode the compositor
-        // re-synchronized them anyway, and the software frame limiter that capped
-        // them raced the compositor's v-sync, producing windowed judder. Letting
-        // v-sync be the single timing source removes that beat pattern entirely.
-        // `Fifo` is always available and still presents at the full panel refresh
-        // rate (e.g. 120 Hz) on high-refresh displays.
         let present_mode = wgpu::PresentMode::Fifo;
 
-        debug!(
-            "Gpu Context : Initialized with max texture dimension: {} and is_srgb: {} present_mode: {:?}",
-            max_dim, is_srgb, present_mode
-        );
         let backing_size = surface_size(size, max_dim);
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,

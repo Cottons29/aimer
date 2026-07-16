@@ -34,6 +34,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             | ElementEvent::PointerMove(p, _, _)
             | ElementEvent::Scroll { delta: p, .. } => *p,
             ElementEvent::Cancel
+            | ElementEvent::PointerExited(_, _)
             | ElementEvent::CharInput { .. }
             | ElementEvent::KeyInput { .. }
             | ElementEvent::ImePreedit { .. } => Vec2d::default(),
@@ -593,7 +594,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 self.ctrl.active_touch_id.set(None);
                 false
             }
-            ElementEvent::CharInput { .. }
+            ElementEvent::PointerExited(_, _)
+            | ElementEvent::CharInput { .. }
             | ElementEvent::KeyInput { .. }
             | ElementEvent::ImePreedit { .. } => child_consumed,
         };

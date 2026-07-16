@@ -26,6 +26,7 @@ use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
 use crate::aimer_app::ANDROID_APP;
 #[cfg(target_os = "android")]
 use crate::ffi_utils::android_screen;
+use crate::first_frame::FirstFrameNotifier;
 #[allow(unused)]
 use crate::handler;
 use crate::handler::event_handler::WindowEventHandler;
@@ -72,6 +73,7 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
     pub start_up_frames: Cell<u8>,
+    pub(crate) first_frame_notifier: FirstFrameNotifier,
     pub active_touch_id: Option<u64>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
@@ -181,8 +183,8 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
             }
         }
 
-        debug!("Logical Window Size : {:?}", window.outer_size());
-        debug!("Physical Window Size : {size:?}");
+        // debug!("Logical Window Size : {:?}", window.outer_size());
+        // debug!("Physical Window Size : {size:?}");
 
         self.render_ctx
             .initialize(window, size);
@@ -406,6 +408,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let presented = self
             .render_ctx
             .render_frame(draw_widgets);
+        self.first_frame_notifier
+            .notify_after_present(presented, crate::first_frame::dispatch_first_frame_rendered);
         if !presented {
             // Surface texture was not available (e.g. surface outdated or
             // window not ready).  Request a redraw so we retry next frame
