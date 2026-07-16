@@ -1,4 +1,5 @@
 mod attribute;
+pub mod clipboard;
 pub mod components;
 pub mod key;
 pub mod layout_cache;

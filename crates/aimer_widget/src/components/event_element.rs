@@ -11,6 +11,12 @@ pub trait EventElement: VisitorElement {
         false
     }
 
+    /// Returns whether this element owns subsequent events for `pointer` even
+    /// when the pointer is outside its layout bounds.
+    fn captures_pointer(&self, _pointer: u64) -> bool {
+        false
+    }
+
     /// Visit children for event dispatch. By default delegates to
     /// `visit_children`. Override this when `visit_children` is not
     /// implemented (e.g. because the element handles its own child
