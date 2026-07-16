@@ -4,6 +4,7 @@ pub mod routing;
 mod starter;
 pub mod stateful;
 mod stateful_2;
+mod svg_test;
 mod test_animation;
 
 use aimer::style::*;
@@ -27,7 +28,7 @@ pub fn my_app() {
     //     Expanded::new().child(TestFadingAnimation),
     // ])))
     // test_positioned()
-    test_image()
+    svg_test::start_svg_test()
 }
 #[allow(unused)]
 fn test_text() {
