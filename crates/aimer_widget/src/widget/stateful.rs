@@ -1060,6 +1060,7 @@ impl EventElement for StatefulElement {
                 ElementEvent::PointerDown(p, _, _) => *p,
                 ElementEvent::PointerUp(p, _, _) => *p,
                 ElementEvent::PointerMove(p, _, _) => *p,
+                ElementEvent::PointerExited(_, _) => Vec2d::default(),
                 ElementEvent::Scroll { .. } => Vec2d::default(),
                 ElementEvent::CharInput { .. } => Vec2d::default(),
                 ElementEvent::KeyInput { .. } => Vec2d::default(),

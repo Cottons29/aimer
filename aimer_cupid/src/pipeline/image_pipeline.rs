@@ -83,6 +83,82 @@ fn constrain_rgba8<'a>(
     (target_width, target_height, Cow::Owned(resized))
 }
 
+struct Rgba8MipLevel {
+    width: u32,
+    height: u32,
+    data: Vec<u8>,
+}
+
+fn generate_rgba8_mip_chain(width: u32, height: u32, data: &[u8]) -> Vec<Rgba8MipLevel> {
+    let mut levels = vec![Rgba8MipLevel { width, height, data: data.to_vec() }];
+
+    while levels
+        .last()
+        .is_some_and(|level| level.width > 1 || level.height > 1)
+    {
+        let source = levels
+            .last()
+            .expect("the mip chain always contains its base level");
+        let target_width = (source.width / 2).max(1);
+        let target_height = (source.height / 2).max(1);
+        let mut target = vec![0; target_width as usize * target_height as usize * 4];
+
+        for target_y in 0..target_height {
+            let source_y_start = target_y * source.height / target_height;
+            let source_y_end = (target_y + 1) * source.height / target_height;
+            for target_x in 0..target_width {
+                let source_x_start = target_x * source.width / target_width;
+                let source_x_end = (target_x + 1) * source.width / target_width;
+                let sample_count =
+                    (source_x_end - source_x_start) * (source_y_end - source_y_start);
+                let mut sum = [0_u32; 4];
+
+                for source_y in source_y_start..source_y_end {
+                    for source_x in source_x_start..source_x_end {
+                        let offset = ((source_y * source.width + source_x) * 4) as usize;
+                        for (channel_sum, value) in sum
+                            .iter_mut()
+                            .zip(&source.data[offset..offset + 4])
+                        {
+                            *channel_sum += *value as u32;
+                        }
+                    }
+                }
+
+                let target_offset = ((target_y * target_width + target_x) * 4) as usize;
+                for (channel, channel_sum) in sum.into_iter().enumerate() {
+                    target[target_offset + channel] =
+                        ((channel_sum + sample_count / 2) / sample_count) as u8;
+                }
+            }
+        }
+
+        levels.push(Rgba8MipLevel { width: target_width, height: target_height, data: target });
+    }
+
+    levels
+}
+
+fn upload_rgba8_mip_chain(queue: &wgpu::Queue, texture: &wgpu::Texture, levels: &[Rgba8MipLevel]) {
+    for (mip_level, level) in levels.iter().enumerate() {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: mip_level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &level.data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * level.width),
+                rows_per_image: Some(level.height),
+            },
+            wgpu::Extent3d { width: level.width, height: level.height, depth_or_array_layers: 1 },
+        );
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct ImageInstance {
@@ -331,33 +407,20 @@ impl ImagePipeline {
                         .limits()
                         .max_texture_dimension_2d,
                 );
+                let mip_chain = generate_rgba8_mip_chain(width, height, data.as_ref());
                 // Use create_texture + write_texture instead of create_texture_with_data
                 // so the copy is deferred to the GPU timeline (non-blocking).
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("uploaded image"),
                     size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-                    mip_level_count: 1,
+                    mip_level_count: mip_chain.len() as u32,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: wgpu::TextureFormat::Rgba8Unorm,
                     usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 });
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    data.as_ref(),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(4 * width),
-                        rows_per_image: Some(height),
-                    },
-                    wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-                );
+                upload_rgba8_mip_chain(queue, &texture, &mip_chain);
 
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -435,26 +498,13 @@ impl ImagePipeline {
                 .limits()
                 .max_texture_dimension_2d,
         );
+        let mip_chain = generate_rgba8_mip_chain(width, height, data.as_ref());
 
         // In-place update if the texture exists and dimensions match.
         if let Some(entry) = self.textures.get(&id) {
             let size = entry.texture.size();
             if size.width == width && size.height == height {
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &entry.texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    data.as_ref(),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(4 * width),
-                        rows_per_image: Some(height),
-                    },
-                    wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-                );
+                upload_rgba8_mip_chain(queue, &entry.texture, &mip_chain);
                 return;
             }
         }
@@ -462,28 +512,14 @@ impl ImagePipeline {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("uploaded image"),
             size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-            mip_level_count: 1,
+            mip_level_count: mip_chain.len() as u32,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            data.as_ref(),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * width),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-        );
+        upload_rgba8_mip_chain(queue, &texture, &mip_chain);
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -621,5 +657,27 @@ mod tests {
 
         assert_eq!((width, height), (1, 1));
         assert_eq!(data.as_ref(), &[0; 4]);
+    }
+
+    #[test]
+    fn mip_chain_reaches_one_pixel_for_non_square_images() {
+        let data = vec![255; 4 * 4 * 2];
+        let mip_chain = generate_rgba8_mip_chain(4, 2, &data);
+
+        assert_eq!(
+            mip_chain
+                .iter()
+                .map(|level| (level.width, level.height))
+                .collect::<Vec<_>>(),
+            vec![(4, 2), (2, 1), (1, 1)],
+        );
+    }
+
+    #[test]
+    fn mip_chain_filters_high_frequency_image_details() {
+        let data = vec![0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255];
+        let mip_chain = generate_rgba8_mip_chain(2, 2, &data);
+
+        assert_eq!(mip_chain[1].data, vec![128, 128, 128, 255]);
     }
 }

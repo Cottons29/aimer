@@ -318,7 +318,7 @@ const TOOLING_FEATURES: [(&str, &str); 6] = [
     ("create", "Scaffold a new Aimer app with its workspace, assets, and platform files ready."),
     ("run", "Launch on desktop, web, or a connected device from one consistent command."),
     ("build", "Compile optimized artifacts for the platform and profile you choose."),
-    ("doctor", "Check toolchains, platform dependencies, and devices with actionable diagnostics.",),
+    ("doctor", "Check toolchains, platform dependencies, and devices with actionable diagnostics."),
     ("assemble", "Package release-ready bundles from your compiled Aimer application."),
     ("migrate", "Keep existing projects aligned as Aimer templates and APIs evolve."),
 ];

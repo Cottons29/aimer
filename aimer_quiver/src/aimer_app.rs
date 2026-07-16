@@ -4,7 +4,6 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use aimer_attribute::BoxConstraint;
-use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_inspector::InspectorAppHandle;
@@ -213,7 +212,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 render_ctx: AimerRenderContext::default(),
                 widget_root: None,
                 pending_widget: Some(widget),
-                cursor_pos: Vec2d::default(),
+                cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
                 current_modifiers: Default::default(),
                 ime_composing: false,
                 window_scale: scale_factor,
@@ -230,6 +229,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 #[cfg(debug_assertions)]
                 inspector_redraw_frames: Cell::new(0),
                 start_up_frames: Cell::new(0),
+                first_frame_notifier: Default::default(),
                 active_touch_id: None,
             },
             canvas: aimer_canvas::InnerCanvas::new(),
@@ -443,7 +443,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
         render_ctx: AimerRenderContext::default(),
         widget_root: None,
         pending_widget: Some(widget),
-        cursor_pos: Vec2d { x: 0.0, y: 0.0 },
+        cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
         current_modifiers: Default::default(),
         ime_composing: false,
         window_scale: 1.0,
@@ -460,6 +460,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
         #[cfg(debug_assertions)]
         inspector_redraw_frames: Cell::new(0),
         start_up_frames: Cell::new(255),
+        first_frame_notifier: Default::default(),
         active_touch_id: None,
     };
 
@@ -480,14 +481,15 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use aimer_attribute::position::Vec2d;
     use aimer_attribute::size::ResolvedSize;
     use aimer_events::element::ElementEvent;
     use aimer_widget::base::BuildContext;
     use aimer_widget::{
         Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
     };
-    use winit::dpi::PhysicalSize;
-    use winit::event::WindowEvent;
+    use winit::dpi::{PhysicalPosition, PhysicalSize};
+    use winit::event::{DeviceId, WindowEvent};
 
     use super::*;
 
@@ -559,6 +561,44 @@ mod tests {
         assert_eq!(cancels.load(Ordering::SeqCst), 1);
         assert_eq!(app.physical_size(), PhysicalSize::new(800, 600));
         assert_eq!(app.logical_size(), ResolvedSize { width: 400.0, height: 300.0 });
+    }
+
+    #[test]
+    fn cursor_boundaries_invalidate_stale_position_without_cancelling_gestures() {
+        let cancels = Arc::new(AtomicUsize::new(0));
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: cancels.clone(),
+        });
+        app.render_frame();
+        let device_id = DeviceId::dummy();
+
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id,
+            position: PhysicalPosition::new(20.0, 30.0),
+        });
+        assert_eq!((app.app.cursor_pos.x, app.app.cursor_pos.y), (20.0, 30.0));
+
+        app.send_window_event(WindowEvent::CursorLeft { device_id });
+        assert_eq!(
+            (app.app.cursor_pos.x, app.app.cursor_pos.y),
+            (
+                crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.x,
+                crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.y,
+            ),
+        );
+        assert_eq!(cancels.load(Ordering::SeqCst), 0);
+
+        app.app.cursor_pos = Vec2d { x: 20.0, y: 30.0 };
+        app.send_window_event(WindowEvent::CursorEntered { device_id });
+        assert_eq!(
+            (app.app.cursor_pos.x, app.app.cursor_pos.y),
+            (
+                crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.x,
+                crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.y,
+            ),
+        );
+        assert!(app.take_redraw_request());
     }
 
     #[test]

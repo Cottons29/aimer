@@ -1,10 +1,7 @@
-use std::sync::atomic::Ordering;
-
-use aimer::router::{Navigator, Outlet};
+use aimer::router::Outlet;
 use aimer::{BuildContext, Widget, widget, *};
 
 use crate::components::header::HeaderSection;
-use crate::screen::home_screen::SHOW_ICON;
 
 /// The persistent application shell frame: a fixed [`HeaderSection`] on top and
 /// a flexible content area below where the active route renders through an
