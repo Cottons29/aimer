@@ -18,7 +18,12 @@ pub use aimer_quiver::{
     self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions,
     set_first_frame_rendered_callback,
 };
-pub use aimer_text::Text;
+pub use aimer_svg::{
+    RawSvg, Svg, SvgCallback, SvgColor, SvgDiagnostic, SvgDocument, SvgError, SvgFillRule, SvgHit,
+    SvgLimits, SvgLoadState, SvgLoader, SvgNodeId, SvgNodeMetadata, SvgPath, SvgSelector,
+    SvgSource, SvgStyle, SvgTransform,
+};
+pub use aimer_text::{RichText, SpanStyle, Text, TextButton, TextSpan};
 pub use aimer_widget::base::BuildContext;
 pub use aimer_widget::{self, Key, State, StatefulWidget, StatelessWidget, Widget, *};
 

@@ -649,4 +649,3 @@ mod tests {
         assert_eq!(window_scale, 2.0);
     }
 }
-
