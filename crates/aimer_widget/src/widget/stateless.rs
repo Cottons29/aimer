@@ -78,6 +78,29 @@ pub struct StatelessElement {
 }
 
 impl StatelessElement {
+    pub fn from_builder(
+        ctx: &BuildContext,
+        rebuild_fn: impl Fn(&BuildContext) -> Box<dyn Element> + 'static,
+        key: Option<crate::key::Key>,
+        debug_name: &'static str,
+    ) -> Self {
+        let dirty = Rc::new(Cell::new(false));
+        let consumer = BuildConsumer::new(dirty.clone());
+        let rebuild_fn: Rc<RebuildCallBack> = Rc::new(rebuild_fn);
+        let child = ctx.with_build_consumer(consumer.clone(), |ctx| rebuild_fn(ctx));
+        let rebuild = Rc::new(move |ctx: &BuildContext| {
+            ctx.with_build_consumer(consumer.clone(), |ctx| rebuild_fn(ctx))
+        });
+        Self {
+            child: SyncChild(UnsafeCell::new(child)),
+            dirty,
+            rebuild_fn: Some(rebuild),
+            key,
+            debug_name,
+            bounds: Cell::new(None),
+        }
+    }
+
     /// Create a self-rebuildable stateless element. `rebuild_fn` re-invokes the
     /// widget's `build()` with a fresh `BuildContext`, so
     /// `MediaQuery`-dependent widgets update when marked dirty (e.g. on
@@ -115,11 +138,9 @@ impl StatelessElement {
         }
     }
 
-    /// If dirty, propagate rebuild to nested dirty elements.
-    /// The `rebuild_fn` + reconciliation path is intentionally disabled while
-    /// the `Reconcilable` removal is in progress.
+    /// If dirty, rebuild the child and preserve live state from the old subtree.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        let Some(_) = self.rebuild_fn.clone() else {
+        let Some(rebuild_fn) = self.rebuild_fn.clone() else {
             // Pure wrapper: cannot rebuild itself, only propagate.
             let child = unsafe { &*self.child.0.get() };
             child.rebuild_if_dirty(ctx);
@@ -132,10 +153,20 @@ impl StatelessElement {
             return;
         }
 
-        // Let nested dirty elements rebuild in-place first.
+        let new_child = rebuild_fn(ctx);
+
         {
             let child = unsafe { &*self.child.0.get() };
             child.rebuild_if_dirty(ctx);
+        }
+
+        {
+            let old_child = unsafe { &*self.child.0.get() };
+            crate::widget::stateful::carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
+        }
+
+        unsafe {
+            *self.child.0.get() = new_child;
         }
 
         self.dirty.set(false);
@@ -219,7 +250,46 @@ impl VisitorElement for StatelessElement {
 
 #[cfg(test)]
 mod tests {
+    use std::any::{Any, TypeId};
+    use std::collections::HashMap;
+    use std::sync::RwLock;
+
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dummy_async_handle() -> tokio::runtime::Handle {
+        use std::sync::OnceLock;
+
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        });
+        let _guard = runtime.enter();
+        tokio::runtime::Handle::current()
+    }
+
+    fn dummy_build_context() -> BuildContext<'static> {
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        BuildContext {
+            parent_size: Default::default(),
+            canvas,
+            scale: 1.0,
+            parent_pos: Default::default(),
+            cursor_pos: Default::default(),
+            box_constraint: Default::default(),
+            visible_rect: None,
+            window: WindowHandle::headless(Default::default(), 1.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            async_handle: dummy_async_handle(),
+            inherited_states: Rc::new(RwLock::new(HashMap::<TypeId, Rc<dyn Any>>::new())),
+        }
+    }
 
     /// Minimal leaf element for exercising the rebuild-marking traversal.
     struct Leaf;
@@ -256,5 +326,52 @@ mod tests {
 
         assert!(outer.dirty.get(), "wrapper itself is marked");
         assert!(inner_dirty.get(), "mark reached the nested rebuildable child");
+    }
+
+    #[test]
+    fn dirty_stateless_element_runs_its_rebuild_closure() {
+        let rebuilds = Rc::new(Cell::new(0));
+        let rebuild_observer = rebuilds.clone();
+        let element = StatelessElement::new(
+            Box::new(Leaf),
+            move |_| {
+                rebuild_observer.set(rebuild_observer.get() + 1);
+                Box::new(Leaf)
+            },
+            None,
+            "Rebuildable",
+        );
+        element.mark_needs_rebuild();
+
+        let context = dummy_build_context();
+        element.rebuild_if_dirty(&context);
+
+        assert_eq!(rebuilds.get(), 1);
+        assert!(!element.dirty.get());
+    }
+
+    #[test]
+    fn builder_runs_initial_and_rebuild_passes_with_a_consumer() {
+        let builds_with_consumer = Rc::new(Cell::new(0));
+        let observer = builds_with_consumer.clone();
+        let context = dummy_build_context();
+        let element = StatelessElement::from_builder(
+            &context,
+            move |context| {
+                if context
+                    .current_build_consumer()
+                    .is_some()
+                {
+                    observer.set(observer.get() + 1);
+                }
+                Box::new(Leaf)
+            },
+            None,
+            "Reactive",
+        );
+        element.mark_needs_rebuild();
+        element.rebuild_if_dirty(&context);
+
+        assert_eq!(builds_with_consumer.get(), 2);
     }
 }

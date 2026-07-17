@@ -94,12 +94,18 @@ type StateMutation<S> = Box<dyn FnOnce(&mut S)>;
 /// Instead of locking a `Mutex`, mutations are sent as closures through a
 /// `crossbeam_channel` and applied on the render thread during the next
 /// rebuild. This eliminates the possibility of deadlocks.
+///
+/// `StateUpdater` is intentionally confined to the UI thread:
+///
+/// ```compile_fail
+/// fn require_send<T: Send>() {}
+/// fn require_sync<T: Sync>() {}
+/// require_send::<aimer_widget::StateUpdater<()>>();
+/// require_sync::<aimer_widget::StateUpdater<()>>();
+/// ```
 pub struct StateUpdater<S> {
     inner: Option<StateUpdaterInner<S>>,
 }
-
-unsafe impl<S> Send for StateUpdater<S> {}
-unsafe impl<S> Sync for StateUpdater<S> {}
 
 struct StateUpdaterInner<S> {
     /// Channel sender for queueing state mutations.
@@ -485,6 +491,7 @@ impl StatefulElement {
         }
 
         let dirty = Rc::new(Cell::new(false));
+        let build_consumer = BuildConsumer::new(dirty.clone());
 
         // Create the channel for state mutations.
         #[allow(clippy::type_complexity)]
@@ -506,6 +513,7 @@ impl StatefulElement {
         let state_for_build = state_cell.clone();
         let revision_for_rebuild = state_revision.clone();
         let rx_for_rebuild = rx;
+        let consumer_for_rebuild = build_consumer.clone();
         let rebuild_fn: Rc<RebuildCallBack> = Rc::new(move |ctx| {
             // Drain all pending mutations from the channel before rebuilding.
             let s = unsafe { &mut *state_for_build.0.get() };
@@ -513,14 +521,16 @@ impl StatefulElement {
                 mutation(s);
                 revision_for_rebuild.fetch_add(1);
             }
-            let child_widget = s.build(ctx);
-            Widget::to_element(&child_widget, ctx)
+            ctx.with_build_consumer(consumer_for_rebuild.clone(), |ctx| {
+                let child_widget = s.build(ctx);
+                Widget::to_element(&child_widget, ctx)
+            })
         });
 
         let child = {
             // Safety: single-threaded — initial build during construction.
             let s = unsafe { &*state_cell.0.get() };
-            Widget::to_element(&s.build(ctx), ctx)
+            ctx.with_build_consumer(build_consumer, |ctx| Widget::to_element(&s.build(ctx), ctx))
         };
 
         // Type-erased handle to this element's state, plus a closure that can

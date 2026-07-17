@@ -58,6 +58,8 @@ pub mod base {
     pub use aimer_attribute::size::{ResolvedSize, Size};
     pub use aimer_color::prelude::*;
 
+    #[doc(hidden)]
+    pub use crate::components::context::BuildConsumer;
     pub use crate::components::context::{BuildContext, WindowHandle};
 }
 pub use aimer_canvas::TextOverflowMode;
