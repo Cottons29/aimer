@@ -1,9 +1,8 @@
-use std::time::Duration;
-
 use aimer::animation::{AnimatedSwitcher, Curve};
 use aimer::router::{Router, Shell};
 use aimer::style::{TextAlign, TextStyle};
 use aimer::*;
+use std::time::Duration;
 
 use crate::components::app_shell::AppShell;
 use crate::screen::blog::DocsPage;

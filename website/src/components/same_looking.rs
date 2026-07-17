@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(test)]
 use std::thread::{sleep, spawn};
 use std::time::Duration;
+// use std::time::Duration;
 
 use aimer::animation::{AnimatedSwitcher, Curve};
 use aimer::style::{FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle};
