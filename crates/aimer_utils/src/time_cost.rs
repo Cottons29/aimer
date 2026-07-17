@@ -74,11 +74,9 @@ impl ExecTimes {
     #[cfg(feature = "time-cost")]
     #[inline]
     pub fn no_param<T>(label: &str, f: impl FnOnce() -> T) -> T {
-        let start = chrono::Local::now();
+        let start = crate::AnimInstant::now();
         let res = f();
-        let delta = chrono::Local::now()
-            .signed_duration_since(start)
-            .num_milliseconds();
+        let delta = start.elapsed().as_millis() as i64;
         if delta < *MINIMUM_EXEC_TIME_MS {
             return res;
         }
@@ -94,14 +92,9 @@ impl ExecTimes {
     }
 
     pub fn print_time(f: impl FnOnce()) {
-        let start = chrono::Local::now();
+        let start = crate::AnimInstant::now();
         f();
 
-        debug!(
-            "Used time: {} ms",
-            chrono::Local::now()
-                .signed_duration_since(start)
-                .num_milliseconds()
-        );
+        debug!("Used time: {} ms", start.elapsed().as_millis());
     }
 }
