@@ -45,10 +45,6 @@ pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
             #key_method
 
             fn to_element(&self, ctx: &aimer_widget::base::BuildContext) -> Box<dyn aimer_widget::Element> {
-                use widget::StatelessWidget;
-                // Assumes self implements StatelessWidget
-                let child_widget = self.build(ctx);
-                let child_element = aimer_widget::Widget::to_element(&child_widget, ctx);
                 // Capture an owned copy of the widget so the element can re-run
                 // `build()` (re-reading `MediaQuery`) when marked dirty on resize.
                 // This requires the widget to be `Clone` (widgets are cheap,
@@ -59,8 +55,8 @@ pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
                     let child_widget = __rebuild_source.build(ctx);
                     aimer_widget::Widget::to_element(&child_widget, ctx)
                 };
-                Box::new(aimer_widget::StatelessElement::new(
-                    child_element,
+                Box::new(aimer_widget::StatelessElement::from_builder(
+                    ctx,
                     __rebuild,
                     #key_pass,
                     #struct_name_str,
