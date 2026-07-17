@@ -16,6 +16,12 @@ pub use aimer_input::callback::{AsyncCallback, CallbackInner, RawInnerCallback};
 pub use aimer_input::input::*;
 pub use aimer_input::*;
 pub use aimer_macro::{key, main};
+pub use aimer_markdown::{
+    Alignment as MarkdownAlignment, Block as MarkdownBlock, Document as MarkdownDocument,
+    ImageResolver as MarkdownImageResolver, Inline as MarkdownInline,
+    LinkHandler as MarkdownLinkHandler, MarkdownError, MarkdownImage, MarkdownTheme,
+    MarkdownViewer, SyntaxToken, SyntaxTokenKind,
+};
 pub use aimer_quiver as quiver;
 pub use aimer_quiver::{
     self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions,
