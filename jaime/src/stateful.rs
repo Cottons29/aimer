@@ -94,7 +94,7 @@ impl State<CounterWidget> for CounterState {
                             .child(
                                 Button::new()
                                     .disabled(self.on_loading)
-                                    .on_press_async(async move || {
+                                    .on_press(move || {
                                         // updater.set_state(|state| state.on_loading = true);
 
                                         // updater.set_state(|state| state.on_loading = false);
@@ -127,9 +127,9 @@ impl State<CounterWidget> for CounterState {
                             .child(
                                 Button::new()
                                     .disabled(self.on_loading)
-                                    .on_press_async({
+                                    .on_press({
                                         let updater = self.updater.clone();
-                                        async move || {
+                                        move || {
                                             println!(
                                                 "Button pressed with state : {}",
                                                 updater.read_state().count
