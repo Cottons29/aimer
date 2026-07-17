@@ -1,9 +1,9 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
+use aimer_utils::AnimInstant;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, EventElement, LayoutElement, VisitorElement};
-use web_time::Instant;
 
 use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
@@ -50,7 +50,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 let _ = aimer_widget::dispatch_event(&self.child, pos, event);
             }
 
-            let now = Instant::now();
+            let now = AnimInstant::now();
             // info!("[scroll] PointerUp mode_before={:?} drag_mode={:?}", mode_before,
             // self.ctrl.drag_mode.get());
             if let Some(last_time) = self.ctrl.last_event_time.get() {
@@ -146,7 +146,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     .apply_wheel_delta(offset, scroll_delta);
                 self.ctrl.scroll_offset.set(offset);
 
-                let now = Instant::now();
+                let now = AnimInstant::now();
                 let dt = self
                     .ctrl
                     .last_event_time
@@ -217,7 +217,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         .last_event_time
                         .get()
                         .is_none_or(|t| {
-                            Instant::now()
+                            AnimInstant::now()
                                 .duration_since(t)
                                 .as_millis()
                                 > STALE_TOUCH_THRESHOLD_MS
@@ -411,7 +411,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
                         let dy = (p.y - last.y) * speed_multiplier;
 
-                        let now = Instant::now();
+                        let now = AnimInstant::now();
                         self.ctrl
                             .last_event_time
                             .set(Some(now));
