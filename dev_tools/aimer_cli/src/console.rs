@@ -7,9 +7,10 @@ use std::path::Path;
 use std::process::Child;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use aimer_inspector::InspectorServer;
+use aimer_utils::AnimInstant;
 use anyhow::Context;
 use arboard::Clipboard;
 use crossbeam::channel::Sender;
@@ -162,7 +163,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
     let running_frame = ["▣", "▤", "▥", "▦", "▧", "▨", "▣", "▤", "▥", "▦"];
     let mut frame_index = 0;
     let tick_rate = Duration::from_millis(100);
-    let mut last_tick = Instant::now();
+    let mut last_tick = AnimInstant::now();
 
     // Drives the ConEmu `OSC 9;4` progress bar (e.g. the blue line at the top of
     // Ghostty). Computed once; the escape is only emitted when the status changes.
@@ -180,7 +181,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
     // Hot-reload file watcher
     // let _watcher = {
     //     let tx_watch = tx.clone();
-    //     let mut debounce_last = Instant::now();
+    //     let mut debounce_last = AnimInstant::now();
     //     let mut watcher = notify::recommended_watcher(move |res:
     // Result<NotifyEvent, notify::Error>| {         if let Ok(event) = res {
     //             use notify::EventKind;
@@ -191,7 +192,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
     //                         .iter()
     //                         .any(|p| p.extension().is_some_and(|ext| ext ==
     // "rs"));                     if dominated_by_rs {
-    //                         let now = Instant::now();
+    //                         let now = AnimInstant::now();
     //                         if now.duration_since(debounce_last) >
     // Duration::from_millis(500) {                             debounce_last =
     // now;                             let _ =
@@ -546,7 +547,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
 
         if last_tick.elapsed() >= tick_rate {
             frame_index = (frame_index + 1) % frames.len();
-            last_tick = Instant::now();
+            last_tick = AnimInstant::now();
         }
     }
 
@@ -598,7 +599,7 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
     // Hot-reload file watcher
     let _watcher = {
         let tx_watch = tx.clone();
-        let mut debounce_last = Instant::now();
+        let mut debounce_last = AnimInstant::now();
         let mut watcher =
             notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
                 if let Ok(event) = res {
@@ -610,7 +611,7 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                     .is_some_and(|ext| ext == "rs")
                             });
                             if dominated_by_rs {
-                                let now = Instant::now();
+                                let now = AnimInstant::now();
                                 if now.duration_since(debounce_last) > Duration::from_millis(500) {
                                     debounce_last = now;
                                     let _ = tx_watch.send(RunnerEvent::HotReload);
