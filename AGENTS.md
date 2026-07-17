@@ -75,6 +75,48 @@ This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `e
 - **Never write "Lazy Senior Dev" code.** Do not merely patch the symptom with spaghetti that other
   developers will curse. Solve the actual problem cleanly.
 - **Follow Test Driven Development.** Write the failing test first, then the code that makes it pass.
+- **The Widget-implemented struct always has new() with no parameter and child always in the last for building valid Widget**
+
+### Builder Pattern Example 
+
+```rust
+pub struct MyWidget<W = RequiredChild>{
+  child: W,
+  size: f32,
+}
+
+
+impl MyWidget {
+  pub fn new() -> Self {
+    Self {
+      child: RequiredChild,
+      size: Default::default()
+    }
+  }
+  
+  pub fn size(mut self, size: f32) -> Self {
+    self.size = size;
+    self
+  }
+  
+  // This will make the instance became a valid widget
+  pub fn child<W: Widget>(self, child: W) -> MyWidget<W> {
+    MyWidget {
+      child,
+      size: self.size
+    }
+  }
+}
+
+
+impl<W: Widget + 'static> Widget for MyWidget<W> {
+  fn to_element(self) -> AnyWidget {
+    // implementation here
+  }
+}
+
+
+```
 
 ### Test Driven Development
 
