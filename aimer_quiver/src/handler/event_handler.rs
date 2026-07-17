@@ -1,14 +1,14 @@
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerSource;
-use aimer_utils::{ExecTimes, debug, info};
+use aimer_utils::{ExecTimes, info};
 use aimer_widget::{Widget, broadcast_event, dispatch_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
     ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent,
 };
 use winit::event_loop::ActiveEventLoop;
-use winit::window::WindowId;
+use winit::window::{CursorIcon, WindowId};
 
 use crate::handler::AimerApplicationHandler;
 
@@ -235,6 +235,9 @@ impl WindowEventHandler {
             return;
         }
         app.cursor_pos = new_pos;
+        if let Some(window) = app.window {
+            window.set_cursor(CursorIcon::Default);
+        }
         if let Some(root) = &app.widget_root {
             let event = ElementEvent::PointerMove(app.cursor_pos, PointerSource::Mouse, 0);
             let _handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
