@@ -11,6 +11,7 @@ aimer_widget.workspace = true
 aimer_style.workspace = true
 aimer_events.workspace = true
 aimer_utils.workspace = true
+unicode-linebreak.workspace = true
 unicode-segmentation.workspace = true
 
 [dev-dependencies]

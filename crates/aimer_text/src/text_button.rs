@@ -1,13 +1,14 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use aimer_attribute::CacheBounds;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
 use aimer_events::window::request_animation_frame;
 use aimer_style::TextStyle;
+use aimer_utils::AnimInstant;
 use aimer_utils::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
@@ -142,7 +143,7 @@ struct RawTextButton {
     widget: TextButton,
     hovered: Cell<bool>,
     interaction: RefCell<ButtonInteraction>,
-    last_tap: Cell<Option<Instant>>,
+    last_tap: Cell<Option<AnimInstant>>,
     bounds: CacheBounds,
 }
 
@@ -192,7 +193,7 @@ impl RawTextButton {
 
     fn press(&self) {
         Self::execute(&self.widget.on_press);
-        let now = Instant::now();
+        let now = AnimInstant::now();
         if self
             .last_tap
             .get()

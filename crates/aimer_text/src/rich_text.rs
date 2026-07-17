@@ -4,10 +4,11 @@ use std::rc::Rc;
 
 use aimer_attribute::{Bounds, CacheBounds, ResolvedSize};
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
+use aimer_events::pointer::PointerSource;
 use aimer_macro::Rebuildable;
-use aimer_style::{TextAlign, TextDecorationLine, TextOverflow, TextStyle};
+use aimer_style::{FontStyle, TextAlign, TextDecorationLine, TextOverflow, TextStyle};
 use aimer_utils::callback::{Callback, CallbackExecutor, RawInnerCallback};
-use aimer_widget::base::BuildContext;
+use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -16,12 +17,17 @@ use crate::text_span::{ResolvedTextSpan, TextSpan, ellipsize_first_line, layout_
 
 pub type LinkCallback = Callback<Rc<str>, ()>;
 
+const DEFAULT_SELECTION_COLOR: Color = Color::Rgba(51, 153, 255, 96);
+
 pub struct RichText {
     span: TextSpan,
     text_style: TextStyle,
+    overflow: Option<TextOverflow>,
     text_align: TextAlign,
     on_link: LinkCallback,
+    link_hover_color: Option<Color>,
     selectable: bool,
+    selection_color: Color,
 }
 
 impl RichText {
@@ -29,9 +35,12 @@ impl RichText {
         Self {
             span,
             text_style: TextStyle::default(),
+            overflow: None,
             text_align: TextAlign::default(),
             on_link: LinkCallback::default(),
+            link_hover_color: None,
             selectable: false,
+            selection_color: DEFAULT_SELECTION_COLOR,
         }
     }
 
@@ -46,8 +55,13 @@ impl RichText {
     }
 
     pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
-        self.text_style.text_overflow = text_overflow;
+        self.overflow = Some(text_overflow);
         self
+    }
+
+    fn resolved_overflow(&self) -> TextOverflow {
+        self.overflow
+            .unwrap_or(self.text_style.text_overflow)
     }
 
     pub fn wrapped(self) -> Self {
@@ -63,14 +77,25 @@ impl RichText {
         self
     }
 
+    /// Changes linked text to `color` while the mouse pointer is over it.
+    pub const fn link_hover_color(mut self, color: Color) -> Self {
+        self.link_hover_color = Some(color);
+        self
+    }
+
     pub const fn selectable(mut self) -> Self {
         self.selectable = true;
+        self
+    }
+
+    pub const fn selection_color(mut self, color: Color) -> Self {
+        self.selection_color = color;
         self
     }
 }
 
 impl Widget for RichText {
-    fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let spans = self.span.flatten(&self.text_style);
         let plain_text: Rc<str> = spans
             .iter()
@@ -81,15 +106,19 @@ impl Widget for RichText {
             spans,
             plain_text,
             text_align: self.text_align,
-            overflow: self.text_style.text_overflow,
+            overflow: self.resolved_overflow(),
             on_link: self.on_link.clone(),
+            link_hover_color: self.link_hover_color,
             selectable: self.selectable,
+            selection_color: self.selection_color,
+            window: ctx.window.clone(),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(Vec::new()),
             text_regions: RefCell::new(Vec::new()),
             selection: RefCell::new(SelectionState::default()),
             focused: Cell::new(false),
             pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
         }
         .boxed()
     }
@@ -121,7 +150,32 @@ struct PreparedBackground {
 struct PreparedLayout {
     fragments: Vec<PreparedFragment>,
     backgrounds: Vec<PreparedBackground>,
+    line_heights: Vec<f32>,
     size: ResolvedSize,
+}
+
+#[derive(Clone, Copy)]
+struct PreparedSelection {
+    line: usize,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+fn push_selection_run(runs: &mut Vec<PreparedSelection>, run: PreparedSelection) {
+    const TOUCH_EPSILON: f32 = 0.01;
+
+    if let Some(previous) = runs.last_mut()
+        && previous.line == run.line
+        && (previous.y - run.y).abs() <= TOUCH_EPSILON
+        && (previous.height - run.height).abs() <= TOUCH_EPSILON
+        && (previous.x + previous.width - run.x).abs() <= TOUCH_EPSILON
+    {
+        previous.width = run.x + run.width - previous.x;
+    } else {
+        runs.push(run);
+    }
 }
 
 fn prepare_background_runs(
@@ -179,18 +233,66 @@ pub struct RawRichText {
     text_align: TextAlign,
     overflow: TextOverflow,
     on_link: LinkCallback,
+    link_hover_color: Option<Color>,
     selectable: bool,
+    selection_color: Color,
+    window: aimer_widget::base::WindowHandle,
     bounds: CacheBounds,
     link_regions: RefCell<Vec<LinkRegion>>,
     text_regions: RefCell<Vec<TextHitRegion>>,
     selection: RefCell<SelectionState>,
     focused: Cell<bool>,
     pressed_link: RefCell<Option<Rc<str>>>,
+    hovered_link: RefCell<Option<Rc<str>>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SelectableCursor {
+    Pointer,
+    Text,
+    Default,
+}
+
+fn interactive_cursor_for_event(
+    selectable: bool,
+    over_link: bool,
+    event: &ElementEvent,
+) -> Option<SelectableCursor> {
+    match event {
+        ElementEvent::PointerDown(_, PointerSource::Mouse, _)
+        | ElementEvent::PointerUp(_, PointerSource::Mouse, _)
+        | ElementEvent::PointerMove(_, PointerSource::Mouse, _)
+            if over_link =>
+        {
+            Some(SelectableCursor::Pointer)
+        }
+        ElementEvent::PointerDown(_, PointerSource::Mouse, _)
+        | ElementEvent::PointerUp(_, PointerSource::Mouse, _)
+        | ElementEvent::PointerMove(_, PointerSource::Mouse, _)
+            if selectable =>
+        {
+            Some(SelectableCursor::Text)
+        }
+        ElementEvent::PointerExited(PointerSource::Mouse, _) => Some(SelectableCursor::Default),
+        _ => None,
+    }
+}
+
+fn display_color(
+    span: &ResolvedTextSpan,
+    hovered_link: Option<&Rc<str>>,
+    link_hover_color: Option<Color>,
+) -> Color {
+    if hovered_link.is_some() && span.link.as_ref() == hovered_link {
+        link_hover_color.unwrap_or(span.style.color)
+    } else {
+        span.style.color
+    }
 }
 
 impl RawRichText {
     fn available_width(&self, ctx: &BuildContext) -> f32 {
-        if ctx.box_constraint.max_width > 0.0 {
+        if ctx.box_constraint.max_width > 0.0 && ctx.box_constraint.max_width < f32::MAX {
             ctx.box_constraint.max_width
         } else {
             ctx.parent_size.width
@@ -294,8 +396,22 @@ impl RawRichText {
             })
             .collect::<Vec<_>>();
         let backgrounds = prepare_background_runs(&fragments, &self.spans);
+        let line_heights = (0..layout.line_count)
+            .map(|line| {
+                if line + 1 < layout.line_count {
+                    line_top[line + 1] - line_top[line]
+                } else {
+                    line_ascent[line] + line_descent[line]
+                }
+            })
+            .collect();
 
-        PreparedLayout { fragments, backgrounds, size: ResolvedSize { width, height } }
+        PreparedLayout {
+            fragments,
+            backgrounds,
+            line_heights,
+            size: ResolvedSize { width, height },
+        }
     }
 
     fn link_at(&self, x: f32, y: f32) -> Option<Rc<str>> {
@@ -307,6 +423,13 @@ impl RawRichText {
                 b.x <= x && x <= b.x + b.width && b.y <= y && y <= b.y + b.height
             })
             .map(|region| region.target.clone())
+    }
+
+    fn set_hovered_link(&self, hovered_link: Option<Rc<str>>) {
+        if *self.hovered_link.borrow() != hovered_link {
+            *self.hovered_link.borrow_mut() = hovered_link;
+            self.window.request_redraw();
+        }
     }
 
     fn execute_link(&self, target: Rc<str>) {
@@ -334,16 +457,23 @@ impl VisitorElement for RawRichText {
 }
 
 impl EventElement for RawRichText {
-    fn captures_pointer(&self, pointer: u64) -> bool {
-        self.selectable
-            && self
-                .selection
-                .borrow()
-                .active_pointer()
-                == Some(pointer)
-    }
-
     fn on_event(&self, event: &ElementEvent) -> bool {
+        let hovered_link = match event {
+            ElementEvent::PointerDown(pos, PointerSource::Mouse, _)
+            | ElementEvent::PointerUp(pos, PointerSource::Mouse, _)
+            | ElementEvent::PointerMove(pos, PointerSource::Mouse, _) => self.link_at(pos.x, pos.y),
+            ElementEvent::PointerExited(PointerSource::Mouse, _) | ElementEvent::Cancel => None,
+            _ => self.hovered_link.borrow().clone(),
+        };
+        self.set_hovered_link(hovered_link.clone());
+
+        match interactive_cursor_for_event(self.selectable, hovered_link.is_some(), event) {
+            Some(SelectableCursor::Pointer) => self.window.set_pointer_cursor(),
+            Some(SelectableCursor::Text) => self.window.set_text_cursor(),
+            Some(SelectableCursor::Default) => self.window.reset_cursor(),
+            None => {}
+        }
+
         match event {
             ElementEvent::PointerDown(pos, _, pointer) => {
                 let target = self.link_at(pos.x, pos.y);
@@ -417,6 +547,7 @@ impl EventElement for RawRichText {
                 self.pressed_link
                     .borrow_mut()
                     .take();
+
                 if matches!(event, ElementEvent::Cancel) {
                     self.selection
                         .borrow_mut()
@@ -453,6 +584,15 @@ impl EventElement for RawRichText {
             }
             _ => false,
         }
+    }
+
+    fn captures_pointer(&self, pointer: u64) -> bool {
+        self.selectable
+            && self
+                .selection
+                .borrow()
+                .active_pointer()
+                == Some(pointer)
     }
 }
 
@@ -504,6 +644,7 @@ impl Drawable for RawRichText {
                 .borrow()
                 .selection()
                 .range();
+            let mut selection_runs = Vec::new();
             for fragment in &layout.fragments {
                 let Some(source_range) = &fragment.source_range else {
                     continue;
@@ -532,7 +673,7 @@ impl Drawable for RawRichText {
                             grapheme_range.clone(),
                             Bounds::new(
                                 (abs_x + x) / ctx.scale,
-                                (abs_y + fragment.baseline - fragment.height) / ctx.scale,
+                                (abs_y + fragment.baseline - fragment.ascent) / ctx.scale,
                                 width / ctx.scale,
                                 fragment.height / ctx.scale,
                             ),
@@ -545,27 +686,39 @@ impl Drawable for RawRichText {
                     x += width;
                 }
                 if let Some(selected_start) = selected_start {
-                    ctx.canvas.fill_color_rect(
-                        (selected_start, fragment.baseline - fragment.height).into(),
-                        ResolvedSize {
+                    push_selection_run(
+                        &mut selection_runs,
+                        PreparedSelection {
+                            line: fragment.line,
+                            x: selected_start,
+                            y: fragment.baseline - fragment.ascent,
                             width: selected_end - selected_start,
-                            height: fragment.height,
+                            height: layout.line_heights[fragment.line],
                         },
-                        aimer_widget::base::Color::Rgba(51, 153, 255, 96),
-                        [0.0; 4],
                     );
                 }
+            }
+            for run in selection_runs {
+                ctx.canvas.fill_color_rect(
+                    (run.x, run.y).into(),
+                    ResolvedSize { width: run.width, height: run.height },
+                    self.selection_color,
+                    [0.0; 4],
+                );
             }
         }
 
         for fragment in &layout.fragments {
             let span = &self.spans[fragment.span_index];
+            let hovered_link = self.hovered_link.borrow();
+            let color = display_color(span, hovered_link.as_ref(), self.link_hover_color);
             let font_size = span.style.font_size.max(1) as f32 * ctx.scale;
-            let italic = span
-                .style
-                .text_decoration
-                .line
-                .contains(TextDecorationLine::ITALIC);
+            let italic = span.style.font_style == FontStyle::Italic
+                || span
+                    .style
+                    .text_decoration
+                    .line
+                    .contains(TextDecorationLine::ITALIC);
             if italic {
                 ctx.canvas.set_italic(true);
             }
@@ -573,7 +726,7 @@ impl Drawable for RawRichText {
                 &fragment.text,
                 (fragment.x, fragment.baseline).into(),
                 font_size,
-                span.style.color,
+                color,
                 span.style.font_family,
                 span.style.font_style,
                 span.style.font_weight.numeric(),
@@ -585,9 +738,7 @@ impl Drawable for RawRichText {
             let decoration = span.style.text_decoration;
             let lines = decoration.line;
             if !lines.is_none() {
-                let color = decoration
-                    .color
-                    .unwrap_or(span.style.color);
+                let color = decoration.color.unwrap_or(color);
                 let thickness = decoration
                     .thickness
                     .map(|value| value * ctx.scale)
@@ -634,13 +785,15 @@ impl Drawable for RawRichText {
                         target: target.clone(),
                         bounds: Bounds::new(
                             (abs_x + fragment.x) / ctx.scale,
-                            (abs_y + fragment.baseline - fragment.height) / ctx.scale,
+                            (abs_y + fragment.baseline - fragment.ascent) / ctx.scale,
                             fragment.width / ctx.scale,
                             fragment.height / ctx.scale,
                         ),
                     });
             }
         }
+
+        self.set_hovered_link(self.link_at(ctx.cursor_pos.x, ctx.cursor_pos.y));
 
         if matches!(self.overflow, TextOverflow::Clip | TextOverflow::Ellipsis) {
             ctx.canvas.clear_clip();
@@ -659,8 +812,12 @@ mod tests {
     use aimer_events::pointer::PointerSource;
     use aimer_style::{TextAlign, TextOverflow, TextStyle};
     use aimer_widget::EventElement;
+    use aimer_widget::base::{Color, WindowHandle};
 
-    use super::{LinkCallback, LinkRegion, PreparedFragment, RawRichText, prepare_background_runs};
+    use super::{
+        DEFAULT_SELECTION_COLOR, LinkCallback, LinkRegion, PreparedFragment, RawRichText,
+        SelectableCursor, interactive_cursor_for_event, prepare_background_runs,
+    };
     use crate::selection::{SelectionState, TextHitRegion, TextSelection};
     use crate::text_span::{ResolvedTextSpan, layout_resolved_spans};
 
@@ -671,7 +828,10 @@ mod tests {
             text_align: TextAlign::TopLeft,
             overflow: TextOverflow::Clip,
             on_link,
+            link_hover_color: Some(Color::Hex(0x388BFD)),
             selectable: true,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            window: WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(vec![LinkRegion {
                 target: Rc::from("https://aimer.dev"),
@@ -684,6 +844,7 @@ mod tests {
             selection: RefCell::new(SelectionState::default()),
             focused: Cell::new(false),
             pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
         }
     }
 
@@ -694,6 +855,97 @@ mod tests {
 
         assert!(!plain.selectable);
         assert!(selectable.selectable);
+    }
+
+    #[test]
+    fn rich_text_selection_color_is_customizable() {
+        let color = Color::Rgba(255, 0, 128, 64);
+        let text = super::RichText::new(crate::TextSpan::new("selectable"))
+            .selectable()
+            .selection_color(color);
+
+        assert_eq!(text.selection_color, color);
+    }
+
+    #[test]
+    fn explicit_overflow_override_is_independent_of_builder_order() {
+        let before_style = super::RichText::new(crate::TextSpan::new("before"))
+            .text_overflow(TextOverflow::Wrap)
+            .text_style(TextStyle::new().font_size(20));
+        let after_style = super::RichText::new(crate::TextSpan::new("after"))
+            .text_style(TextStyle::new().font_size(20))
+            .text_overflow(TextOverflow::Wrap);
+
+        assert!(matches!(before_style.resolved_overflow(), TextOverflow::Wrap));
+        assert!(matches!(after_style.resolved_overflow(), TextOverflow::Wrap));
+    }
+
+    #[test]
+    fn links_use_pointer_cursor_before_selectable_text_cursor() {
+        let hover = ElementEvent::PointerMove(Vec2d { x: 1.0, y: 1.0 }, PointerSource::Mouse, 0);
+        let exit = ElementEvent::PointerExited(PointerSource::Mouse, 0);
+        let touch = ElementEvent::PointerMove(Vec2d { x: 1.0, y: 1.0 }, PointerSource::Touch, 1);
+
+        assert_eq!(
+            interactive_cursor_for_event(true, true, &hover),
+            Some(SelectableCursor::Pointer)
+        );
+        assert_eq!(interactive_cursor_for_event(true, false, &hover), Some(SelectableCursor::Text));
+        assert_eq!(
+            interactive_cursor_for_event(true, false, &exit),
+            Some(SelectableCursor::Default)
+        );
+        assert_eq!(interactive_cursor_for_event(true, true, &touch), None);
+        assert_eq!(interactive_cursor_for_event(false, false, &hover), None);
+    }
+
+    #[test]
+    fn hovered_link_uses_the_configured_color_only_for_its_spans() {
+        let hovered = Rc::<str>::from("https://aimer.dev");
+        let hover_color = Color::Hex(0x388BFD);
+        let linked = ResolvedTextSpan {
+            text: Rc::from("Aimer"),
+            style: TextStyle::new().color(Color::Hex(0x0969DA)),
+            link: Some(hovered.clone()),
+        };
+        let plain = ResolvedTextSpan::plain(Rc::from(" docs"), TextStyle::default());
+
+        assert_eq!(super::display_color(&linked, Some(&hovered), Some(hover_color)), hover_color);
+        assert_eq!(
+            super::display_color(&plain, Some(&hovered), Some(hover_color)),
+            plain.style.color
+        );
+        assert_eq!(super::display_color(&plain, None, Some(hover_color)), plain.style.color);
+    }
+
+    #[test]
+    fn moving_into_and_out_of_a_link_updates_hover_and_requests_redraw() {
+        let text = selectable_raw_text(LinkCallback::default());
+
+        text.on_event(&ElementEvent::PointerMove(
+            Vec2d { x: 1.0, y: 5.0 },
+            PointerSource::Mouse,
+            0,
+        ));
+        assert_eq!(
+            text.hovered_link
+                .borrow()
+                .as_deref(),
+            Some("https://aimer.dev")
+        );
+        assert!(text.window.take_redraw_request());
+
+        text.on_event(&ElementEvent::PointerMove(
+            Vec2d { x: 50.0, y: 50.0 },
+            PointerSource::Mouse,
+            0,
+        ));
+        assert!(
+            text.hovered_link
+                .borrow()
+                .is_none()
+        );
+        assert!(text.window.take_redraw_request());
     }
 
     #[test]
@@ -840,6 +1092,265 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn selection_highlight_starts_at_the_text_line_top() {
+        use aimer_attribute::{CacheBounds, ResolvedSize};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_widget::Drawable;
+        use aimer_widget::base::BuildContext;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize { width: 200.0, height: 100.0 },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let selection_color = Color::Rgba(255, 0, 128, 64);
+        let text = RawRichText {
+            spans: vec![ResolvedTextSpan::plain(
+                Rc::from("selected"),
+                TextStyle::new().font_size(24),
+            )],
+            plain_text: Rc::from("selected"),
+            text_align: TextAlign::TopLeft,
+            overflow: TextOverflow::Wrap,
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: true,
+            selection_color,
+            window: context.window.clone(),
+            bounds: CacheBounds::new(),
+            link_regions: RefCell::new(Vec::new()),
+            text_regions: RefCell::new(Vec::new()),
+            selection: RefCell::new(SelectionState::default()),
+            focused: Cell::new(false),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+        };
+        text.selection
+            .borrow_mut()
+            .select_all(text.plain_text.len());
+        let fragment = text
+            .prepare_layout(&context)
+            .fragments
+            .remove(0);
+
+        text.draw(&context);
+
+        let (selection_top, rendered_color) = inner
+            .draw_list()
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                DrawCommand::FillRect { rect, color, .. } => Some((rect.y, *color)),
+                _ => None,
+            })
+            .unwrap();
+        let expected_color: aimer_cupid::utilities::Color = selection_color.into();
+        assert_eq!(selection_top, fragment.baseline - fragment.ascent);
+        assert_eq!(rendered_color.to_array(), expected_color.to_array());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn selection_highlight_connects_across_adjacent_spans() {
+        use aimer_attribute::{CacheBounds, ResolvedSize};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_widget::Drawable;
+        use aimer_widget::base::BuildContext;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize { width: 200.0, height: 100.0 },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let text = RawRichText {
+            spans: vec![
+                ResolvedTextSpan::plain(Rc::from("normal "), TextStyle::new().font_size(20)),
+                ResolvedTextSpan::plain(
+                    Rc::from("italic"),
+                    TextStyle::new()
+                        .font_size(20)
+                        .font_style(aimer_style::FontStyle::Italic),
+                ),
+            ],
+            plain_text: Rc::from("normal italic"),
+            text_align: TextAlign::TopLeft,
+            overflow: TextOverflow::Wrap,
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: true,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            window: context.window.clone(),
+            bounds: CacheBounds::new(),
+            link_regions: RefCell::new(Vec::new()),
+            text_regions: RefCell::new(Vec::new()),
+            selection: RefCell::new(SelectionState::default()),
+            focused: Cell::new(false),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+        };
+        text.selection
+            .borrow_mut()
+            .select_all(text.plain_text.len());
+
+        text.draw(&context);
+
+        let highlight_count = inner
+            .draw_list()
+            .commands()
+            .iter()
+            .filter(|command| matches!(command, DrawCommand::FillRect { .. }))
+            .count();
+        assert_eq!(highlight_count, 1);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn selection_highlights_touch_between_wrapped_lines() {
+        use aimer_attribute::{BoxConstraint, CacheBounds, ResolvedSize};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_widget::Drawable;
+        use aimer_widget::base::BuildContext;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let mut context = BuildContext::new(
+            canvas,
+            ResolvedSize { width: 70.0, height: 200.0 },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(70, 200), 1.0),
+            runtime.handle().clone(),
+        );
+        context.box_constraint =
+            BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: 70.0, max_height: 200.0 };
+        let text = RawRichText {
+            spans: vec![ResolvedTextSpan::plain(
+                Rc::from("first second third"),
+                TextStyle::new().font_size(24),
+            )],
+            plain_text: Rc::from("first second third"),
+            text_align: TextAlign::TopLeft,
+            overflow: TextOverflow::Wrap,
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: true,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            window: context.window.clone(),
+            bounds: CacheBounds::new(),
+            link_regions: RefCell::new(Vec::new()),
+            text_regions: RefCell::new(Vec::new()),
+            selection: RefCell::new(SelectionState::default()),
+            focused: Cell::new(false),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+        };
+        text.selection
+            .borrow_mut()
+            .select_all(text.plain_text.len());
+
+        text.draw(&context);
+
+        let highlights = inner
+            .draw_list()
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                DrawCommand::FillRect { rect, .. } => Some(*rect),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(highlights.len() > 1);
+        for lines in highlights.windows(2) {
+            assert!((lines[0].y + lines[0].height - lines[1].y).abs() < 0.01);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn italic_span_enables_synthetic_italic_for_its_draw() {
+        use aimer_attribute::{CacheBounds, ResolvedSize};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_widget::Drawable;
+        use aimer_widget::base::BuildContext;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize { width: 200.0, height: 100.0 },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let text = RawRichText {
+            spans: vec![ResolvedTextSpan::plain(
+                Rc::from("italic"),
+                TextStyle::new()
+                    .font_size(20)
+                    .font_style(aimer_style::FontStyle::Italic),
+            )],
+            plain_text: Rc::from("italic"),
+            text_align: TextAlign::TopLeft,
+            overflow: TextOverflow::Clip,
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: false,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            window: context.window.clone(),
+            bounds: CacheBounds::new(),
+            link_regions: RefCell::new(Vec::new()),
+            text_regions: RefCell::new(Vec::new()),
+            selection: RefCell::new(SelectionState::default()),
+            focused: Cell::new(false),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+        };
+
+        text.draw(&context);
+
+        let commands = inner.draw_list();
+        let commands = commands.commands();
+        let draw_index = commands
+            .iter()
+            .position(|command| matches!(command, DrawCommand::DrawText { .. }))
+            .unwrap();
+        assert!(matches!(commands[draw_index - 1], DrawCommand::SetItalic { italic: true }));
+        assert!(matches!(commands[draw_index + 1], DrawCommand::SetItalic { italic: false }));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn backgrounds_draw_before_text_without_changing_size_or_link_regions() {
         use std::cell::{Cell, RefCell};
 
@@ -859,7 +1370,7 @@ mod tests {
             canvas,
             ResolvedSize { width: 200.0, height: 100.0 },
             1.0,
-            Vec2d::default(),
+            Vec2d { x: 1.0, y: 5.0 },
             Vec2d::default(),
             WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
             runtime.handle().clone(),
@@ -875,13 +1386,17 @@ mod tests {
             text_align: TextAlign::TopLeft,
             overflow: TextOverflow::Clip,
             on_link: LinkCallback::default(),
+            link_hover_color: None,
             selectable: false,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            window: context.window.clone(),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(Vec::new()),
             text_regions: RefCell::new(Vec::new()),
             selection: RefCell::new(SelectionState::default()),
             focused: Cell::new(false),
             pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
         };
         let plain = RawRichText {
             spans: vec![ResolvedTextSpan {
@@ -892,13 +1407,17 @@ mod tests {
             text_align: TextAlign::TopLeft,
             overflow: TextOverflow::Clip,
             on_link: LinkCallback::default(),
+            link_hover_color: None,
             selectable: false,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            window: context.window.clone(),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(Vec::new()),
             text_regions: RefCell::new(Vec::new()),
             selection: RefCell::new(SelectionState::default()),
             focused: Cell::new(false),
             pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
         };
 
         assert_eq!(
@@ -908,6 +1427,13 @@ mod tests {
             plain.prepare_layout(&context).size
         );
         highlighted.draw(&context);
+        assert_eq!(
+            highlighted
+                .hovered_link
+                .borrow()
+                .as_deref(),
+            Some("https://aimer.dev")
+        );
 
         let commands = inner.draw_list();
         let background_index = commands
@@ -947,5 +1473,65 @@ mod tests {
         assert_eq!(layout.fragments[1].x, 15.0);
         assert_eq!(layout.fragments[2].line, 1);
         assert_eq!(layout.fragments[2].x, 0.0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn wrapping_uses_parent_width_when_constraint_is_unbounded() {
+        use aimer_attribute::{BoxConstraint, CacheBounds, ResolvedSize, Vec2d};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_style::{TextAlign, TextOverflow};
+        use aimer_widget::base::{BuildContext, WindowHandle};
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let mut context = BuildContext::new(
+            canvas,
+            ResolvedSize { width: 20.0, height: 100.0 },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(20, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        context.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: f32::MAX,
+            max_height: f32::MAX,
+        };
+        let rich_text = RawRichText {
+            spans: vec![ResolvedTextSpan::plain(
+                Rc::from("abcdef"),
+                TextStyle::new().font_size(10),
+            )],
+            plain_text: Rc::from("abcdef"),
+            text_align: TextAlign::TopLeft,
+            overflow: TextOverflow::Wrap,
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: false,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            window: context.window.clone(),
+            bounds: CacheBounds::new(),
+            link_regions: RefCell::new(Vec::new()),
+            text_regions: RefCell::new(Vec::new()),
+            selection: RefCell::new(SelectionState::default()),
+            focused: Cell::new(false),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+        };
+
+        assert_eq!(rich_text.available_width(&context), 20.0);
+        assert_eq!(
+            rich_text
+                .prepare_layout(&context)
+                .size
+                .width,
+            20.0
+        );
     }
 }
