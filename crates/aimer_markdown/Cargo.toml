@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-aimer_macro.workspace = true
 aimer_widget.workspace = true
 aimer_text.workspace = true
 aimer_container.workspace = true
 markdown.workspace = true
+aimer_assets.workspace = true
+aimer_color.workspace = true
+aimer_style.workspace = true
+webbrowser.workspace = true

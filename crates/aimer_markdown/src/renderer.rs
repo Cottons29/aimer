@@ -1,0 +1,589 @@
+use std::rc::Rc;
+
+use aimer_assets::{AssetImage, NetworkImage};
+use aimer_color::prelude::Color;
+use aimer_container::flex::BoxAlignment;
+use aimer_container::flex::row_column::{Column, Row};
+use aimer_container::{Container, Grid, GridItem, GridTrack, SizedBox};
+use aimer_style::{
+    BoxDecoration, FontFamily, FontStyle, FontWeight, LayoutSpacing, TextAlign, TextDecoration,
+    TextDecorationLine, TextStyle,
+};
+use aimer_text::{RichText, SpanStyle, Text, TextSpan};
+use aimer_widget::{AnyWidget, Widget};
+
+use crate::{Alignment, Block, Document, Inline, SyntaxTokenKind, TableRow, highlight};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Metadata passed to a [`ImageResolver`] for each image node.
+pub struct MarkdownImage {
+    pub source: String,
+    pub alt: String,
+    pub title: Option<String>,
+}
+
+/// Shared callback invoked when a rendered link is activated.
+pub type LinkHandler = Rc<dyn Fn(Rc<str>)>;
+/// Shared resolver that maps image metadata to a native Aimer widget.
+pub type ImageResolver = Rc<dyn Fn(&MarkdownImage) -> AnyWidget>;
+
+/// Resolves network URLs with `NetworkImage` and other sources with `AssetImage`.
+pub fn default_image_resolver(image: &MarkdownImage) -> AnyWidget {
+    if image.source.starts_with("http://")
+        || image
+            .source
+            .starts_with("https://")
+    {
+        NetworkImage::new(image.source.clone()).boxed()
+    } else {
+        AssetImage::new(image.source.clone()).boxed()
+    }
+}
+
+#[derive(Clone)]
+/// Visual styles, colors, and spacing used by [`crate::MarkdownViewer`].
+pub struct MarkdownTheme {
+    pub body: TextStyle,
+    pub headings: [TextStyle; 6],
+    pub blockquote: TextStyle,
+    pub code_block: TextStyle,
+    pub inline_code: SpanStyle,
+    pub link: SpanStyle,
+    pub link_hover_color: Color,
+    pub code_background: Color,
+    pub quote_background: Color,
+    pub rule_color: Color,
+    pub table_header_background: Color,
+    pub table_cell_background: Color,
+    pub keyword_color: Color,
+    pub string_color: Color,
+    pub comment_color: Color,
+    pub number_color: Color,
+    pub block_spacing: u32,
+}
+
+impl Default for MarkdownTheme {
+    fn default() -> Self {
+        let body = TextStyle::new()
+            .font_size(16)
+            .color(Color::Hex(0x24292F));
+        Self {
+            body,
+            headings: [
+                body.font_size(32)
+                    .font_weight(FontWeight::Bolder),
+                body.font_size(28)
+                    .font_weight(FontWeight::Bolder),
+                body.font_size(24)
+                    .font_weight(FontWeight::Bolder),
+                body.font_size(20)
+                    .font_weight(FontWeight::Bolder),
+                body.font_size(18)
+                    .font_weight(FontWeight::Bolder),
+                body.font_size(16)
+                    .font_weight(FontWeight::Bolder),
+            ],
+            blockquote: body.color(Color::Hex(0x57606A)),
+            code_block: body
+                .font_family(FontFamily::MONOSPACE)
+                .font_size(14),
+            inline_code: SpanStyle::new()
+                .font_family(FontFamily::MONOSPACE)
+                .background_color(Color::Hex(0xEFF1F3)),
+            link: SpanStyle::new()
+                .color(Color::Hex(0x0969DA))
+                .text_decoration(TextDecoration::Underline),
+            link_hover_color: Color::Hex(0x0969DA).lighten(0.48),
+            code_background: Color::Hex(0xF6F8FA),
+            quote_background: Color::Hex(0xF6F8FA),
+            rule_color: Color::Hex(0xD0D7DE),
+            table_header_background: Color::Hex(0xF6F8FA),
+            table_cell_background: Color::Hex(0xFFFFFF),
+            keyword_color: Color::Hex(0xCF222E),
+            string_color: Color::Hex(0x0A3069),
+            comment_color: Color::Hex(0x6E7781),
+            number_color: Color::Hex(0x0550AE),
+            block_spacing: 12,
+        }
+    }
+}
+
+pub(crate) fn inline_spans(inlines: &[Inline], theme: &MarkdownTheme) -> TextSpan {
+    TextSpan::root(
+        inlines
+            .iter()
+            .map(|inline| inline_span(inline, theme)),
+    )
+}
+
+fn inline_span(inline: &Inline, theme: &MarkdownTheme) -> TextSpan {
+    match inline {
+        Inline::Text(text) => TextSpan::new(text.clone()),
+        Inline::SoftBreak | Inline::HardBreak => TextSpan::new("\n"),
+        Inline::Emphasis(children) => TextSpan::new("")
+            .style(SpanStyle::new().font_style(FontStyle::Italic))
+            .children(
+                children
+                    .iter()
+                    .map(|inline| inline_span(inline, theme)),
+            ),
+        Inline::Strong(children) => TextSpan::new("")
+            .style(SpanStyle::new().font_weight(FontWeight::Bold))
+            .children(
+                children
+                    .iter()
+                    .map(|inline| inline_span(inline, theme)),
+            ),
+        Inline::Delete(children) => TextSpan::new("")
+            .style(
+                SpanStyle::new()
+                    .text_decoration(TextDecoration::new().line(TextDecorationLine::LINE_THROUGH)),
+            )
+            .children(
+                children
+                    .iter()
+                    .map(|inline| inline_span(inline, theme)),
+            ),
+        Inline::InlineCode(code) => TextSpan::new(code.clone()).style(theme.inline_code),
+        Inline::Link { url, content, .. } => TextSpan::new("")
+            .style(theme.link)
+            .children(
+                content
+                    .iter()
+                    .map(|inline| inline_span(inline, theme)),
+            )
+            .link(url.clone()),
+        Inline::Image { alt, .. } => {
+            TextSpan::new(format!("[{alt}]")).style(SpanStyle::new().font_style(FontStyle::Italic))
+        }
+        Inline::FootnoteReference { identifier } => TextSpan::new(format!("[{identifier}]"))
+            .style(theme.link)
+            .link(format!("#footnote-{identifier}")),
+    }
+}
+
+pub(crate) fn render_document(
+    document: &Document,
+    theme: &MarkdownTheme,
+    link_handler: Option<&LinkHandler>,
+    image_resolver: &ImageResolver,
+) -> AnyWidget {
+    render_blocks(&document.blocks, theme, link_handler, image_resolver)
+}
+
+fn render_blocks(
+    blocks: &[Block],
+    theme: &MarkdownTheme,
+    link_handler: Option<&LinkHandler>,
+    image_resolver: &ImageResolver,
+) -> AnyWidget {
+    let children = blocks
+        .iter()
+        .map(|block| render_block(block, theme, link_handler, image_resolver))
+        .collect::<Vec<_>>();
+    Column::new()
+        .horizontal_alignment(BoxAlignment::Start)
+        .gaps(LayoutSpacing::all(theme.block_spacing.into()))
+        .children(children)
+        .boxed()
+}
+
+fn table_text_align(alignment: Alignment) -> TextAlign {
+    match alignment {
+        Alignment::Left | Alignment::None => TextAlign::TopLeft,
+        Alignment::Center => TextAlign::TopCenter,
+        Alignment::Right => TextAlign::TopRight,
+    }
+}
+
+fn table_tracks(column_count: usize) -> Vec<GridTrack> {
+    std::iter::repeat_n(GridTrack::Fr(1.0), column_count).collect()
+}
+
+fn render_table(
+    alignments: &[Alignment],
+    rows: &[TableRow],
+    theme: &MarkdownTheme,
+    link_handler: Option<&LinkHandler>,
+) -> AnyWidget {
+    let column_count = rows
+        .iter()
+        .map(|row| row.cells.len())
+        .chain(std::iter::once(alignments.len()))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let cells = rows
+        .iter()
+        .enumerate()
+        .flat_map(|(row_index, row)| {
+            (0..column_count).map(move |column_index| {
+                let content = row
+                    .cells
+                    .get(column_index)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                let alignment = alignments
+                    .get(column_index)
+                    .copied()
+                    .unwrap_or(Alignment::None);
+                let rich = RichText::new(inline_spans(content, theme))
+                    .text_style(theme.body)
+                    .text_align(table_text_align(alignment))
+                    .wrapped()
+                    .link_hover_color(theme.link_hover_color)
+                    .selectable();
+                let content: AnyWidget = match link_handler {
+                    Some(handler) => {
+                        let handler = (*handler).clone();
+                        rich.on_link(move |target: Rc<str>| handler(target))
+                            .boxed()
+                    }
+                    None => rich.boxed(),
+                };
+                let background = if row_index == 0 {
+                    theme.table_header_background
+                } else {
+                    theme.table_cell_background
+                };
+                GridItem::new(
+                    Container::new()
+                        .padding(LayoutSpacing::all(8_u32.into()))
+                        .color(background)
+                        .child(content)
+                        .boxed(),
+                )
+                .at(row_index, column_index)
+            })
+        })
+        .collect::<Vec<_>>();
+    Container::new()
+        .padding(LayoutSpacing::all(1_u32.into()))
+        .color(theme.rule_color)
+        .child(
+            Grid::new()
+                .columns(table_tracks(column_count))
+                .gap(1.0)
+                .children(cells),
+        )
+        .boxed()
+}
+
+fn render_block(
+    block: &Block,
+    theme: &MarkdownTheme,
+    link_handler: Option<&LinkHandler>,
+    image_resolver: &ImageResolver,
+) -> AnyWidget {
+    match block {
+        Block::Heading { depth, content } => rich_text(
+            content,
+            theme.headings[usize::from(*depth)
+                .saturating_sub(1)
+                .min(5)],
+            theme,
+            link_handler,
+        ),
+        Block::Paragraph(content) => {
+            render_paragraph(content, theme.body, theme, link_handler, image_resolver)
+        }
+        Block::Blockquote(blocks) => Row::new()
+            .gaps(LayoutSpacing::all(10_u32.into()))
+            .children(vec![
+                SizedBox::new()
+                    .width(4.0)
+                    .color(theme.rule_color)
+                    .boxed(),
+                Container::new()
+                    .padding(LayoutSpacing::all(8_u32.into()))
+                    .color(theme.quote_background)
+                    .child(render_blocks_with_style(
+                        blocks,
+                        theme.blockquote,
+                        theme,
+                        link_handler,
+                        image_resolver,
+                    ))
+                    .boxed(),
+            ])
+            .boxed(),
+        Block::List { ordered, start, items } => {
+            let start = start.unwrap_or(1);
+            let rows = items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    let marker = match item.checked {
+                        Some(true) => "[✓]".to_string(),
+                        Some(false) => "[ ]".to_string(),
+                        None if *ordered => format!("{}.", start + index as u32),
+                        None => "•".to_string(),
+                    };
+                    Row::new()
+                        .gaps(LayoutSpacing::all(8_u32.into()))
+                        .children(vec![
+                            Text::new(marker)
+                                .text_style(
+                                    theme
+                                        .body
+                                        .font_weight(FontWeight::Bold),
+                                )
+                                .boxed(),
+                            render_blocks(&item.blocks, theme, link_handler, image_resolver),
+                        ])
+                        .boxed()
+                })
+                .collect::<Vec<_>>();
+            Column::new()
+                .horizontal_alignment(BoxAlignment::Start)
+                .gaps(LayoutSpacing::all(6_u32.into()))
+                .children(rows)
+                .boxed()
+        }
+        Block::Code { value, language, .. } => {
+            let spans = highlight(value, language.as_deref())
+                .into_iter()
+                .map(|token| {
+                    let style = match token.kind {
+                        SyntaxTokenKind::Plain => SpanStyle::new(),
+                        SyntaxTokenKind::Keyword => SpanStyle::new()
+                            .color(theme.keyword_color)
+                            .font_weight(FontWeight::Bold),
+                        SyntaxTokenKind::String => SpanStyle::new().color(theme.string_color),
+                        SyntaxTokenKind::Comment => SpanStyle::new()
+                            .color(theme.comment_color)
+                            .font_style(FontStyle::Italic),
+                        SyntaxTokenKind::Number => SpanStyle::new().color(theme.number_color),
+                    };
+                    TextSpan::new(token.text).style(style)
+                });
+            Container::new()
+                .padding(LayoutSpacing::all(12_u32.into()))
+                .box_decoration(
+                    BoxDecoration::new()
+                        .background_color(theme.code_background)
+                        .border_radius(8),
+                )
+                .child(
+                    RichText::new(TextSpan::root(spans))
+                        .text_style(theme.code_block)
+                        .wrapped()
+                        .selectable(),
+                )
+                .boxed()
+        }
+        Block::ThematicBreak => SizedBox::new()
+            .height(1.0)
+            .color(theme.rule_color)
+            .boxed(),
+        Block::Table { alignments, rows } => render_table(alignments, rows, theme, link_handler),
+        Block::FootnoteDefinition { identifier, blocks } => Row::new()
+            .gaps(LayoutSpacing::all(6_u32.into()))
+            .children(vec![
+                Text::new(format!("[{identifier}]"))
+                    .text_style(
+                        theme
+                            .body
+                            .font_weight(FontWeight::Bold),
+                    )
+                    .boxed(),
+                render_blocks(blocks, theme, link_handler, image_resolver),
+            ])
+            .boxed(),
+    }
+}
+
+fn render_blocks_with_style(
+    blocks: &[Block],
+    style: TextStyle,
+    theme: &MarkdownTheme,
+    link_handler: Option<&LinkHandler>,
+    image_resolver: &ImageResolver,
+) -> AnyWidget {
+    let children = blocks
+        .iter()
+        .map(|block| match block {
+            Block::Paragraph(inlines) => {
+                render_paragraph(inlines, style, theme, link_handler, image_resolver)
+            }
+            _ => render_block(block, theme, link_handler, image_resolver),
+        })
+        .collect::<Vec<_>>();
+    Column::new()
+        .horizontal_alignment(BoxAlignment::Start)
+        .gaps(LayoutSpacing::all(8_u32.into()))
+        .children(children)
+        .boxed()
+}
+
+fn render_paragraph(
+    inlines: &[Inline],
+    style: TextStyle,
+    theme: &MarkdownTheme,
+    link_handler: Option<&LinkHandler>,
+    image_resolver: &ImageResolver,
+) -> AnyWidget {
+    if !inlines
+        .iter()
+        .any(|inline| matches!(inline, Inline::Image { .. }))
+    {
+        return rich_text(inlines, style, theme, link_handler);
+    }
+    let mut children = Vec::new();
+    let mut text = Vec::new();
+    for inline in inlines {
+        if let Inline::Image { url, title, alt } = inline {
+            if !text.is_empty() {
+                children.push(rich_text(&text, style, theme, link_handler));
+                text.clear();
+            }
+            children.push(image_resolver(&MarkdownImage {
+                source: url.clone(),
+                alt: alt.clone(),
+                title: title.clone(),
+            }));
+        } else {
+            text.push(inline.clone());
+        }
+    }
+    if !text.is_empty() {
+        children.push(rich_text(&text, style, theme, link_handler));
+    }
+    Column::new()
+        .horizontal_alignment(BoxAlignment::Start)
+        .gaps(LayoutSpacing::all(8_u32.into()))
+        .children(children)
+        .boxed()
+}
+
+fn rich_text(
+    inlines: &[Inline],
+    style: TextStyle,
+    theme: &MarkdownTheme,
+    link_handler: Option<&LinkHandler>,
+) -> AnyWidget {
+    let rich = RichText::new(inline_spans(inlines, theme))
+        .text_style(style)
+        .wrapped()
+        .link_hover_color(theme.link_hover_color)
+        .selectable();
+    match link_handler {
+        Some(handler) => {
+            let handler = (*handler).clone();
+            rich.on_link(move |target: Rc<str>| handler(target))
+                .boxed()
+        }
+        None => rich.boxed(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aimer_style::{TextAlign, TextDecorationLine, TextStyle};
+    use std::cell::Cell;
+
+    #[test]
+    fn table_columns_share_the_available_width() {
+        assert_eq!(table_tracks(2), vec![GridTrack::Fr(1.0), GridTrack::Fr(1.0)]);
+    }
+
+    #[test]
+    fn default_link_hover_color_is_brighter_than_the_link_color() {
+        let theme = MarkdownTheme::default();
+        let link_color = theme
+            .link
+            .color
+            .expect("default links have a color");
+
+        assert_eq!(theme.link_hover_color, link_color.lighten(0.48));
+        assert_ne!(theme.link_hover_color, link_color);
+    }
+
+    #[test]
+    fn table_alignment_maps_to_rich_text_alignment() {
+        assert!(matches!(table_text_align(Alignment::Left), TextAlign::TopLeft));
+        assert!(matches!(table_text_align(Alignment::Center), TextAlign::TopCenter));
+        assert!(matches!(table_text_align(Alignment::Right), TextAlign::TopRight));
+        assert!(matches!(table_text_align(Alignment::None), TextAlign::TopLeft));
+    }
+
+    #[test]
+    fn maps_nested_inline_styles_links_breaks_and_footnotes() {
+        let theme = MarkdownTheme::default();
+        let inlines = vec![
+            Inline::Text("plain ".into()),
+            Inline::Emphasis(vec![Inline::Strong(vec![Inline::Text("both".into())])]),
+            Inline::Text(" ".into()),
+            Inline::Delete(vec![Inline::Text("gone".into())]),
+            Inline::SoftBreak,
+            Inline::InlineCode("code".into()),
+            Inline::Link {
+                url: "https://example.com".into(),
+                title: None,
+                content: vec![Inline::Text("link".into())],
+            },
+            Inline::FootnoteReference { identifier: "note".into() },
+        ];
+        let resolved = inline_spans(&inlines, &theme).flatten(&TextStyle::default());
+
+        assert_eq!(
+            resolved
+                .iter()
+                .map(|span| span.text.as_ref())
+                .collect::<String>(),
+            "plain both gone\ncodelink[note]"
+        );
+        let both = resolved
+            .iter()
+            .find(|span| span.text.as_ref() == "both")
+            .unwrap();
+        assert_eq!(both.style.font_style, FontStyle::Italic);
+        assert_eq!(both.style.font_weight, FontWeight::Bold);
+        let gone = resolved
+            .iter()
+            .find(|span| span.text.as_ref() == "gone")
+            .unwrap();
+        assert!(
+            gone.style
+                .text_decoration
+                .line
+                .contains(TextDecorationLine::LINE_THROUGH)
+        );
+        assert!(
+            resolved
+                .iter()
+                .any(|span| span.link.as_deref() == Some("https://example.com"))
+        );
+        assert!(
+            resolved
+                .iter()
+                .any(|span| span.link.as_deref() == Some("#footnote-note"))
+        );
+        assert_eq!(
+            resolved
+                .iter()
+                .find(|span| span.text.as_ref() == "code")
+                .unwrap()
+                .style
+                .font_family,
+            FontFamily::MONOSPACE
+        );
+    }
+
+    #[test]
+    fn document_rendering_invokes_the_configured_image_resolver() {
+        let document = Document::parse("before ![alt](asset.png) after").unwrap();
+        let calls = Rc::new(Cell::new(0));
+        let observed = calls.clone();
+        let resolver: ImageResolver = Rc::new(move |image| {
+            assert_eq!(image.source, "asset.png");
+            assert_eq!(image.alt, "alt");
+            observed.set(observed.get() + 1);
+            SizedBox::new().boxed()
+        });
+
+        let _widget = render_document(&document, &MarkdownTheme::default(), None, &resolver);
+        assert_eq!(calls.get(), 1);
+    }
+}
