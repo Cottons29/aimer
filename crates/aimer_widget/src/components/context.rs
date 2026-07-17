@@ -79,6 +79,18 @@ impl WindowHandle {
         }
     }
 
+    pub fn set_text_cursor(&self) {
+        self.set_cursor(winit::window::CursorIcon::Text);
+    }
+
+    pub fn set_pointer_cursor(&self) {
+        self.set_cursor(winit::window::CursorIcon::Pointer);
+    }
+
+    pub fn reset_cursor(&self) {
+        self.set_cursor(winit::window::CursorIcon::Default);
+    }
+
     pub fn native_window(&self) -> Option<&'static Window> {
         match self {
             Self::Native(window) => Some(*window),
