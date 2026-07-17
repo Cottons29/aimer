@@ -184,7 +184,7 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        let start = chrono::Utc::now().timestamp_millis();
+        let start = aimer_utils::AnimInstant::now();
 
         let cache = pipeline_cache::create_pipeline_cache(device);
 
@@ -206,8 +206,7 @@ impl Renderer {
             multisample_target: None,
         };
 
-        let end = chrono::Utc::now().timestamp_millis();
-        debug!("Renderer initialization ready {}ms", end - start);
+        debug!("Renderer initialization ready {}ms", start.elapsed().as_millis());
         renderer
     }
 

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 #[allow(unused)]
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 use aimer_font::{FontFamily, FontRegistry, FontStyle, FontWeight, bundled_monospace_bytes};
 use aimer_utils::time_cost;
@@ -11,7 +11,7 @@ use swash::zeno::Format;
 
 use super::text_layout::FontId;
 use crate::text_pipeline::font_resolver::{
-    FontRecord, advance_width_from_face, shared_fallback_chain,
+    FontData, FontRecord, advance_width_from_face, shared_fallback_chain,
 };
 use crate::text_pipeline::glyph_outline::{ColrOutlineBuilder, rasterize_outline_glyph};
 
@@ -74,8 +74,9 @@ fn rasterize_swash_glyph(
     glyph_id: u16,
     font_size: f32,
 ) -> Option<RasterizedGlyph> {
-    let data = time_cost!("   |-ReadSwashFontData", || record.read_data())?;
-    let font = FontRef::from_index(&data, record.collection_index as usize)?;
+    let data = time_cost!("   |-MapSwashFontData", || record.data())?;
+    let data = data.as_ref();
+    let font = FontRef::from_index(data, record.collection_index as usize)?;
     let mut context = ScaleContext::new();
     let mut scaler = context
         .builder(font)
@@ -86,7 +87,7 @@ fn rasterize_swash_glyph(
         .format(Format::Alpha)
         .render(&mut scaler, glyph_id)?;
     let advance_width =
-        advance_width_from_face(&data, record.collection_index, glyph_id, font_size)?;
+        advance_width_from_face(data, record.collection_index, glyph_id, font_size)?;
 
     Some(RasterizedGlyph {
         bitmap: image.data,
@@ -411,8 +412,8 @@ fn rasterize_color_glyph_helper(
     glyph_id: u16,
     font_size: f32,
 ) -> Option<RasterizedGlyph> {
-    let data = record.read_data()?;
-    let face = ttf_parser::Face::parse(&data, record.collection_index).ok()?;
+    let data = record.data()?;
+    let face = ttf_parser::Face::parse(data.as_ref(), record.collection_index).ok()?;
 
     if !face.is_color_glyph(ttf_parser::GlyphId(glyph_id)) {
         return None;
@@ -462,8 +463,8 @@ fn rasterize_color_glyph(
     glyph_id: u16,
     font_size: f32,
 ) -> Option<RasterizedGlyph> {
-    let data = record.read_data()?;
-    let face = ttf_parser::Face::parse(&data, record.collection_index).ok()?;
+    let data = record.data()?;
+    let face = ttf_parser::Face::parse(data.as_ref(), record.collection_index).ok()?;
 
     // 1. Try sbix (AppleColorEmoji, Noto Color Emoji sbix variant).
     // 2. Try CBDT (Noto Color Emoji on Android/Linux, older format).
@@ -500,7 +501,7 @@ pub struct GlyphRasterizer {
     unsupported_codepoints: HashSet<char>,
     /// Cached font bytes per font_id to avoid re-reading from disk or
     /// re-cloning Arc<[u8]> on every `shape_cluster` call.
-    font_bytes_cache: HashMap<FontId, Arc<[u8]>>,
+    font_bytes_cache: HashMap<FontId, FontData>,
     /// Cached `rustybuzz::Face` per font_id.
     /// Each face borrows from the corresponding `Arc<[u8]>` in
     /// `font_bytes_cache`. The Arc keeps the bytes alive for at least as
@@ -1109,14 +1110,14 @@ impl GlyphRasterizer {
             .font_bytes_cache
             .contains_key(&font_id)
         {
-            let bytes: Option<Arc<[u8]>> = self
+            let bytes = self
                 .family_faces
                 .iter()
                 .find(|face| face.record.id == font_id)
-                .and_then(|face| face.record.bytes.clone())
+                .and_then(|face| face.record.data())
                 .or_else(|| {
                     if font_id == self.primary.id {
-                        return self.primary.bytes.clone();
+                        return self.primary.data();
                     }
                     self.fallbacks
                         .as_ref()
@@ -1124,14 +1125,7 @@ impl GlyphRasterizer {
                             fbs.iter()
                                 .find(|fb| fb.id == font_id)
                         })
-                        .and_then(|fb| {
-                            if let Some(b) = &fb.bytes {
-                                Some(b.clone())
-                            } else {
-                                fb.read_data()
-                                    .map(|v| Arc::from(v.into_boxed_slice()))
-                            }
-                        })
+                        .and_then(FontRecord::data)
                 });
             if let Some(b) = bytes {
                 self.font_bytes_cache
@@ -1139,8 +1133,8 @@ impl GlyphRasterizer {
             }
         }
 
-        let font_data: Arc<[u8]> = match self.font_bytes_cache.get(&font_id) {
-            Some(b) => b.clone(),
+        let font_data = match self.font_bytes_cache.get(&font_id) {
+            Some(data) => data,
             None => return Vec::new(),
         };
 
@@ -1174,7 +1168,7 @@ impl GlyphRasterizer {
             .rb_face_cache
             .contains_key(&font_id)
         {
-            let face_opt = rustybuzz::Face::from_slice(&font_data, collection_index);
+            let face_opt = rustybuzz::Face::from_slice(font_data.as_ref(), collection_index);
             if let Some(face) = face_opt {
                 // SAFETY: `font_data` is an Arc<[u8]> stored in `self.font_bytes_cache`.
                 // The face only borrows from those bytes, and both the Arc and the
@@ -1224,6 +1218,8 @@ impl GlyphRasterizer {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use aimer_font::{FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight};
 

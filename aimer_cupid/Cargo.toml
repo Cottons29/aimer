@@ -30,7 +30,6 @@ unicode-segmentation.workspace = true
 image = {workspace = true, features = ["default"]}
 lyon.workspace = true
 thiserror.workspace = true
-chrono.workspace = true
 fxhash.workspace = true
 dirs.workspace = true
 memmap2 = "0.9"

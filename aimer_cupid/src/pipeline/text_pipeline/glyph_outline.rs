@@ -90,9 +90,10 @@ pub(crate) fn rasterize_outline_glyph(
     glyph_id: u16,
     font_size: f32,
 ) -> Option<RasterizedGlyph> {
-    let data = time_cost!("   |-ReadFontData", || record.read_data())?;
+    let data = time_cost!("   |-MapFontData", || record.data())?;
+    let data = data.as_ref();
     let face = time_cost!("   |-ParseFontFace", || ttf_parser::Face::parse(
-        &data,
+        data,
         record.collection_index
     )
     .ok())?;
@@ -139,12 +140,7 @@ pub(crate) fn rasterize_outline_glyph(
         height,
         offset_x,
         offset_y,
-        advance_width: advance_width_from_face(
-            &data,
-            record.collection_index,
-            glyph_id,
-            font_size,
-        )?,
+        advance_width: advance_width_from_face(data, record.collection_index, glyph_id, font_size)?,
         is_color: false,
     })
 }
