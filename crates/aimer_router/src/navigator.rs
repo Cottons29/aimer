@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, State, StateUpdater, StatefulElement, StatefulWidget, Widget};
+use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
+use aimer_widget::{
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, State, StateUpdater,
+    StatefulElement, StatefulWidget, VisitorElement, Widget,
+};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -143,51 +146,17 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
-        // NOTE: `insert_state` already wraps the value in an `Rc` and keys it by
-        // `TypeId::of::<T>()`. Pass the controller directly so it is stored under
-        // `TypeId::of::<NavigatorController<R>>()` — matching the lookup in
-        // `NavigatorController::of` (`get_state::<NavigatorController<R>>()`).
-        ctx.insert_state(NavigatorController {
-            push_fn: {
-                let updater = self.updater.clone();
-                Rc::new(move |route: R| {
-                    #[cfg(target_arch = "wasm32")]
-                    browser_push_state(&route.format());
-                    updater.set_state(|state| {
-                        state.history.push(route);
-                    });
-                })
-            },
-            pop_fn: {
-                let updater = self.updater.clone();
-                Rc::new(move || {
-                    updater.set_state(|state| {
-                        if state.history.len() > 1 {
-                            state.history.pop();
-                            #[cfg(target_arch = "wasm32")]
-                            if let Some(prev) = state.history.last() {
-                                browser_replace_state(&prev.format());
-                            }
-                        }
-                    });
-                })
-            },
-            can_pop_fn: {
-                let history = self.history.clone();
-                Rc::new(move || history.len() > 1)
-            },
-            history_len_fn: {
-                let history = self.history.clone();
-                Rc::new(move || history.len())
-            },
-        });
+        let controller = navigator_controller(self.updater.clone());
+        ctx.insert_state(controller.clone());
 
         let top = self
             .history
             .last()
             .expect("History should not be empty")
             .clone();
-        let effective = resolve_redirect_chain(top.clone(), |r| r.redirect(ctx), MAX_REDIRECT_HOPS);
+        let effective = ctx.with_state(controller.clone(), |ctx| {
+            resolve_redirect_chain(top.clone(), |route| route.redirect(ctx), MAX_REDIRECT_HOPS)
+        });
 
         // Keep the browser address bar in sync with the final, post-redirect route.
         #[cfg(target_arch = "wasm32")]
@@ -196,6 +165,87 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
         }
 
         (self.routes)(effective)
+    }
+}
+
+struct NavigatorElement<R> {
+    controller: NavigatorController<R>,
+    child: Box<dyn Element>,
+}
+
+impl<R: 'static> NavigatorElement<R> {
+    fn scoped<T>(&self, ctx: &BuildContext, callback: impl FnOnce(&BuildContext) -> T) -> T {
+        ctx.with_state(self.controller.clone(), callback)
+    }
+}
+
+impl<R: 'static> VisitorElement for NavigatorElement<R> {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "NavigatorScope"
+    }
+}
+
+impl<R: 'static> Drawable for NavigatorElement<R> {
+    fn draw(&self, ctx: &BuildContext) {
+        self.scoped(ctx, |ctx| self.child.draw(ctx));
+    }
+}
+
+impl<R: 'static> LayoutElement for NavigatorElement<R> {
+    fn pos(&self) -> Option<Vec2d> {
+        self.child.pos()
+    }
+
+    fn size(&self) -> Option<Size> {
+        self.child.size()
+    }
+
+    fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.scoped(ctx, |ctx| self.child.layout(ctx))
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.scoped(ctx, |ctx| self.child.computed_size(ctx))
+    }
+
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.scoped(ctx, |ctx| self.child.content_size(ctx))
+    }
+
+    fn layer(&self) -> u32 {
+        self.child.layer()
+    }
+
+    fn flex(&self) -> Option<f32> {
+        self.child.flex()
+    }
+
+    fn get_size_from_child(&self) -> Option<Size> {
+        self.child.get_size_from_child()
+    }
+
+    fn invalidate_layout(&self) {
+        self.child.invalidate_layout();
+    }
+
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.child.pos_start_end()
+    }
+}
+
+impl<R: 'static> EventElement for NavigatorElement<R> {}
+
+impl<R: 'static> Rebuildable for NavigatorElement<R> {
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.scoped(ctx, |ctx| self.child.rebuild_if_dirty(ctx));
+    }
+
+    fn mark_needs_rebuild(&self) {
+        self.child.mark_needs_rebuild();
     }
 }
 
@@ -273,14 +323,146 @@ impl<R: Route> StatefulWidget for Navigator<R> {
 
 impl<R: Route> Widget for Navigator<R> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let (el, _) = StatefulElement::new(self, ctx);
-        Box::new(el)
+        let (child, updater) = StatefulElement::new(self, ctx);
+        Box::new(NavigatorElement {
+            controller: navigator_controller(updater),
+            child: Box::new(child),
+        })
+    }
+}
+
+fn navigator_controller<R: Route>(
+    updater: StateUpdater<NavigatorState<R>>,
+) -> NavigatorController<R> {
+    NavigatorController {
+        push_fn: {
+            let updater = updater.clone();
+            Rc::new(move |route: R| {
+                #[cfg(target_arch = "wasm32")]
+                browser_push_state(&route.format());
+                updater.set_state(|state| {
+                    state.history.push(route);
+                });
+            })
+        },
+        pop_fn: {
+            let updater = updater.clone();
+            Rc::new(move || {
+                updater.set_state(|state| {
+                    if state.history.len() > 1 {
+                        state.history.pop();
+                        #[cfg(target_arch = "wasm32")]
+                        if let Some(previous) = state.history.last() {
+                            browser_replace_state(&previous.format());
+                        }
+                    }
+                });
+            })
+        },
+        can_pop_fn: {
+            let updater = updater.clone();
+            Rc::new(move || updater.read(|state| state.history.len() > 1))
+        },
+        history_len_fn: Rc::new(move || updater.read(|state| state.history.len())),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
+    use aimer_widget::base::{ResolvedSize, WindowHandle};
+    use aimer_widget::{Drawable, EventElement, LayoutElement, Rebuildable, VisitorElement};
+
     use super::*;
+
+    thread_local! {
+        static NAVIGATOR_OBSERVED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    #[derive(Clone)]
+    enum TestRoute {
+        Home,
+    }
+
+    impl Route for TestRoute {
+        fn parse(path: &str) -> Option<Self> {
+            (path == "/").then_some(Self::Home)
+        }
+
+        fn format(&self) -> String {
+            "/".to_owned()
+        }
+    }
+
+    struct NavigatorLookupWidget;
+
+    impl Widget for NavigatorLookupWidget {
+        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+            Box::new(NavigatorLookupElement)
+        }
+    }
+
+    struct NavigatorLookupElement;
+
+    impl VisitorElement for NavigatorLookupElement {
+        fn debug_name(&self) -> &'static str {
+            "NavigatorLookupElement"
+        }
+    }
+    impl EventElement for NavigatorLookupElement {}
+    impl LayoutElement for NavigatorLookupElement {}
+    impl Rebuildable for NavigatorLookupElement {}
+    impl Drawable for NavigatorLookupElement {
+        fn draw(&self, ctx: &BuildContext) {
+            let _ = NavigatorController::<TestRoute>::of(ctx);
+            NAVIGATOR_OBSERVED.set(true);
+        }
+    }
+
+    fn lookup_route(_: TestRoute) -> Box<dyn Widget> {
+        Box::new(NavigatorLookupWidget)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn context() -> BuildContext<'static> {
+        use std::sync::OnceLock;
+
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        });
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        let _guard = runtime.enter();
+        BuildContext::new(
+            canvas,
+            ResolvedSize::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn navigator_controller_remains_scoped_on_a_fresh_frame_context() {
+        NAVIGATOR_OBSERVED.set(false);
+        let navigator = Navigator::new(TestRoute::Home, lookup_route);
+        let initial_context = context();
+        let element = navigator.to_element(&initial_context);
+
+        element.draw(&context());
+
+        assert!(NAVIGATOR_OBSERVED.get());
+    }
 
     #[test]
     fn redirect_reroutes_once_then_settles() {
