@@ -5,9 +5,9 @@ use std::time::Duration;
 use aimer_animation::Curve;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+use aimer_utils::AnimInstant;
 use aimer_utils::callback::Callback;
 use aimer_widget::Key;
-use web_time::Instant;
 
 use crate::scrollable::ScrollAxis;
 use crate::scrollable::constants::*;
@@ -98,8 +98,8 @@ pub struct ScrollState {
     pub(crate) cached_max_scroll: Cell<Vec2d>,
     pub(crate) cached_min_scroll: Cell<Vec2d>,
     pub(crate) pointer_velocity: Cell<Vec2d>,
-    pub(crate) last_event_time: Cell<Option<Instant>>,
-    pub(crate) last_frame_time: Cell<Option<Instant>>,
+    pub(crate) last_event_time: Cell<Option<AnimInstant>>,
+    pub(crate) last_frame_time: Cell<Option<AnimInstant>>,
     pub(crate) v_thumb_rect: Cell<Option<(f32, f32, f32, f32)>>,
     pub(crate) h_thumb_rect: Cell<Option<(f32, f32, f32, f32)>>,
     pub(crate) v_scroll_multiplier: Cell<f32>,
@@ -117,7 +117,7 @@ pub struct ScrollState {
     /// Wall-clock instant the current release fling started, or `None` when no
     /// cubic-bézier fling is active. While `Some`, momentum is driven by the
     /// curve rather than by per-frame velocity decay.
-    pub(crate) fling_start_time: Cell<Option<Instant>>,
+    pub(crate) fling_start_time: Cell<Option<AnimInstant>>,
     /// Scroll offset captured at the moment the fling started.
     pub(crate) fling_start_offset: Cell<Vec2d>,
     /// Scroll offset the fling eases toward (`start + projected distance`).
@@ -139,7 +139,7 @@ pub struct ScrollState {
     /// first `update_momentum` frame where velocity exceeds epsilon after a
     /// touch release).  Used to hard-cap the glide at
     /// [`MAX_MOMENTUM_DURATION_S`] so it doesn't creep for 15–20 s.
-    pub(crate) momentum_start_time: Cell<Option<Instant>>,
+    pub(crate) momentum_start_time: Cell<Option<AnimInstant>>,
     /// Finger delta accumulated since the last emitted drag-velocity sample.
     /// Coalesced same-frame pointer moves (web) fold in here instead of each
     /// producing its own inflated sample; flushed once a real time slice
@@ -147,7 +147,7 @@ pub struct ScrollState {
     pub(crate) vel_accum: Cell<Vec2d>,
     /// Wall-clock instant of the last emitted drag-velocity sample, or `None`
     /// before the first sample of a gesture.
-    pub(crate) vel_sample_time: Cell<Option<Instant>>,
+    pub(crate) vel_sample_time: Cell<Option<AnimInstant>>,
     /// Whether a scroll session is currently in progress — a user drag, a
     /// wheel/ keyboard scroll, release momentum, a spring-back, or a
     /// programmatic animation. Latches the `on_scroll_start` /
@@ -726,7 +726,7 @@ impl ScrollState {
         &self,
         dx: f32,
         dy: f32,
-        now: Instant,
+        now: AnimInstant,
     ) -> Option<(Vec2d, f32)> {
         let mut accum = self.vel_accum.get();
         accum.x += dx;
@@ -798,7 +798,7 @@ impl ScrollState {
         self.fling_duration.set(duration_s);
         self.anim_curve.set(Some(curve));
         self.fling_start_time
-            .set(Some(Instant::now()));
+            .set(Some(AnimInstant::now()));
     }
 
     /// Arm a cubic-bézier release fling.
@@ -824,7 +824,7 @@ impl ScrollState {
     /// shared velocity + friction model (so it matches trackpad feel) rather
     /// than this bézier fling. Kept available as an alternative fling model.
     #[allow(dead_code)]
-    pub(crate) fn start_fling(&self, release_velocity: Vec2d, now: Instant) {
+    pub(crate) fn start_fling(&self, release_velocity: Vec2d, now: AnimInstant) {
         if release_velocity.x == 0.0 && release_velocity.y == 0.0 {
             self.cancel_fling();
             return;
@@ -915,7 +915,7 @@ impl ScrollState {
         // offset=({:.1},{:.1})", velocity.x, velocity.y, vel_mag, offset.x, offset.y);
         // }
 
-        let now = Instant::now();
+        let now = AnimInstant::now();
         let dt = self
             .last_frame_time
             .get()
@@ -998,7 +998,7 @@ impl ScrollState {
             // Hard-cap the momentum glide at MAX_MOMENTUM_DURATION_S.
             // Without this the exponential friction tails off asymptotically,
             // letting content creep for 15–20 s before stopping.
-            let now_instant = Instant::now();
+            let now_instant = AnimInstant::now();
             // Arm the timer exactly once, on the first momentum frame. Use an
             // `is_none()` sentinel rather than `elapsed == 0.0`: on coarse-clock
             // targets (web `performance.now()` is resolution-clamped, iOS
@@ -1311,7 +1311,7 @@ mod tests {
         use std::time::Duration;
 
         let frame = Duration::from_millis(16); // ~60 Hz
-        let t0 = Instant::now();
+        let t0 = AnimInstant::now();
         let travel_per_frame = 16.0_f32; // px moved each frame
         let frames = 6;
         let sub = 8; // coalesced sub-samples per frame on web
@@ -1567,7 +1567,7 @@ mod tests {
         // Pretend the whole duration has already passed.
         state
             .fling_start_time
-            .set(Some(Instant::now() - Duration::from_millis(400)));
+            .set(Some(AnimInstant::now() - Duration::from_millis(400)));
         let (offset, _redraw) = state.update_momentum(state.scroll_offset.get());
 
         assert!(
