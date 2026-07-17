@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 aimer_widget = {workspace = true}
 winit.workspace = true
+
+[dev-dependencies]
+aimer_canvas.workspace = true
+tokio.workspace = true
