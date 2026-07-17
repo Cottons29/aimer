@@ -22,6 +22,9 @@ pub use aimer_markdown::{
     LinkHandler as MarkdownLinkHandler, MarkdownError, MarkdownImage, MarkdownTheme,
     MarkdownViewer, SyntaxToken, SyntaxTokenKind,
 };
+pub use aimer_provider::{
+    NotifierProvider, Provider, ProviderContext, ProviderHandle, StoreProvider,
+};
 pub use aimer_quiver as quiver;
 pub use aimer_quiver::{
     self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions,
