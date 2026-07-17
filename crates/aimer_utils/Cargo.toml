@@ -12,7 +12,7 @@ wasm-bindgen = {workspace = true}
 
 
 [dependencies]
-chrono.workspace = true
+web-time.workspace = true
 
 
 
