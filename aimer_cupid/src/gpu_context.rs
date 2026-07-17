@@ -172,7 +172,7 @@ impl<'w> GpuContext<'w> {
         let backends = {
             #[cfg(target_os = "android")]
             {
-                wgpu::Backends::GL
+                wgpu::Backends::GL | wgpu::Backends::VULKAN
             }
             #[cfg(any(target_os = "ios", target_os = "macos"))]
             {
@@ -180,7 +180,7 @@ impl<'w> GpuContext<'w> {
             }
             #[cfg(target_os = "windows")]
             {
-                wgpu::Backends::D3D11
+                wgpu::Backends::DX12
             }
             #[cfg(target_os = "linux")]
             {

@@ -37,6 +37,22 @@ pub struct FontRecord {
     pub is_color: bool,
 }
 
+pub(crate) enum FontData {
+    Shared(Arc<[u8]>),
+    #[cfg(not(target_arch = "wasm32"))]
+    Mapped(memmap2::Mmap),
+}
+
+impl AsRef<[u8]> for FontData {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Shared(bytes) => bytes,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Mapped(bytes) => bytes,
+        }
+    }
+}
+
 impl FontRecord {
     const FONTDUE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
@@ -135,16 +151,23 @@ impl FontRecord {
             .any(|&c| face.glyph_index(c).is_some())
     }
 
-    /// Borrow the underlying font data either from the in-memory `bytes` or by
-    /// reading the on-disk path. Returns `None` if neither source is available.
-    pub(crate) fn read_data(&self) -> Option<Vec<u8>> {
+    /// Retain shared in-memory data or memory-map a file-backed font without
+    /// copying the entire font into the process heap.
+    pub(crate) fn data(&self) -> Option<FontData> {
         if let Some(bytes) = self.bytes.as_ref() {
-            return Some(bytes.as_ref().to_vec());
+            return Some(FontData::Shared(bytes.clone()));
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
             let path = self._path.as_ref()?;
-            std::fs::read(path.as_ref()).ok()
+            let file = std::fs::File::open(path.as_ref()).ok()?;
+            // SAFETY: the read-only mapping owns its file-backed virtual memory
+            // region and remains valid independently of the `File` handle.
+            unsafe {
+                memmap2::Mmap::map(&file)
+                    .ok()
+                    .map(FontData::Mapped)
+            }
         }
         #[cfg(target_arch = "wasm32")]
         None
@@ -494,12 +517,18 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
         let Some(path) = core_text_fallback_path_for_probes(group.probes) else {
             continue;
         };
-        let data = match std::fs::read(&path) {
+        let file = match std::fs::File::open(&path) {
+            Ok(file) => file,
+            Err(_) => continue,
+        };
+        // SAFETY: this read-only mapping is used only while `file` and `data`
+        // are alive in the current probe iteration.
+        let data = match unsafe { memmap2::Mmap::map(&file) } {
             Ok(data) => data,
             Err(_) => continue,
         };
 
-        let face_count = ttf_parser::fonts_in_collection(&data)
+        let face_count = ttf_parser::fonts_in_collection(data.as_ref())
             .unwrap_or(1)
             .max(1);
         for ci in 0..face_count {
@@ -508,7 +537,7 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
             }
 
             let Some(is_color) =
-                font_data_matches_probes(&data, ci, group.probes, group.hint_color)
+                font_data_matches_probes(data.as_ref(), ci, group.probes, group.hint_color)
             else {
                 continue;
             };
@@ -632,11 +661,38 @@ pub fn shared_fallback_chain() -> Vec<FontRecord> {
 /// `GlyphRasterizer::ensure_fallbacks`.
 #[allow(dead_code)]
 pub fn warm_fallbacks() {
-    let start = chrono::Utc::now().timestamp_millis();
+    let start = aimer_utils::AnimInstant::now();
     let chain = shared_fallback_chain();
     for record in &chain {
         let _ = record.ensure_face();
     }
-    let end = chrono::Utc::now().timestamp_millis();
-    info!("warm_fallbacks() took {} ms", end - start);
+    info!("warm_fallbacks() took {} ms", start.elapsed().as_millis());
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use super::{FontData, FontRecord};
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn file_backed_font_data_is_memory_mapped_instead_of_heap_copied() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/pipeline/text_pipeline/font_resolver.rs");
+        let record = FontRecord {
+            id: 1,
+            bytes: None,
+            font: None,
+            byte_len: std::fs::metadata(&path)
+                .ok()
+                .map(|metadata| metadata.len()),
+            collection_index: 0,
+            _path: Some(Arc::new(path)),
+            is_color: false,
+        };
+
+        assert!(matches!(record.data(), Some(FontData::Mapped(_))));
+    }
 }

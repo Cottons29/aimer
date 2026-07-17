@@ -51,7 +51,7 @@ const WELCOME_TEXT: &str = r#"
 const WARM_FONT_SIZES: [f32; 3] = [20.0, 32.0, 44.0];
 
 pub fn time_consume(func: impl FnOnce()) {
-    let start = std::time::Instant::now();
+    let start = aimer_utils::AnimInstant::now();
     func();
     let elapsed = start.elapsed();
     println!("Time elapsed: {} ms", elapsed.as_millis());
