@@ -1,108 +1,127 @@
 # State Management
 
-Managing application state is crucial for building interactive user interfaces. Aimer borrows the `StatefulWidget` / `State` pattern directly from Flutter.
+Aimer supports local widget state and provider-owned state. Both are confined to the UI thread.
 
-In Aimer, widgets come in two main flavors:
-- **Stateless Widgets**: Built once based on their initial configuration and parameters.
-- **Stateful Widgets**: Maintain internal data that might change over the lifetime of the widget. When the internal state changes, the widget triggers a rebuild.
+- Use `StatefulWidget`, `State`, and `StateUpdater` for state owned by one widget.
+- Use `Provider` or `NotifierProvider` for state shared by a subtree.
+- Use `StoreProvider` when mutations should be expressed as typed actions.
 
-Quick rule of thumb:
-- Choose `StatelessWidget` for static/pure UI composition.
-- Choose `StatefulWidget` + `State` + `StateUpdater` for interactive UI that changes over time.
+## Local widget state
 
----
-
-## 3.1 StatelessWidget
-
-A `StatelessWidget` is a widget that does not require mutable state. It simply takes the properties provided to it and builds a widget tree based on those properties. It is ideal for reusable UI components that don't need to change dynamically.
+A state object receives its updater once in `init_state`. Calling `set_state` queues mutations in order and schedules one redraw.
 
 ```rust
-use aimer::{Widget, BuildContext, StatelessWidget};
+use aimer::{BuildContext, State, StateUpdater, StatefulWidget};
 
-pub struct GreetingCard {
-    pub message: String,
+struct Counter;
+
+struct CounterState {
+    count: usize,
+    updater: StateUpdater<Self>,
 }
 
-impl StatelessWidget for GreetingCard {
-    fn build(&self, _ctx: &BuildContext) -> Box<dyn Widget> {
-        Container!(
-            padding: LayoutSpacing::all(Spacing::Px(16)),
-            child: Text!(
-                self.message.clone(),
-                text_style: TextStyle!(
-                    font_size: 18.0,
-                    color: Colors::Black
-                )
-            )
-        )
-    }
-}
-```
-
----
-
-## 3.2 StatefulWidget and State
-
-Use `StatefulWidget` when the widget needs internal state that can change over time (e.g., in response to user input or network events). 
-
-To create a stateful widget, you generally define two structs:
-1. **The Widget (StatefulWidget)**: Holds the initial configuration and creates the state.
-2. **The State**: Holds the mutable data and the `build` method.
-
-### Example: Counter App
-
-Here's an overview of how state is managed using a `StatefulWidget`:
-
-```rust
-use aimer::{State, StatefulWidget, StateUpdater, Widget};
-
-// 1. Define the Widget
-#[derive(Clone)]
-pub struct CounterWidget;
-
-impl StatefulWidget for CounterWidget {
+impl StatefulWidget for Counter {
     type State = CounterState;
 
     fn create_state(&self) -> Self::State {
-        CounterState { count: 0 }
+        CounterState { count: 0, updater: StateUpdater::empty() }
     }
 }
 
-// 2. Define the State
-pub struct CounterState {
-    count: i32,
-}
+impl State<Counter> for CounterState {
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.updater = updater;
+    }
 
-impl State for CounterState {
-    type Widget = CounterWidget;
-
-    fn build(&self, updater: StateUpdater<Self>) -> Box<dyn Widget> {
-        let current_count = self.count;
-        
-        Column!(
-            children: vec![
-                Text!(format!("Count: {}", current_count)),
-                Button!(
-                    child: Text!("Increment"),
-                    on_press: move || {
-                        // Use the updater to mutate state and schedule a rebuild
-                        updater.update(|state| {
-                            state.count += 1;
-                        });
-                    }
-                )
-            ]
-        )
+    fn build(&self, _context: &BuildContext) -> impl aimer::Widget {
+        aimer::Text::new(format!("Count: {}", self.count))
     }
 }
 ```
 
----
+Store the updater in an event callback and call `updater.set_state(|state| state.count += 1)` to rebuild the widget.
 
-## 3.3 The StateUpdater
+## Scoped providers
 
-The `StateUpdater` is the heart of reactive rebuilds. In the `build` method of your `State`, you receive an `updater: StateUpdater<Self>`. It allows you to:
-1. Mutate the inner state safely using `updater.update(|state| { ... })`.
-2. Automatically signal to the framework that the `Element` tree for this specific widget is dirty and requires a re-render.
+Providers own their value for the lifetime of their element. Lookup resolves the nearest ancestor of the requested type, so a nested provider can override an outer provider without affecting siblings. The child is always configured last.
 
-This targeted approach ensures performance remains high by only recalculating the parts of the widget tree that have actually changed, rather than rebuilding the entire application UI.
+```rust
+use aimer::{NotifierProvider, Text};
+
+#[derive(Clone, Default)]
+struct CounterState {
+    count: usize,
+}
+
+let app = NotifierProvider::<CounterState>::new()
+    .create(CounterState::default)
+    .child(Text::new("Application"));
+```
+
+Import `ProviderContext` to use provider methods on `BuildContext`:
+
+```rust
+use aimer::{BuildContext, ProviderContext};
+
+fn build(context: &BuildContext) {
+    let snapshot = context.read::<CounterState>();
+    let watched = context.watch::<CounterState>();
+    let count = context.select::<CounterState, usize>(|state| state.count);
+}
+```
+
+- `read` returns a cloned snapshot and does not subscribe.
+- `watch` returns a cloned snapshot and rebuilds the current widget after any update.
+- `select` rebuilds only when its projected `PartialEq` value changes.
+- `try_read` and `try_watch` return `None` when no matching provider exists.
+- Required lookup methods panic immediately with the missing Rust type in the diagnostic.
+
+Old dependencies are removed before every rebuild, so conditional watches stop receiving updates when their branch is no longer built.
+
+## Updating outside build
+
+Event callbacks cannot retain a borrowed `BuildContext`. Capture a UI-local `ProviderHandle` during build instead:
+
+```rust
+use aimer::{BuildContext, ProviderHandle};
+
+fn build(context: &BuildContext) {
+    let counter = ProviderHandle::<CounterState>::of(context);
+    let on_press = move || {
+        counter.update(|state| state.count += 1);
+    };
+}
+```
+
+`ProviderHandle::read` returns a borrow guard instead of cloning. Do not hold that guard while calling `update`.
+
+## Reducer stores
+
+`StoreProvider` uses the same subscription runtime, but publishes a dispatcher for its action type.
+
+```rust
+use aimer::{ProviderContext, StoreProvider, Text};
+
+#[derive(Clone, Default)]
+struct AppState {
+    signed_in: bool,
+}
+
+enum AppAction {
+    SignedIn,
+    SignedOut,
+}
+
+let app = StoreProvider::<AppState, AppAction>::new()
+    .create(AppState::default)
+    .reducer(|state, action| match action {
+        AppAction::SignedIn => state.signed_in = true,
+        AppAction::SignedOut => state.signed_in = false,
+    })
+    .child(Text::new("Application"));
+
+// During build or another operation with a scoped context:
+// context.dispatch(AppAction::SignedOut);
+```
+
+Actions are reduced synchronously on the UI thread, then ordinary watchers and selectors are notified. Worker threads must send results back to the UI event loop before updating or dispatching provider state; provider handles intentionally do not implement cross-thread sharing.
