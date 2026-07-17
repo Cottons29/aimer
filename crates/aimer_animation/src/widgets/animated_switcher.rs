@@ -244,15 +244,15 @@ impl Drawable for AnimatedSwitcherElement {
 }
 
 impl VisitorElement for AnimatedSwitcherElement {
-    fn debug_name(&self) -> &'static str {
-        "AnimatedSwitcherElement"
-    }
-
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.current_child.as_ref());
         if let Some(old) = unsafe { &*self.old_child.get() } {
             visitor(old.as_ref());
         }
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "AnimatedSwitcherElement"
     }
 }
 

@@ -9,9 +9,7 @@ aimer_widget.workspace = true
 aimer_attribute.workspace = true
 aimer_events.workspace = true
 aimer_canvas.workspace = true
-
-########################
-chrono.workspace = true
+aimer_utils.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
