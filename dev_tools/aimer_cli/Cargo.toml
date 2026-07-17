@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 aimer_inspector.workspace = true
+aimer_utils.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread"]}
 ansi-to-tui.workspace = true
 clap.workspace = true
