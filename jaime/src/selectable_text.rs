@@ -1,4 +1,5 @@
-use aimer::style::{LayoutSpacing, Spacing, TextOverflow, TextStyle};
+use aimer::Dimension::Percent;
+use aimer::style::{LayoutSpacing, Spacing, TextDecoration, TextOverflow, TextStyle};
 use aimer::{
     AimerApp, Color, Container, Dimension, Flex, FontStyle, FontWeight, LayoutDirection, RichText,
     SizedBox, SpanStyle, Text, TextSpan, Widget,
@@ -23,17 +24,21 @@ pub fn selectable_text_example() -> impl Widget {
                     .boxed(),
                     SizedBox::new().height(24).boxed(),
                     Container::new()
-                        // .width(Dimension::Px(680.0))
+                        // .width(Percent(50.0))
                         .padding(LayoutSpacing::all(Spacing::Px(20)))
                         .color(Color::Rgb(245, 247, 250))
                         .child(
                             RichText::new(TextSpan::root([
                                 TextSpan::new("Selection works across "),
                                 TextSpan::new("bold text")
-                                    .style(SpanStyle::new().font_weight(FontWeight::Bold)),
+                                    .style(SpanStyle::new().font_weight(FontWeight::Bolder)),
                                 TextSpan::new(", "),
                                 TextSpan::new("italic text")
-                                    .style(SpanStyle::new().font_style(FontStyle::Italic)),
+                                    .style(
+                                        SpanStyle::new()
+                                            .font_style(FontStyle::Italic)
+                                            .text_decoration(TextDecoration::Underline)
+                                    ),
                                 TextSpan::new(", colors, wrapped lines, and Unicode: "),
                                 TextSpan::new("Aimer • 你好 • សួស្តី • 👩‍💻")
                                     .style(SpanStyle::new().color(Color::BLUE)),
@@ -42,6 +47,7 @@ pub fn selectable_text_example() -> impl Widget {
                                 ),
                             ]))
                                 .text_overflow(TextOverflow::Wrap)
+                                .selection_color(Color::RED)
                             .text_style(TextStyle::new().font_size(20).color(Color::BLACK))
                             .selectable(),
                         )

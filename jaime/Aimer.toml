@@ -8,6 +8,7 @@ group = "com.example.jaime"
 # Files bundled into every platform package. The path below is used verbatim
 # as the runtime lookup key, e.g. `AssetImage!("image.png")`.
 files = [
+    "assets/JAIME.md",
     "assets/image.png",
     "assets/my_image.png",
     "assets/polished_tooling.png",
