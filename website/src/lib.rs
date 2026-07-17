@@ -1,3 +1,4 @@
+mod blog;
 mod components;
 mod router;
 mod screen;
@@ -6,12 +7,17 @@ mod utils;
 use aimer::router::Navigator;
 use aimer::*;
 
+use crate::blog::BlogStore;
 use crate::router::AppRouter;
 
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
-    AimerApp::start(Navigator::<AppRouter>::new(AppRouter::Home, |route| Box::new(route)));
+    AimerApp::start(
+        Provider::<BlogStore>::new()
+            .create(BlogStore::default)
+            .child(Navigator::<AppRouter>::new(AppRouter::Home, |route| Box::new(route))),
+    );
 }
 
 #[cfg(test)]

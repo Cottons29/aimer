@@ -1,6 +1,4 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-#[cfg(test)]
-use std::thread::{sleep, spawn};
 use std::time::Duration;
 // use std::time::Duration;
 
@@ -68,14 +66,10 @@ impl State<SameLookingSection> for SameLookingSectionState {
     {
         #[cfg(test)]
         {
-            let updater_2 = updater.clone();
             let is_clicked = TEST_CLICKED.load(Ordering::Relaxed);
             if !is_clicked {
-                spawn(move || {
-                    sleep(Duration::from_millis(150));
-                    TEST_CLICKED.store(true, Ordering::Relaxed);
-                    updater_2.set_state(|state| state.current_index = 1);
-                });
+                TEST_CLICKED.store(true, Ordering::Relaxed);
+                updater.set_state(|state| state.current_index = 1);
             }
         }
 
