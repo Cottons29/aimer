@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use aimer_style::{FontFamily, FontStyle, FontWeight, TextDecoration, TextStyle};
 use aimer_widget::base::Color;
+use unicode_linebreak::linebreaks;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Default)]
@@ -188,9 +189,26 @@ pub(crate) fn layout_resolved_spans(
     max_width: f32,
     mut measure: impl FnMut(&str, &TextStyle) -> f32,
 ) -> SpanLayout {
-    let mut fragments: Vec<SpanLayoutFragment> = Vec::new();
+    struct PositionedGrapheme<'a> {
+        span_index: usize,
+        text: &'a str,
+        source_range: Range<usize>,
+        line: usize,
+        x: f32,
+        width: f32,
+    }
+
+    let plain_text = spans
+        .iter()
+        .map(|span| span.text.as_ref())
+        .collect::<String>();
+    let break_offsets = linebreaks(&plain_text)
+        .map(|(offset, _)| offset)
+        .collect::<Vec<_>>();
+    let mut graphemes: Vec<PositionedGrapheme<'_>> = Vec::new();
     let mut line = 0;
     let mut x = 0.0;
+    let mut line_start = 0;
     let mut span_start = 0;
 
     for (span_index, span) in spans.iter().enumerate() {
@@ -200,38 +218,72 @@ pub(crate) fn layout_resolved_spans(
             if grapheme == "\n" {
                 line += 1;
                 x = 0.0;
+                line_start = graphemes.len();
                 continue;
             }
 
             let width = measure(grapheme, &span.style);
-            if max_width > 0.0 && x > 0.0 && x + width > max_width {
-                line += 1;
-                x = 0.0;
+            while max_width > 0.0 && x > 0.0 && x + width > max_width {
+                let preferred_break = graphemes[line_start..]
+                    .iter()
+                    .rposition(|item| {
+                        break_offsets
+                            .binary_search(&item.source_range.end)
+                            .is_ok()
+                    })
+                    .map(|relative_index| line_start + relative_index + 1);
+
+                if let Some(next_line_start) = preferred_break {
+                    line += 1;
+                    x = 0.0;
+                    for item in &mut graphemes[next_line_start..] {
+                        item.line = line;
+                        item.x = x;
+                        x += item.width;
+                    }
+                    line_start = next_line_start;
+                } else {
+                    line += 1;
+                    x = 0.0;
+                    line_start = graphemes.len();
+                }
             }
 
-            if let Some(last) = fragments.last_mut()
-                && last.span_index == span_index
-                && last.line == line
-            {
-                last.text.push_str(grapheme);
-                last.width += width;
-                last.source_range
-                    .as_mut()
-                    .expect("source text fragments have a range")
-                    .end = source_range.end;
-            } else {
-                fragments.push(SpanLayoutFragment {
-                    span_index,
-                    text: grapheme.to_owned(),
-                    source_range: Some(source_range),
-                    line,
-                    x,
-                    width,
-                });
-            }
+            graphemes.push(PositionedGrapheme {
+                span_index,
+                text: grapheme,
+                source_range,
+                line,
+                x,
+                width,
+            });
             x += width;
         }
         span_start += span.text.len();
+    }
+
+    let mut fragments: Vec<SpanLayoutFragment> = Vec::new();
+    for grapheme in graphemes {
+        if let Some(last) = fragments.last_mut()
+            && last.span_index == grapheme.span_index
+            && last.line == grapheme.line
+        {
+            last.text.push_str(grapheme.text);
+            last.width += grapheme.width;
+            last.source_range
+                .as_mut()
+                .expect("source text fragments have a range")
+                .end = grapheme.source_range.end;
+        } else {
+            fragments.push(SpanLayoutFragment {
+                span_index: grapheme.span_index,
+                text: grapheme.text.to_owned(),
+                source_range: Some(grapheme.source_range),
+                line: grapheme.line,
+                x: grapheme.x,
+                width: grapheme.width,
+            });
+        }
     }
 
     SpanLayout { fragments, line_count: line + 1 }
@@ -413,6 +465,57 @@ mod tests {
         assert_eq!(layout.fragments.len(), 2);
         assert_eq!(layout.fragments[0].source_range, Some(0..5));
         assert_eq!(layout.fragments[1].source_range, Some(6..12));
+    }
+
+    #[test]
+    fn wrapping_prefers_word_boundaries() {
+        let spans = vec![ResolvedTextSpan::plain(Rc::from("hello world"), TextStyle::default())];
+
+        let layout = layout_resolved_spans(&spans, 8.0, |text, _| text.chars().count() as f32);
+
+        assert_eq!(layout.line_count, 2);
+        assert_eq!(layout.fragments[0].text, "hello ");
+        assert_eq!(layout.fragments[0].line, 0);
+        assert_eq!(layout.fragments[1].text, "world");
+        assert_eq!(layout.fragments[1].line, 1);
+    }
+
+    #[test]
+    fn an_overlong_word_falls_back_to_grapheme_wrapping() {
+        let spans = vec![ResolvedTextSpan::plain(Rc::from("abcdefgh"), TextStyle::default())];
+
+        let layout = layout_resolved_spans(&spans, 3.0, |_, _| 1.0);
+
+        assert_eq!(layout.line_count, 3);
+        assert_eq!(layout.fragments[0].text, "abc");
+        assert_eq!(layout.fragments[1].text, "def");
+        assert_eq!(layout.fragments[2].text, "gh");
+    }
+
+    #[test]
+    fn word_wrapping_continues_across_style_span_boundaries() {
+        let spans = vec![
+            ResolvedTextSpan::plain(Rc::from("hel"), TextStyle::default()),
+            ResolvedTextSpan::plain(Rc::from("lo world"), TextStyle::new().font_size(18)),
+        ];
+
+        let layout = layout_resolved_spans(&spans, 7.0, |text, _| text.chars().count() as f32);
+        let first_line = layout
+            .fragments
+            .iter()
+            .filter(|fragment| fragment.line == 0)
+            .map(|fragment| fragment.text.as_str())
+            .collect::<String>();
+        let second_line = layout
+            .fragments
+            .iter()
+            .filter(|fragment| fragment.line == 1)
+            .map(|fragment| fragment.text.as_str())
+            .collect::<String>();
+
+        assert_eq!(layout.line_count, 2);
+        assert_eq!(first_line, "hello ");
+        assert_eq!(second_line, "world");
     }
 
     #[test]
