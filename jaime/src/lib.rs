@@ -1,6 +1,7 @@
 pub mod animated;
 mod color_sync;
 mod custom_font;
+mod markdown_example;
 pub mod routing;
 mod selectable_text;
 mod starter;
@@ -30,7 +31,7 @@ pub fn my_app() {
     //     Expanded::new().child(TestFadingAnimation),
     // ])))
     // test_positioned()
-    selectable_text::start_selectable_text_example()
+    markdown_example::start_markdown_example()
 }
 #[allow(unused)]
 fn test_text() {
