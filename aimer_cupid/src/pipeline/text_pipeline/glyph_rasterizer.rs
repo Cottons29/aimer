@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use aimer_font::{FontFamily, FontRegistry, FontStyle, FontWeight, bundled_monospace_bytes};
+use crate::font::{FontFamily, FontRegistry, FontStyle, FontWeight, bundled_monospace_bytes};
 use aimer_utils::time_cost;
 use swash::FontRef;
 use swash::scale::{Render, ScaleContext, Source};
@@ -1221,7 +1221,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use aimer_font::{FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight};
+    use crate::font::{FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight};
 
     #[test]
     fn registered_families_resolve_consistently_across_rasterizers() {

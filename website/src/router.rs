@@ -5,7 +5,8 @@ use aimer::*;
 use std::time::Duration;
 
 use crate::components::app_shell::AppShell;
-use crate::screen::blog::{BlogDetailPage, BlogListPage};
+use crate::screen::blog::BlogListPage;
+use crate::screen::blog_detail::BlogDetailPage;
 use crate::screen::home_screen::HomePage;
 use crate::screen::learn_screen::LearnPage;
 
@@ -59,7 +60,7 @@ fn transitioned_page(
 }
 
 impl Router for AppRouter {
-    fn build(&self, _ctx: &BuildContext) -> Box<dyn Widget> {
+    fn build(&self, _ctx: &BuildContext) -> AnyWidget {
         // Every route renders inside the same persistent app shell (header +
         // content area). Only the shell's `Outlet` child — the page below —
         // changes as we navigate.

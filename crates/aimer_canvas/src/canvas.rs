@@ -2,9 +2,9 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 pub use aimer_cupid::canvas::TextMetrics;
+use aimer_cupid::font::{FontFamily, FontStyle};
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 pub use aimer_cupid::text_pipeline::TextOverflowMode;
-use aimer_font::{FontFamily, FontStyle};
 use std::sync::Arc;
 mod native_impl;
 

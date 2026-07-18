@@ -68,7 +68,7 @@ impl Default for FontFamily {
 }
 
 #[doc(hidden)]
-pub fn bundled_monospace_bytes() -> &'static [u8] {
+pub const fn bundled_monospace_bytes() -> &'static [u8] {
     include_bytes!("../fonts/JetBrainsMono-Regular.ttf")
 }
 

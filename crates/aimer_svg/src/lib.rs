@@ -11,7 +11,7 @@ pub use error::SvgError;
 pub use selector::SvgSelector;
 pub use source::{SvgLoadState, SvgLoader, SvgSource};
 pub use style::SvgStyle;
-pub use widget::{RawSvg, Svg, SvgCallback, SvgHit, SvgNodeMetadata};
+pub use widget::{RawSvg, Svg, SvgAsset, SvgCallback, SvgHit, SvgNodeMetadata};
 
 #[cfg(test)]
 mod tests {
@@ -22,7 +22,18 @@ mod tests {
     use aimer_cupid::svg::{SvgElementKind, SvgPathCommand};
 
     use crate::widget;
-    use crate::{SvgDocument, SvgError, SvgLimits, SvgPath, SvgSelector, SvgStyle};
+    use aimer_widget::Widget;
+
+    use crate::{SvgAsset, SvgDocument, SvgError, SvgLimits, SvgPath, SvgSelector, SvgStyle};
+
+    #[test]
+    fn svg_asset_exposes_the_asset_widget_contract() {
+        let widget = SvgAsset::new("assets/icon.svg")
+            .width(24.0)
+            .height(32.0);
+
+        assert_eq!(widget.debug_name(), "SvgAsset");
+    }
 
     #[test]
     fn parses_viewbox_groups_transforms_and_solid_path_style() {

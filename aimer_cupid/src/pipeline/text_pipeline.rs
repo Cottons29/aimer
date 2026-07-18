@@ -7,7 +7,7 @@ pub mod text_layout;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use aimer_font::{FontFamily, FontStyle, FontWeight};
+use crate::font::{FontFamily, FontStyle, FontWeight};
 use aimer_utils::time_cost;
 use bytemuck::{Pod, Zeroable};
 
@@ -1318,7 +1318,7 @@ impl TextPipelineV2 {
 
 #[cfg(test)]
 mod tests {
-    use aimer_font::{FontFamily, FontStyle, FontWeight};
+    use crate::font::{FontFamily, FontStyle, FontWeight};
 
     use super::{LayoutCacheKey, ShapingCacheKey, TextDecorationDraw};
 

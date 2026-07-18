@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use aimer_font::{FontFamily, FontStyle};
+use crate::font::{FontFamily, FontStyle};
 
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
@@ -552,7 +552,7 @@ impl Default for DrawList {
 mod memory_tests {
     use super::*;
 
-    use aimer_font::{FontFamily, FontStyle};
+    use crate::font::{FontFamily, FontStyle};
 
     use crate::svg::{SvgScene, SvgViewport};
 

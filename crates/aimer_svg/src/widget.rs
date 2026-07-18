@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::sync::Arc;
 
 use aimer_attribute::{Bounds, CacheBounds, Dimension, ResolvedSize};
@@ -12,10 +12,10 @@ use aimer_events::window::request_animation_frame;
 use aimer_utils::callback::{Callback, CallbackExecutor, RawInnerCallback};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+    AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
 };
 
-use crate::{SvgDocument, SvgError, SvgSelector, SvgStyle};
+use crate::{SvgDocument, SvgError, SvgLoadState, SvgLoader, SvgSelector, SvgSource, SvgStyle};
 
 pub type SvgCallback = Callback<SvgHit, ()>;
 
@@ -176,6 +176,313 @@ impl Widget for Svg {
         .boxed()
     }
 }
+
+/// Displays an SVG bundled with the app and registered under `[assets]` in
+/// `aimer.toml`.
+///
+/// The asset key follows the same platform lookup rules as `AssetImage`:
+/// Android's asset manager, app-bundle resources on Apple platforms, the project
+/// directory during desktop development, and a root-relative request on web.
+pub struct SvgAsset {
+    key: Arc<str>,
+    width: Option<Dimension>,
+    height: Option<Dimension>,
+    styles: Vec<StyleRule>,
+    hover_styles: Vec<StyleRule>,
+    pressed_styles: Vec<StyleRule>,
+    callbacks: Vec<CallbackRule>,
+    loading_widget: Option<AnyWidget>,
+    error_widget: Option<AnyWidget>,
+}
+
+impl SvgAsset {
+    pub fn new(key: impl Into<Arc<str>>) -> Self {
+        Self {
+            key: key.into(),
+            width: None,
+            height: None,
+            styles: Vec::new(),
+            hover_styles: Vec::new(),
+            pressed_styles: Vec::new(),
+            callbacks: Vec::new(),
+            loading_widget: None,
+            error_widget: None,
+        }
+    }
+
+    pub fn width(mut self, width: impl Into<Dimension>) -> Self {
+        self.width = Some(width.into());
+        self
+    }
+
+    pub fn height(mut self, height: impl Into<Dimension>) -> Self {
+        self.height = Some(height.into());
+        self
+    }
+
+    pub fn style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
+        if let Ok(selector) = selector.as_ref().parse() {
+            self.styles
+                .push(StyleRule { selector, style });
+        }
+        self
+    }
+
+    pub fn try_style(
+        mut self,
+        selector: impl AsRef<str>,
+        style: SvgStyle,
+    ) -> Result<Self, SvgError> {
+        let selector = selector.as_ref().parse()?;
+        self.styles
+            .push(StyleRule { selector, style });
+        Ok(self)
+    }
+
+    pub fn hover_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
+        if let Ok(selector) = selector.as_ref().parse() {
+            self.hover_styles
+                .push(StyleRule { selector, style });
+        }
+        self
+    }
+
+    pub fn try_hover_style(
+        mut self,
+        selector: impl AsRef<str>,
+        style: SvgStyle,
+    ) -> Result<Self, SvgError> {
+        let selector = selector.as_ref().parse()?;
+        self.hover_styles
+            .push(StyleRule { selector, style });
+        Ok(self)
+    }
+
+    pub fn pressed_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
+        if let Ok(selector) = selector.as_ref().parse() {
+            self.pressed_styles
+                .push(StyleRule { selector, style });
+        }
+        self
+    }
+
+    pub fn try_pressed_style(
+        mut self,
+        selector: impl AsRef<str>,
+        style: SvgStyle,
+    ) -> Result<Self, SvgError> {
+        let selector = selector.as_ref().parse()?;
+        self.pressed_styles
+            .push(StyleRule { selector, style });
+        Ok(self)
+    }
+
+    pub fn on_path_press(
+        mut self,
+        selector: impl AsRef<str>,
+        callback: impl Into<SvgCallback>,
+    ) -> Self {
+        if let Ok(selector) = selector.as_ref().parse() {
+            self.callbacks
+                .push(CallbackRule { selector, callback: callback.into() });
+        }
+        self
+    }
+
+    pub fn try_on_path_press(
+        mut self,
+        selector: impl AsRef<str>,
+        callback: impl Into<SvgCallback>,
+    ) -> Result<Self, SvgError> {
+        let selector = selector.as_ref().parse()?;
+        self.callbacks
+            .push(CallbackRule { selector, callback: callback.into() });
+        Ok(self)
+    }
+
+    pub fn loading_widget(mut self, loading_widget: impl Widget + 'static) -> Self {
+        self.loading_widget = Some(loading_widget.boxed());
+        self
+    }
+
+    pub fn error_widget(mut self, error_widget: impl Widget + 'static) -> Self {
+        self.error_widget = Some(error_widget.boxed());
+        self
+    }
+}
+
+impl Widget for SvgAsset {
+    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+        let loader = SvgLoader::new(SvgSource::Asset(self.key.clone()));
+        let background_loader = loader.clone();
+        let window = ctx.window.clone();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        ctx.async_handle.spawn(async move {
+            background_loader.load().await;
+            window.request_redraw();
+        });
+
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            background_loader.load().await;
+            window.request_redraw();
+        });
+
+        Box::new(RawSvgAsset {
+            loader,
+            phase: Cell::new(SvgAssetPhase::Loading),
+            width: self.width,
+            height: self.height,
+            styles: self.styles.clone(),
+            hover_styles: self.hover_styles.clone(),
+            pressed_styles: self.pressed_styles.clone(),
+            callbacks: self.callbacks.clone(),
+            loading_element: self
+                .loading_widget
+                .as_ref()
+                .map(|widget| widget.to_element(ctx)),
+            error_element: self
+                .error_widget
+                .as_ref()
+                .map(|widget| widget.to_element(ctx)),
+            svg_element: UnsafeCell::new(None),
+        })
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "SvgAsset"
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SvgAssetPhase {
+    Loading,
+    Ready,
+    Error,
+}
+
+struct RawSvgAsset {
+    loader: SvgLoader,
+    phase: Cell<SvgAssetPhase>,
+    width: Option<Dimension>,
+    height: Option<Dimension>,
+    styles: Vec<StyleRule>,
+    hover_styles: Vec<StyleRule>,
+    pressed_styles: Vec<StyleRule>,
+    callbacks: Vec<CallbackRule>,
+    loading_element: Option<Box<dyn Element>>,
+    error_element: Option<Box<dyn Element>>,
+    svg_element: UnsafeCell<Option<Box<dyn Element>>>,
+}
+
+impl RawSvgAsset {
+    fn refresh(&self, ctx: &BuildContext) {
+        if self.phase.get() != SvgAssetPhase::Loading {
+            return;
+        }
+        match self.loader.state() {
+            SvgLoadState::Loading => {}
+            SvgLoadState::Ready(document) => {
+                let svg = Svg {
+                    document,
+                    width: self.width,
+                    height: self.height,
+                    styles: self.styles.clone(),
+                    hover_styles: self.hover_styles.clone(),
+                    pressed_styles: self.pressed_styles.clone(),
+                    callbacks: self.callbacks.clone(),
+                };
+                // Rendering and element-tree access are single-threaded. The loader
+                // only updates its independent synchronized state in the background.
+                unsafe {
+                    *self.svg_element.get() = Some(svg.to_element(ctx));
+                }
+                self.phase
+                    .set(SvgAssetPhase::Ready);
+            }
+            SvgLoadState::Error(_) => self
+                .phase
+                .set(SvgAssetPhase::Error),
+        }
+    }
+
+    fn active_element(&self) -> Option<&dyn Element> {
+        match self.phase.get() {
+            SvgAssetPhase::Loading => self.loading_element.as_deref(),
+            SvgAssetPhase::Ready => {
+                // The element is initialized before the phase changes to Ready and
+                // is thereafter only read on the render thread.
+                unsafe { (&*self.svg_element.get()).as_deref() }
+            }
+            SvgAssetPhase::Error => self.error_element.as_deref(),
+        }
+    }
+}
+
+impl VisitorElement for RawSvgAsset {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        if let Some(element) = self.active_element() {
+            visitor(element);
+        }
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "SvgAssetElement"
+    }
+}
+
+impl LayoutElement for RawSvgAsset {
+    fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.refresh(ctx);
+        self.active_element()
+            .map(|element| element.layout(ctx))
+            .unwrap_or_default()
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.refresh(ctx);
+        self.active_element()
+            .map(|element| element.computed_size(ctx))
+            .unwrap_or_default()
+    }
+
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.refresh(ctx);
+        self.active_element()
+            .map(|element| element.content_size(ctx))
+            .unwrap_or_default()
+    }
+
+    fn invalidate_layout(&self) {
+        if let Some(element) = self.active_element() {
+            element.invalidate_layout();
+        }
+    }
+}
+
+impl Drawable for RawSvgAsset {
+    fn draw(&self, ctx: &BuildContext) {
+        self.refresh(ctx);
+        if let Some(element) = self.active_element() {
+            element.draw(ctx);
+        }
+    }
+}
+
+impl EventElement for RawSvgAsset {
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        self.active_element()
+            .is_some_and(|element| element.on_event(event))
+    }
+
+    fn captures_pointer(&self, pointer: u64) -> bool {
+        self.active_element()
+            .is_some_and(|element| element.captures_pointer(pointer))
+    }
+}
+
+impl Rebuildable for RawSvgAsset {}
 
 pub struct RawSvg {
     document: SvgDocument,

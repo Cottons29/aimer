@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use aimer_font::{FontFamily, FontStyle, FontWeight};
+use crate::font::{FontFamily, FontStyle, FontWeight};
 use aimer_utils::time_cost;
 use unicode_bidi::BidiInfo;
 use unicode_linebreak::{BreakOpportunity, linebreaks};
