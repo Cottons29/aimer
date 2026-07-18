@@ -83,10 +83,18 @@ pub fn spawn_streamed(
         }
     };
 
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
+    let stdout = child
+        .stdout
+        .take()
+        .unwrap();
+    let stderr = child
+        .stderr
+        .take()
+        .unwrap();
 
-    *current_child.lock().unwrap() = Some(child);
+    *current_child
+        .lock()
+        .unwrap() = Some(child);
 
     stream_out(stdout, tx.clone());
     stream_err(stderr, tx.clone());

@@ -26,7 +26,9 @@ const COMPLETE_VAR: &str = "COMPLETE";
 /// printed.
 pub fn execute(shell: Shell, install: bool) -> anyhow::Result<()> {
     let cmd = Cli::command();
-    let bin_name = cmd.get_name().to_string();
+    let bin_name = cmd
+        .get_name()
+        .to_string();
 
     // Map the requested shell to its dynamic-completion adapter.
     let shell_name = shell.to_string();
@@ -49,10 +51,18 @@ pub fn execute(shell: Shell, install: bool) -> anyhow::Result<()> {
     }
 
     let target = install_target(shell, &bin_name)?;
-    std::fs::create_dir_all(&target.dir)
-        .with_context(|| format!("creating completion directory {}", target.dir.display()))?;
+    std::fs::create_dir_all(&target.dir).with_context(|| {
+        format!(
+            "creating completion directory {}",
+            target
+                .dir
+                .display()
+        )
+    })?;
 
-    let path = target.dir.join(&target.file_name);
+    let path = target
+        .dir
+        .join(&target.file_name);
     let mut file = std::fs::File::create(&path)
         .with_context(|| format!("writing completion script to {}", path.display()))?;
     completer

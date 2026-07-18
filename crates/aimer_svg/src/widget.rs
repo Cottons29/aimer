@@ -79,7 +79,10 @@ impl Svg {
     }
 
     pub fn style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
-        if let Ok(selector) = selector.as_ref().parse() {
+        if let Ok(selector) = selector
+            .as_ref()
+            .parse()
+        {
             self.styles
                 .push(StyleRule { selector, style });
         }
@@ -91,14 +94,19 @@ impl Svg {
         selector: impl AsRef<str>,
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
-        let selector = selector.as_ref().parse()?;
+        let selector = selector
+            .as_ref()
+            .parse()?;
         self.styles
             .push(StyleRule { selector, style });
         Ok(self)
     }
 
     pub fn hover_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
-        if let Ok(selector) = selector.as_ref().parse() {
+        if let Ok(selector) = selector
+            .as_ref()
+            .parse()
+        {
             self.hover_styles
                 .push(StyleRule { selector, style });
         }
@@ -110,14 +118,19 @@ impl Svg {
         selector: impl AsRef<str>,
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
-        let selector = selector.as_ref().parse()?;
+        let selector = selector
+            .as_ref()
+            .parse()?;
         self.hover_styles
             .push(StyleRule { selector, style });
         Ok(self)
     }
 
     pub fn pressed_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
-        if let Ok(selector) = selector.as_ref().parse() {
+        if let Ok(selector) = selector
+            .as_ref()
+            .parse()
+        {
             self.pressed_styles
                 .push(StyleRule { selector, style });
         }
@@ -129,7 +142,9 @@ impl Svg {
         selector: impl AsRef<str>,
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
-        let selector = selector.as_ref().parse()?;
+        let selector = selector
+            .as_ref()
+            .parse()?;
         self.pressed_styles
             .push(StyleRule { selector, style });
         Ok(self)
@@ -140,7 +155,10 @@ impl Svg {
         selector: impl AsRef<str>,
         callback: impl Into<SvgCallback>,
     ) -> Self {
-        if let Ok(selector) = selector.as_ref().parse() {
+        if let Ok(selector) = selector
+            .as_ref()
+            .parse()
+        {
             self.callbacks
                 .push(CallbackRule { selector, callback: callback.into() });
         }
@@ -152,7 +170,9 @@ impl Svg {
         selector: impl AsRef<str>,
         callback: impl Into<SvgCallback>,
     ) -> Result<Self, SvgError> {
-        let selector = selector.as_ref().parse()?;
+        let selector = selector
+            .as_ref()
+            .parse()?;
         self.callbacks
             .push(CallbackRule { selector, callback: callback.into() });
         Ok(self)
@@ -162,13 +182,23 @@ impl Svg {
 impl Widget for Svg {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         RawSvg {
-            document: self.document.clone(),
+            document: self
+                .document
+                .clone(),
             width: self.width,
             height: self.height,
-            styles: self.styles.clone(),
-            hover_styles: self.hover_styles.clone(),
-            pressed_styles: self.pressed_styles.clone(),
-            callbacks: self.callbacks.clone(),
+            styles: self
+                .styles
+                .clone(),
+            hover_styles: self
+                .hover_styles
+                .clone(),
+            pressed_styles: self
+                .pressed_styles
+                .clone(),
+            callbacks: self
+                .callbacks
+                .clone(),
             bounds: CacheBounds::new(),
             hovered: Cell::new(None),
             interaction: RefCell::new(SvgInteraction::default()),
@@ -221,7 +251,10 @@ impl SvgAsset {
     }
 
     pub fn style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
-        if let Ok(selector) = selector.as_ref().parse() {
+        if let Ok(selector) = selector
+            .as_ref()
+            .parse()
+        {
             self.styles
                 .push(StyleRule { selector, style });
         }
@@ -233,14 +266,19 @@ impl SvgAsset {
         selector: impl AsRef<str>,
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
-        let selector = selector.as_ref().parse()?;
+        let selector = selector
+            .as_ref()
+            .parse()?;
         self.styles
             .push(StyleRule { selector, style });
         Ok(self)
     }
 
     pub fn hover_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
-        if let Ok(selector) = selector.as_ref().parse() {
+        if let Ok(selector) = selector
+            .as_ref()
+            .parse()
+        {
             self.hover_styles
                 .push(StyleRule { selector, style });
         }
@@ -252,14 +290,19 @@ impl SvgAsset {
         selector: impl AsRef<str>,
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
-        let selector = selector.as_ref().parse()?;
+        let selector = selector
+            .as_ref()
+            .parse()?;
         self.hover_styles
             .push(StyleRule { selector, style });
         Ok(self)
     }
 
     pub fn pressed_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
-        if let Ok(selector) = selector.as_ref().parse() {
+        if let Ok(selector) = selector
+            .as_ref()
+            .parse()
+        {
             self.pressed_styles
                 .push(StyleRule { selector, style });
         }
@@ -271,7 +314,9 @@ impl SvgAsset {
         selector: impl AsRef<str>,
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
-        let selector = selector.as_ref().parse()?;
+        let selector = selector
+            .as_ref()
+            .parse()?;
         self.pressed_styles
             .push(StyleRule { selector, style });
         Ok(self)
@@ -282,7 +327,10 @@ impl SvgAsset {
         selector: impl AsRef<str>,
         callback: impl Into<SvgCallback>,
     ) -> Self {
-        if let Ok(selector) = selector.as_ref().parse() {
+        if let Ok(selector) = selector
+            .as_ref()
+            .parse()
+        {
             self.callbacks
                 .push(CallbackRule { selector, callback: callback.into() });
         }
@@ -294,7 +342,9 @@ impl SvgAsset {
         selector: impl AsRef<str>,
         callback: impl Into<SvgCallback>,
     ) -> Result<Self, SvgError> {
-        let selector = selector.as_ref().parse()?;
+        let selector = selector
+            .as_ref()
+            .parse()?;
         self.callbacks
             .push(CallbackRule { selector, callback: callback.into() });
         Ok(self)
@@ -313,19 +363,29 @@ impl SvgAsset {
 
 impl Widget for SvgAsset {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let loader = SvgLoader::new(SvgSource::Asset(self.key.clone()));
+        let loader = SvgLoader::new(SvgSource::Asset(
+            self.key
+                .clone(),
+        ));
         let background_loader = loader.clone();
-        let window = ctx.window.clone();
+        let window = ctx
+            .window
+            .clone();
 
         #[cfg(not(target_arch = "wasm32"))]
-        ctx.async_handle.spawn(async move {
-            background_loader.load().await;
-            window.request_redraw();
-        });
+        ctx.async_handle
+            .spawn(async move {
+                background_loader
+                    .load()
+                    .await;
+                window.request_redraw();
+            });
 
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move {
-            background_loader.load().await;
+            background_loader
+                .load()
+                .await;
             window.request_redraw();
         });
 
@@ -334,10 +394,18 @@ impl Widget for SvgAsset {
             phase: Cell::new(SvgAssetPhase::Loading),
             width: self.width,
             height: self.height,
-            styles: self.styles.clone(),
-            hover_styles: self.hover_styles.clone(),
-            pressed_styles: self.pressed_styles.clone(),
-            callbacks: self.callbacks.clone(),
+            styles: self
+                .styles
+                .clone(),
+            hover_styles: self
+                .hover_styles
+                .clone(),
+            pressed_styles: self
+                .pressed_styles
+                .clone(),
+            callbacks: self
+                .callbacks
+                .clone(),
             loading_element: self
                 .loading_widget
                 .as_ref()
@@ -378,25 +446,42 @@ struct RawSvgAsset {
 
 impl RawSvgAsset {
     fn refresh(&self, ctx: &BuildContext) {
-        if self.phase.get() != SvgAssetPhase::Loading {
+        if self
+            .phase
+            .get()
+            != SvgAssetPhase::Loading
+        {
             return;
         }
-        match self.loader.state() {
+        match self
+            .loader
+            .state()
+        {
             SvgLoadState::Loading => {}
             SvgLoadState::Ready(document) => {
                 let svg = Svg {
                     document,
                     width: self.width,
                     height: self.height,
-                    styles: self.styles.clone(),
-                    hover_styles: self.hover_styles.clone(),
-                    pressed_styles: self.pressed_styles.clone(),
-                    callbacks: self.callbacks.clone(),
+                    styles: self
+                        .styles
+                        .clone(),
+                    hover_styles: self
+                        .hover_styles
+                        .clone(),
+                    pressed_styles: self
+                        .pressed_styles
+                        .clone(),
+                    callbacks: self
+                        .callbacks
+                        .clone(),
                 };
                 // Rendering and element-tree access are single-threaded. The loader
                 // only updates its independent synchronized state in the background.
                 unsafe {
-                    *self.svg_element.get() = Some(svg.to_element(ctx));
+                    *self
+                        .svg_element
+                        .get() = Some(svg.to_element(ctx));
                 }
                 self.phase
                     .set(SvgAssetPhase::Ready);
@@ -408,14 +493,26 @@ impl RawSvgAsset {
     }
 
     fn active_element(&self) -> Option<&dyn Element> {
-        match self.phase.get() {
-            SvgAssetPhase::Loading => self.loading_element.as_deref(),
+        match self
+            .phase
+            .get()
+        {
+            SvgAssetPhase::Loading => self
+                .loading_element
+                .as_deref(),
             SvgAssetPhase::Ready => {
                 // The element is initialized before the phase changes to Ready and
                 // is thereafter only read on the render thread.
-                unsafe { (&*self.svg_element.get()).as_deref() }
+                unsafe {
+                    (&*self
+                        .svg_element
+                        .get())
+                        .as_deref()
+                }
             }
-            SvgAssetPhase::Error => self.error_element.as_deref(),
+            SvgAssetPhase::Error => self
+                .error_element
+                .as_deref(),
         }
     }
 }
@@ -499,17 +596,42 @@ pub struct RawSvg {
 
 impl RawSvg {
     fn resolved_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let viewport = self.document.scene().viewport;
+        let viewport = self
+            .document
+            .scene()
+            .viewport;
         let width = self
             .width
-            .map(|value| value.resolve(ctx.parent_size.width, ctx.scale));
+            .map(|value| {
+                value.resolve(
+                    ctx.parent_size
+                        .width,
+                    ctx.scale,
+                )
+            });
         let height = self
             .height
-            .map(|value| value.resolve(ctx.parent_size.height, ctx.scale));
+            .map(|value| {
+                value.resolve(
+                    ctx.parent_size
+                        .height,
+                    ctx.scale,
+                )
+            });
         let (width, height) = resolved_svg_size(viewport, width, height);
         ResolvedSize {
-            width: width.clamp(ctx.box_constraint.min_width, ctx.box_constraint.max_width),
-            height: height.clamp(ctx.box_constraint.min_height, ctx.box_constraint.max_height),
+            width: width.clamp(
+                ctx.box_constraint
+                    .min_width,
+                ctx.box_constraint
+                    .max_width,
+            ),
+            height: height.clamp(
+                ctx.box_constraint
+                    .min_height,
+                ctx.box_constraint
+                    .max_height,
+            ),
         }
     }
 
@@ -517,41 +639,92 @@ impl RawSvg {
         let mut rules = self
             .styles
             .iter()
-            .map(|rule| (rule.selector.clone(), rule.style))
+            .map(|rule| {
+                (
+                    rule.selector
+                        .clone(),
+                    rule.style,
+                )
+            })
             .collect::<Vec<_>>();
-        if let Some(hovered) = self.hovered.get()
-            && let Some(node) = self.document.scene().node(hovered)
+        if let Some(hovered) = self
+            .hovered
+            .get()
+            && let Some(node) = self
+                .document
+                .scene()
+                .node(hovered)
         {
             rules.extend(
                 self.hover_styles
                     .iter()
-                    .filter(|rule| rule.selector.matches(node))
-                    .map(|rule| (rule.selector.clone(), rule.style)),
+                    .filter(|rule| {
+                        rule.selector
+                            .matches(node)
+                    })
+                    .map(|rule| {
+                        (
+                            rule.selector
+                                .clone(),
+                            rule.style,
+                        )
+                    }),
             );
         }
-        if let Some(pressed) = self.interaction.borrow().pressed
-            && let Some(node) = self.document.scene().node(pressed)
+        if let Some(pressed) = self
+            .interaction
+            .borrow()
+            .pressed
+            && let Some(node) = self
+                .document
+                .scene()
+                .node(pressed)
         {
             rules.extend(
                 self.pressed_styles
                     .iter()
-                    .filter(|rule| rule.selector.matches(node))
-                    .map(|rule| (rule.selector.clone(), rule.style)),
+                    .filter(|rule| {
+                        rule.selector
+                            .matches(node)
+                    })
+                    .map(|rule| {
+                        (
+                            rule.selector
+                                .clone(),
+                            rule.style,
+                        )
+                    }),
             );
         }
         rules
     }
 
     fn overrides(&self) -> Vec<SvgNodeStyleOverride> {
-        overrides_for_rules(self.document.scene(), &self.active_rules())
+        overrides_for_rules(
+            self.document
+                .scene(),
+            &self.active_rules(),
+        )
     }
 
     fn hit_at(&self, x: f32, y: f32) -> Option<SvgHit> {
-        hit_test_scene(self.document.scene(), self.bounds.get_bounds()?, x, y, &self.overrides())
+        hit_test_scene(
+            self.document
+                .scene(),
+            self.bounds
+                .get_bounds()?,
+            x,
+            y,
+            &self.overrides(),
+        )
     }
 
     fn set_hovered(&self, hovered: Option<SvgNodeId>) {
-        if self.hovered.replace(hovered) != hovered {
+        if self
+            .hovered
+            .replace(hovered)
+            != hovered
+        {
             request_animation_frame();
         }
     }
@@ -567,9 +740,16 @@ impl RawSvg {
         for rule in self
             .callbacks
             .iter()
-            .filter(|rule| rule.selector.matches(node))
+            .filter(|rule| {
+                rule.selector
+                    .matches(node)
+            })
         {
-            if let Some(callback) = rule.callback.get().as_ref() {
+            if let Some(callback) = rule
+                .callback
+                .get()
+                .as_ref()
+            {
                 match callback {
                     RawInnerCallback::Empty => {}
                     RawInnerCallback::Sync(function) => function(hit.clone()),
@@ -611,7 +791,8 @@ impl LayoutElement for RawSvg {
     }
 
     fn pos_start_end(&self) -> Option<(aimer_attribute::Vec2d, aimer_attribute::Vec2d)> {
-        self.bounds.pos_start_end()
+        self.bounds
+            .pos_start_end()
     }
 }
 
@@ -624,12 +805,15 @@ impl Drawable for RawSvg {
         self.bounds
             .save(ctx.scale, x, y, size.width, size.height);
         let overrides = self.overrides();
-        ctx.canvas.draw_svg(
-            self.document.scene().clone(),
-            (0.0, 0.0).into(),
-            size,
-            overrides.into(),
-        );
+        ctx.canvas
+            .draw_svg(
+                self.document
+                    .scene()
+                    .clone(),
+                (0.0, 0.0).into(),
+                size,
+                overrides.into(),
+            );
     }
 }
 
@@ -654,7 +838,10 @@ impl EventElement for RawSvg {
                 let hit = self.hit_at(position.x, position.y);
                 self.interaction
                     .borrow_mut()
-                    .pointer_down(hit.as_ref().map(|hit| hit.node_id));
+                    .pointer_down(
+                        hit.as_ref()
+                            .map(|hit| hit.node_id),
+                    );
                 hit.is_some()
             }
             ElementEvent::PointerUp(position, _, _) => {
@@ -662,7 +849,10 @@ impl EventElement for RawSvg {
                 let pressed = self
                     .interaction
                     .borrow_mut()
-                    .pointer_up(hit.as_ref().map(|hit| hit.node_id));
+                    .pointer_up(
+                        hit.as_ref()
+                            .map(|hit| hit.node_id),
+                    );
                 if pressed.is_some()
                     && let Some(hit) = hit
                 {
@@ -695,7 +885,9 @@ impl SvgInteraction {
     }
 
     pub(crate) fn pointer_up(&mut self, hit: Option<SvgNodeId>) -> Option<SvgNodeId> {
-        let pressed = self.pressed.take();
+        let pressed = self
+            .pressed
+            .take();
         if pressed == hit { pressed } else { None }
     }
 
@@ -709,7 +901,10 @@ pub(crate) fn resolved_svg_size(
     width: Option<f32>,
     height: Option<f32>,
 ) -> (f32, f32) {
-    let ratio = viewport.width / viewport.height.max(f32::EPSILON);
+    let ratio = viewport.width
+        / viewport
+            .height
+            .max(f32::EPSILON);
     match (width, height) {
         (Some(width), Some(height)) => (width, height),
         (Some(width), None) => (width, width / ratio.max(f32::EPSILON)),
@@ -739,16 +934,28 @@ pub(crate) fn overrides_for_rules(
                 .filter(|(selector, _)| selector.matches(node))
             {
                 matched = true;
-                if style.fill.is_some() {
+                if style
+                    .fill
+                    .is_some()
+                {
                     result.fill = style.fill;
                 }
-                if style.stroke.is_some() {
+                if style
+                    .stroke
+                    .is_some()
+                {
                     result.stroke = style.stroke;
                 }
-                if style.opacity.is_some() {
+                if style
+                    .opacity
+                    .is_some()
+                {
                     result.opacity = style.opacity;
                 }
-                if style.transform.is_some() {
+                if style
+                    .transform
+                    .is_some()
+                {
                     result.transform = style.transform;
                 }
             }
@@ -774,14 +981,27 @@ pub(crate) fn hit_test_scene(
         return None;
     }
     let scene_point = (
-        (x - bounds.x) * scene.viewport.width / bounds.width,
-        (y - bounds.y) * scene.viewport.height / bounds.height,
+        (x - bounds.x)
+            * scene
+                .viewport
+                .width
+            / bounds.width,
+        (y - bounds.y)
+            * scene
+                .viewport
+                .height
+            / bounds.height,
     );
     for node in scene
         .nodes
         .iter()
         .rev()
-        .filter(|node| node.visible && node.geometry.is_some())
+        .filter(|node| {
+            node.visible
+                && node
+                    .geometry
+                    .is_some()
+        })
     {
         let node_override = overrides
             .iter()
@@ -803,8 +1023,12 @@ pub(crate) fn hit_test_scene(
             return Some(SvgHit {
                 node_id: node.node_id,
                 metadata: SvgNodeMetadata {
-                    svg_id: node.svg_id.clone(),
-                    classes: node.classes.clone(),
+                    svg_id: node
+                        .svg_id
+                        .clone(),
+                    classes: node
+                        .classes
+                        .clone(),
                     element: node.element,
                 },
             });
@@ -823,7 +1047,9 @@ fn hits_geometry(
     let fill_visible = match node_override.map(|value| value.fill) {
         Some(Some(None)) => false,
         Some(Some(Some(_))) => true,
-        Some(None) | None => node.fill.is_some(),
+        Some(None) | None => node
+            .fill
+            .is_some(),
     };
     let fill_rule = node
         .fill
@@ -836,15 +1062,21 @@ fn hits_geometry(
     let stroke_visible = match node_override.map(|value| value.stroke) {
         Some(Some(None)) => false,
         Some(Some(Some(_))) => true,
-        Some(None) | None => node.stroke.is_some(),
+        Some(None) | None => node
+            .stroke
+            .is_some(),
     };
     if stroke_visible && let Some(stroke) = &node.stroke {
         let threshold = stroke.width * 0.5;
-        return contours.iter().any(|contour| {
-            contour
-                .windows(2)
-                .any(|segment| point_segment_distance(point, segment[0], segment[1]) <= threshold)
-        });
+        return contours
+            .iter()
+            .any(|contour| {
+                contour
+                    .windows(2)
+                    .any(|segment| {
+                        point_segment_distance(point, segment[0], segment[1]) <= threshold
+                    })
+            });
     }
     false
 }
@@ -853,7 +1085,11 @@ fn flatten_geometry(geometry: &SvgGeometry) -> Vec<Vec<(f32, f32)>> {
     let mut contours = Vec::new();
     let mut contour = Vec::new();
     let mut current = (0.0, 0.0);
-    for command in geometry.commands.iter().copied() {
+    for command in geometry
+        .commands
+        .iter()
+        .copied()
+    {
         match command {
             SvgPathCommand::MoveTo { x, y } => {
                 if !contour.is_empty() {
@@ -898,7 +1134,9 @@ fn flatten_geometry(geometry: &SvgGeometry) -> Vec<Vec<(f32, f32)>> {
             }
             SvgPathCommand::Close => {
                 if contour.first() != contour.last()
-                    && let Some(first) = contour.first().copied()
+                    && let Some(first) = contour
+                        .first()
+                        .copied()
                 {
                     contour.push(first);
                 }

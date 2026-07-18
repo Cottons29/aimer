@@ -24,8 +24,12 @@ pub trait LayoutElement: VisitorElement {
             .map(|s| {
                 s.resolve(
                     &ResolvedSize {
-                        width: ctx.box_constraint.max_width,
-                        height: ctx.box_constraint.max_height,
+                        width: ctx
+                            .box_constraint
+                            .max_width,
+                        height: ctx
+                            .box_constraint
+                            .max_height,
                     },
                     ctx.scale,
                 )
@@ -96,11 +100,21 @@ pub trait LayoutElement: VisitorElement {
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        if self.size().is_none() || self.pos().is_none() {
+        if self
+            .size()
+            .is_none()
+            || self
+                .pos()
+                .is_none()
+        {
             return None;
         }
-        let start = self.pos().unwrap();
-        let size = self.size().unwrap();
+        let start = self
+            .pos()
+            .unwrap();
+        let size = self
+            .size()
+            .unwrap();
         let resolved = ResolvedSize {
             width: match size.width {
                 Dimension::Px(v) => v,

@@ -32,7 +32,9 @@ impl NamedWidget {
 
 impl Widget for NamedWidget {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self.inner.to_element(ctx);
+        let child = self
+            .inner
+            .to_element(ctx);
         if child.debug_name() == self.name {
             return child;
         }
@@ -56,9 +58,15 @@ impl Rebuildable for StatelessElement {
 
     fn mark_needs_rebuild(&self) {
         // eprintln!("[diag] StatelessElement.mark_needs_rebuild");
-        self.dirty.set(true);
+        self.dirty
+            .set(true);
         // Safety: single-threaded rendering pipeline.
-        let child = unsafe { &*self.child.0.get() };
+        let child = unsafe {
+            &*self
+                .child
+                .0
+                .get()
+        };
         child.mark_needs_rebuild();
     }
 }
@@ -140,15 +148,31 @@ impl StatelessElement {
 
     /// If dirty, rebuild the child and preserve live state from the old subtree.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        let Some(rebuild_fn) = self.rebuild_fn.clone() else {
+        let Some(rebuild_fn) = self
+            .rebuild_fn
+            .clone()
+        else {
             // Pure wrapper: cannot rebuild itself, only propagate.
-            let child = unsafe { &*self.child.0.get() };
+            let child = unsafe {
+                &*self
+                    .child
+                    .0
+                    .get()
+            };
             child.rebuild_if_dirty(ctx);
             return;
         };
 
-        if !self.dirty.get() {
-            let child = unsafe { &*self.child.0.get() };
+        if !self
+            .dirty
+            .get()
+        {
+            let child = unsafe {
+                &*self
+                    .child
+                    .0
+                    .get()
+            };
             child.rebuild_if_dirty(ctx);
             return;
         }
@@ -156,20 +180,34 @@ impl StatelessElement {
         let new_child = rebuild_fn(ctx);
 
         {
-            let child = unsafe { &*self.child.0.get() };
+            let child = unsafe {
+                &*self
+                    .child
+                    .0
+                    .get()
+            };
             child.rebuild_if_dirty(ctx);
         }
 
         {
-            let old_child = unsafe { &*self.child.0.get() };
+            let old_child = unsafe {
+                &*self
+                    .child
+                    .0
+                    .get()
+            };
             crate::widget::stateful::carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
         }
 
         unsafe {
-            *self.child.0.get() = new_child;
+            *self
+                .child
+                .0
+                .get() = new_child;
         }
 
-        self.dirty.set(false);
+        self.dirty
+            .set(false);
     }
 }
 
@@ -204,34 +242,81 @@ impl Drawable for StatelessElement {
         }
         self.rebuild_if_dirty(ctx);
         // Safety: single-threaded rendering pipeline.
-        let child = unsafe { &*self.child.0.get() };
+        let child = unsafe {
+            &*self
+                .child
+                .0
+                .get()
+        };
         child.draw(ctx);
     }
 }
 
 impl LayoutElement for StatelessElement {
     fn pos(&self) -> Option<Vec2d> {
-        unsafe { &*self.child.0.get() }.pos()
+        unsafe {
+            &*self
+                .child
+                .0
+                .get()
+        }
+        .pos()
     }
 
     fn size(&self) -> Option<Size> {
-        unsafe { &*self.child.0.get() }.size()
+        unsafe {
+            &*self
+                .child
+                .0
+                .get()
+        }
+        .size()
     }
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        unsafe { &*self.child.0.get() }.computed_size(ctx)
+        unsafe {
+            &*self
+                .child
+                .0
+                .get()
+        }
+        .computed_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        unsafe { &*self.child.0.get() }.content_size(ctx)
+        unsafe {
+            &*self
+                .child
+                .0
+                .get()
+        }
+        .content_size(ctx)
     }
     fn get_size_from_child(&self) -> Option<Size> {
-        unsafe { &*self.child.0.get() }.get_size_from_child()
+        unsafe {
+            &*self
+                .child
+                .0
+                .get()
+        }
+        .get_size_from_child()
     }
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        if self.bounds.get().is_some() {
-            return self.bounds.get();
+        if self
+            .bounds
+            .get()
+            .is_some()
+        {
+            return self
+                .bounds
+                .get();
         }
-        unsafe { &*self.child.0.get() }.pos_start_end()
+        unsafe {
+            &*self
+                .child
+                .0
+                .get()
+        }
+        .pos_start_end()
     }
 }
 
@@ -239,7 +324,12 @@ impl VisitorElement for StatelessElement {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         // Safety: single-threaded rendering pipeline; the returned reference is
         // valid for `'a` because the child lives inside `self`.
-        let child = unsafe { &*self.child.0.get() };
+        let child = unsafe {
+            &*self
+                .child
+                .0
+                .get()
+        };
         visitor(child.as_ref());
     }
 
@@ -313,18 +403,41 @@ mod tests {
     fn mark_needs_rebuild_propagates_through_wrapper() {
         let inner = StatelessElement::new(Box::new(Leaf), |_| Box::new(Leaf), None, "Inner");
         // Rebuildable elements start clean and carry a build closure.
-        assert!(inner.rebuild_fn.is_some());
-        assert!(!inner.dirty.get());
-        let inner_dirty = inner.dirty.clone();
+        assert!(
+            inner
+                .rebuild_fn
+                .is_some()
+        );
+        assert!(
+            !inner
+                .dirty
+                .get()
+        );
+        let inner_dirty = inner
+            .dirty
+            .clone();
 
         // A wrapper cannot rebuild itself but must still forward the mark.
         let outer = StatelessElement::wrapper(Box::new(inner), None, "Outer");
-        assert!(outer.rebuild_fn.is_none());
-        assert!(!outer.dirty.get());
+        assert!(
+            outer
+                .rebuild_fn
+                .is_none()
+        );
+        assert!(
+            !outer
+                .dirty
+                .get()
+        );
 
         outer.mark_needs_rebuild();
 
-        assert!(outer.dirty.get(), "wrapper itself is marked");
+        assert!(
+            outer
+                .dirty
+                .get(),
+            "wrapper itself is marked"
+        );
         assert!(inner_dirty.get(), "mark reached the nested rebuildable child");
     }
 
@@ -347,7 +460,11 @@ mod tests {
         element.rebuild_if_dirty(&context);
 
         assert_eq!(rebuilds.get(), 1);
-        assert!(!element.dirty.get());
+        assert!(
+            !element
+                .dirty
+                .get()
+        );
     }
 
     #[test]

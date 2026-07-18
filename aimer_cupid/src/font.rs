@@ -133,7 +133,9 @@ fn registry() -> &'static RwLock<RegistryState> {
 }
 
 fn normalize_family(name: &str) -> Result<String, FontError> {
-    let normalized = name.trim().to_lowercase();
+    let normalized = name
+        .trim()
+        .to_lowercase();
     if normalized.is_empty() {
         Err(FontError::EmptyFamily)
     } else if matches!(normalized.as_str(), "sans-serif" | "monospace") {
@@ -183,24 +185,33 @@ impl FontRegistry {
     /// the same normalized family, numeric weight, and style twice is rejected.
     pub fn register(registration: FontRegistration<'_>) -> Result<FontFamily, FontError> {
         let family_name = normalize_family(registration.family)?;
-        if registration.bytes.is_empty() || ttf_parser::Face::parse(registration.bytes, 0).is_err()
+        if registration
+            .bytes
+            .is_empty()
+            || ttf_parser::Face::parse(registration.bytes, 0).is_err()
         {
             return Err(FontError::InvalidFont);
         }
 
         let family = family_handle(&family_name);
-        let weight = registration.weight.numeric();
+        let weight = registration
+            .weight
+            .numeric();
         let id = face_id(family, weight, registration.style);
         let mut state = registry()
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        if let Some(existing_name) = state.family_names.get(&family)
+        if let Some(existing_name) = state
+            .family_names
+            .get(&family)
             && existing_name != &family_name
         {
             return Err(FontError::HandleCollision);
         }
-        if let Some(owner) = state.face_owners.get(&id)
+        if let Some(owner) = state
+            .face_owners
+            .get(&id)
             && *owner != (family, weight, registration.style)
         {
             return Err(FontError::HandleCollision);
@@ -241,7 +252,9 @@ impl FontRegistry {
     }
 
     pub fn family(name: &str) -> Option<FontFamily> {
-        let normalized = name.trim().to_lowercase();
+        let normalized = name
+            .trim()
+            .to_lowercase();
         match normalized.as_str() {
             "sans-serif" => Some(FontFamily::SANS_SERIF),
             "monospace" => Some(FontFamily::MONOSPACE),

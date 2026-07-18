@@ -22,17 +22,28 @@ impl<T> WidgetRc<T> {
     }
 
     fn inner(&self) -> &WidgetRcInner<T> {
-        unsafe { self.ptr.as_ref() }
+        unsafe {
+            self.ptr
+                .as_ref()
+        }
     }
 }
 
 impl<T> Clone for WidgetRc<T> {
     fn clone(&self) -> Self {
         let inner = self.inner();
-        let count_before = unsafe { *inner.counter.get() };
+        let count_before = unsafe {
+            *inner
+                .counter
+                .get()
+        };
 
         let count_after = count_before + 1;
-        unsafe { *inner.counter.get() = count_after };
+        unsafe {
+            *inner
+                .counter
+                .get() = count_after
+        };
 
         WidgetRc { ptr: self.ptr }
     }
@@ -41,20 +52,38 @@ impl<T> Clone for WidgetRc<T> {
 impl<T> Deref for WidgetRc<T> {
     type Target = T;
     fn deref(&self) -> &T {
-        &self.inner().value
+        &self
+            .inner()
+            .value
     }
 }
 
 impl<T> Drop for WidgetRc<T> {
     fn drop(&mut self) {
-        let inner = unsafe { self.ptr.as_ref() };
-        let count_before = unsafe { *inner.counter.get() };
+        let inner = unsafe {
+            self.ptr
+                .as_ref()
+        };
+        let count_before = unsafe {
+            *inner
+                .counter
+                .get()
+        };
 
         let count_after = count_before - 1;
-        unsafe { *inner.counter.get() = count_after };
+        unsafe {
+            *inner
+                .counter
+                .get() = count_after
+        };
 
         if count_after == 0 {
-            unsafe { drop(Box::from_raw(self.ptr.as_ptr())) }
+            unsafe {
+                drop(Box::from_raw(
+                    self.ptr
+                        .as_ptr(),
+                ))
+            }
         }
     }
 }

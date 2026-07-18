@@ -46,8 +46,12 @@ impl Default for AspectRatio {
 impl<W: Widget> Widget for AspectRatio<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawAspectRatio {
-            child: self.child.to_element(ctx),
-            aspect_ratio: self.aspect_ratio.abs(),
+            child: self
+                .child
+                .to_element(ctx),
+            aspect_ratio: self
+                .aspect_ratio
+                .abs(),
             ratio_option: self.ratio_option,
         })
     }
@@ -63,8 +67,14 @@ fn resolve_ratio_size_with_option(
     ratio_option: RatioOption,
 ) -> (f32, f32) {
     let ratio = if aspect_ratio.is_finite() && aspect_ratio > 0.0 { aspect_ratio } else { 1.0 };
-    let width_bounded = constraints.max_width.is_finite() && constraints.max_width < f32::MAX;
-    let height_bounded = constraints.max_height.is_finite() && constraints.max_height < f32::MAX;
+    let width_bounded = constraints
+        .max_width
+        .is_finite()
+        && constraints.max_width < f32::MAX;
+    let height_bounded = constraints
+        .max_height
+        .is_finite()
+        && constraints.max_height < f32::MAX;
 
     let (mut width, mut height) = if matches!(ratio_option, RatioOption::Width) && width_bounded {
         let width = constraints.max_width;
@@ -120,7 +130,8 @@ impl Drawable for RawAspectRatio {
             max_width: size.width,
             max_height: size.height,
         };
-        self.child.draw(&child_ctx);
+        self.child
+            .draw(&child_ctx);
     }
 }
 
@@ -139,17 +150,22 @@ impl LayoutElement for RawAspectRatio {
     }
 
     fn layer(&self) -> u32 {
-        self.child.layer()
+        self.child
+            .layer()
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child.get_size_from_child()
+        self.child
+            .get_size_from_child()
     }
 }
 
 impl VisitorElement for RawAspectRatio {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 
     fn debug_name(&self) -> &'static str {

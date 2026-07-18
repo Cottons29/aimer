@@ -179,8 +179,16 @@ impl WindowEventHandler {
 
     fn handle_touch<W: Widget + 'static>(item: Touch, app: &mut AimerApplicationHandler<W>) {
         let scale = app.window_scale;
-        let pos =
-            Vec2d { x: (item.location.x / scale) as f32, y: (item.location.y / scale) as f32 };
+        let pos = Vec2d {
+            x: (item
+                .location
+                .x
+                / scale) as f32,
+            y: (item
+                .location
+                .y
+                / scale) as f32,
+        };
         let touch_id = item.id;
 
         // All touch events are passed through with their finger ID.
@@ -229,8 +237,16 @@ impl WindowEventHandler {
     ) {
         let scale = app.window_scale as f32;
         let new_pos = Vec2d { x: position.x as f32 / scale, y: position.y as f32 / scale };
-        let dx = (new_pos.x - app.cursor_pos.x).abs();
-        let dy = (new_pos.y - app.cursor_pos.y).abs();
+        let dx = (new_pos.x
+            - app
+                .cursor_pos
+                .x)
+            .abs();
+        let dy = (new_pos.y
+            - app
+                .cursor_pos
+                .y)
+            .abs();
         if dx < 1.0 && dy < 1.0 {
             return;
         }
@@ -332,7 +348,9 @@ impl WindowEventHandler {
             }
         };
 
-        let modifiers = app.current_modifiers.clone();
+        let modifiers = app
+            .current_modifiers
+            .clone();
 
         if modifiers.ctrl || modifiers.meta {
             use winit::keyboard::{KeyCode, PhysicalKey};
@@ -504,7 +522,9 @@ impl WindowEventHandler {
             }
             Ime::Commit(text) => {
                 app.ime_composing = false;
-                let modifiers = app.current_modifiers.clone();
+                let modifiers = app
+                    .current_modifiers
+                    .clone();
                 Self::dispatch_text(&text, &KeyAction::Pressed, &modifiers, app);
             }
             Ime::Disabled => {
@@ -573,10 +593,15 @@ impl WindowEventHandler {
                     Self::oriented_screen_size(size, (width, height))
                 }
                 None => {
-                    if app.window.is_none() {
+                    if app
+                        .window
+                        .is_none()
+                    {
                         return;
                     }
-                    app.window.unwrap().inner_size()
+                    app.window
+                        .unwrap()
+                        .inner_size()
                 }
             }
         };

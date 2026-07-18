@@ -21,16 +21,27 @@ impl VersionCommand {
             hex::encode(hash)
         });
 
-        let cargo_version = cargo_handle.join().unwrap();
-        let rust_version = rust_handle.join().unwrap();
-        let binary_hash = binary_hash_handle.join().unwrap();
+        let cargo_version = cargo_handle
+            .join()
+            .unwrap();
+        let rust_version = rust_handle
+            .join()
+            .unwrap();
+        let binary_hash = binary_hash_handle
+            .join()
+            .unwrap();
 
         // Rainbow gradient 🌈
         let gradient = [Color::Green, Color::Yellow, Color::Red, Color::Magenta, Color::Blue];
 
         let rustc_version_line = match rust_version {
             Some(version) => {
-                format!("rustc {} ", version.green().bold())
+                format!(
+                    "rustc {} ",
+                    version
+                        .green()
+                        .bold()
+                )
             }
             None => String::new(),
         };
@@ -38,16 +49,30 @@ impl VersionCommand {
         let current_os_name = env::consts::OS;
         let cargo_version_line = match cargo_version {
             Some(version) => {
-                format!("cargo {}, {}", version.green().bold(), rustc_version_line)
+                format!(
+                    "cargo {}, {}",
+                    version
+                        .green()
+                        .bold(),
+                    rustc_version_line
+                )
             }
             None => String::new(),
         };
 
         let build_time = option_env!("AIMER_BUILD_TIME").unwrap_or("undefined");
-        let formatted_buildtime = format!("Build Time: {}", build_time.green().bold());
+        let formatted_buildtime = format!(
+            "Build Time: {}",
+            build_time
+                .green()
+                .bold()
+        );
         let formatted_version = format!(
             "Current Version is {} ({})",
-            VERSION.to_string().green().bold(),
+            VERSION
+                .to_string()
+                .green()
+                .bold(),
             current_os_name.green()
         );
 
@@ -55,16 +80,31 @@ impl VersionCommand {
 
         let messages = [
             String::new(),
-            format!("Welcome to {}!", "Aimer 🎍".green().bold()),
+            format!(
+                "Welcome to {}!",
+                "Aimer 🎍"
+                    .green()
+                    .bold()
+            ),
             // format!("A {} cross-platform framework for building gui
             // applications.","Rust".red().bold() ),
             "A cross-platform framework for building pretty gui applications.".into(),
-            format!("Aimer are written in {} 🦀", "Rust".red().bold()),
+            format!(
+                "Aimer are written in {} 🦀",
+                "Rust"
+                    .red()
+                    .bold()
+            ),
             String::new(),
             formatted_version,
             cargo_version_line,
             formatted_buildtime,
-            format!("sha256: {}", binary_hash.green().bold()),
+            format!(
+                "sha256: {}",
+                binary_hash
+                    .green()
+                    .bold()
+            ),
         ];
 
         let lines = [
@@ -83,7 +123,10 @@ impl VersionCommand {
         ];
         let total = lines.len();
         println!();
-        for (i, line) in lines.iter().enumerate() {
+        for (i, line) in lines
+            .iter()
+            .enumerate()
+        {
             let color_index = i * gradient.len() / total;
             println!(
                 " {}     {}",
@@ -101,7 +144,10 @@ impl VersionCommand {
             .output()
             .ok()?;
 
-        if !output.status.success() {
+        if !output
+            .status
+            .success()
+        {
             return None;
         }
 
@@ -120,7 +166,10 @@ impl VersionCommand {
             .output()
             .ok()?;
 
-        if !output.status.success() {
+        if !output
+            .status
+            .success()
+        {
             return None;
         }
 
@@ -146,7 +195,9 @@ mod tests {
     #[test]
     fn version_constant_is_semver_like() {
         // Should have at least major.minor.patch
-        let parts: Vec<&str> = VERSION.split('.').collect();
+        let parts: Vec<&str> = VERSION
+            .split('.')
+            .collect();
         assert!(parts.len() >= 3, "VERSION '{}' is not semver-like", VERSION);
     }
 
@@ -157,7 +208,12 @@ mod tests {
         let v = version.unwrap();
         assert!(!v.is_empty());
         // Should look like a version number (contains digits)
-        assert!(v.chars().any(|c| c.is_numeric()), "Rust version '{}' should contain digits", v);
+        assert!(
+            v.chars()
+                .any(|c| c.is_numeric()),
+            "Rust version '{}' should contain digits",
+            v
+        );
     }
 
     #[test]
@@ -166,7 +222,12 @@ mod tests {
         assert!(version.is_some(), "cargo should be available on the system");
         let v = version.unwrap();
         assert!(!v.is_empty());
-        assert!(v.chars().any(|c| c.is_numeric()), "Cargo version '{}' should contain digits", v);
+        assert!(
+            v.chars()
+                .any(|c| c.is_numeric()),
+            "Cargo version '{}' should contain digits",
+            v
+        );
     }
 
     #[test]

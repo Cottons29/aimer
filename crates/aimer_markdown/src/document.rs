@@ -123,9 +123,15 @@ fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
             Ok(Block::List { ordered: list.ordered, start: list.start, items })
         }
         Node::Code(code) => Ok(Block::Code {
-            value: code.value.clone(),
-            language: code.lang.clone(),
-            meta: code.meta.clone(),
+            value: code
+                .value
+                .clone(),
+            language: code
+                .lang
+                .clone(),
+            meta: code
+                .meta
+                .clone(),
         }),
         Node::ThematicBreak(_) => Ok(Block::ThematicBreak),
         Node::Table(table) => {
@@ -160,7 +166,9 @@ fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
             Ok(Block::Table { alignments, rows })
         }
         Node::FootnoteDefinition(footnote) => Ok(Block::FootnoteDefinition {
-            identifier: footnote.identifier.clone(),
+            identifier: footnote
+                .identifier
+                .clone(),
             blocks: convert_blocks(&footnote.children)?,
         }),
         Node::Html(_) => Err(MarkdownError::new("Raw HTML is not supported in MarkdownViewer")),
@@ -182,20 +190,35 @@ fn convert_inlines(nodes: &[Node]) -> Result<Vec<Inline>, MarkdownError> {
             }
             Node::Strong(strong) => result.push(Inline::Strong(convert_inlines(&strong.children)?)),
             Node::Delete(delete) => result.push(Inline::Delete(convert_inlines(&delete.children)?)),
-            Node::InlineCode(code) => result.push(Inline::InlineCode(code.value.clone())),
+            Node::InlineCode(code) => result.push(Inline::InlineCode(
+                code.value
+                    .clone(),
+            )),
             Node::Link(link) => result.push(Inline::Link {
-                url: link.url.clone(),
-                title: link.title.clone(),
+                url: link
+                    .url
+                    .clone(),
+                title: link
+                    .title
+                    .clone(),
                 content: convert_inlines(&link.children)?,
             }),
             Node::Image(image) => result.push(Inline::Image {
-                url: image.url.clone(),
-                title: image.title.clone(),
-                alt: image.alt.clone(),
+                url: image
+                    .url
+                    .clone(),
+                title: image
+                    .title
+                    .clone(),
+                alt: image
+                    .alt
+                    .clone(),
             }),
-            Node::FootnoteReference(reference) => {
-                result.push(Inline::FootnoteReference { identifier: reference.identifier.clone() })
-            }
+            Node::FootnoteReference(reference) => result.push(Inline::FootnoteReference {
+                identifier: reference
+                    .identifier
+                    .clone(),
+            }),
             Node::Html(_) => {
                 return Err(MarkdownError::new("Raw HTML is not supported in MarkdownViewer"));
             }
@@ -211,10 +234,15 @@ fn convert_inlines(nodes: &[Node]) -> Result<Vec<Inline>, MarkdownError> {
 }
 
 fn push_text_with_soft_breaks(result: &mut Vec<Inline>, value: &str) {
-    let mut parts = value.split('\n').peekable();
+    let mut parts = value
+        .split('\n')
+        .peekable();
     while let Some(part) = parts.next() {
         push_extended_image_text(result, part);
-        if parts.peek().is_some() {
+        if parts
+            .peek()
+            .is_some()
+        {
             result.push(Inline::SoftBreak);
         }
     }
@@ -369,7 +397,9 @@ mod tests {
             [None, Some(true), Some(false)]
         );
         assert!(matches!(
-            items[2].blocks.last(),
+            items[2]
+                .blocks
+                .last(),
             Some(Block::List { ordered: true, start: Some(1), .. })
         ));
     }
@@ -449,6 +479,10 @@ mod tests {
     fn rejects_raw_html_without_silently_dropping_it() {
         let error = Document::parse("<script>alert('no')</script>")
             .expect_err("raw HTML is intentionally unsupported");
-        assert!(error.to_string().contains("HTML"));
+        assert!(
+            error
+                .to_string()
+                .contains("HTML")
+        );
     }
 }

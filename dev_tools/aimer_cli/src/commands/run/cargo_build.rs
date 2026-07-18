@@ -78,10 +78,18 @@ pub fn spawn_cargo_build(
         }
     };
 
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
+    let stdout = child
+        .stdout
+        .take()
+        .unwrap();
+    let stderr = child
+        .stderr
+        .take()
+        .unwrap();
 
-    *current_child.lock().unwrap() = Some(child);
+    *current_child
+        .lock()
+        .unwrap() = Some(child);
 
     stream_stdout_as_build_log(stdout, tx.clone());
     stream_stderr_with_cargo_progress(stderr, tx.clone());
@@ -154,7 +162,9 @@ fn cargo_lock_package_count() -> usize {
         if let Some(n) = count(&d.join("Cargo.lock")) {
             return n;
         }
-        dir = d.parent().map(|p| p.to_path_buf());
+        dir = d
+            .parent()
+            .map(|p| p.to_path_buf());
     }
     0
 }
@@ -268,7 +278,9 @@ pub fn stream_stdout_with_gradle_progress(
 
 pub fn wait_for_child(current_child: &Arc<Mutex<Option<Child>>>) -> Option<ExitStatus> {
     loop {
-        let mut guard = current_child.lock().unwrap();
+        let mut guard = current_child
+            .lock()
+            .unwrap();
 
         let child = guard.as_mut()?;
 

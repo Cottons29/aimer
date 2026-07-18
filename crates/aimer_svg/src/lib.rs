@@ -48,8 +48,20 @@ mod tests {
         )
         .expect("valid SVG should parse");
 
-        assert_eq!(document.scene().viewport.width, 24.0);
-        assert_eq!(document.scene().viewport.height, 12.0);
+        assert_eq!(
+            document
+                .scene()
+                .viewport
+                .width,
+            24.0
+        );
+        assert_eq!(
+            document
+                .scene()
+                .viewport
+                .height,
+            12.0
+        );
         let mark = document
             .select("#mark")
             .expect("selector should parse");
@@ -67,10 +79,24 @@ mod tests {
             ["accent"]
         );
         assert_eq!(node.opacity, 0.5);
-        assert_eq!(node.transform.tx, 2.0);
-        assert_eq!(node.transform.ty, 3.0);
-        assert!(node.fill.is_some());
-        assert!(node.stroke.is_some());
+        assert_eq!(
+            node.transform
+                .tx,
+            2.0
+        );
+        assert_eq!(
+            node.transform
+                .ty,
+            3.0
+        );
+        assert!(
+            node.fill
+                .is_some()
+        );
+        assert!(
+            node.stroke
+                .is_some()
+        );
     }
 
     #[test]
@@ -126,7 +152,11 @@ mod tests {
             "#p",
         )
         .unwrap();
-        assert!(!selected.commands().is_empty());
+        assert!(
+            !selected
+                .commands()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -175,8 +205,15 @@ mod tests {
         )
         .unwrap();
         let style = SvgStyle::new().fill(aimer_cupid::svg::SvgColor::rgba8(255, 0, 0, 255));
-        let overrides =
-            widget::overrides_for_rules(document.scene(), &[(".accent".parse().unwrap(), style)]);
+        let overrides = widget::overrides_for_rules(
+            document.scene(),
+            &[(
+                ".accent"
+                    .parse()
+                    .unwrap(),
+                style,
+            )],
+        );
 
         assert_eq!(overrides.len(), 1);
         assert_eq!(
@@ -208,7 +245,12 @@ mod tests {
             &[],
         )
         .unwrap();
-        assert_eq!(hit.metadata.svg_id.as_deref(), Some("front"));
+        assert_eq!(
+            hit.metadata
+                .svg_id
+                .as_deref(),
+            Some("front")
+        );
         let back = widget::hit_test_scene(
             document.scene(),
             Bounds::new(0.0, 0.0, 20.0, 20.0),
@@ -217,7 +259,12 @@ mod tests {
             &[],
         )
         .unwrap();
-        assert_eq!(back.metadata.svg_id.as_deref(), Some("back"));
+        assert_eq!(
+            back.metadata
+                .svg_id
+                .as_deref(),
+            Some("back")
+        );
     }
 
     #[test]
@@ -275,13 +322,17 @@ mod tests {
         )
         .unwrap();
 
-        let groups = document.select("g").unwrap();
+        let groups = document
+            .select("g")
+            .unwrap();
         let clusters = document
             .select(".cluster")
             .unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups, clusters);
-        let child = document.select("#child").unwrap()[0];
+        let child = document
+            .select("#child")
+            .unwrap()[0];
         assert_eq!(
             document
                 .scene()

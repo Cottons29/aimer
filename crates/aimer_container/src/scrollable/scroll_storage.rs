@@ -38,7 +38,11 @@ pub(crate) fn save_offset(key: &Key, logical_offset: Vec2d) {
 
 /// Read the last saved logical offset for a storage key, if one was stored.
 pub(crate) fn read_offset(key: &Key) -> Option<Vec2d> {
-    SCROLL_OFFSETS.with(|m| m.borrow().get(key).copied())
+    SCROLL_OFFSETS.with(|m| {
+        m.borrow()
+            .get(key)
+            .copied()
+    })
 }
 
 #[cfg(test)]

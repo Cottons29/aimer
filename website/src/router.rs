@@ -2,6 +2,7 @@ use aimer::animation::{AnimatedSwitcher, Curve};
 use aimer::router::{Router, Shell};
 use aimer::style::{TextAlign, TextStyle};
 use aimer::*;
+use std::panic::Location;
 use std::time::Duration;
 
 use crate::components::app_shell::AppShell;
@@ -12,6 +13,16 @@ use crate::screen::learn_screen::LearnPage;
 
 const ROUTE_TRANSITION_DURATION: Duration = Duration::from_millis(200);
 const ROUTE_SWITCHER_KEY: &str = "route-switcher";
+
+#[cfg(test)]
+thread_local! {
+    static ROUTE_BUILDS: std::cell::RefCell<Vec<AppRouter>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_route_builds() -> Vec<AppRouter> {
+    ROUTE_BUILDS.with(|builds| std::mem::take(&mut *builds.borrow_mut()))
+}
 
 #[widget(Router)]
 #[derive(Clone, Debug, PartialEq)]
@@ -60,10 +71,19 @@ fn transitioned_page(
 }
 
 impl Router for AppRouter {
+    #[track_caller]
     fn build(&self, _ctx: &BuildContext) -> AnyWidget {
         // Every route renders inside the same persistent app shell (header +
         // content area). Only the shell's `Outlet` child — the page below —
         // changes as we navigate.
+
+        #[cfg(test)]
+        ROUTE_BUILDS.with(|builds| {
+            builds
+                .borrow_mut()
+                .push(self.clone())
+        });
+        eprintln!("Current route: {:?}", self);
         let active_tab = self.active_tab();
         let transition_key = self.transition_key();
         match self {

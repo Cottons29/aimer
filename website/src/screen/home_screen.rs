@@ -1,5 +1,10 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-
+use crate::components::get_started_button::HoverableGetStartedButton;
+use crate::components::same_looking::SameLookingSection;
+use crate::router::AppRouter;
+use crate::utils::{app_padding, is_mobile, mobile_title, resp_position};
+#[cfg(test)]
+use crate::{CURRENT_INDEX, TEST_STATE_UPDATED};
+use aimer::router::{Navigator, NavigatorController, NavigatorInstance};
 use aimer::style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing, Spacing,
     TextDecoration, TextDecorationLine, TextDecorationStyle, TextOverflow, TextStyle,
@@ -8,10 +13,7 @@ use aimer::{
     BuildContext, Container, Dimension, Positioned, ScrollController, State, StateUpdater,
     StatefulWidget, Text, Widget, widget, *,
 };
-
-use crate::components::get_started_button::HoverableGetStartedButton;
-use crate::components::same_looking::SameLookingSection;
-use crate::utils::{app_padding, is_mobile, mobile_title, resp_position};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub static SHOW_ICON: AtomicBool = AtomicBool::new(true);
 
@@ -60,12 +62,26 @@ impl State<HomePage> for HomePageState {
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
+        #[cfg(test)]
+        {
+            let is_navigated = TEST_STATE_UPDATED.load(Ordering::Relaxed);
+            if !is_navigated {
+                let navigator = NavigatorController::<AppRouter>::of(ctx);
+                std::thread::spawn(move || {
+                    navigator.push(AppRouter::Blog);
+                    TEST_STATE_UPDATED.store(true, Ordering::Relaxed);
+                });
+            }
+        }
         Container::new()
             .color(Color::WHITE)
             .child(
                 Scrollable::new()
                     .key(key!())
-                    .controller(self.controller.clone())
+                    .controller(
+                        self.controller
+                            .clone(),
+                    )
                     .axis(ScrollAxis::Vertical)
                     .child(Column::new().children(vec![
                         hero_section(ctx),
@@ -175,7 +191,9 @@ fn feature_block(
                                         .font_weight(FontWeight::Bold),
                                 )
                                 .boxed(),
-                            SizedBox::new().height(10).boxed(),
+                            SizedBox::new()
+                                .height(10)
+                                .boxed(),
                             body,
                         ]),
                 ),
@@ -202,7 +220,9 @@ fn why_aimer_section(ctx: &BuildContext) -> AnyWidget {
                                 .text_decoration(TextDecoration::Underline),
                         )
                         .boxed(),
-                    SizedBox::new().height(48).boxed(),
+                    SizedBox::new()
+                        .height(48)
+                        .boxed(),
                     Container::new()
                         .height(Dimension::Px(500.0))
                         .child(
@@ -346,7 +366,9 @@ fn tooling_card(title: &str, description: &str, mobile: bool) -> AnyWidget {
                                 .text_decoration(TextDecoration::Underline),
                         )
                         .boxed(),
-                    SizedBox::new().height(14).boxed(),
+                    SizedBox::new()
+                        .height(14)
+                        .boxed(),
                     Text::new(description.to_string())
                         .text_style(
                             TextStyle::new()
@@ -374,7 +396,9 @@ fn polished_tooling_section(ctx: &BuildContext) -> AnyWidget {
                 .horizontal_alignment(BoxAlignment::Start)
                 .vertical_alignment(BoxAlignment::Start)
                 .children(vec![
-                    SizedBox::new().height(12).boxed(),
+                    SizedBox::new()
+                        .height(12)
+                        .boxed(),
                     Container::new()
                         .height(100)
                         .child(
@@ -399,7 +423,9 @@ fn polished_tooling_section(ctx: &BuildContext) -> AnyWidget {
                                 .collect::<Vec<_>>(),
                         )
                         .boxed(),
-                    SizedBox::new().height(48).boxed(),
+                    SizedBox::new()
+                        .height(48)
+                        .boxed(),
                 ]),
         )
         .boxed()

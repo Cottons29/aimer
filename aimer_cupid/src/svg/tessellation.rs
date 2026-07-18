@@ -26,7 +26,13 @@ pub struct SvgMesh {
 
 impl SvgMesh {
     pub fn memory_bytes(&self) -> usize {
-        self.vertices.len() * size_of::<[f32; 2]>() + self.indices.len() * size_of::<u32>()
+        self.vertices
+            .len()
+            * size_of::<[f32; 2]>()
+            + self
+                .indices
+                .len()
+                * size_of::<u32>()
     }
 }
 
@@ -114,12 +120,19 @@ impl SvgGeometryCache {
         style: SvgMeshStyle,
         physical_scale: f32,
     ) -> Result<Arc<SvgMesh>, SvgTessellationError> {
-        self.usage_clock = self.usage_clock.wrapping_add(1);
+        self.usage_clock = self
+            .usage_clock
+            .wrapping_add(1);
         let tolerance = SvgToleranceBucket::from_scale(physical_scale);
         let key = GeometryKey { path: path_key(geometry), style: style.into(), tolerance };
-        if let Some(entry) = self.entries.get_mut(&key) {
+        if let Some(entry) = self
+            .entries
+            .get_mut(&key)
+        {
             entry.last_used = self.usage_clock;
-            return Ok(entry.mesh.clone());
+            return Ok(entry
+                .mesh
+                .clone());
         }
 
         let mesh = Arc::new(tessellate(geometry, style, tolerance.tolerance())?);
@@ -134,11 +147,13 @@ impl SvgGeometryCache {
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.entries
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries
+            .is_empty()
     }
 
     pub fn memory_bytes(&self) -> usize {
@@ -150,12 +165,18 @@ impl SvgGeometryCache {
     }
 
     pub fn clear(&mut self) {
-        self.entries.clear();
+        self.entries
+            .clear();
         self.memory_bytes = 0;
     }
 
     fn evict_to_limits(&mut self) {
-        while self.entries.len() > self.max_entries || self.memory_bytes > self.max_memory_bytes {
+        while self
+            .entries
+            .len()
+            > self.max_entries
+            || self.memory_bytes > self.max_memory_bytes
+        {
             let Some(oldest_key) = self
                 .entries
                 .iter()
@@ -164,10 +185,17 @@ impl SvgGeometryCache {
             else {
                 break;
             };
-            if let Some(entry) = self.entries.remove(&oldest_key) {
+            if let Some(entry) = self
+                .entries
+                .remove(&oldest_key)
+            {
                 self.memory_bytes = self
                     .memory_bytes
-                    .saturating_sub(entry.mesh.memory_bytes());
+                    .saturating_sub(
+                        entry
+                            .mesh
+                            .memory_bytes(),
+                    );
             }
         }
     }
@@ -233,17 +261,26 @@ fn tessellate(
             .map(|point| [point.x, point.y])
             .collect::<Vec<_>>()
             .into(),
-        indices: output.indices.into(),
+        indices: output
+            .indices
+            .into(),
     })
 }
 
 fn lyon_path(geometry: &SvgGeometry) -> Result<Path, SvgTessellationError> {
-    if geometry.commands.is_empty() {
+    if geometry
+        .commands
+        .is_empty()
+    {
         return Err(SvgTessellationError::EmptyPath);
     }
     let mut builder = Path::builder();
     let mut contour_open = false;
-    for command in geometry.commands.iter().copied() {
+    for command in geometry
+        .commands
+        .iter()
+        .copied()
+    {
         match command {
             SvgPathCommand::MoveTo { x, y } => {
                 if contour_open {
@@ -278,8 +315,16 @@ fn lyon_path(geometry: &SvgGeometry) -> Result<Path, SvgTessellationError> {
 }
 
 fn path_key(geometry: &SvgGeometry) -> Vec<u32> {
-    let mut key = Vec::with_capacity(geometry.commands.len() * 7);
-    for command in geometry.commands.iter() {
+    let mut key = Vec::with_capacity(
+        geometry
+            .commands
+            .len()
+            * 7,
+    );
+    for command in geometry
+        .commands
+        .iter()
+    {
         match *command {
             SvgPathCommand::MoveTo { x, y } => key.extend([0, x.to_bits(), y.to_bits()]),
             SvgPathCommand::LineTo { x, y } => key.extend([1, x.to_bits(), y.to_bits()]),

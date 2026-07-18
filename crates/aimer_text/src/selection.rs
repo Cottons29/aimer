@@ -20,8 +20,22 @@ pub(crate) fn text_offset_at(regions: &[TextHitRegion], x: f32, y: f32) -> Optio
         .min_by(|left, right| {
             distance_squared(left.bounds, x, y).total_cmp(&distance_squared(right.bounds, x, y))
         })?;
-    let midpoint = region.bounds.x + region.bounds.width / 2.0;
-    Some(if x < midpoint { region.source_range.start } else { region.source_range.end })
+    let midpoint = region
+        .bounds
+        .x
+        + region
+            .bounds
+            .width
+            / 2.0;
+    Some(if x < midpoint {
+        region
+            .source_range
+            .start
+    } else {
+        region
+            .source_range
+            .end
+    })
 }
 
 fn distance_squared(bounds: Bounds, x: f32, y: f32) -> f32 {
@@ -66,7 +80,11 @@ impl TextSelection {
     }
 
     pub fn range(self) -> Range<usize> {
-        self.anchor.min(self.focus)..self.anchor.max(self.focus)
+        self.anchor
+            .min(self.focus)
+            ..self
+                .anchor
+                .max(self.focus)
     }
 
     pub const fn is_collapsed(self) -> bool {
@@ -96,8 +114,14 @@ impl SelectionState {
         if self.active_pointer != Some(pointer) {
             return false;
         }
-        self.selection = TextSelection::new(self.selection.anchor(), offset);
-        self.dragged |= !self.selection.is_collapsed();
+        self.selection = TextSelection::new(
+            self.selection
+                .anchor(),
+            offset,
+        );
+        self.dragged |= !self
+            .selection
+            .is_collapsed();
         true
     }
 
@@ -124,7 +148,8 @@ impl SelectionState {
     }
 
     pub const fn is_active(&self) -> bool {
-        self.active_pointer.is_some()
+        self.active_pointer
+            .is_some()
     }
 
     pub const fn active_pointer(&self) -> Option<u64> {

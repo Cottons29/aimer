@@ -21,7 +21,9 @@ use winit::window::Window;
 pub fn attach_window_to_active_scene(window: &Window) {
     let ui_view = match window.window_handle() {
         Ok(handle) => match handle.as_raw() {
-            RawWindowHandle::UiKit(uikit) => uikit.ui_view.as_ptr() as *mut Object,
+            RawWindowHandle::UiKit(uikit) => uikit
+                .ui_view
+                .as_ptr() as *mut Object,
             _ => return,
         },
         Err(_) => return,
@@ -114,7 +116,14 @@ pub fn get_screen_resolution_pixels() -> Option<(f64, f64)> {
         msg_send![main_screen, nativeBounds]
     };
 
-    Some((native_bounds.size.width, native_bounds.size.height))
+    Some((
+        native_bounds
+            .size
+            .width,
+        native_bounds
+            .size
+            .height,
+    ))
 }
 #[derive(Debug)]
 #[repr(C)]

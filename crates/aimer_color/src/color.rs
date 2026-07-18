@@ -292,7 +292,9 @@ impl Color {
 }
 
 const fn float_to_channel(value: f32) -> u8 {
-    value.round().clamp(0.0, 255.0) as u8
+    value
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
 
 const fn lerp_channel(start: u8, end: u8, t: f32) -> u8 {
@@ -451,7 +453,11 @@ mod tests {
         let red = Color::Rgb(255, 0, 0);
         let blue = Color::Rgba(0, 0, 255, 0);
 
-        assert_eq!(red.lerp(blue, 0.5).as_u32(), 0x80800080);
+        assert_eq!(
+            red.lerp(blue, 0.5)
+                .as_u32(),
+            0x80800080
+        );
         assert_eq!(red.blend(blue, 0.5), red.lerp(blue, 0.5));
     }
 

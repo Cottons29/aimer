@@ -47,8 +47,12 @@ impl Shell {
 impl Widget for Shell {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         // Make the active child available to the descendant `Outlet`.
-        ctx.insert_state(OutletSlot::new(self.child_builder.clone()));
-        self.frame.to_element(ctx)
+        ctx.insert_state(OutletSlot::new(
+            self.child_builder
+                .clone(),
+        ));
+        self.frame
+            .to_element(ctx)
     }
 
     fn debug_name(&self) -> &'static str {
@@ -81,7 +85,10 @@ pub fn branch_pop<R>(branches: &mut [Vec<R>], index: usize) {
 pub fn active_top<R: Clone>(branches: &[Vec<R>], active: usize) -> Option<R> {
     branches
         .get(active)
-        .and_then(|b| b.last().cloned())
+        .and_then(|b| {
+            b.last()
+                .cloned()
+        })
 }
 
 /// A tabbed shell that keeps an independent navigation stack per branch, so
@@ -130,19 +137,25 @@ impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
         // Inject the imperative controller for descendants.
         ctx.insert_state(StatefulShellController::<R> {
             go_branch_fn: {
-                let updater = self.updater.clone();
+                let updater = self
+                    .updater
+                    .clone();
                 Rc::new(move |index: usize| {
                     updater.set_state(move |state| state.active = index);
                 })
             },
             push_in_branch_fn: {
-                let updater = self.updater.clone();
+                let updater = self
+                    .updater
+                    .clone();
                 Rc::new(move |index: usize, route: R| {
                     updater.set_state(move |state| branch_push(&mut state.branches, index, route));
                 })
             },
             pop_in_branch_fn: {
-                let updater = self.updater.clone();
+                let updater = self
+                    .updater
+                    .clone();
                 Rc::new(move |index: usize| {
                     updater.set_state(move |state| branch_pop(&mut state.branches, index));
                 })
@@ -152,7 +165,9 @@ impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
                 Rc::new(move || active)
             },
             branch_len_fn: {
-                let branches = self.branches.clone();
+                let branches = self
+                    .branches
+                    .clone();
                 Rc::new(move |index: usize| {
                     branches
                         .get(index)
@@ -193,11 +208,21 @@ pub struct StatefulShellController<R> {
 impl<R> Clone for StatefulShellController<R> {
     fn clone(&self) -> Self {
         Self {
-            go_branch_fn: self.go_branch_fn.clone(),
-            push_in_branch_fn: self.push_in_branch_fn.clone(),
-            pop_in_branch_fn: self.pop_in_branch_fn.clone(),
-            active_branch_fn: self.active_branch_fn.clone(),
-            branch_len_fn: self.branch_len_fn.clone(),
+            go_branch_fn: self
+                .go_branch_fn
+                .clone(),
+            push_in_branch_fn: self
+                .push_in_branch_fn
+                .clone(),
+            pop_in_branch_fn: self
+                .pop_in_branch_fn
+                .clone(),
+            active_branch_fn: self
+                .active_branch_fn
+                .clone(),
+            branch_len_fn: self
+                .branch_len_fn
+                .clone(),
         }
     }
 }
@@ -244,7 +269,9 @@ impl<R: Route> StatefulWidget for StatefulShell<R> {
     type State = StatefulShellState<R>;
     fn create_state(&self) -> Self::State {
         StatefulShellState::<R> {
-            branches: self.branches.clone(),
+            branches: self
+                .branches
+                .clone(),
             active: self.active,
             updater: StateUpdater::empty(),
             frame: self.frame,

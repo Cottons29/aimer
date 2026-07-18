@@ -157,22 +157,35 @@ impl<T, E> AsyncRuntime<T, E> {
     }
 
     fn revision(&self) -> u64 {
-        self.inner.borrow().revision
+        self.inner
+            .borrow()
+            .revision
     }
 
     fn reset(&self) {
-        let mut inner = self.inner.borrow_mut();
-        if let Some(handle) = inner.abort_handle.take() {
+        let mut inner = self
+            .inner
+            .borrow_mut();
+        if let Some(handle) = inner
+            .abort_handle
+            .take()
+        {
             handle.abort();
         }
-        inner.generation = inner.generation.wrapping_add(1);
-        inner.revision = inner.revision.wrapping_add(1);
+        inner.generation = inner
+            .generation
+            .wrapping_add(1);
+        inner.revision = inner
+            .revision
+            .wrapping_add(1);
         inner.snapshot = AsyncSnapshot::Waiting;
         inner.started = false;
     }
 
     fn begin(&self) -> Option<(u64, futures_util::future::AbortRegistration)> {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self
+            .inner
+            .borrow_mut();
         if inner.started {
             return None;
         }
@@ -184,8 +197,13 @@ impl<T, E> AsyncRuntime<T, E> {
     }
 
     fn poll_completion(&self) {
-        while let Ok(completion) = self.receiver.try_recv() {
-            let mut inner = self.inner.borrow_mut();
+        while let Ok(completion) = self
+            .receiver
+            .try_recv()
+        {
+            let mut inner = self
+                .inner
+                .borrow_mut();
             if completion.generation != inner.generation {
                 continue;
             }
@@ -193,7 +211,9 @@ impl<T, E> AsyncRuntime<T, E> {
                 Ok(data) => AsyncSnapshot::Data(data),
                 Err(error) => AsyncSnapshot::Error(error),
             };
-            inner.revision = inner.revision.wrapping_add(1);
+            inner.revision = inner
+                .revision
+                .wrapping_add(1);
             inner.abort_handle = None;
         }
     }
@@ -235,8 +255,13 @@ where
 
     fn create_state(&self) -> Self::State {
         AsyncBuilderState {
-            request_key: self.request_key.clone(),
-            future_factory: self.future_factory.factory.clone(),
+            request_key: self
+                .request_key
+                .clone(),
+            future_factory: self
+                .future_factory
+                .factory
+                .clone(),
             snapshot_builder: self
                 .snapshot_builder
                 .builder
@@ -261,8 +286,13 @@ where
 
     fn create_state(&self) -> Self::State {
         AsyncBuilderState {
-            request_key: self.request_key.clone(),
-            future_factory: self.future_factory.factory.clone(),
+            request_key: self
+                .request_key
+                .clone(),
+            future_factory: self
+                .future_factory
+                .factory
+                .clone(),
             snapshot_builder: self
                 .snapshot_builder
                 .builder
@@ -286,19 +316,32 @@ where
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
     fn adopt_config_from(&mut self, new: &Self) {
-        self.future_factory = new.future_factory.clone();
-        self.snapshot_builder = new.snapshot_builder.clone();
+        self.future_factory = new
+            .future_factory
+            .clone();
+        self.snapshot_builder = new
+            .snapshot_builder
+            .clone();
         if self.request_key != new.request_key {
-            self.request_key = new.request_key.clone();
-            self.runtime.reset();
+            self.request_key = new
+                .request_key
+                .clone();
+            self.runtime
+                .reset();
         }
     }
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         AsyncFrame {
-            future_factory: self.future_factory.clone(),
-            snapshot_builder: self.snapshot_builder.clone(),
-            runtime: self.runtime.clone(),
+            future_factory: self
+                .future_factory
+                .clone(),
+            snapshot_builder: self
+                .snapshot_builder
+                .clone(),
+            runtime: self
+                .runtime
+                .clone(),
             marker: PhantomData::<fn() -> Fut>,
         }
     }
@@ -318,19 +361,32 @@ where
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
     fn adopt_config_from(&mut self, new: &Self) {
-        self.future_factory = new.future_factory.clone();
-        self.snapshot_builder = new.snapshot_builder.clone();
+        self.future_factory = new
+            .future_factory
+            .clone();
+        self.snapshot_builder = new
+            .snapshot_builder
+            .clone();
         if self.request_key != new.request_key {
-            self.request_key = new.request_key.clone();
-            self.runtime.reset();
+            self.request_key = new
+                .request_key
+                .clone();
+            self.runtime
+                .reset();
         }
     }
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         AsyncFrame {
-            future_factory: self.future_factory.clone(),
-            snapshot_builder: self.snapshot_builder.clone(),
-            runtime: self.runtime.clone(),
+            future_factory: self
+                .future_factory
+                .clone(),
+            snapshot_builder: self
+                .snapshot_builder
+                .clone(),
+            runtime: self
+                .runtime
+                .clone(),
             marker: PhantomData::<fn() -> Fut>,
         }
     }
@@ -348,7 +404,8 @@ where
     E: Send + 'static,
 {
     fn key(&self) -> Option<Key> {
-        self.widget_key.clone()
+        self.widget_key
+            .clone()
     }
 
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
@@ -374,7 +431,8 @@ where
     E: 'static,
 {
     fn key(&self) -> Option<Key> {
-        self.widget_key.clone()
+        self.widget_key
+            .clone()
     }
 
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
@@ -400,7 +458,10 @@ where
     B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget,
 {
     fn child_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let inner = self.runtime.inner.borrow();
+        let inner = self
+            .runtime
+            .inner
+            .borrow();
         (self.snapshot_builder)(&inner.snapshot).to_element(ctx)
     }
 }
@@ -417,10 +478,19 @@ where
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(AsyncFrameElement {
             child: SyncChild(UnsafeCell::new(self.child_element(ctx))),
-            future_factory: self.future_factory.clone(),
-            snapshot_builder: self.snapshot_builder.clone(),
-            runtime: self.runtime.clone(),
-            rendered_revision: Cell::new(self.runtime.revision()),
+            future_factory: self
+                .future_factory
+                .clone(),
+            snapshot_builder: self
+                .snapshot_builder
+                .clone(),
+            runtime: self
+                .runtime
+                .clone(),
+            rendered_revision: Cell::new(
+                self.runtime
+                    .revision(),
+            ),
             marker: PhantomData::<fn() -> Fut>,
         })
     }
@@ -442,10 +512,19 @@ where
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(AsyncFrameElement {
             child: SyncChild(UnsafeCell::new(self.child_element(ctx))),
-            future_factory: self.future_factory.clone(),
-            snapshot_builder: self.snapshot_builder.clone(),
-            runtime: self.runtime.clone(),
-            rendered_revision: Cell::new(self.runtime.revision()),
+            future_factory: self
+                .future_factory
+                .clone(),
+            snapshot_builder: self
+                .snapshot_builder
+                .clone(),
+            runtime: self
+                .runtime
+                .clone(),
+            rendered_revision: Cell::new(
+                self.runtime
+                    .revision(),
+            ),
             marker: PhantomData::<fn() -> Fut>,
         })
     }
@@ -468,14 +547,23 @@ impl<F, Fut, B, T, E> AsyncFrameElement<F, Fut, B, T, E> {
     fn current_child(&self) -> &dyn Element {
         // Safety: Aimer's rendering pipeline is single-threaded. Child replacement
         // happens only while processing this element on that render thread.
-        unsafe { (&*self.child.0.get()).as_ref() }
+        unsafe {
+            (&*self
+                .child
+                .0
+                .get())
+                .as_ref()
+        }
     }
 
     fn replace_child(&self, child: Box<dyn Element>) {
         // Safety: see `current_child`; no child reference is retained across this
         // replacement.
         unsafe {
-            *self.child.0.get() = child;
+            *self
+                .child
+                .0
+                .get() = child;
         }
     }
 }
@@ -485,17 +573,29 @@ where
     B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget,
 {
     fn update_child(&self, ctx: &BuildContext) {
-        if self.rendered_revision.get() == self.runtime.revision() {
+        if self
+            .rendered_revision
+            .get()
+            == self
+                .runtime
+                .revision()
+        {
             return;
         }
         let new_child = {
-            let inner = self.runtime.inner.borrow();
+            let inner = self
+                .runtime
+                .inner
+                .borrow();
             (self.snapshot_builder)(&inner.snapshot).to_element(ctx)
         };
         carry_child_state(self.current_child(), new_child.as_ref(), ctx);
         self.replace_child(new_child);
         self.rendered_revision
-            .set(self.runtime.revision());
+            .set(
+                self.runtime
+                    .revision(),
+            );
     }
 }
 
@@ -509,18 +609,28 @@ where
     E: Send + 'static,
 {
     fn refresh(&self, ctx: &BuildContext) {
-        if let Some((generation, registration)) = self.runtime.begin() {
+        if let Some((generation, registration)) = self
+            .runtime
+            .begin()
+        {
             let future = (self.future_factory)();
-            let sender = self.runtime.sender.clone();
-            let window = ctx.window.clone();
-            ctx.async_handle.spawn(async move {
-                if let Ok(result) = Abortable::new(future, registration).await {
-                    let _ = sender.send(Completion { generation, result });
-                    window.request_redraw();
-                }
-            });
+            let sender = self
+                .runtime
+                .sender
+                .clone();
+            let window = ctx
+                .window
+                .clone();
+            ctx.async_handle
+                .spawn(async move {
+                    if let Ok(result) = Abortable::new(future, registration).await {
+                        let _ = sender.send(Completion { generation, result });
+                        window.request_redraw();
+                    }
+                });
         }
-        self.runtime.poll_completion();
+        self.runtime
+            .poll_completion();
         self.update_child(ctx);
     }
 }
@@ -535,10 +645,18 @@ where
     E: 'static,
 {
     fn refresh(&self, ctx: &BuildContext) {
-        if let Some((generation, registration)) = self.runtime.begin() {
+        if let Some((generation, registration)) = self
+            .runtime
+            .begin()
+        {
             let future = (self.future_factory)();
-            let sender = self.runtime.sender.clone();
-            let window = ctx.window.clone();
+            let sender = self
+                .runtime
+                .sender
+                .clone();
+            let window = ctx
+                .window
+                .clone();
             wasm_bindgen_futures::spawn_local(async move {
                 if let Ok(result) = Abortable::new(future, registration).await {
                     let _ = sender.send(Completion { generation, result });
@@ -546,7 +664,8 @@ where
                 }
             });
         }
-        self.runtime.poll_completion();
+        self.runtime
+            .poll_completion();
         self.update_child(ctx);
     }
 }
@@ -616,7 +735,8 @@ where
 {
     fn draw(&self, ctx: &BuildContext) {
         self.refresh(ctx);
-        self.current_child().draw(ctx);
+        self.current_child()
+            .draw(ctx);
     }
 }
 
@@ -631,21 +751,25 @@ where
 {
     fn draw(&self, ctx: &BuildContext) {
         self.refresh(ctx);
-        self.current_child().draw(ctx);
+        self.current_child()
+            .draw(ctx);
     }
 }
 
 impl<F, Fut, B, T, E> LayoutElement for AsyncFrameElement<F, Fut, B, T, E> {
     fn pos(&self) -> Option<Vec2d> {
-        self.current_child().pos()
+        self.current_child()
+            .pos()
     }
 
     fn size(&self) -> Option<Size> {
-        self.current_child().size()
+        self.current_child()
+            .size()
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.current_child().layout(ctx)
+        self.current_child()
+            .layout(ctx)
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -659,11 +783,13 @@ impl<F, Fut, B, T, E> LayoutElement for AsyncFrameElement<F, Fut, B, T, E> {
     }
 
     fn layer(&self) -> u32 {
-        self.current_child().layer()
+        self.current_child()
+            .layer()
     }
 
     fn flex(&self) -> Option<f32> {
-        self.current_child().flex()
+        self.current_child()
+            .flex()
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
@@ -809,7 +935,10 @@ mod tests {
         assert_eq!(launches.load(Ordering::SeqCst), 1);
 
         tokio::task::yield_now().await;
-        assert!(ctx.window.take_redraw_request());
+        assert!(
+            ctx.window
+                .take_redraw_request()
+        );
         element.rebuild_if_dirty(&ctx);
 
         assert!(contains(element.as_ref(), "Data"));
@@ -885,7 +1014,10 @@ mod tests {
     #[test]
     fn stale_completion_cannot_replace_a_newer_generation() {
         let runtime = super::AsyncRuntime::<usize, &'static str>::new();
-        let old_generation = runtime.inner.borrow().generation;
+        let old_generation = runtime
+            .inner
+            .borrow()
+            .generation;
         runtime.reset();
         runtime
             .sender
@@ -894,7 +1026,13 @@ mod tests {
 
         runtime.poll_completion();
 
-        assert!(matches!(runtime.inner.borrow().snapshot, AsyncSnapshot::Waiting));
+        assert!(matches!(
+            runtime
+                .inner
+                .borrow()
+                .snapshot,
+            AsyncSnapshot::Waiting
+        ));
     }
 
     #[tokio::test]

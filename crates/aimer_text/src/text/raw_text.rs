@@ -19,8 +19,16 @@ pub struct RawTextWidget {
 
 impl RawTextWidget {
     fn font_size(&self, scale: f32) -> f32 {
-        let base =
-            if self.text_style.font_size == 0 { 14.0 } else { self.text_style.font_size as f32 };
+        let base = if self
+            .text_style
+            .font_size
+            == 0
+        {
+            14.0
+        } else {
+            self.text_style
+                .font_size as f32
+        };
         base * scale
     }
 }
@@ -53,18 +61,31 @@ impl Drawable for RawTextWidget {
             }
         }
         let font_size = self.font_size(ctx.scale);
-        let width = ctx.parent_size.width;
-        let height = ctx.parent_size.height;
-        let max_width =
-            if matches!(self.text_style.text_overflow, TextOverflow::Wrap) { width } else { 0.0 };
+        let width = ctx
+            .parent_size
+            .width;
+        let height = ctx
+            .parent_size
+            .height;
+        let max_width = if matches!(
+            self.text_style
+                .text_overflow,
+            TextOverflow::Wrap
+        ) {
+            width
+        } else {
+            0.0
+        };
         let metrics = ctx
             .canvas
             .measure_text_metrics_styled(
                 &self.text,
                 font_size,
                 max_width,
-                self.text_style.font_family,
-                self.text_style.font_style,
+                self.text_style
+                    .font_family,
+                self.text_style
+                    .font_style,
                 self.text_style
                     .font_weight
                     .numeric(),
@@ -89,7 +110,9 @@ impl Drawable for RawTextWidget {
             TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => height - descent,
         };
 
-        let color = self.text_style.color;
+        let color = self
+            .text_style
+            .color;
         let font_weight = self
             .text_style
             .font_weight
@@ -103,13 +126,20 @@ impl Drawable for RawTextWidget {
             .line
             .contains(TextDecorationLine::ITALIC);
         if is_italic {
-            ctx.canvas.set_italic(true);
+            ctx.canvas
+                .set_italic(true);
         }
 
-        match self.text_style.text_overflow {
+        match self
+            .text_style
+            .text_overflow
+        {
             TextOverflow::Clip => {
-                ctx.canvas.save();
-                let width = ctx.parent_size.width;
+                ctx.canvas
+                    .save();
+                let width = ctx
+                    .parent_size
+                    .width;
                 ctx.canvas
                     .set_clip((0.0, 0.0).into(), ResolvedSize { width, height });
                 ctx.canvas
@@ -119,12 +149,16 @@ impl Drawable for RawTextWidget {
                         font_size,
                         color,
                         width,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
+                        self.text_style
+                            .font_family,
+                        self.text_style
+                            .font_style,
                         font_weight,
                     );
-                ctx.canvas.clear_clip();
-                ctx.canvas.restore();
+                ctx.canvas
+                    .clear_clip();
+                ctx.canvas
+                    .restore();
             }
             TextOverflow::Ellipsis => {
                 ctx.canvas
@@ -136,8 +170,10 @@ impl Drawable for RawTextWidget {
                         width,
                         height,
                         TextOverflowMode::Ellipsis,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
+                        self.text_style
+                            .font_family,
+                        self.text_style
+                            .font_style,
                         font_weight,
                     );
             }
@@ -149,40 +185,55 @@ impl Drawable for RawTextWidget {
                         font_size,
                         color,
                         width,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
+                        self.text_style
+                            .font_family,
+                        self.text_style
+                            .font_style,
                         font_weight,
                     );
             }
             _ => {
-                ctx.canvas.draw_text_styled(
-                    &self.text,
-                    (x, y).into(),
-                    font_size,
-                    color,
-                    self.text_style.font_family,
-                    self.text_style.font_style,
-                    font_weight,
-                );
+                ctx.canvas
+                    .draw_text_styled(
+                        &self.text,
+                        (x, y).into(),
+                        font_size,
+                        color,
+                        self.text_style
+                            .font_family,
+                        self.text_style
+                            .font_style,
+                        font_weight,
+                    );
             }
         }
 
         if is_italic {
-            ctx.canvas.set_italic(false);
+            ctx.canvas
+                .set_italic(false);
         }
 
-        let decoration = self.text_style.text_decoration;
-        if !decoration.line.is_none() {
+        let decoration = self
+            .text_style
+            .text_decoration;
+        if !decoration
+            .line
+            .is_none()
+        {
             let scale = ctx.scale;
             // Dedicated decoration color, else inherit the text color.
-            let deco_color = decoration.color.unwrap_or(color);
+            let deco_color = decoration
+                .color
+                .unwrap_or(color);
             // User thickness/offset are logical px; scale them like the font.
             let thickness = decoration
                 .thickness
                 .map(|t| t * scale)
                 .unwrap_or((font_size * 0.06).max(1.0));
             let offset = decoration.offset * scale;
-            let style_id = decoration.style.id();
+            let style_id = decoration
+                .style
+                .id();
 
             // The band must be tall enough to hold the styled stroke: wavy needs
             // room for its amplitude, double needs room for two strokes + gap.
@@ -196,14 +247,15 @@ impl Drawable for RawTextWidget {
 
             let emit = |center_y: f32| {
                 let band_top = center_y - band_height / 2.0;
-                ctx.canvas.draw_text_decoration(
-                    (x, band_top).into(),
-                    ResolvedSize { width: text_width, height: band_height },
-                    deco_color,
-                    style_id,
-                    thickness,
-                    period,
-                );
+                ctx.canvas
+                    .draw_text_decoration(
+                        (x, band_top).into(),
+                        ResolvedSize { width: text_width, height: band_height },
+                        deco_color,
+                        style_id,
+                        thickness,
+                        period,
+                    );
             };
 
             if decoration
@@ -236,7 +288,9 @@ impl VisitorElement for RawTextWidget {
 
 impl LayoutElement for RawTextWidget {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let scale_bits = ctx.scale.to_bits();
+        let scale_bits = ctx
+            .scale
+            .to_bits();
         if let Some(cached) = self
             .cache
             .get_computed(ctx.box_constraint, scale_bits)
@@ -246,12 +300,21 @@ impl LayoutElement for RawTextWidget {
 
         let font_size = self.font_size(ctx.scale);
 
-        let result = match self.text_style.text_overflow {
+        let result = match self
+            .text_style
+            .text_overflow
+        {
             TextOverflow::Wrap => {
-                let width = if ctx.box_constraint.max_width > 0.0 {
-                    ctx.box_constraint.max_width
+                let width = if ctx
+                    .box_constraint
+                    .max_width
+                    > 0.0
+                {
+                    ctx.box_constraint
+                        .max_width
                 } else {
-                    ctx.parent_size.width
+                    ctx.parent_size
+                        .width
                 };
                 let metrics = ctx
                     .canvas
@@ -259,14 +322,21 @@ impl LayoutElement for RawTextWidget {
                         &self.text,
                         font_size,
                         width,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
+                        self.text_style
+                            .font_family,
+                        self.text_style
+                            .font_style,
                         self.text_style
                             .font_weight
                             .numeric(),
                     );
 
-                ResolvedSize { width, height: metrics.height.ceil() }
+                ResolvedSize {
+                    width,
+                    height: metrics
+                        .height
+                        .ceil(),
+                }
             }
             _ => {
                 let metrics = ctx
@@ -275,13 +345,22 @@ impl LayoutElement for RawTextWidget {
                         &self.text,
                         font_size,
                         0.0,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
+                        self.text_style
+                            .font_family,
+                        self.text_style
+                            .font_style,
                         self.text_style
                             .font_weight
                             .numeric(),
                     );
-                ResolvedSize { width: metrics.width.ceil(), height: metrics.height.ceil() }
+                ResolvedSize {
+                    width: metrics
+                        .width
+                        .ceil(),
+                    height: metrics
+                        .height
+                        .ceil(),
+                }
             }
         };
 
@@ -290,6 +369,7 @@ impl LayoutElement for RawTextWidget {
         result
     }
     fn invalidate_layout(&self) {
-        self.cache.invalidate();
+        self.cache
+            .invalidate();
     }
 }

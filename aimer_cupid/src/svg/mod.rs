@@ -172,11 +172,13 @@ pub struct SvgScene {
 
 impl SvgScene {
     pub fn node(&self, node_id: SvgNodeId) -> Option<&SvgNode> {
-        self.nodes.get(node_id.0 as usize)
+        self.nodes
+            .get(node_id.0 as usize)
     }
 
     pub fn geometry(&self, node: &SvgNode) -> Option<&SvgGeometry> {
-        self.geometries.get(node.geometry?)
+        self.geometries
+            .get(node.geometry?)
     }
 }
 
@@ -229,9 +231,23 @@ mod tests {
             .mesh_for(&concave, SvgMeshStyle::Fill(SvgFillRule::EvenOdd), 1.0)
             .unwrap();
 
-        assert!(!non_zero.vertices.is_empty());
-        assert_eq!(non_zero.indices.len() % 3, 0);
-        assert!(!even_odd.indices.is_empty());
+        assert!(
+            !non_zero
+                .vertices
+                .is_empty()
+        );
+        assert_eq!(
+            non_zero
+                .indices
+                .len()
+                % 3,
+            0
+        );
+        assert!(
+            !even_odd
+                .indices
+                .is_empty()
+        );
         assert!(!Arc::ptr_eq(&non_zero, &even_odd));
     }
 
@@ -267,7 +283,11 @@ mod tests {
 
         assert!(Arc::ptr_eq(&first, &reused));
         assert!(!Arc::ptr_eq(&first, &changed));
-        assert!(!first.vertices.is_empty());
+        assert!(
+            !first
+                .vertices
+                .is_empty()
+        );
     }
 
     #[test]

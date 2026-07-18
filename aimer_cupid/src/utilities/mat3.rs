@@ -79,6 +79,11 @@ mod tests {
     fn pixel_alignment_keeps_integer_translation_stable() {
         let transform = Mat3::translate(12.0, -7.0);
 
-        assert_eq!(transform.pixel_aligned().cols, transform.cols);
+        assert_eq!(
+            transform
+                .pixel_aligned()
+                .cols,
+            transform.cols
+        );
     }
 }

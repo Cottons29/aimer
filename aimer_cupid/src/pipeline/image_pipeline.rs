@@ -377,7 +377,8 @@ impl ImagePipeline {
     }
 
     pub fn has_texture(&self, id: TextureId) -> bool {
-        self.textures.contains_key(&id)
+        self.textures
+            .contains_key(&id)
     }
 
     /// Upload RGBA8 image data only if the texture ID does not already exist.
@@ -394,7 +395,10 @@ impl ImagePipeline {
         data: &[u8],
     ) -> bool {
         use std::collections::hash_map::Entry;
-        match self.textures.entry(id) {
+        match self
+            .textures
+            .entry(id)
+        {
             Entry::Occupied(_) => false,
             Entry::Vacant(vacant) => {
                 let (width, height, data) = constrain_rgba8(
@@ -460,13 +464,22 @@ impl ImagePipeline {
         is_srgb: bool,
     ) {
         self.frame_instance_offset = 0;
-        let previous_capacity = self.instance_policy.capacity();
+        let previous_capacity = self
+            .instance_policy
+            .capacity();
         self.instance_policy
             .record_usage(total_instances);
-        if self.instance_policy.capacity() != previous_capacity {
+        if self
+            .instance_policy
+            .capacity()
+            != previous_capacity
+        {
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("image instance buffer (resized)"),
-                size: (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64,
+                size: (self
+                    .instance_policy
+                    .capacity()
+                    * size_of::<ImageInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -502,8 +515,13 @@ impl ImagePipeline {
                 .max_texture_dimension_2d,
         );
         // In-place update if the texture exists and dimensions match.
-        if let Some(entry) = self.textures.get(&id) {
-            let size = entry.texture.size();
+        if let Some(entry) = self
+            .textures
+            .get(&id)
+        {
+            let size = entry
+                .texture
+                .size();
             if size.width == width && size.height == height {
                 upload_rgba8(queue, &entry.texture, width, height, data.as_ref());
                 return;
@@ -538,18 +556,22 @@ impl ImagePipeline {
             ],
         });
 
-        self.textures.insert(
-            id,
-            TextureEntry { bind_group, texture, bytes: width as u64 * height as u64 * 4 },
-        );
+        self.textures
+            .insert(
+                id,
+                TextureEntry { bind_group, texture, bytes: width as u64 * height as u64 * 4 },
+            );
     }
 
     pub fn remove_texture(&mut self, id: TextureId) -> bool {
-        self.textures.remove(&id).is_some()
+        self.textures
+            .remove(&id)
+            .is_some()
     }
 
     pub fn texture_count(&self) -> usize {
-        self.textures.len()
+        self.textures
+            .len()
     }
 
     pub fn texture_bytes(&self) -> u64 {
@@ -560,7 +582,10 @@ impl ImagePipeline {
     }
 
     pub fn instance_buffer_bytes(&self) -> u64 {
-        (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64
+        (self
+            .instance_policy
+            .capacity()
+            * size_of::<ImageInstance>()) as u64
     }
 
     /// Draw a batch of instances with the same texture_id.
@@ -576,7 +601,10 @@ impl ImagePipeline {
             return;
         }
 
-        let entry = match self.textures.get(&texture_id) {
+        let entry = match self
+            .textures
+            .get(&texture_id)
+        {
             Some(e) => e,
             None => return,
         };
@@ -587,7 +615,11 @@ impl ImagePipeline {
         // the queue timeline *before* the pass executes, so writing every batch
         // at offset 0 would make every draw read only the last batch's data.
         let end = self.frame_instance_offset + instances.len();
-        if end > self.instance_policy.capacity() {
+        if end
+            > self
+                .instance_policy
+                .capacity()
+        {
             // Fallback safety net: `begin_frame` should have sized the buffer for
             // the whole frame, but if it was not called, grow without dropping
             // already-written data by copying nothing (prior draws keep the old
@@ -596,7 +628,10 @@ impl ImagePipeline {
                 .grow_to_fit(end);
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("image instance buffer (resized)"),
-                size: (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64,
+                size: (self
+                    .instance_policy
+                    .capacity()
+                    * size_of::<ImageInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });

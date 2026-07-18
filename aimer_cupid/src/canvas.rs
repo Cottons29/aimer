@@ -49,7 +49,9 @@ impl CupidCanvas {
     }
 
     pub fn begin_frame(&self) {
-        self.draw_list.borrow_mut().clear();
+        self.draw_list
+            .borrow_mut()
+            .clear();
     }
 
     pub fn register_font_bytes(&self, bytes: Vec<u8>) -> Option<crate::text_layout::FontId> {
@@ -157,7 +159,9 @@ impl CupidCanvas {
     }
 
     pub fn save(&self) {
-        self.draw_list.borrow_mut().save();
+        self.draw_list
+            .borrow_mut()
+            .save();
     }
 
     pub fn restore(&self) {
@@ -436,7 +440,9 @@ impl CupidCanvas {
             return *metrics;
         }
 
-        let mut rasterizer = self.rasterizer.borrow_mut();
+        let mut rasterizer = self
+            .rasterizer
+            .borrow_mut();
         let weight = FontWeight::Value(u32::from(font_weight));
         let (ascent, descent, line_gap) =
             rasterizer.line_metrics_for_family(font_size, font_family, weight, font_style);
@@ -501,7 +507,9 @@ impl CupidCanvas {
             line_count,
         };
 
-        let mut cache = self.metrics_cache.borrow_mut();
+        let mut cache = self
+            .metrics_cache
+            .borrow_mut();
         if cache.len() > 1024 {
             cache.clear();
         }
@@ -710,7 +718,9 @@ impl CupidCanvas {
     }
 
     pub fn get_transform_translation(&self) -> (f32, f32) {
-        let transform = self.draw_list.borrow();
+        let transform = self
+            .draw_list
+            .borrow();
         let t = transform.current_transform();
         (t.cols[2][0], t.cols[2][1])
     }
@@ -759,7 +769,8 @@ impl CupidCanvas {
     }
 
     pub fn draw_list(&self) -> Ref<'_, DrawList> {
-        self.draw_list.borrow()
+        self.draw_list
+            .borrow()
     }
 
     pub fn get_image_size(&self, texture_id: TextureId) -> Option<(u32, u32)> {
@@ -802,7 +813,13 @@ mod family_metrics_tests {
         );
 
         assert_ne!(sans.width, mono.width);
-        assert_eq!(canvas.metrics_cache.borrow().len(), 2);
+        assert_eq!(
+            canvas
+                .metrics_cache
+                .borrow()
+                .len(),
+            2
+        );
     }
 }
 
@@ -813,7 +830,9 @@ mod tests {
     #[test]
     fn measurement_uses_renderable_fallback_for_cjk_text() {
         let canvas = CupidCanvas::new();
-        let mut rasterizer = canvas.rasterizer.borrow_mut();
+        let mut rasterizer = canvas
+            .rasterizer
+            .borrow_mut();
 
         let primary_font_id = rasterizer.primary_font_id();
         let cjk_font_id = rasterizer.font_id_for_codepoint('你');

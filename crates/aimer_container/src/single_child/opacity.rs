@@ -32,7 +32,9 @@ impl Default for Opacity {
 impl<W: Widget + 'static> Widget for Opacity<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawOpacity {
-            child: self.child.to_element(ctx),
+            child: self
+                .child
+                .to_element(ctx),
             opacity: normalized_opacity(self.opacity),
         })
     }
@@ -50,41 +52,53 @@ struct RawOpacity {
 
 impl Drawable for RawOpacity {
     fn draw(&self, ctx: &BuildContext) {
-        ctx.canvas.set_alpha(self.opacity);
-        self.child.draw(ctx);
-        ctx.canvas.restore_alpha();
+        ctx.canvas
+            .set_alpha(self.opacity);
+        self.child
+            .draw(ctx);
+        ctx.canvas
+            .restore_alpha();
     }
 }
 
 impl LayoutElement for RawOpacity {
     fn size(&self) -> Option<Size> {
-        self.child.size()
+        self.child
+            .size()
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.computed_size(ctx)
+        self.child
+            .computed_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.content_size(ctx)
+        self.child
+            .content_size(ctx)
     }
 
     fn layer(&self) -> u32 {
-        self.child.layer()
+        self.child
+            .layer()
     }
 
     fn flex(&self) -> Option<f32> {
-        self.child.flex()
+        self.child
+            .flex()
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child.get_size_from_child()
+        self.child
+            .get_size_from_child()
     }
 }
 
 impl VisitorElement for RawOpacity {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 
     fn debug_name(&self) -> &'static str {

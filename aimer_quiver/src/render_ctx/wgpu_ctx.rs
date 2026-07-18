@@ -17,11 +17,15 @@ pub mod render_ctx {
         /// Returns true when the GPU context has been initialized and is
         /// usable.
         pub fn is_ready(&self) -> bool {
-            self.gpu.is_some()
+            self.gpu
+                .is_some()
         }
 
         pub fn initialize(&mut self, window: &'static Window, size: PhysicalSize<u32>) {
-            if self.gpu.is_some() {
+            if self
+                .gpu
+                .is_some()
+            {
                 self.resize(size);
                 return;
             }

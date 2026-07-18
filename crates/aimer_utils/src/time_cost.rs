@@ -45,7 +45,9 @@ static MINIMUM_EXEC_TIME_MS: LazyLock<i64> = LazyLock::new(|| {
 
 #[cfg(feature = "time-cost")]
 fn add_grouping(key: &str, val: i64) {
-    let key = key.trim().replace("|-", "");
+    let key = key
+        .trim()
+        .replace("|-", "");
     let group = unsafe { &raw mut EXEC_GROUPING.map };
     let group = unsafe { &mut *group };
     let times = group
@@ -64,7 +66,9 @@ impl ExecTimes {
             let group = unsafe { &raw mut EXEC_GROUPING.map };
             let group = unsafe { &mut *group };
             for (label, times) in group.iter() {
-                let sum = times.iter().sum::<i64>();
+                let sum = times
+                    .iter()
+                    .sum::<i64>();
                 debug!("{:<5}ms -> {}", sum, label);
             }
             group.clear();
@@ -76,7 +80,9 @@ impl ExecTimes {
     pub fn no_param<T>(label: &str, f: impl FnOnce() -> T) -> T {
         let start = crate::AnimInstant::now();
         let res = f();
-        let delta = start.elapsed().as_millis() as i64;
+        let delta = start
+            .elapsed()
+            .as_millis() as i64;
         if delta < *MINIMUM_EXEC_TIME_MS {
             return res;
         }
@@ -95,6 +101,11 @@ impl ExecTimes {
         let start = crate::AnimInstant::now();
         f();
 
-        debug!("Used time: {} ms", start.elapsed().as_millis());
+        debug!(
+            "Used time: {} ms",
+            start
+                .elapsed()
+                .as_millis()
+        );
     }
 }

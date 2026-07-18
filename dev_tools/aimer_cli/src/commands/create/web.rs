@@ -38,14 +38,26 @@ mod tests {
     #[test]
     fn create_web_scaffold() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("test-app");
+        let dir = tmp
+            .path()
+            .join("test-app");
         fs::create_dir_all(&dir).unwrap();
 
         create(&dir, "test-app", "com.example.test");
 
         let web_dir = dir.join("builds/web");
-        assert!(web_dir.join("Trunk.toml").exists(), "missing Trunk.toml");
-        assert!(web_dir.join("index.html").exists(), "missing index.html");
+        assert!(
+            web_dir
+                .join("Trunk.toml")
+                .exists(),
+            "missing Trunk.toml"
+        );
+        assert!(
+            web_dir
+                .join("index.html")
+                .exists(),
+            "missing index.html"
+        );
         assert!(
             web_dir
                 .join("favicon.ico")
@@ -72,7 +84,12 @@ mod tests {
                 .exists(),
             "vite.config.ts should not exist"
         );
-        assert!(!web_dir.join("main.ts").exists(), "main.ts should not exist");
+        assert!(
+            !web_dir
+                .join("main.ts")
+                .exists(),
+            "main.ts should not exist"
+        );
 
         // index.html should contain Trunk data-trunk attribute
         let html = fs::read_to_string(web_dir.join("index.html")).unwrap();

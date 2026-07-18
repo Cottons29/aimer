@@ -52,13 +52,16 @@ impl State<MyAnimatedList> for MyListState {
     fn build(&self, _: &BuildContext) -> impl Widget {
         {
             let now = AnimInstant::now();
-            let has_dismissed = self.list.iter().any(|item| {
-                item.pending_removal
-                    && item
-                        .removal_started_at
-                        .map(|t| now.duration_since(t) >= ANIM_DURATION)
-                        .unwrap_or(false)
-            });
+            let has_dismissed = self
+                .list
+                .iter()
+                .any(|item| {
+                    item.pending_removal
+                        && item
+                            .removal_started_at
+                            .map(|t| now.duration_since(t) >= ANIM_DURATION)
+                            .unwrap_or(false)
+                });
             if has_dismissed {}
         }
 

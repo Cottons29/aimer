@@ -23,11 +23,16 @@ impl GlyphOutline {
     }
 
     fn finish_contour(&mut self) {
-        if self.current.len() >= 2 {
+        if self
+            .current
+            .len()
+            >= 2
+        {
             self.contours
                 .push(std::mem::take(&mut self.current));
         } else {
-            self.current.clear();
+            self.current
+                .clear();
         }
     }
 }
@@ -43,7 +48,10 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
     }
 
     fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        let Some(&(x0, y0)) = self.current.last() else {
+        let Some(&(x0, y0)) = self
+            .current
+            .last()
+        else {
             return;
         };
         let x1 = x1 * self.scale - self.offset_x;
@@ -53,15 +61,19 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
         for step in 1..=12 {
             let t = step as f32 / 12.0;
             let mt = 1.0 - t;
-            self.current.push((
-                mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2,
-                mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2,
-            ));
+            self.current
+                .push((
+                    mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2,
+                    mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2,
+                ));
         }
     }
 
     fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        let Some(&(x0, y0)) = self.current.last() else {
+        let Some(&(x0, y0)) = self
+            .current
+            .last()
+        else {
             return;
         };
         let x1 = x1 * self.scale - self.offset_x;
@@ -73,10 +85,17 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
         for step in 1..=16 {
             let t = step as f32 / 16.0;
             let mt = 1.0 - t;
-            self.current.push((
-                mt * mt * mt * x0 + 3.0 * mt * mt * t * x1 + 3.0 * mt * t * t * x2 + t * t * t * x3,
-                mt * mt * mt * y0 + 3.0 * mt * mt * t * y1 + 3.0 * mt * t * t * y2 + t * t * t * y3,
-            ));
+            self.current
+                .push((
+                    mt * mt * mt * x0
+                        + 3.0 * mt * mt * t * x1
+                        + 3.0 * mt * t * t * x2
+                        + t * t * t * x3,
+                    mt * mt * mt * y0
+                        + 3.0 * mt * mt * t * y1
+                        + 3.0 * mt * t * t * y2
+                        + t * t * t * y3,
+                ));
         }
     }
 
@@ -165,15 +184,21 @@ impl ColrOutlineBuilder {
         // Convert from font coordinates (y-up) to bitmap coordinates (y-down).
         let bx = x * self.scale - self.offset_x;
         let by = self.height - (y * self.scale - self.offset_y);
-        self.current.push((bx, by));
+        self.current
+            .push((bx, by));
     }
 
     pub(crate) fn finish(&mut self) {
-        if self.current.len() >= 2 {
+        if self
+            .current
+            .len()
+            >= 2
+        {
             self.contours
                 .push(std::mem::take(&mut self.current));
         } else {
-            self.current.clear();
+            self.current
+                .clear();
         }
     }
 }
@@ -189,7 +214,10 @@ impl ttf_parser::OutlineBuilder for ColrOutlineBuilder {
     }
 
     fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        let Some(&(x0, y0)) = self.current.last() else {
+        let Some(&(x0, y0)) = self
+            .current
+            .last()
+        else {
             return;
         };
         let x1s = x1 * self.scale - self.offset_x;
@@ -199,15 +227,19 @@ impl ttf_parser::OutlineBuilder for ColrOutlineBuilder {
         for step in 1..=12u32 {
             let t = step as f32 / 12.0;
             let mt = 1.0 - t;
-            self.current.push((
-                mt * mt * x0 + 2.0 * mt * t * x1s + t * t * x2s,
-                mt * mt * y0 + 2.0 * mt * t * y1s + t * t * y2s,
-            ));
+            self.current
+                .push((
+                    mt * mt * x0 + 2.0 * mt * t * x1s + t * t * x2s,
+                    mt * mt * y0 + 2.0 * mt * t * y1s + t * t * y2s,
+                ));
         }
     }
 
     fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        let Some(&(x0, y0)) = self.current.last() else {
+        let Some(&(x0, y0)) = self
+            .current
+            .last()
+        else {
             return;
         };
         let x1s = x1 * self.scale - self.offset_x;
@@ -219,16 +251,17 @@ impl ttf_parser::OutlineBuilder for ColrOutlineBuilder {
         for step in 1..=16u32 {
             let t = step as f32 / 16.0;
             let mt = 1.0 - t;
-            self.current.push((
-                mt * mt * mt * x0
-                    + 3.0 * mt * mt * t * x1s
-                    + 3.0 * mt * t * t * x2s
-                    + t * t * t * x3s,
-                mt * mt * mt * y0
-                    + 3.0 * mt * mt * t * y1s
-                    + 3.0 * mt * t * t * y2s
-                    + t * t * t * y3s,
-            ));
+            self.current
+                .push((
+                    mt * mt * mt * x0
+                        + 3.0 * mt * mt * t * x1s
+                        + 3.0 * mt * t * t * x2s
+                        + t * t * t * x3s,
+                    mt * mt * mt * y0
+                        + 3.0 * mt * mt * t * y1s
+                        + 3.0 * mt * t * t * y2s
+                        + t * t * t * y3s,
+                ));
         }
     }
 

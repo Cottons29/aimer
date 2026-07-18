@@ -14,7 +14,8 @@ pub fn start_color_sync() {
 
 impl Widget for ColorSync {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        self.build(ctx).to_element(ctx)
+        self.build(ctx)
+            .to_element(ctx)
     }
 }
 

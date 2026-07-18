@@ -9,7 +9,8 @@ use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerEvent, PointerPosition};
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild, VisitorElement,
+    Widget,
 };
 
 use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback, VoidParamedFunction};
@@ -19,7 +20,7 @@ use crate::gesture::{
     ScaleCallback, ScaleData, ScrollCallback, ScrollData, SwipeCallback, SwipeDirection, TAP_SLOP,
 };
 
-pub struct GestureDetector<W: Widget + 'static> {
+pub struct GestureDetector<W = RequiredChild> {
     pub on_tap: VoidCallback,
     pub on_double_press: VoidCallback,
     pub on_long_press: VoidCallback,
@@ -33,24 +34,143 @@ pub struct GestureDetector<W: Widget + 'static> {
     pub child: W,
 }
 
+impl Default for GestureDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GestureDetector {
+    pub fn new() -> Self {
+        Self {
+            on_tap: VoidCallback::default(),
+            on_double_press: VoidCallback::default(),
+            on_long_press: VoidCallback::default(),
+            on_drag_start: DragCallback::default(),
+            on_drag_update: DragUpdateCallback::default(),
+            on_drag_end: VoidCallback::default(),
+            on_right_tap: VoidCallback::default(),
+            on_swipe: SwipeCallback::default(),
+            on_scroll: ScrollCallback::default(),
+            on_scale: ScaleCallback::default(),
+            child: RequiredChild,
+        }
+    }
+}
+
+impl<W> GestureDetector<W> {
+    pub fn on_tap(mut self, on_tap: impl Into<VoidCallback>) -> Self {
+        self.on_tap = on_tap.into();
+        self
+    }
+
+    pub fn on_double_press(mut self, on_double_press: impl Into<VoidCallback>) -> Self {
+        self.on_double_press = on_double_press.into();
+        self
+    }
+
+    pub fn on_long_press(mut self, on_long_press: impl Into<VoidCallback>) -> Self {
+        self.on_long_press = on_long_press.into();
+        self
+    }
+
+    pub fn on_drag_start(mut self, on_drag_start: impl Into<DragCallback>) -> Self {
+        self.on_drag_start = on_drag_start.into();
+        self
+    }
+
+    pub fn on_drag_update(mut self, on_drag_update: impl Into<DragUpdateCallback>) -> Self {
+        self.on_drag_update = on_drag_update.into();
+        self
+    }
+
+    pub fn on_drag_end(mut self, on_drag_end: impl Into<VoidCallback>) -> Self {
+        self.on_drag_end = on_drag_end.into();
+        self
+    }
+
+    pub fn on_right_tap(mut self, on_right_tap: impl Into<VoidCallback>) -> Self {
+        self.on_right_tap = on_right_tap.into();
+        self
+    }
+
+    pub fn on_swipe(mut self, on_swipe: impl Into<SwipeCallback>) -> Self {
+        self.on_swipe = on_swipe.into();
+        self
+    }
+
+    pub fn on_scroll(mut self, on_scroll: impl Into<ScrollCallback>) -> Self {
+        self.on_scroll = on_scroll.into();
+        self
+    }
+
+    pub fn on_scale(mut self, on_scale: impl Into<ScaleCallback>) -> Self {
+        self.on_scale = on_scale.into();
+        self
+    }
+
+    pub fn child<C: Widget>(self, child: C) -> GestureDetector<C> {
+        GestureDetector {
+            on_tap: self.on_tap,
+            on_double_press: self.on_double_press,
+            on_long_press: self.on_long_press,
+            on_drag_start: self.on_drag_start,
+            on_drag_update: self.on_drag_update,
+            on_drag_end: self.on_drag_end,
+            on_right_tap: self.on_right_tap,
+            on_swipe: self.on_swipe,
+            on_scroll: self.on_scroll,
+            on_scale: self.on_scale,
+            child,
+        }
+    }
+}
+
 impl<W: Widget + 'static> Widget for GestureDetector<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         RawGestureDetector {
-            child: self.child.to_element(ctx),
+            child: self
+                .child
+                .to_element(ctx),
             cached_bounds: CacheBounds::new(),
-            window: ctx.window.clone(),
-            on_tap: self.on_tap.clone(),
-            on_double_press: self.on_double_press.clone(),
-            on_long_press: self.on_long_press.clone(),
-            on_drag_start: self.on_drag_start.clone(),
-            on_drag_update: self.on_drag_update.clone(),
-            on_drag_end: self.on_drag_end.clone(),
-            on_right_tap: self.on_right_tap.clone(),
-            on_swipe: self.on_swipe.clone(),
-            on_scroll: self.on_scroll.clone(),
-            on_scale: self.on_scale.clone(),
+            window: ctx
+                .window
+                .clone(),
+            on_tap: self
+                .on_tap
+                .clone(),
+            on_double_press: self
+                .on_double_press
+                .clone(),
+            on_long_press: self
+                .on_long_press
+                .clone(),
+            on_drag_start: self
+                .on_drag_start
+                .clone(),
+            on_drag_update: self
+                .on_drag_update
+                .clone(),
+            on_drag_end: self
+                .on_drag_end
+                .clone(),
+            on_right_tap: self
+                .on_right_tap
+                .clone(),
+            on_swipe: self
+                .on_swipe
+                .clone(),
+            on_scroll: self
+                .on_scroll
+                .clone(),
+            on_scale: self
+                .on_scale
+                .clone(),
             #[cfg(not(target_arch = "wasm32"))]
-            runtime_handle: Some(ctx.async_handle.clone()),
+            runtime_handle: Some(
+                ctx.async_handle
+                    .clone(),
+            ),
             state: RefCell::new(Default::default()),
         }
         .boxed()
@@ -158,7 +278,9 @@ impl<E: Element> RawGestureDetector<E> {
 
     fn process_pointer_event(&self, event: &PointerEvent) -> Option<GestureEvent> {
         // println!("pointer event: {:?}", event);
-        let mut state = self.state.borrow_mut();
+        let mut state = self
+            .state
+            .borrow_mut();
 
         match event {
             PointerEvent::Down(pos) => {
@@ -167,19 +289,33 @@ impl<E: Element> RawGestureDetector<E> {
                 // Stale-touch cleanup: if there are orphan touches from before
                 // the app was backgrounded (no Cancel/Up received), clear them
                 // so a fresh single touch doesn't falsely trigger a pinch.
-                if !state.touches.is_empty()
-                    && state.down_time.is_none_or(|t| {
-                        now.duration_since(t).as_millis() > STALE_GESTURE_TOUCH_MS as u128
-                    })
+                if !state
+                    .touches
+                    .is_empty()
+                    && state
+                        .down_time
+                        .is_none_or(|t| {
+                            now.duration_since(t)
+                                .as_millis()
+                                > STALE_GESTURE_TOUCH_MS as u128
+                        })
                 {
-                    state.touches.clear();
+                    state
+                        .touches
+                        .clear();
                     state.initial_pinch_distance = None;
                     state.current_scale = 1.0;
                 }
 
-                state.touches.insert(pos.id, *pos);
+                state
+                    .touches
+                    .insert(pos.id, *pos);
 
-                if state.touches.len() == 2 {
+                if state
+                    .touches
+                    .len()
+                    == 2
+                {
                     let positions: Vec<PointerPosition> = state
                         .touches
                         .values()
@@ -192,7 +328,11 @@ impl<E: Element> RawGestureDetector<E> {
                     return Some(GestureEvent::ScaleStart { focal_x: focal.x, focal_y: focal.y });
                 }
 
-                if state.touches.len() == 1 {
+                if state
+                    .touches
+                    .len()
+                    == 1
+                {
                     state.down_position = Some(*pos);
                     state.down_time = Some(now);
                     state.is_dragging = false;
@@ -204,12 +344,17 @@ impl<E: Element> RawGestureDetector<E> {
             }
 
             PointerEvent::Up(pos) => {
-                state.touches.remove(&pos.id);
+                state
+                    .touches
+                    .remove(&pos.id);
 
                 if state
                     .initial_pinch_distance
                     .is_some()
-                    && state.touches.len() < 2
+                    && state
+                        .touches
+                        .len()
+                        < 2
                 {
                     state.initial_pinch_distance = None;
                     state.current_scale = 1.0;
@@ -218,8 +363,12 @@ impl<E: Element> RawGestureDetector<E> {
                 }
 
                 if state.is_dragging {
-                    let start_time = state.drag_start_time.take();
-                    let start_pos = state.drag_start_position.take();
+                    let start_time = state
+                        .drag_start_time
+                        .take();
+                    let start_pos = state
+                        .drag_start_position
+                        .take();
                     state.is_dragging = false;
                     state.last_drag_position = None;
                     state.down_position = None;
@@ -239,7 +388,10 @@ impl<E: Element> RawGestureDetector<E> {
                     }
 
                     if let (Some(start_time), Some(start_pos)) = (start_time, start_pos)
-                        && let Some(cb) = self.on_swipe.callable().as_ref()
+                        && let Some(cb) = self
+                            .on_swipe
+                            .callable()
+                            .as_ref()
                     {
                         let elapsed = AnimInstant::now().duration_since(start_time);
                         if elapsed.as_millis() as u64 <= SWIPE_MAX_DURATION_MS {
@@ -278,8 +430,12 @@ impl<E: Element> RawGestureDetector<E> {
                     return Some(GestureEvent::DragEnd(*pos));
                 }
 
-                let down_pos = state.down_position.take()?;
-                let down_time = state.down_time.take()?;
+                let down_pos = state
+                    .down_position
+                    .take()?;
+                let down_time = state
+                    .down_time
+                    .take()?;
                 let now = AnimInstant::now();
                 let elapsed = now.duration_since(down_time);
 
@@ -335,7 +491,11 @@ impl<E: Element> RawGestureDetector<E> {
                 state.last_tap_time = Some(now);
                 state.last_tap_position = Some(*pos);
                 drop(state);
-                if let Some(cb) = self.on_tap.callable().as_ref() {
+                if let Some(cb) = self
+                    .on_tap
+                    .callable()
+                    .as_ref()
+                {
                     Self::execute_callback(
                         cb,
                         #[cfg(not(target_arch = "wasm32"))]
@@ -346,13 +506,21 @@ impl<E: Element> RawGestureDetector<E> {
             }
 
             PointerEvent::Move(pos) => {
-                state.touches.insert(pos.id, *pos);
+                state
+                    .touches
+                    .insert(pos.id, *pos);
 
-                if state.touches.len() >= 2
+                if state
+                    .touches
+                    .len()
+                    >= 2
                     && state
                         .initial_pinch_distance
                         .is_some()
-                    && let Some(cb) = self.on_scale.callable().as_ref()
+                    && let Some(cb) = self
+                        .on_scale
+                        .callable()
+                        .as_ref()
                 {
                     let positions: Vec<PointerPosition> = state
                         .touches
@@ -452,7 +620,9 @@ impl<E: Element> RawGestureDetector<E> {
                     state.initial_pinch_distance = None;
                     state.current_scale = 1.0;
                 }
-                state.touches.clear();
+                state
+                    .touches
+                    .clear();
                 state.down_position = None;
                 state.down_time = None;
                 None
@@ -477,7 +647,11 @@ impl<E: Element> RawGestureDetector<E> {
             PointerEvent::Scroll { delta_x, delta_y } => {
                 let data = ScrollData { delta_x: *delta_x, delta_y: *delta_y };
                 drop(state);
-                if let Some(cb) = self.on_scroll.callable().as_ref() {
+                if let Some(cb) = self
+                    .on_scroll
+                    .callable()
+                    .as_ref()
+                {
                     Self::execute_paramed_callback(
                         cb,
                         data,
@@ -509,7 +683,9 @@ fn midpoint(a: PointerPosition, b: PointerPosition) -> PointerPosition {
 /// behind/below it (e.g. a `Scrollable` on a lower `Stack` layer). `Scroll`
 /// events carry no pointer position, so the decision cannot be bounds-based.
 fn detector_consumes_scroll(on_scroll: &ScrollCallback) -> bool {
-    on_scroll.callable().is_some()
+    on_scroll
+        .callable()
+        .is_some()
 }
 
 fn should_accept_pointer_event(
@@ -523,7 +699,9 @@ fn should_accept_pointer_event(
     }
 
     match event {
-        ElementEvent::PointerUp(_, _, id) => state.touches.contains_key(id),
+        ElementEvent::PointerUp(_, _, id) => state
+            .touches
+            .contains_key(id),
         _ => false,
     }
 }
@@ -544,7 +722,8 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
         if matches!(event, ElementEvent::Cancel) {
             self.process_pointer_event(&PointerEvent::Cancel);
-            self.window.request_redraw();
+            self.window
+                .request_redraw();
             return true;
         }
 
@@ -568,13 +747,21 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
                 }
                 let pointer_event = PointerEvent::Scroll { delta_x: delta.x, delta_y: delta.y };
                 self.process_pointer_event(&pointer_event);
-                self.window.request_redraw();
+                self.window
+                    .request_redraw();
                 return true;
             }
             _ => return false,
         };
 
-        if !should_accept_pointer_event(&self.cached_bounds, &self.state.borrow(), event, *pos) {
+        if !should_accept_pointer_event(
+            &self.cached_bounds,
+            &self
+                .state
+                .borrow(),
+            event,
+            *pos,
+        ) {
             return false;
         }
 
@@ -592,7 +779,8 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
         };
 
         self.process_pointer_event(&pointer_event);
-        self.window.request_redraw();
+        self.window
+            .request_redraw();
         true
     }
 
@@ -608,7 +796,9 @@ impl<E: Element> LayoutElement for RawGestureDetector<E> {
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        let size = self.child.layout(ctx);
+        let size = self
+            .child
+            .layout(ctx);
         let (abs_x, abs_y) = ctx
             .canvas
             .get_transform_translation();
@@ -618,11 +808,13 @@ impl<E: Element> LayoutElement for RawGestureDetector<E> {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child.computed_size(ctx)
+        self.child
+            .computed_size(ctx)
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.cached_bounds.pos_start_end()
+        self.cached_bounds
+            .pos_start_end()
     }
 }
 
@@ -631,11 +823,14 @@ impl<E: Element> Drawable for RawGestureDetector<E> {
         let (abs_x, abs_y) = ctx
             .canvas
             .get_transform_translation();
-        let child_size = self.child.computed_size(ctx);
+        let child_size = self
+            .child
+            .computed_size(ctx);
         self.cached_bounds
             .save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
 
-        self.child.draw(ctx);
+        self.child
+            .draw(ctx);
     }
 }
 
@@ -643,9 +838,17 @@ impl<E: Element> Rebuildable for RawGestureDetector<E> {}
 
 #[cfg(test)]
 mod tests {
-    use aimer_events::pointer::PointerSource;
+    use aimer_events::pointer::{PointerPosition, PointerSource};
 
     use super::*;
+
+    struct TestWidget;
+
+    impl Widget for TestWidget {
+        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+            panic!("not needed for builder tests")
+        }
+    }
 
     fn touch_position(x: f32, y: f32, id: u64) -> PointerPosition {
         PointerPosition { x, y, source: PointerSource::Touch, id }
@@ -653,6 +856,24 @@ mod tests {
 
     fn touch_vec(x: f32, y: f32) -> Vec2d {
         Vec2d { x, y }
+    }
+
+    #[test]
+    fn builder_configures_all_gestures_before_child_is_added() {
+        let detector = GestureDetector::new()
+            .on_tap(|| {})
+            .on_double_press(|| {})
+            .on_long_press(|| {})
+            .on_drag_start(|_: PointerPosition| {})
+            .on_drag_update(|_: DragUpdateData| {})
+            .on_drag_end(|| {})
+            .on_right_tap(|| {})
+            .on_swipe(|_: SwipeDirection| {})
+            .on_scroll(|_: ScrollData| {})
+            .on_scale(|_: ScaleData| {})
+            .child(TestWidget);
+
+        assert!(detector_consumes_scroll(&detector.on_scroll));
     }
 
     #[test]
@@ -720,15 +941,26 @@ mod tests {
     fn active_touch_state_is_preserved_for_replacement_detector() {
         let mut existing = GestureState::default();
         let down = touch_position(25.0, 35.0, 7);
-        existing.touches.insert(7, down);
+        existing
+            .touches
+            .insert(7, down);
         existing.down_position = Some(down);
         existing.down_time = Some(AnimInstant::now());
 
         let mut replacement = GestureState::default();
         preserve_gesture_state(&existing, &mut replacement);
 
-        assert_eq!(replacement.touches.get(&7), Some(&down));
+        assert_eq!(
+            replacement
+                .touches
+                .get(&7),
+            Some(&down)
+        );
         assert_eq!(replacement.down_position, Some(down));
-        assert!(replacement.down_time.is_some());
+        assert!(
+            replacement
+                .down_time
+                .is_some()
+        );
     }
 }
