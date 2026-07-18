@@ -38,7 +38,9 @@ fn plain(code: &str) -> Vec<SyntaxToken> {
 }
 
 fn tokenize(code: &str, dialect: Dialect) -> Vec<SyntaxToken> {
-    let chars: Vec<char> = code.chars().collect();
+    let chars: Vec<char> = code
+        .chars()
+        .collect();
     let mut result = Vec::new();
     let mut index = 0;
     while index < chars.len() {
@@ -129,7 +131,12 @@ fn tokenize_string(chars: &[char], start: usize, result: &mut Vec<SyntaxToken>) 
 
 fn push(result: &mut Vec<SyntaxToken>, kind: SyntaxTokenKind, chars: &[char]) {
     if !chars.is_empty() {
-        result.push(SyntaxToken { kind, text: chars.iter().collect() });
+        result.push(SyntaxToken {
+            kind,
+            text: chars
+                .iter()
+                .collect(),
+        });
     }
 }
 
@@ -228,12 +235,17 @@ mod tests {
             tokens
                 .iter()
                 .any(|token| token.kind == SyntaxTokenKind::Comment
-                    && token.text.contains("message"))
+                    && token
+                        .text
+                        .contains("message"))
         );
         assert!(
             tokens
                 .iter()
-                .any(|token| token.kind == SyntaxTokenKind::String && token.text.contains("Hi"))
+                .any(|token| token.kind == SyntaxTokenKind::String
+                    && token
+                        .text
+                        .contains("Hi"))
         );
         assert!(
             tokens
@@ -243,7 +255,9 @@ mod tests {
         assert_eq!(
             tokens
                 .iter()
-                .map(|token| token.text.as_str())
+                .map(|token| token
+                    .text
+                    .as_str())
                 .collect::<String>(),
             source
         );
@@ -266,7 +280,9 @@ mod tests {
         assert_eq!(
             tokens
                 .iter()
-                .map(|token| token.text.as_str())
+                .map(|token| token
+                    .text
+                    .as_str())
                 .collect::<String>(),
             rust
         );

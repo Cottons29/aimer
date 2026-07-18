@@ -15,7 +15,11 @@ pub enum SvgSelector {
 impl SvgSelector {
     pub(crate) fn matches(&self, node: &SvgNode) -> bool {
         match self {
-            Self::Id(id) => node.svg_id.as_deref() == Some(id),
+            Self::Id(id) => {
+                node.svg_id
+                    .as_deref()
+                    == Some(id)
+            }
             Self::Class(class) => node
                 .classes
                 .iter()

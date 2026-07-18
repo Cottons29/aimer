@@ -196,7 +196,12 @@ impl<'w> GpuContext<'w> {
                 std::process::exit(1);
             });
 
-        debug!("Current Activated Backend: {:?}", adapter.get_info().backend);
+        debug!(
+            "Current Activated Backend: {:?}",
+            adapter
+                .get_info()
+                .backend
+        );
 
         let caps = surface.get_capabilities(&adapter);
 
@@ -219,8 +224,12 @@ impl<'w> GpuContext<'w> {
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: selected_format,
-            width: backing_size.width.max(1),
-            height: backing_size.height.max(1),
+            width: backing_size
+                .width
+                .max(1),
+            height: backing_size
+                .height
+                .max(1),
             present_mode,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
@@ -247,8 +256,10 @@ impl<'w> GpuContext<'w> {
                 .limits()
                 .max_texture_dimension_2d;
             let backing_size = render_dimensions(size, max_dim);
-            self.config.width = backing_size.width;
-            self.config.height = backing_size.height;
+            self.config
+                .width = backing_size.width;
+            self.config
+                .height = backing_size.height;
             self.viewport_size = size;
             self.surface
                 .configure(&self.device, &self.config);
@@ -256,21 +267,25 @@ impl<'w> GpuContext<'w> {
     }
 
     pub fn width(&self) -> u32 {
-        self.config.width
+        self.config
+            .width
     }
 
     pub fn height(&self) -> u32 {
-        self.config.height
+        self.config
+            .height
     }
 
     pub fn begin_frame(&self) -> wgpu::CurrentSurfaceTexture {
-        self.surface.get_current_texture()
+        self.surface
+            .get_current_texture()
     }
 
     pub fn end_frame(&self, frame: SurfaceTexture) {
         // wgpu 30: presentation moved from `SurfaceTexture::present()` to
         // `Queue::present()`.
-        self.queue.present(frame);
+        self.queue
+            .present(frame);
     }
 }
 

@@ -117,12 +117,19 @@ fn emit_terminal_progress(status: &Status) {
 /// clamped to the nearest edge so dragging past the border still extends the
 /// selection sensibly. Returns `None` when the pane has no visible rows.
 fn hit_test(view: &PaneView, col: u16, row: u16) -> Option<(usize, usize)> {
-    if view.visible_rows.is_empty() {
+    if view
+        .visible_rows
+        .is_empty()
+    {
         return None;
     }
     let cy = row
         .saturating_sub(view.y)
-        .min(view.visible_rows.len() as u16 - 1) as usize;
+        .min(
+            view.visible_rows
+                .len() as u16
+                - 1,
+        ) as usize;
     let cx = col.saturating_sub(view.x) as usize;
     let vr = view.visible_rows[cy];
     let within = if vr.len == 0 { 0 } else { cx.min(vr.len - 1) };
@@ -262,7 +269,11 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
         // so we don't spam the escape on every frame.
         if progress_supported && last_progress.as_ref() != Some(&state.status) {
             emit_terminal_progress(&state.status);
-            last_progress = Some(state.status.clone());
+            last_progress = Some(
+                state
+                    .status
+                    .clone(),
+            );
         }
 
         let inspector_state = inspector_handle
@@ -345,8 +356,12 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                         | (KeyCode::Char('C'), KeyModifiers::SHIFT) => {
                             state.clear_selection();
                             match state.pane {
-                                ConsoleType::App => state.app_logs.clear(),
-                                ConsoleType::Build => state.build_logs.clear(),
+                                ConsoleType::App => state
+                                    .app_logs
+                                    .clear(),
+                                ConsoleType::Build => state
+                                    .build_logs
+                                    .clear(),
                                 _ => {}
                             }
                         }
@@ -380,9 +395,13 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                 .selected_text()
                                 .unwrap_or_else(|| {
                                     if state.pane == ConsoleType::Build {
-                                        state.build_logs.join("\n")
+                                        state
+                                            .build_logs
+                                            .join("\n")
                                     } else {
-                                        state.app_logs.join("\n")
+                                        state
+                                            .app_logs
+                                            .join("\n")
                                     }
                                 });
                             if let Ok(mut clipboard) = Clipboard::new() {
@@ -394,9 +413,13 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                         (KeyCode::Char('c'), _) | (KeyCode::Char('C'), _) => {
                             if let Ok(mut clipboard) = Clipboard::new() {
                                 let logs = if state.pane == ConsoleType::Build {
-                                    state.build_logs.join("\n")
+                                    state
+                                        .build_logs
+                                        .join("\n")
                                 } else {
-                                    state.app_logs.join("\n")
+                                    state
+                                        .app_logs
+                                        .join("\n")
                                 };
                                 let _ = clipboard.set_text(logs);
                             }
@@ -436,20 +459,34 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                             state.inspector_full_tree = !state.inspector_full_tree;
                         }
                         (KeyCode::Up, _) => match state.pane {
-                            ConsoleType::Build => state.build_pane.scroll_up(1),
-                            ConsoleType::App => state.app_pane.scroll_up(1),
+                            ConsoleType::Build => state
+                                .build_pane
+                                .scroll_up(1),
+                            ConsoleType::App => state
+                                .app_pane
+                                .scroll_up(1),
                             ConsoleType::Inspector => {
                                 state.inspector_cursor = state
                                     .inspector_cursor
                                     .saturating_sub(1);
-                                if (state.inspector_cursor as u16) < state.inspector_pane.scroll {
-                                    state.inspector_pane.scroll = state.inspector_cursor as u16;
+                                if (state.inspector_cursor as u16)
+                                    < state
+                                        .inspector_pane
+                                        .scroll
+                                {
+                                    state
+                                        .inspector_pane
+                                        .scroll = state.inspector_cursor as u16;
                                 }
                             }
                         },
                         (KeyCode::Down, _) => match state.pane {
-                            ConsoleType::Build => state.build_pane.scroll_down(1),
-                            ConsoleType::App => state.app_pane.scroll_down(1),
+                            ConsoleType::Build => state
+                                .build_pane
+                                .scroll_down(1),
+                            ConsoleType::App => state
+                                .app_pane
+                                .scroll_down(1),
                             ConsoleType::Inspector => {
                                 state.inspector_cursor = state
                                     .inspector_cursor
@@ -457,20 +494,34 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                             }
                         },
                         (KeyCode::PageUp, _) => match state.pane {
-                            ConsoleType::Build => state.build_pane.scroll_up(10),
-                            ConsoleType::App => state.app_pane.scroll_up(10),
+                            ConsoleType::Build => state
+                                .build_pane
+                                .scroll_up(10),
+                            ConsoleType::App => state
+                                .app_pane
+                                .scroll_up(10),
                             ConsoleType::Inspector => {
                                 state.inspector_cursor = state
                                     .inspector_cursor
                                     .saturating_sub(10);
-                                if (state.inspector_cursor as u16) < state.inspector_pane.scroll {
-                                    state.inspector_pane.scroll = state.inspector_cursor as u16;
+                                if (state.inspector_cursor as u16)
+                                    < state
+                                        .inspector_pane
+                                        .scroll
+                                {
+                                    state
+                                        .inspector_pane
+                                        .scroll = state.inspector_cursor as u16;
                                 }
                             }
                         },
                         (KeyCode::PageDown, _) => match state.pane {
-                            ConsoleType::Build => state.build_pane.scroll_down(10),
-                            ConsoleType::App => state.app_pane.scroll_down(10),
+                            ConsoleType::Build => state
+                                .build_pane
+                                .scroll_down(10),
+                            ConsoleType::App => state
+                                .app_pane
+                                .scroll_down(10),
                             ConsoleType::Inspector => {
                                 state.inspector_cursor = state
                                     .inspector_cursor
@@ -484,14 +535,26 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                     let (col, row) = (mouse_event.column, mouse_event.row);
                     match mouse_event.kind {
                         MouseEventKind::ScrollUp => match state.pane {
-                            ConsoleType::Build => state.build_pane.scroll_up(2),
-                            ConsoleType::App => state.app_pane.scroll_up(2),
-                            ConsoleType::Inspector => state.inspector_pane.scroll_up(2),
+                            ConsoleType::Build => state
+                                .build_pane
+                                .scroll_up(2),
+                            ConsoleType::App => state
+                                .app_pane
+                                .scroll_up(2),
+                            ConsoleType::Inspector => state
+                                .inspector_pane
+                                .scroll_up(2),
                         },
                         MouseEventKind::ScrollDown => match state.pane {
-                            ConsoleType::Build => state.build_pane.scroll_down(2),
-                            ConsoleType::App => state.app_pane.scroll_down(2),
-                            ConsoleType::Inspector => state.inspector_pane.scroll_down(2),
+                            ConsoleType::Build => state
+                                .build_pane
+                                .scroll_down(2),
+                            ConsoleType::App => state
+                                .app_pane
+                                .scroll_down(2),
+                            ConsoleType::Inspector => state
+                                .inspector_pane
+                                .scroll_down(2),
                         },
                         // Begin a selection at the clicked cell.
                         MouseEventKind::Down(MouseButton::Left) if state.selection_mode => {
@@ -516,14 +579,22 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                             {
                                 if row < vy {
                                     match state.pane {
-                                        ConsoleType::Build => state.build_pane.scroll_up(1),
-                                        ConsoleType::App => state.app_pane.scroll_up(1),
+                                        ConsoleType::Build => state
+                                            .build_pane
+                                            .scroll_up(1),
+                                        ConsoleType::App => state
+                                            .app_pane
+                                            .scroll_up(1),
                                         _ => {}
                                     }
                                 } else if vh > 0 && row >= vy + vh {
                                     match state.pane {
-                                        ConsoleType::Build => state.build_pane.scroll_down(1),
-                                        ConsoleType::App => state.app_pane.scroll_down(1),
+                                        ConsoleType::Build => state
+                                            .build_pane
+                                            .scroll_down(1),
+                                        ConsoleType::App => state
+                                            .app_pane
+                                            .scroll_down(1),
                                         _ => {}
                                     }
                                 }
@@ -532,7 +603,9 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                 .last_view
                                 .as_ref()
                                 .and_then(|v| hit_test(v, col, row))
-                                && let Some(sel) = state.selection.as_mut()
+                                && let Some(sel) = state
+                                    .selection
+                                    .as_mut()
                             {
                                 sel.cursor = pos;
                             }
@@ -606,10 +679,13 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
                     use notify::EventKind;
                     match event.kind {
                         EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
-                            let dominated_by_rs = event.paths.iter().any(|p| {
-                                p.extension()
-                                    .is_some_and(|ext| ext == "rs")
-                            });
+                            let dominated_by_rs = event
+                                .paths
+                                .iter()
+                                .any(|p| {
+                                    p.extension()
+                                        .is_some_and(|ext| ext == "rs")
+                                });
                             if dominated_by_rs {
                                 let now = AnimInstant::now();
                                 if now.duration_since(debounce_last) > Duration::from_millis(500) {

@@ -81,9 +81,19 @@ impl NetworkImage {
 impl Widget for NetworkImage {
     #[track_caller]
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let source = match self.header.as_ref() {
-            Some(header) => ImageSource::NetworkWithHeaders(self.url.clone(), header.clone()),
-            None => ImageSource::Network(self.url.clone()),
+        let source = match self
+            .header
+            .as_ref()
+        {
+            Some(header) => ImageSource::NetworkWithHeaders(
+                self.url
+                    .clone(),
+                header.clone(),
+            ),
+            None => ImageSource::Network(
+                self.url
+                    .clone(),
+            ),
         };
 
         // debug!("creating network image widget with url: {}", self.url);

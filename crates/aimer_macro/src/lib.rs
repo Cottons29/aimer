@@ -43,7 +43,9 @@ use crate::unique_key::UniqueKeyInput;
 #[proc_macro_attribute]
 pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_fn = parse_macro_input!(item as ItemFn);
-    let fn_name = &input_fn.sig.ident;
+    let fn_name = &input_fn
+        .sig
+        .ident;
 
     let expanded = quote! {
 
@@ -87,7 +89,10 @@ enum AttributeKind {
 impl TryFrom<&str> for AttributeKind {
     type Error = syn::Error;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value.to_lowercase().as_str() {
+        match value
+            .to_lowercase()
+            .as_str()
+        {
             "stateless" => Ok(AttributeKind::Stateless),
             "stateful" => Ok(AttributeKind::Stateful),
             "router" => Ok(AttributeKind::Router),

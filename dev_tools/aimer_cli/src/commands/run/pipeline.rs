@@ -99,7 +99,10 @@ pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>) {
             }
         };
 
-        if let Some(stdout) = wasm_build.stdout.take() {
+        if let Some(stdout) = wasm_build
+            .stdout
+            .take()
+        {
             let tx_out = tx.clone();
             thread::spawn(move || {
                 let reader = BufReader::new(stdout);
@@ -112,7 +115,10 @@ pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>) {
             });
         }
 
-        if let Some(stderr) = wasm_build.stderr.take() {
+        if let Some(stderr) = wasm_build
+            .stderr
+            .take()
+        {
             let tx_err = tx.clone();
             thread::spawn(move || {
                 let reader = BufReader::new(stderr);

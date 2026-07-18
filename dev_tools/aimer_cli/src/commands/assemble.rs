@@ -298,7 +298,9 @@ fn assemble_web(release: bool) -> anyhow::Result<String> {
 /// exists yet, so this compiles the artifact and reports its directory.
 fn assemble_desktop(target: Targets, release: bool) -> anyhow::Result<String> {
     let mut cargo = Command::new("cargo");
-    cargo.arg("build").arg("--lib");
+    cargo
+        .arg("build")
+        .arg("--lib");
     if release {
         cargo.arg("--release");
     }
@@ -320,11 +322,17 @@ fn resolve_compatible_java_home() -> Option<String> {
             else {
                 continue;
             };
-            if !output.status.success() {
+            if !output
+                .status
+                .success()
+            {
                 continue;
             }
             if let Ok(path) = String::from_utf8(output.stdout) {
-                return Some(path.trim().to_string());
+                return Some(
+                    path.trim()
+                        .to_string(),
+                );
             }
         }
     }

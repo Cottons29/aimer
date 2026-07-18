@@ -10,7 +10,8 @@ struct BorrowGuard<'a>(&'a Cell<bool>);
 
 impl Drop for BorrowGuard<'_> {
     fn drop(&mut self) {
-        self.0.set(false);
+        self.0
+            .set(false);
     }
 }
 
@@ -23,18 +24,31 @@ impl<T> LocalCell<T> {
         let _guard = self.borrow();
         // Safety: the borrow guard rejects overlapping access, and `LocalCell`
         // is not `Sync`, so the value remains confined to one thread.
-        unsafe { f(&*self.value.get()) }
+        unsafe {
+            f(&*self
+                .value
+                .get())
+        }
     }
 
     pub(crate) fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         let _guard = self.borrow();
         // Safety: the borrow guard rejects overlapping access, and `LocalCell`
         // is not `Sync`, so the mutable reference is unique.
-        unsafe { f(&mut *self.value.get()) }
+        unsafe {
+            f(&mut *self
+                .value
+                .get())
+        }
     }
 
     fn borrow(&self) -> BorrowGuard<'_> {
-        assert!(!self.borrowed.replace(true), "LocalCell is already borrowed");
+        assert!(
+            !self
+                .borrowed
+                .replace(true),
+            "LocalCell is already borrowed"
+        );
         BorrowGuard(&self.borrowed)
     }
 }

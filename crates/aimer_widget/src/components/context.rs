@@ -46,7 +46,9 @@ impl WindowHandle {
         match self {
             Self::Native(window) => window.inner_size(),
             Self::Headless(state) => winit::dpi::PhysicalSize::new(
-                state.width.load(Ordering::Relaxed),
+                state
+                    .width
+                    .load(Ordering::Relaxed),
                 state
                     .height
                     .load(Ordering::Relaxed),
@@ -180,13 +182,18 @@ impl BuildConsumer {
     }
 
     pub fn mark_needs_rebuild(&self) {
-        self.dirty.set(true);
+        self.dirty
+            .set(true);
     }
 }
 
 impl Drop for BuildConsumer {
     fn drop(&mut self) {
-        for cleanup in self.cleanups.get_mut().drain(..) {
+        for cleanup in self
+            .cleanups
+            .get_mut()
+            .drain(..)
+        {
             cleanup();
         }
     }
@@ -203,8 +210,14 @@ struct StateScopeGuard {
 
 impl Drop for StateScopeGuard {
     fn drop(&mut self) {
-        let mut states = self.states.write().unwrap();
-        if let Some(previous) = self.previous.take() {
+        let mut states = self
+            .states
+            .write()
+            .unwrap();
+        if let Some(previous) = self
+            .previous
+            .take()
+        {
             states.insert(self.type_id, previous);
         } else {
             states.remove(&self.type_id);
@@ -261,7 +274,11 @@ impl<'a> BuildContext<'a> {
             .read()
             .unwrap()
             .get(&TypeId::of::<T>())
-            .and_then(|arc| arc.clone().downcast::<T>().ok())
+            .and_then(|arc| {
+                arc.clone()
+                    .downcast::<T>()
+                    .ok()
+            })
     }
 
     pub fn with_state<T: Any, R>(&self, state: T, callback: impl FnOnce(&Self) -> R) -> R {
@@ -271,7 +288,13 @@ impl<'a> BuildContext<'a> {
             .write()
             .unwrap()
             .insert(type_id, Rc::new(state));
-        let _guard = StateScopeGuard { states: self.inherited_states.clone(), type_id, previous };
+        let _guard = StateScopeGuard {
+            states: self
+                .inherited_states
+                .clone(),
+            type_id,
+            previous,
+        };
         callback(self)
     }
 
@@ -288,7 +311,11 @@ impl<'a> BuildContext<'a> {
     #[doc(hidden)]
     pub fn current_build_consumer(&self) -> Option<Rc<BuildConsumer>> {
         self.get_state::<CurrentBuildConsumer>()
-            .map(|consumer| consumer.0.clone())
+            .map(|consumer| {
+                consumer
+                    .0
+                    .clone()
+            })
     }
 }
 
@@ -337,10 +364,20 @@ mod tests {
         context.insert_state(1_u32);
 
         context.with_state(2_u32, |context| {
-            assert_eq!(*context.get_state::<u32>().unwrap(), 2);
+            assert_eq!(
+                *context
+                    .get_state::<u32>()
+                    .unwrap(),
+                2
+            );
         });
 
-        assert_eq!(*context.get_state::<u32>().unwrap(), 1);
+        assert_eq!(
+            *context
+                .get_state::<u32>()
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -353,7 +390,12 @@ mod tests {
         }));
 
         assert!(result.is_err());
-        assert_eq!(*context.get_state::<u32>().unwrap(), 1);
+        assert_eq!(
+            *context
+                .get_state::<u32>()
+                .unwrap(),
+            1
+        );
     }
 
     #[test]

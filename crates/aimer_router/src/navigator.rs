@@ -58,7 +58,11 @@ pub(crate) fn browser_replace_state(path: &str) {
 
 #[cfg(target_arch = "wasm32")]
 fn browser_current_path() -> Option<String> {
-    web_sys::window().and_then(|w| w.location().pathname().ok())
+    web_sys::window().and_then(|w| {
+        w.location()
+            .pathname()
+            .ok()
+    })
 }
 
 pub struct Navigator<R>
@@ -95,21 +99,34 @@ impl<R: Route> NavigatorState<R> {
     pub fn push(&self, route: R) {
         #[cfg(target_arch = "wasm32")]
         browser_push_state(&route.format());
-        self.updater.set_state(|state| {
-            state.history.push(route);
-        });
+        self.updater
+            .set_state(|state| {
+                state
+                    .history
+                    .push(route);
+            });
     }
 
     pub fn pop(&self) {
-        self.updater.set_state(|state| {
-            if state.history.len() > 1 {
-                state.history.pop();
-                #[cfg(target_arch = "wasm32")]
-                if let Some(prev) = state.history.last() {
-                    browser_replace_state(&prev.format());
+        self.updater
+            .set_state(|state| {
+                if state
+                    .history
+                    .len()
+                    > 1
+                {
+                    state
+                        .history
+                        .pop();
+                    #[cfg(target_arch = "wasm32")]
+                    if let Some(prev) = state
+                        .history
+                        .last()
+                    {
+                        browser_replace_state(&prev.format());
+                    }
                 }
-            }
-        });
+            });
     }
 }
 
@@ -121,7 +138,11 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
         {
             let updater_clone = updater;
             let closure = Closure::wrap(Box::new(move |_event: web_sys::PopStateEvent| {
-                if let Some(path) = web_sys::window().and_then(|w| w.location().pathname().ok()) {
+                if let Some(path) = web_sys::window().and_then(|w| {
+                    w.location()
+                        .pathname()
+                        .ok()
+                }) {
                     if let Some(route) = R::parse(&path) {
                         updater_clone.set_state(|state| {
                             // Replace the history stack with just this route
@@ -136,8 +157,12 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
             }) as Box<dyn FnMut(web_sys::PopStateEvent)>);
 
             if let Some(window) = web_sys::window() {
-                let _ = window
-                    .add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref());
+                let _ = window.add_event_listener_with_callback(
+                    "popstate",
+                    closure
+                        .as_ref()
+                        .unchecked_ref(),
+                );
             }
 
             // Leak the closure so it stays alive for the lifetime of the app
@@ -146,7 +171,10 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
-        let controller = navigator_controller(self.updater.clone());
+        let controller = navigator_controller(
+            self.updater
+                .clone(),
+        );
         ctx.insert_state(controller.clone());
 
         let top = self
@@ -175,13 +203,20 @@ struct NavigatorElement<R> {
 
 impl<R: 'static> NavigatorElement<R> {
     fn scoped<T>(&self, ctx: &BuildContext, callback: impl FnOnce(&BuildContext) -> T) -> T {
-        ctx.with_state(self.controller.clone(), callback)
+        ctx.with_state(
+            self.controller
+                .clone(),
+            callback,
+        )
     }
 }
 
 impl<R: 'static> VisitorElement for NavigatorElement<R> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 
     fn debug_name(&self) -> &'static str {
@@ -191,49 +226,68 @@ impl<R: 'static> VisitorElement for NavigatorElement<R> {
 
 impl<R: 'static> Drawable for NavigatorElement<R> {
     fn draw(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| self.child.draw(ctx));
+        self.scoped(ctx, |ctx| {
+            self.child
+                .draw(ctx)
+        });
     }
 }
 
 impl<R: 'static> LayoutElement for NavigatorElement<R> {
     fn pos(&self) -> Option<Vec2d> {
-        self.child.pos()
+        self.child
+            .pos()
     }
 
     fn size(&self) -> Option<Size> {
-        self.child.size()
+        self.child
+            .size()
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.scoped(ctx, |ctx| self.child.layout(ctx))
+        self.scoped(ctx, |ctx| {
+            self.child
+                .layout(ctx)
+        })
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.scoped(ctx, |ctx| self.child.computed_size(ctx))
+        self.scoped(ctx, |ctx| {
+            self.child
+                .computed_size(ctx)
+        })
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.scoped(ctx, |ctx| self.child.content_size(ctx))
+        self.scoped(ctx, |ctx| {
+            self.child
+                .content_size(ctx)
+        })
     }
 
     fn layer(&self) -> u32 {
-        self.child.layer()
+        self.child
+            .layer()
     }
 
     fn flex(&self) -> Option<f32> {
-        self.child.flex()
+        self.child
+            .flex()
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child.get_size_from_child()
+        self.child
+            .get_size_from_child()
     }
 
     fn invalidate_layout(&self) {
-        self.child.invalidate_layout();
+        self.child
+            .invalidate_layout();
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.child.pos_start_end()
+        self.child
+            .pos_start_end()
     }
 }
 
@@ -241,11 +295,23 @@ impl<R: 'static> EventElement for NavigatorElement<R> {}
 
 impl<R: 'static> Rebuildable for NavigatorElement<R> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| self.child.rebuild_if_dirty(ctx));
+        self.scoped(ctx, |ctx| {
+            self.child
+                .rebuild_if_dirty(ctx)
+        });
+    }
+
+    fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
+        self.scoped(ctx, callback);
+    }
+
+    fn is_carry_state(&self) -> bool {
+        true
     }
 
     fn mark_needs_rebuild(&self) {
-        self.child.mark_needs_rebuild();
+        self.child
+            .mark_needs_rebuild();
     }
 }
 
@@ -256,26 +322,37 @@ pub struct NavigatorController<R> {
     history_len_fn: Rc<dyn Fn() -> usize>,
 }
 
+unsafe impl<R> Send for NavigatorController<R> {}
+unsafe impl<R> Sync for NavigatorController<R> {}
 impl<R> Clone for NavigatorController<R> {
     fn clone(&self) -> Self {
         NavigatorController {
-            push_fn: self.push_fn.clone(),
-            pop_fn: self.pop_fn.clone(),
-            can_pop_fn: self.can_pop_fn.clone(),
-            history_len_fn: self.history_len_fn.clone(),
+            push_fn: self
+                .push_fn
+                .clone(),
+            pop_fn: self
+                .pop_fn
+                .clone(),
+            can_pop_fn: self
+                .can_pop_fn
+                .clone(),
+            history_len_fn: self
+                .history_len_fn
+                .clone(),
         }
     }
 }
 
-pub type NavigatorInstance<R> = Rc<NavigatorController<R>>;
+pub type NavigatorInstance<R> = NavigatorController<R>;
 
 impl<R: 'static> NavigatorController<R> {
     /// Flutter-style: `Navigator::of(ctx).push(route)`
     #[track_caller]
     pub fn of(ctx: &BuildContext) -> NavigatorInstance<R> {
-        ctx.get_state::<NavigatorController<R>>()
-            .expect("No Navigator found in context. Make sure a Navigator widget is an ancestor.")
-            .clone()
+        (*ctx
+            .get_state::<NavigatorController<R>>()
+            .expect("No Navigator found in context. Make sure a Navigator widget is an ancestor."))
+        .clone()
     }
 
     pub fn push(&self, route: R) {
@@ -314,7 +391,10 @@ impl<R: Route> StatefulWidget for Navigator<R> {
     type State = NavigatorState<R>;
     fn create_state(&self) -> Self::State {
         NavigatorState::<R> {
-            history: vec![self.initial_route.clone()],
+            history: vec![
+                self.initial_route
+                    .clone(),
+            ],
             updater: StateUpdater::empty(),
             routes: self.routes,
         }
@@ -341,7 +421,9 @@ fn navigator_controller<R: Route>(
                 #[cfg(target_arch = "wasm32")]
                 browser_push_state(&route.format());
                 updater.set_state(|state| {
-                    state.history.push(route);
+                    state
+                        .history
+                        .push(route);
                 });
             })
         },
@@ -349,10 +431,19 @@ fn navigator_controller<R: Route>(
             let updater = updater.clone();
             Rc::new(move || {
                 updater.set_state(|state| {
-                    if state.history.len() > 1 {
-                        state.history.pop();
+                    if state
+                        .history
+                        .len()
+                        > 1
+                    {
+                        state
+                            .history
+                            .pop();
                         #[cfg(target_arch = "wasm32")]
-                        if let Some(previous) = state.history.last() {
+                        if let Some(previous) = state
+                            .history
+                            .last()
+                        {
                             browser_replace_state(&previous.format());
                         }
                     }
@@ -361,9 +452,22 @@ fn navigator_controller<R: Route>(
         },
         can_pop_fn: {
             let updater = updater.clone();
-            Rc::new(move || updater.read(|state| state.history.len() > 1))
+            Rc::new(move || {
+                updater.read(|state| {
+                    state
+                        .history
+                        .len()
+                        > 1
+                })
+            })
         },
-        history_len_fn: Rc::new(move || updater.read(|state| state.history.len())),
+        history_len_fn: Rc::new(move || {
+            updater.read(|state| {
+                state
+                    .history
+                    .len()
+            })
+        }),
     }
 }
 

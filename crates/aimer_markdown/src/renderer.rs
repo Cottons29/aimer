@@ -29,14 +29,26 @@ pub type ImageResolver = Rc<dyn Fn(&MarkdownImage) -> AnyWidget>;
 
 /// Resolves network URLs with `NetworkImage` and other sources with `AssetImage`.
 pub fn default_image_resolver(image: &MarkdownImage) -> AnyWidget {
-    if image.source.starts_with("http://")
+    if image
+        .source
+        .starts_with("http://")
         || image
             .source
             .starts_with("https://")
     {
-        NetworkImage::new(image.source.clone()).boxed()
+        NetworkImage::new(
+            image
+                .source
+                .clone(),
+        )
+        .boxed()
     } else {
-        AssetImage::new(image.source.clone()).boxed()
+        AssetImage::new(
+            image
+                .source
+                .clone(),
+        )
+        .boxed()
     }
 }
 
@@ -183,7 +195,11 @@ fn render_blocks(
         .collect::<Vec<_>>();
     Column::new()
         .horizontal_alignment(BoxAlignment::Start)
-        .gaps(LayoutSpacing::all(theme.block_spacing.into()))
+        .gaps(LayoutSpacing::all(
+            theme
+                .block_spacing
+                .into(),
+        ))
         .children(children)
         .boxed()
 }
@@ -208,7 +224,10 @@ fn render_table(
 ) -> AnyWidget {
     let column_count = rows
         .iter()
-        .map(|row| row.cells.len())
+        .map(|row| {
+            row.cells
+                .len()
+        })
         .chain(std::iter::once(alignments.len()))
         .max()
         .unwrap_or(1)
@@ -530,19 +549,37 @@ mod tests {
         assert_eq!(
             resolved
                 .iter()
-                .map(|span| span.text.as_ref())
+                .map(|span| span
+                    .text
+                    .as_ref())
                 .collect::<String>(),
             "plain both gone\ncodelink[note]"
         );
         let both = resolved
             .iter()
-            .find(|span| span.text.as_ref() == "both")
+            .find(|span| {
+                span.text
+                    .as_ref()
+                    == "both"
+            })
             .unwrap();
-        assert_eq!(both.style.font_style, FontStyle::Italic);
-        assert_eq!(both.style.font_weight, FontWeight::Bold);
+        assert_eq!(
+            both.style
+                .font_style,
+            FontStyle::Italic
+        );
+        assert_eq!(
+            both.style
+                .font_weight,
+            FontWeight::Bold
+        );
         let gone = resolved
             .iter()
-            .find(|span| span.text.as_ref() == "gone")
+            .find(|span| {
+                span.text
+                    .as_ref()
+                    == "gone"
+            })
             .unwrap();
         assert!(
             gone.style
@@ -553,17 +590,26 @@ mod tests {
         assert!(
             resolved
                 .iter()
-                .any(|span| span.link.as_deref() == Some("https://example.com"))
+                .any(|span| span
+                    .link
+                    .as_deref()
+                    == Some("https://example.com"))
         );
         assert!(
             resolved
                 .iter()
-                .any(|span| span.link.as_deref() == Some("#footnote-note"))
+                .any(|span| span
+                    .link
+                    .as_deref()
+                    == Some("#footnote-note"))
         );
         assert_eq!(
             resolved
                 .iter()
-                .find(|span| span.text.as_ref() == "code")
+                .find(|span| span
+                    .text
+                    .as_ref()
+                    == "code")
                 .unwrap()
                 .style
                 .font_family,

@@ -17,13 +17,18 @@ struct SizeProbeElement {
 
 impl Widget for SizeProbe {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(SizeProbeElement { observed: self.observed.clone() })
+        Box::new(SizeProbeElement {
+            observed: self
+                .observed
+                .clone(),
+        })
     }
 }
 
 impl Drawable for SizeProbeElement {
     fn draw(&self, ctx: &BuildContext) {
-        self.observed.set(ctx.parent_size);
+        self.observed
+            .set(ctx.parent_size);
     }
 }
 

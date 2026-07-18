@@ -28,7 +28,10 @@ pub fn is_tool_available(bin: &str, probe: &[&str]) -> bool {
     Command::new(bin)
         .args(probe)
         .output()
-        .map(|o| o.status.success())
+        .map(|o| {
+            o.status
+                .success()
+        })
         .unwrap_or(false)
 }
 

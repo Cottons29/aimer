@@ -151,12 +151,33 @@ impl RawTextButton {
     const DOUBLE_TAP_INTERVAL: Duration = Duration::from_millis(500);
 
     fn active_style(&self) -> TextStyle {
-        let (mut style, color) = if self.widget.disabled {
-            (self.widget.disabled_style, self.widget.disabled_color)
-        } else if self.hovered.get() {
-            (self.widget.hover_style, self.widget.hover_color)
+        let (mut style, color) = if self
+            .widget
+            .disabled
+        {
+            (
+                self.widget
+                    .disabled_style,
+                self.widget
+                    .disabled_color,
+            )
+        } else if self
+            .hovered
+            .get()
+        {
+            (
+                self.widget
+                    .hover_style,
+                self.widget
+                    .hover_color,
+            )
         } else {
-            (self.widget.style, self.widget.color)
+            (
+                self.widget
+                    .style,
+                self.widget
+                    .color,
+            )
         };
         if let Some(color) = color {
             style.color = color;
@@ -166,7 +187,10 @@ impl RawTextButton {
 
     fn text_element(&self) -> RawTextWidget {
         RawTextWidget {
-            text: self.widget.label.clone(),
+            text: self
+                .widget
+                .label
+                .clone(),
             text_style: self.active_style(),
             text_align: Default::default(),
             cache: LayoutCache::new(),
@@ -175,7 +199,10 @@ impl RawTextButton {
     }
 
     fn execute(callback: &VoidCallback) {
-        if let Some(callback) = callback.get().as_ref() {
+        if let Some(callback) = callback
+            .get()
+            .as_ref()
+        {
             match callback {
                 RawInnerCallback::Empty => {}
                 RawInnerCallback::Sync(function) => function(()),
@@ -192,22 +219,36 @@ impl RawTextButton {
     }
 
     fn press(&self) {
-        Self::execute(&self.widget.on_press);
+        Self::execute(
+            &self
+                .widget
+                .on_press,
+        );
         let now = AnimInstant::now();
         if self
             .last_tap
             .get()
             .is_some_and(|last| now.duration_since(last) <= Self::DOUBLE_TAP_INTERVAL)
         {
-            Self::execute(&self.widget.on_double_press);
-            self.last_tap.set(None);
+            Self::execute(
+                &self
+                    .widget
+                    .on_double_press,
+            );
+            self.last_tap
+                .set(None);
         } else {
-            self.last_tap.set(Some(now));
+            self.last_tap
+                .set(Some(now));
         }
     }
 
     fn set_hovered(&self, hovered: bool) {
-        if self.hovered.replace(hovered) != hovered {
+        if self
+            .hovered
+            .replace(hovered)
+            != hovered
+        {
             request_animation_frame();
         }
     }
@@ -223,7 +264,13 @@ impl EventElement for RawTextButton {
     fn on_event(&self, event: &ElementEvent) -> bool {
         match event {
             ElementEvent::PointerMove(pos, PointerSource::Mouse, _) => {
-                self.set_hovered(self.bounds.is_inside(pos.x, pos.y) && !self.widget.disabled);
+                self.set_hovered(
+                    self.bounds
+                        .is_inside(pos.x, pos.y)
+                        && !self
+                            .widget
+                            .disabled,
+                );
                 false
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => {
@@ -234,17 +281,31 @@ impl EventElement for RawTextButton {
                 false
             }
             ElementEvent::PointerDown(pos, _, _) => {
-                let inside = self.bounds.is_inside(pos.x, pos.y);
+                let inside = self
+                    .bounds
+                    .is_inside(pos.x, pos.y);
                 self.interaction
                     .borrow_mut()
-                    .pointer_down(inside, self.widget.disabled);
-                inside && !self.widget.disabled
+                    .pointer_down(
+                        inside,
+                        self.widget
+                            .disabled,
+                    );
+                inside
+                    && !self
+                        .widget
+                        .disabled
             }
             ElementEvent::PointerUp(pos, _, _) => {
                 let action = self
                     .interaction
                     .borrow_mut()
-                    .pointer_up(self.bounds.is_inside(pos.x, pos.y), self.widget.disabled);
+                    .pointer_up(
+                        self.bounds
+                            .is_inside(pos.x, pos.y),
+                        self.widget
+                            .disabled,
+                    );
                 if action == ButtonAction::Press {
                     self.press();
                     true
@@ -265,7 +326,9 @@ impl EventElement for RawTextButton {
 
 impl LayoutElement for RawTextButton {
     fn layout(&self, ctx: &BuildContext) -> aimer_attribute::ResolvedSize {
-        let size = self.text_element().layout(ctx);
+        let size = self
+            .text_element()
+            .layout(ctx);
         let (x, y) = ctx
             .canvas
             .get_transform_translation();
@@ -289,10 +352,18 @@ impl Drawable for RawTextButton {
             .get_transform_translation();
         self.bounds
             .save(ctx.scale, x, y, size.width, size.height);
-        if !self.widget.disabled {
+        if !self
+            .widget
+            .disabled
+        {
             self.set_hovered(
                 self.bounds
-                    .is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y),
+                    .is_inside(
+                        ctx.cursor_pos
+                            .x,
+                        ctx.cursor_pos
+                            .y,
+                    ),
             );
         }
         text.draw(ctx);

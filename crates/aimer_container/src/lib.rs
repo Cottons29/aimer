@@ -105,7 +105,9 @@ mod tests {
                 index: self.index,
                 selected: self.selected,
                 hovered: false,
-                observers: self.observers.clone(),
+                observers: self
+                    .observers
+                    .clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -167,9 +169,15 @@ mod tests {
         fn create_state(&self) -> Self::State {
             TabState {
                 index: 0,
-                observer: self.observer.clone(),
-                live_updater: self.live_updater.clone(),
-                button_observers: self.button_observers.clone(),
+                observer: self
+                    .observer
+                    .clone(),
+                live_updater: self
+                    .live_updater
+                    .clone(),
+                button_observers: self
+                    .button_observers
+                    .clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -191,8 +199,14 @@ mod tests {
         }
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
-            self.observer.set(self.index);
-            *self.live_updater.borrow_mut() = Some(self.updater.clone());
+            self.observer
+                .set(self.index);
+            *self
+                .live_updater
+                .borrow_mut() = Some(
+                self.updater
+                    .clone(),
+            );
             // Content follows the selection (the image in the real app) AND a
             // Row of buttons whose highlight must follow the selection too.
             Column::new().children(vec![
@@ -202,10 +216,30 @@ mod tests {
                     .boxed(),
                 Row::new()
                     .children(vec![
-                        button(0, self.index == 0, self.button_observers.clone()),
-                        button(1, self.index == 1, self.button_observers.clone()),
-                        button(2, self.index == 2, self.button_observers.clone()),
-                        button(3, self.index == 3, self.button_observers.clone()),
+                        button(
+                            0,
+                            self.index == 0,
+                            self.button_observers
+                                .clone(),
+                        ),
+                        button(
+                            1,
+                            self.index == 1,
+                            self.button_observers
+                                .clone(),
+                        ),
+                        button(
+                            2,
+                            self.index == 2,
+                            self.button_observers
+                                .clone(),
+                        ),
+                        button(
+                            3,
+                            self.index == 3,
+                            self.button_observers
+                                .clone(),
+                        ),
                     ])
                     .boxed(),
             ])
@@ -544,10 +578,17 @@ mod tests {
     impl LayoutElement for MainAxisProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
             self.seen
-                .set(ctx.box_constraint.max_width);
+                .set(
+                    ctx.box_constraint
+                        .max_width,
+                );
             ResolvedSize {
-                width: ctx.box_constraint.max_width,
-                height: ctx.box_constraint.max_height,
+                width: ctx
+                    .box_constraint
+                    .max_width,
+                height: ctx
+                    .box_constraint
+                    .max_height,
             }
         }
     }
@@ -582,8 +623,16 @@ mod tests {
     impl LayoutElement for IntrinsicProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
             self.seen
-                .set(ctx.box_constraint.max_width);
-            ResolvedSize { width: self.intrinsic_width, height: ctx.box_constraint.max_height }
+                .set(
+                    ctx.box_constraint
+                        .max_width,
+                );
+            ResolvedSize {
+                width: self.intrinsic_width,
+                height: ctx
+                    .box_constraint
+                    .max_height,
+            }
         }
     }
     impl Rebuildable for IntrinsicProbe {}

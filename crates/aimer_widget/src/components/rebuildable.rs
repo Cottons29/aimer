@@ -13,6 +13,19 @@ pub trait Rebuildable: VisitorElement {
         None
     }
 
+    fn is_carry_state(&self) -> bool {
+        false
+    }
+
+    /// Run reconciliation work with any inherited state published by this
+    /// element available in `ctx`.
+    ///
+    /// Scope elements override this so eager descendant rebuilds performed
+    /// during state carry observe the same context as normal draw and layout.
+    fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
+        callback(ctx);
+    }
+
     /// Mark this element (and its subtree) as needing a rebuild on the next
     /// frame.
     ///

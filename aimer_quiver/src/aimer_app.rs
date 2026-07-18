@@ -196,7 +196,11 @@ pub struct HeadlessAimerApp<W: Widget + 'static> {
 
 impl<W: Widget + 'static> HeadlessAimerApp<W> {
     fn new(widget: W, options: HeadlessOptions) -> HeadlessAimerApp<W> {
-        let scale_factor = if options.scale_factor.is_finite() && options.scale_factor > 0.0 {
+        let scale_factor = if options
+            .scale_factor
+            .is_finite()
+            && options.scale_factor > 0.0
+        {
             options.scale_factor
         } else {
             1.0
@@ -245,9 +249,17 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             return;
         }
 
-        let scale_factor = self.app.window_scale;
-        let frame_size =
-            ResolvedSize { width: self.size.width as f32, height: self.size.height as f32 };
+        let scale_factor = self
+            .app
+            .window_scale;
+        let frame_size = ResolvedSize {
+            width: self
+                .size
+                .width as f32,
+            height: self
+                .size
+                .height as f32,
+        };
         let canvas = aimer_canvas::Canvas::new(&self.canvas);
         canvas.begin_frame();
         let ctx = BuildContext {
@@ -255,7 +267,9 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             canvas,
             scale: scale_factor as f32,
             parent_pos: Default::default(),
-            cursor_pos: self.app.cursor_pos,
+            cursor_pos: self
+                .app
+                .cursor_pos,
             box_constraint: BoxConstraint {
                 min_width: 0.0,
                 min_height: 0.0,
@@ -263,7 +277,9 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 max_height: frame_size.height,
             },
             visible_rect: None,
-            window: self.window.clone(),
+            window: self
+                .window
+                .clone(),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: self
                 .app
@@ -273,15 +289,26 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             inherited_states: Default::default(),
         };
 
-        if self.app.widget_root.is_none()
-            && let Some(widget) = self.app.pending_widget.take()
+        if self
+            .app
+            .widget_root
+            .is_none()
+            && let Some(widget) = self
+                .app
+                .pending_widget
+                .take()
         {
-            self.app.widget_root = Some(widget.to_element(&ctx));
+            self.app
+                .widget_root = Some(widget.to_element(&ctx));
         }
-        if let Some(root) = &self.app.widget_root {
+        if let Some(root) = &self
+            .app
+            .widget_root
+        {
             root.draw(&ctx);
         }
-        self.app.pending_resize = None;
+        self.app
+            .pending_resize = None;
     }
 
     /// Delivers a `winit` window event to the headless application.
@@ -289,13 +316,23 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         if let WindowEvent::Resized(size) = &event {
             self.size = *size;
             self.window
-                .update_headless_metrics(self.size, self.app.window_scale);
+                .update_headless_metrics(
+                    self.size,
+                    self.app
+                        .window_scale,
+                );
         }
         let action = WindowEventHandler::handle_headless_event(&mut self.app, event);
         self.window
-            .update_headless_metrics(self.size, self.app.window_scale);
+            .update_headless_metrics(
+                self.size,
+                self.app
+                    .window_scale,
+            );
         match action {
-            HeadlessEventAction::None => self.window.request_redraw(),
+            HeadlessEventAction::None => self
+                .window
+                .request_redraw(),
             HeadlessEventAction::Render => self.render_frame(),
             HeadlessEventAction::Exit => self.exit_requested = true,
         }
@@ -305,7 +342,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     /// loop.
     pub fn send_user_event(&mut self, event: AimerCustomAppEvent) {
         crate::handler::user_events::handle_user_event(&mut self.app, event);
-        self.window.request_redraw();
+        self.window
+            .request_redraw();
     }
 
     pub fn physical_size(&self) -> PhysicalSize<u32> {
@@ -314,17 +352,30 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 
     pub fn logical_size(&self) -> ResolvedSize {
         ResolvedSize {
-            width: self.size.width as f32 / self.app.window_scale as f32,
-            height: self.size.height as f32 / self.app.window_scale as f32,
+            width: self
+                .size
+                .width as f32
+                / self
+                    .app
+                    .window_scale as f32,
+            height: self
+                .size
+                .height as f32
+                / self
+                    .app
+                    .window_scale as f32,
         }
     }
 
     pub fn scale_factor(&self) -> f64 {
-        self.app.window_scale
+        self.app
+            .window_scale
     }
 
     pub fn has_native_window(&self) -> bool {
-        self.app.window.is_some()
+        self.app
+            .window
+            .is_some()
     }
 
     pub fn is_exit_requested(&self) -> bool {
@@ -333,7 +384,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 
     /// Returns and clears whether application code requested another frame.
     pub fn take_redraw_request(&self) -> bool {
-        self.window.take_redraw_request()
+        self.window
+            .take_redraw_request()
     }
 }
 
@@ -502,7 +554,11 @@ mod tests {
         fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
             self.builds
                 .fetch_add(1, Ordering::SeqCst);
-            Box::new(RecordingElement { cancels: self.cancels.clone() })
+            Box::new(RecordingElement {
+                cancels: self
+                    .cancels
+                    .clone(),
+            })
         }
     }
 
@@ -577,11 +633,28 @@ mod tests {
             device_id,
             position: PhysicalPosition::new(20.0, 30.0),
         });
-        assert_eq!((app.app.cursor_pos.x, app.app.cursor_pos.y), (20.0, 30.0));
+        assert_eq!(
+            (
+                app.app
+                    .cursor_pos
+                    .x,
+                app.app
+                    .cursor_pos
+                    .y
+            ),
+            (20.0, 30.0)
+        );
 
         app.send_window_event(WindowEvent::CursorLeft { device_id });
         assert_eq!(
-            (app.app.cursor_pos.x, app.app.cursor_pos.y),
+            (
+                app.app
+                    .cursor_pos
+                    .x,
+                app.app
+                    .cursor_pos
+                    .y
+            ),
             (
                 crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.x,
                 crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.y,
@@ -589,10 +662,18 @@ mod tests {
         );
         assert_eq!(cancels.load(Ordering::SeqCst), 0);
 
-        app.app.cursor_pos = Vec2d { x: 20.0, y: 30.0 };
+        app.app
+            .cursor_pos = Vec2d { x: 20.0, y: 30.0 };
         app.send_window_event(WindowEvent::CursorEntered { device_id });
         assert_eq!(
-            (app.app.cursor_pos.x, app.app.cursor_pos.y),
+            (
+                app.app
+                    .cursor_pos
+                    .x,
+                app.app
+                    .cursor_pos
+                    .y
+            ),
             (
                 crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.x,
                 crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.y,
@@ -641,7 +722,8 @@ mod tests {
 
     impl Drawable for RedrawElement {
         fn draw(&self, ctx: &BuildContext) {
-            ctx.window.request_redraw();
+            ctx.window
+                .request_redraw();
         }
     }
     impl LayoutElement for RedrawElement {}

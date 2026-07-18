@@ -106,7 +106,8 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
         }
         Targets::Windows | Targets::Linux => {
             let mut c = Command::new("cargo");
-            c.arg("build").arg("--lib");
+            c.arg("build")
+                .arg("--lib");
             if release {
                 c.arg("--release");
             }

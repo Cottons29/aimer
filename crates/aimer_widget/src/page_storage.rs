@@ -63,7 +63,10 @@ pub fn read<T: Clone + 'static>(key: impl Into<Key>) -> Option<T> {
     STORE.with(|m| {
         m.borrow()
             .get(&key)
-            .and_then(|v| v.downcast_ref::<T>().cloned())
+            .and_then(|v| {
+                v.downcast_ref::<T>()
+                    .cloned()
+            })
     })
 }
 
@@ -78,7 +81,8 @@ pub fn read_or<T: Clone + 'static>(key: impl Into<Key>, default: T) -> T {
 pub fn remove(key: impl Into<Key>) {
     let key = key.into();
     STORE.with(|m| {
-        m.borrow_mut().remove(&key);
+        m.borrow_mut()
+            .remove(&key);
     });
 }
 

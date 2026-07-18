@@ -130,7 +130,10 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
             }
         };
 
-        if self.window.is_none() {
+        if self
+            .window
+            .is_none()
+        {
             let window = event_loop
                 .create_window(window_attributes)
                 .unwrap();
@@ -139,7 +142,9 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
             self.window = Some(window);
         }
 
-        let window = self.window.unwrap();
+        let window = self
+            .window
+            .unwrap();
 
         // winit's iOS window is created without a `UIWindowScene`. On the
         // iOS 26/27 SDK the scene life cycle is mandatory, so a scene-less
@@ -211,27 +216,44 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if self.start_up_frames.get() > 0 {
-            let Some(window) = self.window.as_ref() else {
+        if self
+            .start_up_frames
+            .get()
+            > 0
+        {
+            let Some(window) = self
+                .window
+                .as_ref()
+            else {
                 return;
             };
             window.request_redraw();
             self.start_up_frames
-                .set(self.start_up_frames.get() - 1);
+                .set(
+                    self.start_up_frames
+                        .get()
+                        - 1,
+                );
             // debug!("About to wait, {} frames left",
             // self.start_up_frames.get());
         }
         #[cfg(debug_assertions)]
         {
             let current = self.inspector_enabled();
-            let prev = self.inspector_prev_enabled.get();
+            let prev = self
+                .inspector_prev_enabled
+                .get();
             if current != prev {
                 self.inspector_prev_enabled
                     .set(current);
-                self.inspector_change.set(true);
-                self.inspector_redraw_frames.set(5);
+                self.inspector_change
+                    .set(true);
+                self.inspector_redraw_frames
+                    .set(5);
             }
-            let frames = self.inspector_redraw_frames.get();
+            let frames = self
+                .inspector_redraw_frames
+                .get();
             if frames > 0 {
                 self.inspector_redraw_frames
                     .set(frames - 1);
@@ -256,9 +278,11 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             *hovered = None;
         }
 
-        ctx.canvas.save();
+        ctx.canvas
+            .save();
         widget.draw(ctx);
-        ctx.canvas.restore();
+        ctx.canvas
+            .restore();
     }
 
     #[cfg(debug_assertions)]
@@ -315,14 +339,20 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         #[cfg(debug_assertions)]
         {
             let current = self.inspector_enabled();
-            let prev = self.inspector_prev_enabled.get();
+            let prev = self
+                .inspector_prev_enabled
+                .get();
             if current != prev {
                 self.inspector_prev_enabled
                     .set(current);
-                self.inspector_change.set(true);
-                self.inspector_redraw_frames.set(5);
+                self.inspector_change
+                    .set(true);
+                self.inspector_redraw_frames
+                    .set(5);
             }
-            let frames = self.inspector_redraw_frames.get();
+            let frames = self
+                .inspector_redraw_frames
+                .get();
             if frames > 0 {
                 self.inspector_redraw_frames
                     .set(frames - 1);
@@ -341,9 +371,16 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         // On web, GPU init is async — consuming the resize before the GPU exists
         // would silently drop it and leave the surface at the wrong size.
         #[allow(clippy::collapsible_if)]
-        if self.render_ctx.is_ready() {
-            if let Some(size) = self.pending_resize.take() {
-                self.render_ctx.resize(size);
+        if self
+            .render_ctx
+            .is_ready()
+        {
+            if let Some(size) = self
+                .pending_resize
+                .take()
+            {
+                self.render_ctx
+                    .resize(size);
             }
         }
 
@@ -352,7 +389,10 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let cursor_pos = self.cursor_pos;
 
         #[cfg(not(target_arch = "wasm32"))]
-        let async_handle = self.async_runtime.handle().clone();
+        let async_handle = self
+            .async_runtime
+            .handle()
+            .clone();
         #[cfg(debug_assertions)]
         let inspector_enabled = self.inspector_enabled();
         let widget_root = &mut self.widget_root;
@@ -393,14 +433,18 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                     // Save and restore canvas state to ensure the inspector overlay
                     // always renders at the top layer above all widgets,
                     // unaffected by any residual transforms.
-                    build_ctx.canvas.save();
+                    build_ctx
+                        .canvas
+                        .save();
                     InspectorOverlay::draw(
                         root.as_ref(),
                         &build_ctx.canvas,
                         cursor_pos,
                         build_ctx.scale,
                     );
-                    build_ctx.canvas.restore();
+                    build_ctx
+                        .canvas
+                        .restore();
                 }
             }
         };

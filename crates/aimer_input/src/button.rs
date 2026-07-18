@@ -2,7 +2,6 @@ use std::cell::Cell;
 use std::future::Future;
 use std::rc::Rc;
 
-use aimer_attribute::CacheBounds;
 use aimer_container::Container;
 use aimer_style::BoxDecoration;
 use aimer_widget::base::{BuildContext, Color};
@@ -12,9 +11,6 @@ use aimer_widget::{
 
 use crate::callback::VoidCallback;
 use crate::gesture::gesture_detector::GestureDetector;
-use crate::gesture::{
-    DragCallback, DragUpdateCallback, ScaleCallback, ScrollCallback, SwipeCallback,
-};
 use crate::mouse_region::{MouseRegion, PointerState};
 
 /// A clickable button widget with visual feedback.
@@ -164,14 +160,26 @@ impl<W: Widget + 'static> StatefulWidget for Button<W> {
     fn create_state(&self) -> Self::State {
         ButtonState {
             is_hover: false,
-            on_press: self.on_press.clone(),
-            on_long_press: self.on_long_press.clone(),
-            on_double_press: self.on_double_press.clone(),
-            on_right_press: self.on_right_press.clone(),
-            decoration: self.decoration.clone(),
+            on_press: self
+                .on_press
+                .clone(),
+            on_long_press: self
+                .on_long_press
+                .clone(),
+            on_double_press: self
+                .on_double_press
+                .clone(),
+            on_right_press: self
+                .on_right_press
+                .clone(),
+            decoration: self
+                .decoration
+                .clone(),
             state_updater: StateUpdater::empty(),
             current_state: Rc::new(Cell::new(PointerState::Outside)),
-            child: self.child.clone(),
+            child: self
+                .child
+                .clone(),
             is_disabled: self.is_disabled,
         }
     }
@@ -194,19 +202,35 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
     }
 
     fn adopt_config_from(&mut self, new: &Self) {
-        self.on_press = new.on_press.clone();
+        self.on_press = new
+            .on_press
+            .clone();
         self.is_disabled = new.is_disabled;
-        self.on_long_press = new.on_long_press.clone();
-        self.on_double_press = new.on_double_press.clone();
-        self.on_right_press = new.on_right_press.clone();
-        self.decoration = new.decoration.clone();
-        self.child = new.child.clone();
+        self.on_long_press = new
+            .on_long_press
+            .clone();
+        self.on_double_press = new
+            .on_double_press
+            .clone();
+        self.on_right_press = new
+            .on_right_press
+            .clone();
+        self.decoration = new
+            .decoration
+            .clone();
+        self.child = new
+            .child
+            .clone();
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
-        let child = self.child.clone();
+        let child = self
+            .child
+            .clone();
 
-        let mut decor = self.decoration.clone();
+        let mut decor = self
+            .decoration
+            .clone();
 
         if self.is_hover
             && let Some(color) = decor.background_color
@@ -225,55 +249,57 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
             return child.boxed();
         }
 
-        MouseRegion {
-            on_hover_enter: {
-                let updater = self.state_updater.clone();
+        MouseRegion::new()
+            .on_hover_enter({
+                let updater = self
+                    .state_updater
+                    .clone();
                 move || {
                     updater.set_state(|s| {
                         s.is_hover = true;
                     })
                 }
-            }
-            .into(),
-            on_hover_exit: {
-                let updater = self.state_updater.clone();
+            })
+            .on_hover_exit({
+                let updater = self
+                    .state_updater
+                    .clone();
                 move || {
                     updater.set_state(|s| {
                         s.is_hover = false;
                     })
                 }
-            }
-            .into(),
-            cursor: None,
-            // current_state: state.accept_state.clone(),
-            current_state: self.current_state.clone(),
-            cached_bounds: CacheBounds::new(),
-            child: GestureDetector {
-                on_tap: if self.is_disabled {
-                    VoidCallback::default()
-                } else {
-                    self.on_press.clone()
-                },
-                on_double_press: if self.is_disabled {
-                    VoidCallback::default()
-                } else {
-                    self.on_double_press.clone()
-                },
-                on_long_press: if self.is_disabled {
-                    VoidCallback::default()
-                } else {
-                    self.on_long_press.clone()
-                },
-                on_drag_start: DragCallback::default(),
-                on_drag_update: DragUpdateCallback::default(),
-                on_drag_end: VoidCallback::default(),
-                on_right_tap: self.on_right_press.clone(),
-                on_swipe: SwipeCallback::default(),
-                on_scroll: ScrollCallback::default(),
-                on_scale: ScaleCallback::default(),
-                child,
-            },
-        }
-        .boxed()
+            })
+            .current_state(
+                self.current_state
+                    .clone(),
+            )
+            .child(
+                GestureDetector::new()
+                    .on_tap(if self.is_disabled {
+                        VoidCallback::default()
+                    } else {
+                        self.on_press
+                            .clone()
+                    })
+                    .on_double_press(if self.is_disabled {
+                        VoidCallback::default()
+                    } else {
+                        self.on_double_press
+                            .clone()
+                    })
+                    .on_long_press(if self.is_disabled {
+                        VoidCallback::default()
+                    } else {
+                        self.on_long_press
+                            .clone()
+                    })
+                    .on_right_tap(
+                        self.on_right_press
+                            .clone(),
+                    )
+                    .child(child),
+            )
+            .boxed()
     }
 }

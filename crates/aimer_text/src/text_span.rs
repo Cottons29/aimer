@@ -117,12 +117,15 @@ impl TextSpan {
     }
 
     pub fn children(mut self, children: impl IntoIterator<Item = TextSpan>) -> Self {
-        self.children = children.into_iter().collect();
+        self.children = children
+            .into_iter()
+            .collect();
         self
     }
 
     pub fn child(mut self, child: TextSpan) -> Self {
-        self.children.push(child);
+        self.children
+            .push(child);
         self
     }
 
@@ -143,13 +146,24 @@ impl TextSpan {
         inherited_link: Option<Rc<str>>,
         result: &mut Vec<ResolvedTextSpan>,
     ) {
-        let style = self.style.resolve(inherited_style);
+        let style = self
+            .style
+            .resolve(inherited_style);
         let link = self
             .link
             .clone()
             .or(inherited_link);
-        if !self.text.is_empty() {
-            result.push(ResolvedTextSpan { text: self.text.clone(), style, link: link.clone() });
+        if !self
+            .text
+            .is_empty()
+        {
+            result.push(ResolvedTextSpan {
+                text: self
+                    .text
+                    .clone(),
+                style,
+                link: link.clone(),
+            });
         }
         for child in &self.children {
             child.flatten_into(style, link.clone(), result);
@@ -200,7 +214,10 @@ pub(crate) fn layout_resolved_spans(
 
     let plain_text = spans
         .iter()
-        .map(|span| span.text.as_ref())
+        .map(|span| {
+            span.text
+                .as_ref()
+        })
         .collect::<String>();
     let break_offsets = linebreaks(&plain_text)
         .map(|(offset, _)| offset)
@@ -211,8 +228,14 @@ pub(crate) fn layout_resolved_spans(
     let mut line_start = 0;
     let mut span_start = 0;
 
-    for (span_index, span) in spans.iter().enumerate() {
-        for (grapheme_start, grapheme) in span.text.grapheme_indices(true) {
+    for (span_index, span) in spans
+        .iter()
+        .enumerate()
+    {
+        for (grapheme_start, grapheme) in span
+            .text
+            .grapheme_indices(true)
+        {
             let source_range =
                 span_start + grapheme_start..span_start + grapheme_start + grapheme.len();
             if grapheme == "\n" {
@@ -228,7 +251,11 @@ pub(crate) fn layout_resolved_spans(
                     .iter()
                     .rposition(|item| {
                         break_offsets
-                            .binary_search(&item.source_range.end)
+                            .binary_search(
+                                &item
+                                    .source_range
+                                    .end,
+                            )
                             .is_ok()
                     })
                     .map(|relative_index| line_start + relative_index + 1);
@@ -259,7 +286,9 @@ pub(crate) fn layout_resolved_spans(
             });
             x += width;
         }
-        span_start += span.text.len();
+        span_start += span
+            .text
+            .len();
     }
 
     let mut fragments: Vec<SpanLayoutFragment> = Vec::new();
@@ -268,16 +297,21 @@ pub(crate) fn layout_resolved_spans(
             && last.span_index == grapheme.span_index
             && last.line == grapheme.line
         {
-            last.text.push_str(grapheme.text);
+            last.text
+                .push_str(grapheme.text);
             last.width += grapheme.width;
             last.source_range
                 .as_mut()
                 .expect("source text fragments have a range")
-                .end = grapheme.source_range.end;
+                .end = grapheme
+                .source_range
+                .end;
         } else {
             fragments.push(SpanLayoutFragment {
                 span_index: grapheme.span_index,
-                text: grapheme.text.to_owned(),
+                text: grapheme
+                    .text
+                    .to_owned(),
                 source_range: Some(grapheme.source_range),
                 line: grapheme.line,
                 x: grapheme.x,
@@ -324,19 +358,29 @@ pub(crate) fn ellipsize_first_line(
             .next_back()
             .map(|(start, grapheme)| (start, grapheme.to_owned()))
         {
-            last.text.truncate(start);
+            last.text
+                .truncate(start);
             last.width -= measure(&grapheme, &spans[last.span_index].style);
             if let Some(source_range) = &mut last.source_range {
                 source_range.end -= grapheme.len();
             }
         }
-        if last.text.is_empty() {
-            layout.fragments.pop();
+        if last
+            .text
+            .is_empty()
+        {
+            layout
+                .fragments
+                .pop();
         }
     }
 
-    if let Some(last) = layout.fragments.last_mut() {
-        last.text.push('…');
+    if let Some(last) = layout
+        .fragments
+        .last_mut()
+    {
+        last.text
+            .push('…');
         last.width += ellipsis_width;
     } else {
         layout
@@ -377,7 +421,12 @@ mod tests {
 
         assert_eq!(flattened.len(), 3);
         assert_eq!(&*flattened[1].text, "inherited");
-        assert_eq!(flattened[1].style.font_size, 18);
+        assert_eq!(
+            flattened[1]
+                .style
+                .font_size,
+            18
+        );
         assert_eq!(
             flattened[1]
                 .style
@@ -385,8 +434,18 @@ mod tests {
                 .numeric(),
             FontWeight::Bold.numeric()
         );
-        assert_eq!(flattened[1].style.color, Color::RED);
-        assert_eq!(flattened[2].style.color, Color::BLUE);
+        assert_eq!(
+            flattened[1]
+                .style
+                .color,
+            Color::RED
+        );
+        assert_eq!(
+            flattened[2]
+                .style
+                .color,
+            Color::BLUE
+        );
     }
 
     #[test]
@@ -400,9 +459,24 @@ mod tests {
             ])
             .flatten(&TextStyle::default());
 
-        assert_eq!(flattened[0].style.font_family, custom);
-        assert_eq!(flattened[1].style.font_family, custom);
-        assert_eq!(flattened[2].style.font_family, FontFamily::SANS_SERIF);
+        assert_eq!(
+            flattened[0]
+                .style
+                .font_family,
+            custom
+        );
+        assert_eq!(
+            flattened[1]
+                .style
+                .font_family,
+            custom
+        );
+        assert_eq!(
+            flattened[2]
+                .style
+                .font_family,
+            FontFamily::SANS_SERIF
+        );
     }
 
     #[test]
@@ -415,9 +489,24 @@ mod tests {
             ])
             .flatten(&TextStyle::default());
 
-        assert_eq!(flattened[0].style.background_color, Some(Color::RED));
-        assert_eq!(flattened[1].style.background_color, Some(Color::RED));
-        assert_eq!(flattened[2].style.background_color, Some(Color::BLUE));
+        assert_eq!(
+            flattened[0]
+                .style
+                .background_color,
+            Some(Color::RED)
+        );
+        assert_eq!(
+            flattened[1]
+                .style
+                .background_color,
+            Some(Color::RED)
+        );
+        assert_eq!(
+            flattened[2]
+                .style
+                .background_color,
+            Some(Color::BLUE)
+        );
         assert_eq!(TextStyle::default().background_color, None);
     }
 
@@ -436,7 +525,10 @@ mod tests {
         assert!(
             flattened
                 .iter()
-                .all(|span| span.link.as_deref() == Some("https://aimer.dev"))
+                .all(|span| span
+                    .link
+                    .as_deref()
+                    == Some("https://aimer.dev"))
         );
     }
 
@@ -449,7 +541,12 @@ mod tests {
 
         let layout = layout_resolved_spans(&spans, 2.0, |_, _| 1.0);
 
-        assert_eq!(layout.fragments.len(), 2);
+        assert_eq!(
+            layout
+                .fragments
+                .len(),
+            2
+        );
         assert_eq!(layout.fragments[0].text, "aé");
         assert_eq!(layout.fragments[0].source_range, Some(0..3));
         assert_eq!(layout.fragments[1].text, "👩‍💻b");
@@ -462,7 +559,12 @@ mod tests {
 
         let layout = layout_resolved_spans(&spans, 0.0, |text, _| text.len() as f32);
 
-        assert_eq!(layout.fragments.len(), 2);
+        assert_eq!(
+            layout
+                .fragments
+                .len(),
+            2
+        );
         assert_eq!(layout.fragments[0].source_range, Some(0..5));
         assert_eq!(layout.fragments[1].source_range, Some(6..12));
     }
@@ -471,7 +573,10 @@ mod tests {
     fn wrapping_prefers_word_boundaries() {
         let spans = vec![ResolvedTextSpan::plain(Rc::from("hello world"), TextStyle::default())];
 
-        let layout = layout_resolved_spans(&spans, 8.0, |text, _| text.chars().count() as f32);
+        let layout = layout_resolved_spans(&spans, 8.0, |text, _| {
+            text.chars()
+                .count() as f32
+        });
 
         assert_eq!(layout.line_count, 2);
         assert_eq!(layout.fragments[0].text, "hello ");
@@ -499,18 +604,29 @@ mod tests {
             ResolvedTextSpan::plain(Rc::from("lo world"), TextStyle::new().font_size(18)),
         ];
 
-        let layout = layout_resolved_spans(&spans, 7.0, |text, _| text.chars().count() as f32);
+        let layout = layout_resolved_spans(&spans, 7.0, |text, _| {
+            text.chars()
+                .count() as f32
+        });
         let first_line = layout
             .fragments
             .iter()
             .filter(|fragment| fragment.line == 0)
-            .map(|fragment| fragment.text.as_str())
+            .map(|fragment| {
+                fragment
+                    .text
+                    .as_str()
+            })
             .collect::<String>();
         let second_line = layout
             .fragments
             .iter()
             .filter(|fragment| fragment.line == 1)
-            .map(|fragment| fragment.text.as_str())
+            .map(|fragment| {
+                fragment
+                    .text
+                    .as_str()
+            })
             .collect::<String>();
 
         assert_eq!(layout.line_count, 2);
@@ -522,11 +638,16 @@ mod tests {
     fn ellipsis_keeps_one_line_and_fits_the_available_width() {
         let style = TextStyle::new().font_size(10);
         let spans = vec![ResolvedTextSpan::plain(Rc::from("abcdef"), style)];
-        let mut layout =
-            layout_resolved_spans(&spans, 20.0, |text, _| text.chars().count() as f32 * 5.0);
+        let mut layout = layout_resolved_spans(&spans, 20.0, |text, _| {
+            text.chars()
+                .count() as f32
+                * 5.0
+        });
 
         ellipsize_first_line(&mut layout, &spans, 20.0, |text, _| {
-            text.chars().count() as f32 * 5.0
+            text.chars()
+                .count() as f32
+                * 5.0
         });
 
         assert_eq!(layout.line_count, 1);
@@ -534,7 +655,9 @@ mod tests {
             layout
                 .fragments
                 .iter()
-                .map(|fragment| fragment.text.as_str())
+                .map(|fragment| fragment
+                    .text
+                    .as_str())
                 .collect::<String>(),
             "abc…"
         );

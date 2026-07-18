@@ -106,11 +106,15 @@ impl Widget for MarkdownViewer {
             Ok(document) => renderer::render_document(
                 &document,
                 &self.theme,
-                self.link_handler.as_ref(),
+                self.link_handler
+                    .as_ref(),
                 &self.image_resolver,
             ),
             Err(error) => aimer_text::Text::new(error.to_string())
-                .text_style(self.theme.body)
+                .text_style(
+                    self.theme
+                        .body,
+                )
                 .boxed(),
         };
         if self.scrollable {
@@ -165,6 +169,10 @@ mod tests {
         });
 
         assert!(handled.is_none());
-        assert!(opened.into_inner().is_empty());
+        assert!(
+            opened
+                .into_inner()
+                .is_empty()
+        );
     }
 }

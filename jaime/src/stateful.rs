@@ -62,7 +62,9 @@ impl State<CounterWidget> for CounterState {
     // build the widget with state
     fn build(&self, _: &BuildContext) -> impl Widget {
         // debug!("self.count: {}", self.count);
-        let updater = self.updater.clone();
+        let updater = self
+            .updater
+            .clone();
         Container::new()
             .color(Color::WHITE)
             .padding(LayoutSpacing { top: Spacing::Px(20), ..Default::default() })
@@ -79,7 +81,9 @@ impl State<CounterWidget> for CounterState {
                                     .color(Colors::Black),
                             )
                             .boxed(),
-                        SizedBox::new().height(50).boxed(),
+                        SizedBox::new()
+                            .height(50)
+                            .boxed(),
                         Text::new(format!("Clicked: {}", self.count,))
                             .text_style(
                                 TextStyle::new()
@@ -87,7 +91,9 @@ impl State<CounterWidget> for CounterState {
                                     .color(Colors::Black),
                             )
                             .boxed(),
-                        SizedBox::new().height(50).boxed(),
+                        SizedBox::new()
+                            .height(50)
+                            .boxed(),
                         Container::new()
                             .width(Dimension::Px(200.0))
                             .height(Dimension::Px(50.0))
@@ -101,7 +107,9 @@ impl State<CounterWidget> for CounterState {
 
                                         println!(
                                             "Button pressed with state : {}",
-                                            updater.read_state().count
+                                            updater
+                                                .read_state()
+                                                .count
                                         );
                                         updater.set_state(|state| {
                                             state.count += 1;
@@ -120,7 +128,9 @@ impl State<CounterWidget> for CounterState {
                                     .boxed(),
                             )
                             .boxed(),
-                        SizedBox::new().height(20).boxed(),
+                        SizedBox::new()
+                            .height(20)
+                            .boxed(),
                         Container::new()
                             .width(Dimension::Px(200.0))
                             .height(Dimension::Px(50.0))
@@ -128,11 +138,15 @@ impl State<CounterWidget> for CounterState {
                                 Button::new()
                                     .disabled(self.on_loading)
                                     .on_press({
-                                        let updater = self.updater.clone();
+                                        let updater = self
+                                            .updater
+                                            .clone();
                                         move || {
                                             println!(
                                                 "Button pressed with state : {}",
-                                                updater.read_state().count
+                                                updater
+                                                    .read_state()
+                                                    .count
                                             );
                                             updater.set_state(|state| {
                                                 state.count -= 1;

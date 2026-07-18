@@ -57,69 +57,95 @@ impl VisitorElement for Box<dyn Element> {
             .visit_children(visitor)
     }
     fn debug_name(&self) -> &'static str {
-        self.as_ref().debug_name()
+        self.as_ref()
+            .debug_name()
     }
     fn element_type_id(&self) -> std::any::TypeId {
-        self.as_ref().element_type_id()
+        self.as_ref()
+            .element_type_id()
     }
 }
 
 impl LayoutElement for Box<dyn Element> {
     fn pos(&self) -> Option<Vec2d> {
-        self.as_ref().pos()
+        self.as_ref()
+            .pos()
     }
     fn size(&self) -> Option<Size> {
-        self.as_ref().size()
+        self.as_ref()
+            .size()
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.as_ref().layout(ctx)
+        self.as_ref()
+            .layout(ctx)
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.as_ref().computed_size(ctx)
+        self.as_ref()
+            .computed_size(ctx)
     }
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.as_ref().content_size(ctx)
+        self.as_ref()
+            .content_size(ctx)
     }
     fn layer(&self) -> u32 {
-        self.as_ref().layer()
+        self.as_ref()
+            .layer()
     }
 
     fn flex(&self) -> Option<f32> {
-        self.as_ref().flex()
+        self.as_ref()
+            .flex()
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.as_ref().get_size_from_child()
+        self.as_ref()
+            .get_size_from_child()
     }
 
     fn invalidate_layout(&self) {
-        self.as_ref().invalidate_layout()
+        self.as_ref()
+            .invalidate_layout()
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.as_ref().pos_start_end()
+        self.as_ref()
+            .pos_start_end()
     }
 }
 
 impl Rebuildable for Box<dyn Element> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.as_ref().rebuild_if_dirty(ctx)
+        self.as_ref()
+            .rebuild_if_dirty(ctx)
     }
 
     fn option_any(&self) -> Option<&dyn std::any::Any> {
-        self.as_ref().option_any()
+        self.as_ref()
+            .option_any()
+    }
+
+    fn is_carry_state(&self) -> bool {
+        self.as_ref()
+            .is_carry_state()
+    }
+
+    fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
+        self.as_ref()
+            .with_rebuild_context(ctx, callback)
     }
 
     fn mark_needs_rebuild(&self) {
-        self.as_ref().mark_needs_rebuild()
+        self.as_ref()
+            .mark_needs_rebuild()
     }
 }
 
 impl EventElement for Box<dyn Element> {
     fn on_event(&self, event: &ElementEvent) -> bool {
-        self.as_ref().on_event(event)
+        self.as_ref()
+            .on_event(event)
     }
 
     fn captures_pointer(&self, pointer: u64) -> bool {
@@ -135,7 +161,8 @@ impl EventElement for Box<dyn Element> {
 
 impl Drawable for Box<dyn Element> {
     fn draw(&self, ctx: &BuildContext) {
-        self.as_ref().draw(ctx)
+        self.as_ref()
+            .draw(ctx)
     }
 }
 
@@ -159,7 +186,10 @@ pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> b
     let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
     root.event_children(&mut |child| children.push(child));
 
-    for child in children.into_iter().rev() {
+    for child in children
+        .into_iter()
+        .rev()
+    {
         if dispatch_event(child, pos, event) {
             return true;
         }
@@ -176,7 +206,10 @@ pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> b
     // If the element has no position info, still try to dispatch the event.
     // This allows elements like Button (which don't track absolute position)
     // to receive events when reached through the tree traversal.
-    if root.pos_start_end().is_none() {
+    if root
+        .pos_start_end()
+        .is_none()
+    {
         return root.on_event(event);
     }
 
@@ -188,7 +221,10 @@ fn dispatch_captured_event(root: &dyn Element, pointer: u64, event: &ElementEven
 
     let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
     root.event_children(&mut |child| children.push(child));
-    for child in children.into_iter().rev() {
+    for child in children
+        .into_iter()
+        .rev()
+    {
         if let Some(handled) = dispatch_captured_event(child, pointer, event) {
             return Some(handled);
         }
@@ -207,7 +243,10 @@ pub fn broadcast_event(root: &dyn Element, event: &ElementEvent) -> bool {
     let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
     root.event_children(&mut |child| children.push(child));
 
-    for child in children.into_iter().rev() {
+    for child in children
+        .into_iter()
+        .rev()
+    {
         if broadcast_event(child, event) {
             consumed = true;
         }
@@ -270,7 +309,11 @@ mod tests {
     impl EventElement for CapturingElement {
         fn on_event(&self, _event: &ElementEvent) -> bool {
             self.events
-                .set(self.events.get() + 1);
+                .set(
+                    self.events
+                        .get()
+                        + 1,
+                );
             true
         }
 
@@ -299,6 +342,11 @@ mod tests {
         let event = ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, PointerSource::Touch, 7);
 
         assert!(dispatch_event(&element, Vec2d { x: 50.0, y: 50.0 }, &event));
-        assert_eq!(element.events.get(), 1);
+        assert_eq!(
+            element
+                .events
+                .get(),
+            1
+        );
     }
 }

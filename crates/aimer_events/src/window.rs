@@ -42,7 +42,9 @@ pub fn set_window(window: &'static Window) {
 
 /// Retrieve the application window reference, if it has been set.
 pub fn get_window() -> Option<&'static Window> {
-    GLOBAL_WINDOW.get().copied()
+    GLOBAL_WINDOW
+        .get()
+        .copied()
 }
 
 /// Install a platform redraw requester.

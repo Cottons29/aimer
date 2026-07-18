@@ -184,15 +184,23 @@ fn collect_shaping_runs<'a>(
             })
             .unwrap_or_else(unicode_bidi::Level::ltr);
 
-        let merge = result.last().is_some_and(|last| {
-            last.level == level && cluster != "\n" && !last.text.ends_with('\n')
-        });
+        let merge = result
+            .last()
+            .is_some_and(|last| {
+                last.level == level
+                    && cluster != "\n"
+                    && !last
+                        .text
+                        .ends_with('\n')
+            });
 
         if merge {
             // Extend the last run to include this cluster.  Because both slices
             // are sub-slices of `text` we can reconstruct a single slice from
             // the original pointer.
-            let last = result.last_mut().unwrap();
+            let last = result
+                .last_mut()
+                .unwrap();
             let new_end = cluster_start + cluster.len();
             // Safety: both are valid sub-slices of the same UTF-8 `text`.
             last.text = &text[last.start..new_end];
@@ -214,12 +222,18 @@ where
     F: FnMut(&str, usize) -> Vec<PositionedShapedGlyph>,
 {
     let bidi = BidiInfo::new(text, None);
-    let paragraph = bidi.paragraphs.first();
+    let paragraph = bidi
+        .paragraphs
+        .first();
     // `visual_runs` returns (Vec<Level>, Vec<Range<usize>>); we zip them into
     // (Range, Level) pairs for use in `collect_shaping_runs`.
     let visual_run_ranges: Vec<(std::ops::Range<usize>, unicode_bidi::Level)> = paragraph
         .map(|para| {
-            let (levels, ranges) = bidi.visual_runs(para, para.range.clone());
+            let (levels, ranges) = bidi.visual_runs(
+                para,
+                para.range
+                    .clone(),
+            );
             ranges
                 .into_iter()
                 .zip(levels)
@@ -247,14 +261,20 @@ where
     let mut line_start_glyph = 0;
     let mut line_width = 0.0;
     let mut baseline = options.origin_y;
-    let max_width = options.max_width.max(0.0);
-    let max_height = options.max_height.max(0.0);
+    let max_width = options
+        .max_width
+        .max(0.0);
+    let max_height = options
+        .max_height
+        .max(0.0);
 
     // Use a queue so remainder runs from word-wrapping are re-evaluated for
     // overflow on subsequent lines.  A plain `for` loop would emit the
     // remainder once and `continue`, skipping the overflow check — causing
     // long words to render past the second line's edge.
-    let mut queue: VecDeque<ShapingRun<'_>> = shaping_runs.into_iter().collect();
+    let mut queue: VecDeque<ShapingRun<'_>> = shaping_runs
+        .into_iter()
+        .collect();
 
     while let Some(shaping_run) = queue.pop_front() {
         let run_start = shaping_run.start;
@@ -647,12 +667,19 @@ fn apply_ellipsis(
     if let Some(line) = lines.last_mut() {
         let ellipsis_width = options.font_size * 0.5;
         while line.width + ellipsis_width > options.max_width
-            && line.glyph_range.end > line.glyph_range.start
+            && line
+                .glyph_range
+                .end
+                > line
+                    .glyph_range
+                    .start
         {
             if let Some(glyph) = glyphs.pop() {
-                line.glyph_range.end -= 1;
+                line.glyph_range
+                    .end -= 1;
                 line.width -= glyph.advance;
-                line.text_range.end = glyph.cluster;
+                line.text_range
+                    .end = glyph.cluster;
             } else {
                 break;
             }
@@ -661,8 +688,15 @@ fn apply_ellipsis(
         glyphs.push(PositionedShapedGlyph {
             font_id,
             glyph_id: '…' as u32 as u16,
-            cluster: line.text_range.end,
-            text_range: line.text_range.end..line.text_range.end,
+            cluster: line
+                .text_range
+                .end,
+            text_range: line
+                .text_range
+                .end
+                ..line
+                    .text_range
+                    .end,
             x,
             y: line.baseline,
             x_offset: 0.0,
@@ -671,7 +705,8 @@ fn apply_ellipsis(
             font_size: options.font_size,
             source: "…".to_string(),
         });
-        line.glyph_range.end = glyphs.len();
+        line.glyph_range
+            .end = glyphs.len();
         line.width += ellipsis_width;
         line.ascent = metrics.ascent;
     }
@@ -702,7 +737,9 @@ pub fn shape_text_styled(
     let line_height = ascent - _descent + line_gap;
 
     let clusters = time_cost!("text_layout::LayoutText - text.graphemes", { text.graphemes(true) });
-    let chars: Vec<&str> = clusters.into_iter().collect();
+    let chars: Vec<&str> = clusters
+        .into_iter()
+        .collect();
 
     let clusters = time_cost!("text_layout::LayoutText - text.graphemes loops", {
         chars
@@ -871,14 +908,32 @@ mod tests {
     fn preserves_explicit_newlines() {
         let layout = test_layout("first\nsecond", 0.0);
 
-        assert_eq!(layout.lines.len(), 2);
+        assert_eq!(
+            layout
+                .lines
+                .len(),
+            2
+        );
         assert!(layout.lines[0].hard_break);
         assert_eq!(layout.lines[0].text_range, 0..5);
         assert_eq!(layout.lines[1].text_range, 6..12);
-        assert_eq!(layout.metrics.line_count, 2);
         assert_eq!(
-            layout.metrics.height,
-            layout.metrics.line_height * 2.0 - layout.metrics.line_gap
+            layout
+                .metrics
+                .line_count,
+            2
+        );
+        assert_eq!(
+            layout
+                .metrics
+                .height,
+            layout
+                .metrics
+                .line_height
+                * 2.0
+                - layout
+                    .metrics
+                    .line_gap
         );
     }
 
@@ -886,7 +941,12 @@ mod tests {
     fn wraps_without_splitting_grapheme_clusters() {
         let layout = test_layout("Cafe\u{301} noir", 20.0);
 
-        assert!(layout.lines.len() > 1);
+        assert!(
+            layout
+                .lines
+                .len()
+                > 1
+        );
         assert!(
             layout
                 .glyphs
@@ -897,7 +957,10 @@ mod tests {
             !layout
                 .lines
                 .iter()
-                .any(|line| line.text_range.end == 4)
+                .any(|line| line
+                    .text_range
+                    .end
+                    == 4)
         );
     }
 
@@ -915,15 +978,25 @@ mod tests {
             layout
                 .glyphs
                 .last()
-                .map(|glyph| glyph.source.as_str()),
+                .map(|glyph| glyph
+                    .source
+                    .as_str()),
             Some("…")
         );
         assert!(
             !layout
                 .lines
                 .iter()
-                .any(|line| line.text_range.end == 4)
+                .any(|line| line
+                    .text_range
+                    .end
+                    == 4)
         );
-        assert!(layout.metrics.width <= options.max_width);
+        assert!(
+            layout
+                .metrics
+                .width
+                <= options.max_width
+        );
     }
 }

@@ -58,7 +58,9 @@ impl Column {
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow: self.overflow,
-            children: children.into_iter().collect(),
+            children: children
+                .into_iter()
+                .collect(),
         }
     }
 }
@@ -136,12 +138,15 @@ impl Row {
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow: self.overflow,
-            children: children.into_iter().collect(),
+            children: children
+                .into_iter()
+                .collect(),
         }
     }
 
     pub fn add_child<W: Widget + 'static>(mut self, child: W) -> Self {
-        self.children.push(Box::new(child));
+        self.children
+            .push(Box::new(child));
         self
     }
 

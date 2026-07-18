@@ -80,7 +80,10 @@ async fn load_bytes(source: &SvgSource) -> Result<Vec<u8>, String> {
             let response = reqwest::get(url.as_ref())
                 .await
                 .map_err(|error| error.to_string())?;
-            if !response.status().is_success() {
+            if !response
+                .status()
+                .is_success()
+            {
                 return Err(format!("SVG request failed with status {}", response.status()));
             }
             response
@@ -102,7 +105,9 @@ async fn load_bytes(source: &SvgSource) -> Result<Vec<u8>, String> {
     }
     let url = match source {
         SvgSource::Asset(key) => asset_url(key),
-        SvgSource::File(path) => path.to_string_lossy().into_owned(),
+        SvgSource::File(path) => path
+            .to_string_lossy()
+            .into_owned(),
         SvgSource::Network(url) => url.to_string(),
         SvgSource::Memory(_) => unreachable!(),
     };
@@ -203,10 +208,18 @@ mod tests {
         )));
         assert!(matches!(loader.state(), SvgLoadState::Loading));
 
-        let state = loader.load().await;
+        let state = loader
+            .load()
+            .await;
 
         let SvgLoadState::Ready(document) = state else { panic!("memory SVG should load") };
-        assert_eq!(document.scene().viewport.width, 2.0);
+        assert_eq!(
+            document
+                .scene()
+                .viewport
+                .width,
+            2.0
+        );
         assert!(matches!(loader.state(), SvgLoadState::Ready(_)));
     }
 
@@ -218,7 +231,9 @@ mod tests {
         use super::*;
 
         let directory = tempfile::tempdir().unwrap();
-        let valid_path = directory.path().join("valid.svg");
+        let valid_path = directory
+            .path()
+            .join("valid.svg");
         std::fs::write(
             &valid_path,
             br#"<svg width="7" height="5" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#,
@@ -229,10 +244,19 @@ mod tests {
                 .to_string_lossy()
                 .as_ref(),
         )));
-        let SvgLoadState::Ready(document) = valid.load().await else {
+        let SvgLoadState::Ready(document) = valid
+            .load()
+            .await
+        else {
             panic!("valid SVG asset should load");
         };
-        assert_eq!(document.scene().viewport.width, 7.0);
+        assert_eq!(
+            document
+                .scene()
+                .viewport
+                .width,
+            7.0
+        );
 
         let missing = SvgLoader::new(SvgSource::Asset(Arc::from(
             directory
@@ -241,7 +265,12 @@ mod tests {
                 .to_string_lossy()
                 .as_ref(),
         )));
-        assert!(matches!(missing.load().await, SvgLoadState::Error(_)));
+        assert!(matches!(
+            missing
+                .load()
+                .await,
+            SvgLoadState::Error(_)
+        ));
 
         let malformed_path = directory
             .path()
@@ -252,7 +281,12 @@ mod tests {
                 .to_string_lossy()
                 .as_ref(),
         )));
-        assert!(matches!(malformed.load().await, SvgLoadState::Error(_)));
+        assert!(matches!(
+            malformed
+                .load()
+                .await,
+            SvgLoadState::Error(_)
+        ));
     }
 
     #[test]

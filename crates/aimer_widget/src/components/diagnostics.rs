@@ -50,7 +50,11 @@ impl Widget for ErrorWidget {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         #[cfg(not(debug_assertions))]
         aimer_utils::log::error(&self.message);
-        Box::new(ErrorElement { message: self.message.clone() })
+        Box::new(ErrorElement {
+            message: self
+                .message
+                .clone(),
+        })
     }
 
     fn debug_name(&self) -> &'static str {
@@ -80,14 +84,15 @@ impl ErrorElement {
         #[cfg(not(debug_assertions))]
         let _ = message;
 
-        ctx.canvas.draw_text_wrapped(
-            text,
-            Vec2d { x: 12.0, y: 24.0 },
-            14.0,
-            Color::WHITE,
-            (size.width - 24.0).max(0.0),
-            600,
-        );
+        ctx.canvas
+            .draw_text_wrapped(
+                text,
+                Vec2d { x: 12.0, y: 24.0 },
+                14.0,
+                Color::WHITE,
+                (size.width - 24.0).max(0.0),
+                600,
+            );
     }
 }
 
@@ -136,11 +141,17 @@ impl<W: Widget + 'static> OverflowIndicator<W> {
 
 impl<W: Widget + 'static> Widget for OverflowIndicator<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self.child.to_element(ctx);
+        let child = self
+            .child
+            .to_element(ctx);
         let label = self
             .label
             .clone()
-            .unwrap_or_else(|| self.child.debug_name().to_string());
+            .unwrap_or_else(|| {
+                self.child
+                    .debug_name()
+                    .to_string()
+            });
         Box::new(RawOverflowIndicator { child, label, clip: self.clip })
     }
 
@@ -158,16 +169,21 @@ struct RawOverflowIndicator {
 impl Drawable for RawOverflowIndicator {
     fn draw(&self, ctx: &BuildContext) {
         let bounds = self.computed_size(ctx);
-        let child_size = self.child.computed_size(ctx);
+        let child_size = self
+            .child
+            .computed_size(ctx);
         let overflow = detect_overflow(child_size, bounds, Vec2d::default());
 
-        ctx.canvas.save();
+        ctx.canvas
+            .save();
         if self.clip {
             ctx.canvas
                 .set_clip(Vec2d::default(), bounds);
         }
-        self.child.draw(ctx);
-        ctx.canvas.restore();
+        self.child
+            .draw(ctx);
+        ctx.canvas
+            .restore();
 
         paint_overflow_indicator(ctx, bounds, overflow, &self.label);
     }
@@ -175,7 +191,10 @@ impl Drawable for RawOverflowIndicator {
 
 impl EventElement for RawOverflowIndicator {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 }
 
@@ -183,7 +202,10 @@ impl Rebuildable for RawOverflowIndicator {}
 
 impl VisitorElement for RawOverflowIndicator {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child.as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 
     fn debug_name(&self) -> &'static str {
@@ -193,23 +215,30 @@ impl VisitorElement for RawOverflowIndicator {
 
 impl LayoutElement for RawOverflowIndicator {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let child = self.child.computed_size(ctx);
+        let child = self
+            .child
+            .computed_size(ctx);
         ResolvedSize {
             width: constrain(
                 child.width,
-                ctx.box_constraint.min_width,
-                ctx.box_constraint.max_width,
+                ctx.box_constraint
+                    .min_width,
+                ctx.box_constraint
+                    .max_width,
             ),
             height: constrain(
                 child.height,
-                ctx.box_constraint.min_height,
-                ctx.box_constraint.max_height,
+                ctx.box_constraint
+                    .min_height,
+                ctx.box_constraint
+                    .max_height,
             ),
         }
     }
 
     fn invalidate_layout(&self) {
-        self.child.invalidate_layout();
+        self.child
+            .invalidate_layout();
     }
 }
 
@@ -254,15 +283,16 @@ pub fn paint_overflow_indicator(
         let mut x = 0.0;
         let mut yellow = true;
         while x < bounds.width {
-            ctx.canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize {
-                    width: STRIPE.min(bounds.width - x),
-                    height: THICKNESS.min(bounds.height),
-                },
-                if yellow { Color::YELLOW } else { Color::BLACK },
-                [0.0; 4],
-            );
+            ctx.canvas
+                .fill_color_rect(
+                    Vec2d { x, y },
+                    ResolvedSize {
+                        width: STRIPE.min(bounds.width - x),
+                        height: THICKNESS.min(bounds.height),
+                    },
+                    if yellow { Color::YELLOW } else { Color::BLACK },
+                    [0.0; 4],
+                );
             yellow = !yellow;
             x += STRIPE;
         }
@@ -271,15 +301,16 @@ pub fn paint_overflow_indicator(
         let mut y = 0.0;
         let mut yellow = true;
         while y < bounds.height {
-            ctx.canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize {
-                    width: THICKNESS.min(bounds.width),
-                    height: STRIPE.min(bounds.height - y),
-                },
-                if yellow { Color::YELLOW } else { Color::BLACK },
-                [0.0; 4],
-            );
+            ctx.canvas
+                .fill_color_rect(
+                    Vec2d { x, y },
+                    ResolvedSize {
+                        width: THICKNESS.min(bounds.width),
+                        height: STRIPE.min(bounds.height - y),
+                    },
+                    if yellow { Color::YELLOW } else { Color::BLACK },
+                    [0.0; 4],
+                );
             yellow = !yellow;
             y += STRIPE;
         }
@@ -300,12 +331,13 @@ pub fn paint_overflow_indicator(
 
     let text = format!("{label} overflowed by {:.1}px", overflow.maximum());
     let width = ((text.len() as f32 * 6.0) + 8.0).min(bounds.width);
-    ctx.canvas.fill_color_rect(
-        Vec2d { x: 0.0, y: 0.0 },
-        ResolvedSize { width, height: 18.0_f32.min(bounds.height) },
-        Color::BLACK,
-        [0.0; 4],
-    );
+    ctx.canvas
+        .fill_color_rect(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width, height: 18.0_f32.min(bounds.height) },
+            Color::BLACK,
+            [0.0; 4],
+        );
     ctx.canvas
         .draw_text(&text, Vec2d { x: 4.0, y: 13.0 }, 10.0, Color::YELLOW, 600);
 }

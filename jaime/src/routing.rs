@@ -218,7 +218,12 @@ mod tests {
             tab_child,
         );
         assert_eq!(shell.active, 0);
-        assert_eq!(shell.branches.len(), 3);
+        assert_eq!(
+            shell
+                .branches
+                .len(),
+            3
+        );
         assert_eq!(shell.branches[0], vec![TabRoute::Feed]);
         assert_eq!(shell.branches[1], vec![TabRoute::Notifications]);
         assert_eq!(shell.branches[2], vec![TabRoute::Profile]);

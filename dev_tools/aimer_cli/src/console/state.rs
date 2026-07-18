@@ -54,11 +54,15 @@ impl ScrollablePane {
     }
 
     pub fn scroll_up(&mut self, amount: u16) {
-        self.scroll = self.scroll.saturating_add(amount);
+        self.scroll = self
+            .scroll
+            .saturating_add(amount);
     }
 
     pub fn scroll_down(&mut self, amount: u16) {
-        self.scroll = self.scroll.saturating_sub(amount);
+        self.scroll = self
+            .scroll
+            .saturating_sub(amount);
     }
 
     pub fn reset(&mut self) {
@@ -187,8 +191,13 @@ impl AppState {
     pub fn push_build_log(&mut self, msg: String) {
         self.build_logs
             .push(msg.replace('\r', ""));
-        if self.build_logs.len() > MAX_LINES {
-            self.build_logs.remove(0);
+        if self
+            .build_logs
+            .len()
+            > MAX_LINES
+        {
+            self.build_logs
+                .remove(0);
         }
     }
 
@@ -196,9 +205,17 @@ impl AppState {
     /// capping history.
     pub fn push_app_log(&mut self, msg: String) {
         self.app_logs
-            .push(msg.replace('\r', "").process_log());
-        if self.app_logs.len() > MAX_LINES {
-            self.app_logs.remove(0);
+            .push(
+                msg.replace('\r', "")
+                    .process_log(),
+            );
+        if self
+            .app_logs
+            .len()
+            > MAX_LINES
+        {
+            self.app_logs
+                .remove(0);
         }
     }
 
@@ -214,19 +231,25 @@ impl AppState {
 
     /// Cycle focus to the next pane.
     pub fn next_pane(&mut self) {
-        self.pane = self.pane.next();
+        self.pane = self
+            .pane
+            .next();
     }
 
     /// Clear and reset the build pane.
     pub fn clear_build(&mut self) {
-        self.build_logs.clear();
-        self.build_pane.reset();
+        self.build_logs
+            .clear();
+        self.build_pane
+            .reset();
     }
 
     /// Clear and reset the app pane.
     pub fn clear_app(&mut self) {
-        self.app_logs.clear();
-        self.app_pane.reset();
+        self.app_logs
+            .clear();
+        self.app_pane
+            .reset();
     }
 
     /// Drop any active selection (and stop an in-progress drag).
@@ -240,7 +263,10 @@ impl AppState {
     /// are inclusive, matching Vim's character-wise visual mode.
     pub fn selected_text(&self) -> Option<String> {
         let sel = self.selection?;
-        let logical = &self.last_view.as_ref()?.logical;
+        let logical = &self
+            .last_view
+            .as_ref()?
+            .logical;
         if logical.is_empty() {
             return None;
         }
@@ -249,7 +275,11 @@ impl AppState {
         let la = la.min(last_line);
         let lb = lb.min(last_line);
 
-        let line_chars = |idx: usize| -> Vec<char> { logical[idx].chars().collect() };
+        let line_chars = |idx: usize| -> Vec<char> {
+            logical[idx]
+                .chars()
+                .collect()
+        };
 
         if la == lb {
             let chars = line_chars(la);
@@ -258,7 +288,11 @@ impl AppState {
             }
             let start = ca.min(chars.len() - 1);
             let end = cb.min(chars.len() - 1);
-            Some(chars[start..=end].iter().collect())
+            Some(
+                chars[start..=end]
+                    .iter()
+                    .collect(),
+            )
         } else {
             let mut out = String::new();
             // First line: from `ca` to its end.
@@ -447,8 +481,16 @@ mod tests {
         let state = AppState::new();
         assert_eq!(state.pane, ConsoleType::App);
         assert_eq!(state.status, Status::Compiling(0));
-        assert!(state.build_logs.is_empty());
-        assert!(state.app_logs.is_empty());
+        assert!(
+            state
+                .build_logs
+                .is_empty()
+        );
+        assert!(
+            state
+                .app_logs
+                .is_empty()
+        );
         assert!(!state.inspector_full_tree);
         assert_eq!(state.inspector_cursor, 0);
     }
@@ -503,9 +545,20 @@ mod tests {
         for i in 0..(MAX_LINES + 10) {
             state.push_build_log(format!("line {i}"));
         }
-        assert_eq!(state.build_logs.len(), MAX_LINES);
+        assert_eq!(
+            state
+                .build_logs
+                .len(),
+            MAX_LINES
+        );
         // Oldest lines dropped; last line preserved.
-        assert_eq!(state.build_logs.last().unwrap(), &format!("line {}", MAX_LINES + 9));
+        assert_eq!(
+            state
+                .build_logs
+                .last()
+                .unwrap(),
+            &format!("line {}", MAX_LINES + 9)
+        );
     }
 
     #[test]
@@ -513,16 +566,38 @@ mod tests {
         let mut state = AppState::new();
         state.push_build_log("b".to_string());
         state.push_app_log("a".to_string());
-        state.build_pane.scroll_up(5);
-        state.app_pane.scroll_up(5);
+        state
+            .build_pane
+            .scroll_up(5);
+        state
+            .app_pane
+            .scroll_up(5);
 
         state.clear_build();
-        assert!(state.build_logs.is_empty());
-        assert_eq!(state.build_pane.scroll, 0);
+        assert!(
+            state
+                .build_logs
+                .is_empty()
+        );
+        assert_eq!(
+            state
+                .build_pane
+                .scroll,
+            0
+        );
 
         state.clear_app();
-        assert!(state.app_logs.is_empty());
-        assert_eq!(state.app_pane.scroll, 0);
+        assert!(
+            state
+                .app_logs
+                .is_empty()
+        );
+        assert_eq!(
+            state
+                .app_pane
+                .scroll,
+            0
+        );
     }
 
     // ── Selection / yank ─────────────────────────────────────────────
@@ -548,9 +623,17 @@ mod tests {
     fn selection_defaults_off() {
         let state = AppState::new();
         assert!(!state.selection_mode);
-        assert!(state.selection.is_none());
+        assert!(
+            state
+                .selection
+                .is_none()
+        );
         assert!(!state.selecting);
-        assert!(state.last_view.is_none());
+        assert!(
+            state
+                .last_view
+                .is_none()
+        );
     }
 
     #[test]
@@ -565,14 +648,24 @@ mod tests {
     fn selected_text_single_line_inclusive() {
         let mut state = state_with(&["hello world"]);
         state.selection = Some(Selection { anchor: (0, 0), cursor: (0, 4) });
-        assert_eq!(state.selected_text().as_deref(), Some("hello"));
+        assert_eq!(
+            state
+                .selected_text()
+                .as_deref(),
+            Some("hello")
+        );
     }
 
     #[test]
     fn selected_text_is_order_independent() {
         let mut state = state_with(&["hello world"]);
         state.selection = Some(Selection { anchor: (0, 4), cursor: (0, 0) });
-        assert_eq!(state.selected_text().as_deref(), Some("hello"));
+        assert_eq!(
+            state
+                .selected_text()
+                .as_deref(),
+            Some("hello")
+        );
     }
 
     #[test]
@@ -580,14 +673,24 @@ mod tests {
         let mut state = state_with(&["foo", "bar", "baz"]);
         // From col 1 of "foo" through col 1 of "baz", whole middle line.
         state.selection = Some(Selection { anchor: (0, 1), cursor: (2, 1) });
-        assert_eq!(state.selected_text().as_deref(), Some("oo\nbar\nba"));
+        assert_eq!(
+            state
+                .selected_text()
+                .as_deref(),
+            Some("oo\nbar\nba")
+        );
     }
 
     #[test]
     fn selected_text_clamps_column_past_eol() {
         let mut state = state_with(&["ab"]);
         state.selection = Some(Selection { anchor: (0, 0), cursor: (0, 99) });
-        assert_eq!(state.selected_text().as_deref(), Some("ab"));
+        assert_eq!(
+            state
+                .selected_text()
+                .as_deref(),
+            Some("ab")
+        );
     }
 
     #[test]
@@ -609,7 +712,11 @@ mod tests {
         state.selection = Some(Selection { anchor: (0, 0), cursor: (0, 0) });
         state.selecting = true;
         state.clear_selection();
-        assert!(state.selection.is_none());
+        assert!(
+            state
+                .selection
+                .is_none()
+        );
         assert!(!state.selecting);
     }
 }
