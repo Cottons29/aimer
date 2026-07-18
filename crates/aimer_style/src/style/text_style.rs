@@ -1,5 +1,5 @@
 use aimer_color::prelude::{Color, Colors};
-pub use aimer_font::{FontFamily, FontStyle, FontWeight};
+pub use aimer_cupid::font::{FontFamily, FontStyle, FontWeight};
 
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy)]

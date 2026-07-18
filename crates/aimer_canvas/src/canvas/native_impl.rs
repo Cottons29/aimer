@@ -2,10 +2,10 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 use aimer_cupid::canvas::CupidCanvas;
+use aimer_cupid::font::{FontFamily, FontStyle};
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 use aimer_cupid::text_pipeline::TextOverflowMode;
 use aimer_cupid::utilities::Color as CupidColor;
-use aimer_font::{FontFamily, FontStyle};
 use std::sync::Arc;
 
 use crate::canvas::CanvasRendering;

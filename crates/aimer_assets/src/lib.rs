@@ -1,8 +1,17 @@
 pub mod img_widget;
 
+pub mod font {
+    pub use aimer_cupid::font::*;
+}
+
 use std::fmt::Debug;
 
+pub use aimer_svg::SvgAsset;
 use aimer_widget::base::BuildContext;
+pub use font::{
+    FontError, FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight,
+    bundled_monospace_bytes,
+};
 pub use img_widget::asset_image::AssetImage;
 pub use img_widget::image_widget::Image;
 pub use img_widget::network_image::NetworkImage;
@@ -59,4 +68,17 @@ pub type LoadingResult = Result<u32, &'static str>;
 ///   image and is expected to be provided by the caller.
 pub trait ImageProvider: Clone + Debug {
     fn get_image(&self, ctx: &BuildContext) -> ImageResult;
+}
+
+#[cfg(test)]
+mod public_api_tests {
+    use aimer_widget::Widget;
+
+    use super::{FontFamily, SvgAsset};
+
+    #[test]
+    fn exposes_font_and_svg_assets_from_one_crate() {
+        assert_ne!(FontFamily::SANS_SERIF, FontFamily::MONOSPACE);
+        assert_eq!(SvgAsset::new("assets/icon.svg").debug_name(), "SvgAsset");
+    }
 }

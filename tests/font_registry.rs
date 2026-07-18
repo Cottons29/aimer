@@ -1,10 +1,8 @@
 use aimer::style::TextStyle;
-use aimer::{
-    Color, FontError, FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight, RichText,
-    SpanStyle, TextSpan,
-};
+use aimer::{Color, RichText, SpanStyle, TextSpan};
+use aimer_assets::{FontError, FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight};
 
-const TEST_FONT: &[u8] = include_bytes!("../crates/aimer_font/fonts/JetBrainsMono-Regular.ttf");
+const TEST_FONT: &[u8] = aimer_assets::bundled_monospace_bytes();
 
 #[test]
 fn named_font_registration_is_validated_and_stable() {

@@ -22,3 +22,6 @@ wasm-bindgen-futures.workspace = true
 wasm-bindgen.workspace = true
 js-sys.workspace = true
 web-sys = { workspace = true, features = ["Response", "Window"] }
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -7,7 +7,6 @@ edition = "2024"
 aimer_attribute.workspace = true
 aimer_utils.workspace = true
 aimer_color.workspace = true
-aimer_font.workspace = true
 once_cell.workspace = true
 
 

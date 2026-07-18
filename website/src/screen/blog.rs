@@ -51,70 +51,7 @@ impl StatelessWidget for BlogListPage {
     }
 }
 
-#[widget(Stateless)]
-#[derive(Clone)]
-pub struct BlogDetailPage {
-    id: String,
-}
-
-impl BlogDetailPage {
-    pub fn boxing(id: String, _: &BuildContext) -> Box<dyn Widget> {
-        Box::new(Self { id })
-    }
-}
-
-impl StatelessWidget for BlogDetailPage {
-    fn build(&self, ctx: &BuildContext) -> impl Widget {
-        let store = ctx.watch::<BlogStore>();
-        let state = store
-            .details
-            .get(&self.id)
-            .cloned()
-            .unwrap_or_default();
-        if matches!(state, LoadState::Idle) {
-            request_blog_detail(ProviderHandle::<BlogStore>::of(ctx), self.id.clone());
-        }
-        let navigator = NavigatorController::<AppRouter>::of(ctx);
-        let content = match state {
-            LoadState::Idle | LoadState::Loading => status_text("Loading blog…", Color::BLACK),
-            LoadState::Error(error) => status_text(&error, Color::RED),
-            LoadState::Ready(markdown) => {
-                info!("Markdown: {}", markdown);
-                MarkdownViewer::new()
-                    .markdown(markdown)
-                    .scrollable(false)
-                    .boxed()
-            },
-        };
-
-        Container::new()
-            .color(Color::WHITE)
-            .child(
-                Scrollable::new()
-                    .axis(ScrollAxis::Vertical)
-                    .child(
-                        Container::new()
-                            .padding(app_padding(ctx))
-                            .child(
-                                Column::new()
-                                    .horizontal_alignment(BoxAlignment::Start)
-                                    .children(vec![
-                                        Button::new()
-                                            .on_press(move || navigator.pop())
-                                            .child(Text::new("← Back to blogs"))
-                                            .boxed(),
-                                        SizedBox::new().height(24).boxed(),
-                                        content,
-                                        SizedBox::new().height(48).boxed(),
-                                    ]),
-                            ),
-                    ),
-            )
-            .boxed()
-    }
-}
-
-fn page(title: &str, content: Box<dyn Widget>, ctx: &BuildContext) -> Box<dyn Widget> {
+fn page(title: &str, content: AnyWidget, ctx: &BuildContext) -> AnyWidget {
     Container::new()
         .color(Color::WHITE)
         .child(
@@ -151,7 +88,7 @@ fn blog_row(blog: BlogSummary, navigator: Rc<NavigatorController<AppRouter>>) ->
     Button::new()
         .decoration(
             BoxDecoration::new()
-                .background_color(Color::WHITE.darken(0.33))
+                .background_color(Color::GRAY.with_alpha(0.2))
                 .border_radius(8),
         )
         .on_press(move || navigator.push(AppRouter::BlogDetail { id: route_id.clone() }))
@@ -185,7 +122,7 @@ fn blog_row(blog: BlogSummary, navigator: Rc<NavigatorController<AppRouter>>) ->
         .boxed()
 }
 
-fn status_text(message: &str, color: Color) -> Box<dyn Widget> {
+pub(crate) fn status_text(message: &str, color: Color) -> Box<dyn Widget> {
     Text::new(message.to_owned())
         .text_style(
             TextStyle::new()

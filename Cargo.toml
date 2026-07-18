@@ -27,7 +27,6 @@ aimer_text.workspace = true
 aimer_macro.workspace = true
 aimer_provider.workspace = true
 aimer_svg.workspace = true
-aimer_font.workspace = true
 aimer_markdown.workspace = true
 
 
@@ -52,7 +51,6 @@ members = [
     "crates/aimer_inspector",
     "crates/aimer_assets",
     "crates/aimer_style",
-    "crates/aimer_font",
     "crates/aimer_text",
     "crates/aimer_macro",
     "jaime"
@@ -75,7 +73,6 @@ aimer_inspector = { path = "crates/aimer_inspector" }
 aimer_cupid = { path = "aimer_cupid" }
 aimer_assets = { path = "crates/aimer_assets" }
 aimer_style = { path = "crates/aimer_style" }
-aimer_font = { path = "crates/aimer_font" }
 aimer_text = { path = "crates/aimer_text" }
 aimer_macro = { path = "crates/aimer_macro" }
 aimer_provider = { path = "crates/aimer_provider" }

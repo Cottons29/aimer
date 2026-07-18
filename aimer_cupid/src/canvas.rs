@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aimer_font::{FontFamily, FontStyle, FontWeight};
+use crate::font::{FontFamily, FontStyle, FontWeight};
 
 use crate::draw_cmd::DrawList;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
@@ -777,7 +777,7 @@ impl Default for CupidCanvas {
 
 #[cfg(test)]
 mod family_metrics_tests {
-    use aimer_font::{FontFamily, FontStyle, FontWeight};
+    use crate::font::{FontFamily, FontStyle, FontWeight};
 
     use super::CupidCanvas;
 
