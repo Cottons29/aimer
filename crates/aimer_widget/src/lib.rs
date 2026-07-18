@@ -1,3 +1,4 @@
+mod async_builder;
 mod attribute;
 pub mod clipboard;
 pub mod components;
@@ -65,6 +66,7 @@ pub mod base {
 pub use aimer_canvas::TextOverflowMode;
 pub use aimer_macro::{main, widget};
 
+pub use crate::async_builder::{AsyncBuilder, AsyncSnapshot};
 pub use crate::components::element::{broadcast_event, dispatch_event};
 pub use crate::key::Key;
 pub use crate::layout_cache::LayoutCache;
