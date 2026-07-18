@@ -1,4 +1,5 @@
 pub mod animated;
+mod async_builder;
 mod color_sync;
 mod custom_font;
 mod markdown_example;
@@ -31,7 +32,7 @@ pub fn my_app() {
     //     Expanded::new().child(TestFadingAnimation),
     // ])))
     // test_positioned()
-    markdown_example::start_markdown_example()
+    async_builder::start_async_builder_example()
 }
 #[allow(unused)]
 fn test_text() {
