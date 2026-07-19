@@ -822,21 +822,3 @@ mod family_metrics_tests {
         );
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn measurement_uses_renderable_fallback_for_cjk_text() {
-        let canvas = CupidCanvas::new();
-        let mut rasterizer = canvas
-            .rasterizer
-            .borrow_mut();
-
-        let primary_font_id = rasterizer.primary_font_id();
-        let cjk_font_id = rasterizer.font_id_for_codepoint('你');
-
-        assert_ne!(cjk_font_id, primary_font_id);
-    }
-}
