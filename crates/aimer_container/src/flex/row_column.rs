@@ -1,7 +1,7 @@
 use aimer_attribute::CacheBounds;
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, RequiredChild, Widget};
+use aimer_widget::{AnyWidget, Element, RequiredChild, Widget};
 
 use crate::flex::raw_flex::RawFlex;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
@@ -51,6 +51,23 @@ impl Column {
         self.overflow = overflow;
         self
     }
+
+
+    /// Same as [`Self::children`] but returns a boxed widget.
+    ///
+    /// equal to Self::children(\[...\]).boxed()
+    pub fn box_children<W: Widget + 'static>(self, children: impl IntoIterator<Item = W>) -> AnyWidget {
+        Row {
+            vertical_alignment: self.vertical_alignment,
+            horizontal_alignment: self.horizontal_alignment,
+            gaps: self.gaps,
+            overflow: self.overflow,
+            children: children
+                .into_iter()
+                .collect(),
+        }.boxed()
+    }
+
 
     pub fn children<W: Widget>(self, children: impl IntoIterator<Item = W>) -> Column<W> {
         Column {
@@ -142,6 +159,22 @@ impl Row {
                 .into_iter()
                 .collect(),
         }
+    }
+
+
+    /// Same as [`Self::children`] but returns a boxed widget.
+    ///
+    /// equal to Self::children(\[...\]).boxed()
+    pub fn box_children<W: Widget + 'static>(self, children: impl IntoIterator<Item = W>) -> AnyWidget {
+        Row {
+            vertical_alignment: self.vertical_alignment,
+            horizontal_alignment: self.horizontal_alignment,
+            gaps: self.gaps,
+            overflow: self.overflow,
+            children: children
+                .into_iter()
+                .collect(),
+        }.boxed()
     }
 
     pub fn add_child<W: Widget + 'static>(mut self, child: W) -> Self {

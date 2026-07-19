@@ -6,7 +6,7 @@ use aimer_widget::base::Color;
 use unicode_linebreak::linebreaks;
 use unicode_segmentation::UnicodeSegmentation;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct SpanStyle {
     pub font_size: Option<u32>,
     pub font_family: Option<FontFamily>,

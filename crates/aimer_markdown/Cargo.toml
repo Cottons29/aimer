@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aimer_utils.workspace = true
 aimer_widget.workspace = true
 aimer_text.workspace = true
 aimer_container.workspace = true
@@ -12,3 +13,7 @@ aimer_assets.workspace = true
 aimer_color.workspace = true
 aimer_style.workspace = true
 webbrowser.workspace = true
+aimer_svg.workspace = true
+arborium = {workspace = true, features = ["all-languages"]}
+dom_query = {workspace = true, features = ["markdown"]}
+htmd = "0.5.4"

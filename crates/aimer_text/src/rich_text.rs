@@ -283,18 +283,13 @@ fn push_selection_run(runs: &mut Vec<PreparedSelection>, run: PreparedSelection)
     }
 }
 
-fn overlap_selection_lines(runs: &mut [PreparedSelection], overlap: f32) {
-    let Some(last_line) = runs
-        .last()
-        .map(|run| run.line)
-    else {
-        return;
-    };
-
+fn snap_selection_lines_to_pixels(runs: &mut [PreparedSelection]) {
     for run in runs {
-        if run.line < last_line {
-            run.height += overlap;
-        }
+        let bottom = (run.y + run.height).round();
+        run.y = run
+            .y
+            .round();
+        run.height = (bottom - run.y).max(0.0);
     }
 }
 
@@ -1040,7 +1035,7 @@ impl Drawable for RawRichText {
             for run in selection_runs {
                 push_selection_run(&mut merged_selection_runs, run);
             }
-            overlap_selection_lines(&mut merged_selection_runs, ctx.scale);
+            snap_selection_lines_to_pixels(&mut merged_selection_runs);
             for run in merged_selection_runs {
                 ctx.canvas
                     .fill_color_rect(
@@ -1198,9 +1193,9 @@ mod tests {
     use aimer_widget::base::{Color, WindowHandle};
 
     use super::{
-        DEFAULT_SELECTION_COLOR, LinkCallback, LinkRegion, PreparedFragment, RawRichText,
-        SelectableCursor, SelectionCoordinator, SelectionOwner, interactive_cursor_for_event,
-        prepare_background_runs,
+        DEFAULT_SELECTION_COLOR, LinkCallback, LinkRegion, PreparedFragment, PreparedSelection,
+        RawRichText, SelectableCursor, SelectionCoordinator, SelectionOwner,
+        interactive_cursor_for_event, prepare_background_runs, snap_selection_lines_to_pixels,
     };
     use crate::selection::{TextHitRegion, TextSelection};
     use crate::text_span::{ResolvedTextSpan, layout_resolved_spans};
@@ -1562,6 +1557,27 @@ mod tests {
     }
 
     #[test]
+    fn selection_line_overlap_does_not_overflow_past_a_shorter_next_line() {
+        let mut highlights = vec![
+            PreparedSelection { line: 0, x: 10.0, y: 20.25, width: 100.0, height: 10.48 },
+            PreparedSelection { line: 1, x: 10.0, y: 30.73, width: 20.0, height: 10.48 },
+        ];
+
+        snap_selection_lines_to_pixels(&mut highlights);
+
+        assert_eq!(highlights.len(), 2);
+        assert_eq!(highlights[0].x, 10.0);
+        assert_eq!(highlights[0].width, 100.0);
+        assert_eq!(highlights[0].y, 20.0);
+        assert_eq!(highlights[0].height, 11.0);
+        assert_eq!(highlights[1].x, 10.0);
+        assert_eq!(highlights[1].width, 20.0);
+        assert_eq!(highlights[1].y, 31.0);
+        assert_eq!(highlights[1].height, 10.0);
+        assert_eq!(highlights[0].y + highlights[0].height, highlights[1].y);
+    }
+
+    #[test]
     fn backgrounds_merge_on_one_line_but_not_across_lines_or_colors() {
         let spans = vec![
             ResolvedTextSpan::plain(
@@ -1873,8 +1889,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(highlights.len() > 1);
-        for lines in highlights.windows(2) {
-            assert!((lines[0].y + lines[0].height - lines[1].y - 1.0).abs() < 0.01);
+        for adjacent in highlights.windows(2) {
+            assert!((adjacent[0].y + adjacent[0].height - adjacent[1].y).abs() < 0.01);
         }
     }
 
@@ -2008,8 +2024,8 @@ mod tests {
         assert_eq!(highlights.len(), 3);
         assert_eq!(highlights[0].width, layout.fragments[0].width + 1.0);
         assert_eq!(highlights[1].width, 1.0);
-        for lines in highlights.windows(2) {
-            assert!((lines[0].y + lines[0].height - lines[1].y - 1.0).abs() < 0.01);
+        for adjacent in highlights.windows(2) {
+            assert!((adjacent[0].y + adjacent[0].height - adjacent[1].y).abs() < 0.01);
         }
     }
 

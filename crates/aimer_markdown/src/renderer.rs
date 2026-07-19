@@ -6,13 +6,17 @@ use aimer_container::flex::BoxAlignment;
 use aimer_container::flex::row_column::{Column, Row};
 use aimer_container::{Container, Grid, GridItem, GridTrack, SizedBox};
 use aimer_style::{
-    BoxDecoration, FontFamily, FontStyle, FontWeight, LayoutSpacing, TextAlign, TextDecoration,
+    BoxDecoration, FontStyle, FontWeight, LayoutSpacing, TextAlign, TextDecoration,
     TextDecorationLine, TextStyle,
 };
+use aimer_svg::{Svg, SvgDocument, SvgStyle};
 use aimer_text::{RichText, SpanStyle, Text, TextSpan};
 use aimer_widget::{AnyWidget, Widget};
 
-use crate::{Alignment, Block, Document, Inline, SyntaxTokenKind, TableRow, highlight};
+pub(crate) use crate::markdown_theme::MarkdownTheme;
+use crate::{Alignment, Block, CaptureSpan, Document, Inline, TableRow, highlight};
+
+const TICK_SVG_DATA: &'static [u8] = include_bytes!("../tick-checkbox-svgrepo-com.svg");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Metadata passed to a [`ImageResolver`] for each image node.
@@ -26,6 +30,20 @@ pub struct MarkdownImage {
 pub type LinkHandler = Rc<dyn Fn(Rc<str>)>;
 /// Shared resolver that maps image metadata to a native Aimer widget.
 pub type ImageResolver = Rc<dyn Fn(&MarkdownImage) -> AnyWidget>;
+
+fn build_tick_box(ticked: bool) -> AnyWidget {
+    match SvgDocument::from_svg(TICK_SVG_DATA) {
+        Ok(doc) => Svg::new(doc)
+            .width(16)
+            .height(16)
+            .style(
+                "#tick",
+                SvgStyle::new().fill(if ticked { Color::BLACK } else { Color::Transparent }),
+            )
+            .boxed(),
+        Err(_) => Text::new(if ticked { "[✔]".to_string() } else { "[ ]".to_string() }).boxed(),
+    }
+}
 
 /// Resolves network URLs with `NetworkImage` and other sources with `AssetImage`.
 pub fn default_image_resolver(image: &MarkdownImage) -> AnyWidget {
@@ -49,74 +67,6 @@ pub fn default_image_resolver(image: &MarkdownImage) -> AnyWidget {
                 .clone(),
         )
         .boxed()
-    }
-}
-
-#[derive(Clone)]
-/// Visual styles, colors, and spacing used by [`crate::MarkdownViewer`].
-pub struct MarkdownTheme {
-    pub body: TextStyle,
-    pub headings: [TextStyle; 6],
-    pub blockquote: TextStyle,
-    pub code_block: TextStyle,
-    pub inline_code: SpanStyle,
-    pub link: SpanStyle,
-    pub link_hover_color: Color,
-    pub code_background: Color,
-    pub quote_background: Color,
-    pub rule_color: Color,
-    pub table_header_background: Color,
-    pub table_cell_background: Color,
-    pub keyword_color: Color,
-    pub string_color: Color,
-    pub comment_color: Color,
-    pub number_color: Color,
-    pub block_spacing: u32,
-}
-
-impl Default for MarkdownTheme {
-    fn default() -> Self {
-        let body = TextStyle::new()
-            .font_size(16)
-            .color(Color::Hex(0x24292F));
-        Self {
-            body,
-            headings: [
-                body.font_size(32)
-                    .font_weight(FontWeight::Bolder),
-                body.font_size(28)
-                    .font_weight(FontWeight::Bolder),
-                body.font_size(24)
-                    .font_weight(FontWeight::Bolder),
-                body.font_size(20)
-                    .font_weight(FontWeight::Bolder),
-                body.font_size(18)
-                    .font_weight(FontWeight::Bolder),
-                body.font_size(16)
-                    .font_weight(FontWeight::Bolder),
-            ],
-            blockquote: body.color(Color::Hex(0x57606A)),
-            code_block: body
-                .font_family(FontFamily::MONOSPACE)
-                .font_size(14),
-            inline_code: SpanStyle::new()
-                .font_family(FontFamily::MONOSPACE)
-                .background_color(Color::Hex(0xEFF1F3)),
-            link: SpanStyle::new()
-                .color(Color::Hex(0x0969DA))
-                .text_decoration(TextDecoration::Underline),
-            link_hover_color: Color::Hex(0x0969DA).lighten(0.48),
-            code_background: Color::Hex(0xF6F8FA),
-            quote_background: Color::Hex(0xF6F8FA),
-            rule_color: Color::Hex(0xD0D7DE),
-            table_header_background: Color::Hex(0xF6F8FA),
-            table_cell_background: Color::Hex(0xFFFFFF),
-            keyword_color: Color::Hex(0xCF222E),
-            string_color: Color::Hex(0x0A3069),
-            comment_color: Color::Hex(0x6E7781),
-            number_color: Color::Hex(0x0550AE),
-            block_spacing: 12,
-        }
     }
 }
 
@@ -332,22 +282,31 @@ fn render_block(
                 .iter()
                 .enumerate()
                 .map(|(index, item)| {
+                    let mut is_complete = false;
                     let marker = match item.checked {
-                        Some(true) => "[✓]".to_string(),
-                        Some(false) => "[ ]".to_string(),
-                        None if *ordered => format!("{}.", start + index as u32),
-                        None => "•".to_string(),
+                        Some(true) => {
+                            is_complete = true;
+                            None
+                        }
+                        Some(false) => None,
+                        None if *ordered => Some(format!("{}.", start + index as u32)),
+                        None => Some("•".to_string()),
                     };
+
                     Row::new()
                         .gaps(LayoutSpacing::all(8_u32.into()))
+                        .vertical_alignment(BoxAlignment::Center)
                         .children(vec![
-                            Text::new(marker)
-                                .text_style(
-                                    theme
-                                        .body
-                                        .font_weight(FontWeight::Bold),
-                                )
-                                .boxed(),
+                            match marker {
+                                Some(marker) => Text::new(marker)
+                                    .text_style(
+                                        theme
+                                            .body
+                                            .font_weight(FontWeight::Bold),
+                                    )
+                                    .boxed(),
+                                None => build_tick_box(is_complete),
+                            },
                             render_blocks(&item.blocks, theme, link_handler, image_resolver),
                         ])
                         .boxed()
@@ -360,22 +319,7 @@ fn render_block(
                 .boxed()
         }
         Block::Code { value, language, .. } => {
-            let spans = highlight(value, language.as_deref())
-                .into_iter()
-                .map(|token| {
-                    let style = match token.kind {
-                        SyntaxTokenKind::Plain => SpanStyle::new(),
-                        SyntaxTokenKind::Keyword => SpanStyle::new()
-                            .color(theme.keyword_color)
-                            .font_weight(FontWeight::Bold),
-                        SyntaxTokenKind::String => SpanStyle::new().color(theme.string_color),
-                        SyntaxTokenKind::Comment => SpanStyle::new()
-                            .color(theme.comment_color)
-                            .font_style(FontStyle::Italic),
-                        SyntaxTokenKind::Number => SpanStyle::new().color(theme.number_color),
-                    };
-                    TextSpan::new(token.text).style(style)
-                });
+            let spans = highlighted_code_spans(value, language.as_deref());
             Container::new()
                 .padding(LayoutSpacing::all(12_u32.into()))
                 .box_decoration(
@@ -410,6 +354,38 @@ fn render_block(
             ])
             .boxed(),
     }
+}
+
+fn highlighted_code_spans(value: &str, language: Option<&str>) -> Vec<TextSpan> {
+    let mut offset = 0;
+    let mut spans = Vec::new();
+    for capture in highlight(value, language) {
+        let (start, end) = capture.range();
+        let (start, end) = (start as usize, end as usize);
+        if start < offset
+            || end <= start
+            || end > value.len()
+            || !value.is_char_boundary(start)
+            || !value.is_char_boundary(end)
+        {
+            continue;
+        }
+        if offset < start {
+            spans.push(TextSpan::new(&value[offset..start]));
+        }
+        let mut style = SpanStyle::new().color(capture.color());
+        if matches!(capture, CaptureSpan::Keyword { .. }) {
+            style = style.font_weight(FontWeight::Bold);
+        } else if matches!(capture, CaptureSpan::Comment { .. }) {
+            style = style.font_style(FontStyle::Italic);
+        }
+        spans.push(TextSpan::new(&value[start..end]).style(style));
+        offset = end;
+    }
+    if offset < value.len() {
+        spans.push(TextSpan::new(&value[offset..]));
+    }
+    spans
 }
 
 fn render_blocks_with_style(
@@ -499,7 +475,7 @@ fn rich_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aimer_style::{TextAlign, TextDecorationLine, TextStyle};
+    use aimer_style::{FontFamily, TextAlign, TextDecorationLine, TextStyle};
     use std::cell::Cell;
 
     #[test]
@@ -525,6 +501,25 @@ mod tests {
         assert!(matches!(table_text_align(Alignment::Center), TextAlign::TopCenter));
         assert!(matches!(table_text_align(Alignment::Right), TextAlign::TopRight));
         assert!(matches!(table_text_align(Alignment::None), TextAlign::TopLeft));
+    }
+
+    #[test]
+    fn highlighted_code_spans_preserve_all_source_text() {
+        for (source, language) in [
+            ("fn café() { \"你好\" } // done\n", Some("rust")),
+            ("anything <goes>\n", Some("unknown")),
+            ("unlabelled\n", None),
+        ] {
+            let text = TextSpan::root(highlighted_code_spans(source, language))
+                .flatten(&TextStyle::default())
+                .into_iter()
+                .map(|span| {
+                    span.text
+                        .to_string()
+                })
+                .collect::<String>();
+            assert_eq!(text, source);
+        }
     }
 
     #[test]
