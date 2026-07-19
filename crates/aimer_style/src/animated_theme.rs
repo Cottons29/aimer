@@ -51,10 +51,12 @@ impl AnimatedTheme {
     ///
     /// Attach the descendant subtree last with [`AnimatedTheme::child`].
     pub fn new() -> Self {
-        Self { data: ThemeData::default(),
-               duration: Duration::from_millis(200),
-               curve: Curve::Linear,
-               child: Rc::new(RequiredChild) }
+        Self {
+            data: ThemeData::default(),
+            duration: Duration::from_millis(200),
+            curve: Curve::Linear,
+            child: Rc::new(RequiredChild),
+        }
     }
 }
 
@@ -88,10 +90,12 @@ impl<W> AnimatedTheme<W> {
 
     /// Attaches the descendant widget subtree and produces a valid widget.
     pub fn child<C: Widget>(self, child: C) -> AnimatedTheme<C> {
-        AnimatedTheme { data: self.data,
-                        duration: self.duration,
-                        curve: self.curve,
-                        child: Rc::new(child) }
+        AnimatedTheme {
+            data: self.data,
+            duration: self.duration,
+            curve: self.curve,
+            child: Rc::new(child),
+        }
     }
 
     /// Attaches the descendant subtree and type-erases the completed theme
@@ -148,15 +152,18 @@ impl<W: Widget + 'static> StatefulWidget for AnimatedTheme<W> {
     type State = AnimatedThemeState;
 
     fn create_state(&self) -> Self::State {
-        AnimatedThemeState { target: self.data,
-                             current: Rc::new(Cell::new(self.data)),
-                             duration: self.duration,
-                             curve: self.curve,
-                             child: self.child
-                                        .clone(),
-                             controller: AnimationController::new(self.duration, self.curve),
-                             transition: Rc::new(RefCell::new(ThemeTransition::new(self.data))),
-                             handle: ProviderHandle::new(self.data) }
+        AnimatedThemeState {
+            target: self.data,
+            current: Rc::new(Cell::new(self.data)),
+            duration: self.duration,
+            curve: self.curve,
+            child: self
+                .child
+                .clone(),
+            controller: AnimationController::new(self.duration, self.curve),
+            transition: Rc::new(RefCell::new(ThemeTransition::new(self.data))),
+            handle: ProviderHandle::new(self.data),
+        }
     }
 }
 
@@ -166,18 +173,22 @@ impl<W: Widget + 'static> State<AnimatedTheme<W>> for AnimatedThemeState {
     fn adopt_config_from(&mut self, new: &Self) {
         self.duration = new.duration;
         self.curve = new.curve;
-        self.child = new.child
-                        .clone();
+        self.child = new
+            .child
+            .clone();
         self.controller
             .set_duration(new.duration);
         self.controller
             .set_curve(new.curve);
 
-        if !self.transition
-                .borrow_mut()
-                .retarget(new.target,
-                          self.controller
-                              .value())
+        if !self
+            .transition
+            .borrow_mut()
+            .retarget(
+                new.target,
+                self.controller
+                    .value(),
+            )
         {
             return;
         }
@@ -185,41 +196,52 @@ impl<W: Widget + 'static> State<AnimatedTheme<W>> for AnimatedThemeState {
         self.target = new.target;
         self.controller
             .reset();
-        if self.duration
-               .is_zero()
+        if self
+            .duration
+            .is_zero()
         {
             self.controller
                 .set_value(1.0);
             self.publish(self.target);
         } else {
             self.current
-                .set(self.transition
-                         .borrow()
-                         .sample(0.0));
+                .set(
+                    self.transition
+                        .borrow()
+                        .sample(0.0),
+                );
             self.controller
                 .forward_from_first_tick();
         }
     }
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
-        AnimatedThemeFrame { current: self.current
-                                          .clone(),
-                             child: self.child
-                                        .clone(),
-                             controller: self.controller
-                                             .clone(),
-                             transition: self.transition
-                                             .clone(),
-                             handle: self.handle
-                                         .clone() }
+        AnimatedThemeFrame {
+            current: self
+                .current
+                .clone(),
+            child: self
+                .child
+                .clone(),
+            controller: self
+                .controller
+                .clone(),
+            transition: self
+                .transition
+                .clone(),
+            handle: self
+                .handle
+                .clone(),
+        }
     }
 }
 
 impl AnimatedThemeState {
     fn publish(&self, value: ThemeData) {
-        if self.current
-               .replace(value)
-           != value
+        if self
+            .current
+            .replace(value)
+            != value
         {
             self.handle
                 .update(|theme| *theme = value);
@@ -229,8 +251,9 @@ impl AnimatedThemeState {
 
 impl<W: Widget + 'static> Widget for AnimatedTheme<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        StatefulElement::new_with_name(self, ctx, "AnimatedTheme", self.key()).0
-                                                                              .boxed()
+        StatefulElement::new_with_name(self, ctx, "AnimatedTheme", self.key())
+            .0
+            .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -248,20 +271,31 @@ struct AnimatedThemeFrame {
 
 impl Widget for AnimatedThemeFrame {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = Provider::new().handle(self.handle
-                                               .clone())
-                                   .child(self.child
-                                              .clone())
-                                   .to_element(ctx);
-        Box::new(AnimatedThemeElement { current: self.current
-                                                     .clone(),
-                                        child,
-                                        controller: self.controller
-                                                        .clone(),
-                                        transition: self.transition
-                                                        .clone(),
-                                        handle: self.handle
-                                                    .clone() })
+        let child = Provider::new()
+            .handle(
+                self.handle
+                    .clone(),
+            )
+            .child(
+                self.child
+                    .clone(),
+            )
+            .to_element(ctx);
+        Box::new(AnimatedThemeElement {
+            current: self
+                .current
+                .clone(),
+            child,
+            controller: self
+                .controller
+                .clone(),
+            transition: self
+                .transition
+                .clone(),
+            handle: self
+                .handle
+                .clone(),
+        })
     }
 }
 
@@ -275,8 +309,10 @@ struct AnimatedThemeElement {
 
 impl VisitorElement for AnimatedThemeElement {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(self.child
-                    .as_ref());
+        visitor(
+            self.child
+                .as_ref(),
+        );
     }
 
     fn debug_name(&self) -> &'static str {
@@ -286,14 +322,17 @@ impl VisitorElement for AnimatedThemeElement {
 
 impl Drawable for AnimatedThemeElement {
     fn draw(&self, ctx: &BuildContext) {
-        let progress = self.controller
-                           .tick(AnimInstant::now());
-        let value = self.transition
-                        .borrow()
-                        .sample(progress);
-        if self.current
-               .replace(value)
-           != value
+        let progress = self
+            .controller
+            .tick(AnimInstant::now());
+        let value = self
+            .transition
+            .borrow()
+            .sample(progress);
+        if self
+            .current
+            .replace(value)
+            != value
         {
             self.handle
                 .update(|theme| *theme = value);
@@ -304,11 +343,12 @@ impl Drawable for AnimatedThemeElement {
         self.child
             .draw(ctx);
 
-        if self.controller
-               .is_animating()
+        if self
+            .controller
+            .is_animating()
         {
             ctx.window
-               .request_redraw();
+                .request_redraw();
         }
     }
 }
@@ -402,9 +442,10 @@ mod tests {
     }
 
     fn widget(data: ThemeData, duration: Duration) -> AnimatedTheme<TestWidget> {
-        AnimatedTheme::new().data(data)
-                            .duration(duration)
-                            .child(TestWidget)
+        AnimatedTheme::new()
+            .data(data)
+            .duration(duration)
+            .child(TestWidget)
     }
 
     #[test]
@@ -423,12 +464,18 @@ mod tests {
 
         assert!(transition.retarget(theme(200), 0.5));
 
-        assert_eq!(transition.sample(0.0)
-                             .primary_color,
-                   Color::Rgba(50, 50, 50, 255));
-        assert_eq!(transition.sample(1.0)
-                             .primary_color,
-                   Color::Rgba(200, 200, 200, 255));
+        assert_eq!(
+            transition
+                .sample(0.0)
+                .primary_color,
+            Color::Rgba(50, 50, 50, 255)
+        );
+        assert_eq!(
+            transition
+                .sample(1.0)
+                .primary_color,
+            Color::Rgba(200, 200, 200, 255)
+        );
     }
 
     #[test]
@@ -436,17 +483,27 @@ mod tests {
         let mut state = widget(theme(0), Duration::from_millis(200)).create_state();
         let new_state = widget(theme(101), Duration::ZERO).create_state();
 
-        <AnimatedThemeState as State<AnimatedTheme<TestWidget>>>::adopt_config_from(&mut state,
-                                                                                    &new_state);
+        <AnimatedThemeState as State<AnimatedTheme<TestWidget>>>::adopt_config_from(
+            &mut state, &new_state,
+        );
 
-        assert_eq!(*state.handle
-                         .read(),
-                   theme(101));
-        assert_eq!(state.current
-                        .get(),
-                   theme(101));
-        assert!(!state.controller
-                      .is_animating());
+        assert_eq!(
+            *state
+                .handle
+                .read(),
+            theme(101)
+        );
+        assert_eq!(
+            state
+                .current
+                .get(),
+            theme(101)
+        );
+        assert!(
+            !state
+                .controller
+                .is_animating()
+        );
     }
 
     #[test]
@@ -454,16 +511,26 @@ mod tests {
         let mut state = widget(theme(0), Duration::from_millis(200)).create_state();
         let new_state = widget(theme(101), Duration::from_millis(400)).create_state();
 
-        <AnimatedThemeState as State<AnimatedTheme<TestWidget>>>::adopt_config_from(&mut state,
-                                                                                    &new_state);
+        <AnimatedThemeState as State<AnimatedTheme<TestWidget>>>::adopt_config_from(
+            &mut state, &new_state,
+        );
 
-        assert_eq!(state.controller
-                        .duration(),
-                   Duration::from_millis(400));
-        assert!(state.controller
-                     .is_animating());
-        assert_eq!(state.current
-                        .get(),
-                   theme(0));
+        assert_eq!(
+            state
+                .controller
+                .duration(),
+            Duration::from_millis(400)
+        );
+        assert!(
+            state
+                .controller
+                .is_animating()
+        );
+        assert_eq!(
+            state
+                .current
+                .get(),
+            theme(0)
+        );
     }
 }
