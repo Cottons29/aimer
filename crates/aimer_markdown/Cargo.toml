@@ -14,6 +14,4 @@ aimer_color.workspace = true
 aimer_style.workspace = true
 webbrowser.workspace = true
 aimer_svg.workspace = true
-arborium = {workspace = true, features = ["all-languages"]}
-dom_query = {workspace = true, features = ["markdown"]}
-htmd = "0.5.4"
+arborium = {workspace = true}

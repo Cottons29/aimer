@@ -23,9 +23,9 @@ AimerMarkdown is a Rust library that provides a set of tools for render the Mark
 # Implementation Steps
 
 - [x] Add a public RichText/span widget with mixed-style wrapping and link hit regions.
-- [x] Parse Markdown into an internal document tree.
+- [ ] Parse Markdown into an internal document tree.
 - [x] Map block nodes to Aimer layout widgets and inline nodes to rich-text spans.
-- [x] Add a configurable theme, link callback, image resolver, and selectable/copyable code blocks.
+- [ ] Add a configurable theme, link callback, image resolver, and selectable/copyable code blocks.
 
 # Main Markdown Syntax Reference
 
@@ -161,7 +161,7 @@ fenced code block
 ```
 
 ```python
-# fenced code block with syntax highlighting
+# fenced code block
 print("Hello World")
 ```
     indented code block (4 spaces)

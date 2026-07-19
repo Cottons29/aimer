@@ -29,6 +29,10 @@ aimer_provider.workspace = true
 aimer_svg.workspace = true
 aimer_markdown.workspace = true
 
+[features]
+markdown =[]
+provider=[]
+svg = []
 
 [workspace]
 resolver = "3"

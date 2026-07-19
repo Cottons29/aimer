@@ -6,21 +6,17 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib", "staticlib"]
 [dependencies]
-aimer = {path = ".."}
+aimer = { path = "..", features = ["markdown", "svg", "provider"] }
 webbrowser = "1.2.1"
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
-chrono.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
-
-[profile.dev]
-debug = true
 
 [profile.release]
 opt-level = 'z'       # Default: maximum optimizations for speed

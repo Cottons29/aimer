@@ -16,12 +16,14 @@ pub use aimer_input::callback::{AsyncCallback, CallbackInner, RawInnerCallback};
 pub use aimer_input::input::*;
 pub use aimer_input::*;
 pub use aimer_macro::{key, main};
+#[cfg(feature = "markdown")]
 pub use aimer_markdown::{
     Alignment as MarkdownAlignment, Block as MarkdownBlock, Document as MarkdownDocument,
     ImageResolver as MarkdownImageResolver, Inline as MarkdownInline,
     LinkHandler as MarkdownLinkHandler, MarkdownError, MarkdownImage, MarkdownTheme,
     MarkdownViewer,
 };
+#[cfg(feature = "provider")]
 pub use aimer_provider::{
     NotifierProvider, Provider, ProviderContext, ProviderHandle, StoreProvider,
 };
@@ -30,6 +32,7 @@ pub use aimer_quiver::{
     self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions,
     set_first_frame_rendered_callback,
 };
+#[cfg(feature = "svg")]
 pub use aimer_svg::{
     RawSvg, Svg, SvgCallback, SvgColor, SvgDiagnostic, SvgDocument, SvgError, SvgFillRule, SvgHit,
     SvgLimits, SvgLoadState, SvgLoader, SvgNodeId, SvgNodeMetadata, SvgPath, SvgSelector,
