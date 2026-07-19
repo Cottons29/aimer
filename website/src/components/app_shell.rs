@@ -21,15 +21,10 @@ pub struct AppShell {
 
 impl StatelessWidget for AppShell {
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
-        Container::new()
-            .color(Color::WHITE)
-            .child(Column::new().children(vec![
-                    Box::new(HeaderSection { active_tab: self.active_tab }),
-                    Expanded::new()
-                        .child(Container::new()
-                            .color(Color::WHITE)
-                            .child(Outlet))
-                        .boxed(),
-                ]))
+        Container::new().color(Color::WHITE).child(Column::new().children(vec![
+            SizedBox::new().height(40).boxed(),
+            Box::new(HeaderSection { active_tab: self.active_tab }),
+            Expanded::new().child(Container::new().color(Color::WHITE).child(Outlet)).boxed(),
+        ]))
     }
 }

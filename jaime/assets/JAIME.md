@@ -147,7 +147,6 @@ Here is a footnote reference[^1].
 
 <https://example.com>  (autolink)
 
-# Images
 
 # Blockquotes
 > This is a quote

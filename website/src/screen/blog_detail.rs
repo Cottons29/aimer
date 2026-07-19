@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn sidebar_contains_publication_time_author_and_tags() {
-        let fields = metadata_fields(&crate::blog_store::BlogDetail {
+        let fields = metadata_fields(&BlogDetail {
             id: "first-post".to_owned(),
             upload_time: "2026-07-18T02:22:00Z".to_owned(),
             title: "First post".to_owned(),
