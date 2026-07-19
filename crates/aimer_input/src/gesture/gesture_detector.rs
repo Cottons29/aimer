@@ -9,8 +9,8 @@ use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerEvent, PointerPosition};
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild, VisitorElement,
-    Widget,
+    AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild,
+    VisitorElement, Widget,
 };
 
 use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback, VoidParamedFunction};
@@ -20,6 +20,22 @@ use crate::gesture::{
     ScaleCallback, ScaleData, ScrollCallback, ScrollData, SwipeCallback, SwipeDirection, TAP_SLOP,
 };
 
+/// A transparent widget that recognizes pointer gestures over its child.
+///
+/// All callbacks default to no-ops. The detector paints nothing and adopts its child's layout;
+/// finish construction with [`GestureDetector::child`] or [`GestureDetector::box_child`]. Scroll
+/// events are consumed only when [`GestureDetector::on_scroll`] is configured.
+///
+/// # Example
+///
+/// ```
+/// use aimer_input::gesture::gesture_detector::GestureDetector;
+/// use aimer_text::Text;
+///
+/// let detector = GestureDetector::new()
+///     .on_tap(|| println!("tap"))
+///     .child(Text::new("Tap me"));
+/// ```
 pub struct GestureDetector<W = RequiredChild> {
     pub on_tap: VoidCallback,
     pub on_double_press: VoidCallback,
@@ -41,6 +57,7 @@ impl Default for GestureDetector {
 }
 
 impl GestureDetector {
+    /// Creates a detector with no-op callbacks and a required-child placeholder.
     pub fn new() -> Self {
         Self {
             on_tap: VoidCallback::default(),
@@ -59,56 +76,81 @@ impl GestureDetector {
 }
 
 impl<W> GestureDetector<W> {
+    /// Sets the callback for a primary tap completed within the tap slop.
     pub fn on_tap(mut self, on_tap: impl Into<VoidCallback>) -> Self {
         self.on_tap = on_tap.into();
         self
     }
 
+    /// Sets the callback fired after two qualifying taps within the double-tap timeout.
     pub fn on_double_press(mut self, on_double_press: impl Into<VoidCallback>) -> Self {
         self.on_double_press = on_double_press.into();
         self
     }
 
+    /// Sets the callback fired once a held pointer reaches the long-press duration.
     pub fn on_long_press(mut self, on_long_press: impl Into<VoidCallback>) -> Self {
         self.on_long_press = on_long_press.into();
         self
     }
 
+    /// Sets the callback fired when pointer movement first exceeds the tap slop.
+    ///
+    /// The callback receives the pointer position where the drag started.
     pub fn on_drag_start(mut self, on_drag_start: impl Into<DragCallback>) -> Self {
         self.on_drag_start = on_drag_start.into();
         self
     }
 
+    /// Sets the callback fired for movement while a drag is active.
+    ///
+    /// [`DragUpdateData`] reports the current position and movement delta.
     pub fn on_drag_update(mut self, on_drag_update: impl Into<DragUpdateCallback>) -> Self {
         self.on_drag_update = on_drag_update.into();
         self
     }
 
+    /// Sets the callback fired when an active drag ends.
     pub fn on_drag_end(mut self, on_drag_end: impl Into<VoidCallback>) -> Self {
         self.on_drag_end = on_drag_end.into();
         self
     }
 
+    /// Sets the callback for a completed secondary-button tap.
     pub fn on_right_tap(mut self, on_right_tap: impl Into<VoidCallback>) -> Self {
         self.on_right_tap = on_right_tap.into();
         self
     }
 
+    /// Sets the callback for a fast directional drag recognized as a swipe.
+    ///
+    /// The callback receives the resulting [`SwipeDirection`].
     pub fn on_swipe(mut self, on_swipe: impl Into<SwipeCallback>) -> Self {
         self.on_swipe = on_swipe.into();
         self
     }
 
+    /// Sets the callback for mouse-wheel or trackpad scrolling over the child.
+    ///
+    /// Installing this callback causes the detector to consume matching scroll events; without it,
+    /// those events fall through to lower layers. [`ScrollData`] contains the scroll delta.
     pub fn on_scroll(mut self, on_scroll: impl Into<ScrollCallback>) -> Self {
         self.on_scroll = on_scroll.into();
         self
     }
 
+    /// Sets the callback for a two-pointer pinch gesture.
+    ///
+    /// [`ScaleData`] reports the scale relative to the initial pointer distance.
     pub fn on_scale(mut self, on_scale: impl Into<ScaleCallback>) -> Self {
         self.on_scale = on_scale.into();
         self
     }
 
+    /// Supplies the terminal child and returns a statically typed detector.
+    ///
+    /// Existing callback settings are preserved. A detector without a child is only an intermediate
+    /// builder and does not implement [`Widget`].
     pub fn child<C: Widget>(self, child: C) -> GestureDetector<C> {
         GestureDetector {
             on_tap: self.on_tap,
@@ -123,6 +165,16 @@ impl<W> GestureDetector<W> {
             on_scale: self.on_scale,
             child,
         }
+    }
+
+    /// Supplies the terminal child and erases the completed detector's concrete type.
+    ///
+    /// This is exactly equivalent to `self.child(child).boxed()`, combining
+    /// [`GestureDetector::child`] with [`Widget::boxed`]. Use it when branching APIs need one
+    /// [`AnyWidget`] return type despite using different concrete child types.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+        self.child(child)
+            .boxed()
     }
 }
 
@@ -182,7 +234,7 @@ impl<W: Widget + 'static> Widget for GestureDetector<W> {
 /// `GestureDetector` detects tap, double-tap, long-press, drag, swipe,
 /// scroll, and scale (pinch) gestures and fires the corresponding callbacks.
 /// It does **not** render any visual feedback — decoration, pressed overlays,
-/// and hover effects belong to higher-level widgets like [`Button`].
+/// and hover effects belong to higher-level widgets like [`crate::button::Button`].
 ///
 /// This mirrors Flutter's `GestureDetector`: a transparent wrapper that
 /// recognises gestures and delegates rendering entirely to its child.

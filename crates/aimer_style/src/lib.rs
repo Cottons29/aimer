@@ -1,4 +1,9 @@
+mod animated_theme;
 mod style;
+mod theme;
+
+pub use animated_theme::AnimatedTheme;
+pub use theme::{Theme, ThemeData};
 
 // layout export
 pub use aimer_attribute::BoxConstraint;

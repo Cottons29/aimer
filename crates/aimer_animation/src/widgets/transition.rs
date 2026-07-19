@@ -17,13 +17,16 @@ use crate::primitives::time::AnimInstant;
 
 /// Animates the opacity of its child based on the controller's value.
 ///
-/// At value 0.0 the child is fully transparent; at 1.0 fully opaque.
+/// At value `0.0` the child is fully transparent; at `1.0` it is fully opaque.
+/// Values are clamped to that range for drawing. Layout and event behavior are
+/// delegated to the child.
 pub struct FadeTransition<T: Widget + 'static> {
     pub opacity: AnimationController,
     pub child: T,
 }
 
 impl<T: Widget> FadeTransition<T> {
+    /// Creates an opacity transition without starting or resetting `opacity`.
     pub fn new(opacity: AnimationController, child: T) -> Self {
         Self { opacity, child }
     }
@@ -169,8 +172,8 @@ impl_transition_element!(
 
 /// Animates a slide offset for its child.
 ///
-/// The child is translated by `offset * controller_value` pixels.
-/// At value 0.0 the child is at the offset position; at 1.0 it's at its natural
+/// The child is translated by `offset * (1.0 - controller_value)` pixels.
+/// At value `0.0` the child is at the offset position; at `1.0` it is at its natural
 /// position.
 pub struct SlideTransition<T: Widget + 'static> {
     pub position: AnimationController,
@@ -181,6 +184,8 @@ pub struct SlideTransition<T: Widget + 'static> {
 }
 
 impl<T: Widget> SlideTransition<T> {
+    /// Creates a slide transition from the pixel `offset` to the child's
+    /// natural position, without starting or resetting `position`.
     pub fn new(position: AnimationController, offset: (f32, f32), child: T) -> Self {
         Self { position, offset, child }
     }
@@ -327,12 +332,17 @@ impl LayoutElement for SlideTransitionElement {
 // ---------------------------------------------------------------------------
 
 /// Animates uniform scale for its child based on the controller's value.
+///
+/// A value of `1.0` is the child's natural size. The drawing transform is
+/// centered in the current box constraints; layout itself is unchanged.
 pub struct ScaleTransition<T: Widget + 'static> {
     pub scale: AnimationController,
     pub child: T,
 }
 
 impl<T: Widget> ScaleTransition<T> {
+    /// Creates a centered scale transition without starting or resetting
+    /// `scale`.
     pub fn new(scale: AnimationController, child: T) -> Self {
         Self { scale, child }
     }
@@ -488,6 +498,8 @@ pub struct RotationTransition<T: Widget + 'static> {
 }
 
 impl<T: Widget> RotationTransition<T> {
+    /// Creates a centered rotation transition without starting or resetting
+    /// `turns`.
     pub fn new(turns: AnimationController, child: T) -> Self {
         Self { turns, child }
     }

@@ -6,10 +6,19 @@ use aimer_macro::Rebuildable;
 pub use aimer_style::*;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutCache, LayoutElement, RequiredChild, VisitorElement,
-    Widget,
+    AnyWidget, Drawable, Element, EventElement, LayoutCache, LayoutElement, RequiredChild,
+    VisitorElement, Widget,
 };
 
+/// A decorated single-child layout box with optional size, spacing, and color.
+///
+/// Width and height default to [`Dimension::Auto`] and resolve within the
+/// parent's constraints. Margin contributes outside the painted box; padding
+/// and decoration borders inset the child. All spacing and pixel dimensions are
+/// logical units that are scaled by the build context.
+///
+/// Attach a child with [`Container::child`] to retain its concrete type, or
+/// with [`Container::box_child`] when branches need a shared erased type.
 pub struct Container<T = RequiredChild> {
     pub(crate) width: Dimension,
     pub(crate) height: Dimension,
@@ -27,6 +36,9 @@ impl Default for Container {
 }
 
 impl Container {
+    /// Creates an automatically sized container with no spacing or decoration.
+    ///
+    /// Finish the builder with [`Container::child`] or [`Container::box_child`].
     pub fn new() -> Self {
         Self {
             width: Dimension::Auto,
@@ -39,37 +51,67 @@ impl Container {
         }
     }
 
+    /// Sets the outer width before margin is added.
+    ///
+    /// The default is [`Dimension::Auto`]. Pixel dimensions use logical pixels,
+    /// percentages resolve against the parent's maximum width, and the final
+    /// value is clamped to the available constraints.
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = width.into();
         self
     }
 
+    /// Sets the outer height before margin is added.
+    ///
+    /// The default is [`Dimension::Auto`]. Pixel dimensions use logical pixels,
+    /// percentages resolve against the parent's maximum height, and the final
+    /// value is clamped to the available constraints.
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = height.into();
         self
     }
 
+    /// Replaces the spacing between the decoration edge and the child.
+    ///
+    /// Padding is measured in logical pixels and defaults to zero on every side.
+    /// It reduces the constraints available to the child.
     pub fn padding(mut self, padding: LayoutSpacing) -> Self {
         self.padding = padding;
         self
     }
 
+    /// Replaces the transparent spacing outside the decorated box.
+    ///
+    /// Margin is measured in logical pixels and defaults to zero on every side.
+    /// It contributes to the container's layout footprint but is not painted.
     pub fn margin(mut self, margin: LayoutSpacing) -> Self {
         self.margin = margin;
         self
     }
 
+    /// Replaces the complete background, border, and corner decoration.
+    ///
+    /// The default decoration is empty. Its border width is included when
+    /// deriving the child's inset and clipping radius.
     pub fn box_decoration(mut self, box_decoration: BoxDecoration) -> Self {
         self.box_decoration = box_decoration;
         self
     }
 
+    /// Sets a solid background color.
+    ///
+    /// By default no separate color is painted. Setting a color also makes the
+    /// container opaque to scroll-event fall-through within its bounds.
     pub fn color(mut self, color: Color) -> Self {
         self.color = Some(color);
         self
     }
 
-    /// make this struct became a valid Widget
+    /// Attaches the required child and completes this builder.
+    ///
+    /// The child is laid out inside padding and decoration borders, and its
+    /// concrete type is preserved. Use [`Container::box_child`] when different
+    /// branches need one erased return type.
     pub fn child<W: Widget>(self, child: W) -> Container<W> {
         Container {
             width: self.width,
@@ -80,6 +122,16 @@ impl Container {
             color: self.color,
             child,
         }
+    }
+
+    /// Attaches `child` and erases the resulting widget's concrete type.
+    ///
+    /// This is equivalent to calling [`Container::child`] followed by
+    /// [`Widget::boxed`]. Use it when different branches must return one
+    /// [`AnyWidget`] type.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+        self.child(child)
+            .boxed()
     }
 }
 

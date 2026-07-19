@@ -15,6 +15,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::selection::{SelectionState, TextHitRegion, text_offset_at};
 use crate::text_span::{ResolvedTextSpan, TextSpan, ellipsize_first_line, layout_resolved_spans};
 
+/// Callback invoked with the target of an activated linked [`TextSpan`].
 pub type LinkCallback = Callback<Rc<str>, ()>;
 
 const DEFAULT_SELECTION_COLOR: Color = Color::Rgba(51, 153, 255, 96);
@@ -100,6 +101,26 @@ fn selection_coordinator(ctx: &BuildContext) -> Rc<SelectionCoordinator> {
         .expect("selection coordinator was just inserted")
 }
 
+/// Displays a tree of styled [`TextSpan`] values with optional links and selection.
+///
+/// A span's style is resolved over the widget's base [`TextStyle`]. The widget defaults to the
+/// style's overflow mode, default alignment, no link callback, and disabled selection. Wrapping
+/// lays text onto multiple lines; ellipsis truncates the first line to the available width.
+/// Selectable text supports pointer selection and the platform select-all and copy shortcuts.
+///
+/// # Example
+///
+/// ```
+/// use aimer_text::text_span::TextSpan;
+/// use aimer_text::RichText;
+///
+/// let text = RichText::new(
+///     TextSpan::new("Read ").child(TextSpan::new("the guide").link("/guide")),
+/// )
+/// .on_link(|target| println!("open {target}"))
+/// .selectable()
+/// .wrapped();
+/// ```
 pub struct RichText {
     span: TextSpan,
     text_style: TextStyle,
@@ -112,6 +133,7 @@ pub struct RichText {
 }
 
 impl RichText {
+    /// Creates rich text rooted at `span` with default base style and interaction settings.
     pub fn new(span: TextSpan) -> Self {
         Self {
             span,
@@ -125,16 +147,19 @@ impl RichText {
         }
     }
 
+    /// Replaces the base style inherited by spans that do not override individual attributes.
     pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = text_style;
         self
     }
 
+    /// Sets the alignment of each laid-out line within the available width.
     pub fn text_align(mut self, text_align: TextAlign) -> Self {
         self.text_align = text_align;
         self
     }
 
+    /// Overrides overflow behavior independently of the base style.
     pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
         self.overflow = Some(text_overflow);
         self
@@ -148,14 +173,20 @@ impl RichText {
             )
     }
 
+    /// Configures spans to wrap onto additional lines when width is constrained.
     pub fn wrapped(self) -> Self {
         self.text_overflow(TextOverflow::Wrap)
     }
 
+    /// Configures overflowing content to truncate the first line with an ellipsis.
     pub fn ellipsis(self) -> Self {
         self.text_overflow(TextOverflow::Ellipsis)
     }
 
+    /// Sets the callback invoked after a primary click completes on a linked span.
+    ///
+    /// The callback receives the link target stored by [`TextSpan::link`]. Dragging to select text
+    /// suppresses link activation.
     pub fn on_link(mut self, on_link: impl Into<LinkCallback>) -> Self {
         self.on_link = on_link.into();
         self
@@ -167,11 +198,15 @@ impl RichText {
         self
     }
 
+    /// Enables pointer selection plus select-all and copy keyboard shortcuts.
     pub const fn selectable(mut self) -> Self {
         self.selectable = true;
         self
     }
 
+    /// Replaces the highlight color used for selected text.
+    ///
+    /// This does not by itself enable selection; call [`RichText::selectable`] as well.
     pub const fn selection_color(mut self, color: Color) -> Self {
         self.selection_color = color;
         self
@@ -341,6 +376,11 @@ struct LinkRegion {
     bounds: Bounds,
 }
 
+/// The laid-out element produced by [`RichText`].
+///
+/// This low-level exported type participates directly in layout, drawing, links, and selection.
+/// Prefer constructing [`RichText`], which resolves the span tree and initializes its interaction
+/// state correctly.
 #[derive(Rebuildable)]
 pub struct RawRichText {
     spans: Vec<ResolvedTextSpan>,

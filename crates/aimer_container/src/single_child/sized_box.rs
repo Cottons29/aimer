@@ -3,10 +3,16 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::{Color, *};
-use aimer_widget::{Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget};
+use aimer_widget::{
+    AnyWidget, Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget,
+};
 
 use crate::ZeroSizedBox;
 
+/// A single-child box with optional explicit dimensions and background color.
+///
+/// Attach a child with [`SizedBox::child`] to retain its concrete type, or with
+/// [`SizedBox::box_child`] when branches need a shared erased type.
 pub struct SizedBox<W: Widget + 'static = ZeroSizedBox> {
     width: Dimension,
     height: Dimension,
@@ -21,6 +27,10 @@ impl Default for SizedBox {
 }
 
 impl SizedBox {
+    /// Creates a transparent, automatically sized box without a child.
+    ///
+    /// The box is already a valid widget; use [`SizedBox::child`] or
+    /// [`SizedBox::box_child`] to attach content.
     pub fn new() -> Self {
         Self {
             width: Dimension::Auto,
@@ -30,23 +40,52 @@ impl SizedBox {
         }
     }
 
+    /// Sets the preferred width.
+    ///
+    /// The default is [`Dimension::Auto`], which derives width from the child or
+    /// zero when no child exists. Pixel values are logical pixels, percentages
+    /// resolve against the parent's maximum width, and constraints still apply.
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = width.into();
         self
     }
 
+    /// Sets the preferred height.
+    ///
+    /// The default is [`Dimension::Auto`], which derives height from the child or
+    /// zero when no child exists. Pixel values are logical pixels, percentages
+    /// resolve against the parent's maximum height, and constraints still apply.
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = height.into();
         self
     }
 
+    /// Sets the box's fill color.
+    ///
+    /// The default is [`Color::Transparent`]. The color fills the box's resolved
+    /// bounds before its child is drawn.
     pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = color.into();
         self
     }
 
+    /// Attaches or replaces the optional child.
+    ///
+    /// `SizedBox::new()` is already valid without content. This operation
+    /// preserves the concrete child type; use [`SizedBox::box_child`] when
+    /// branches need an erased type.
     pub fn child<W: Widget>(self, child: W) -> SizedBox<W> {
         SizedBox { width: self.width, height: self.height, color: self.color, child: Some(child) }
+    }
+
+    /// Attaches `child` and erases the resulting widget's concrete type.
+    ///
+    /// This is equivalent to calling [`SizedBox::child`] followed by
+    /// [`Widget::boxed`]. Use it when different branches must return one
+    /// [`AnyWidget`] type.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+        self.child(child)
+            .boxed()
     }
 }
 

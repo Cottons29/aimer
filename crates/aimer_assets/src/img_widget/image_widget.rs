@@ -12,6 +12,25 @@ use crate::ImageResult::Success;
 use crate::img_widget::source::ImageSource;
 use crate::{ImageProvider, ImageResult};
 
+/// Displays an image read from a file-system path.
+///
+/// The file is loaded and decoded asynchronously and cached by path. While it is
+/// loading, this widget draws no content. If reading or decoding fails, it draws a
+/// magenta-and-black error pattern; unlike [`AssetImage`](crate::AssetImage) and
+/// [`NetworkImage`](crate::NetworkImage), `Image` does not provide custom fallback
+/// builders.
+///
+/// # Example
+///
+/// ```
+/// use aimer_assets::Image;
+/// use aimer_style::BoxFit;
+///
+/// let image = Image::new("images/photo.png")
+///     .width(320.0)
+///     .height(180.0)
+///     .fit(BoxFit::Cover);
+/// ```
 pub struct Image {
     pub path: PathBuf,
     pub width: Dimension,
@@ -21,6 +40,11 @@ pub struct Image {
 }
 
 impl Image {
+    /// Creates an image that reads from `path`.
+    ///
+    /// Width and height default to [`Dimension::Auto`], [`BoxFit::None`] is used,
+    /// and the drawing scale is `1.0`. The path is interpreted by the host file
+    /// system and is not an `aimer.toml` asset key.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
@@ -31,21 +55,36 @@ impl Image {
         }
     }
 
+    /// Sets the width of the widget's layout box.
+    ///
+    /// The default is [`Dimension::Auto`].
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = width.into();
         self
     }
 
+    /// Sets the height of the widget's layout box.
+    ///
+    /// The default is [`Dimension::Auto`].
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = height.into();
         self
     }
 
+    /// Sets how the image is fitted into its layout box.
+    ///
+    /// The default is [`BoxFit::None`]. Every mode except [`BoxFit::Fill`]
+    /// preserves the image's aspect ratio; `Fill` stretches it to the box.
     pub fn fit(mut self, fit: BoxFit) -> Self {
         self.fit = fit;
         self
     }
 
+    /// Multiplies the final painted image size around the center of its layout box.
+    ///
+    /// This does not change the widget's layout size. The default is `1.0`; values
+    /// are stored without validation, so callers should provide a finite,
+    /// non-negative value.
     pub fn scale(mut self, scale: impl Into<f32>) -> Self {
         self.scale = scale.into();
         self

@@ -16,7 +16,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_macro::key;
 use aimer_utils::callback::Callback;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, Key, RequiredChild, Widget};
+use aimer_widget::{AnyWidget, Element, Key, RequiredChild, Widget};
 pub use controller::{DragMode, ScrollController};
 use controller::{ScrollState, VelocityHistory};
 pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
@@ -24,6 +24,31 @@ pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
 use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
 
+/// A single-child viewport that scrolls overflowing content along one axis.
+///
+/// The child receives an unbounded constraint on the selected [`ScrollAxis`]
+/// and the viewport clips and translates that content according to
+/// [`ScrollBehavior`]. The default axis is vertical, both scroll bars are
+/// enabled, a fresh storage [`Key`] is generated, and no external
+/// [`ScrollController`] is attached.
+///
+/// Attach a child with [`Scrollable::child`] to retain its concrete type, or
+/// with [`Scrollable::box_child`] when branches need a shared erased type.
+///
+/// # Example
+///
+/// ```rust
+/// use aimer_container::flex::Column;
+/// use aimer_container::{ScrollAxis, Scrollable, SizedBox};
+///
+/// let viewport = Scrollable::new()
+///     .axis(ScrollAxis::Vertical)
+///     .vertical_scroll_bar(None)
+///     .child(Column::new().children([
+///         SizedBox::new().height(200),
+///         SizedBox::new().height(200),
+///     ]));
+/// ```
 pub struct Scrollable<W = RequiredChild> {
     pub child: W,
     pub scroll_behavior: ScrollBehavior,
@@ -51,6 +76,10 @@ impl Default for Scrollable {
 }
 
 impl Scrollable {
+    /// Creates a vertical scrollable with default scroll bars and no controller.
+    ///
+    /// Finish the builder with [`Scrollable::child`] or
+    /// [`Scrollable::box_child`].
     pub fn new() -> Self {
         Self {
             child: RequiredChild,
@@ -63,6 +92,12 @@ impl Scrollable {
         }
     }
 
+    /// Creates a scrollable with its required child already attached.
+    ///
+    /// This is equivalent to [`Scrollable::new`] followed by
+    /// [`Scrollable::child`]: it uses the default vertical axis and behavior,
+    /// enables both default scroll bars, generates a storage key, and has no
+    /// external controller.
     pub fn with_child<W: Widget>(child: W) -> Scrollable<W> {
         Scrollable {
             child,
@@ -75,36 +110,65 @@ impl Scrollable {
         }
     }
 
+    /// Replaces the scrolling physics and initial offset configuration.
+    ///
+    /// The default is [`ScrollBehavior::default`]. Offsets are interpreted in
+    /// logical pixels and scaled for the current build context.
     pub fn scroll_behavior(mut self, scroll_behavior: ScrollBehavior) -> Self {
         self.scroll_behavior = scroll_behavior;
         self
     }
 
+    /// Sets the single axis along which content may overflow and scroll.
+    ///
+    /// The default is [`ScrollAxis::Vertical`]. The child is made unbounded only
+    /// on this axis and remains constrained on the cross axis.
     pub fn axis(mut self, axis: ScrollAxis) -> Self {
         self.axis = axis;
         self
     }
 
+    /// Replaces the vertical scroll-bar configuration.
+    ///
+    /// A default bar is enabled initially. Pass `None` to hide it. This setting
+    /// controls presentation and does not change [`Scrollable::axis`].
     pub fn vertical_scroll_bar(mut self, scroll_bar: Option<ScrollBar>) -> Self {
         self.vertical_scroll_bar = scroll_bar;
         self
     }
 
+    /// Replaces the horizontal scroll-bar configuration.
+    ///
+    /// A default bar is enabled initially. Pass `None` to hide it. This setting
+    /// controls presentation and does not change [`Scrollable::axis`].
     pub fn horizontal_scroll_bar(mut self, scroll_bar: Option<ScrollBar>) -> Self {
         self.horizontal_scroll_bar = scroll_bar;
         self
     }
 
+    /// Replaces the identity used to persist and restore the logical offset.
+    ///
+    /// [`Scrollable::new`] generates a fresh key. Reusing a stable key allows a
+    /// torn-down viewport to recover its stored position.
     pub fn key(mut self, key: Key) -> Self {
         self.key = key;
         self
     }
 
+    /// Attaches an application-owned controller for reading or driving offset.
+    ///
+    /// By default no controller is attached. The supplied controller replaces
+    /// any previous one and its state survives widget rebuilds.
     pub fn controller(mut self, controller: ScrollController) -> Self {
         self.controller = Some(controller);
         self
     }
 
+    /// Attaches the required child and completes this builder.
+    ///
+    /// This terminal operation preserves all scrolling configuration and the
+    /// child's concrete type. Use [`Scrollable::box_child`] when different
+    /// branches need one erased return type.
     pub fn child<W: Widget>(self, child: W) -> Scrollable<W> {
         Scrollable {
             child,
@@ -115,6 +179,16 @@ impl Scrollable {
             vertical_scroll_bar: self.vertical_scroll_bar,
             horizontal_scroll_bar: self.horizontal_scroll_bar,
         }
+    }
+
+    /// Attaches `child` and erases the resulting widget's concrete type.
+    ///
+    /// This is equivalent to calling [`Scrollable::child`] followed by
+    /// [`Widget::boxed`]. Use it when different branches must return one
+    /// [`AnyWidget`] type.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+        self.child(child)
+            .boxed()
     }
 }
 

@@ -27,7 +27,7 @@ pub trait StatusListener: Send + Sync {
 /// Controls an animation's timing, progress, and direction.
 ///
 /// The controller produces a `value` in `[0.0, 1.0]` that changes over
-/// `duration` according to the specified `curve`. Call [`tick`] each frame to
+/// `duration` according to the specified `curve`. Call [`Self::tick`] each frame to
 /// advance.
 ///
 /// # Listeners

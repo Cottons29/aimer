@@ -22,7 +22,7 @@ pub struct RequiredChild;
 
 pub type AnyElement = Box<dyn Element>;
 
-/// An alias of Box<dyn Widget>
+/// An alias of `Box<dyn Widget>`.
 pub type AnyWidget = Box<dyn Widget>;
 
 // #[cfg(debug_assertions)]

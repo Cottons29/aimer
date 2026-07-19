@@ -2,6 +2,11 @@ use aimer_widget::base::BuildContext;
 use aimer_widget::{
     Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
 };
+/// A leaf widget that occupies no space and paints nothing.
+///
+/// `ZeroSizedBox` has no constructor or child: instantiate the unit struct
+/// directly. It is useful as an empty placeholder where a valid [`Widget`] or
+/// element is required, and its layout size remains the default zero size.
 pub struct ZeroSizedBox;
 
 impl Drawable for ZeroSizedBox {

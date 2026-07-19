@@ -17,6 +17,12 @@ use crate::img_widget::source::ImageSource;
 /// through [`ImageSource::Asset`]: from the APK on Android, the app bundle on
 /// iOS/macOS, the project directory during desktop development, and via `fetch`
 /// from the site root on web.
+///
+/// Loading and decoding happen asynchronously. Until the image is ready the widget
+/// supplied by [`AssetImage::loading_widget`] is drawn, or nothing is drawn when no
+/// loading widget is set. A load or decode failure similarly draws the
+/// [`AssetImage::error_widget`]; without one, the renderer uses its built-in
+/// magenta-and-black error pattern.
 pub struct AssetImage {
     pub key: String,
     pub width: Dimension,
@@ -28,6 +34,10 @@ pub struct AssetImage {
 }
 
 impl AssetImage {
+    /// Creates an asset image for the registered asset `key`.
+    ///
+    /// Width and height default to [`Dimension::Auto`], [`BoxFit::None`] is used,
+    /// no loading or error widget is installed, and the drawing scale is `1.0`.
     pub fn new(key: impl Into<String>) -> Self {
         Self {
             key: key.into(),
@@ -40,31 +50,53 @@ impl AssetImage {
         }
     }
 
+    /// Sets the width of the widget's layout box.
+    ///
+    /// The default is [`Dimension::Auto`].
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = width.into();
         self
     }
 
+    /// Sets the height of the widget's layout box.
+    ///
+    /// The default is [`Dimension::Auto`].
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = height.into();
         self
     }
 
+    /// Sets how the image is fitted into its layout box.
+    ///
+    /// The default is [`BoxFit::None`]. Every mode except [`BoxFit::Fill`]
+    /// preserves the image's aspect ratio; `Fill` stretches it to the box.
     pub fn fit(mut self, fit: BoxFit) -> Self {
         self.fit = fit;
         self
     }
 
+    /// Sets the widget drawn when loading or decoding the asset fails.
+    ///
+    /// It replaces the built-in magenta-and-black error pattern. The fallback is
+    /// converted to an element with the same build context as this image.
     pub fn error_widget(mut self, error_widget: impl Widget + 'static) -> Self {
         self.error_widget = Some(Box::new(error_widget));
         self
     }
 
+    /// Sets the widget drawn while the asset is being loaded and decoded.
+    ///
+    /// Without a loading widget, the image draws no content until it is ready.
     pub fn loading_widget(mut self, loading_widget: impl Widget + 'static) -> Self {
         self.loading_widget = Some(Box::new(loading_widget));
         self
     }
 
+    /// Multiplies the final painted image size around the center of its layout box.
+    ///
+    /// This does not change the widget's layout size. The default is `1.0`; values
+    /// are stored without validation, so callers should provide a finite,
+    /// non-negative value.
     pub fn scale(mut self, scale: impl Into<f32>) -> Self {
         self.scale = scale.into();
         self

@@ -5,11 +5,15 @@ use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::TextAlign;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
 };
 
 pub type Alignment = TextAlign;
 
+/// Positions a single child within the space supplied by its parent.
+///
+/// Attach a child with [`Align::child`] to retain its concrete type, or with
+/// [`Align::box_child`] when branches need a shared erased type.
 pub struct Align<W = RequiredChild> {
     child: W,
     layer: u32,
@@ -23,22 +27,48 @@ impl Default for Align {
 }
 
 impl Align {
+    /// Creates a top-centered alignment builder on layer zero.
+    ///
+    /// Finish the builder with [`Align::child`] or [`Align::box_child`].
     pub fn new() -> Self {
         Self { child: RequiredChild, layer: 0, alignment: Alignment::TopCenter }
     }
 
+    /// Sets where the child is placed within the parent's available size.
+    ///
+    /// The default is [`Alignment::TopCenter`]. If the child exceeds an axis,
+    /// that axis receives no negative offset, so placement starts at zero.
     pub fn alignment(mut self, alignment: Alignment) -> Self {
         self.alignment = alignment;
         self
     }
 
+    /// Sets the child's z-order layer when used in layered layouts.
+    ///
+    /// The default is `0`. Higher layers are painted later by [`crate::Stack`]
+    /// in its normal direction; this value does not affect the child's size.
     pub fn layer(mut self, layer: u32) -> Self {
         self.layer = layer;
         self
     }
 
+    /// Attaches the required child and completes this builder.
+    ///
+    /// The child receives the parent's constraints and is translated according
+    /// to the selected alignment. Its concrete type is preserved; use
+    /// [`Align::box_child`] for branch type erasure.
     pub fn child<W: Widget>(self, child: W) -> Align<W> {
         Align { child, layer: self.layer, alignment: self.alignment }
+    }
+
+    /// Attaches `child` and erases the resulting widget's concrete type.
+    ///
+    /// This is equivalent to calling [`Align::child`] followed by
+    /// [`Widget::boxed`]. Use it when different branches must return one
+    /// [`AnyWidget`] type.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+        self.child(child)
+            .boxed()
     }
 }
 

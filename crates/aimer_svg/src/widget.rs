@@ -45,6 +45,34 @@ struct CallbackRule {
 }
 
 #[derive(Clone)]
+/// Renders an already parsed [`SvgDocument`].
+///
+/// With no explicit dimensions, the widget uses the document's intrinsic SVG
+/// viewport. Setting only [`Svg::width`] or [`Svg::height`] preserves the viewport
+/// aspect ratio; setting both uses the requested dimensions. Selector-based style
+/// overrides and pointer interaction are optional and empty by default.
+///
+/// Styles target `#id`, `.class`, or element-name selectors. A [`SvgStyle`] changes
+/// only the properties it contains: fill and stroke colors can be replaced or
+/// removed, opacity is overridden, and a transform replaces the selected node's
+/// rendered transform. The non-`try_` builders silently ignore invalid selectors;
+/// their `try_` counterparts return [`SvgError::InvalidSelector`].
+///
+/// # Example
+///
+/// ```
+/// use aimer_svg::{Svg, SvgColor, SvgDocument, SvgError, SvgStyle};
+///
+/// # fn example() -> Result<(), SvgError> {
+/// let document = SvgDocument::from_svg(
+///     br#"<svg viewBox="0 0 24 24"><path id="mark" d="M2 2h20v20z"/></svg>"#,
+/// )?;
+/// let svg = Svg::new(document)
+///     .width(48.0)
+///     .style("#mark", SvgStyle::new().fill(SvgColor::rgba8(0, 128, 255, 255)));
+/// # Ok(())
+/// # }
+/// ```
 pub struct Svg {
     document: SvgDocument,
     width: Option<Dimension>,
@@ -56,6 +84,10 @@ pub struct Svg {
 }
 
 impl Svg {
+    /// Creates a widget for a parsed SVG document.
+    ///
+    /// The intrinsic viewport determines its size, and no style or callback rules
+    /// are installed.
     pub fn new(document: SvgDocument) -> Self {
         Self {
             document,
@@ -68,17 +100,31 @@ impl Svg {
         }
     }
 
+    /// Sets the rendered width.
+    ///
+    /// When height is not set, it is derived from the document viewport to preserve
+    /// the intrinsic aspect ratio.
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = Some(width.into());
         self
     }
 
+    /// Sets the rendered height.
+    ///
+    /// When width is not set, it is derived from the document viewport to preserve
+    /// the intrinsic aspect ratio.
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = Some(height.into());
         self
     }
 
-    pub fn style(mut self, selector: impl AsRef<str>, style: impl  Into<SvgStyle>) -> Self {
+    /// Adds a persistent style override for nodes matching `selector`.
+    ///
+    /// Supported selectors are `#id`, `.class`, and element names. An invalid
+    /// selector is ignored; use [`Svg::try_style`] to receive an error instead.
+    /// Rules are retained in insertion order and only properties set in `style`
+    /// override the SVG document.
+    pub fn style(mut self, selector: impl AsRef<str>, style: impl Into<SvgStyle>) -> Self {
         if let Ok(selector) = selector
             .as_ref()
             .parse()
@@ -89,6 +135,9 @@ impl Svg {
         self
     }
 
+    /// Adds a persistent style override, returning an error for an invalid selector.
+    ///
+    /// See [`Svg::style`] for matching and override semantics.
     pub fn try_style(
         mut self,
         selector: impl AsRef<str>,
@@ -102,6 +151,10 @@ impl Svg {
         Ok(self)
     }
 
+    /// Adds a style applied while a matching painted node is under the pointer.
+    ///
+    /// An invalid selector is ignored; use [`Svg::try_hover_style`] to receive an
+    /// error. Only properties present in `style` are overridden.
     pub fn hover_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
         if let Ok(selector) = selector
             .as_ref()
@@ -113,6 +166,9 @@ impl Svg {
         self
     }
 
+    /// Adds a hover style, returning an error for an invalid selector.
+    ///
+    /// See [`Svg::hover_style`] for interaction and override semantics.
     pub fn try_hover_style(
         mut self,
         selector: impl AsRef<str>,
@@ -126,6 +182,10 @@ impl Svg {
         Ok(self)
     }
 
+    /// Adds a style applied while a matching painted node is pressed.
+    ///
+    /// An invalid selector is ignored; use [`Svg::try_pressed_style`] to receive an
+    /// error. The pressed state ends when the pointer is released or cancelled.
     pub fn pressed_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
         if let Ok(selector) = selector
             .as_ref()
@@ -137,6 +197,9 @@ impl Svg {
         self
     }
 
+    /// Adds a pressed style, returning an error for an invalid selector.
+    ///
+    /// See [`Svg::pressed_style`] for interaction and override semantics.
     pub fn try_pressed_style(
         mut self,
         selector: impl AsRef<str>,
@@ -150,6 +213,11 @@ impl Svg {
         Ok(self)
     }
 
+    /// Registers a callback for a press completed on a matching painted node.
+    ///
+    /// The callback receives [`SvgHit`] metadata and runs only when pointer down and
+    /// pointer up hit the same node. An invalid selector is ignored; use
+    /// [`Svg::try_on_path_press`] to receive an error.
     pub fn on_path_press(
         mut self,
         selector: impl AsRef<str>,
@@ -165,6 +233,9 @@ impl Svg {
         self
     }
 
+    /// Registers a press callback, returning an error for an invalid selector.
+    ///
+    /// See [`Svg::on_path_press`] for hit-testing and press lifecycle semantics.
     pub fn try_on_path_press(
         mut self,
         selector: impl AsRef<str>,
@@ -213,6 +284,24 @@ impl Widget for Svg {
 /// The asset key follows the same platform lookup rules as `AssetImage`:
 /// Android's asset manager, app-bundle resources on Apple platforms, the project
 /// directory during desktop development, and a root-relative request on web.
+/// Loading and parsing run asynchronously. While loading, the configured
+/// [`SvgAsset::loading_widget`] is active; after an I/O or parse error, the
+/// configured [`SvgAsset::error_widget`] is active. Without the corresponding
+/// fallback, the widget has no active child for that phase.
+///
+/// Once loaded, sizing, selector styles, transforms, colors, and callbacks have the
+/// same semantics as [`Svg`].
+///
+/// # Example
+///
+/// ```
+/// use aimer_svg::{SvgAsset, SvgColor, SvgStyle};
+///
+/// let icon = SvgAsset::new("assets/icon.svg")
+///     .width(32.0)
+///     .height(32.0)
+///     .style(".accent", SvgStyle::new().fill(SvgColor::rgba8(0, 128, 255, 255)));
+/// ```
 pub struct SvgAsset {
     key: Arc<str>,
     width: Option<Dimension>,
@@ -226,6 +315,10 @@ pub struct SvgAsset {
 }
 
 impl SvgAsset {
+    /// Creates a widget for the registered SVG asset `key`.
+    ///
+    /// The intrinsic SVG viewport determines the loaded widget's size. No style,
+    /// callback, loading, or error widgets are set by default.
     pub fn new(key: impl Into<Arc<str>>) -> Self {
         Self {
             key: key.into(),
@@ -240,16 +333,29 @@ impl SvgAsset {
         }
     }
 
+    /// Sets the rendered width after the asset loads.
+    ///
+    /// When height is not set, it is derived from the SVG viewport to preserve the
+    /// intrinsic aspect ratio.
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = Some(width.into());
         self
     }
 
+    /// Sets the rendered height after the asset loads.
+    ///
+    /// When width is not set, it is derived from the SVG viewport to preserve the
+    /// intrinsic aspect ratio.
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = Some(height.into());
         self
     }
 
+    /// Adds a persistent style override for nodes matching `selector`.
+    ///
+    /// Supported selectors are `#id`, `.class`, and element names. An invalid
+    /// selector is ignored; use [`SvgAsset::try_style`] to receive an error instead.
+    /// Only properties set in [`SvgStyle`] override the loaded document.
     pub fn style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
         if let Ok(selector) = selector
             .as_ref()
@@ -261,6 +367,9 @@ impl SvgAsset {
         self
     }
 
+    /// Adds a persistent style override, returning an error for an invalid selector.
+    ///
+    /// See [`SvgAsset::style`] for matching and override semantics.
     pub fn try_style(
         mut self,
         selector: impl AsRef<str>,
@@ -274,6 +383,10 @@ impl SvgAsset {
         Ok(self)
     }
 
+    /// Adds a style applied while a matching painted node is under the pointer.
+    ///
+    /// An invalid selector is ignored; use [`SvgAsset::try_hover_style`] to receive
+    /// an error.
     pub fn hover_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
         if let Ok(selector) = selector
             .as_ref()
@@ -285,6 +398,9 @@ impl SvgAsset {
         self
     }
 
+    /// Adds a hover style, returning an error for an invalid selector.
+    ///
+    /// See [`SvgAsset::hover_style`] for interaction semantics.
     pub fn try_hover_style(
         mut self,
         selector: impl AsRef<str>,
@@ -298,6 +414,10 @@ impl SvgAsset {
         Ok(self)
     }
 
+    /// Adds a style applied while a matching painted node is pressed.
+    ///
+    /// An invalid selector is ignored; use [`SvgAsset::try_pressed_style`] to
+    /// receive an error. The pressed state ends on pointer release or cancellation.
     pub fn pressed_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
         if let Ok(selector) = selector
             .as_ref()
@@ -309,6 +429,9 @@ impl SvgAsset {
         self
     }
 
+    /// Adds a pressed style, returning an error for an invalid selector.
+    ///
+    /// See [`SvgAsset::pressed_style`] for interaction semantics.
     pub fn try_pressed_style(
         mut self,
         selector: impl AsRef<str>,
@@ -322,6 +445,11 @@ impl SvgAsset {
         Ok(self)
     }
 
+    /// Registers a callback for a press completed on a matching painted node.
+    ///
+    /// The callback receives [`SvgHit`] metadata and runs only when pointer down and
+    /// pointer up hit the same node. An invalid selector is ignored; use
+    /// [`SvgAsset::try_on_path_press`] to receive an error.
     pub fn on_path_press(
         mut self,
         selector: impl AsRef<str>,
@@ -337,6 +465,9 @@ impl SvgAsset {
         self
     }
 
+    /// Registers a press callback, returning an error for an invalid selector.
+    ///
+    /// See [`SvgAsset::on_path_press`] for hit-testing and press lifecycle semantics.
     pub fn try_on_path_press(
         mut self,
         selector: impl AsRef<str>,
@@ -350,11 +481,19 @@ impl SvgAsset {
         Ok(self)
     }
 
+    /// Sets the child active while the asset is being read and parsed.
+    ///
+    /// Without one, the asset widget has no active child during loading. The child
+    /// is built with the same build context as the asset widget.
     pub fn loading_widget(mut self, loading_widget: impl Widget + 'static) -> Self {
         self.loading_widget = Some(loading_widget.boxed());
         self
     }
 
+    /// Sets the child active after asset loading or SVG parsing fails.
+    ///
+    /// The underlying error text is not passed to the child. Without an error
+    /// widget, the asset widget has no active child after failure.
     pub fn error_widget(mut self, error_widget: impl Widget + 'static) -> Self {
         self.error_widget = Some(error_widget.boxed());
         self

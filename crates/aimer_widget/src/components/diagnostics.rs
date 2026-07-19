@@ -36,11 +36,18 @@ pub fn detect_overflow(child: ResolvedSize, bounds: ResolvedSize, offset: Vec2d)
 }
 
 #[derive(Clone, Debug)]
+/// A diagnostic widget that fills its available bounds with an error message.
+///
+/// Debug builds display the supplied message. Release builds log that message
+/// and render a generic description so internal diagnostic details are not
+/// exposed to users.
 pub struct ErrorWidget {
     message: String,
 }
 
 impl ErrorWidget {
+    /// Creates an error diagnostic with the message used for logging and debug
+    /// rendering.
     pub fn new(message: impl Into<String>) -> Self {
         Self { message: message.into() }
     }
@@ -117,6 +124,11 @@ impl LayoutElement for ErrorElement {
     }
 }
 
+/// Wraps a child and paints a debug overflow warning around constrained edges.
+///
+/// The child is clipped to the available bounds by default. In debug builds,
+/// overflowing edges receive striped markers and a label; release builds keep
+/// only the optional clipping behavior.
 pub struct OverflowIndicator<W> {
     child: W,
     label: Option<String>,
@@ -124,15 +136,22 @@ pub struct OverflowIndicator<W> {
 }
 
 impl<W: Widget + 'static> OverflowIndicator<W> {
+    /// Creates an indicator for `child`, with clipping enabled and a label
+    /// derived from [`Widget::debug_name`].
     pub fn new(child: W) -> Self {
         Self { child, label: None, clip: true }
     }
 
+    /// Overrides the label displayed in the debug overflow message.
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
         self
     }
 
+    /// Controls whether child drawing is clipped to the constrained bounds.
+    ///
+    /// The default is `true`. Overflow detection and debug markers are still
+    /// computed when clipping is disabled.
     pub fn clip(mut self, clip: bool) -> Self {
         self.clip = clip;
         self
