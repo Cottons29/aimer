@@ -4,7 +4,7 @@ use aimer_assets::{AssetImage, NetworkImage};
 use aimer_color::prelude::Color;
 use aimer_container::flex::BoxAlignment;
 use aimer_container::flex::row_column::{Column, Row};
-use aimer_container::{Container, Grid, GridItem, GridTrack, SizedBox};
+use aimer_container::{Container, Grid, GridItem, GridTrack, SizedBox, ZeroSizedBox};
 use aimer_style::{
     BoxDecoration, FontStyle, FontWeight, LayoutSpacing, TextAlign, TextDecoration,
     TextDecorationLine, TextStyle,
@@ -33,13 +33,14 @@ pub type ImageResolver = Rc<dyn Fn(&MarkdownImage) -> AnyWidget>;
 
 fn build_tick_box(ticked: bool) -> AnyWidget {
     match SvgDocument::from_svg(TICK_SVG_DATA) {
-        Ok(doc) => Svg::new(doc)
+        Ok(doc) => Container::new()
+            // .margin(LayoutSpacing::new().top(4))
             .width(16)
             .height(16)
-            .style(
+            .child(Svg::new(doc).style(
                 "#tick",
                 SvgStyle::new().fill(if ticked { Color::BLACK } else { Color::Transparent }),
-            )
+            ))
             .boxed(),
         Err(_) => Text::new(if ticked { "[✔]".to_string() } else { "[ ]".to_string() }).boxed(),
     }
@@ -54,19 +55,9 @@ pub fn default_image_resolver(image: &MarkdownImage) -> AnyWidget {
             .source
             .starts_with("https://")
     {
-        NetworkImage::new(
-            image
-                .source
-                .clone(),
-        )
-        .boxed()
+        NetworkImage::new(image.source.clone()).boxed()
     } else {
-        AssetImage::new(
-            image
-                .source
-                .clone(),
-        )
-        .boxed()
+        AssetImage::new(image.source.clone()).boxed()
     }
 }
 
@@ -174,10 +165,7 @@ fn render_table(
 ) -> AnyWidget {
     let column_count = rows
         .iter()
-        .map(|row| {
-            row.cells
-                .len()
-        })
+        .map(|row| row.cells.len())
         .chain(std::iter::once(alignments.len()))
         .max()
         .unwrap_or(1)
@@ -259,10 +247,11 @@ fn render_block(
         Block::Blockquote(blocks) => Row::new()
             .gaps(LayoutSpacing::all(10_u32.into()))
             .children(vec![
-                SizedBox::new()
+                Container::new()
                     .width(4.0)
+                    // .height(0)
                     .color(theme.rule_color)
-                    .boxed(),
+                    .box_child(ZeroSizedBox),
                 Container::new()
                     .padding(LayoutSpacing::all(8_u32.into()))
                     .color(theme.quote_background)
@@ -295,7 +284,7 @@ fn render_block(
 
                     Row::new()
                         .gaps(LayoutSpacing::all(8_u32.into()))
-                        .vertical_alignment(BoxAlignment::Center)
+                        .vertical_alignment(BoxAlignment::Start)
                         .children(vec![
                             match marker {
                                 Some(marker) => Text::new(marker)
@@ -407,8 +396,7 @@ fn render_blocks_with_style(
     Column::new()
         .horizontal_alignment(BoxAlignment::Start)
         .gaps(LayoutSpacing::all(8_u32.into()))
-        .children(children)
-        .boxed()
+        .box_children(children)
 }
 
 fn render_paragraph(
@@ -544,19 +532,13 @@ mod tests {
         assert_eq!(
             resolved
                 .iter()
-                .map(|span| span
-                    .text
-                    .as_ref())
+                .map(|span| span.text.as_ref())
                 .collect::<String>(),
             "plain both gone\ncodelink[note]"
         );
         let both = resolved
             .iter()
-            .find(|span| {
-                span.text
-                    .as_ref()
-                    == "both"
-            })
+            .find(|span| span.text.as_ref() == "both")
             .unwrap();
         assert_eq!(
             both.style
@@ -570,11 +552,7 @@ mod tests {
         );
         let gone = resolved
             .iter()
-            .find(|span| {
-                span.text
-                    .as_ref()
-                    == "gone"
-            })
+            .find(|span| span.text.as_ref() == "gone")
             .unwrap();
         assert!(
             gone.style
@@ -585,26 +563,17 @@ mod tests {
         assert!(
             resolved
                 .iter()
-                .any(|span| span
-                    .link
-                    .as_deref()
-                    == Some("https://example.com"))
+                .any(|span| span.link.as_deref() == Some("https://example.com"))
         );
         assert!(
             resolved
                 .iter()
-                .any(|span| span
-                    .link
-                    .as_deref()
-                    == Some("#footnote-note"))
+                .any(|span| span.link.as_deref() == Some("#footnote-note"))
         );
         assert_eq!(
             resolved
                 .iter()
-                .find(|span| span
-                    .text
-                    .as_ref()
-                    == "code")
+                .find(|span| span.text.as_ref() == "code")
                 .unwrap()
                 .style
                 .font_family,

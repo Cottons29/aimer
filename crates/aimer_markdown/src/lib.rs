@@ -5,7 +5,8 @@ mod syntax;
 
 use std::rc::Rc;
 
-use aimer_container::{ScrollAxis, Scrollable};
+use aimer_container::{Container, ScrollAxis, Scrollable};
+use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyWidget, Element, Widget};
 
@@ -40,6 +41,7 @@ pub struct MarkdownViewer {
     theme: MarkdownTheme,
     link_handler: Option<LinkHandler>,
     image_resolver: ImageResolver,
+    padding: LayoutSpacing,
     scrollable: bool,
 }
 
@@ -59,13 +61,25 @@ impl MarkdownViewer {
             theme: MarkdownTheme::default(),
             link_handler: Some(Rc::new(open_web_link)),
             image_resolver: Rc::new(default_image_resolver),
+            padding: Default::default(),
             scrollable: true,
         }
+    }
+
+    pub fn padding(mut self, padding: LayoutSpacing) -> Self {
+        self.padding = padding;
+        self
     }
 
     /// Sets the Markdown source rendered by this viewer.
     pub fn markdown(mut self, source: impl Into<Rc<str>>) -> Self {
         self.source = source.into();
+        self
+    }
+
+    /// Sets whether the viewer should be scrollable.
+    pub fn scrollable(mut self, scrollable: bool) -> Self {
+        self.scrollable = scrollable;
         self
     }
 
@@ -92,12 +106,6 @@ impl MarkdownViewer {
         self.image_resolver = Rc::new(resolver);
         self
     }
-
-    /// Enables or disables the viewer's vertical scrolling wrapper.
-    pub fn scrollable(mut self, scrollable: bool) -> Self {
-        self.scrollable = scrollable;
-        self
-    }
 }
 
 impl Widget for MarkdownViewer {
@@ -111,19 +119,24 @@ impl Widget for MarkdownViewer {
                 &self.image_resolver,
             ),
             Err(error) => aimer_text::Text::new(error.to_string())
-                .text_style(
-                    self.theme
-                        .body,
-                )
+                .text_style(self.theme.body)
                 .boxed(),
         };
+
         if self.scrollable {
             Scrollable::new()
                 .axis(ScrollAxis::Vertical)
-                .child(content)
+                .child(
+                    Container::new()
+                        .padding(self.padding)
+                        .child(content),
+                )
                 .to_element(ctx)
         } else {
-            content.to_element(ctx)
+            Container::new()
+                .padding(self.padding)
+                .child(content)
+                .to_element(ctx)
         }
     }
 

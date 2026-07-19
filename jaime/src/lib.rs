@@ -11,6 +11,7 @@ pub mod stateful;
 mod stateful_2;
 mod svg_test;
 mod test_animation;
+mod scroll_and_row;
 
 use aimer::style::*;
 #[allow(unused_imports)]
@@ -19,6 +20,8 @@ use aimer::{AimerApp, *};
 
 #[allow(unused_imports)]
 use crate::animated::start_my_animated_list;
+use crate::markdown_example::start_markdown_example;
+use crate::scroll_and_row::test_scroll_and_row;
 #[allow(unused_imports)]
 use crate::stateful::start_counter;
 use crate::test_animation::TestFadingAnimation;
@@ -34,7 +37,11 @@ pub fn my_app() {
     // ])))
     // test_positioned()
     // async_builder::start_async_builder_example()
-    animated_theme::start_animated_theme_example()
+    // animated_theme::start_animated_theme_example()
+    // test_scrollable()
+    // test_scrollable_row()
+    start_markdown_example();
+    // test_scroll_and_row();
 }
 #[allow(unused)]
 fn test_text() {
@@ -344,7 +351,9 @@ pub fn test_scrollable() {
         up_button: None,
         down_button: None,
     };
-    let app = Container::new().child(
+    let app = Container::new()
+        .color(Color::WHITE)
+        .child(
         Column::new()
             .children(vec![
                 Container::new()
@@ -398,6 +407,7 @@ pub fn test_scrollable() {
             ])
             .boxed(),
     );
+
     AimerApp::start(app);
 }
 #[allow(unused)]
