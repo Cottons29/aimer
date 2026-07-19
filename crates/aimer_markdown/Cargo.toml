@@ -14,4 +14,4 @@ aimer_color.workspace = true
 aimer_style.workspace = true
 webbrowser.workspace = true
 aimer_svg.workspace = true
-arborium = {workspace = true}
+arborium = {workspace = true, features = ["default", "lang-rust"]}
