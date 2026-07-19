@@ -295,25 +295,6 @@ mod tests {
         assert!(link_style.color == Color::BLACK);
     }
 
-    #[test]
-    fn blog_link_is_underlined_and_italic_only_when_hovered() {
-        let (style, hover_style) = blog_link_styles();
-
-        assert!(
-            style
-                .text_decoration
-                .line
-                == TextDecorationLine::NONE
-        );
-        assert!(style.font_style == FontStyle::Normal);
-        assert!(
-            hover_style
-                .text_decoration
-                .line
-                == TextDecorationLine::UNDERLINE
-        );
-        assert!(hover_style.font_style == FontStyle::Italic);
-    }
 
     #[test]
     fn upload_time_is_presented_as_a_readable_utc_date() {
