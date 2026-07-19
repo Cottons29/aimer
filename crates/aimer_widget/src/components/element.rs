@@ -233,6 +233,14 @@ fn dispatch_captured_event(root: &dyn Element, pointer: u64, event: &ElementEven
         .then(|| root.on_event(event))
 }
 
+/// Cancels the element that captured `pointer`, even when `pos` is outside its bounds.
+/// Falls back to normal hit-tested dispatch when no element owns the pointer.
+pub fn cancel_pointer(root: &dyn Element, pointer: u64, pos: Vec2d) -> bool {
+    let event = ElementEvent::Cancel;
+    dispatch_captured_event(root, pointer, &event)
+        .unwrap_or_else(|| dispatch_event(root, pos, &event))
+}
+
 /// Broadcast an event to every element in the tree, regardless of hit-testing.
 /// Returns `true` if any element consumed the event.
 pub fn broadcast_event(root: &dyn Element, event: &ElementEvent) -> bool {
@@ -342,6 +350,45 @@ mod tests {
         let event = ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, PointerSource::Touch, 7);
 
         assert!(dispatch_event(&element, Vec2d { x: 50.0, y: 50.0 }, &event));
+        assert_eq!(
+            element
+                .events
+                .get(),
+            1
+        );
+    }
+
+    #[test]
+    fn cancel_pointer_reaches_captured_element_outside_bounds() {
+        let element = CapturingElement { events: Cell::new(0) };
+
+        assert!(cancel_pointer(&element, 7, Vec2d { x: 50.0, y: 50.0 }));
+        assert_eq!(
+            element
+                .events
+                .get(),
+            1
+        );
+    }
+
+    #[test]
+    fn cancel_pointer_falls_back_to_hit_testing_without_capture() {
+        let element = CapturingElement { events: Cell::new(0) };
+
+        assert!(cancel_pointer(&element, 8, Vec2d { x: 5.0, y: 5.0 }));
+        assert_eq!(
+            element
+                .events
+                .get(),
+            1
+        );
+    }
+
+    #[test]
+    fn cancel_pointer_is_not_delivered_twice_to_captured_target() {
+        let element = CapturingElement { events: Cell::new(0) };
+
+        assert!(cancel_pointer(&element, 7, Vec2d { x: 5.0, y: 5.0 }));
         assert_eq!(
             element
                 .events
