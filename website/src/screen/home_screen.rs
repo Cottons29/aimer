@@ -279,14 +279,13 @@ fn why_aimer_section(ctx: &BuildContext) -> AnyWidget {
                                 feature_block(
                                     "Performance",
                                     Row::new()
-                                        .children(vec![
+                                        .box_children(vec![
                                             word("GPU-accelerated rendering via ", false),
                                             word("Cupid", true),
                                             word(" & ", false),
                                             word("wgpu", true),
                                             word(".", false),
-                                        ])
-                                        .boxed(),
+                                        ]),
                                     resp_position(ctx, 72.0, 46.0),
                                     resp_position(ctx, 32.0, 0.0),
                                 ),
@@ -419,8 +418,7 @@ fn polished_tooling_section(ctx: &BuildContext) -> AnyWidget {
                                 .into_iter()
                                 .map(|(title, description)| {
                                     GridItem::new(tooling_card(title, description, mobile))
-                                })
-                                .collect::<Vec<_>>(),
+                                }),
                         )
                         .boxed(),
                     SizedBox::new()

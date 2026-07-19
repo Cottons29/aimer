@@ -1,4 +1,5 @@
 mod document;
+mod markdown_theme;
 mod renderer;
 mod syntax;
 
@@ -9,10 +10,9 @@ use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyWidget, Element, Widget};
 
 pub use document::{Alignment, Block, Document, Inline, ListItem, MarkdownError, TableRow};
-pub use renderer::{
-    ImageResolver, LinkHandler, MarkdownImage, MarkdownTheme, default_image_resolver,
-};
-pub use syntax::{SyntaxToken, SyntaxTokenKind, highlight};
+pub use markdown_theme::MarkdownTheme;
+pub use renderer::{ImageResolver, LinkHandler, MarkdownImage, default_image_resolver};
+pub use syntax::{CaptureSpan, highlight};
 
 fn open_web_link_with<E>(
     target: &str,

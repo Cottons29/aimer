@@ -15,7 +15,7 @@ pub enum LineHeight {
 /// lines (e.g. underline + line-through) can be combined without the awkward
 /// `Combine(&'static [Self])` slice the old enum used.
 #[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct TextDecorationLine(u8);
 
 impl Default for TextDecorationLine {
@@ -59,7 +59,7 @@ impl core::ops::BitOr for TextDecorationLine {
 /// The stroke style of a decoration line, mirroring the CSS
 /// `text-decoration-style`.
 #[allow(dead_code)]
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TextDecorationStyle {
     #[default]
     Solid,
@@ -88,7 +88,7 @@ impl TextDecorationStyle {
 /// thickness and a vertical offset. Replaces the old on/off `Underline`-only
 /// enum.
 #[allow(dead_code)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct TextDecoration {
     pub line: TextDecorationLine,
     pub style: TextDecorationStyle,
@@ -196,7 +196,7 @@ pub enum TextAlign {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct TextStyle {
     pub font_size: u32,
     pub font_family: FontFamily,
@@ -274,7 +274,7 @@ impl Default for TextStyle {
 }
 
 #[allow(dead_code)]
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug)]
 pub enum TextOverflow {
     #[default]
     Clip,

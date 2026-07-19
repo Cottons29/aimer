@@ -32,7 +32,8 @@ pub fn my_app() {
     //     Expanded::new().child(TestFadingAnimation),
     // ])))
     // test_positioned()
-    async_builder::start_async_builder_example()
+    // async_builder::start_async_builder_example()
+    markdown_example::start_markdown_example()
 }
 #[allow(unused)]
 fn test_text() {

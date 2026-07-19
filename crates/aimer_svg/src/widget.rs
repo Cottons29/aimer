@@ -78,13 +78,13 @@ impl Svg {
         self
     }
 
-    pub fn style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
+    pub fn style(mut self, selector: impl AsRef<str>, style: impl  Into<SvgStyle>) -> Self {
         if let Ok(selector) = selector
             .as_ref()
             .parse()
         {
             self.styles
-                .push(StyleRule { selector, style });
+                .push(StyleRule { selector, style: style.into() });
         }
         self
     }

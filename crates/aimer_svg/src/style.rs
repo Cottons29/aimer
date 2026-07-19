@@ -13,8 +13,8 @@ impl SvgStyle {
         Self { fill: None, stroke: None, opacity: None, transform: None }
     }
 
-    pub const fn fill(mut self, fill: SvgColor) -> Self {
-        self.fill = Some(Some(fill));
+    pub  fn fill(mut self, fill: impl Into<SvgColor>) -> Self {
+        self.fill = Some(Some(fill.into()));
         self
     }
 

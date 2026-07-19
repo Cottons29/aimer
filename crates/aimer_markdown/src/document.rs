@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter};
 
+use aimer_utils::error;
 use markdown::mdast::{AlignKind, Node};
 use markdown::{Constructs, ParseOptions};
 
@@ -219,10 +220,12 @@ fn convert_inlines(nodes: &[Node]) -> Result<Vec<Inline>, MarkdownError> {
                     .identifier
                     .clone(),
             }),
-            Node::Html(_) => {
+            Node::Html(item) => {
+                error!("Raw HTML is not supported in MarkdownViewer : {:?}", item);
                 return Err(MarkdownError::new("Raw HTML is not supported in MarkdownViewer"));
             }
             other => {
+                error!("Unsupported Markdown inline node: {}", node_name(other));
                 return Err(MarkdownError::new(format!(
                     "Unsupported Markdown inline node: {}",
                     node_name(other)

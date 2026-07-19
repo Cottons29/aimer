@@ -1,3 +1,4 @@
+use aimer_color::prelude::Color;
 use std::sync::Arc;
 
 mod tessellation;
@@ -98,6 +99,18 @@ pub struct SvgColor {
     pub g: f32,
     pub b: f32,
     pub a: f32,
+}
+
+impl From<Color> for SvgColor {
+    fn from(color: Color) -> Self {
+        let u32_color = color.as_u32();
+        Self {
+            r: ((u32_color >> 16) & 0xff) as f32 / 255.0,
+            g: ((u32_color >> 8) & 0xff) as f32 / 255.0,
+            b: (u32_color & 0xff) as f32 / 255.0,
+            a: ((u32_color >> 24) & 0xff) as f32 / 255.0,
+        }
+    }
 }
 
 impl SvgColor {

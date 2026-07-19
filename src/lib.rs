@@ -20,7 +20,7 @@ pub use aimer_markdown::{
     Alignment as MarkdownAlignment, Block as MarkdownBlock, Document as MarkdownDocument,
     ImageResolver as MarkdownImageResolver, Inline as MarkdownInline,
     LinkHandler as MarkdownLinkHandler, MarkdownError, MarkdownImage, MarkdownTheme,
-    MarkdownViewer, SyntaxToken, SyntaxTokenKind,
+    MarkdownViewer,
 };
 pub use aimer_provider::{
     NotifierProvider, Provider, ProviderContext, ProviderHandle, StoreProvider,
