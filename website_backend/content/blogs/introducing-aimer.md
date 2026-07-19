@@ -1,6 +1,6 @@
 # First Blog: Introducing Aimer
 
-Aimer is a cross-platform GUI framework for Rust with a declarative widget model and hardware-accelerated rendering.
+**Aimer** is a cross-platform GUI framework for Rust with a declarative widget model and hardware-accelerated rendering.
 
 ### Example Snippet
 

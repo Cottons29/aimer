@@ -14,3 +14,14 @@ tower-http = { version = "0.7.0", features = ["cors"] }
 [dev-dependencies]
 tempfile.workspace = true
 tower.workspace = true
+
+
+[profile.release]
+opt-level = 3        # 0-3, "s" (size), "z" (min size) — 3 is default for release
+lto = true            # Link-time optimization: "fat", "thin", or true/false
+codegen-units = 1     # Fewer units = better optimization, slower compile
+panic = "abort"       # Smaller binary, no unwinding (can't catch_unwind)
+strip = true          # Strip symbols/debug info from binary
+debug = false         # No debug info (default false in release)
+overflow-checks = false  # Default false in release
+incremental = false   # Default false in release
