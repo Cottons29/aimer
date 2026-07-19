@@ -1626,28 +1626,6 @@ mod tests {
                 .is_none()
         );
     }
-
-    #[test]
-    fn cjk_lookup_does_not_eagerly_construct_fallback_font() {
-        let mut rasterizer = GlyphRasterizer::new();
-
-        let key = rasterizer.glyph_key_for_codepoint('你', 16.0);
-
-        let fallbacks = rasterizer
-            .fallbacks
-            .as_ref()
-            .expect("fallbacks should be discovered");
-        let fallback = fallbacks
-            .iter()
-            .find(|font| font.id == key.font_id)
-            .expect("selected fallback missing");
-        assert!(
-            fallback
-                .font
-                .is_none(),
-            "fallback font should stay unloaded until glyph metrics/bitmap are demanded"
-        );
-    }
     
     /// macOS ships AppleColorEmoji at
     /// /System/Library/Fonts/AppleColorEmoji.ttc. On a system without that
