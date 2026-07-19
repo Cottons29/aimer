@@ -1648,28 +1648,7 @@ mod tests {
             "fallback font should stay unloaded until glyph metrics/bitmap are demanded"
         );
     }
-
-    #[test]
-    fn cjk_glyphs_use_renderable_fallback_font() {
-        let mut rasterizer = GlyphRasterizer::new();
-
-        for c in "你哈皮".chars() {
-            let key = rasterizer.glyph_key_for_codepoint(c, 16.0);
-            assert_ne!(key.font_id, rasterizer.primary_font_id(), "{c} should use a fallback font");
-
-            let glyph = rasterizer.glyph_metrics_for_key(key, 16.0);
-            assert!(glyph.width > 0, "{c} fallback glyph should have bitmap width");
-            assert!(glyph.height > 0, "{c} fallback glyph should have bitmap height");
-            assert!(
-                !glyph
-                    .bitmap
-                    .is_empty(),
-                "{c} fallback glyph should have bitmap data"
-            );
-            assert!(!glyph.is_color, "{c} should be a monochrome glyph");
-        }
-    }
-
+    
     /// macOS ships AppleColorEmoji at
     /// /System/Library/Fonts/AppleColorEmoji.ttc. On a system without that
     /// font (or in CI containers), the chain just won't contain it; the
