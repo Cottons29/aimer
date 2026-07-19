@@ -10,7 +10,18 @@ use aimer_widget::{
     AnyWidget, Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement, Widget,
 };
 
-/// a flexible layout container
+/// Arranges a homogeneous collection of children along a configurable main axis.
+///
+/// [`LayoutDirection::Row`] uses a horizontal main axis and
+/// [`LayoutDirection::Column`] a vertical one. Alignment controls placement on
+/// each physical axis, while [`OverflowBehavior`] clips, exposes, or wraps
+/// children that exceed the available constraints. Spacing is expressed as
+/// logical pixels through [`LayoutSpacing`].
+///
+/// `Flex::new()` defaults to [`LayoutDirection::Inherit`], start alignment on
+/// both axes, zero gaps, [`OverflowBehavior::Hidden`], and no children. Supply
+/// children with [`Flex::children`] or append to an existing erased collection
+/// with [`Flex::add_child`].
 #[allow(dead_code)]
 pub struct Flex<W: Widget + 'static = AnyWidget> {
     pub(crate) direction: LayoutDirection,
@@ -28,6 +39,11 @@ impl Default for Flex {
 }
 
 impl Flex {
+    /// Creates an empty flex layout with inherited direction.
+    ///
+    /// Both alignments default to [`BoxAlignment::Start`], gaps to zero, and
+    /// overflow to [`OverflowBehavior::Hidden`]. An empty flex is already a
+    /// valid [`Widget`].
     pub fn new() -> Self {
         Self {
             direction: LayoutDirection::default(),
@@ -41,31 +57,57 @@ impl Flex {
 }
 
 impl<W: Widget + 'static> Flex<W> {
+    /// Sets the main-axis direction used to place children.
+    ///
+    /// The default is [`LayoutDirection::Inherit`]. Use
+    /// [`LayoutDirection::Row`] for left-to-right placement or
+    /// [`LayoutDirection::Column`] for top-to-bottom placement.
     pub fn direction(mut self, direction: LayoutDirection) -> Self {
         self.direction = direction;
         self
     }
 
+    /// Sets alignment on the physical vertical axis.
+    ///
+    /// The default is [`BoxAlignment::Start`].
     pub fn vertical_alignment(mut self, alignment: BoxAlignment) -> Self {
         self.vertical_alignment = alignment;
         self
     }
 
+    /// Sets alignment on the physical horizontal axis.
+    ///
+    /// The default is [`BoxAlignment::Start`].
     pub fn horizontal_alignment(mut self, alignment: BoxAlignment) -> Self {
         self.horizontal_alignment = alignment;
         self
     }
 
+    /// Sets the spacing between adjacent children.
+    ///
+    /// Values are logical pixels represented by [`LayoutSpacing`]; the default
+    /// is zero spacing. Horizontal sides contribute to row gaps and vertical
+    /// sides contribute to column gaps.
     pub fn gaps(mut self, gaps: impl Into<LayoutSpacing>) -> Self {
         self.gaps = gaps.into();
         self
     }
 
+    /// Sets how children exceeding the available constraints are handled.
+    ///
+    /// [`OverflowBehavior::Hidden`] is the default and clips to the flex bounds.
+    /// [`OverflowBehavior::Visible`] paints outside them, while
+    /// [`OverflowBehavior::Wrap`] creates additional rows or columns.
     pub fn overflow(mut self, overflow: OverflowBehavior) -> Self {
         self.overflow = overflow;
         self
     }
 
+    /// Replaces all children with the supplied homogeneous collection.
+    ///
+    /// This is not an append operation. The returned [`Flex`] adopts the item
+    /// type of the iterator and is immediately a valid [`Widget`], including
+    /// when the iterator is empty.
     pub fn children<C: Widget>(self, children: impl IntoIterator<Item = C>) -> Flex<C> {
         Flex {
             direction: self.direction,
@@ -79,6 +121,11 @@ impl<W: Widget + 'static> Flex<W> {
         }
     }
 
+    /// Appends one child to the existing collection.
+    ///
+    /// The child must have the same type as the collection's existing items.
+    /// Use [`Flex::children`] to replace the collection or establish a new item
+    /// type.
     pub fn add_child(mut self, child: W) -> Self {
         self.children
             .push(child);

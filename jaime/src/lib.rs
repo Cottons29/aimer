@@ -1,4 +1,5 @@
 pub mod animated;
+mod animated_theme;
 mod async_builder;
 mod color_sync;
 mod custom_font;
@@ -33,7 +34,7 @@ pub fn my_app() {
     // ])))
     // test_positioned()
     // async_builder::start_async_builder_example()
-    markdown_example::start_markdown_example()
+    animated_theme::start_animated_theme_example()
 }
 #[allow(unused)]
 fn test_text() {

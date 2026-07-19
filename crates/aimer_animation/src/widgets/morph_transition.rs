@@ -92,13 +92,19 @@ impl Animatable for Rgba {
 /// itself.
 ///
 /// # Example
-/// ```ignore
-/// MorphTransition::new(
+/// ```rust
+/// use std::time::Duration;
+///
+/// use aimer_animation::{Curve, MorphTransition, Rgba};
+/// use aimer_widget::ErrorWidget;
+///
+/// let transition = MorphTransition::new(
 ///     Duration::from_millis(400),
-///     Curve::FastOutSlowIn,
-///     if expanded { large_card() } else { small_card() },
+///     Curve::Linear,
+///     ErrorWidget::new("Profile card"),
 /// )
-/// .background_color(current_color)  // optional: enables color morphing
+/// .background_color(Rgba::WHITE)
+/// .child_key("profile-card");
 /// ```
 pub struct MorphTransition<T: Widget + 'static> {
     pub child: Arc<T>,
@@ -112,6 +118,11 @@ pub struct MorphTransition<T: Widget + 'static> {
 }
 
 impl<T: Widget> MorphTransition<T> {
+    /// Creates a morph transition around `child`.
+    ///
+    /// The initial child is displayed without animation. Later rebuilds start
+    /// a morph when the effective child key or optional background color
+    /// changes. The child's own [`Widget::key`] is the default identity.
     pub fn new(duration: Duration, curve: Curve, child: T) -> Self {
         Self {
             child: Arc::new(child),
@@ -123,17 +134,28 @@ impl<T: Widget> MorphTransition<T> {
         }
     }
 
-    /// Set a background color that will be morphed when the child changes.
+    /// Sets the background color included in the morph.
+    ///
+    /// A changed color starts a transition even when the child key is
+    /// unchanged. Without this builder, no background is painted or
+    /// interpolated by the transition.
     pub fn background_color(mut self, color: Rgba) -> Self {
         self.background_color = Some(color);
         self
     }
 
+    /// Sets an explicit child identity used to detect content changes.
+    ///
+    /// This overrides the key reported by the child widget.
     pub fn child_key(mut self, key: impl Into<Key>) -> Self {
         self.transition_key = Some(key.into());
         self
     }
 
+    /// Sets the identity of the transition widget for reconciliation.
+    ///
+    /// This does not determine whether a morph starts; use
+    /// [`child_key`](Self::child_key) for that purpose.
     pub fn key(mut self, key: impl Into<Key>) -> Self {
         self.widget_key = Some(key.into());
         self

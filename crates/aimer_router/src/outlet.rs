@@ -16,6 +16,8 @@ pub struct OutletSlot {
 }
 
 impl OutletSlot {
+    /// Creates a slot from the type-erased active-child builder injected by a
+    /// shell.
     pub fn new(build: OutletChildBuilder) -> Self {
         Self { build }
     }
@@ -26,7 +28,8 @@ impl OutletSlot {
     }
 }
 
-/// A placeholder widget marking where a shell's active child route is rendered.
+/// A zero-configuration placeholder widget marking where a shell's active child
+/// route is rendered.
 ///
 /// Place an `Outlet` anywhere inside a [`crate::shell::Shell`]'s frame; the
 /// shell injects an [`OutletSlot`] and the outlet builds the active child from

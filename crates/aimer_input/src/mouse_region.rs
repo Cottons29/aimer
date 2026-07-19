@@ -8,23 +8,45 @@ use aimer_events::window::request_animation_frame;
 use aimer_macro::Rebuildable;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, RequiredChild, VisitorElement, Widget,
+    AnyWidget, Drawable, Element, EventElement, LayoutElement, RequiredChild, VisitorElement,
+    Widget,
 };
 
 use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
 
+/// Whether a mouse pointer is currently inside a [`MouseRegion`].
 #[derive(Debug, Copy, Clone, Default)]
 pub enum PointerState {
+    /// The pointer is within the region's laid-out bounds.
     Inside,
+    /// The pointer is outside the region's laid-out bounds.
     #[default]
     Outside,
 }
 
 /// A shared pointer state.
 ///
-/// This is a type alias of Rc<Cell<PointerState>>
+/// This is a type alias of `Rc<Cell<PointerState>>` and can be passed to
+/// [`MouseRegion::current_state`] so other code can observe transitions.
 pub type SharedPointerState = Rc<Cell<PointerState>>;
 
+/// A transparent widget that tracks mouse hover over its child.
+///
+/// Touch events do not change hover state. Enter and exit callbacks run only on actual state
+/// transitions; asynchronous callbacks are currently ignored. The default cursor is unchanged and
+/// the initial state is [`PointerState::Outside`].
+///
+/// # Example
+///
+/// ```
+/// use aimer_input::mouse_region::MouseRegion;
+/// use aimer_text::Text;
+///
+/// let region = MouseRegion::new()
+///     .cursor(winit::window::CursorIcon::Pointer)
+///     .on_hover_enter(|| println!("entered"))
+///     .child(Text::new("Hover me"));
+/// ```
 pub struct MouseRegion<W = RequiredChild> {
     pub on_hover_enter: VoidCallback,
     pub on_hover_exit: VoidCallback,
@@ -41,6 +63,7 @@ impl Default for MouseRegion {
 }
 
 impl MouseRegion {
+    /// Creates a region with no-op callbacks, no cursor override, and outside pointer state.
     pub fn new() -> Self {
         Self {
             on_hover_enter: VoidCallback::default(),
@@ -54,26 +77,37 @@ impl MouseRegion {
 }
 
 impl<W> MouseRegion<W> {
+    /// Sets the callback fired when the mouse transitions from outside to inside the child bounds.
     pub fn on_hover_enter(mut self, on_hover_enter: impl Into<VoidCallback>) -> Self {
         self.on_hover_enter = on_hover_enter.into();
         self
     }
 
+    /// Sets the callback fired when the mouse transitions from inside to outside the child bounds.
     pub fn on_hover_exit(mut self, on_hover_exit: impl Into<VoidCallback>) -> Self {
         self.on_hover_exit = on_hover_exit.into();
         self
     }
 
+    /// Sets the cursor shown while the mouse is inside the region.
+    ///
+    /// Pass `None` to leave the cursor unchanged. On exit, a configured cursor resets to the
+    /// platform default.
     pub fn cursor(mut self, cursor: impl Into<Option<winit::window::CursorIcon>>) -> Self {
         self.cursor = cursor.into();
         self
     }
 
+    /// Replaces the shared cell in which hover transitions are recorded.
     pub fn current_state(mut self, current_state: SharedPointerState) -> Self {
         self.current_state = current_state;
         self
     }
 
+    /// Supplies the terminal child and returns a statically typed region.
+    ///
+    /// Existing callbacks, cursor, and shared state are preserved. A region without a child is only
+    /// an intermediate builder and does not implement [`Widget`].
     pub fn child<C: Widget>(self, child: C) -> MouseRegion<C> {
         MouseRegion {
             on_hover_enter: self.on_hover_enter,
@@ -83,6 +117,16 @@ impl<W> MouseRegion<W> {
             cached_bounds: self.cached_bounds,
             child,
         }
+    }
+
+    /// Supplies the terminal child and erases the completed region's concrete type.
+    ///
+    /// This is exactly equivalent to `self.child(child).boxed()`, combining
+    /// [`MouseRegion::child`] with [`Widget::boxed`]. Use it when branching APIs need one
+    /// [`AnyWidget`] return type despite using different concrete child types.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+        self.child(child)
+            .boxed()
     }
 }
 
@@ -117,7 +161,7 @@ impl<W: Widget + 'static> Widget for MouseRegion<W> {
 /// ##### A transparent wrapper that tracks the mouse hover state.
 ///
 /// `MouseRegion` only responds to mouse-originated pointer events — touch
-/// input is ignored for hover purposes. It writes to a shared `Rc<Cell<bool>>`
+/// input is ignored for hover purposes. It writes to a shared `Rc<Cell<PointerState>>`
 /// so that a child element (e.g. `GestureDetector`) can read the hover state
 /// for decoration switching without knowing about `MouseRegion` at all.
 ///

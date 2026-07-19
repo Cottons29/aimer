@@ -19,8 +19,11 @@ pub struct Shell {
 }
 
 impl Shell {
-    /// Create a shell from a `frame` widget (containing an `Outlet`) and a
+    /// Creates a shell from a `frame` widget (containing an [`crate::Outlet`]) and a
     /// closure that builds the active child widget.
+    ///
+    /// The frame is the shell's child and remains the stable outer subtree;
+    /// the closure supplies the content requested by its descendant outlet.
     pub fn new(
         frame: impl Widget + 'static,
         child_builder: impl Fn(&BuildContext) -> Box<dyn Widget> + 'static,
@@ -28,9 +31,7 @@ impl Shell {
         Self { frame: Box::new(frame), child_builder: Rc::new(child_builder) }
     }
 
-    /// The Heap-allocated version of this `Shell::new`.
-    /// Create a shell from a `frame` widget (containing an `Outlet`) and a
-    /// closure that builds the active child widget.
+    /// Creates the heap-allocated [`Widget`] form of [`Shell::new`].
     pub fn boxing(
         frame: impl Widget + 'static,
         child_builder: impl Fn(&BuildContext) -> Box<dyn Widget> + 'static,
@@ -38,7 +39,9 @@ impl Shell {
         Self::new(frame, child_builder).boxed()
     }
 
-    /// Create a shell whose active child is a fixed widget value.
+    /// Creates a shell whose active child is a fixed, cloneable widget value.
+    ///
+    /// The child is cloned each time the outlet requests it.
     pub fn with_child(frame: impl Widget + 'static, child: impl Widget + Clone + 'static) -> Self {
         Self::new(frame, move |_| Box::new(child.clone()))
     }
@@ -94,7 +97,10 @@ pub fn active_top<R: Clone>(branches: &[Vec<R>], active: usize) -> Option<R> {
 /// A tabbed shell that keeps an independent navigation stack per branch, so
 /// switching branches preserves each branch's history (StatefulShellRoute).
 ///
-/// Only the active branch's top route is rendered into the shell's `Outlet`.
+/// Only the active branch's top route is rendered into the shell's
+/// [`crate::Outlet`]. Each branch starts with exactly one route and guarded pops
+/// never empty a stack. Descendants navigate through
+/// [`StatefulShellController`].
 pub struct StatefulShell<R: Route> {
     pub branches: Vec<Vec<R>>,
     pub active: usize,
@@ -103,10 +109,13 @@ pub struct StatefulShell<R: Route> {
 }
 
 impl<R: Route> StatefulShell<R> {
-    /// Create a stateful shell from one initial route per branch.
+    /// Creates a stateful shell from one initial route per branch.
     ///
-    /// `frame` builds the persistent layout (which must contain an `Outlet`)
+    /// `frame` builds the persistent layout (which must contain an [`crate::Outlet`])
     /// and `routes` builds the widget for a given child route.
+    ///
+    /// Branch zero is active initially. `initial_routes` must not be empty, and
+    /// every branch created by this constructor has a non-empty history stack.
     pub fn new(
         initial_routes: Vec<R>,
         frame: fn(&BuildContext) -> Box<dyn Widget>,

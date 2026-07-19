@@ -1,7 +1,9 @@
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget};
+use aimer_widget::{
+    AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
+};
 
 use crate::ZeroSizedBox;
 
@@ -18,14 +20,20 @@ use crate::ZeroSizedBox;
 ///   first child gets `1 / (1 + 2)` and the second `2 / (1 + 2)` of the free
 ///   space.
 ///
+/// Attach a child with [`Expanded::child`] to retain its concrete type, or with
+/// [`Expanded::box_child`] when branches need to return the same erased type.
+///
 /// # Example
 ///
-/// ```rust ignore
-/// Row::new()
+/// ```rust
+/// use aimer_container::SizedBox;
+/// use aimer_container::flex::{Expanded, Row};
+///
+/// let row = Row::new()
 ///     .children(vec![
-///         Expanded::new().child(Container::new().color(Colors::Red)),
-///         Expanded::new().flex(2).child(Container::new().color(Colors::Blue)),
-///     ])
+///         Expanded::new().child(SizedBox::new()),
+///         Expanded::new().flex(2.0).child(SizedBox::new()),
+///     ]);
 /// ```
 pub struct Expanded<W = RequiredChild> {
     /// The flex factor: the child's share of the free main-axis space is
@@ -42,17 +50,38 @@ impl Default for Expanded {
 }
 
 impl Expanded {
+    /// Creates an expanding child with a flex factor of `1.0`.
+    ///
+    /// Finish the builder with [`Expanded::child`] or [`Expanded::box_child`].
     pub fn new() -> Self {
         Self { flex: 1.0, child: RequiredChild }
     }
 
+    /// Sets this child's weight when a flex parent distributes remaining space.
+    ///
+    /// The default is `1.0`. At element construction, negative values are
+    /// clamped to `0.0`; a zero-weight child receives no share of the remaining
+    /// main-axis space.
     pub fn flex(mut self, flex: f32) -> Self {
         self.flex = flex;
         self
     }
-    /// Make Expanded became a valid Widget implementation
+    /// Attaches the required child and makes the builder a valid [`Widget`].
+    ///
+    /// This terminal operation preserves the child's concrete type. Use
+    /// [`Expanded::box_child`] instead when branch type erasure is needed.
     pub fn child<W: Widget + 'static>(self, child: W) -> Expanded<W> {
         Expanded { child, flex: self.flex }
+    }
+
+    /// Attaches `child` and erases the resulting widget's concrete type.
+    ///
+    /// This is equivalent to calling [`Expanded::child`] followed by
+    /// [`Widget::boxed`]. Use it when different branches must return one
+    /// [`AnyWidget`] type.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+        self.child(child)
+            .boxed()
     }
 }
 

@@ -8,6 +8,10 @@ use aimer_style::*;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{TextOverflowMode, *};
 
+/// Low-level element that lays out and paints one run of text.
+///
+/// [`crate::Text`] is the usual constructor. Direct construction requires callers to provide a
+/// fresh [`LayoutCache`] and typeface slot in addition to the text, style, and alignment.
 #[derive(Rebuildable, EventElement)]
 pub struct RawTextWidget {
     pub text: Rc<str>,

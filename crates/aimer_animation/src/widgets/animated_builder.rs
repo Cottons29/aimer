@@ -16,17 +16,23 @@ type AnimatedElementBuilder = dyn Fn(f32, &BuildContext) -> Box<dyn Element>;
 
 /// A widget that rebuilds its child on every animation tick.
 ///
-/// Unlike `Animated` which applies a fixed visual effect, `AnimatedBuilder`
+/// Unlike [`crate::widgets::Animated`], which applies a fixed visual effect, `AnimatedBuilder`
 /// gives you the current animation value each frame so you can build any widget
-/// based on it.
+/// based on it. The builder receives the controller's curved value. It runs
+/// once when the element is created and again whenever that value changes;
+/// redraws continue while the controller is animating.
 ///
 /// # Example
-/// ```ignore
-/// AnimatedBuilder::new(controller, |value| {
-///     Container::new()
-///         .width(Size::Fixed(value * 200.0))
-///         .child(Text::new(format!("{:.0}%", value * 100.0)))
-/// })
+/// ```rust
+/// use std::time::Duration;
+///
+/// use aimer_animation::{AnimatedBuilder, AnimationController, Curve};
+/// use aimer_widget::ErrorWidget;
+///
+/// let controller = AnimationController::new(Duration::from_millis(250), Curve::Linear);
+/// let animated = AnimatedBuilder::new(controller, |value| {
+///     ErrorWidget::new(format!("Progress: {:.0}%", value * 100.0))
+/// });
 /// ```
 pub struct AnimatedBuilder {
     pub controller: AnimationController,
@@ -34,6 +40,10 @@ pub struct AnimatedBuilder {
 }
 
 impl AnimatedBuilder {
+    /// Creates a builder driven by `controller`.
+    ///
+    /// The closure must be `'static` because the resulting element retains it.
+    /// Construction does not start or reset the controller.
     pub fn new<F, W>(controller: AnimationController, builder: F) -> Self
     where
         F: Fn(f32) -> W + 'static,

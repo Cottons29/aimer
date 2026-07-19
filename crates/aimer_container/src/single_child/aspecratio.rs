@@ -2,7 +2,9 @@ use aimer_attribute::size::ResolvedSize;
 use aimer_attribute::{BoxConstraint, Size};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget};
+use aimer_widget::{
+    AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
+};
 
 #[derive(Clone, Copy)]
 pub enum RatioOption {
@@ -11,6 +13,10 @@ pub enum RatioOption {
 }
 
 #[allow(dead_code)]
+/// Sizes its child to a configured width-to-height ratio within its constraints.
+///
+/// Attach a child with [`AspectRatio::child`] to retain its concrete type, or
+/// with [`AspectRatio::box_child`] when branches need a shared erased type.
 pub struct AspectRatio<W = RequiredChild> {
     pub aspect_ratio: f32,
     ratio_option: RatioOption,
@@ -18,22 +24,50 @@ pub struct AspectRatio<W = RequiredChild> {
 }
 
 impl AspectRatio {
+    /// Creates an aspect-ratio builder with a `1.0` width-driven ratio.
+    ///
+    /// Finish the builder with [`AspectRatio::child`] or
+    /// [`AspectRatio::box_child`].
     pub fn new() -> Self {
         Self { aspect_ratio: 1.0, child: RequiredChild, ratio_option: RatioOption::Width }
     }
 
+    /// Sets the desired width divided by height.
+    ///
+    /// The default is `1.0`. The value is made positive when the widget is
+    /// built; non-finite or zero values resolve as `1.0` during layout. The
+    /// resulting size is clamped to the parent's minimum and maximum constraints.
     pub fn aspect_ratio(mut self, aspect_ratio: f32) -> Self {
         self.aspect_ratio = aspect_ratio;
         self
     }
 
+    /// Selects which bounded axis drives ratio calculation.
+    ///
+    /// [`RatioOption::Width`] is the default. If the preferred axis is
+    /// unbounded, layout falls back to the bounded axis and still honors all
+    /// parent constraints.
     pub fn ratio_option(mut self, ratio_option: RatioOption) -> Self {
         self.ratio_option = ratio_option;
         self
     }
 
+    /// Attaches the required child and completes this builder.
+    ///
+    /// The child receives the ratio-constrained size, and its concrete type is
+    /// preserved. Use [`AspectRatio::box_child`] for branch type erasure.
     pub fn child<C: Widget>(self, child: C) -> AspectRatio<C> {
         AspectRatio { aspect_ratio: self.aspect_ratio, ratio_option: self.ratio_option, child }
+    }
+
+    /// Attaches `child` and erases the resulting widget's concrete type.
+    ///
+    /// This is equivalent to calling [`AspectRatio::child`] followed by
+    /// [`Widget::boxed`]. Use it when different branches must return one
+    /// [`AnyWidget`] type.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+        self.child(child)
+            .boxed()
     }
 }
 

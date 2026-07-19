@@ -23,16 +23,23 @@ type ImplicitElementBuilder<T> = dyn Fn(&T, &BuildContext) -> Box<dyn Element>;
 ///
 /// On the first build, the value is used directly (no animation).
 /// When the widget is rebuilt with a different value, a tween animation
-/// runs from the old value to the new value over the specified duration.
+/// runs from the currently displayed value to the new value over the specified
+/// duration. Retargeting an animation therefore remains continuous. Rebuilding
+/// with an equal value does not restart the controller.
 ///
 /// # Example
-/// ```ignore
-/// ImplicitAnimatedBuilder::new(
-///     current_width,
+/// ```rust
+/// use std::time::Duration;
+///
+/// use aimer_animation::{Curve, ImplicitAnimatedBuilder};
+/// use aimer_widget::ErrorWidget;
+///
+/// let animated = ImplicitAnimatedBuilder::new(
+///     160.0_f32,
 ///     Duration::from_millis(300),
-///     Curve::FastOutSlowIn,
-///     |width| Container::new().width(Size::Fixed(width)).child(Text::new("Hello")),
-/// )
+///     Curve::Linear,
+///     |width| ErrorWidget::new(format!("Width: {width:.0}")),
+/// );
 /// ```
 pub struct ImplicitAnimatedBuilder<T: Animatable + Clone + PartialEq + 'static> {
     pub value: T,
@@ -45,6 +52,11 @@ impl<T> ImplicitAnimatedBuilder<T>
 where
     T: Animatable + Clone + PartialEq + 'static,
 {
+    /// Creates an implicit animation for `value`.
+    ///
+    /// `T` must support interpolation through [`Animatable`]. The builder is
+    /// called with the initial value immediately and with interpolated values
+    /// during drawing. `duration` and `curve` are adopted on later rebuilds.
     pub fn new<F, W>(value: T, duration: Duration, curve: Curve, builder: F) -> Self
     where
         F: Fn(&T) -> W + 'static,

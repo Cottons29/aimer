@@ -26,15 +26,22 @@ fn request_next_frame() {
 /// old child and fades in the new one over the specified `duration`.
 /// Child widgets should provide distinct keys; use
 /// [`AnimatedSwitcher::child_key`] when the child type does not expose one
-/// itself.
+/// itself. The first child appears immediately. Rebuilding with the same child
+/// identity updates the child without starting a transition.
 ///
 /// # Example
-/// ```ignore
-/// AnimatedSwitcher::new(
+/// ```rust
+/// use std::time::Duration;
+///
+/// use aimer_animation::{AnimatedSwitcher, Curve};
+/// use aimer_widget::ErrorWidget;
+///
+/// let switcher = AnimatedSwitcher::new(
 ///     Duration::from_millis(300),
-///     Curve::FastOutSlowIn,
-///     if show_first { text_widget("First") } else { text_widget("Second") },
+///     Curve::Linear,
+///     ErrorWidget::new("Current page"),
 /// )
+/// .child_key("current-page");
 /// ```
 pub struct AnimatedSwitcher<T: Widget + 'static> {
     pub child: Rc<T>,
@@ -47,6 +54,11 @@ pub struct AnimatedSwitcher<T: Widget + 'static> {
 }
 
 impl<T: Widget> AnimatedSwitcher<T> {
+    /// Creates a switcher with the incoming `curve` and transition `duration`.
+    ///
+    /// The outgoing child uses the same curve unless
+    /// [`with_switch_out_curve`](Self::with_switch_out_curve) is called. The
+    /// child's own [`Widget::key`] is used as its identity by default.
     pub fn new(duration: Duration, curve: Curve, child: T) -> Self {
         Self {
             child: Rc::new(child),
@@ -58,18 +70,26 @@ impl<T: Widget> AnimatedSwitcher<T> {
         }
     }
 
+    /// Uses a separate curve for fading out the outgoing child.
+    ///
+    /// If omitted, the incoming [`curve`](Self::curve) is used for both
+    /// directions.
     pub fn with_switch_out_curve(mut self, curve: Curve) -> Self {
         self.switch_out_curve = Some(curve);
         self
     }
 
-    /// Set the child identity used to decide whether a transition is needed.
+    /// Sets the child identity used to decide whether a transition is needed.
     /// This is useful when the child widget itself does not expose a key.
     pub fn child_key(mut self, key: impl Into<Key>) -> Self {
         self.transition_key = Some(key.into());
         self
     }
 
+    /// Sets the identity of the switcher itself for widget reconciliation.
+    ///
+    /// This is independent of [`child_key`](Self::child_key), which controls
+    /// whether the children cross-fade.
     pub fn key(mut self, key: impl Into<Key>) -> Self {
         self.widget_key = Some(key.into());
         self

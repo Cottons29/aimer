@@ -65,6 +65,12 @@ fn browser_current_path() -> Option<String> {
     })
 }
 
+/// A stateful route stack that renders the widget for its current top route.
+///
+/// Descendants can retrieve a [`NavigatorController`] from the build context.
+/// Pushing appends a route; popping never removes the initial route. On WebAssembly,
+/// the initial browser path overrides `initial_route` when it parses successfully,
+/// and later stack changes synchronize with browser history.
 pub struct Navigator<R>
 where
     R: Route,
@@ -74,6 +80,10 @@ where
 }
 
 impl<R: Route> Navigator<R> {
+    /// Creates a navigator with one initial route and a route-to-widget builder.
+    ///
+    /// `routes` is called for the active route after redirect resolution. The
+    /// initial route remains the bottom of the in-memory stack.
     pub fn new(initial_route: R, routes: fn(R) -> Box<dyn Widget>) -> Self {
         // On WASM, try to restore the initial route from the browser URL
         #[cfg(target_arch = "wasm32")]

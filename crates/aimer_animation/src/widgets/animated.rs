@@ -11,7 +11,7 @@ use std::cell::Cell;
 use crate::control::controller::AnimationController;
 use crate::primitives::time::AnimInstant;
 
-/// Describes what visual property the `Animated` widget should animate.
+/// Describes the visual property that an [`Animated`] widget interpolates.
 #[derive(Debug, Clone, Copy)]
 pub enum AnimationEffect {
     /// Animate opacity from `from` to `to` (0.0 = invisible, 1.0 = fully
@@ -40,17 +40,23 @@ impl AnimationEffect {
 /// [`AnimationController`].
 ///
 /// The `Animated` widget applies a canvas transform (opacity, scale, translate,
-/// or rotate) to its child based on the current animation progress. It
-/// internally manages a `StatefulWidget` that ticks the controller each frame
-/// and requests redraws while the animation is running.
+/// or rotate) to its child based on the current animation progress. Its element
+/// ticks the controller directly while drawing, applies the resulting value,
+/// and requests another redraw while the controller remains active.
 ///
 /// # Example
-/// ```rust ignore
-/// Animated::new(
+/// ```rust
+/// use std::time::Duration;
+///
+/// use aimer_animation::{Animated, AnimationController, AnimationEffect, Curve};
+/// use aimer_widget::ErrorWidget;
+///
+/// let controller = AnimationController::new(Duration::from_millis(250), Curve::Linear);
+/// let animated = Animated::new(
 ///     controller,
 ///     AnimationEffect::Opacity { from: 0.0, to: 1.0 },
-///     my_child_widget,
-/// )
+///     ErrorWidget::new("Unable to load preview"),
+/// );
 /// ```
 pub struct Animated<T = RequiredChild> {
     pub controller: AnimationController,
@@ -69,6 +75,12 @@ pub struct Animated<T = RequiredChild> {
 // }
 
 impl<T: Widget> Animated<T> {
+    /// Wraps `child` in a controller-driven visual effect.
+    ///
+    /// The controller is sampled during drawing. Its configured curve is
+    /// applied by [`AnimationController::tick`], and redraws continue only
+    /// while the controller is animating. This constructor does not start or
+    /// reset the controller; callers control its lifecycle.
     pub fn new(controller: AnimationController, effect: AnimationEffect, child: T) -> Self {
         Self { controller, effect, child }
     }

@@ -6,7 +6,7 @@ use aimer_container::Container;
 use aimer_style::BoxDecoration;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    Element, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
+    AnyWidget, Element, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
 };
 
 use crate::callback::VoidCallback;
@@ -15,9 +15,23 @@ use crate::mouse_region::{MouseRegion, PointerState};
 
 /// A clickable button widget with visual feedback.
 ///
-/// `Button` renders a decorated container (background, border, outline) and
-/// provides gesture callbacks for tap, double-tap, long-press, right-click,
-/// swipe, scroll, and scale. It dims when disabled.
+/// `Button` renders a decorated container (background, border, outline) and provides callbacks for
+/// primary tap, double-tap, long-press, and secondary-button tap. It substitutes a disabled
+/// background and suppresses all pointer callbacks when disabled.
+///
+/// The default button is enabled, has an empty [`BoxDecoration`], and has no-op callbacks. Finish
+/// construction with [`Button::child`] or [`Button::box_child`].
+///
+/// # Example
+///
+/// ```
+/// use aimer_input::button::Button;
+/// use aimer_text::Text;
+///
+/// let button = Button::new()
+///     .on_press(|| println!("pressed"))
+///     .child(Text::new("Save"));
+/// ```
 #[allow(dead_code)]
 pub struct Button<W = RequiredChild> {
     pub on_press: VoidCallback,
@@ -29,6 +43,7 @@ pub struct Button<W = RequiredChild> {
     child: Rc<W>,
 }
 
+/// Mounted state used internally by [`Button`].
 pub struct ButtonState<W: Widget + 'static> {
     is_hover: bool,
     pub on_press: VoidCallback,
@@ -49,6 +64,7 @@ impl Default for Button {
 }
 
 impl Button {
+    /// Creates an enabled button with default decoration and no-op callbacks.
     pub fn new() -> Self {
         Self {
             on_press: VoidCallback::default(),
@@ -63,12 +79,15 @@ impl Button {
 }
 
 impl<W> Button<W> {
+    /// Sets the callback invoked for a completed primary tap.
+    ///
+    /// The callback is not invoked while the button is disabled.
     pub fn on_press(mut self, on_press: impl Into<VoidCallback>) -> Self {
         self.on_press = on_press.into();
         self
     }
 
-    /// Register an **async** press callback.
+    /// Registers an asynchronous callback for a completed primary tap.
     ///
     /// The closure must return a `Future` (e.g. an `async` block).
     /// The future is spawned by the framework's executor.
@@ -86,12 +105,17 @@ impl<W> Button<W> {
         self
     }
 
+    /// Sets the callback invoked once a held pointer is recognized as a long-press.
+    ///
+    /// The callback is not invoked while the button is disabled.
     pub fn on_long_press(mut self, on_long_press: impl Into<VoidCallback>) -> Self {
         self.on_long_press = on_long_press.into();
         self
     }
 
-    /// Register an **async** long-press callback.
+    /// Registers an asynchronous long-press callback.
+    ///
+    /// Like [`Button::on_press_async`], this one-shot closure is taken on its first invocation.
     pub fn on_long_press_async<F, Fut>(mut self, on_long_press: F) -> Self
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -101,12 +125,17 @@ impl<W> Button<W> {
         self
     }
 
+    /// Sets the callback invoked when a second primary tap completes within the double-tap timeout.
+    ///
+    /// The callback is not invoked while the button is disabled.
     pub fn on_double_press(mut self, on_double_press: impl Into<VoidCallback>) -> Self {
         self.on_double_press = on_double_press.into();
         self
     }
 
-    /// Register an **async** double-press callback.
+    /// Registers an asynchronous double-press callback.
+    ///
+    /// Like [`Button::on_press_async`], this one-shot closure is taken on its first invocation.
     pub fn on_double_press_async<F, Fut>(mut self, on_double_press: F) -> Self
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -116,12 +145,17 @@ impl<W> Button<W> {
         self
     }
 
+    /// Sets the callback invoked for a completed secondary-button tap.
+    ///
+    /// The callback is not invoked while the button is disabled.
     pub fn on_right_press(mut self, on_right_press: impl Into<VoidCallback>) -> Self {
         self.on_right_press = on_right_press.into();
         self
     }
 
-    /// Register an **async** right-press callback.
+    /// Registers an asynchronous secondary-button tap callback.
+    ///
+    /// Like [`Button::on_press_async`], this one-shot closure is taken on its first invocation.
     pub fn on_right_press_async<F, Fut>(mut self, on_right_press: F) -> Self
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -131,16 +165,27 @@ impl<W> Button<W> {
         self
     }
 
+    /// Replaces the decoration drawn behind the child.
+    ///
+    /// Hovering lightens an existing background color. Disabled buttons replace that background
+    /// with translucent black.
     pub fn decoration(mut self, decoration: BoxDecoration) -> Self {
         self.decoration = decoration;
         self
     }
 
+    /// Enables or disables primary, double, and long-press interaction.
+    ///
+    /// A disabled button omits its hover and gesture wrappers and draws its disabled background.
     pub fn disabled(mut self, is_disabled: bool) -> Self {
         self.is_disabled = is_disabled;
         self
     }
 
+    /// Supplies the terminal child and returns a statically typed [`Button`].
+    ///
+    /// Builder settings made before this call are preserved. A button without a child is only an
+    /// intermediate builder and does not implement [`Widget`].
     pub fn child<C: Widget>(self, child: C) -> Button<C> {
         Button {
             on_press: self.on_press,
@@ -151,6 +196,16 @@ impl<W> Button<W> {
             is_disabled: self.is_disabled,
             child: Rc::new(child),
         }
+    }
+
+    /// Supplies the terminal child and erases the completed button's concrete type.
+    ///
+    /// This is exactly equivalent to `self.child(child).boxed()`, combining [`Button::child`] with
+    /// [`Widget::boxed`]. Use it when branching APIs need to return one [`AnyWidget`] despite using
+    /// different concrete child types.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+        self.child(child)
+            .boxed()
     }
 }
 

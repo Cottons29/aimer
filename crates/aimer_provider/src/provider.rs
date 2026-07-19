@@ -7,7 +7,7 @@ use std::rc::{Rc, Weak};
 
 use aimer_widget::base::{BuildConsumer, BuildContext, ResolvedSize, Size, Vec2d, WindowHandle};
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild, State,
+    AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild, State,
     StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
@@ -62,7 +62,8 @@ impl<T> Clone for ProviderHandle<T> {
 }
 
 impl<T: 'static> ProviderHandle<T> {
-    fn new(value: T) -> Self {
+    /// Creates a handle containing `value` for use by a provider scope.
+    pub fn new(value: T) -> Self {
         Self(Rc::new(ProviderStore {
             value: RefCell::new(Rc::new(value)),
             subscribers: RefCell::new(HashMap::new()),
@@ -392,6 +393,7 @@ impl ProviderContext for BuildContext<'_> {
 /// value through [`ProviderContext`] or [`ProviderHandle`].
 pub struct Provider<T, W = RequiredChild> {
     create: Option<Rc<dyn Fn() -> T>>,
+    handle: Option<ProviderHandle<T>>,
     child: Rc<W>,
 }
 
@@ -401,7 +403,7 @@ pub type NotifierProvider<T, W = RequiredChild> = Provider<T, W>;
 impl<T> Provider<T> {
     /// Creates an unconfigured provider.
     pub fn new() -> Self {
-        Self { create: None, child: Rc::new(RequiredChild) }
+        Self { create: None, handle: None, child: Rc::new(RequiredChild) }
     }
 }
 
@@ -418,9 +420,26 @@ impl<T, W> Provider<T, W> {
         self
     }
 
+    /// Uses an existing handle instead of creating a new provider value.
+    pub fn handle(mut self, handle: ProviderHandle<T>) -> Self {
+        self.handle = Some(handle);
+        self
+    }
+
     /// Attaches the descendant widget subtree and produces a valid widget.
     pub fn child<C: Widget>(self, child: C) -> Provider<T, C> {
-        Provider { create: self.create, child: Rc::new(child) }
+        Provider { create: self.create, handle: self.handle, child: Rc::new(child) }
+    }
+
+    /// Attaches the descendant subtree and type-erases the completed provider widget.
+    ///
+    /// This is equivalent to calling [`Provider::child`] followed by [`Widget::boxed`]. Use it
+    /// when different code paths must return one [`AnyWidget`] type.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget
+    where
+        T: 'static,
+    {
+        self.child(child).boxed()
     }
 }
 
@@ -434,14 +453,23 @@ impl<T: 'static, W: Widget + 'static> StatefulWidget for Provider<T, W> {
     type State = ProviderState<T, W>;
 
     fn create_state(&self) -> Self::State {
-        let create = self
-            .create
-            .as_ref()
+        let handle = self
+            .handle
+            .clone()
             .unwrap_or_else(|| {
-                panic!("Provider::<{}>::create must be called before child", type_name::<T>())
+                let create = self
+                    .create
+                    .as_ref()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Provider::<{}>::create or handle must be called before child",
+                            type_name::<T>()
+                        )
+                    });
+                ProviderHandle::new(create())
             });
         ProviderState {
-            handle: ProviderHandle::new(create()),
+            handle,
             child: self
                 .child
                 .clone(),
@@ -657,6 +685,18 @@ impl<T, A, W> StoreProvider<T, A, W> {
     /// Attaches the descendant widget subtree and produces a valid widget.
     pub fn child<C: Widget>(self, child: C) -> StoreProvider<T, A, C> {
         StoreProvider { create: self.create, reducer: self.reducer, child: Rc::new(child) }
+    }
+
+    /// Attaches the descendant subtree and type-erases the completed store provider widget.
+    ///
+    /// This is equivalent to calling [`StoreProvider::child`] followed by [`Widget::boxed`]. Use
+    /// it when different code paths must return one [`AnyWidget`] type.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget
+    where
+        T: Clone + 'static,
+        A: 'static,
+    {
+        self.child(child).boxed()
     }
 }
 

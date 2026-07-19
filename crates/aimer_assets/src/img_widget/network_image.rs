@@ -10,6 +10,30 @@ use aimer_widget::{Element, LayoutCache, Widget};
 use crate::img_widget::image_widget::RawImageWidget;
 use crate::img_widget::source::ImageSource;
 
+/// Displays an image fetched from a network URL.
+///
+/// Requests and image decoding are asynchronous, and results are cached by URL.
+/// Use [`NetworkImage::loading_widget`] and [`NetworkImage::error_widget`] to
+/// replace the default empty loading state and magenta-and-black error pattern.
+/// Request headers can be supplied with [`NetworkImage::header`].
+///
+/// # Example
+///
+/// ```
+/// use std::collections::HashMap;
+///
+/// use aimer_assets::NetworkImage;
+/// use aimer_style::BoxFit;
+///
+/// let mut headers = HashMap::new();
+/// headers.insert("Accept".to_owned(), "image/webp,image/*".to_owned());
+///
+/// let image = NetworkImage::new("https://example.com/photo.webp")
+///     .header(headers)
+///     .width(320.0)
+///     .height(180.0)
+///     .fit(BoxFit::Cover);
+/// ```
 pub struct NetworkImage {
     pub url: String,
     pub width: Dimension,
@@ -23,6 +47,11 @@ pub struct NetworkImage {
 }
 
 impl NetworkImage {
+    /// Creates a network image for `url`.
+    ///
+    /// Width and height default to [`Dimension::Auto`], [`BoxFit::None`] is used,
+    /// no request headers or fallback widgets are set, and the drawing scale is
+    /// `1.0`. The URL is not requested until the widget is drawn.
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -37,41 +66,70 @@ impl NetworkImage {
         }
     }
 
+    /// Sets the width of the widget's layout box.
+    ///
+    /// The default is [`Dimension::Auto`].
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = width.into();
         self
     }
 
+    /// Sets the height of the widget's layout box.
+    ///
+    /// The default is [`Dimension::Auto`].
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = height.into();
         self
     }
 
+    /// Sets how the image is fitted into its layout box.
+    ///
+    /// The default is [`BoxFit::None`]. Every mode except [`BoxFit::Fill`]
+    /// preserves the image's aspect ratio; `Fill` stretches it to the box.
     pub fn fit(mut self, fit: BoxFit) -> Self {
         self.fit = fit;
         self
     }
 
+    /// Sets the complete map of HTTP request headers.
+    ///
+    /// Calling this builder again replaces the previous map. Invalid header names
+    /// or values cause loading to enter the error state rather than panic.
     pub fn header(mut self, header: HashMap<String, String>) -> Self {
         self.header = Some(header);
         self
     }
 
+    /// Sets the widget drawn when the request or image decoding fails.
+    ///
+    /// It replaces the built-in magenta-and-black error pattern.
     pub fn error_widget(mut self, error_widget: impl Widget + 'static) -> Self {
         self.error_widget = Some(Box::new(error_widget));
         self
     }
 
+    /// Sets the widget drawn while the request and decoding are in progress.
+    ///
+    /// Without a loading widget, the image draws no content until it is ready.
     pub fn loading_widget(mut self, loading_widget: impl Widget + 'static) -> Self {
         self.loading_widget = Some(Box::new(loading_widget));
         self
     }
 
+    /// Stores a requested loading delay in milliseconds.
+    ///
+    /// The current renderer does not apply this value, so this builder has no
+    /// effect on request timing or fallback display yet. The default is no delay.
     pub fn delay(mut self, delay: u64) -> Self {
         self.delay = Some(delay);
         self
     }
 
+    /// Multiplies the final painted image size around the center of its layout box.
+    ///
+    /// This does not change the widget's layout size. The default is `1.0`; values
+    /// are stored without validation, so callers should provide a finite,
+    /// non-negative value.
     pub fn scale(mut self, scale: impl Into<f32>) -> Self {
         self.scale = scale.into();
         self

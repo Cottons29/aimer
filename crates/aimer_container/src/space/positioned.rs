@@ -3,12 +3,16 @@ use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+    AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
 };
 
 use crate::ZeroSizedBox;
 
 #[allow(dead_code)]
+/// Positions and transforms one child relative to its parent, typically a [`crate::Stack`].
+///
+/// Attach a child with [`Positioned::child`] to retain its concrete type, or
+/// with [`Positioned::box_child`] when branches need a shared erased type.
 pub struct Positioned<W: Widget + 'static = ZeroSizedBox> {
     pub child: W,
     pub position: Position,
@@ -27,6 +31,10 @@ impl Default for Positioned {
 }
 
 impl Positioned {
+    /// Creates a relative, untransformed positioned widget on layer zero.
+    ///
+    /// The placeholder is already a valid widget; use [`Positioned::child`] or
+    /// [`Positioned::box_child`] to attach content.
     pub fn new() -> Self {
         Self {
             child: ZeroSizedBox,
@@ -46,41 +54,79 @@ impl<W: Widget + 'static> Positioned<W> {
     //     Box::new(Self::new())
     // }
 
+    /// Records the positioning mode associated with this widget.
+    ///
+    /// The default is [`Position::Relative`]. The current renderer stores this
+    /// value for inspection but resolves edge offsets identically for every
+    /// [`Position`] variant.
     pub fn position(mut self, position: Position) -> Self {
         self.position = position;
         self
     }
 
+    /// Sets the logical left inset or offset.
+    ///
+    /// The default is [`Dimension::Auto`]. Pixel values are logical pixels and
+    /// percentage values resolve against the parent's width. If both left and
+    /// right are specified, left takes precedence for painting.
     pub fn left(mut self, left: impl Into<Dimension>) -> Self {
         self.left = left.into();
         self
     }
 
+    /// Sets the logical top inset or offset.
+    ///
+    /// The default is [`Dimension::Auto`]. Pixel values are logical pixels and
+    /// percentage values resolve against the parent's height. If both top and
+    /// bottom are specified, top takes precedence for painting.
     pub fn top(mut self, top: impl Into<Dimension>) -> Self {
         self.top = top.into();
         self
     }
 
+    /// Sets the logical right inset.
+    ///
+    /// The default is [`Dimension::Auto`]. Pixel values are logical pixels and
+    /// percentage values resolve against the parent's width. A right-only inset
+    /// positions the child from the parent's right edge.
     pub fn right(mut self, right: impl Into<Dimension>) -> Self {
         self.right = right.into();
         self
     }
 
+    /// Sets the logical bottom inset.
+    ///
+    /// The default is [`Dimension::Auto`]. Pixel values are logical pixels and
+    /// percentage values resolve against the parent's height. A bottom-only
+    /// inset positions the child from the parent's bottom edge.
     pub fn bottom(mut self, bottom: impl Into<Dimension>) -> Self {
         self.bottom = bottom.into();
         self
     }
 
+    /// Replaces the additional paint transform.
+    ///
+    /// The default is [`Transform::None`]. Translation values use logical pixels,
+    /// rotation uses radians, and scale values are dimensionless. The transform
+    /// affects painting rather than the child's measured layout size.
     pub fn transform(mut self, transform: Transform) -> Self {
         self.transform = transform;
         self
     }
 
+    /// Sets the z-order layer used by layered parents such as [`crate::Stack`].
+    ///
+    /// The default is `0`; higher layers paint later in a normal-direction stack.
     pub fn layer(mut self, layer: u32) -> Self {
         self.layer = layer;
         self
     }
 
+    /// Attaches or replaces the child while preserving positioning settings.
+    ///
+    /// `Positioned::new()` is already valid with a zero-sized placeholder. This
+    /// operation preserves the new child's concrete type; use
+    /// [`Positioned::box_child`] for branch type erasure.
     pub fn child<C: Widget>(self, child: C) -> Positioned<C> {
         Positioned {
             child,
@@ -92,6 +138,16 @@ impl<W: Widget + 'static> Positioned<W> {
             transform: self.transform,
             layer: self.layer,
         }
+    }
+
+    /// Attaches `child` and erases the resulting widget's concrete type.
+    ///
+    /// This is equivalent to calling [`Positioned::child`] followed by
+    /// [`Widget::boxed`]. Use it when different branches must return one
+    /// [`AnyWidget`] type.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+        self.child(child)
+            .boxed()
     }
 }
 

@@ -1,25 +1,52 @@
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget};
+use aimer_widget::{
+    AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
+};
 
+/// Paints a single child with a normalized alpha value.
+///
+/// Attach a child with [`Opacity::child`] to retain its concrete type, or with
+/// [`Opacity::box_child`] when branches need a shared erased type.
 pub struct Opacity<W = RequiredChild> {
     child: W,
     opacity: f32,
 }
 
 impl Opacity {
+    /// Creates a fully opaque builder.
+    ///
+    /// Finish the builder with [`Opacity::child`] or [`Opacity::box_child`].
     pub fn new() -> Self {
         Self { child: RequiredChild, opacity: 1.0 }
     }
 
+    /// Sets the alpha multiplier applied while painting the child.
+    ///
+    /// The default is `1.0`. Finite values are clamped to the inclusive
+    /// `0.0..=1.0` range, and `NaN` is normalized to `1.0`. Layout is unaffected.
     pub fn opacity(mut self, opacity: f32) -> Self {
         self.opacity = normalized_opacity(opacity);
         self
     }
 
+    /// Attaches the required child and completes this builder.
+    ///
+    /// The concrete child type is preserved and all opacity configuration is
+    /// retained. Use [`Opacity::box_child`] for branch type erasure.
     pub fn child<W: Widget>(self, child: W) -> Opacity<W> {
         Opacity { child, opacity: self.opacity }
+    }
+
+    /// Attaches `child` and erases the resulting widget's concrete type.
+    ///
+    /// This is equivalent to calling [`Opacity::child`] followed by
+    /// [`Widget::boxed`]. Use it when different branches must return one
+    /// [`AnyWidget`] type.
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+        self.child(child)
+            .boxed()
     }
 }
 

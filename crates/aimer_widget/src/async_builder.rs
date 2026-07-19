@@ -37,17 +37,24 @@ pub struct SnapshotBuilder<B, T, E> {
 ///
 /// The future starts after the widget is mounted. Rebuilding a parent with the
 /// same request key keeps the current operation; changing the request key
-/// cancels it and starts a new one.
+/// cancels it and starts a new one. The snapshot begins at
+/// [`AsyncSnapshot::Waiting`], then changes exactly once to
+/// [`AsyncSnapshot::Data`] or [`AsyncSnapshot::Error`] for the active request.
+/// Completions from cancelled requests are discarded, and an in-flight future
+/// is aborted when the widget is dropped.
 ///
-/// ```ignore
-/// AsyncBuilder::new()
+/// ```rust
+/// use aimer_widget::{AsyncBuilder, AsyncSnapshot, ErrorWidget, Widget};
+///
+/// let user_id = 7_u64;
+/// let builder = AsyncBuilder::new()
 ///     .request_key(user_id)
-///     .future(move || async move { load_user(user_id).await })
+///     .future(move || async move { Ok::<_, &'static str>(user_id) })
 ///     .child(|snapshot| match snapshot {
-///         AsyncSnapshot::Waiting => Text::new("Loading...").boxed(),
-///         AsyncSnapshot::Data(user) => Text::new(&user.name).boxed(),
-///         AsyncSnapshot::Error(error) => Text::new(error.to_string()).boxed(),
-///     })
+///         AsyncSnapshot::Waiting => ErrorWidget::new("Loading user").boxed(),
+///         AsyncSnapshot::Data(id) => ErrorWidget::new(format!("User {id}" )).boxed(),
+///         AsyncSnapshot::Error(error) => ErrorWidget::new(*error).boxed(),
+///     });
 /// ```
 pub struct AsyncBuilder<K = (), F = RequiredChild, B = RequiredChild> {
     request_key: K,
@@ -57,6 +64,10 @@ pub struct AsyncBuilder<K = (), F = RequiredChild, B = RequiredChild> {
 }
 
 impl AsyncBuilder {
+    /// Creates an incomplete async builder in the waiting state.
+    ///
+    /// The default request key is `()`. Call [`future`](Self::future), then
+    /// [`child`](AsyncBuilder::child), to produce a valid [`Widget`].
     pub fn new() -> Self {
         Self {
             request_key: (),
@@ -74,6 +85,11 @@ impl Default for AsyncBuilder {
 }
 
 impl<K, F, B> AsyncBuilder<K, F, B> {
+    /// Sets the logical identity of the asynchronous request.
+    ///
+    /// An equal key preserves the existing future and snapshot across parent
+    /// rebuilds. A changed key aborts the old request, returns the snapshot to
+    /// [`AsyncSnapshot::Waiting`], and starts the new future after mounting.
     pub fn request_key<NK>(self, request_key: NK) -> AsyncBuilder<NK, F, B> {
         AsyncBuilder {
             request_key,
@@ -83,6 +99,10 @@ impl<K, F, B> AsyncBuilder<K, F, B> {
         }
     }
 
+    /// Sets this widget's reconciliation key.
+    ///
+    /// This is distinct from [`request_key`](Self::request_key): the widget key
+    /// identifies the element, while the request key controls future reuse.
     pub fn key(mut self, key: impl Into<Key>) -> Self {
         self.widget_key = Some(key.into());
         self
@@ -90,6 +110,11 @@ impl<K, F, B> AsyncBuilder<K, F, B> {
 }
 
 impl<K, B> AsyncBuilder<K, RequiredChild, B> {
+    /// Supplies a factory for the asynchronous operation.
+    ///
+    /// The factory is retained and invoked at most once for each request key.
+    /// It must return a future whose output maps to the snapshot's data and
+    /// error variants.
     pub fn future<F, Fut, T, E>(self, factory: F) -> AsyncBuilder<K, FutureFactory<F, T, E>, B>
     where
         F: Fn() -> Fut,
@@ -105,6 +130,10 @@ impl<K, B> AsyncBuilder<K, RequiredChild, B> {
 }
 
 impl<K, F, T, E> AsyncBuilder<K, FutureFactory<F, T, E>, RequiredChild> {
+    /// Supplies the final snapshot builder and makes the value a valid widget.
+    ///
+    /// The closure is called for waiting, successful, and failed snapshots and
+    /// must return a type-erased child widget for every variant.
     pub fn child<B>(
         self,
         builder: B,

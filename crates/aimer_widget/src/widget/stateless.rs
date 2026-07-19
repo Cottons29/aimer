@@ -18,13 +18,19 @@ pub trait StatelessWidget {
 
 /// Wraps any [`Widget`] and attaches a static name used by the inspector
 /// overlay. Used by `#[derive(WidgetConstructor)]` to provide inspector
-/// support.
+/// support. It does not change layout, drawing, events, or child identity. If
+/// the produced element already reports the requested name, no extra wrapper
+/// is created.
 pub struct NamedWidget {
     inner: Box<dyn Widget>,
     name: &'static str,
 }
 
 impl NamedWidget {
+    /// Wraps an already type-erased widget with a static inspector name.
+    ///
+    /// The wrapper forwards dirty rebuilding to its child but cannot recreate
+    /// the source widget itself because it stores no build closure.
     pub fn new(inner: Box<dyn Widget>, name: &'static str) -> Self {
         Self { inner, name }
     }

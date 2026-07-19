@@ -18,6 +18,23 @@ use aimer_widget::{
 
 use crate::RawTextWidget;
 
+/// A label-sized text control that responds to primary presses.
+///
+/// The control lays out exactly like its text and has no container or padding. Its normal, hover,
+/// and disabled styles each default to [`TextStyle::default`]; explicit color builders override the
+/// color of the corresponding style. A press fires on pointer-up only when pointer-down and
+/// pointer-up both occur inside the label. Disabled controls neither hover nor invoke callbacks.
+///
+/// # Example
+///
+/// ```
+/// use aimer_text::TextButton;
+/// use aimer_widget::base::Color;
+///
+/// let button = TextButton::new("Learn more")
+///     .color(Color::BLUE)
+///     .on_press(|| println!("open"));
+/// ```
 #[derive(Clone)]
 pub struct TextButton {
     disabled: bool,
@@ -33,10 +50,16 @@ pub struct TextButton {
 }
 
 impl TextButton {
+    /// Conventional text color available to callers.
     pub const TEXT_COLOR: Color = Color::BLUE;
+    /// Conventional hover color available to callers.
     pub const HOVER_COLOR: Color = Color::BLUE.lighten(0.6);
+    /// Conventional disabled color available to callers.
     pub const DISABLED_COLOR: Color = Color::GRAY;
 
+    /// Creates an enabled text button with `label`, default styles, and no-op callbacks.
+    ///
+    /// The color constants are not applied automatically; configure them with the color builders.
     pub fn new(label: impl Into<Rc<str>>) -> Self {
         Self {
             disabled: false,
@@ -52,46 +75,57 @@ impl TextButton {
         }
     }
 
+    /// Sets whether pointer interaction and hover styling are disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
+    /// Overrides the normal style's text color.
     pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = Some(color.into());
         self
     }
 
+    /// Overrides the hover style's text color.
     pub fn hover_color(mut self, color: impl Into<Color>) -> Self {
         self.hover_color = Some(color.into());
         self
     }
 
+    /// Overrides the disabled style's text color.
     pub fn disabled_color(mut self, color: impl Into<Color>) -> Self {
         self.disabled_color = Some(color.into());
         self
     }
 
+    /// Replaces the style used while enabled and not hovered.
     pub fn style(mut self, style: TextStyle) -> Self {
         self.style = style;
         self
     }
 
+    /// Replaces the style used while the mouse is over an enabled button.
     pub fn hover_style(mut self, style: TextStyle) -> Self {
         self.hover_style = style;
         self
     }
 
+    /// Replaces the style used while disabled.
     pub fn disabled_style(mut self, style: TextStyle) -> Self {
         self.disabled_style = style;
         self
     }
 
+    /// Sets the callback invoked for every completed primary press.
+    ///
+    /// Both the first and second presses of a double press invoke this callback.
     pub fn on_press(mut self, callback: impl Into<VoidCallback>) -> Self {
         self.on_press = callback.into();
         self
     }
 
+    /// Sets the callback additionally invoked when two presses finish within 500 milliseconds.
     pub fn on_double_press(mut self, callback: impl Into<VoidCallback>) -> Self {
         self.on_double_press = callback.into();
         self

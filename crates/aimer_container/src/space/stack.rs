@@ -10,6 +10,31 @@ pub enum StackDirection {
     Reverse,
     Inherit,
 }
+/// Paints children on top of one another in the same constrained area.
+///
+/// Every child receives the stack's content size and constraints. Before
+/// painting, children are sorted by their [`Widget`] element layer; the default
+/// [`StackDirection::Normal`] paints lower layers first, while
+/// [`StackDirection::Reverse`] reverses that order. `Inherit` currently behaves
+/// like `Normal`.
+///
+/// `Stack::new()` is an empty, valid widget. [`Stack::children`] replaces the
+/// collection with homogeneous values, while [`Stack::add_child`] appends and
+/// boxes values so different concrete widget types can be mixed.
+///
+/// # Example
+///
+/// ```rust
+/// use aimer_container::{Align, Alignment, SizedBox, Stack};
+///
+/// let stack = Stack::new()
+///     .add_child(SizedBox::new().width(200).height(120))
+///     .add_child(
+///         Align::new()
+///             .alignment(Alignment::MidCenter)
+///             .child(SizedBox::new().width(40).height(40)),
+///     );
+/// ```
 pub struct Stack<W = AnyWidget> {
     pub children: Vec<W>,
     pub direction: StackDirection,
@@ -22,10 +47,19 @@ impl Default for Stack {
 }
 
 impl Stack {
+    /// Creates an empty stack in [`StackDirection::Normal`] painting order.
+    ///
+    /// The empty stack is already a valid [`Widget`].
     pub fn new() -> Self {
         Self { children: Vec::new(), direction: StackDirection::default() }
     }
 
+    /// Replaces all children with a homogeneous collection.
+    ///
+    /// This is not an append operation. The returned [`Stack`] adopts the
+    /// iterator's item type; callers that need it to satisfy the current
+    /// concrete [`Widget`] implementation should supply erased [`AnyWidget`]
+    /// values, or use [`Stack::add_child`] instead.
     pub fn children<W: Widget>(self, children: impl IntoIterator<Item = W>) -> Stack<W> {
         Stack {
             children: children
@@ -35,12 +69,20 @@ impl Stack {
         }
     }
 
+    /// Appends a child, boxing it into the stack's erased collection.
+    ///
+    /// Existing children are retained, and successive calls may use different
+    /// concrete widget types.
     pub fn add_child(mut self, child: impl Widget + 'static) -> Self {
         self.children
             .push(Box::new(child));
         self
     }
 
+    /// Sets the layer-sorted painting order.
+    ///
+    /// The default is [`StackDirection::Normal`]. Reverse order affects
+    /// painting only; it does not change layout constraints or child storage.
     pub fn direction(mut self, direction: StackDirection) -> Self {
         self.direction = direction;
         self
