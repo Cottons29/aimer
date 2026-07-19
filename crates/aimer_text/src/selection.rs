@@ -18,7 +18,15 @@ pub(crate) fn text_offset_at(regions: &[TextHitRegion], x: f32, y: f32) -> Optio
     let region = regions
         .iter()
         .min_by(|left, right| {
-            distance_squared(left.bounds, x, y).total_cmp(&distance_squared(right.bounds, x, y))
+            vertical_distance(left.bounds, y)
+                .total_cmp(&vertical_distance(right.bounds, y))
+                .then_with(|| {
+                    distance_squared(left.bounds, x, y).total_cmp(&distance_squared(
+                        right.bounds,
+                        x,
+                        y,
+                    ))
+                })
         })?;
     let midpoint = region
         .bounds
@@ -36,6 +44,16 @@ pub(crate) fn text_offset_at(regions: &[TextHitRegion], x: f32, y: f32) -> Optio
             .source_range
             .end
     })
+}
+
+fn vertical_distance(bounds: Bounds, y: f32) -> f32 {
+    if y < bounds.y {
+        bounds.y - y
+    } else if y > bounds.y + bounds.height {
+        y - (bounds.y + bounds.height)
+    } else {
+        0.0
+    }
 }
 
 fn distance_squared(bounds: Bounds, x: f32, y: f32) -> f32 {
@@ -99,12 +117,14 @@ impl TextSelection {
 #[derive(Debug, Default)]
 pub(crate) struct SelectionState {
     selection: TextSelection,
+    selection_before_gesture: Option<TextSelection>,
     active_pointer: Option<u64>,
     dragged: bool,
 }
 
 impl SelectionState {
     pub fn begin(&mut self, offset: usize, pointer: u64) {
+        self.selection_before_gesture = Some(self.selection);
         self.selection = TextSelection::collapsed(offset);
         self.active_pointer = Some(pointer);
         self.dragged = false;
@@ -130,15 +150,31 @@ impl SelectionState {
             return false;
         }
         self.active_pointer = None;
+        self.selection_before_gesture = None;
         true
     }
 
     pub fn cancel(&mut self) {
+        if let Some(selection) = self
+            .selection_before_gesture
+            .take()
+        {
+            self.selection = selection;
+        }
         self.active_pointer = None;
+        self.dragged = false;
+    }
+
+    pub fn clear(&mut self) {
+        self.selection = TextSelection::default();
+        self.selection_before_gesture = None;
+        self.active_pointer = None;
+        self.dragged = false;
     }
 
     pub fn select_all(&mut self, text_len: usize) {
         self.selection = TextSelection::new(0, text_len);
+        self.selection_before_gesture = None;
         self.active_pointer = None;
         self.dragged = false;
     }
@@ -224,6 +260,26 @@ mod tests {
     }
 
     #[test]
+    fn hit_testing_below_short_final_line_reaches_end_of_text() {
+        let regions = vec![
+            TextHitRegion::new(0..1, Bounds::new(10.0, 20.0, 100.0, 10.0)),
+            TextHitRegion::new(1..2, Bounds::new(10.0, 30.0, 10.0, 10.0)),
+        ];
+
+        assert_eq!(text_offset_at(&regions, 200.0, 50.0), Some(2));
+    }
+
+    #[test]
+    fn hit_testing_above_short_first_line_reaches_start_of_text() {
+        let regions = vec![
+            TextHitRegion::new(0..1, Bounds::new(100.0, 20.0, 10.0, 10.0)),
+            TextHitRegion::new(1..2, Bounds::new(10.0, 30.0, 100.0, 10.0)),
+        ];
+
+        assert_eq!(text_offset_at(&regions, -100.0, 10.0), Some(0));
+    }
+
+    #[test]
     fn selection_drag_tracks_only_the_pointer_that_started_it() {
         let mut state = SelectionState::default();
 
@@ -252,5 +308,47 @@ mod tests {
                 .selected_text(text),
             Some(text)
         );
+    }
+
+    #[test]
+    fn cancelled_drag_restores_selection_from_before_pointer_down() {
+        let mut state = SelectionState::default();
+        state.select_all(12);
+
+        state.begin(3, 7);
+        assert!(state.update(9, 7));
+        state.cancel();
+
+        assert_eq!(state.selection(), TextSelection::new(0, 12));
+        assert!(!state.is_active());
+        assert!(!state.was_dragged());
+    }
+
+    #[test]
+    fn ended_drag_commits_new_selection() {
+        let mut state = SelectionState::default();
+        state.select_all(12);
+
+        state.begin(3, 7);
+        assert!(state.update(9, 7));
+        assert!(state.end(7));
+        state.cancel();
+
+        assert_eq!(state.selection(), TextSelection::new(3, 9));
+        assert!(!state.is_active());
+    }
+
+    #[test]
+    fn clear_removes_selection_and_active_pointer() {
+        let mut state = SelectionState::default();
+        state.select_all(12);
+        state.begin(3, 7);
+        assert!(state.update(9, 7));
+
+        state.clear();
+
+        assert_eq!(state.selection(), TextSelection::default());
+        assert!(!state.is_active());
+        assert!(!state.was_dragged());
     }
 }

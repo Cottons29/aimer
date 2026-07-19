@@ -9,6 +9,38 @@ use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
 use crate::scrollable::constants::*;
 
+const DRAG_AXIS_DOMINANCE_RATIO: f32 = 1.2;
+
+fn pending_content_drag_wins(
+    axis: ScrollAxis,
+    start: Vec2d,
+    current: Vec2d,
+    threshold: f32,
+) -> bool {
+    let dx = current.x - start.x;
+    let dy = current.y - start.y;
+    match axis {
+        ScrollAxis::Vertical => {
+            dy.abs() > threshold && dy.abs() > dx.abs() * DRAG_AXIS_DOMINANCE_RATIO
+        }
+        ScrollAxis::Horizontal => {
+            dx.abs() > threshold && dx.abs() > dy.abs() * DRAG_AXIS_DOMINANCE_RATIO
+        }
+    }
+}
+
+fn pointer_drag_delta(
+    last: Vec2d,
+    current: Vec2d,
+    speed_multiplier: f32,
+    content_drag_just_won: bool,
+) -> Vec2d {
+    if content_drag_just_won {
+        return Vec2d::default();
+    }
+    Vec2d { x: (current.x - last.x) * speed_multiplier, y: (current.y - last.y) * speed_multiplier }
+}
+
 impl<E: Element> EventElement for RawScrollableContainer<E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
         if let Some(cursor_pos) = event.get_pointer_pos() {
@@ -52,12 +84,50 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             .ctrl
             .drag_mode
             .get();
+        let pending_content_drag_won = match event {
+            ElementEvent::PointerMove(current, _, id)
+                if mode_before == DragMode::Pending
+                    && self
+                        .ctrl
+                        .active_touch_id
+                        .get()
+                        .is_none_or(|active| active == *id) =>
+            {
+                self.ctrl
+                    .last_pointer_pos
+                    .get()
+                    .is_some_and(|start| {
+                        pending_content_drag_wins(
+                            self.ctrl
+                                .axis,
+                            start,
+                            *current,
+                            DRAG_START_THRESHOLD_DP
+                                * self
+                                    .ctrl
+                                    .last_scale
+                                    .get(),
+                        )
+                    })
+            }
+            _ => false,
+        };
         let mut child_consumed = false;
 
         if matches!(event, ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel) {
-            if mode_before != DragMode::None && mode_before != DragMode::Pending {
-                let _ = aimer_widget::dispatch_event(&self.child, pos, &ElementEvent::Cancel);
-            } else if matches!(event, ElementEvent::PointerUp(_, _, _)) {
+            if matches!(mode_before, DragMode::VerticalScrollbar | DragMode::HorizontalScrollbar) {
+                match event {
+                    ElementEvent::PointerUp(_, _, pointer) => {
+                        let _ = aimer_widget::cancel_pointer(&self.child, *pointer, pos);
+                    }
+                    ElementEvent::Cancel => {
+                        let _ = aimer_widget::dispatch_event(&self.child, pos, event);
+                    }
+                    _ => {}
+                }
+            } else if matches!(mode_before, DragMode::None | DragMode::Pending)
+                && matches!(event, ElementEvent::PointerUp(_, _, _))
+            {
                 let _ = aimer_widget::dispatch_event(&self.child, pos, event);
             }
 
@@ -136,8 +206,14 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             return false;
         }
 
+        if pending_content_drag_won && let ElementEvent::PointerMove(_, _, pointer) = event {
+            let _ = aimer_widget::cancel_pointer(&self.child, *pointer, pos);
+        }
+
         // ── All other events: normal child-first dispatch ──
-        if mode_before == DragMode::None || mode_before == DragMode::Pending {
+        if (mode_before == DragMode::None || mode_before == DragMode::Pending)
+            && !pending_content_drag_won
+        {
             child_consumed = aimer_widget::dispatch_event(&self.child, pos, event);
         }
 
@@ -462,66 +538,17 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     .get();
                 #[allow(clippy::collapsible_if)]
                 if mode == DragMode::Pending {
-                    if let Some(start) = self
+                    if self
                         .ctrl
                         .last_pointer_pos
                         .get()
+                        .is_some()
                     {
-                        let dx = p.x - start.x;
-                        let dy = p.y - start.y;
-
-                        // println!("dy: {:?}", dy);
-
-                        let threshold = DRAG_START_THRESHOLD_DP
-                            * self
-                                .ctrl
-                                .last_scale
-                                .get();
-                        let exceeds_threshold = match self
-                            .ctrl
-                            .axis
-                        {
-                            ScrollAxis::Vertical => dy.abs() > threshold && dy.abs() > dx.abs(),
-                            ScrollAxis::Horizontal => dx.abs() > threshold && dx.abs() > dy.abs(),
-                        };
-
-                        if exceeds_threshold {
+                        if pending_content_drag_won {
                             mode = DragMode::Content;
                             self.ctrl
                                 .drag_mode
                                 .set(DragMode::Content);
-                            // info!("[scroll] DRAG STARTED (Pending→Content) dx={:.1} dy={:.1}
-                            // threshold={:.1}", dx, dy, threshold);
-
-                            let mut adjusted_start = start;
-                            match self
-                                .ctrl
-                                .axis
-                            {
-                                ScrollAxis::Vertical => {
-                                    if dy > 0.0 {
-                                        adjusted_start.y += threshold;
-                                    } else {
-                                        adjusted_start.y -= threshold;
-                                    }
-                                }
-                                ScrollAxis::Horizontal => {
-                                    if dx > 0.0 {
-                                        adjusted_start.x += threshold;
-                                    } else {
-                                        adjusted_start.x -= threshold;
-                                    }
-                                }
-                            }
-                            self.ctrl
-                                .last_pointer_pos
-                                .set(Some(adjusted_start));
-
-                            let _ = aimer_widget::dispatch_event(
-                                &self.child,
-                                *p,
-                                &ElementEvent::Cancel,
-                            );
                         } else {
                             return child_consumed;
                         }
@@ -542,9 +569,14 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         let speed_multiplier = self
                             .ctrl
                             .speed_multiplier;
-                        let dx = (p.x - last.x) * speed_multiplier;
-
-                        let dy = (p.y - last.y) * speed_multiplier;
+                        let delta = pointer_drag_delta(
+                            last,
+                            *p,
+                            speed_multiplier,
+                            pending_content_drag_won,
+                        );
+                        let dx = delta.x;
+                        let dy = delta.y;
 
                         let now = AnimInstant::now();
                         self.ctrl
@@ -868,5 +900,83 @@ impl<E: Element> LayoutElement for RawScrollableContainer<E> {
             .computed_size(&child_ctx);
         // println!("Content Computed Size: {:?}", res);
         res
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pending_content_drag_wins, pointer_drag_delta};
+    use crate::ScrollAxis;
+    use aimer_attribute::Vec2d;
+
+    #[test]
+    fn move_exactly_at_drag_threshold_remains_pending() {
+        assert!(!pending_content_drag_wins(
+            ScrollAxis::Vertical,
+            Vec2d::default(),
+            Vec2d { x: 0.0, y: 10.0 },
+            10.0,
+        ));
+    }
+
+    #[test]
+    fn axis_dominant_move_above_threshold_wins_scrolling() {
+        assert!(pending_content_drag_wins(
+            ScrollAxis::Vertical,
+            Vec2d::default(),
+            Vec2d { x: 2.0, y: 10.01 },
+            10.0,
+        ));
+        assert!(pending_content_drag_wins(
+            ScrollAxis::Horizontal,
+            Vec2d::default(),
+            Vec2d { x: -10.01, y: 2.0 },
+            10.0,
+        ));
+    }
+
+    #[test]
+    fn equal_diagonal_move_does_not_win_scrolling() {
+        assert!(!pending_content_drag_wins(
+            ScrollAxis::Vertical,
+            Vec2d::default(),
+            Vec2d { x: 12.0, y: 12.0 },
+            10.0,
+        ));
+    }
+
+    #[test]
+    fn near_diagonal_text_selection_does_not_win_scrolling() {
+        assert!(!pending_content_drag_wins(
+            ScrollAxis::Vertical,
+            Vec2d::default(),
+            Vec2d { x: 149.0, y: 149.5 },
+            10.0,
+        ));
+        assert!(!pending_content_drag_wins(
+            ScrollAxis::Horizontal,
+            Vec2d::default(),
+            Vec2d { x: 149.5, y: 149.0 },
+            10.0,
+        ));
+    }
+
+    #[test]
+    fn cross_axis_dominant_move_does_not_win_scrolling() {
+        assert!(!pending_content_drag_wins(
+            ScrollAxis::Vertical,
+            Vec2d::default(),
+            Vec2d { x: 15.0, y: 12.0 },
+            10.0,
+        ));
+    }
+
+    #[test]
+    fn winning_move_establishes_scroll_origin_without_changing_offset() {
+        let delta =
+            pointer_drag_delta(Vec2d { x: 20.0, y: 110.0 }, Vec2d { x: 20.0, y: 150.0 }, 1.0, true);
+
+        assert_eq!(delta.x, 0.0);
+        assert_eq!(delta.y, 0.0);
     }
 }

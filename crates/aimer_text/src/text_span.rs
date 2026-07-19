@@ -186,7 +186,14 @@ impl ResolvedTextSpan {
 
 pub(crate) struct SpanLayout {
     pub fragments: Vec<SpanLayoutFragment>,
+    pub line_breaks: Vec<SpanLayoutLineBreak>,
     pub line_count: usize,
+}
+
+pub(crate) struct SpanLayoutLineBreak {
+    pub span_index: usize,
+    pub source_range: Range<usize>,
+    pub line: usize,
 }
 
 pub(crate) struct SpanLayoutFragment {
@@ -223,6 +230,7 @@ pub(crate) fn layout_resolved_spans(
         .map(|(offset, _)| offset)
         .collect::<Vec<_>>();
     let mut graphemes: Vec<PositionedGrapheme<'_>> = Vec::new();
+    let mut line_breaks = Vec::new();
     let mut line = 0;
     let mut x = 0.0;
     let mut line_start = 0;
@@ -238,7 +246,8 @@ pub(crate) fn layout_resolved_spans(
         {
             let source_range =
                 span_start + grapheme_start..span_start + grapheme_start + grapheme.len();
-            if grapheme == "\n" {
+            if grapheme == "\n" || grapheme == "\r\n" {
+                line_breaks.push(SpanLayoutLineBreak { span_index, source_range, line });
                 line += 1;
                 x = 0.0;
                 line_start = graphemes.len();
@@ -320,7 +329,7 @@ pub(crate) fn layout_resolved_spans(
         }
     }
 
-    SpanLayout { fragments, line_count: line + 1 }
+    SpanLayout { fragments, line_breaks, line_count: line + 1 }
 }
 
 pub(crate) fn ellipsize_first_line(
@@ -336,6 +345,9 @@ pub(crate) fn ellipsize_first_line(
     layout
         .fragments
         .retain(|fragment| fragment.line == 0);
+    layout
+        .line_breaks
+        .clear();
     let span_index = layout
         .fragments
         .last()
@@ -567,6 +579,30 @@ mod tests {
         );
         assert_eq!(layout.fragments[0].source_range, Some(0..5));
         assert_eq!(layout.fragments[1].source_range, Some(6..12));
+    }
+
+    #[test]
+    fn explicit_line_breaks_retain_their_source_ranges_and_styles() {
+        let spans = vec![
+            ResolvedTextSpan::plain(Rc::from("first\n"), TextStyle::new().font_size(14)),
+            ResolvedTextSpan::plain(Rc::from("\nsecond"), TextStyle::new().font_size(20)),
+        ];
+
+        let layout = layout_resolved_spans(&spans, 0.0, |text, _| text.len() as f32);
+
+        assert_eq!(layout.line_count, 3);
+        assert_eq!(
+            layout
+                .line_breaks
+                .len(),
+            2
+        );
+        assert_eq!(layout.line_breaks[0].span_index, 0);
+        assert_eq!(layout.line_breaks[0].source_range, 5..6);
+        assert_eq!(layout.line_breaks[0].line, 0);
+        assert_eq!(layout.line_breaks[1].span_index, 1);
+        assert_eq!(layout.line_breaks[1].source_range, 6..7);
+        assert_eq!(layout.line_breaks[1].line, 1);
     }
 
     #[test]
