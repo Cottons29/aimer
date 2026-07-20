@@ -1,11 +1,11 @@
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{Context, bail};
-
+use crate::commands::run::web::{configure_trunk, find_llvm_ar};
 use crate::config::AimerManifest;
 use crate::errors::AimerError;
 use crate::targets::Targets;
+use anyhow::{Context, bail};
 
 /// Non-interactive build entry point used by `aimer build`.
 ///
@@ -59,7 +59,12 @@ fn resolve_target(target: Option<String>) -> anyhow::Result<Targets> {
 fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
     let mut cmd = match target {
         Targets::Web => {
+            let Some(llvm_ar) = find_llvm_ar() else {
+                bail!("Failed to find llvm-ar".to_string());
+            };
+
             let mut c = Command::new("trunk");
+            configure_trunk(&mut c, &llvm_ar);
             c.arg("build")
                 .current_dir("builds/web");
             if release {
@@ -121,4 +126,32 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
         .stderr(std::process::Stdio::inherit());
 
     Ok(cmd)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_build_uses_trunk_compatible_no_color_value() {
+        let command = build_command(Targets::Web, false).unwrap();
+        let wasm_archiver = command
+            .get_envs()
+            .find_map(|(name, value)| (name == "AR_wasm32_unknown_unknown").then_some(value))
+            .flatten();
+        let no_color = command
+            .get_envs()
+            .find_map(|(name, value)| (name == "NO_COLOR").then_some(value))
+            .flatten();
+
+        assert_eq!(
+            wasm_archiver,
+            Some(
+                find_llvm_ar()
+                    .unwrap()
+                    .as_os_str()
+            )
+        );
+        assert_eq!(no_color, Some(std::ffi::OsStr::new("true")));
+    }
 }

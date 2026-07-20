@@ -3,6 +3,13 @@ mod markdown_theme;
 mod renderer;
 mod syntax;
 
+// Arborium's debug Tree-sitter runtime references C's `stderr`, which is not
+// provided by the `wasm32-unknown-unknown` target. Its optional diagnostics
+// accept a null stream, so provide the missing WASM-side storage here.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+static mut stderr: usize = 0;
+
 use std::rc::Rc;
 
 use aimer_container::{Container, ScrollAxis, Scrollable};

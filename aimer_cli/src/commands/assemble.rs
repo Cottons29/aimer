@@ -282,7 +282,9 @@ fn assemble_web(release: bool) -> anyhow::Result<String> {
     // }
     copy_assets_into(artifact)?;
 
+    let llvm_ar = crate::commands::run::web::find_llvm_ar().context("Failed to find llvm-ar")?;
     let mut trunk = Command::new("trunk");
+    crate::commands::run::web::configure_trunk(&mut trunk, &llvm_ar);
     trunk
         .arg("build")
         .current_dir("builds/web");
