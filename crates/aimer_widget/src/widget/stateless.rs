@@ -5,6 +5,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 
 use crate::base::*;
+use crate::widget::recovery::{BuildPhase, build_or_error};
 use crate::widget::stateful::{RebuildCallBack, SyncChild};
 use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
 // StatelessWidget is effectively just a Widget.
@@ -95,9 +96,13 @@ impl StatelessElement {
         let dirty = Rc::new(Cell::new(false));
         let consumer = BuildConsumer::new(dirty.clone());
         let rebuild_fn: Rc<RebuildCallBack> = Rc::new(rebuild_fn);
-        let child = ctx.with_build_consumer(consumer.clone(), |ctx| rebuild_fn(ctx));
+        let child = ctx.with_build_consumer(consumer.clone(), |ctx| {
+            build_or_error(debug_name, BuildPhase::Build, || rebuild_fn(ctx))
+        });
         let rebuild = Rc::new(move |ctx: &BuildContext| {
-            ctx.with_build_consumer(consumer.clone(), |ctx| rebuild_fn(ctx))
+            ctx.with_build_consumer(consumer.clone(), |ctx| {
+                build_or_error(debug_name, BuildPhase::Build, || rebuild_fn(ctx))
+            })
         });
         Self {
             child: SyncChild(UnsafeCell::new(child)),
@@ -372,6 +377,61 @@ mod tests {
 
         assert_eq!(rebuilds.get(), 1);
         assert!(!element.dirty.get());
+    }
+
+    #[test]
+    fn initial_builder_panic_installs_error_child() {
+        let context = dummy_build_context();
+        let element = StatelessElement::from_builder(
+            &context,
+            |_| panic!("missing provider during initial build"),
+            None,
+            "InitialPanicWidget",
+        );
+
+        let child = unsafe {
+            &*element
+                .child
+                .0
+                .get()
+        };
+        assert_eq!(child.debug_name(), "ErrorWidget");
+        assert!(!element.dirty.get());
+    }
+
+    #[test]
+    fn rebuild_panic_installs_stable_error_child_and_clears_dirty() {
+        let builds = Rc::new(Cell::new(0));
+        let build_observer = builds.clone();
+        let context = dummy_build_context();
+        let element = StatelessElement::from_builder(
+            &context,
+            move |_| {
+                build_observer.set(build_observer.get() + 1);
+                if build_observer.get() == 1 {
+                    Box::new(Leaf)
+                } else {
+                    panic!("missing provider during rebuild")
+                }
+            },
+            None,
+            "RebuildPanicWidget",
+        );
+
+        element.mark_needs_rebuild();
+        element.rebuild_if_dirty(&context);
+
+        let child = unsafe {
+            &*element
+                .child
+                .0
+                .get()
+        };
+        assert_eq!(child.debug_name(), "ErrorWidget");
+        assert!(!element.dirty.get());
+
+        element.rebuild_if_dirty(&context);
+        assert_eq!(builds.get(), 2, "recovered subtree must not retry while clean");
     }
 
     #[test]

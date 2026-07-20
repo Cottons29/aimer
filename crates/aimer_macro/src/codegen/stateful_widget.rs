@@ -46,8 +46,7 @@ pub fn generate_stateful_widget_impl(input: TokenStream) -> TokenStream {
             #key_method
 
             fn to_element(&self, ctx: &widget::base::BuildContext) -> Box<dyn widget::Element> {
-                let (element, _updater) = widget::StatefulElement::new_with_name(self, ctx, stringify!(#struct_name), #key_pass);
-                Box::new(element)
+                widget::StatefulElement::from_widget(self, ctx, stringify!(#struct_name), #key_pass)
             }
             fn debug_name(&self) -> &'static str {
                 stringify!(#struct_name)
@@ -56,4 +55,22 @@ pub fn generate_stateful_widget_impl(input: TokenStream) -> TokenStream {
     };
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+
+    use super::*;
+
+    #[test]
+    fn generated_widget_uses_recoverable_stateful_conversion() {
+        let output = generate_stateful_widget_impl(quote! {
+            struct PanicBoundaryWidget;
+        })
+        .to_string();
+
+        assert!(output.contains("StatefulElement :: from_widget"));
+        assert!(!output.contains("StatefulElement :: new_with_name"));
+    }
 }

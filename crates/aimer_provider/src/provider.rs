@@ -3,8 +3,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::ops::Deref;
+use std::panic::Location;
 use std::rc::{Rc, Weak};
 
+use aimer_utils::PanicHelper;
 use aimer_widget::base::{BuildConsumer, BuildContext, ResolvedSize, Size, Vec2d, WindowHandle};
 use aimer_widget::{
     AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild, State,
@@ -86,9 +88,15 @@ impl<T: 'static> ProviderHandle<T> {
     /// # Panics
     ///
     /// Panics when no matching provider is in the current widget scope.
+    #[track_caller]
     pub fn of(context: &BuildContext) -> Self {
+        let caller = Location::caller();
         Self::try_of(context).unwrap_or_else(|| {
-            panic!("No provider for `{}` found in the current widget scope", type_name::<T>())
+            panic!(
+                "No provider for `{}` found in the current widget scope\n\n{}",
+                type_name::<T>(),
+                PanicHelper::location(caller),
+            )
         })
     }
 
@@ -1129,6 +1137,21 @@ mod tests {
     #[should_panic(expected = "No provider for")]
     fn required_lookup_has_a_clear_missing_provider_diagnostic() {
         ProviderContext::read::<Counter>(&context());
+    }
+
+    #[test]
+    fn missing_handle_diagnostic_highlights_its_external_caller() {
+        let panic = std::panic::catch_unwind(|| {
+            let _ = ProviderHandle::<Counter>::of(&context());
+        })
+        .expect_err("missing provider should panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("provider panic should use an owned diagnostic");
+
+        assert!(message.contains(file!()));
+        assert!(message.contains("ProviderHandle::<Counter>::of(&context())"));
+        assert!(message.contains("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"));
     }
 
     #[test]
