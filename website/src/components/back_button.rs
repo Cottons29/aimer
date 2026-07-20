@@ -4,10 +4,10 @@ use std::rc::Rc;
 use aimer::callback::VoidCallback;
 use aimer::gesture::gesture_detector::GestureDetector;
 use aimer::mouse_region::{MouseRegion, PointerState};
-use aimer::style::{TextAlign, TextDecoration, TextStyle};
+use aimer::style::{TextAlign, TextDecoration, TextStyle, Theme, ThemeData};
 use aimer::{
-    BuildContext, Row, SizedBox, State, StateUpdater, StatefulWidget, Svg, SvgDocument, Text,
-    Widget, widget,
+    BuildContext, Color, Row, SizedBox, State, StateUpdater, StatefulWidget, Svg, SvgDocument,
+    Text, Widget, widget,
 };
 
 #[widget(Stateful)]
@@ -54,12 +54,10 @@ impl StatefulWidget for BlogBackButton {
     }
 }
 
-fn back_label_style(is_hover: bool) -> TextStyle {
-    TextStyle::new().text_decoration(if is_hover {
-        TextDecoration::Underline
-    } else {
-        TextDecoration::None
-    })
+fn back_label_style(is_hover: bool, color: Color) -> TextStyle {
+    TextStyle::new()
+        .color(color)
+        .text_decoration(if is_hover { TextDecoration::Underline } else { TextDecoration::None })
 }
 
 impl State<BlogBackButton> for BlogBackButtonState {
@@ -70,7 +68,8 @@ impl State<BlogBackButton> for BlogBackButtonState {
         self.updater = updater;
     }
 
-    fn build(&self, _ctx: &BuildContext) -> impl Widget {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::of(ctx);
         let document = SvgDocument::from_svg(include_bytes!("../../assets/back-svgrepo-com.svg"))
             .expect("the bundled SVG should be valid");
 
@@ -104,7 +103,10 @@ impl State<BlogBackButton> for BlogBackButtonState {
                                 .boxed(),
                             Text::new("Back to blogs")
                                 .text_align(TextAlign::MidCenter)
-                                .text_style(back_label_style(self.is_hover))
+                                .text_style(back_label_style(
+                                    self.is_hover,
+                                    theme.on_background_color,
+                                ))
                                 .boxed(),
                         ]),
                     ),
@@ -121,7 +123,7 @@ mod tests {
     #[test]
     fn back_label_is_not_underlined_when_not_hovered() {
         assert!(
-            back_label_style(false)
+            back_label_style(false, Color::BLACK)
                 .text_decoration
                 .line
                 == TextDecorationLine::NONE
@@ -131,7 +133,7 @@ mod tests {
     #[test]
     fn back_label_is_underlined_when_hovered() {
         assert!(
-            back_label_style(true)
+            back_label_style(true, Color::BLACK)
                 .text_decoration
                 .line
                 == TextDecorationLine::UNDERLINE

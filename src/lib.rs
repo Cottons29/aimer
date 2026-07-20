@@ -15,7 +15,7 @@ pub use aimer_input::button::Button;
 pub use aimer_input::callback::{AsyncCallback, CallbackInner, RawInnerCallback};
 pub use aimer_input::input::*;
 pub use aimer_input::*;
-pub use aimer_macro::{key, main};
+pub use aimer_macro::{Theme, key, main};
 #[cfg(feature = "markdown")]
 pub use aimer_markdown::{
     Alignment as MarkdownAlignment, Block as MarkdownBlock, Document as MarkdownDocument,
@@ -53,7 +53,7 @@ pub mod animation {
 
 // Macro re-export
 pub mod macros {
-    pub use aimer_macro::{key, main, widget};
+    pub use aimer_macro::{Theme, key, main, widget};
 }
 
 // Styling re-export

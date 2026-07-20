@@ -2,7 +2,7 @@
 // Hoverable Get Started button
 // ---------------------------------------------------------------------------
 
-use aimer::style::{BoxDecoration, FontWeight, TextAlign, TextStyle};
+use aimer::style::{BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, TextAlign, TextStyle, Theme, ThemeData};
 use aimer::{BuildContext, Widget, widget, *};
 
 #[widget(Stateless)]
@@ -10,12 +10,20 @@ use aimer::{BuildContext, Widget, widget, *};
 pub struct HoverableGetStartedButton {}
 
 impl StatelessWidget for HoverableGetStartedButton {
-    fn build(&self, _ctx: &BuildContext) -> impl Widget {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::copied(ctx);
+
         Container::new().child(
             Button::new()
                 .decoration(
                     BoxDecoration::new()
                         .background_color(Color::BLACK)
+                        .border(BoxBorder::all(
+                            BorderSlice::new()
+                                .color(theme.on_background_color)
+                                .style(BorderStyle::Solid)
+                                .stroke(2),
+                        ))
                         .border_radius(8),
                 )
                 .on_press({

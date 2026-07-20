@@ -1,3 +1,4 @@
+use aimer_animation::Animatable;
 use aimer_color::prelude::Color;
 use aimer_provider::{ProviderContext, Snapshot};
 use aimer_widget::base::BuildContext;
@@ -100,17 +101,15 @@ impl ThemeData {
         self.on_surface_color = color;
         self
     }
+}
 
-    /// Linearly interpolates every semantic color toward `other`.
-    ///
-    /// Values of `t` at or below `0.0` return `self`, while values at or above
-    /// `1.0` return `other` exactly.
-    pub fn lerp(self, other: Self, t: f32) -> Self {
+impl Animatable for ThemeData {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
         if t <= 0.0 {
-            return self;
+            return *self;
         }
         if t >= 1.0 {
-            return other;
+            return *other;
         }
         Self {
             primary_color: self
@@ -143,12 +142,21 @@ impl Default for ThemeData {
 
 /// Accesses the nearest theme supplied by an [`crate::AnimatedTheme`] ancestor.
 ///
-/// Use [`Theme::of`] while building themed widgets so they rebuild as the theme
-/// animates. Use [`Theme::read`] when the caller only needs the current value
-/// and should not subscribe to future changes.
-pub struct Theme;
-
-impl Theme {
+/// Use [`Theme::of`] while building themed widgets so they rebuild as the theme animates. Use
+/// [`Theme::read`] when the caller only needs the current value and should not subscribe to future
+/// changes.
+///
+/// A derived theme requires every field to implement [`Animatable`]:
+///
+/// ```compile_fail
+/// use aimer_style::Theme;
+///
+/// #[derive(Clone, PartialEq, Theme)]
+/// struct InvalidTheme {
+///     label: String,
+/// }
+/// ```
+pub trait Theme: Animatable + Clone + PartialEq + Sized + 'static {
     /// Returns the current theme and subscribes the building widget to theme
     /// changes.
     ///
@@ -156,8 +164,8 @@ impl Theme {
     ///
     /// Panics when there is no [`crate::AnimatedTheme`] ancestor or when called
     /// outside a widget build.
-    pub fn of(context: &BuildContext) -> Snapshot<ThemeData> {
-        context.watch::<ThemeData>()
+    fn of(context: &BuildContext) -> Snapshot<Self> {
+        context.watch::<Self>()
     }
 
     /// Returns the current theme without subscribing the building widget to
@@ -166,14 +174,36 @@ impl Theme {
     /// # Panics
     ///
     /// Panics when there is no [`crate::AnimatedTheme`] ancestor.
-    pub fn read(context: &BuildContext) -> Snapshot<ThemeData> {
-        context.read::<ThemeData>()
+    fn read(context: &BuildContext) -> Snapshot<Self> {
+        context.read::<Self>()
+    }
+
+    /// Returns a copy of the current theme without subscribing the building widget to changes.
+    ///
+    /// # Panics
+    ///
+    /// Panics when there is no provider for this theme type.
+    fn copied(context: &BuildContext) -> Self
+    where
+        Self: Copy,
+    {
+        context.copied::<Self>()
     }
 }
 
+impl Theme for ThemeData {}
+
 #[cfg(test)]
 mod tests {
+    use aimer_animation::Animatable;
+
     use super::*;
+    use crate::Theme as ThemeDerive;
+
+    #[derive(Clone, Debug, PartialEq, ThemeDerive)]
+    struct DirectTheme {
+        value: f32,
+    }
 
     fn theme(color: Color) -> ThemeData {
         ThemeData::new()
@@ -190,8 +220,10 @@ mod tests {
         let begin = theme(Color::Rgba(10, 20, 30, 40));
         let end = theme(Color::Rgba(110, 120, 130, 140));
 
-        assert_eq!(begin.lerp(end, 0.0), begin);
-        assert_eq!(begin.lerp(end, 1.0), end);
+        assert_eq!(Animatable::lerp(&begin, &end, -0.5), begin);
+        assert_eq!(Animatable::lerp(&begin, &end, 0.0), begin);
+        assert_eq!(Animatable::lerp(&begin, &end, 1.0), end);
+        assert_eq!(Animatable::lerp(&begin, &end, 1.5), end);
     }
 
     #[test]
@@ -200,6 +232,21 @@ mod tests {
         let end = theme(Color::Rgba(100, 120, 140, 160));
         let expected = theme(Color::Rgba(50, 70, 90, 110));
 
-        assert_eq!(begin.lerp(end, 0.5), expected);
+        assert_eq!(Animatable::lerp(&begin, &end, 0.5), expected);
+    }
+
+    #[test]
+    fn theme_data_implements_theme_contract() {
+        fn assert_theme<T: Theme>() {}
+
+        assert_theme::<ThemeData>();
+    }
+
+    #[test]
+    fn derive_works_for_direct_aimer_style_consumers() {
+        let begin = DirectTheme { value: 2.0 };
+        let end = DirectTheme { value: 6.0 };
+
+        assert_eq!(begin.lerp(&end, 0.5), DirectTheme { value: 4.0 });
     }
 }

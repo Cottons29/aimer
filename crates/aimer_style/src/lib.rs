@@ -2,8 +2,14 @@ mod animated_theme;
 mod style;
 mod theme;
 
+pub use aimer_macro::Theme;
 pub use animated_theme::AnimatedTheme;
 pub use theme::{Theme, ThemeData};
+
+#[doc(hidden)]
+pub mod __private {
+    pub use aimer_animation::Animatable;
+}
 
 // layout export
 pub use aimer_attribute::BoxConstraint;

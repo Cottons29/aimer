@@ -2,6 +2,7 @@ pub mod animated;
 mod animated_theme;
 mod async_builder;
 mod color_sync;
+mod custom_animated_theme;
 mod custom_font;
 mod markdown_example;
 mod panic_recovery;
@@ -21,6 +22,7 @@ use aimer::{AimerApp, *};
 
 #[allow(unused_imports)]
 use crate::animated::start_my_animated_list;
+use crate::custom_animated_theme::start_custom_animated_theme_example;
 use crate::markdown_example::start_markdown_example;
 #[allow(unused_imports)]
 use crate::panic_recovery::start_panic_recovery_example;
@@ -41,14 +43,15 @@ pub fn my_app() {
     // ])))
     // test_positioned()
     // async_builder::start_async_builder_example()
-    // animated_theme::start_animated_theme_example()
+    // custom_animated_theme::start_custom_animated_theme_example()
     // test_scrollable()
     // test_scrollable_row()
     // start_markdown_example();
     // start_panic_recovery_example();
     // test_scroll_and_row();
     // start_svg_test();
-    panic_recovery::start_panic_recovery_example()
+    // panic_recovery::start_panic_recovery_example()
+    start_custom_animated_theme_example()
 }
 #[allow(unused)]
 fn test_text() {

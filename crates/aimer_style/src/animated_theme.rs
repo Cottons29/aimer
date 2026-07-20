@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -10,18 +10,17 @@ use aimer_widget::{
     StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
-use crate::ThemeData;
+use crate::{Theme, ThemeData};
 
 fn request_next_frame() {
     aimer_events::window::request_animation_frame();
 }
 
-/// Supplies a [`ThemeData`] value to descendants and animates changes to it.
+/// Supplies a [`Theme`] value to descendants and animates changes to it.
 ///
-/// Descendants read the interpolated theme with [`crate::Theme::of`]. When
-/// `data` changes, `AnimatedTheme` interpolates every semantic color without
-/// replacing the descendant widget tree. If the target changes during a
-/// transition, the new transition begins at the currently displayed
+/// Descendants read the interpolated value with [`Theme::of`]. When `data` changes,
+/// `AnimatedTheme` interpolates the theme without replacing the descendant widget tree. If the
+/// target changes during a transition, the new transition begins at the currently displayed
 /// theme. A zero duration applies the target immediately.
 ///
 /// The default transition lasts 200 milliseconds and uses [`Curve::Linear`].
@@ -42,8 +41,8 @@ fn request_next_frame() {
 ///                         .child(child)
 /// }
 /// ```
-pub struct AnimatedTheme<W = RequiredChild> {
-    data: ThemeData,
+pub struct AnimatedTheme<W = RequiredChild, T = ThemeData> {
+    data: T,
     duration: Duration,
     curve: Curve,
     child: Rc<W>,
@@ -70,11 +69,10 @@ impl Default for AnimatedTheme {
     }
 }
 
-impl<W> AnimatedTheme<W> {
+impl<W, T> AnimatedTheme<W, T> {
     /// Sets the target theme supplied to descendants.
-    pub fn data(mut self, data: ThemeData) -> Self {
-        self.data = data;
-        self
+    pub fn data<U: Theme>(self, data: U) -> AnimatedTheme<W, U> {
+        AnimatedTheme { data, duration: self.duration, curve: self.curve, child: self.child }
     }
 
     /// Sets how long a theme transition lasts.
@@ -93,7 +91,7 @@ impl<W> AnimatedTheme<W> {
     }
 
     /// Attaches the descendant widget subtree and produces a valid widget.
-    pub fn child<C: Widget>(self, child: C) -> AnimatedTheme<C> {
+    pub fn child<C: Widget>(self, child: C) -> AnimatedTheme<C, T> {
         AnimatedTheme {
             data: self.data,
             duration: self.duration,
@@ -108,29 +106,32 @@ impl<W> AnimatedTheme<W> {
     /// This is equivalent to calling [`AnimatedTheme::child`] followed by
     /// [`Widget::boxed`]. Use it when different code paths must return one
     /// [`AnyWidget`] type.
-    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget
+    where
+        T: Theme,
+    {
         self.child(child)
             .boxed()
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct ThemeTransition {
-    begin: ThemeData,
-    end: ThemeData,
+#[derive(Clone, Debug)]
+struct ThemeTransition<T> {
+    begin: T,
+    end: T,
 }
 
-impl ThemeTransition {
-    fn new(value: ThemeData) -> Self {
-        Self { begin: value, end: value }
+impl<T: Theme> ThemeTransition<T> {
+    fn new(value: T) -> Self {
+        Self { begin: value.clone(), end: value }
     }
 
-    fn sample(&self, progress: f32) -> ThemeData {
+    fn sample(&self, progress: f32) -> T {
         self.begin
-            .lerp(self.end, progress)
+            .lerp(&self.end, progress)
     }
 
-    fn retarget(&mut self, target: ThemeData, progress: f32) -> bool {
+    fn retarget(&mut self, target: T, progress: f32) -> bool {
         if self.end == target {
             return false;
         }
@@ -141,35 +142,35 @@ impl ThemeTransition {
 }
 
 #[doc(hidden)]
-pub struct AnimatedThemeState {
-    target: ThemeData,
-    current: Rc<Cell<ThemeData>>,
+pub struct AnimatedThemeState<T: Theme> {
+    target: T,
+    current: Rc<RefCell<T>>,
     duration: Duration,
     curve: Curve,
     child: Rc<dyn Widget>,
     controller: AnimationController,
-    transition: Rc<RefCell<ThemeTransition>>,
-    handle: ProviderHandle<ThemeData>,
+    transition: Rc<RefCell<ThemeTransition<T>>>,
+    handle: ProviderHandle<T>,
 }
 
-impl<W: Widget + 'static> StatefulWidget for AnimatedTheme<W> {
-    type State = AnimatedThemeState;
+impl<W: Widget + 'static, T: Theme> StatefulWidget for AnimatedTheme<W, T> {
+    type State = AnimatedThemeState<T>;
 
     fn create_state(&self) -> Self::State {
         AnimatedThemeState {
-            target: self.data,
-            current: Rc::new(Cell::new(self.data)),
+            target: self.data.clone(),
+            current: Rc::new(RefCell::new(self.data.clone())),
             duration: self.duration,
             curve: self.curve,
             child: self.child.clone(),
             controller: AnimationController::new(self.duration, self.curve),
-            transition: Rc::new(RefCell::new(ThemeTransition::new(self.data))),
-            handle: ProviderHandle::new(self.data),
+            transition: Rc::new(RefCell::new(ThemeTransition::new(self.data.clone()))),
+            handle: ProviderHandle::new(self.data.clone()),
         }
     }
 }
 
-impl<W: Widget + 'static> State<AnimatedTheme<W>> for AnimatedThemeState {
+impl<W: Widget + 'static, T: Theme> State<AnimatedTheme<W, T>> for AnimatedThemeState<T> {
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
     fn adopt_config_from(&mut self, new: &Self) {
@@ -185,7 +186,7 @@ impl<W: Widget + 'static> State<AnimatedTheme<W>> for AnimatedThemeState {
             .transition
             .borrow_mut()
             .retarget(
-                new.target,
+                new.target.clone(),
                 self.controller
                     .value(),
             )
@@ -193,7 +194,7 @@ impl<W: Widget + 'static> State<AnimatedTheme<W>> for AnimatedThemeState {
             return;
         }
 
-        self.target = new.target;
+        self.target = new.target.clone();
         self.controller
             .reset();
         if self
@@ -202,13 +203,14 @@ impl<W: Widget + 'static> State<AnimatedTheme<W>> for AnimatedThemeState {
         {
             self.controller
                 .set_value(1.0);
-            self.publish(self.target);
+            self.publish(self.target.clone());
         } else {
-            self.current.set(
-                self.transition
-                    .borrow()
-                    .sample(0.0),
-            );
+            *self
+                .current
+                .borrow_mut() = self
+                .transition
+                .borrow()
+                .sample(0.0);
             self.controller
                 .forward_from_first_tick();
         }
@@ -229,20 +231,23 @@ impl<W: Widget + 'static> State<AnimatedTheme<W>> for AnimatedThemeState {
     }
 }
 
-impl AnimatedThemeState {
-    fn publish(&self, value: ThemeData) {
-        if self
+impl<T: Theme> AnimatedThemeState<T> {
+    fn publish(&self, value: T) {
+        if *self
             .current
-            .replace(value)
+            .borrow()
             != value
         {
+            *self
+                .current
+                .borrow_mut() = value.clone();
             self.handle
                 .update(|theme| *theme = value);
         }
     }
 }
 
-impl<W: Widget + 'static> Widget for AnimatedTheme<W> {
+impl<W: Widget + 'static, T: Theme> Widget for AnimatedTheme<W, T> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         StatefulElement::new_with_name(self, ctx, "AnimatedTheme", self.key())
             .0
@@ -254,15 +259,15 @@ impl<W: Widget + 'static> Widget for AnimatedTheme<W> {
     }
 }
 
-struct AnimatedThemeFrame {
-    current: Rc<Cell<ThemeData>>,
+struct AnimatedThemeFrame<T: Theme> {
+    current: Rc<RefCell<T>>,
     child: Rc<dyn Widget>,
     controller: AnimationController,
-    transition: Rc<RefCell<ThemeTransition>>,
-    handle: ProviderHandle<ThemeData>,
+    transition: Rc<RefCell<ThemeTransition<T>>>,
+    handle: ProviderHandle<T>,
 }
 
-impl Widget for AnimatedThemeFrame {
+impl<T: Theme> Widget for AnimatedThemeFrame<T> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let child = Provider::new()
             .handle(self.handle.clone())
@@ -282,15 +287,15 @@ impl Widget for AnimatedThemeFrame {
     }
 }
 
-struct AnimatedThemeElement {
-    current: Rc<Cell<ThemeData>>,
+struct AnimatedThemeElement<T: Theme> {
+    current: Rc<RefCell<T>>,
     child: Box<dyn Element>,
     controller: AnimationController,
-    transition: Rc<RefCell<ThemeTransition>>,
-    handle: ProviderHandle<ThemeData>,
+    transition: Rc<RefCell<ThemeTransition<T>>>,
+    handle: ProviderHandle<T>,
 }
 
-impl VisitorElement for AnimatedThemeElement {
+impl<T: Theme> VisitorElement for AnimatedThemeElement<T> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
     }
@@ -300,7 +305,7 @@ impl VisitorElement for AnimatedThemeElement {
     }
 }
 
-impl Drawable for AnimatedThemeElement {
+impl<T: Theme> Drawable for AnimatedThemeElement<T> {
     fn draw(&self, ctx: &BuildContext) {
         let progress = self
             .controller
@@ -309,11 +314,14 @@ impl Drawable for AnimatedThemeElement {
             .transition
             .borrow()
             .sample(progress);
-        if self
+        if *self
             .current
-            .replace(value)
+            .borrow()
             != value
         {
+            *self
+                .current
+                .borrow_mut() = value.clone();
             self.handle
                 .update(|theme| *theme = value);
         }
@@ -331,9 +339,9 @@ impl Drawable for AnimatedThemeElement {
     }
 }
 
-impl EventElement for AnimatedThemeElement {}
+impl<T: Theme> EventElement for AnimatedThemeElement<T> {}
 
-impl Rebuildable for AnimatedThemeElement {
+impl<T: Theme> Rebuildable for AnimatedThemeElement<T> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         self.child
             .rebuild_if_dirty(ctx);
@@ -349,7 +357,7 @@ impl Rebuildable for AnimatedThemeElement {
     }
 }
 
-impl LayoutElement for AnimatedThemeElement {
+impl<T: Theme> LayoutElement for AnimatedThemeElement<T> {
     fn pos(&self) -> Option<Vec2d> {
         self.child.pos()
     }
@@ -402,9 +410,33 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use aimer_animation::Animatable;
     use aimer_color::prelude::Color;
 
     use super::*;
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct CustomTheme {
+        value: f32,
+    }
+
+    impl Animatable for CustomTheme {
+        fn lerp(&self, other: &Self, t: f32) -> Self {
+            if t <= 0.0 {
+                return self.clone();
+            }
+            if t >= 1.0 {
+                return other.clone();
+            }
+            Self {
+                value: self
+                    .value
+                    .lerp(&other.value, t),
+            }
+        }
+    }
+
+    impl crate::Theme for CustomTheme {}
 
     struct TestWidget;
 
@@ -419,6 +451,16 @@ mod tests {
     }
 
     fn widget(data: ThemeData, duration: Duration) -> AnimatedTheme<TestWidget> {
+        AnimatedTheme::new()
+            .data(data)
+            .duration(duration)
+            .child(TestWidget)
+    }
+
+    fn custom_widget(
+        data: CustomTheme,
+        duration: Duration,
+    ) -> AnimatedTheme<TestWidget, CustomTheme> {
         AnimatedTheme::new()
             .data(data)
             .duration(duration)
@@ -456,16 +498,57 @@ mod tests {
     }
 
     #[test]
+    fn custom_non_copy_theme_retargets_from_displayed_value() {
+        let mut transition = ThemeTransition::new(CustomTheme { value: 0.0 });
+        assert!(transition.retarget(CustomTheme { value: 100.0 }, 0.0));
+
+        assert!(transition.retarget(CustomTheme { value: 200.0 }, 0.5));
+
+        assert_eq!(transition.sample(0.0), CustomTheme { value: 50.0 });
+        assert_eq!(transition.sample(1.0), CustomTheme { value: 200.0 });
+    }
+
+    #[test]
     fn zero_duration_uses_exact_target() {
         let mut state = widget(theme(0), Duration::from_millis(200)).create_state();
         let new_state = widget(theme(101), Duration::ZERO).create_state();
 
-        <AnimatedThemeState as State<AnimatedTheme<TestWidget>>>::adopt_config_from(
+        <AnimatedThemeState<ThemeData> as State<AnimatedTheme<TestWidget>>>::adopt_config_from(
             &mut state, &new_state,
         );
 
         assert_eq!(*state.handle.read(), theme(101));
-        assert_eq!(state.current.get(), theme(101));
+        assert_eq!(
+            *state
+                .current
+                .borrow(),
+            theme(101)
+        );
+        assert!(
+            !state
+                .controller
+                .is_animating()
+        );
+    }
+
+    #[test]
+    fn custom_non_copy_theme_zero_duration_publishes_exact_target() {
+        let mut state =
+            custom_widget(CustomTheme { value: 0.0 }, Duration::from_millis(200)).create_state();
+        let new_state = custom_widget(CustomTheme { value: 101.0 }, Duration::ZERO).create_state();
+
+        <AnimatedThemeState<CustomTheme> as State<AnimatedTheme<TestWidget, CustomTheme>>>::adopt_config_from(
+            &mut state,
+            &new_state,
+        );
+
+        assert_eq!(*state.handle.read(), CustomTheme { value: 101.0 });
+        assert_eq!(
+            *state
+                .current
+                .borrow(),
+            CustomTheme { value: 101.0 }
+        );
         assert!(
             !state
                 .controller
@@ -478,7 +561,7 @@ mod tests {
         let mut state = widget(theme(0), Duration::from_millis(200)).create_state();
         let new_state = widget(theme(101), Duration::from_millis(400)).create_state();
 
-        <AnimatedThemeState as State<AnimatedTheme<TestWidget>>>::adopt_config_from(
+        <AnimatedThemeState<ThemeData> as State<AnimatedTheme<TestWidget>>>::adopt_config_from(
             &mut state, &new_state,
         );
 
@@ -493,7 +576,12 @@ mod tests {
                 .controller
                 .is_animating()
         );
-        assert_eq!(state.current.get(), theme(0));
+        assert_eq!(
+            *state
+                .current
+                .borrow(),
+            theme(0)
+        );
     }
 
     #[test]
