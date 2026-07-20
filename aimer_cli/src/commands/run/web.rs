@@ -103,7 +103,7 @@ pub fn spawn_web_runner(
         println!("Failed to copy assets into {artifact}");
         return;
     };
-
+    #[cfg(target_os = "macos")]
     let Some(llvm_ar) = find_llvm_ar() else {
         fail(&tx, "Failed to find llvm-ar".to_string());
         return;
@@ -113,6 +113,7 @@ pub fn spawn_web_runner(
     build_log(&tx, "Starting trunk server...");
 
     let mut trunk = Command::new("trunk");
+    #[cfg(target_os = "macos")]
     configure_trunk(&mut trunk, &llvm_ar);
     trunk
         .arg("serve")

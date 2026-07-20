@@ -71,40 +71,45 @@ enum MyWindowEvent {
 #[cfg(not(target_arch = "wasm32"))]
 impl<'w> App<'w> {
     fn new() -> Self {
-        Self { gpu: None,
-               renderer: None,
-               canvas: CupidCanvas::new(),
-               window: None,
-               texture_id: None }
+        Self {
+            gpu: None,
+            renderer: None,
+            canvas: CupidCanvas::new(),
+            window: None,
+            texture_id: None,
+        }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window
-               .is_some()
+        if self
+            .window
+            .is_some()
         {
             return;
         }
 
         let title = "Cupid Render Engine — Test";
-        let attrs =
-            Window::default_attributes().with_title(title)
-                                        .with_inner_size(winit::dpi::LogicalSize::new(800, 600));
+        let attrs = Window::default_attributes()
+            .with_title(title)
+            .with_inner_size(winit::dpi::LogicalSize::new(800, 600));
         #[cfg(target_os = "macos")]
         let attrs = {
             use winit::platform::macos::WindowAttributesExtMacOS;
 
-            attrs.with_decorations(true)
-                 .with_titlebar_hidden(false)
-                 .with_titlebar_transparent(false)
-                 .with_title_hidden(false)
-                 .with_titlebar_buttons_hidden(false)
-                 .with_fullsize_content_view(false)
+            attrs
+                .with_decorations(true)
+                .with_titlebar_hidden(false)
+                .with_titlebar_transparent(false)
+                .with_title_hidden(false)
+                .with_titlebar_buttons_hidden(false)
+                .with_fullsize_content_view(false)
         };
-        let window = event_loop.create_window(attrs)
-                               .unwrap();
+        let window = event_loop
+            .create_window(attrs)
+            .unwrap();
         // window.set_min_inner_size(Some(winit::dpi::LogicalSize::new(1500, 700)));
         window.set_title(title);
 
@@ -132,21 +137,23 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
         // wrapping width it is drawn with, so it renders from the warm cache on
         // the very first frame. The wrap width mirrors the draw call below
         // (`inner_size().width - 60.0`).
-        img_renderer.warm_text(&gpu.device,
-                               &gpu.queue,
-                               WELCOME_TEXT,
-                               44.0,
-                               size.width as f32 - 60.0);
+        img_renderer.warm_text(
+            &gpu.device,
+            &gpu.queue,
+            WELCOME_TEXT,
+            44.0,
+            size.width as f32 - 60.0,
+        );
         debug!("Text warm-up complete");
         let image_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("image.png");
         debug!("Loading test image from {}", image_path.display());
-        let img = image::open(&image_path).unwrap_or_else(|e| {
-                                              panic!("Failed to load {}: {e}", image_path.display())
-                                          })
-                                          .into_rgba8();
+        let img = image::open(&image_path)
+            .unwrap_or_else(|e| panic!("Failed to load {}: {e}", image_path.display()))
+            .into_rgba8();
         let (img_w, img_h) = img.dimensions();
-        let tex_id = img_renderer.image_pipeline
-                                 .upload_image(&gpu.device, &gpu.queue, img_w, img_h, img.as_raw());
+        let tex_id = img_renderer
+            .image_pipeline
+            .upload_image(&gpu.device, &gpu.queue, img_w, img_h, img.as_raw());
         debug!("Uploaded image to GPU");
 
         self.texture_id = Some(tex_id);
@@ -195,7 +202,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
 
             WindowEvent::MouseInput { state, .. } => {
                 if ElementState::Pressed == state
-                   && let Some(window) = self.window.as_ref()
+                    && let Some(window) = self.window.as_ref()
                 {
                     window.request_redraw();
                 }
@@ -217,8 +224,9 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                     _ => return,
                 };
 
-                let view = frame.texture
-                                .create_view(&wgpu::TextureViewDescriptor::default());
+                let view = frame
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
 
                 let width = gpu.width();
                 let height = gpu.height();
@@ -290,18 +298,20 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 // 👉", 44.0, Color::black()); self.canvas
                 //     .draw_text(30.0, 740.0, "هَمْزَة عَلَى الأَلِفْ	", 44.0, Color::black());
                 self.canvas
-                    .draw_text_wrapped(30.0,
-                                       30.0,
-                                       WELCOME_TEXT,
-                                       44.0,
-                                       Color::black(),
-                                       self.window
-                                           .as_ref()
-                                           .unwrap()
-                                           .inner_size()
-                                           .width as f32
-                                       - 60.0,
-                                       400);
+                    .draw_text_wrapped(
+                        30.0,
+                        30.0,
+                        WELCOME_TEXT,
+                        44.0,
+                        Color::black(),
+                        self.window
+                            .as_ref()
+                            .unwrap()
+                            .inner_size()
+                            .width as f32
+                            - 60.0,
+                        400,
+                    );
 
                 // Draw test image if available
                 // if let Some(tex_id) = self.texture_id {
@@ -312,22 +322,29 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                     .clear_clip();
 
                 ExecTimes::print_time(|| {
-                    renderer.render(&gpu.device,
-                                    &gpu.queue,
-                                    &view,
-                                    width,
-                                    height,
-                                    gpu.is_srgb,
-                                    &self.canvas
-                                         .draw_list())
+                    renderer.render(
+                        &gpu.device,
+                        &gpu.queue,
+                        &view,
+                        width,
+                        height,
+                        gpu.is_srgb,
+                        &self
+                            .canvas
+                            .draw_list(),
+                    )
                 });
 
                 gpu.end_frame(frame);
                 #[cfg(debug_assertions)]
                 {
-                    debug!("#############################>Time Consume<#######################################");
+                    debug!(
+                        "#############################>Time Consume<#######################################"
+                    );
                     ExecTimes::cost_grouping();
-                    debug!("##################################################################################")
+                    debug!(
+                        "##################################################################################"
+                    )
                 }
             }
             _ => {}
@@ -344,17 +361,19 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
 }
 
 fn main() {
-    let event_loop =
-        EventLoop::<MyWindowEvent>::with_user_event().build()
-                                                     .expect("Failed to create event loop");
+    let event_loop = EventLoop::<MyWindowEvent>::with_user_event()
+        .build()
+        .expect("Failed to create event loop");
 
-    MY_EVENT_PROXY.set(event_loop.create_proxy())
-                  .ok();
+    MY_EVENT_PROXY
+        .set(event_loop.create_proxy())
+        .ok();
     event_loop.set_control_flow(ControlFlow::Wait);
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut app = App::new();
-        event_loop.run_app(&mut app)
-                  .unwrap();
+        event_loop
+            .run_app(&mut app)
+            .unwrap();
     }
 }

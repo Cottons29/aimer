@@ -23,10 +23,12 @@ pub(crate) enum HeadlessEventAction {
 }
 
 impl WindowEventHandler {
-    pub(crate) fn handle_events<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>,
-                                                     event_loop: &ActiveEventLoop,
-                                                     _id: WindowId,
-                                                     event: WindowEvent) {
+    pub(crate) fn handle_events<W: Widget + 'static>(
+        app: &mut AimerApplicationHandler<W>,
+        event_loop: &ActiveEventLoop,
+        _id: WindowId,
+        event: WindowEvent,
+    ) {
         // debug!("======> Event: {event:?}");
         match event {
             WindowEvent::CloseRequested => {
@@ -53,10 +55,12 @@ impl WindowEventHandler {
 
             WindowEvent::ModifiersChanged(mods) => {
                 let state = mods.state();
-                app.current_modifiers = Modifiers { ctrl: state.control_key(),
-                                                    shift: state.shift_key(),
-                                                    alt: state.alt_key(),
-                                                    meta: state.super_key() };
+                app.current_modifiers = Modifiers {
+                    ctrl: state.control_key(),
+                    shift: state.shift_key(),
+                    alt: state.alt_key(),
+                    meta: state.super_key(),
+                };
             }
 
             WindowEvent::KeyboardInput { event, .. } => Self::handle_keyboard_input(event, app),
@@ -98,9 +102,10 @@ impl WindowEventHandler {
         }
     }
 
-    pub(crate) fn handle_headless_event<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>,
-                                                             event: WindowEvent)
-                                                             -> HeadlessEventAction {
+    pub(crate) fn handle_headless_event<W: Widget + 'static>(
+        app: &mut AimerApplicationHandler<W>,
+        event: WindowEvent,
+    ) -> HeadlessEventAction {
         match event {
             WindowEvent::CloseRequested => HeadlessEventAction::Exit,
             WindowEvent::Touch(item) => {
@@ -125,10 +130,12 @@ impl WindowEventHandler {
             }
             WindowEvent::ModifiersChanged(mods) => {
                 let state = mods.state();
-                app.current_modifiers = Modifiers { ctrl: state.control_key(),
-                                                    shift: state.shift_key(),
-                                                    alt: state.alt_key(),
-                                                    meta: state.super_key() };
+                app.current_modifiers = Modifiers {
+                    ctrl: state.control_key(),
+                    shift: state.shift_key(),
+                    alt: state.alt_key(),
+                    meta: state.super_key(),
+                };
                 HeadlessEventAction::None
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -200,11 +207,12 @@ impl WindowEventHandler {
                     // elements with an active drag (e.g. scrollable fling) receive
                     // the release event even when the finger lifts outside their
                     // bounds — the common case for a fast flick on touch screens.
-                    if matches!(&event,
-                                ElementEvent::PointerDown(_, _, _)
-                                | ElementEvent::PointerUp(_, _, _)
-                                | ElementEvent::Cancel)
-                    {
+                    if matches!(
+                        &event,
+                        ElementEvent::PointerDown(_, _, _)
+                            | ElementEvent::PointerUp(_, _, _)
+                            | ElementEvent::Cancel
+                    ) {
                         broadcast_event(root.as_ref(), &event);
                     }
                 }
@@ -215,8 +223,10 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_cursor_move<W: Widget + 'static>(position: PhysicalPosition<f64>,
-                                               app: &mut AimerApplicationHandler<W>) {
+    fn handle_cursor_move<W: Widget + 'static>(
+        position: PhysicalPosition<f64>,
+        app: &mut AimerApplicationHandler<W>,
+    ) {
         let scale = app.window_scale as f32;
         let new_pos = Vec2d { x: position.x as f32 / scale, y: position.y as f32 / scale };
         let dx = (new_pos.x - app.cursor_pos.x).abs();
@@ -256,9 +266,11 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_mouse_input<W: Widget + 'static>(state: ElementState,
-                                               button: MouseButton,
-                                               app: &mut AimerApplicationHandler<W>) {
+    fn handle_mouse_input<W: Widget + 'static>(
+        state: ElementState,
+        button: MouseButton,
+        app: &mut AimerApplicationHandler<W>,
+    ) {
         // Only handle left and right mouse buttons here.
         // Middle button and others are ignored for now.
         if !matches!(button, MouseButton::Left | MouseButton::Right) {
@@ -289,11 +301,12 @@ impl WindowEventHandler {
                 }
             }
             if !handled {
-                if matches!(&event,
-                            ElementEvent::PointerDown(_, _, _)
-                            | ElementEvent::PointerUp(_, _, _)
-                            | ElementEvent::Cancel)
-                {
+                if matches!(
+                    &event,
+                    ElementEvent::PointerDown(_, _, _)
+                        | ElementEvent::PointerUp(_, _, _)
+                        | ElementEvent::Cancel
+                ) {
                     broadcast_event(root.as_ref(), &event);
                 }
             }
@@ -303,8 +316,10 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_keyboard_input<W: Widget + 'static>(event: KeyEvent,
-                                                  app: &mut AimerApplicationHandler<W>) {
+    fn handle_keyboard_input<W: Widget + 'static>(
+        event: KeyEvent,
+        app: &mut AimerApplicationHandler<W>,
+    ) {
         use winit::event::ElementState;
         use winit::keyboard::{Key, NamedKey as WinitNamedKey};
 
@@ -317,8 +332,9 @@ impl WindowEventHandler {
             }
         };
 
-        let modifiers = app.current_modifiers
-                           .clone();
+        let modifiers = app
+            .current_modifiers
+            .clone();
 
         if modifiers.ctrl || modifiers.meta {
             use winit::keyboard::{KeyCode, PhysicalKey};
@@ -338,7 +354,7 @@ impl WindowEventHandler {
                         handled = true;
                     }
                     if let Some(window) = &app.window
-                       && handled
+                        && handled
                     {
                         window.request_redraw();
                     }
@@ -381,9 +397,10 @@ impl WindowEventHandler {
         };
 
         if let Some(text) = text_input
-           && !text.is_empty()
-           && text.chars()
-                  .all(|c| !c.is_control())
+            && !text.is_empty()
+            && text
+                .chars()
+                .all(|c| !c.is_control())
         {
             Self::dispatch_text(&text, &action, &modifiers, app);
             return;
@@ -425,7 +442,7 @@ impl WindowEventHandler {
                     handled = true;
                 }
                 if let Some(window) = &app.window
-                   && handled
+                    && handled
                 {
                     window.request_redraw();
                 }
@@ -437,16 +454,20 @@ impl WindowEventHandler {
     /// as a sequence of `CharInput` events — one per `char`. This is the single
     /// path used for plain typed characters, web text input, and committed IME
     /// text, so CJK phrases and emoji are inserted correctly.
-    fn dispatch_text<W: Widget + 'static>(text: &str,
-                                          action: &KeyAction,
-                                          modifiers: &Modifiers,
-                                          app: &mut AimerApplicationHandler<W>) {
+    fn dispatch_text<W: Widget + 'static>(
+        text: &str,
+        action: &KeyAction,
+        modifiers: &Modifiers,
+        app: &mut AimerApplicationHandler<W>,
+    ) {
         let Some(root) = &app.widget_root else { return };
         let mut handled = false;
         for ch in text.chars() {
-            let ev = ElementEvent::CharInput { ch,
-                                               action: action.clone(),
-                                               modifiers: modifiers.clone() };
+            let ev = ElementEvent::CharInput {
+                ch,
+                action: action.clone(),
+                modifiers: modifiers.clone(),
+            };
             handled |= dispatch_event(root.as_ref(), app.cursor_pos, &ev);
         }
         #[cfg(debug_assertions)]
@@ -454,7 +475,7 @@ impl WindowEventHandler {
             handled = true;
         }
         if let Some(window) = &app.window
-           && handled
+            && handled
         {
             window.request_redraw();
         }
@@ -485,8 +506,9 @@ impl WindowEventHandler {
             }
             Ime::Commit(text) => {
                 app.ime_composing = false;
-                let modifiers = app.current_modifiers
-                                   .clone();
+                let modifiers = app
+                    .current_modifiers
+                    .clone();
                 Self::dispatch_text(&text, &KeyAction::Pressed, &modifiers, app);
             }
             Ime::Disabled => {
@@ -495,9 +517,11 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_mouse_wheel<W: Widget + 'static>(delta: MouseScrollDelta,
-                                               phase: TouchPhase,
-                                               app: &mut AimerApplicationHandler<W>) {
+    fn handle_mouse_wheel<W: Widget + 'static>(
+        delta: MouseScrollDelta,
+        phase: TouchPhase,
+        app: &mut AimerApplicationHandler<W>,
+    ) {
         // debug!("Mouse wheel delta: {:?}", delta);
         let scroll_delta = match delta {
             MouseScrollDelta::LineDelta(x, y) => Vec2d { x: x * 20.0, y: y * 20.0 },
@@ -516,7 +540,7 @@ impl WindowEventHandler {
             }
 
             if let Some(window) = &app.window
-               && handled
+                && handled
             {
                 window.request_redraw();
             }
@@ -524,9 +548,10 @@ impl WindowEventHandler {
     }
 
     #[cfg(any(test, target_os = "ios"))]
-    fn oriented_screen_size(resize_size: PhysicalSize<u32>,
-                            screen_size: (f64, f64))
-                            -> PhysicalSize<u32> {
+    fn oriented_screen_size(
+        resize_size: PhysicalSize<u32>,
+        screen_size: (f64, f64),
+    ) -> PhysicalSize<u32> {
         let (width, height) = screen_size;
         if resize_size.width < resize_size.height {
             PhysicalSize::new(width as u32, height as u32)
@@ -535,9 +560,11 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_resize<W: Widget + 'static>(size: PhysicalSize<u32>,
-                                          app: &mut AimerApplicationHandler<W>,
-                                          event_loop: &ActiveEventLoop) {
+    fn handle_resize<W: Widget + 'static>(
+        size: PhysicalSize<u32>,
+        app: &mut AimerApplicationHandler<W>,
+        event_loop: &ActiveEventLoop,
+    ) {
         #[cfg(target_os = "ios")]
         aimer_utils::debug!("iOS handle_resize raw size: {size:?}");
         #[cfg(target_os = "ios")]
@@ -554,8 +581,8 @@ impl WindowEventHandler {
                         return;
                     }
                     app.window
-                       .unwrap()
-                       .inner_size()
+                        .unwrap()
+                        .inner_size()
                 }
             }
         };
@@ -591,8 +618,10 @@ impl WindowEventHandler {
         app.render(event_loop);
     }
 
-    fn apply_resize<W: Widget + 'static>(size: PhysicalSize<u32>,
-                                         app: &mut AimerApplicationHandler<W>) {
+    fn apply_resize<W: Widget + 'static>(
+        size: PhysicalSize<u32>,
+        app: &mut AimerApplicationHandler<W>,
+    ) {
         app.pending_resize = Some(size);
 
         if let Some(root) = &app.widget_root {
@@ -610,12 +639,14 @@ mod tests {
     fn ios_screen_size_follows_resize_orientation() {
         let screen_size = (1179.0, 2556.0);
 
-        assert_eq!(WindowEventHandler::oriented_screen_size(PhysicalSize::new(390, 844),
-                                                            screen_size),
-                   PhysicalSize::new(1179, 2556),);
-        assert_eq!(WindowEventHandler::oriented_screen_size(PhysicalSize::new(844, 390),
-                                                            screen_size),
-                   PhysicalSize::new(2556, 1179),);
+        assert_eq!(
+            WindowEventHandler::oriented_screen_size(PhysicalSize::new(390, 844), screen_size),
+            PhysicalSize::new(1179, 2556),
+        );
+        assert_eq!(
+            WindowEventHandler::oriented_screen_size(PhysicalSize::new(844, 390), screen_size),
+            PhysicalSize::new(2556, 1179),
+        );
     }
 
     #[test]

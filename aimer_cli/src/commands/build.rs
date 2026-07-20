@@ -59,13 +59,16 @@ fn resolve_target(target: Option<String>) -> anyhow::Result<Targets> {
 fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
     let mut cmd = match target {
         Targets::Web => {
-            let Some(llvm_ar) = find_llvm_ar() else {
-                bail!("Failed to find llvm-ar".to_string());
-            };
+             let mut c = Command::new("trunk");
 
-            let mut c = Command::new("trunk");
-            configure_trunk(&mut c, &llvm_ar);
-            c.arg("build")
+            #[cfg(target_os = "macos")] {
+                let Some(llvm_ar) = find_llvm_ar() else {
+                    bail!("Failed to find llvm-ar".to_string());
+                };
+
+                configure_trunk(&mut c, &llvm_ar);
+            }
+                c.arg("build")
                 .current_dir("builds/web");
             if release {
                 c.arg("--release");
@@ -131,7 +134,9 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn web_build_uses_trunk_compatible_no_color_value() {
         let command = build_command(Targets::Web, false).unwrap();

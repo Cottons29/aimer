@@ -48,10 +48,11 @@ impl RectInstance {
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout { array_stride: std::mem::size_of::<RectInstance>()
-                                                 as wgpu::BufferAddress,
-                                   step_mode: wgpu::VertexStepMode::Instance,
-                                   attributes: &Self::ATTRIBS }
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<RectInstance>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &Self::ATTRIBS,
+        }
     }
 }
 
@@ -75,23 +76,23 @@ pub struct RectPipeline {
 impl RectPipeline {
     const INITIAL_CAPACITY: usize = 256;
 
-    pub fn new(device: &wgpu::Device,
-               format: wgpu::TextureFormat,
-               pipeline_cache: Option<&wgpu::PipelineCache>)
-               -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        pipeline_cache: Option<&wgpu::PipelineCache>,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rect shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/rect.wgsl").into()),
         });
 
-        let viewport_buffer =
-            device.create_buffer(&wgpu::BufferDescriptor { label: Some("rect viewport uniform"),
-                                                           size: 16, /* vec2<f32> + padding
-                                                                      * to 16 bytes */
-                                                           usage:
-                                                               wgpu::BufferUsages::UNIFORM
-                                                               | wgpu::BufferUsages::COPY_DST,
-                                                           mapped_at_creation: false });
+        let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rect viewport uniform"),
+            size: 16, /* vec2<f32> + padding
+                       * to 16 bytes */
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rect bind group layout"),
@@ -151,23 +152,22 @@ impl RectPipeline {
             cache: pipeline_cache,
         });
 
-        let instance_buffer =
-            device.create_buffer(&wgpu::BufferDescriptor { label: Some("rect instance buffer"),
-                                                           size: (Self::INITIAL_CAPACITY
-                                                                  * size_of::<RectInstance>())
-                                                                 as u64,
-                                                           usage:
-                                                               wgpu::BufferUsages::VERTEX
-                                                               | wgpu::BufferUsages::COPY_DST,
-                                                           mapped_at_creation: false });
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rect instance buffer"),
+            size: (Self::INITIAL_CAPACITY * size_of::<RectInstance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
-        Self { pipeline,
-               viewport_buffer,
-               viewport_bind_group,
-               instance_buffer,
-               instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
-               instances: Vec::new(),
-               frame_instance_offset: 0 }
+        Self {
+            pipeline,
+            viewport_buffer,
+            viewport_bind_group,
+            instance_buffer,
+            instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
+            instances: Vec::new(),
+            frame_instance_offset: 0,
+        }
     }
 
     pub fn push(&mut self, instance: RectInstance) {
@@ -183,13 +183,15 @@ impl RectPipeline {
     }
 
     pub fn begin_frame(&mut self, device: &wgpu::Device) {
-        let previous_capacity = self.instance_policy
-                                    .capacity();
+        let previous_capacity = self
+            .instance_policy
+            .capacity();
         self.instance_policy
             .record_usage(self.frame_instance_offset);
-        if self.instance_policy
-               .capacity()
-           != previous_capacity
+        if self
+            .instance_policy
+            .capacity()
+            != previous_capacity
         {
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("rect instance buffer (resized)"),
@@ -205,20 +207,24 @@ impl RectPipeline {
     }
 
     pub fn instance_buffer_bytes(&self) -> u64 {
-        (self.instance_policy
-             .capacity()
-         * size_of::<RectInstance>()) as u64
+        (self
+            .instance_policy
+            .capacity()
+            * size_of::<RectInstance>()) as u64
     }
 
-    pub fn flush(&mut self,
-                 device: &wgpu::Device,
-                 queue: &wgpu::Queue,
-                 pass: &mut wgpu::RenderPass<'_>,
-                 width: u32,
-                 height: u32,
-                 is_srgb: bool) {
-        if self.instances
-               .is_empty()
+    pub fn flush(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pass: &mut wgpu::RenderPass<'_>,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+    ) {
+        if self
+            .instances
+            .is_empty()
         {
             return;
         }
@@ -229,9 +235,11 @@ impl RectPipeline {
         let is_srgb_f32 = 2.0_f32;
         #[cfg(not(target_os = "android"))]
         let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
-        queue.write_buffer(&self.viewport_buffer,
-                           0,
-                           bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]));
+        queue.write_buffer(
+            &self.viewport_buffer,
+            0,
+            bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
+        );
 
         let instance_count = self.instances.len();
         let stride = std::mem::size_of::<RectInstance>();
@@ -247,33 +255,37 @@ impl RectPipeline {
         // draws keep a reference to the old buffer (with their data intact),
         // while this and subsequent batches use the new one.
         if required
-           > self.instance_policy
-                 .capacity()
+            > self
+                .instance_policy
+                .capacity()
         {
             self.instance_policy
                 .grow_to_fit(required);
-            self.instance_buffer =
-                device.create_buffer(&wgpu::BufferDescriptor { label: Some("rect instance buffer"),
-                                                               size: (self.instance_policy
-                                                                          .capacity()
-                                                                      * stride)
-                                                                     as u64,
-                                                               usage:
-                                                                   wgpu::BufferUsages::VERTEX
-                                                                   | wgpu::BufferUsages::COPY_DST,
-                                                               mapped_at_creation: false });
+            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rect instance buffer"),
+                size: (self
+                    .instance_policy
+                    .capacity()
+                    * stride) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
         }
 
         let byte_offset = (start_instance * stride) as u64;
-        queue.write_buffer(&self.instance_buffer,
-                           byte_offset,
-                           bytemuck::cast_slice(&self.instances));
+        queue.write_buffer(
+            &self.instance_buffer,
+            byte_offset,
+            bytemuck::cast_slice(&self.instances),
+        );
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
-        pass.set_vertex_buffer(0,
-                               self.instance_buffer
-                                   .slice(byte_offset..));
+        pass.set_vertex_buffer(
+            0,
+            self.instance_buffer
+                .slice(byte_offset..),
+        );
         pass.draw(0..6, 0..instance_count as u32);
 
         self.frame_instance_offset += instance_count;
