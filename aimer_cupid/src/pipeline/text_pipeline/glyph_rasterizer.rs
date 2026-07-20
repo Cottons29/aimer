@@ -3,13 +3,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use crate::font::{FontFamily, FontRegistry, FontStyle, FontWeight, bundled_monospace_bytes};
 use aimer_utils::time_cost;
 use swash::FontRef;
 use swash::scale::{Render, ScaleContext, Source};
 use swash::zeno::Format;
 
 use super::text_layout::FontId;
+use crate::font::{FontFamily, FontRegistry, FontStyle, FontWeight, bundled_monospace_bytes};
 use crate::text_pipeline::font_resolver::{
     FontData, FontRecord, advance_width_from_face, shared_fallback_chain,
 };
@@ -59,71 +59,60 @@ pub struct GlyphKey {
 
 impl GlyphKey {
     pub fn new(font_id: FontId, glyph_id: u16, font_size: f32) -> Self {
-        Self {
-            font_id,
-            glyph_id,
-            size_tenths: (font_size * 10.0) as u32,
-            subpixel_x: 0,
-            subpixel_y: 0,
-        }
+        Self { font_id,
+               glyph_id,
+               size_tenths: (font_size * 10.0) as u32,
+               subpixel_x: 0,
+               subpixel_y: 0 }
     }
 }
 
-fn rasterize_swash_glyph(
-    record: &FontRecord,
-    glyph_id: u16,
-    font_size: f32,
-) -> Option<RasterizedGlyph> {
+fn rasterize_swash_glyph(record: &FontRecord,
+                         glyph_id: u16,
+                         font_size: f32)
+                         -> Option<RasterizedGlyph> {
     let data = time_cost!("   |-MapSwashFontData", || record.data())?;
     let data = data.as_ref();
     let font = FontRef::from_index(data, record.collection_index as usize)?;
     let mut context = ScaleContext::new();
-    let mut scaler = context
-        .builder(font)
-        .size(font_size)
-        .hint(true)
-        .build();
-    let image = Render::new(&[Source::Outline])
-        .format(Format::Alpha)
-        .render(&mut scaler, glyph_id)?;
+    let mut scaler = context.builder(font)
+                            .size(font_size)
+                            .hint(true)
+                            .build();
+    let image = Render::new(&[Source::Outline]).format(Format::Alpha)
+                                               .render(&mut scaler, glyph_id)?;
     let advance_width =
         advance_width_from_face(data, record.collection_index, glyph_id, font_size)?;
 
-    Some(RasterizedGlyph {
-        bitmap: image.data,
-        width: image
-            .placement
-            .width,
-        height: image
-            .placement
-            .height,
-        offset_x: image.placement.left as f32,
-        offset_y: (image.placement.top
-            - image
-                .placement
-                .height as i32) as f32,
-        advance_width,
-        is_color: false,
-    })
+    Some(RasterizedGlyph { bitmap: image.data,
+                           width: image.placement
+                                       .width,
+                           height: image.placement
+                                        .height,
+                           offset_x: image.placement.left as f32,
+                           offset_y: (image.placement.top
+                                      - image.placement
+                                             .height as i32)
+                                     as f32,
+                           advance_width,
+                           is_color: false })
 }
 
 fn primary_font_record() -> FontRecord {
     static PRIMARY_FONT_RECORD: OnceLock<FontRecord> = OnceLock::new();
-    PRIMARY_FONT_RECORD
-        .get_or_init(|| {
-            FontRecord::from_static_bytes(0, PRIMARY_FONT).expect("failed to load primary font")
-        })
-        .clone()
+    PRIMARY_FONT_RECORD.get_or_init(|| {
+        FontRecord::from_static_bytes(0, PRIMARY_FONT).expect("failed to load primary font")
+    })
+    .clone()
 }
 
 fn monospace_font_record() -> FontRecord {
     static MONOSPACE_FONT_RECORD: OnceLock<FontRecord> = OnceLock::new();
-    MONOSPACE_FONT_RECORD
-        .get_or_init(|| {
-            FontRecord::from_static_bytes(MONOSPACE_FONT_ID, bundled_monospace_bytes())
+    MONOSPACE_FONT_RECORD.get_or_init(|| {
+        FontRecord::from_static_bytes(MONOSPACE_FONT_ID, bundled_monospace_bytes())
                 .expect("failed to load bundled monospace font")
-        })
-        .clone()
+    })
+    .clone()
 }
 
 // ---------------------------------------------------------------------------
@@ -134,24 +123,20 @@ fn monospace_font_record() -> FontRecord {
 /// Returns `None` if the font cannot be found or loading fails.
 ///
 /// On Linux/Windows we use font-kit which enumerates system fonts.
-#[cfg(not(any(
-    target_arch = "wasm32",
-    target_os = "ios",
-    target_os = "macos",
-    target_os = "android"
-)))]
+#[cfg(not(any(target_arch = "wasm32",
+              target_os = "ios",
+              target_os = "macos",
+              target_os = "android")))]
 fn load_system_font(family: &str) -> Option<Vec<u8>> {
     use font_kit::family_name::FamilyName;
     use font_kit::properties::Properties;
     use font_kit::source::SystemSource;
 
     let source = SystemSource::new();
-    let handle = source
-        .select_best_match(
-            &[FamilyName::Title(family.to_string()), FamilyName::SansSerif],
-            &Properties::new(),
-        )
-        .ok()?;
+    let handle = source.select_best_match(&[FamilyName::Title(family.to_string()),
+                                            FamilyName::SansSerif],
+                                          &Properties::new())
+                       .ok()?;
     let font = handle.load().ok()?;
     let data = font.copy_font_data()?;
     Some(data.to_vec())
@@ -168,27 +153,24 @@ pub(crate) fn load_system_font_path(family: &str) -> Option<PathBuf> {
 
     #[link(name = "CoreText", kind = "framework")]
     unsafe extern "C" {
-        fn CTFontCreateWithName(
-            name: core_foundation_sys::string::CFStringRef,
-            size: f64,
-            matrix: *const std::ffi::c_void,
-        ) -> *const std::ffi::c_void;
+        fn CTFontCreateWithName(name: core_foundation_sys::string::CFStringRef,
+                                size: f64,
+                                matrix: *const std::ffi::c_void)
+                                -> *const std::ffi::c_void;
 
-        fn CTFontCopyAttribute(
-            font: *const std::ffi::c_void,
-            attribute: core_foundation_sys::string::CFStringRef,
-        ) -> *const std::ffi::c_void;
+        fn CTFontCopyAttribute(font: *const std::ffi::c_void,
+                               attribute: core_foundation_sys::string::CFStringRef)
+                               -> *const std::ffi::c_void;
 
         static kCTFontURLAttribute: core_foundation_sys::string::CFStringRef;
 
         fn CFRelease(cf: *const std::ffi::c_void);
 
-        fn CFURLGetFileSystemRepresentation(
-            url: *const std::ffi::c_void,
-            resolve_against_base: bool,
-            buffer: *mut u8,
-            max_buf_len: isize,
-        ) -> bool;
+        fn CFURLGetFileSystemRepresentation(url: *const std::ffi::c_void,
+                                            resolve_against_base: bool,
+                                            buffer: *mut u8,
+                                            max_buf_len: isize)
+                                            -> bool;
     }
 
     let cf_name = CFString::new(family);
@@ -214,10 +196,9 @@ pub(crate) fn load_system_font_path(family: &str) -> Option<PathBuf> {
             return None;
         }
 
-        let path_len = path_buf
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(0);
+        let path_len = path_buf.iter()
+                               .position(|&b| b == 0)
+                               .unwrap_or(0);
 
         let path = std::str::from_utf8(&path_buf[..path_len]).ok()?;
         Some(PathBuf::from(path))
@@ -229,12 +210,11 @@ pub(crate) fn load_system_font_path(family: &str) -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 /// Decode a PNG/JPEG bitmap from an `sbix` or `CBDT` raster image record and
 /// scale it to `font_size` pixels tall.  The returned bitmap is RGBA8.
-fn decode_raster_image(
-    raster: &ttf_parser::RasterGlyphImage<'_>,
-    face: &ttf_parser::Face<'_>,
-    glyph_id: u16,
-    font_size: f32,
-) -> Option<RasterizedGlyph> {
+fn decode_raster_image(raster: &ttf_parser::RasterGlyphImage<'_>,
+                       face: &ttf_parser::Face<'_>,
+                       glyph_id: u16,
+                       font_size: f32)
+                       -> Option<RasterizedGlyph> {
     let img_format = match raster.format {
         ttf_parser::RasterImageFormat::PNG => image::ImageFormat::Png,
         // JPEG is used by some CBDT fonts on older Android.
@@ -250,16 +230,13 @@ fn decode_raster_image(
         return None;
     }
 
-    let strike_ppem = raster
-        .pixels_per_em
-        .max(1) as f32;
+    let strike_ppem = raster.pixels_per_em
+                            .max(1) as f32;
     let scale = font_size / strike_ppem;
-    let render_w = ((strike_w as f32) * scale)
-        .round()
-        .max(1.0) as u32;
-    let render_h = ((strike_h as f32) * scale)
-        .round()
-        .max(1.0) as u32;
+    let render_w = ((strike_w as f32) * scale).round()
+                                              .max(1.0) as u32;
+    let render_h = ((strike_h as f32) * scale).round()
+                                              .max(1.0) as u32;
 
     let resampled = if render_w == strike_w && render_h == strike_h {
         rgba
@@ -276,15 +253,13 @@ fn decode_raster_image(
     let offset_x = f32::from(raster.x) * scale;
     let offset_y = f32::from(raster.y) * scale;
 
-    Some(RasterizedGlyph {
-        bitmap: resampled.into_raw(),
-        width: render_w,
-        height: render_h,
-        offset_x,
-        offset_y,
-        advance_width,
-        is_color: true,
-    })
+    Some(RasterizedGlyph { bitmap: resampled.into_raw(),
+                           width: render_w,
+                           height: render_h,
+                           offset_x,
+                           offset_y,
+                           advance_width,
+                           is_color: true })
 }
 
 /// A `ttf_parser::colr::Painter` implementation that rasterizes COLR glyphs.
@@ -313,24 +288,21 @@ struct ColrPainter<'face> {
 }
 
 impl<'face> ColrPainter<'face> {
-    fn new(
-        face: &'face ttf_parser::Face<'face>,
-        width: u32,
-        height: u32,
-        scale: f32,
-        offset_x: f32,
-        offset_y: f32,
-    ) -> Self {
-        Self {
-            face,
-            width,
-            height,
-            bitmap: vec![0u8; (width * height * 4) as usize],
-            scale,
-            offset_x,
-            offset_y,
-            pending_contours: Vec::new(),
-        }
+    fn new(face: &'face ttf_parser::Face<'face>,
+           width: u32,
+           height: u32,
+           scale: f32,
+           offset_x: f32,
+           offset_y: f32)
+           -> Self {
+        Self { face,
+               width,
+               height,
+               bitmap: vec![0u8; (width * height * 4) as usize],
+               scale,
+               offset_x,
+               offset_y,
+               pending_contours: Vec::new() }
     }
 
     fn fill_contours(&mut self, color: ttf_parser::RgbaColor) {
@@ -360,12 +332,11 @@ impl<'face> ColrPainter<'face> {
 pub fn point_inside(contours: &[Vec<(f32, f32)>], x: f32, y: f32) -> bool {
     let mut inside = false;
     for contour in contours {
-        let mut prev = *contour
-            .last()
-            .expect("contour is non-empty");
+        let mut prev = *contour.last()
+                               .expect("contour is non-empty");
         for &curr in contour {
             if (curr.1 > y) != (prev.1 > y)
-                && x < (prev.0 - curr.0) * (y - curr.1) / (prev.1 - curr.1) + curr.0
+               && x < (prev.0 - curr.0) * (y - curr.1) / (prev.1 - curr.1) + curr.0
             {
                 inside = !inside;
             }
@@ -380,10 +351,9 @@ impl<'a> ttf_parser::colr::Painter<'a> for ColrPainter<'_> {
         // Build the outline for this layer glyph and store it.
         let mut builder =
             ColrOutlineBuilder::new(self.scale, self.offset_x, self.offset_y, self.height as f32);
-        if self
-            .face
-            .outline_glyph(glyph_id, &mut builder)
-            .is_some()
+        if self.face
+               .outline_glyph(glyph_id, &mut builder)
+               .is_some()
         {
             builder.finish();
             self.pending_contours = builder.contours;
@@ -418,11 +388,10 @@ impl<'a> ttf_parser::colr::Painter<'a> for ColrPainter<'_> {
 /// Rasterize a COLR glyph using `paint_color_glyph`, compositing each
 /// layer's outline filled with its palette color into an RGBA8 bitmap
 #[inline]
-fn rasterize_color_glyph_helper(
-    record: &FontRecord,
-    glyph_id: u16,
-    font_size: f32,
-) -> Option<RasterizedGlyph> {
+fn rasterize_color_glyph_helper(record: &FontRecord,
+                                glyph_id: u16,
+                                font_size: f32)
+                                -> Option<RasterizedGlyph> {
     let data = record.data()?;
     let face = ttf_parser::Face::parse(data.as_ref(), record.collection_index).ok()?;
 
@@ -436,12 +405,10 @@ fn rasterize_color_glyph_helper(
     let scale = font_size / units_per_em;
     let offset_x = f32::from(bbox.x_min) * scale;
     let offset_y = f32::from(bbox.y_min) * scale;
-    let width = (f32::from(bbox.x_max - bbox.x_min) * scale)
-        .ceil()
-        .max(1.0) as u32;
-    let height = (f32::from(bbox.y_max - bbox.y_min) * scale)
-        .ceil()
-        .max(1.0) as u32;
+    let width = (f32::from(bbox.x_max - bbox.x_min) * scale).ceil()
+                                                            .max(1.0) as u32;
+    let height = (f32::from(bbox.y_max - bbox.y_min) * scale).ceil()
+                                                             .max(1.0) as u32;
 
     let advance_units = f32::from(face.glyph_hor_advance(ttf_parser::GlyphId(glyph_id))?);
     let advance_width = advance_units * font_size / units_per_em;
@@ -454,26 +421,23 @@ fn rasterize_color_glyph_helper(
     let foreground = ttf_parser::RgbaColor { red: 0, green: 0, blue: 0, alpha: 255 };
     face.paint_color_glyph(ttf_parser::GlyphId(glyph_id), 0, foreground, &mut painter)?;
 
-    Some(RasterizedGlyph {
-        bitmap: painter.bitmap,
-        width,
-        height,
-        offset_x,
-        offset_y,
-        advance_width,
-        is_color: true,
-    })
+    Some(RasterizedGlyph { bitmap: painter.bitmap,
+                           width,
+                           height,
+                           offset_x,
+                           offset_y,
+                           advance_width,
+                           is_color: true })
 }
 
 /// Rasterize a color glyph, trying sbix → CBDT → COLR in that order.
 ///
 /// The returned bitmap is non-premultiplied RGBA8 (`width * height * 4` bytes).
 #[inline]
-fn rasterize_color_glyph(
-    record: &FontRecord,
-    glyph_id: u16,
-    font_size: f32,
-) -> Option<RasterizedGlyph> {
+fn rasterize_color_glyph(record: &FontRecord,
+                         glyph_id: u16,
+                         font_size: f32)
+                         -> Option<RasterizedGlyph> {
     let data = record.data()?;
     let face = ttf_parser::Face::parse(data.as_ref(), record.collection_index).ok()?;
 
@@ -482,13 +446,13 @@ fn rasterize_color_glyph(
     // Pass `u16::MAX` to request the largest available strike so we can
     // downsample once; avoids duplicate atlas entries for nearby sizes.
     if let Some(raster) = face.glyph_raster_image(ttf_parser::GlyphId(glyph_id), u16::MAX)
-        && let Some(glyph) = decode_raster_image(&raster, &face, glyph_id, font_size)
+       && let Some(glyph) = decode_raster_image(&raster, &face, glyph_id, font_size)
     {
         return Some(glyph);
     }
 
     if face.is_color_glyph(ttf_parser::GlyphId(glyph_id))
-        && let Some(glyph) = rasterize_color_glyph_helper(record, glyph_id, font_size)
+       && let Some(glyph) = rasterize_color_glyph_helper(record, glyph_id, font_size)
     {
         return Some(glyph);
     }
@@ -532,24 +496,19 @@ struct FamilyFontRecord {
 }
 
 fn registered_family_faces() -> Vec<FamilyFontRecord> {
-    let mut faces = vec![FamilyFontRecord {
-        family: FontFamily::MONOSPACE,
-        weight: FontWeight::Normal.numeric(),
-        style: FontStyle::Normal,
-        record: monospace_font_record(),
-    }];
-    faces.extend(
-        FontRegistry::faces()
-            .into_iter()
-            .filter_map(|face| {
-                Some(FamilyFontRecord {
+    let mut faces = vec![FamilyFontRecord { family: FontFamily::MONOSPACE,
+                                            weight: FontWeight::Normal.numeric(),
+                                            style: FontStyle::Normal,
+                                            record: monospace_font_record() }];
+    faces.extend(FontRegistry::faces().into_iter()
+                                      .filter_map(|face| {
+                                          Some(FamilyFontRecord {
                     family: face.family,
                     weight: face.weight,
                     style: face.style,
                     record: FontRecord::from_shared_bytes(face.face_id, face.bytes)?,
                 })
-            }),
-    );
+                                      }));
     faces
 }
 
@@ -559,7 +518,7 @@ fn family_style_distance(requested: FontStyle, candidate: FontStyle) -> u8 {
     } else if candidate == FontStyle::Normal {
         1
     } else if matches!(requested, FontStyle::Oblique | FontStyle::ObliqueDeg(_))
-        && matches!(candidate, FontStyle::Oblique | FontStyle::ObliqueDeg(_))
+              && matches!(candidate, FontStyle::Oblique | FontStyle::ObliqueDeg(_))
     {
         2
     } else {
@@ -574,18 +533,16 @@ impl GlyphRasterizer {
     pub fn new() -> Self {
         let primary = primary_font_record();
 
-        Self {
-            primary,
-            family_faces: registered_family_faces(),
-            fallbacks: None, // loaded lazily on first miss
-            enable_fallbacks: true,
-            cache: HashMap::new(),
-            advance_cache: HashMap::new(),
-            unsupported_codepoints: HashSet::new(),
-            font_bytes_cache: HashMap::new(),
-            rb_face_cache: HashMap::new(),
-            shape_buffer: Some(rustybuzz::UnicodeBuffer::new()),
-        }
+        Self { primary,
+               family_faces: registered_family_faces(),
+               fallbacks: None, // loaded lazily on first miss
+               enable_fallbacks: true,
+               cache: HashMap::new(),
+               advance_cache: HashMap::new(),
+               unsupported_codepoints: HashSet::new(),
+               font_bytes_cache: HashMap::new(),
+               rb_face_cache: HashMap::new(),
+               shape_buffer: Some(rustybuzz::UnicodeBuffer::new()) }
     }
 
     /// Create a lightweight rasterizer with only the primary font (no
@@ -593,26 +550,23 @@ impl GlyphRasterizer {
     /// needed.
     pub fn primary_only() -> Self {
         let primary = primary_font_record();
-        Self {
-            primary,
-            family_faces: registered_family_faces(),
-            fallbacks: None,
-            enable_fallbacks: false,
-            cache: HashMap::new(),
-            advance_cache: HashMap::new(),
-            unsupported_codepoints: HashSet::new(),
-            font_bytes_cache: HashMap::new(),
-            rb_face_cache: HashMap::new(),
-            shape_buffer: Some(rustybuzz::UnicodeBuffer::new()),
-        }
+        Self { primary,
+               family_faces: registered_family_faces(),
+               fallbacks: None,
+               enable_fallbacks: false,
+               cache: HashMap::new(),
+               advance_cache: HashMap::new(),
+               unsupported_codepoints: HashSet::new(),
+               font_bytes_cache: HashMap::new(),
+               rb_face_cache: HashMap::new(),
+               shape_buffer: Some(rustybuzz::UnicodeBuffer::new()) }
     }
 
     /// Ensure fallback fonts are loaded. Called lazily on first glyph miss.
     fn ensure_fallbacks(&mut self) {
-        if self
-            .fallbacks
-            .is_some()
-            || !self.enable_fallbacks
+        if self.fallbacks
+               .is_some()
+           || !self.enable_fallbacks
         {
             return;
         }
@@ -623,31 +577,27 @@ impl GlyphRasterizer {
         self.primary.id
     }
 
-    pub fn font_id_for_family(
-        &mut self,
-        family: FontFamily,
-        weight: FontWeight,
-        style: FontStyle,
-    ) -> FontId {
+    pub fn font_id_for_family(&mut self,
+                              family: FontFamily,
+                              weight: FontWeight,
+                              style: FontStyle)
+                              -> FontId {
         self.family_record(family, weight, style)
             .map_or(self.primary.id, |record| record.id)
     }
 
-    pub fn glyph_key_for_family_codepoint(
-        &mut self,
-        codepoint: char,
-        font_size: f32,
-        family: FontFamily,
-        weight: FontWeight,
-        style: FontStyle,
-    ) -> GlyphKey {
-        if let Some((font_id, glyph_id)) = self
-            .family_record(family, weight, style)
-            .and_then(|record| {
-                record
-                    .glyph_index(codepoint)
-                    .map(|glyph_id| (record.id, glyph_id))
-            })
+    pub fn glyph_key_for_family_codepoint(&mut self,
+                                          codepoint: char,
+                                          font_size: f32,
+                                          family: FontFamily,
+                                          weight: FontWeight,
+                                          style: FontStyle)
+                                          -> GlyphKey {
+        if let Some((font_id, glyph_id)) = self.family_record(family, weight, style)
+                                               .and_then(|record| {
+                                                   record.glyph_index(codepoint)
+                                                         .map(|glyph_id| (record.id, glyph_id))
+                                               })
         {
             return GlyphKey::new(font_id, glyph_id, font_size);
         }
@@ -655,38 +605,34 @@ impl GlyphRasterizer {
         self.glyph_key_for_codepoint(codepoint, font_size)
     }
 
-    pub fn advance_width_for_family(
-        &mut self,
-        codepoint: char,
-        font_size: f32,
-        family: FontFamily,
-        weight: FontWeight,
-        style: FontStyle,
-    ) -> f32 {
+    pub fn advance_width_for_family(&mut self,
+                                    codepoint: char,
+                                    font_size: f32,
+                                    family: FontFamily,
+                                    weight: FontWeight,
+                                    style: FontStyle)
+                                    -> f32 {
         let key = self.glyph_key_for_family_codepoint(codepoint, font_size, family, weight, style);
-        if let Some(width) = self
-            .advance_cache
-            .get(&key)
+        if let Some(width) = self.advance_cache
+                                 .get(&key)
         {
             return *width;
         }
-        let width = self
-            .select_font_for_key(key)
-            .advance_width_for_glyph(key.glyph_id, font_size)
-            .unwrap_or(0.0);
+        let width = self.select_font_for_key(key)
+                        .advance_width_for_glyph(key.glyph_id, font_size)
+                        .unwrap_or(0.0);
         self.advance_cache
             .insert(key, width);
         width
     }
 
-    pub fn measure_text_for_family(
-        &mut self,
-        text: &str,
-        font_size: f32,
-        family: FontFamily,
-        weight: FontWeight,
-        style: FontStyle,
-    ) -> f32 {
+    pub fn measure_text_for_family(&mut self,
+                                   text: &str,
+                                   font_size: f32,
+                                   family: FontFamily,
+                                   weight: FontWeight,
+                                   style: FontStyle)
+                                   -> f32 {
         text.chars()
             .map(|codepoint| {
                 self.advance_width_for_family(codepoint, font_size, family, weight, style)
@@ -694,12 +640,11 @@ impl GlyphRasterizer {
             .sum()
     }
 
-    fn family_record(
-        &self,
-        family: FontFamily,
-        weight: FontWeight,
-        style: FontStyle,
-    ) -> Option<&FontRecord> {
+    fn family_record(&self,
+                     family: FontFamily,
+                     weight: FontWeight,
+                     style: FontStyle)
+                     -> Option<&FontRecord> {
         if family == FontFamily::SANS_SERIF {
             return Some(&self.primary);
         }
@@ -708,13 +653,11 @@ impl GlyphRasterizer {
             .iter()
             .filter(|face| face.family == family)
             .min_by_key(|face| {
-                (
-                    family_style_distance(style, face.style),
-                    face.weight
-                        .abs_diff(numeric_weight),
-                    face.weight,
-                    face.record.id,
-                )
+                (family_style_distance(style, face.style),
+                 face.weight
+                     .abs_diff(numeric_weight),
+                 face.weight,
+                 face.record.id)
             })
             .map(|face| &face.record)
     }
@@ -751,13 +694,11 @@ impl GlyphRasterizer {
     }
 
     pub fn glyph_key_for_codepoint(&mut self, codepoint: char, font_size: f32) -> GlyphKey {
-        if self
-            .primary
-            .glyph_index(codepoint)
-            .is_none()
-            && !self
-                .unsupported_codepoints
-                .contains(&codepoint)
+        if self.primary
+               .glyph_index(codepoint)
+               .is_none()
+           && !self.unsupported_codepoints
+                   .contains(&codepoint)
         {
             self.ensure_fallbacks();
         }
@@ -771,13 +712,11 @@ impl GlyphRasterizer {
     }
 
     pub fn font_id_for_codepoint(&mut self, codepoint: char) -> FontId {
-        if self
-            .primary
-            .glyph_index(codepoint)
-            .is_none()
-            && !self
-                .unsupported_codepoints
-                .contains(&codepoint)
+        if self.primary
+               .glyph_index(codepoint)
+               .is_none()
+           && !self.unsupported_codepoints
+                   .contains(&codepoint)
         {
             self.ensure_fallbacks();
         }
@@ -791,22 +730,20 @@ impl GlyphRasterizer {
     }
 
     fn font_and_glyph_for_codepoint(&self, codepoint: char) -> (FontId, u16, bool) {
-        if let Some(glyph_id) = self
-            .primary
-            .glyph_index(codepoint)
+        if let Some(glyph_id) = self.primary
+                                    .glyph_index(codepoint)
         {
             (self.primary.id, glyph_id, true)
         } else {
-            let fallback = self
-                .fallbacks
-                .as_ref()
-                .and_then(|fbs| {
-                    fbs.iter()
-                        .find_map(|fb| {
-                            fb.glyph_index(codepoint)
-                                .map(|glyph_id| (fb.id, glyph_id))
-                        })
-                });
+            let fallback = self.fallbacks
+                               .as_ref()
+                               .and_then(|fbs| {
+                                   fbs.iter()
+                                      .find_map(|fb| {
+                                          fb.glyph_index(codepoint)
+                                            .map(|glyph_id| (fb.id, glyph_id))
+                                      })
+                               });
             if let Some(font) = fallback {
                 (font.0, font.1, true)
             } else {
@@ -818,10 +755,9 @@ impl GlyphRasterizer {
     fn select_font_for_key(&mut self, key: GlyphKey) -> &mut FontRecord {
         if key.font_id == self.primary.id {
             &mut self.primary
-        } else if let Some(index) = self
-            .family_faces
-            .iter()
-            .position(|face| face.record.id == key.font_id)
+        } else if let Some(index) = self.family_faces
+                                        .iter()
+                                        .position(|face| face.record.id == key.font_id)
         {
             &mut self.family_faces[index].record
         } else {
@@ -829,7 +765,7 @@ impl GlyphRasterizer {
                 .as_mut()
                 .and_then(|fbs| {
                     fbs.iter_mut()
-                        .find(|fb| fb.id == key.font_id)
+                       .find(|fb| fb.id == key.font_id)
                 })
                 .unwrap_or(&mut self.primary)
         }
@@ -845,30 +781,28 @@ impl GlyphRasterizer {
 
     pub fn rasterize_key(&mut self, key: GlyphKey, font_size: f32) -> &RasterizedGlyph {
         // Check if we need to load fallbacks for this glyph.
-        if !self
-            .cache
-            .contains_key(&key)
-            && key.font_id != self.primary.id
+        if !self.cache
+                .contains_key(&key)
+           && key.font_id != self.primary.id
         {
             // debug!("----------------------------------------------------------------------------");
             time_cost!("FallbackFont", || self.ensure_fallbacks())
         }
-        if !self
-            .cache
-            .contains_key(&key)
+        if !self.cache
+                .contains_key(&key)
         {
             // #[cfg(debug_assertions)]
             // debug!("----------------------------------------------------------------------------");
-            let is_color = time_cost!("SelectingFontColor", || self
-                .select_font_for_key(key)
-                .is_color);
+            let is_color = time_cost!("SelectingFontColor", || self.select_font_for_key(key)
+                                                                   .is_color);
 
             let glyph = time_cost!("   |-RasterizingLogic", {
                 if is_color {
-                    let record_snapshot = time_cost!("       |-RecordSnapshot", || self
-                        .select_font_for_key(key)
-                        .clone());
-                    time_cost!("       |-RasterizeColorGlyph", || rasterize_color_glyph(
+                    let record_snapshot =
+                        time_cost!("       |-RecordSnapshot", || self.select_font_for_key(key)
+                                                                     .clone());
+                    time_cost!("       |-RasterizeColorGlyph", || {
+                        rasterize_color_glyph(
                         &record_snapshot,
                         key.glyph_id,
                         font_size
@@ -881,31 +815,33 @@ impl GlyphRasterizer {
                         offset_y: 0.0,
                         advance_width: font_size * 0.5,
                         is_color: true,
-                    }))
+                    })
+                    })
                 } else {
                     let record =
                         time_cost!("   |-SelectFontForRasterize", || self.select_font_for_key(key));
                     if record.should_use_fontdue()
-                        && let Some(font) =
-                            time_cost!("   |-EnsureFontdueFont", || record.ensure_font())
+                       && let Some(font) =
+                           time_cost!("   |-EnsureFontdueFont", || record.ensure_font())
                     {
-                        let (metrics, bitmap) = time_cost!("   |-RasterizeFontdueGlyph", || font
-                            .rasterize_indexed(key.glyph_id, font_size));
-                        RasterizedGlyph {
-                            bitmap,
-                            width: metrics.width as u32,
-                            height: metrics.height as u32,
-                            offset_x: metrics.xmin as f32,
-                            offset_y: metrics.ymin as f32,
-                            advance_width: metrics.advance_width,
-                            is_color: false,
-                        }
+                        let (metrics, bitmap) = time_cost!("   |-RasterizeFontdueGlyph", || {
+                            font.rasterize_indexed(key.glyph_id, font_size)
+                        });
+                        RasterizedGlyph { bitmap,
+                                          width: metrics.width as u32,
+                                          height: metrics.height as u32,
+                                          offset_x: metrics.xmin as f32,
+                                          offset_y: metrics.ymin as f32,
+                                          advance_width: metrics.advance_width,
+                                          is_color: false }
                     } else {
-                        let fallback_advance = time_cost!("   |-FallbackAdvance", || record
-                            .advance_width_for_glyph(key.glyph_id, font_size)
-                            .unwrap_or(0.0));
+                        let fallback_advance = time_cost!("   |-FallbackAdvance", || {
+                            record.advance_width_for_glyph(key.glyph_id, font_size)
+                                  .unwrap_or(0.0)
+                        });
                         let record_snapshot = time_cost!("   |-RecordSnapshot", || record.clone());
-                        time_cost!("   |-RasterizeSwashGlyph", || rasterize_swash_glyph(
+                        time_cost!("   |-RasterizeSwashGlyph", || {
+                            rasterize_swash_glyph(
                             &record_snapshot,
                             key.glyph_id,
                             font_size
@@ -923,16 +859,14 @@ impl GlyphRasterizer {
                             offset_y: 0.0,
                             advance_width: fallback_advance,
                             is_color: false,
-                        }))
+                        })
+                        })
                     }
                 }
             });
 
-            self.make_bitmap_capacity_for(
-                glyph
-                    .bitmap
-                    .capacity(),
-            );
+            self.make_bitmap_capacity_for(glyph.bitmap
+                                               .capacity());
             self.advance_cache
                 .insert(key, glyph.advance_width);
             self.cache
@@ -945,16 +879,14 @@ impl GlyphRasterizer {
     }
 
     pub fn rasterize_bitmap_key(&mut self, key: GlyphKey, font_size: f32) -> &RasterizedGlyph {
-        if self
-            .cache
-            .get(&key)
-            .is_some_and(|glyph| {
-                glyph.width > 0
-                    && glyph.height > 0
-                    && glyph
-                        .bitmap
-                        .is_empty()
-            })
+        if self.cache
+               .get(&key)
+               .is_some_and(|glyph| {
+                   glyph.width > 0
+                   && glyph.height > 0
+                   && glyph.bitmap
+                           .is_empty()
+               })
         {
             self.cache
                 .remove(&key);
@@ -963,14 +895,12 @@ impl GlyphRasterizer {
     }
 
     pub fn release_bitmap(&mut self, key: GlyphKey) {
-        if let Some(glyph) = self
-            .cache
-            .get_mut(&key)
+        if let Some(glyph) = self.cache
+                                 .get_mut(&key)
         {
             glyph.bitmap.clear();
-            glyph
-                .bitmap
-                .shrink_to_fit();
+            glyph.bitmap
+                 .shrink_to_fit();
         }
     }
 
@@ -980,19 +910,14 @@ impl GlyphRasterizer {
             return;
         }
 
-        for glyph in self
-            .cache
-            .values_mut()
+        for glyph in self.cache
+                         .values_mut()
         {
-            retained_bytes = retained_bytes.saturating_sub(
-                glyph
-                    .bitmap
-                    .capacity(),
-            );
+            retained_bytes = retained_bytes.saturating_sub(glyph.bitmap
+                                                                .capacity());
             glyph.bitmap.clear();
-            glyph
-                .bitmap
-                .shrink_to_fit();
+            glyph.bitmap
+                 .shrink_to_fit();
             if retained_bytes.saturating_add(incoming_bytes) <= Self::BITMAP_CACHE_CAPACITY_BYTES {
                 break;
             }
@@ -1003,9 +928,8 @@ impl GlyphRasterizer {
         self.cache
             .values()
             .map(|glyph| {
-                glyph
-                    .bitmap
-                    .capacity()
+                glyph.bitmap
+                     .capacity()
             })
             .sum()
     }
@@ -1032,9 +956,8 @@ impl GlyphRasterizer {
             }
 
             let key = self.glyph_key_for_codepoint(c, font_size);
-            let glyph = self
-                .rasterize_bitmap_key(key, font_size)
-                .clone();
+            let glyph = self.rasterize_bitmap_key(key, font_size)
+                            .clone();
             glyphs.push((key, glyph));
         }
         glyphs
@@ -1042,9 +965,8 @@ impl GlyphRasterizer {
 
     pub fn advance_width(&mut self, codepoint: char, font_size: f32) -> f32 {
         let key = self.glyph_key_for_codepoint(codepoint, font_size);
-        if let Some(width) = self
-            .advance_cache
-            .get(&key)
+        if let Some(width) = self.advance_cache
+                                 .get(&key)
         {
             return *width;
         }
@@ -1053,19 +975,17 @@ impl GlyphRasterizer {
             self.ensure_fallbacks();
         }
 
-        let width = self
-            .select_font_for_key(key)
-            .advance_width_for_glyph(key.glyph_id, font_size)
-            .unwrap_or(0.0);
+        let width = self.select_font_for_key(key)
+                        .advance_width_for_glyph(key.glyph_id, font_size)
+                        .unwrap_or(0.0);
         self.advance_cache
             .insert(key, width);
         width
     }
 
     pub fn advance_width_for_key(&mut self, key: GlyphKey, font_size: f32) -> f32 {
-        if let Some(width) = self
-            .advance_cache
-            .get(&key)
+        if let Some(width) = self.advance_cache
+                                 .get(&key)
         {
             return *width;
         }
@@ -1074,10 +994,9 @@ impl GlyphRasterizer {
             self.ensure_fallbacks();
         }
 
-        let width = self
-            .select_font_for_key(key)
-            .advance_width_for_glyph(key.glyph_id, font_size)
-            .unwrap_or(0.0);
+        let width = self.select_font_for_key(key)
+                        .advance_width_for_glyph(key.glyph_id, font_size)
+                        .unwrap_or(0.0);
         self.advance_cache
             .insert(key, width);
         width
@@ -1086,27 +1005,22 @@ impl GlyphRasterizer {
     /// Returns line metrics (ascent, descent, line_gap) for the given font
     /// size. Uses the primary font for consistent line spacing.
     pub fn line_metrics(&self, font_size: f32) -> (f32, f32, f32) {
-        self.line_metrics_for_family(
-            font_size,
-            FontFamily::SANS_SERIF,
-            FontWeight::Normal,
-            FontStyle::Normal,
-        )
+        self.line_metrics_for_family(font_size,
+                                     FontFamily::SANS_SERIF,
+                                     FontWeight::Normal,
+                                     FontStyle::Normal)
     }
 
-    pub fn line_metrics_for_family(
-        &self,
-        font_size: f32,
-        family: FontFamily,
-        weight: FontWeight,
-        style: FontStyle,
-    ) -> (f32, f32, f32) {
-        let record = self
-            .family_record(family, weight, style)
-            .unwrap_or(&self.primary);
-        let Some(data) = record
-            .bytes
-            .as_ref()
+    pub fn line_metrics_for_family(&self,
+                                   font_size: f32,
+                                   family: FontFamily,
+                                   weight: FontWeight,
+                                   style: FontStyle)
+                                   -> (f32, f32, f32) {
+        let record = self.family_record(family, weight, style)
+                         .unwrap_or(&self.primary);
+        let Some(data) = record.bytes
+                               .as_ref()
         else {
             return (font_size * 0.8, font_size * -0.2, 0.0);
         };
@@ -1139,103 +1053,93 @@ impl GlyphRasterizer {
     ///
     /// Returns a list of `(GlyphKey, advance, x_offset, y_offset)` tuples.
     /// If shaping fails or the cluster is empty, returns an empty vec.
-    pub fn shape_cluster(
-        &mut self,
-        cluster: &str,
-        font_size: f32,
-    ) -> Vec<(GlyphKey, f32, f32, f32)> {
-        self.shape_cluster_for_family(
-            cluster,
-            font_size,
-            FontFamily::SANS_SERIF,
-            FontWeight::Normal,
-            FontStyle::Normal,
-        )
+    pub fn shape_cluster(&mut self,
+                         cluster: &str,
+                         font_size: f32)
+                         -> Vec<(GlyphKey, f32, f32, f32)> {
+        self.shape_cluster_for_family(cluster,
+                                      font_size,
+                                      FontFamily::SANS_SERIF,
+                                      FontWeight::Normal,
+                                      FontStyle::Normal)
     }
 
-    pub fn shape_cluster_for_family(
-        &mut self,
-        cluster: &str,
-        font_size: f32,
-        family: FontFamily,
-        weight: FontWeight,
-        style: FontStyle,
-    ) -> Vec<(GlyphKey, f32, f32, f32)> {
+    pub fn shape_cluster_for_family(&mut self,
+                                    cluster: &str,
+                                    font_size: f32,
+                                    family: FontFamily,
+                                    weight: FontWeight,
+                                    style: FontStyle)
+                                    -> Vec<(GlyphKey, f32, f32, f32)> {
         // Find the font for the first base (non-combining) codepoint of this cluster.
-        let base_char = cluster
-            .chars()
-            .find(|c| !c.is_control())
-            .unwrap_or('\0');
+        let base_char = cluster.chars()
+                               .find(|c| !c.is_control())
+                               .unwrap_or('\0');
         if base_char == '\0' {
             return Vec::new();
         }
 
-        let font_id = self
-            .glyph_key_for_family_codepoint(base_char, font_size, family, weight, style)
-            .font_id;
+        let font_id = self.glyph_key_for_family_codepoint(base_char, font_size, family, weight,
+                                                          style)
+                          .font_id;
 
         // Retrieve cached font bytes for this font_id, populating the cache on
         // first access.  This avoids a file read (or Arc<[u8]> clone followed by
         // a heap copy) on every call.
-        if !self
-            .font_bytes_cache
-            .contains_key(&font_id)
+        if !self.font_bytes_cache
+                .contains_key(&font_id)
         {
-            let bytes = self
-                .family_faces
-                .iter()
-                .find(|face| face.record.id == font_id)
-                .and_then(|face| face.record.data())
-                .or_else(|| {
-                    if font_id == self.primary.id {
-                        return self.primary.data();
-                    }
-                    self.fallbacks
-                        .as_ref()
-                        .and_then(|fbs| {
-                            fbs.iter()
-                                .find(|fb| fb.id == font_id)
-                        })
-                        .and_then(FontRecord::data)
-                });
+            let bytes = self.family_faces
+                            .iter()
+                            .find(|face| face.record.id == font_id)
+                            .and_then(|face| face.record.data())
+                            .or_else(|| {
+                                if font_id == self.primary.id {
+                                    return self.primary.data();
+                                }
+                                self.fallbacks
+                                    .as_ref()
+                                    .and_then(|fbs| {
+                                        fbs.iter()
+                                           .find(|fb| fb.id == font_id)
+                                    })
+                                    .and_then(FontRecord::data)
+                            });
             if let Some(b) = bytes {
                 self.font_bytes_cache
                     .insert(font_id, b);
             }
         }
 
-        let font_data = match self
-            .font_bytes_cache
-            .get(&font_id)
+        let font_data = match self.font_bytes_cache
+                                  .get(&font_id)
         {
             Some(data) => data,
             None => return Vec::new(),
         };
 
         // Shape the cluster with rustybuzz.
-        let collection_index = self
-            .family_faces
-            .iter()
-            .find(|face| face.record.id == font_id)
-            .map(|face| {
-                face.record
-                    .collection_index
-            })
-            .unwrap_or_else(|| {
-                if font_id == self.primary.id {
-                    return self
-                        .primary
-                        .collection_index;
-                }
-                self.fallbacks
-                    .as_ref()
-                    .and_then(|fbs| {
-                        fbs.iter()
-                            .find(|fb| fb.id == font_id)
-                    })
-                    .map(|fb| fb.collection_index)
-                    .unwrap_or(0)
-            });
+        let collection_index = self.family_faces
+                                   .iter()
+                                   .find(|face| face.record.id == font_id)
+                                   .map(|face| {
+                                       face.record
+                                           .collection_index
+                                   })
+                                   .unwrap_or_else(|| {
+                                       if font_id == self.primary.id {
+                                           return self.primary
+                                                      .collection_index;
+                                       }
+                                       self.fallbacks
+                                           .as_ref()
+                                           .and_then(|fbs| {
+                                               fbs.iter()
+                                                  .find(|fb| fb.id == font_id)
+                                           })
+                                           .map(|fb| fb.collection_index)
+                                           .unwrap_or(0)
+                                   });
 
         // Improvement A: reuse a cached `rustybuzz::Face` for this font_id to
         // avoid re-parsing all font tables on every cluster.
@@ -1243,9 +1147,8 @@ impl GlyphRasterizer {
         // Both the Arc and the face live inside `self` and are dropped together,
         // so the bytes always outlive the face reference.
         #[allow(clippy::map_entry)]
-        if !self
-            .rb_face_cache
-            .contains_key(&font_id)
+        if !self.rb_face_cache
+                .contains_key(&font_id)
         {
             let face_opt = rustybuzz::Face::from_slice(font_data.as_ref(), collection_index);
             if let Some(face) = face_opt {
@@ -1257,9 +1160,8 @@ impl GlyphRasterizer {
                     .insert(font_id, face_static);
             }
         }
-        let face = match self
-            .rb_face_cache
-            .get(&font_id)
+        let face = match self.rb_face_cache
+                             .get(&font_id)
         {
             Some(f) => f,
             None => return Vec::new(),
@@ -1270,26 +1172,24 @@ impl GlyphRasterizer {
 
         // Re-use the pre-allocated UnicodeBuffer by taking it out, resetting it,
         // filling it with the cluster text, shaping, then putting it back.
-        let mut buffer = self
-            .shape_buffer
-            .take()
-            .unwrap_or_default();
+        let mut buffer = self.shape_buffer
+                             .take()
+                             .unwrap_or_default();
         buffer.push_str(cluster);
         let output = rustybuzz::shape(face, &[], buffer);
 
-        let result = output
-            .glyph_infos()
-            .iter()
-            .zip(output.glyph_positions())
-            .map(|(info, pos)| {
-                let glyph_id = info.glyph_id as u16;
-                let key = GlyphKey::new(font_id, glyph_id, font_size);
-                let advance = pos.x_advance as f32 * scale;
-                let x_offset = pos.x_offset as f32 * scale;
-                let y_offset = pos.y_offset as f32 * scale;
-                (key, advance, x_offset, y_offset)
-            })
-            .collect();
+        let result = output.glyph_infos()
+                           .iter()
+                           .zip(output.glyph_positions())
+                           .map(|(info, pos)| {
+                               let glyph_id = info.glyph_id as u16;
+                               let key = GlyphKey::new(font_id, glyph_id, font_size);
+                               let advance = pos.x_advance as f32 * scale;
+                               let x_offset = pos.x_offset as f32 * scale;
+                               let y_offset = pos.y_offset as f32 * scale;
+                               (key, advance, x_offset, y_offset)
+                           })
+                           .collect();
 
         // Return the buffer (now a GlyphBuffer) back to a UnicodeBuffer for reuse.
         self.shape_buffer = Some(output.clear());
@@ -1307,27 +1207,19 @@ mod tests {
 
     #[test]
     fn registered_families_resolve_consistently_across_rasterizers() {
-        let family = FontRegistry::register(FontRegistration {
-            family: "cupid-family-resolution-test",
-            bytes: PRIMARY_FONT,
-            weight: FontWeight::Normal,
-            style: FontStyle::Normal,
-        })
-        .unwrap();
-        FontRegistry::register(FontRegistration {
-            family: "cupid-family-resolution-test",
-            bytes: PRIMARY_FONT,
-            weight: FontWeight::Bold,
-            style: FontStyle::Normal,
-        })
-        .unwrap();
-        FontRegistry::register(FontRegistration {
-            family: "cupid-family-resolution-test",
-            bytes: PRIMARY_FONT,
-            weight: FontWeight::Normal,
-            style: FontStyle::Italic,
-        })
-        .unwrap();
+        let family =
+            FontRegistry::register(FontRegistration { family: "cupid-family-resolution-test",
+                                                      bytes: PRIMARY_FONT,
+                                                      weight: FontWeight::Normal,
+                                                      style: FontStyle::Normal }).unwrap();
+        FontRegistry::register(FontRegistration { family: "cupid-family-resolution-test",
+                                                  bytes: PRIMARY_FONT,
+                                                  weight: FontWeight::Bold,
+                                                  style: FontStyle::Normal }).unwrap();
+        FontRegistry::register(FontRegistration { family: "cupid-family-resolution-test",
+                                                  bytes: PRIMARY_FONT,
+                                                  weight: FontWeight::Normal,
+                                                  style: FontStyle::Italic }).unwrap();
 
         let mut first = GlyphRasterizer::new();
         let mut second = GlyphRasterizer::new();
@@ -1342,85 +1234,65 @@ mod tests {
         assert_ne!(italic, bold);
         assert_eq!(second.font_id_for_family(family, FontWeight::Bold, FontStyle::Normal), bold);
 
-        let key = first.glyph_key_for_family_codepoint(
-            'A',
-            16.0,
-            family,
-            FontWeight::Normal,
-            FontStyle::Normal,
-        );
+        let key = first.glyph_key_for_family_codepoint('A',
+                                                       16.0,
+                                                       family,
+                                                       FontWeight::Normal,
+                                                       FontStyle::Normal);
         assert_eq!(key.font_id, normal);
     }
 
     #[test]
     fn generic_families_are_distinct_and_renderable() {
         let mut rasterizer = GlyphRasterizer::new();
-        let sans = rasterizer.font_id_for_family(
-            FontFamily::SANS_SERIF,
-            FontWeight::Normal,
-            FontStyle::Normal,
-        );
-        let monospace = rasterizer.font_id_for_family(
-            FontFamily::MONOSPACE,
-            FontWeight::Normal,
-            FontStyle::Normal,
-        );
+        let sans = rasterizer.font_id_for_family(FontFamily::SANS_SERIF,
+                                                 FontWeight::Normal,
+                                                 FontStyle::Normal);
+        let monospace = rasterizer.font_id_for_family(FontFamily::MONOSPACE,
+                                                      FontWeight::Normal,
+                                                      FontStyle::Normal);
 
         assert_eq!(sans, rasterizer.primary_font_id());
         assert_ne!(monospace, sans);
-        let key = rasterizer.glyph_key_for_family_codepoint(
-            'M',
-            16.0,
-            FontFamily::MONOSPACE,
-            FontWeight::Normal,
-            FontStyle::Normal,
-        );
+        let key = rasterizer.glyph_key_for_family_codepoint('M',
+                                                            16.0,
+                                                            FontFamily::MONOSPACE,
+                                                            FontWeight::Normal,
+                                                            FontStyle::Normal);
         assert_eq!(key.font_id, monospace);
-        assert!(
-            rasterizer
-                .rasterize_key(key, 16.0)
-                .width
-                > 0
-        );
+        assert!(rasterizer.rasterize_key(key, 16.0)
+                          .width
+                > 0);
     }
 
     #[test]
     fn family_measurement_and_shaping_use_the_same_face() {
         let mut rasterizer = GlyphRasterizer::new();
-        let mono_i = rasterizer.advance_width_for_family(
-            'i',
-            20.0,
-            FontFamily::MONOSPACE,
-            FontWeight::Normal,
-            FontStyle::Normal,
-        );
-        let mono_m = rasterizer.advance_width_for_family(
-            'M',
-            20.0,
-            FontFamily::MONOSPACE,
-            FontWeight::Normal,
-            FontStyle::Normal,
-        );
+        let mono_i = rasterizer.advance_width_for_family('i',
+                                                         20.0,
+                                                         FontFamily::MONOSPACE,
+                                                         FontWeight::Normal,
+                                                         FontStyle::Normal);
+        let mono_m = rasterizer.advance_width_for_family('M',
+                                                         20.0,
+                                                         FontFamily::MONOSPACE,
+                                                         FontWeight::Normal,
+                                                         FontStyle::Normal);
         assert!((mono_i - mono_m).abs() < 0.001);
 
-        let measured = rasterizer.measure_text_for_family(
-            "Mi",
-            20.0,
-            FontFamily::MONOSPACE,
-            FontWeight::Normal,
-            FontStyle::Normal,
-        );
-        let shaped_width: f32 = rasterizer
-            .shape_cluster_for_family(
-                "Mi",
-                20.0,
-                FontFamily::MONOSPACE,
-                FontWeight::Normal,
-                FontStyle::Normal,
-            )
-            .iter()
-            .map(|(_, advance, _, _)| advance)
-            .sum();
+        let measured = rasterizer.measure_text_for_family("Mi",
+                                                          20.0,
+                                                          FontFamily::MONOSPACE,
+                                                          FontWeight::Normal,
+                                                          FontStyle::Normal);
+        let shaped_width: f32 = rasterizer.shape_cluster_for_family("Mi",
+                                                                    20.0,
+                                                                    FontFamily::MONOSPACE,
+                                                                    FontWeight::Normal,
+                                                                    FontStyle::Normal)
+                                          .iter()
+                                          .map(|(_, advance, _, _)| advance)
+                                          .sum();
         assert!((measured - shaped_width).abs() < 0.001);
     }
 
@@ -1433,21 +1305,16 @@ mod tests {
             )
             .expect("the bundled CJK fallback should register");
 
-        let key = rasterizer.glyph_key_for_family_codepoint(
-            '你',
-            16.0,
-            FontFamily::MONOSPACE,
-            FontWeight::Normal,
-            FontStyle::Normal,
-        );
+        let key = rasterizer.glyph_key_for_family_codepoint('你',
+                                                            16.0,
+                                                            FontFamily::MONOSPACE,
+                                                            FontWeight::Normal,
+                                                            FontStyle::Normal);
 
         assert_eq!(key.font_id, fallback_id);
-        assert!(
-            rasterizer
-                .rasterize_key(key, 16.0)
-                .width
-                > 0
-        );
+        assert!(rasterizer.rasterize_key(key, 16.0)
+                          .width
+                > 0);
     }
 
     #[test]
@@ -1455,18 +1322,14 @@ mod tests {
         let first = GlyphRasterizer::new();
         let second = GlyphRasterizer::primary_only();
 
-        assert!(Arc::ptr_eq(
-            first
-                .primary
-                .bytes
-                .as_ref()
-                .expect("primary bytes missing"),
-            second
-                .primary
-                .bytes
-                .as_ref()
-                .expect("primary bytes missing")
-        ));
+        assert!(Arc::ptr_eq(first.primary
+                                 .bytes
+                                 .as_ref()
+                                 .expect("primary bytes missing"),
+                            second.primary
+                                  .bytes
+                                  .as_ref()
+                                  .expect("primary bytes missing")));
     }
 
     #[test]
@@ -1474,29 +1337,20 @@ mod tests {
         let mut rasterizer = GlyphRasterizer::primary_only();
         let bytes = PRIMARY_FONT.to_vec();
 
-        let font_id = rasterizer
-            .register_font_bytes(bytes)
-            .expect("embedded font bytes should register");
+        let font_id = rasterizer.register_font_bytes(bytes)
+                                .expect("embedded font bytes should register");
 
         assert_ne!(font_id, rasterizer.primary_font_id());
-        let fallbacks = rasterizer
-            .fallbacks
-            .as_ref()
-            .expect("registered fallback missing");
-        let registered = fallbacks
-            .iter()
-            .find(|record| record.id == font_id)
-            .expect("registered font record missing");
-        assert!(
-            registered
-                .bytes
-                .is_some()
-        );
-        assert!(
-            registered
-                .glyph_index('A')
-                .is_some()
-        );
+        let fallbacks = rasterizer.fallbacks
+                                  .as_ref()
+                                  .expect("registered fallback missing");
+        let registered = fallbacks.iter()
+                                  .find(|record| record.id == font_id)
+                                  .expect("registered font record missing");
+        assert!(registered.bytes
+                          .is_some());
+        assert!(registered.glyph_index('A')
+                          .is_some());
     }
 
     #[test]
@@ -1507,16 +1361,10 @@ mod tests {
             rasterizer.glyph_key_for_codepoint(c, 32.0);
         }
 
-        assert!(
-            rasterizer
-                .fallbacks
-                .is_none()
-        );
-        assert!(
-            rasterizer
-                .unsupported_codepoints
-                .is_empty()
-        );
+        assert!(rasterizer.fallbacks
+                          .is_none());
+        assert!(rasterizer.unsupported_codepoints
+                          .is_empty());
     }
 
     #[test]
@@ -1524,32 +1372,21 @@ mod tests {
         let mut rasterizer = GlyphRasterizer::new();
 
         rasterizer.preload_text("Hello", 16.0);
-        let cache_len = rasterizer
-            .cache
-            .len();
-        let advance_cache_len = rasterizer
-            .advance_cache
-            .len();
+        let cache_len = rasterizer.cache
+                                  .len();
+        let advance_cache_len = rasterizer.advance_cache
+                                          .len();
 
         rasterizer.preload_text("Hello", 16.0);
 
-        assert_eq!(
-            rasterizer
-                .cache
-                .len(),
-            cache_len
-        );
-        assert_eq!(
-            rasterizer
-                .advance_cache
-                .len(),
-            advance_cache_len
-        );
-        assert!(
-            rasterizer
-                .fallbacks
-                .is_none()
-        );
+        assert_eq!(rasterizer.cache
+                             .len(),
+                   cache_len);
+        assert_eq!(rasterizer.advance_cache
+                             .len(),
+                   advance_cache_len);
+        assert!(rasterizer.fallbacks
+                          .is_none());
     }
 
     /// macOS ships AppleColorEmoji at
@@ -1565,35 +1402,26 @@ mod tests {
         // ក ខ គ are basic Khmer consonants that must be present in any Khmer font.
         for c in "កខគ".chars() {
             let key = rasterizer.glyph_key_for_codepoint(c, 16.0);
-            assert_ne!(
-                key.font_id,
-                rasterizer.primary_font_id(),
-                "U+{:04X} {} should use a Khmer fallback font, not the primary (Roboto)",
-                c as u32,
-                c
-            );
+            assert_ne!(key.font_id,
+                       rasterizer.primary_font_id(),
+                       "U+{:04X} {} should use a Khmer fallback font, not the primary (Roboto)",
+                       c as u32,
+                       c);
 
             let glyph = rasterizer.glyph_metrics_for_key(key, 16.0);
-            assert!(
-                glyph.width > 0,
-                "U+{:04X} {} Khmer glyph should have bitmap width > 0",
-                c as u32,
-                c
-            );
-            assert!(
-                glyph.height > 0,
-                "U+{:04X} {} Khmer glyph should have bitmap height > 0",
-                c as u32,
-                c
-            );
-            assert!(
-                !glyph
-                    .bitmap
-                    .is_empty(),
-                "U+{:04X} {} Khmer glyph bitmap must not be empty",
-                c as u32,
-                c
-            );
+            assert!(glyph.width > 0,
+                    "U+{:04X} {} Khmer glyph should have bitmap width > 0",
+                    c as u32,
+                    c);
+            assert!(glyph.height > 0,
+                    "U+{:04X} {} Khmer glyph should have bitmap height > 0",
+                    c as u32,
+                    c);
+            assert!(!glyph.bitmap
+                          .is_empty(),
+                    "U+{:04X} {} Khmer glyph bitmap must not be empty",
+                    c as u32,
+                    c);
             assert!(!glyph.is_color, "U+{:04X} {} Khmer glyph should be monochrome", c as u32, c);
         }
     }
@@ -1623,39 +1451,30 @@ mod tests {
         // In practice rustybuzz + Khmer Sangam MN produces 2 glyphs for this cluster:
         // one for the base consonant with full advance, one zero-advance mark
         // (subscript).
-        assert!(
-            shaped.len()
-                < cluster
-                    .chars()
-                    .count(),
-            "Khmer COENG cluster should produce fewer glyphs than codepoints; got {} shaped glyphs for {} codepoints",
-            shaped.len(),
-            cluster
-                .chars()
-                .count()
-        );
+        assert!(shaped.len()
+                < cluster.chars()
+                         .count(),
+                "Khmer COENG cluster should produce fewer glyphs than codepoints; got {} shaped glyphs for {} codepoints",
+                shaped.len(),
+                cluster.chars()
+                       .count());
 
         // Each shaped glyph must use the Khmer fallback font (not Roboto primary).
         for (key, _, _, _) in &shaped {
-            assert_ne!(
-                key.font_id,
-                rasterizer.primary_font_id(),
-                "Khmer cluster glyph must use a fallback font, not primary (Roboto)"
-            );
+            assert_ne!(key.font_id,
+                       rasterizer.primary_font_id(),
+                       "Khmer cluster glyph must use a fallback font, not primary (Roboto)");
         }
 
         // Every shaped glyph must rasterize to a non-empty bitmap.
         for (key, _, _, _) in shaped {
             let glyph = rasterizer.rasterize_key(key, 16.0);
-            assert!(
-                glyph.width > 0
+            assert!(glyph.width > 0
                     && glyph.height > 0
-                    && !glyph
-                        .bitmap
-                        .is_empty(),
-                "Shaped Khmer glyph (id={}) must have a renderable bitmap",
-                key.glyph_id
-            );
+                    && !glyph.bitmap
+                             .is_empty(),
+                    "Shaped Khmer glyph (id={}) must have a renderable bitmap",
+                    key.glyph_id);
         }
     }
 
@@ -1664,18 +1483,14 @@ mod tests {
     fn fallback_chain_keeps_both_emoji_and_cjk() {
         let chain = shared_fallback_chain();
 
-        let has_emoji = chain
-            .iter()
-            .any(|fb| fb.is_color);
-        let has_cjk = chain
-            .iter()
-            .any(|fb| !fb.is_color);
+        let has_emoji = chain.iter()
+                             .any(|fb| fb.is_color);
+        let has_cjk = chain.iter()
+                           .any(|fb| !fb.is_color);
 
         // We don't hard-fail when the system lacks AppleColorEmoji — just log.
         if !has_emoji {
-            eprintln!(
-                "[note] no color font loaded — AppleColorEmoji missing from this macOS build"
-            );
+            eprintln!("[note] no color font loaded — AppleColorEmoji missing from this macOS build");
         }
         // CJK *should* be present on any modern macOS install.
         assert!(has_cjk, "no CJK fallback was loaded — chain: {} entries", chain.len());
@@ -1706,15 +1521,12 @@ mod tests {
         // RGBA8 → 4 bytes per pixel. The bitmap may be empty if the sbix
         // strike was missing/unsupported (we'd hit the placeholder branch in
         // rasterize_key), so guard the size check on the bitmap being present.
-        if !glyph
-            .bitmap
-            .is_empty()
+        if !glyph.bitmap
+                 .is_empty()
         {
-            assert_eq!(
-                glyph.bitmap.len(),
-                (glyph.width * glyph.height * 4) as usize,
-                "'😀' bitmap must be RGBA8 (4 bytes per pixel)"
-            );
+            assert_eq!(glyph.bitmap.len(),
+                       (glyph.width * glyph.height * 4) as usize,
+                       "'😀' bitmap must be RGBA8 (4 bytes per pixel)");
         }
     }
 
@@ -1722,25 +1534,17 @@ mod tests {
     fn uploaded_glyph_bitmap_can_be_released_without_losing_metrics() {
         let mut rasterizer = GlyphRasterizer::primary_only();
         let key = rasterizer.glyph_key_for_codepoint('A', 24.0);
-        let expected = rasterizer
-            .rasterize_key(key, 24.0)
-            .clone();
-        assert!(
-            !expected
-                .bitmap
-                .is_empty()
-        );
+        let expected = rasterizer.rasterize_key(key, 24.0)
+                                 .clone();
+        assert!(!expected.bitmap
+                         .is_empty());
 
         rasterizer.release_bitmap(key);
 
-        let cached = rasterizer
-            .cached_glyph(key)
-            .unwrap();
-        assert!(
-            cached
-                .bitmap
-                .is_empty()
-        );
+        let cached = rasterizer.cached_glyph(key)
+                               .unwrap();
+        assert!(cached.bitmap
+                      .is_empty());
         assert_eq!(cached.width, expected.width);
         assert_eq!(cached.height, expected.height);
         assert_eq!(cached.advance_width, expected.advance_width);
@@ -1750,31 +1554,22 @@ mod tests {
     fn bitmap_cache_pruning_keeps_metrics_and_releases_pixel_capacity() {
         let mut rasterizer = GlyphRasterizer::primary_only();
         let key = GlyphKey::new(rasterizer.primary_font_id(), 1, 16.0);
-        rasterizer
-            .cache
-            .insert(
-                key,
-                RasterizedGlyph {
-                    bitmap: vec![255; 1024],
-                    width: 32,
-                    height: 32,
-                    offset_x: 1.0,
-                    offset_y: 2.0,
-                    advance_width: 12.0,
-                    is_color: false,
-                },
-            );
+        rasterizer.cache
+                  .insert(key,
+                          RasterizedGlyph { bitmap: vec![255; 1024],
+                                            width: 32,
+                                            height: 32,
+                                            offset_x: 1.0,
+                                            offset_y: 2.0,
+                                            advance_width: 12.0,
+                                            is_color: false });
 
         rasterizer.make_bitmap_capacity_for(GlyphRasterizer::BITMAP_CACHE_CAPACITY_BYTES);
 
-        let cached = rasterizer
-            .cached_glyph(key)
-            .unwrap();
-        assert!(
-            cached
-                .bitmap
-                .is_empty()
-        );
+        let cached = rasterizer.cached_glyph(key)
+                               .unwrap();
+        assert!(cached.bitmap
+                      .is_empty());
         assert_eq!((cached.width, cached.height), (32, 32));
         assert_eq!(cached.advance_width, 12.0);
     }

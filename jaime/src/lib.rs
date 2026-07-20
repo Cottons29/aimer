@@ -40,7 +40,7 @@ pub fn my_app() {
     // animated_theme::start_animated_theme_example()
     // test_scrollable()
     // test_scrollable_row()
-    // start_markdown_example();
+    start_markdown_example();
     // test_scroll_and_row();
 }
 #[allow(unused)]
