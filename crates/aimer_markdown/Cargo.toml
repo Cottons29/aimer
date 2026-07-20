@@ -14,7 +14,7 @@ aimer_color.workspace = true
 aimer_style.workspace = true
 webbrowser.workspace = true
 aimer_svg.workspace = true
-arborium = {workspace = true, features = ["default", "lang-python", "lang-rust", "lang-toml"]}
+arborium = { workspace = true, features = ["default", "lang-python", "lang-rust", "lang-toml"] }
 
 [dev-dependencies]
 aimer_attribute.workspace = true
