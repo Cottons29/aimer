@@ -12,6 +12,10 @@ use aimer_widget::{
 
 use crate::ThemeData;
 
+fn request_next_frame() {
+    aimer_events::window::request_animation_frame();
+}
+
 /// Supplies a [`ThemeData`] value to descendants and animates changes to it.
 ///
 /// Descendants read the interpolated theme with [`crate::Theme::of`]. When
@@ -322,8 +326,7 @@ impl Drawable for AnimatedThemeElement {
             .controller
             .is_animating()
         {
-            ctx.window
-                .request_redraw();
+            request_next_frame();
         }
     }
 }
@@ -396,6 +399,9 @@ impl LayoutElement for AnimatedThemeElement {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use aimer_color::prelude::Color;
 
     use super::*;
@@ -488,5 +494,18 @@ mod tests {
                 .is_animating()
         );
         assert_eq!(state.current.get(), theme(0));
+    }
+
+    #[test]
+    fn active_transition_requests_next_frame_through_animation_scheduler() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let observed_requests = requests.clone();
+        aimer_events::window::set_redraw_requester(move || {
+            observed_requests.fetch_add(1, Ordering::Relaxed);
+        });
+
+        request_next_frame();
+
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
     }
 }
