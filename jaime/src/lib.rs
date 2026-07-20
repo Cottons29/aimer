@@ -4,6 +4,7 @@ mod async_builder;
 mod color_sync;
 mod custom_font;
 mod markdown_example;
+mod panic_recovery;
 pub mod routing;
 mod scroll_and_row;
 mod selectable_text;
@@ -21,9 +22,12 @@ use aimer::{AimerApp, *};
 #[allow(unused_imports)]
 use crate::animated::start_my_animated_list;
 use crate::markdown_example::start_markdown_example;
+#[allow(unused_imports)]
+use crate::panic_recovery::start_panic_recovery_example;
 use crate::scroll_and_row::test_scroll_and_row;
 #[allow(unused_imports)]
 use crate::stateful::start_counter;
+use crate::svg_test::start_svg_test;
 use crate::test_animation::TestFadingAnimation;
 
 // this is the entry point of the app
@@ -40,8 +44,11 @@ pub fn my_app() {
     // animated_theme::start_animated_theme_example()
     // test_scrollable()
     // test_scrollable_row()
-    start_markdown_example();
+    // start_markdown_example();
+    // start_panic_recovery_example();
     // test_scroll_and_row();
+    // start_svg_test();
+    panic_recovery::start_panic_recovery_example()
 }
 #[allow(unused)]
 fn test_text() {

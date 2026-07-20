@@ -12,6 +12,7 @@ use aimer_utils::error;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
 use crate::base::*;
+use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
 use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
 
 trait FetchAdd {
@@ -434,6 +435,26 @@ impl StatefulElement {
 }
 
 impl StatefulElement {
+    /// Converts a stateful widget into an element while containing lifecycle
+    /// panics to this widget subtree in unwind-enabled builds.
+    #[doc(hidden)]
+    pub fn from_widget<W: StatefulWidget + 'static>(
+        widget: &W,
+        ctx: &BuildContext,
+        debug_name: &'static str,
+        key: Option<crate::key::Key>,
+    ) -> Box<dyn Element>
+    where
+        W::State: 'static,
+    {
+        match recover_operation(debug_name, BuildPhase::KeyedState, || {
+            Self::try_new_with_identity(widget, ctx, debug_name, key)
+        }) {
+            Ok(Ok((element, _updater))) => Box::new(element),
+            Ok(Err(diagnostic)) | Err(diagnostic) => diagnostic.into_error_element(),
+        }
+    }
+
     /// Create a new StatefulElement from a StatefulWidget.
     /// Returns the element and a StateUpdater that can be used in callbacks.
     pub fn new_with_name<W: StatefulWidget + 'static>(
@@ -445,7 +466,8 @@ impl StatefulElement {
     where
         W::State: 'static,
     {
-        Self::new_with_identity(widget, ctx, debug_name, key)
+        Self::try_new_with_identity(widget, ctx, debug_name, key)
+            .unwrap_or_else(|diagnostic| panic!("{diagnostic}"))
     }
 
     pub fn new<W: StatefulWidget + 'static>(
@@ -455,19 +477,21 @@ impl StatefulElement {
     where
         W::State: 'static,
     {
-        Self::new_with_identity(widget, ctx, "Unknown", None)
+        Self::try_new_with_identity(widget, ctx, "Unknown", None)
+            .unwrap_or_else(|diagnostic| panic!("{diagnostic}"))
     }
 
-    fn new_with_identity<W: StatefulWidget + 'static>(
+    fn try_new_with_identity<W: StatefulWidget + 'static>(
         widget: &W,
         ctx: &BuildContext,
         debug_name: &'static str,
         key: Option<crate::key::Key>,
-    ) -> (Self, StateUpdater<W::State>)
+    ) -> Result<(Self, StateUpdater<W::State>), PanicDiagnostic>
     where
         W::State: 'static,
     {
-        let state = widget.create_state();
+        let state =
+            recover_operation(debug_name, BuildPhase::CreateState, || widget.create_state())?;
 
         if KeyedStateScope::is_active()
             && let Some(key_ref) = key.as_ref()
@@ -475,28 +499,32 @@ impl StatefulElement {
         {
             let fresh_state = Rc::new(SyncState(UnsafeCell::new(state)));
             let fresh_state_any: Rc<dyn Any> = fresh_state;
-            (live.adopt_config_fn)(fresh_state_any.as_ref());
+            recover_operation(debug_name, BuildPhase::AdoptConfig, || {
+                (live.adopt_config_fn)(fresh_state_any.as_ref())
+            })?;
 
             let child = (live.rebuild_fn)(ctx);
-            let element = StatefulElement {
-                child: SyncChild(UnsafeCell::new(child)),
-                dirty: RefCell::new(live.dirty),
-                rebuild_fn: SyncRebuildFn(UnsafeCell::new(live.rebuild_fn)),
-                rebuild_generation: Cell::new(0),
-                last_rebuilt_generation: Cell::new(0),
-                state_revision: RefCell::new(live.state_revision),
-                debug_name: Cell::new(debug_name),
-                key,
-                bounds: Cell::new(None),
-                state_any: SyncStateAny(UnsafeCell::new(live.state_any)),
-                state_sender: SyncStateAny(UnsafeCell::new(live.state_sender)),
-                adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(live.adopt_config_fn)),
-            };
-            let updater = element
-                .state_updater()
-                .expect("keyed state registry contained a state of the wrong type");
-            register_keyed_state(&element);
-            return (element, updater);
+            return recover_operation(debug_name, BuildPhase::KeyedState, || {
+                let element = StatefulElement {
+                    child: SyncChild(UnsafeCell::new(child)),
+                    dirty: RefCell::new(live.dirty),
+                    rebuild_fn: SyncRebuildFn(UnsafeCell::new(live.rebuild_fn)),
+                    rebuild_generation: Cell::new(0),
+                    last_rebuilt_generation: Cell::new(0),
+                    state_revision: RefCell::new(live.state_revision),
+                    debug_name: Cell::new(debug_name),
+                    key,
+                    bounds: Cell::new(None),
+                    state_any: SyncStateAny(UnsafeCell::new(live.state_any)),
+                    state_sender: SyncStateAny(UnsafeCell::new(live.state_sender)),
+                    adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(live.adopt_config_fn)),
+                };
+                let updater = element
+                    .state_updater()
+                    .expect("keyed state registry contained a state of the wrong type");
+                register_keyed_state(&element);
+                (element, updater)
+            });
         }
 
         let dirty = Rc::new(Cell::new(false));
@@ -516,7 +544,9 @@ impl StatefulElement {
         {
             // Safety: single-threaded — we are the only accessor during construction.
             let s = unsafe { &mut *state_cell.0.get() };
-            s.init_state(init_updater.clone());
+            recover_operation(debug_name, BuildPhase::InitState, || {
+                s.init_state(init_updater.clone())
+            })?;
         }
 
         let state_for_build = state_cell.clone();
@@ -525,25 +555,51 @@ impl StatefulElement {
         let consumer_for_rebuild = build_consumer.clone();
         let rebuild_fn: Rc<RebuildCallBack> = Rc::new(move |ctx| {
             // Drain all pending mutations from the channel before rebuilding.
-            let s = unsafe {
-                &mut *state_for_build
-                    .0
-                    .get()
-            };
-            while let Ok(mutation) = rx_for_rebuild.try_recv() {
-                mutation(s);
-                revision_for_rebuild.fetch_add(1);
+            let mutation_result =
+                recover_operation(debug_name, BuildPhase::ApplyStateMutation, || {
+                    let s = unsafe {
+                        &mut *state_for_build
+                            .0
+                            .get()
+                    };
+                    while let Ok(mutation) = rx_for_rebuild.try_recv() {
+                        mutation(s);
+                        revision_for_rebuild.fetch_add(1);
+                    }
+                });
+            if let Err(diagnostic) = mutation_result {
+                return diagnostic.into_error_element();
             }
             ctx.with_build_consumer(consumer_for_rebuild.clone(), |ctx| {
-                let child_widget = s.build(ctx);
-                Widget::to_element(&child_widget, ctx)
+                let s = unsafe {
+                    &*state_for_build
+                        .0
+                        .get()
+                };
+                let child_widget =
+                    match recover_operation(debug_name, BuildPhase::Build, || s.build(ctx)) {
+                        Ok(widget) => widget,
+                        Err(diagnostic) => return diagnostic.into_error_element(),
+                    };
+                match recover_operation(debug_name, BuildPhase::ToElement, || {
+                    Widget::to_element(&child_widget, ctx)
+                }) {
+                    Ok(element) => element,
+                    Err(diagnostic) => diagnostic.into_error_element(),
+                }
             })
         });
 
         let child = {
             // Safety: single-threaded — initial build during construction.
             let s = unsafe { &*state_cell.0.get() };
-            ctx.with_build_consumer(build_consumer, |ctx| Widget::to_element(&s.build(ctx), ctx))
+            ctx.with_build_consumer(build_consumer, |ctx| {
+                let child_widget =
+                    recover_operation(debug_name, BuildPhase::Build, || s.build(ctx))?;
+                recover_operation(debug_name, BuildPhase::ToElement, || {
+                    Widget::to_element(&child_widget, ctx)
+                })
+            })?
         };
 
         // Type-erased handle to this element's state, plus a closure that can
@@ -585,11 +641,16 @@ impl StatefulElement {
             adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(adopt_config_fn)),
         };
 
-        if KeyedStateScope::is_active() {
-            register_keyed_state(&element);
-        }
+        let element = if KeyedStateScope::is_active() {
+            recover_operation(debug_name, BuildPhase::KeyedState, || {
+                register_keyed_state(&element);
+                element
+            })?
+        } else {
+            element
+        };
 
-        (element, updater)
+        Ok((element, updater))
     }
 
     /// Check if this element needs a rebuild and perform it if so.
@@ -1367,9 +1428,252 @@ impl Rebuildable for StatefulElement {
 
 #[cfg(test)]
 mod tests {
+    use std::any::{Any, TypeId};
+    use std::collections::HashMap;
     use std::panic::AssertUnwindSafe;
+    use std::sync::RwLock;
 
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dummy_async_handle() -> tokio::runtime::Handle {
+        use std::sync::OnceLock;
+
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        });
+        let _guard = runtime.enter();
+        tokio::runtime::Handle::current()
+    }
+
+    fn dummy_build_context() -> BuildContext<'static> {
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        BuildContext {
+            parent_size: Default::default(),
+            canvas,
+            scale: 1.0,
+            parent_pos: Default::default(),
+            cursor_pos: Default::default(),
+            box_constraint: Default::default(),
+            visible_rect: None,
+            window: WindowHandle::headless(Default::default(), 1.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            async_handle: dummy_async_handle(),
+            inherited_states: Rc::new(RwLock::new(HashMap::<TypeId, Rc<dyn Any>>::new())),
+        }
+    }
+
+    struct TestLeaf;
+    impl VisitorElement for TestLeaf {
+        fn debug_name(&self) -> &'static str {
+            "TestLeaf"
+        }
+    }
+    impl Drawable for TestLeaf {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl LayoutElement for TestLeaf {}
+    impl EventElement for TestLeaf {}
+    impl Rebuildable for TestLeaf {}
+
+    #[derive(Clone, Copy, Eq, PartialEq)]
+    enum PanicPhase {
+        None,
+        CreateState,
+        InitState,
+        Build,
+        ToElement,
+        AdoptConfig,
+    }
+
+    struct LifecycleWidget {
+        phase: PanicPhase,
+        updater: Rc<RefCell<Option<StateUpdater<LifecycleState>>>>,
+        builds: Rc<Cell<usize>>,
+    }
+
+    struct LifecycleState {
+        phase: PanicPhase,
+        updater: Rc<RefCell<Option<StateUpdater<LifecycleState>>>>,
+        builds: Rc<Cell<usize>>,
+    }
+
+    struct LifecycleChild {
+        panic_in_to_element: bool,
+    }
+
+    impl Widget for LifecycleChild {
+        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+            if self.panic_in_to_element {
+                panic!("child conversion failed");
+            }
+            Box::new(TestLeaf)
+        }
+    }
+
+    impl StatefulWidget for LifecycleWidget {
+        type State = LifecycleState;
+
+        fn create_state(&self) -> Self::State {
+            if self.phase == PanicPhase::CreateState {
+                panic!("state creation failed");
+            }
+            LifecycleState {
+                phase: self.phase,
+                updater: self.updater.clone(),
+                builds: self.builds.clone(),
+            }
+        }
+    }
+
+    impl State<LifecycleWidget> for LifecycleState {
+        fn init_state(&mut self, updater: StateUpdater<Self>) {
+            if self.phase == PanicPhase::InitState {
+                panic!("state initialization failed");
+            }
+            self.updater
+                .replace(Some(updater));
+        }
+
+        fn adopt_config_from(&mut self, new: &Self) {
+            if new.phase == PanicPhase::AdoptConfig {
+                panic!("keyed configuration failed");
+            }
+            self.phase = new.phase;
+        }
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            self.builds
+                .set(self.builds.get() + 1);
+            if self.phase == PanicPhase::Build {
+                panic!("state build failed");
+            }
+            LifecycleChild { panic_in_to_element: self.phase == PanicPhase::ToElement }
+        }
+    }
+
+    fn lifecycle_widget(phase: PanicPhase) -> LifecycleWidget {
+        LifecycleWidget {
+            phase,
+            updater: Rc::new(RefCell::new(None)),
+            builds: Rc::new(Cell::new(0)),
+        }
+    }
+
+    fn assert_initial_phase_recovers(phase: PanicPhase) {
+        let context = dummy_build_context();
+        let element = StatefulElement::from_widget(
+            &lifecycle_widget(phase),
+            &context,
+            "LifecycleWidget",
+            None,
+        );
+        assert_eq!(element.debug_name(), "ErrorWidget");
+    }
+
+    fn has_error_child(element: &dyn Element) -> bool {
+        let mut found = false;
+        element.visit_children(&mut |child| found |= child.debug_name() == "ErrorWidget");
+        found
+    }
+
+    #[test]
+    fn create_state_panic_becomes_error_element() {
+        assert_initial_phase_recovers(PanicPhase::CreateState);
+    }
+
+    #[test]
+    fn init_state_panic_becomes_error_element() {
+        assert_initial_phase_recovers(PanicPhase::InitState);
+    }
+
+    #[test]
+    fn initial_state_build_panic_becomes_error_element() {
+        assert_initial_phase_recovers(PanicPhase::Build);
+    }
+
+    #[test]
+    fn initial_child_conversion_panic_becomes_error_element() {
+        assert_initial_phase_recovers(PanicPhase::ToElement);
+    }
+
+    #[test]
+    fn queued_mutation_panic_installs_stable_error_child() {
+        let context = dummy_build_context();
+        let widget = lifecycle_widget(PanicPhase::None);
+        let updater_slot = widget
+            .updater
+            .clone();
+        let mutation_attempts = Rc::new(Cell::new(0));
+        let observed_attempts = mutation_attempts.clone();
+        let element = StatefulElement::from_widget(&widget, &context, "LifecycleWidget", None);
+        let updater = updater_slot
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .clone();
+        updater.set_state(move |_| {
+            observed_attempts.set(observed_attempts.get() + 1);
+            panic!("queued mutation failed");
+        });
+
+        element.rebuild_if_dirty(&context);
+        assert!(has_error_child(element.as_ref()));
+        element.rebuild_if_dirty(&context);
+        assert_eq!(mutation_attempts.get(), 1, "recovered mutation must not be retried");
+    }
+
+    #[test]
+    fn dirty_state_build_panic_installs_stable_error_child() {
+        let context = dummy_build_context();
+        let widget = lifecycle_widget(PanicPhase::None);
+        let updater_slot = widget
+            .updater
+            .clone();
+        let builds = widget
+            .builds
+            .clone();
+        let element = StatefulElement::from_widget(&widget, &context, "LifecycleWidget", None);
+        updater_slot
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .set_state(|state| state.phase = PanicPhase::Build);
+
+        element.rebuild_if_dirty(&context);
+        assert!(has_error_child(element.as_ref()));
+        element.rebuild_if_dirty(&context);
+        assert_eq!(builds.get(), 2, "recovered build must not be retried while clean");
+    }
+
+    #[test]
+    fn keyed_config_panic_becomes_error_element() {
+        let context = dummy_build_context();
+        let _scope = KeyedStateScope::enter();
+        let key = crate::Key::Value("panic-recovery-key".to_owned());
+        let live = StatefulElement::from_widget(
+            &lifecycle_widget(PanicPhase::None),
+            &context,
+            "LifecycleWidget",
+            Some(key.clone()),
+        );
+        assert_eq!(live.debug_name(), "LifecycleWidget");
+
+        let recovered = StatefulElement::from_widget(
+            &lifecycle_widget(PanicPhase::AdoptConfig),
+            &context,
+            "LifecycleWidget",
+            Some(key),
+        );
+        assert_eq!(recovered.debug_name(), "ErrorWidget");
+    }
 
     #[test]
     fn test_state_updater_empty_panic() {

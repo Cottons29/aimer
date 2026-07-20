@@ -87,12 +87,19 @@ impl ErrorElement {
         #[cfg(not(debug_assertions))]
         let _ = message;
 
+
+        let (pos_y, font_size) = if cfg!(target_os = "ios") || cfg!(target_os = "android") {
+            (400f32, 40.0)
+        }else {
+            (200f32, 34f32)
+        };
+
         ctx.canvas
             .draw_text_wrapped(
                 text,
-                Vec2d { x: 12.0, y: 24.0 },
-                14.0,
-                Color::WHITE,
+                Vec2d { x: 24.0, y: pos_y },
+                font_size,
+                Color::YELLOW,
                 (size.width - 24.0).max(0.0),
                 600,
             );

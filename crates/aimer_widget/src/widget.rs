@@ -6,6 +6,7 @@ use aimer_attribute::size::ResolvedSize;
 use crate::base::BuildContext;
 use crate::{AnyElement, AnyWidget, Element};
 
+mod recovery;
 pub mod stateful;
 pub mod stateless;
 
