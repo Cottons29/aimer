@@ -22,11 +22,9 @@ impl SvgVertex {
     const ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![0 => Float32x2];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBUTES,
-        }
+        wgpu::VertexBufferLayout { array_stride: size_of::<Self>() as wgpu::BufferAddress,
+                                   step_mode: wgpu::VertexStepMode::Vertex,
+                                   attributes: &Self::ATTRIBUTES }
     }
 }
 
@@ -52,11 +50,9 @@ impl SvgInstance {
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &Self::ATTRIBUTES,
-        }
+        wgpu::VertexBufferLayout { array_stride: size_of::<Self>() as wgpu::BufferAddress,
+                                   step_mode: wgpu::VertexStepMode::Instance,
+                                   attributes: &Self::ATTRIBUTES }
     }
 }
 
@@ -96,11 +92,10 @@ impl SvgPipeline {
     const MAX_GPU_MESH_BYTES: u64 = 64 * 1024 * 1024;
     const MAX_GPU_MESHES: usize = 4096;
 
-    pub fn new(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        pipeline_cache: Option<&wgpu::PipelineCache>,
-    ) -> Self {
+    pub fn new(device: &wgpu::Device,
+               format: wgpu::TextureFormat,
+               pipeline_cache: Option<&wgpu::PipelineCache>)
+               -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("svg shader"),
             source: wgpu::ShaderSource::Wgsl(Self::shader_source().into()),
@@ -139,30 +134,27 @@ impl SvgPipeline {
             cache: pipeline_cache,
         });
         let instance_buffer = create_instance_buffer(device, Self::INITIAL_INSTANCE_CAPACITY);
-        Self {
-            pipeline,
-            geometry_cache: SvgGeometryCache::new(Self::MAX_CPU_MESH_BYTES, Self::MAX_CPU_MESHES),
-            gpu_meshes: HashMap::new(),
-            prepared_draws: Vec::new(),
-            item_ranges: Vec::new(),
-            instances: Vec::new(),
-            instance_buffer,
-            instance_policy: InstanceBufferPolicy::new(Self::INITIAL_INSTANCE_CAPACITY),
-            gpu_mesh_bytes: 0,
-            usage_clock: 0,
-            max_gpu_mesh_bytes: Self::MAX_GPU_MESH_BYTES,
-            max_gpu_meshes: Self::MAX_GPU_MESHES,
-        }
+        Self { pipeline,
+               geometry_cache: SvgGeometryCache::new(Self::MAX_CPU_MESH_BYTES,
+                                                     Self::MAX_CPU_MESHES),
+               gpu_meshes: HashMap::new(),
+               prepared_draws: Vec::new(),
+               item_ranges: Vec::new(),
+               instances: Vec::new(),
+               instance_buffer,
+               instance_policy: InstanceBufferPolicy::new(Self::INITIAL_INSTANCE_CAPACITY),
+               gpu_mesh_bytes: 0,
+               usage_clock: 0,
+               max_gpu_mesh_bytes: Self::MAX_GPU_MESH_BYTES,
+               max_gpu_meshes: Self::MAX_GPU_MESHES }
     }
 
     #[inline]
     fn shader_source() -> &'static str {
         #[cfg(target_os = "android")]
         {
-            concat!(
-                include_str!("./shaders/android_color.wgsl"),
-                include_str!("./shaders/svg.wgsl")
-            )
+            concat!(include_str!("./shaders/android_color.wgsl"),
+                    include_str!("./shaders/svg.wgsl"))
         }
         #[cfg(not(target_os = "android"))]
         {
@@ -174,18 +166,15 @@ impl SvgPipeline {
         crate::pipeline::multisample_state()
     }
 
-    pub fn prepare(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        items: &[SvgRenderItem],
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-    ) {
-        self.usage_clock = self
-            .usage_clock
-            .wrapping_add(1);
+    pub fn prepare(&mut self,
+                   device: &wgpu::Device,
+                   queue: &wgpu::Queue,
+                   items: &[SvgRenderItem],
+                   width: u32,
+                   height: u32,
+                   is_srgb: bool) {
+        self.usage_clock = self.usage_clock
+                               .wrapping_add(1);
         self.prepared_draws
             .clear();
         self.item_ranges
@@ -194,94 +183,76 @@ impl SvgPipeline {
             .clear();
         let mut frame_meshes = HashSet::new();
         for item in items {
-            let range_start = self
-                .prepared_draws
-                .len();
+            let range_start = self.prepared_draws
+                                  .len();
             if item.opacity > 0.0
-                && item
-                    .destination
-                    .width
-                    > 0.0
-                && item
-                    .destination
-                    .height
-                    > 0.0
+               && item.destination
+                      .width
+                  > 0.0
+               && item.destination
+                      .height
+                  > 0.0
             {
                 self.prepare_item(device, item, width, height, is_srgb, &mut frame_meshes);
             }
             self.item_ranges
-                .push(
-                    range_start
-                        ..self
-                            .prepared_draws
-                            .len(),
-                );
+                .push(range_start
+                      ..self.prepared_draws
+                            .len());
         }
 
-        let old_capacity = self
-            .instance_policy
-            .capacity();
+        let old_capacity = self.instance_policy
+                               .capacity();
         self.instance_policy
             .record_usage(self.instances.len());
         if old_capacity
-            != self
-                .instance_policy
-                .capacity()
+           != self.instance_policy
+                  .capacity()
         {
-            self.instance_buffer = create_instance_buffer(
-                device,
-                self.instance_policy
-                    .capacity(),
-            );
+            self.instance_buffer = create_instance_buffer(device,
+                                                          self.instance_policy
+                                                              .capacity());
         }
-        if !self
-            .instances
-            .is_empty()
+        if !self.instances
+                .is_empty()
         {
             queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances));
         }
         self.evict_gpu_meshes(&frame_meshes);
     }
 
-    fn prepare_item(
-        &mut self,
-        device: &wgpu::Device,
-        item: &SvgRenderItem,
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-        frame_meshes: &mut HashSet<usize>,
-    ) {
-        for node in item
-            .scene
-            .nodes
-            .iter()
-            .filter(|node| {
-                node.visible
-                    && node
-                        .geometry
-                        .is_some()
-            })
+    fn prepare_item(&mut self,
+                    device: &wgpu::Device,
+                    item: &SvgRenderItem,
+                    width: u32,
+                    height: u32,
+                    is_srgb: bool,
+                    frame_meshes: &mut HashSet<usize>) {
+        for node in item.scene
+                        .nodes
+                        .iter()
+                        .filter(|node| {
+                            node.visible
+                            && node.geometry
+                                   .is_some()
+                        })
         {
-            let Some(geometry) = item
-                .scene
-                .geometry(node)
+            let Some(geometry) = item.scene
+                                     .geometry(node)
             else {
                 continue;
             };
-            let node_override = item
-                .overrides
-                .iter()
-                .find(|value| value.node_id == node.node_id);
+            let node_override = item.overrides
+                                    .iter()
+                                    .find(|value| value.node_id == node.node_id);
             let transform = combined_transform(item, node, node_override);
             if outside_viewport(transform, geometry, width, height) {
                 continue;
             }
             let physical_scale = transform_scale(transform);
             let opacity = item.opacity
-                * node_override
-                    .and_then(|value| value.opacity)
-                    .unwrap_or(node.opacity);
+                          * node_override.and_then(|value| value.opacity)
+                                         .unwrap_or(node.opacity);
             if opacity <= 0.0 {
                 continue;
             }
@@ -290,70 +261,62 @@ impl SvgPipeline {
             match node.paint_order {
                 SvgPaintOrder::FillAndStroke => {
                     if let Some((color, style)) = fill {
-                        self.prepare_mesh(
-                            device,
-                            geometry,
-                            style,
-                            transform,
-                            color,
-                            opacity,
-                            item,
-                            width,
-                            height,
-                            is_srgb,
-                            physical_scale,
-                            frame_meshes,
-                        );
+                        self.prepare_mesh(device,
+                                          geometry,
+                                          style,
+                                          transform,
+                                          color,
+                                          opacity,
+                                          item,
+                                          width,
+                                          height,
+                                          is_srgb,
+                                          physical_scale,
+                                          frame_meshes);
                     }
                     if let Some((color, style)) = stroke {
-                        self.prepare_mesh(
-                            device,
-                            geometry,
-                            style,
-                            transform,
-                            color,
-                            opacity,
-                            item,
-                            width,
-                            height,
-                            is_srgb,
-                            physical_scale,
-                            frame_meshes,
-                        );
+                        self.prepare_mesh(device,
+                                          geometry,
+                                          style,
+                                          transform,
+                                          color,
+                                          opacity,
+                                          item,
+                                          width,
+                                          height,
+                                          is_srgb,
+                                          physical_scale,
+                                          frame_meshes);
                     }
                 }
                 SvgPaintOrder::StrokeAndFill => {
                     if let Some((color, style)) = stroke {
-                        self.prepare_mesh(
-                            device,
-                            geometry,
-                            style,
-                            transform,
-                            color,
-                            opacity,
-                            item,
-                            width,
-                            height,
-                            is_srgb,
-                            physical_scale,
-                            frame_meshes,
-                        );
+                        self.prepare_mesh(device,
+                                          geometry,
+                                          style,
+                                          transform,
+                                          color,
+                                          opacity,
+                                          item,
+                                          width,
+                                          height,
+                                          is_srgb,
+                                          physical_scale,
+                                          frame_meshes);
                     }
                     if let Some((color, style)) = fill {
-                        self.prepare_mesh(
-                            device,
-                            geometry,
-                            style,
-                            transform,
-                            color,
-                            opacity,
-                            item,
-                            width,
-                            height,
-                            is_srgb,
-                            physical_scale,
-                            frame_meshes,
-                        );
+                        self.prepare_mesh(device,
+                                          geometry,
+                                          style,
+                                          transform,
+                                          color,
+                                          opacity,
+                                          item,
+                                          width,
+                                          height,
+                                          is_srgb,
+                                          physical_scale,
+                                          frame_meshes);
                     }
                 }
             }
@@ -361,30 +324,26 @@ impl SvgPipeline {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn prepare_mesh(
-        &mut self,
-        device: &wgpu::Device,
-        geometry: &crate::svg::SvgGeometry,
-        style: SvgMeshStyle,
-        transform: Mat3,
-        color: SvgColor,
-        opacity: f32,
-        item: &SvgRenderItem,
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-        physical_scale: f32,
-        frame_meshes: &mut HashSet<usize>,
-    ) {
-        let Ok(mesh) = self
-            .geometry_cache
-            .mesh_for(geometry, style, physical_scale)
+    fn prepare_mesh(&mut self,
+                    device: &wgpu::Device,
+                    geometry: &crate::svg::SvgGeometry,
+                    style: SvgMeshStyle,
+                    transform: Mat3,
+                    color: SvgColor,
+                    opacity: f32,
+                    item: &SvgRenderItem,
+                    width: u32,
+                    height: u32,
+                    is_srgb: bool,
+                    physical_scale: f32,
+                    frame_meshes: &mut HashSet<usize>) {
+        let Ok(mesh) = self.geometry_cache
+                           .mesh_for(geometry, style, physical_scale)
         else {
             return;
         };
-        if mesh
-            .indices
-            .is_empty()
+        if mesh.indices
+               .is_empty()
         {
             return;
         }
@@ -393,42 +352,37 @@ impl SvgPipeline {
         self.ensure_gpu_mesh(device, mesh_key, &mesh);
         let instance_index = self.instances.len() as u32;
         self.instances
-            .push(SvgInstance {
-                transform_x: [
-                    transform.cols[0][0],
-                    transform.cols[1][0],
-                    transform.cols[2][0],
-                    0.0,
-                ],
-                transform_y: [
-                    transform.cols[0][1],
-                    transform.cols[1][1],
-                    transform.cols[2][1],
-                    0.0,
-                ],
-                color: [color.r, color.g, color.b, color.a * opacity],
-                clip_rect: item.clip_rect,
-                clip_border_radius: item.clip_border_radius,
-                viewport: [width as f32, height as f32, surface_srgb_value(is_srgb), 0.0],
-            });
+            .push(SvgInstance { transform_x: [transform.cols[0][0],
+                                              transform.cols[1][0],
+                                              transform.cols[2][0],
+                                              0.0],
+                                transform_y: [transform.cols[0][1],
+                                              transform.cols[1][1],
+                                              transform.cols[2][1],
+                                              0.0],
+                                color: [color.r, color.g, color.b, color.a * opacity],
+                                clip_rect: item.clip_rect,
+                                clip_border_radius: item.clip_border_radius,
+                                viewport: [width as f32,
+                                           height as f32,
+                                           surface_srgb_value(is_srgb),
+                                           0.0] });
         self.prepared_draws
             .push(PreparedDraw { mesh_key, instance_index });
     }
 
     fn ensure_gpu_mesh(&mut self, device: &wgpu::Device, key: usize, mesh: &Arc<SvgMesh>) {
-        if let Some(entry) = self
-            .gpu_meshes
-            .get_mut(&key)
+        if let Some(entry) = self.gpu_meshes
+                                 .get_mut(&key)
         {
             entry.last_used = self.usage_clock;
             return;
         }
-        let vertices = mesh
-            .vertices
-            .iter()
-            .copied()
-            .map(|position| SvgVertex { position })
-            .collect::<Vec<_>>();
+        let vertices = mesh.vertices
+                           .iter()
+                           .copied()
+                           .map(|position| SvgVertex { position })
+                           .collect::<Vec<_>>();
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("svg vertex buffer"),
             contents: bytemuck::cast_slice(&vertices),
@@ -442,76 +396,60 @@ impl SvgPipeline {
         let bytes = mesh.memory_bytes() as u64;
         self.gpu_mesh_bytes += bytes;
         self.gpu_meshes
-            .insert(
-                key,
-                GpuMesh {
-                    _mesh: mesh.clone(),
-                    vertex_buffer,
-                    index_buffer,
-                    index_count: mesh.indices.len() as u32,
-                    bytes,
-                    last_used: self.usage_clock,
-                },
-            );
+            .insert(key,
+                    GpuMesh { _mesh: mesh.clone(),
+                              vertex_buffer,
+                              index_buffer,
+                              index_count: mesh.indices.len() as u32,
+                              bytes,
+                              last_used: self.usage_clock });
     }
 
     fn evict_gpu_meshes(&mut self, frame_meshes: &HashSet<usize>) {
-        while self
-            .gpu_meshes
-            .len()
-            > self.max_gpu_meshes
-            || self.gpu_mesh_bytes > self.max_gpu_mesh_bytes
+        while self.gpu_meshes
+                  .len()
+              > self.max_gpu_meshes
+              || self.gpu_mesh_bytes > self.max_gpu_mesh_bytes
         {
-            let Some(key) = self
-                .gpu_meshes
-                .iter()
-                .filter(|(key, _)| !frame_meshes.contains(key))
-                .min_by_key(|(_, mesh)| mesh.last_used)
-                .map(|(key, _)| *key)
+            let Some(key) = self.gpu_meshes
+                                .iter()
+                                .filter(|(key, _)| !frame_meshes.contains(key))
+                                .min_by_key(|(_, mesh)| mesh.last_used)
+                                .map(|(key, _)| *key)
             else {
                 break;
             };
-            if let Some(mesh) = self
-                .gpu_meshes
-                .remove(&key)
+            if let Some(mesh) = self.gpu_meshes
+                                    .remove(&key)
             {
-                self.gpu_mesh_bytes = self
-                    .gpu_mesh_bytes
-                    .saturating_sub(mesh.bytes);
+                self.gpu_mesh_bytes = self.gpu_mesh_bytes
+                                          .saturating_sub(mesh.bytes);
             }
         }
     }
 
     pub fn draw_item<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, item_index: usize) {
-        let Some(range) = self
-            .item_ranges
-            .get(item_index)
+        let Some(range) = self.item_ranges
+                              .get(item_index)
         else {
             return;
         };
         pass.set_pipeline(&self.pipeline);
         for draw in &self.prepared_draws[range.clone()] {
-            let Some(mesh) = self
-                .gpu_meshes
-                .get(&draw.mesh_key)
+            let Some(mesh) = self.gpu_meshes
+                                 .get(&draw.mesh_key)
             else {
                 continue;
             };
-            pass.set_vertex_buffer(
-                0,
-                mesh.vertex_buffer
-                    .slice(..),
-            );
-            pass.set_vertex_buffer(
-                1,
-                self.instance_buffer
-                    .slice(..),
-            );
-            pass.set_index_buffer(
-                mesh.index_buffer
-                    .slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
+            pass.set_vertex_buffer(0,
+                                   mesh.vertex_buffer
+                                       .slice(..));
+            pass.set_vertex_buffer(1,
+                                   self.instance_buffer
+                                       .slice(..));
+            pass.set_index_buffer(mesh.index_buffer
+                                      .slice(..),
+                                  wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..mesh.index_count, 0, draw.instance_index..draw.instance_index + 1);
         }
     }
@@ -526,10 +464,9 @@ impl SvgPipeline {
     }
 
     pub fn instance_buffer_bytes(&self) -> u64 {
-        (self
-            .instance_policy
-            .capacity()
-            * size_of::<SvgInstance>()) as u64
+        (self.instance_policy
+             .capacity()
+         * size_of::<SvgInstance>()) as u64
     }
 
     pub fn clear_resources(&mut self) {
@@ -542,19 +479,19 @@ impl SvgPipeline {
 }
 
 fn create_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("svg instance buffer"),
-        size: (capacity.max(1) * size_of::<SvgInstance>()) as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
+    device.create_buffer(&wgpu::BufferDescriptor { label: Some("svg instance buffer"),
+                                                   size: (capacity.max(1)
+                                                          * size_of::<SvgInstance>())
+                                                         as u64,
+                                                   usage: wgpu::BufferUsages::VERTEX
+                                                          | wgpu::BufferUsages::COPY_DST,
+                                                   mapped_at_creation: false })
 }
 
-fn combined_transform(
-    item: &SvgRenderItem,
-    node: &SvgNode,
-    node_override: Option<&SvgNodeStyleOverride>,
-) -> Mat3 {
+fn combined_transform(item: &SvgRenderItem,
+                      node: &SvgNode,
+                      node_override: Option<&SvgNodeStyleOverride>)
+                      -> Mat3 {
     let viewport = item.scene.viewport;
     let destination = Mat3::translate(item.destination.x, item.destination.y).mul(&Mat3::scale(
         item.destination
@@ -568,52 +505,40 @@ fn combined_transform(
                 .height
                 .max(f32::EPSILON),
     ));
-    let transform = node_override
-        .and_then(|value| value.transform)
-        .unwrap_or(node.transform);
-    let node_transform = Mat3 {
-        cols: [
-            [transform.sx, transform.ky, 0.0],
-            [transform.kx, transform.sy, 0.0],
-            [transform.tx, transform.ty, 1.0],
-        ],
-    };
+    let transform = node_override.and_then(|value| value.transform)
+                                 .unwrap_or(node.transform);
+    let node_transform = Mat3 { cols: [[transform.sx, transform.ky, 0.0],
+                                       [transform.kx, transform.sy, 0.0],
+                                       [transform.tx, transform.ty, 1.0]] };
     item.world_transform
         .mul(&destination)
         .mul(&node_transform)
 }
 
-fn resolved_fill(
-    node: &SvgNode,
-    node_override: Option<&SvgNodeStyleOverride>,
-) -> Option<(SvgColor, SvgMeshStyle)> {
+fn resolved_fill(node: &SvgNode,
+                 node_override: Option<&SvgNodeStyleOverride>)
+                 -> Option<(SvgColor, SvgMeshStyle)> {
     let fill = match node_override.map(|value| value.fill) {
-        Some(Some(Some(color))) => Some((
-            color,
-            node.fill
-                .as_ref()
-                .map(|fill| fill.rule)
-                .unwrap_or(crate::svg::SvgFillRule::NonZero),
-        )),
+        Some(Some(Some(color))) => Some((color,
+                                         node.fill
+                                             .as_ref()
+                                             .map(|fill| fill.rule)
+                                             .unwrap_or(crate::svg::SvgFillRule::NonZero))),
         Some(Some(None)) => None,
-        Some(None) | None => node
-            .fill
-            .as_ref()
-            .map(|fill| (fill.color, fill.rule)),
+        Some(None) | None => node.fill
+                                 .as_ref()
+                                 .map(|fill| (fill.color, fill.rule)),
     }?;
     Some((fill.0, SvgMeshStyle::Fill(fill.1)))
 }
 
-fn resolved_stroke(
-    node: &SvgNode,
-    node_override: Option<&SvgNodeStyleOverride>,
-) -> Option<(SvgColor, SvgMeshStyle)> {
-    let stroke = node
-        .stroke
-        .as_ref()?;
-    if !stroke
-        .dash_array
-        .is_empty()
+fn resolved_stroke(node: &SvgNode,
+                   node_override: Option<&SvgNodeStyleOverride>)
+                   -> Option<(SvgColor, SvgMeshStyle)> {
+    let stroke = node.stroke
+                     .as_ref()?;
+    if !stroke.dash_array
+              .is_empty()
     {
         return None;
     }
@@ -622,37 +547,31 @@ fn resolved_stroke(
         Some(Some(None)) => return None,
         Some(None) | None => stroke.color,
     };
-    Some((
-        color,
-        SvgMeshStyle::Stroke {
-            width: stroke.width,
-            line_cap: stroke.line_cap,
-            line_join: stroke.line_join,
-            miter_limit: stroke.miter_limit,
-        },
-    ))
+    Some((color,
+          SvgMeshStyle::Stroke { width: stroke.width,
+                                 line_cap: stroke.line_cap,
+                                 line_join: stroke.line_join,
+                                 miter_limit: stroke.miter_limit }))
 }
 
 fn transform_scale(transform: Mat3) -> f32 {
     let x = transform.cols[0][0].hypot(transform.cols[0][1]);
     let y = transform.cols[1][0].hypot(transform.cols[1][1]);
     x.max(y)
-        .max(f32::EPSILON)
+     .max(f32::EPSILON)
 }
 
-fn outside_viewport(
-    transform: Mat3,
-    geometry: &crate::svg::SvgGeometry,
-    width: u32,
-    height: u32,
-) -> bool {
+fn outside_viewport(transform: Mat3,
+                    geometry: &crate::svg::SvgGeometry,
+                    width: u32,
+                    height: u32)
+                    -> bool {
     let mut min_x = f32::INFINITY;
     let mut min_y = f32::INFINITY;
     let mut max_x = f32::NEG_INFINITY;
     let mut max_y = f32::NEG_INFINITY;
-    for command in geometry
-        .commands
-        .iter()
+    for command in geometry.commands
+                           .iter()
     {
         let point = match *command {
             crate::svg::SvgPathCommand::MoveTo { x, y }
