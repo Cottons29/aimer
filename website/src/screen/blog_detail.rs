@@ -5,9 +5,9 @@ use crate::router::AppRouter;
 use crate::utils::{app_padding, is_mobile};
 use aimer::console::info;
 use aimer::router::NavigatorController;
-use aimer::style::{FontWeight, LayoutSpacing, TextOverflow, TextStyle};
+use aimer::style::{FontWeight, LayoutSpacing, TextOverflow, TextStyle, Theme, ThemeData};
 use aimer::{
-    BoxAlignment, BuildContext, Color, Column, Container, Expanded, MarkdownViewer,
+    BoxAlignment, BuildContext, Color, Column, Container, Expanded, MarkdownTheme, MarkdownViewer,
     ProviderContext, ProviderHandle, Row, ScrollAxis, Scrollable, SizedBox, StatelessWidget, Text,
     Widget, ZeroSizedBox, widget,
 };
@@ -40,7 +40,7 @@ fn metadata_fields(detail: &BlogDetail) -> [(&'static str, String); 3] {
     ]
 }
 
-fn metadata_sidebar(detail: &BlogDetail) -> Box<dyn Widget> {
+fn metadata_sidebar(detail: &BlogDetail, theme: &ThemeData) -> Box<dyn Widget> {
     let mut children = Vec::new();
     for (index, (label, value)) in metadata_fields(detail)
         .into_iter()
@@ -52,7 +52,11 @@ fn metadata_sidebar(detail: &BlogDetail) -> Box<dyn Widget> {
                     TextStyle::new()
                         .font_size(16)
                         .font_weight(FontWeight::Bold)
-                        .color(Color::BLACK.with_opacity(170)),
+                        .color(
+                            theme
+                                .on_background_color
+                                .with_opacity(170),
+                        ),
                 )
                 .boxed(),
         );
@@ -66,7 +70,7 @@ fn metadata_sidebar(detail: &BlogDetail) -> Box<dyn Widget> {
                 .text_style(
                     TextStyle::new()
                         .font_size(18)
-                        .color(Color::BLACK)
+                        .color(theme.on_background_color)
                         .text_overflow(TextOverflow::Wrap),
                 )
                 .boxed(),
@@ -80,7 +84,11 @@ fn metadata_sidebar(detail: &BlogDetail) -> Box<dyn Widget> {
             children.push(
                 Container::new()
                     .height(1)
-                    .color(Color::GRAY.with_alpha(0.35))
+                    .color(
+                        theme
+                            .on_background_color
+                            .with_alpha(0.35),
+                    )
                     .child(ZeroSizedBox)
                     .boxed(),
             );
@@ -97,6 +105,44 @@ fn metadata_sidebar(detail: &BlogDetail) -> Box<dyn Widget> {
         .boxed()
 }
 
+fn themed_markdown(theme: &ThemeData) -> MarkdownTheme {
+    let mut markdown = MarkdownTheme::default();
+    markdown.body = markdown
+        .body
+        .color(theme.on_background_color);
+    markdown.headings = markdown
+        .headings
+        .map(|style| style.color(theme.on_background_color));
+    markdown.blockquote = markdown
+        .blockquote
+        .color(
+            theme
+                .on_background_color
+                .with_opacity(180),
+        );
+    markdown.code_block = markdown
+        .code_block
+        .color(theme.on_surface_color);
+    markdown.inline_code = markdown
+        .inline_code
+        .color(theme.on_surface_color)
+        .background_color(theme.surface_color);
+    markdown.link = markdown
+        .link
+        .color(theme.primary_color);
+    markdown.link_hover_color = theme
+        .primary_color
+        .lighten(0.2);
+    markdown.code_background = theme.surface_color;
+    markdown.quote_background = theme.surface_color;
+    markdown.rule_color = theme
+        .on_background_color
+        .with_opacity(72);
+    markdown.table_header_background = theme.surface_color;
+    markdown.table_cell_background = theme.background_color;
+    markdown
+}
+
 #[widget(Stateless)]
 #[derive(Clone)]
 pub struct BlogDetailPage {
@@ -111,6 +157,7 @@ impl BlogDetailPage {
 
 impl StatelessWidget for BlogDetailPage {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::of(ctx);
         let store = ctx.watch::<BlogStore>();
         let state = store
             .details
@@ -123,14 +170,16 @@ impl StatelessWidget for BlogDetailPage {
         let navigator = NavigatorController::<AppRouter>::of(ctx);
         let (content, metadata) = match state {
             LoadState::Idle | LoadState::Loading => {
-                (crate::screen::blog::status_text("Loading blog…", Color::BLACK), None)
+                (crate::screen::blog::status_text("Loading blog…", theme.on_background_color), None)
             }
             LoadState::Error(error) => (crate::screen::blog::status_text(&error, Color::RED), None),
             LoadState::Ready(detail) => {
                 // info!("Markdown: {}", detail.markdown);
-                let metadata = metadata_sidebar(&detail);
+                let metadata = metadata_sidebar(&detail, &theme);
+                let markdown_theme = themed_markdown(&theme);
                 let content = MarkdownViewer::new()
                     .markdown(detail.markdown)
+                    .theme(markdown_theme)
                     .scrollable(false)
                     .boxed();
                 (content, Some(metadata))
@@ -188,7 +237,7 @@ impl StatelessWidget for BlogDetailPage {
         };
 
         Container::new()
-            .color(Color::WHITE)
+            .color(theme.background_color)
             .child(
                 Scrollable::new()
                     .axis(ScrollAxis::Vertical)
@@ -219,6 +268,35 @@ mod tests {
     fn detail_layout_is_horizontal_on_desktop_and_vertical_on_mobile() {
         assert_eq!(detail_layout(false), DetailLayout::Horizontal);
         assert_eq!(detail_layout(true), DetailLayout::Vertical);
+    }
+
+    #[test]
+    fn markdown_theme_uses_website_semantic_colors() {
+        let theme = ThemeData::dark();
+        let markdown = themed_markdown(&theme);
+
+        assert!(markdown.body.color == theme.on_background_color);
+        assert!(
+            markdown
+                .headings
+                .iter()
+                .all(|style| style.color == theme.on_background_color)
+        );
+        assert_eq!(markdown.code_background, theme.surface_color);
+        assert_eq!(markdown.table_cell_background, theme.background_color);
+        assert_eq!(
+            markdown
+                .inline_code
+                .color,
+            Some(theme.on_surface_color)
+        );
+        assert_eq!(
+            markdown
+                .inline_code
+                .background_color,
+            Some(theme.surface_color)
+        );
+        assert_eq!(markdown.link.color, Some(theme.primary_color));
     }
 
     #[test]

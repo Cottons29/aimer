@@ -19,6 +19,7 @@ use crate::scrollable::scroll_behavior::ScrollBehavior;
 pub(crate) const SCROLL_NOTIFY_EPSILON: f32 = 0.01;
 
 /// Ring buffer of recent velocity samples for trackpad smoothing.
+#[derive(Clone)]
 pub(crate) struct VelocityHistory {
     samples: Vec<(f32, f32)>,
     count: usize,
@@ -176,8 +177,8 @@ pub struct ScrollState {
 }
 
 impl ScrollState {
-    /// Adopt the live scroll position (and momentum) from a previous
-    /// controller.
+    /// Adopt the live interaction and animation state from a previous scroll
+    /// engine.
     ///
     /// Used during reconciliation: when a parent rebuild produces a fresh
     /// scrollable, the newly built controller copies the offset from the old
@@ -194,9 +195,87 @@ impl ScrollState {
                 prev.pointer_velocity
                     .get(),
             );
+        self.last_pointer_pos
+            .set(
+                prev.last_pointer_pos
+                    .get(),
+            );
+        self.drag_mode
+            .set(prev.drag_mode.get());
+        self.last_event_time
+            .set(
+                prev.last_event_time
+                    .get(),
+            );
+        self.last_frame_time
+            .set(
+                prev.last_frame_time
+                    .get(),
+            );
+        self.cursor_pos.set(
+            prev.cursor_pos
+                .get(),
+        );
+        *self
+            .velocity_history
+            .borrow_mut() = prev
+            .velocity_history
+            .borrow()
+            .clone();
+        self.fling_start_time
+            .set(
+                prev.fling_start_time
+                    .get(),
+            );
+        self.fling_start_offset
+            .set(
+                prev.fling_start_offset
+                    .get(),
+            );
+        self.fling_target_offset
+            .set(
+                prev.fling_target_offset
+                    .get(),
+            );
+        self.fling_duration
+            .set(
+                prev.fling_duration
+                    .get(),
+            );
+        self.anim_curve.set(
+            prev.anim_curve
+                .get(),
+        );
+        self.active_touch_id
+            .set(
+                prev.active_touch_id
+                    .get(),
+            );
         self.spring_velocity
             .set(
                 prev.spring_velocity
+                    .get(),
+            );
+        self.momentum_start_time
+            .set(
+                prev.momentum_start_time
+                    .get(),
+            );
+        self.vel_accum
+            .set(prev.vel_accum.get());
+        self.vel_sample_time
+            .set(
+                prev.vel_sample_time
+                    .get(),
+            );
+        self.is_scrolling
+            .set(
+                prev.is_scrolling
+                    .get(),
+            );
+        self.last_reported_offset
+            .set(
+                prev.last_reported_offset
                     .get(),
             );
     }
@@ -344,6 +423,16 @@ impl ScrollController {
     /// Attach (or re-attach, on rebuild) the live scroll engine. Applies any
     /// position requested before attachment.
     pub(crate) fn attach(&self, state: Rc<ScrollState>) {
+        let previous = self
+            .inner
+            .state
+            .borrow()
+            .clone();
+        if let Some(previous) = previous
+            && !Rc::ptr_eq(&previous, &state)
+        {
+            state.adopt_scroll_state(&previous);
+        }
         if let Some(pos) = self
             .inner
             .pending
@@ -1503,6 +1592,126 @@ mod tests {
                 .y,
             -200.0
         );
+    }
+
+    #[test]
+    fn controller_reattach_preserves_in_flight_scroll_state() {
+        let ctrl = ScrollController::new();
+        let first = Rc::new(ctrl_with_offset(Vec2d { x: 0.0, y: -120.0 }));
+        let fling_started = AnimInstant::now();
+        first
+            .pointer_velocity
+            .set(Vec2d { x: 0.0, y: -12.0 });
+        first
+            .fling_start_time
+            .set(Some(fling_started));
+        first
+            .fling_start_offset
+            .set(Vec2d { x: 0.0, y: -120.0 });
+        first
+            .fling_target_offset
+            .set(Vec2d { x: 0.0, y: -360.0 });
+        first
+            .fling_duration
+            .set(1.25);
+        first
+            .is_scrolling
+            .set(true);
+        ctrl.attach(first);
+
+        let rebuilt = Rc::new(ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 }));
+        ctrl.attach(rebuilt.clone());
+
+        assert_eq!(
+            rebuilt
+                .scroll_offset
+                .get()
+                .y,
+            -120.0
+        );
+        assert_eq!(
+            rebuilt
+                .pointer_velocity
+                .get()
+                .y,
+            -12.0
+        );
+        assert!(
+            rebuilt
+                .fling_start_time
+                .get()
+                .is_some()
+        );
+        assert_eq!(
+            rebuilt
+                .fling_start_offset
+                .get()
+                .y,
+            -120.0
+        );
+        assert_eq!(
+            rebuilt
+                .fling_target_offset
+                .get()
+                .y,
+            -360.0
+        );
+        assert_eq!(
+            rebuilt
+                .fling_duration
+                .get(),
+            1.25
+        );
+        assert!(
+            rebuilt
+                .is_scrolling
+                .get()
+        );
+
+        let (_, needs_redraw) = rebuilt.update_momentum(
+            rebuilt
+                .scroll_offset
+                .get(),
+        );
+        assert!(needs_redraw, "the rebuilt engine continues the remaining fling");
+    }
+
+    #[test]
+    fn controller_reattach_preserves_active_drag() {
+        let ctrl = ScrollController::new();
+        let first = Rc::new(ctrl_with_offset(Vec2d { x: 0.0, y: -120.0 }));
+        first
+            .drag_mode
+            .set(DragMode::Content);
+        first
+            .active_touch_id
+            .set(Some(7));
+        first
+            .last_pointer_pos
+            .set(Some(Vec2d { x: 20.0, y: 80.0 }));
+        ctrl.attach(first);
+
+        let rebuilt = Rc::new(ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 }));
+        ctrl.attach(rebuilt.clone());
+
+        assert_eq!(
+            rebuilt
+                .drag_mode
+                .get(),
+            DragMode::Content
+        );
+        assert_eq!(
+            rebuilt
+                .active_touch_id
+                .get(),
+            Some(7)
+        );
+        let last_pointer_pos = rebuilt
+            .last_pointer_pos
+            .get()
+            .expect("active drag keeps its last pointer position");
+        assert_eq!(last_pointer_pos.x, 20.0);
+        assert_eq!(last_pointer_pos.y, 80.0);
     }
 
     // Coalesced-events contract (the web "scroll too fast" bug): winit delivers

@@ -2,6 +2,7 @@ mod raw_widget;
 pub mod router;
 mod stateful_widget;
 mod stateless_widget;
+pub(crate) mod theme;
 
 use proc_macro2::TokenStream;
 

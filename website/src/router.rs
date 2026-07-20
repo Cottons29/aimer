@@ -1,6 +1,6 @@
 use aimer::animation::{AnimatedSwitcher, Curve};
 use aimer::router::{Router, Shell};
-use aimer::style::{TextAlign, TextStyle};
+use aimer::style::{TextAlign, TextStyle, Theme, ThemeData};
 use aimer::*;
 use std::panic::Location;
 use std::time::Duration;
@@ -103,8 +103,9 @@ impl Router for AppRouter {
             AppRouter::Learn => Shell::boxing(AppShell { active_tab }, move |ctx| {
                 transitioned_page(transition_key, LearnPage::boxing(ctx)).boxed()
             }),
-            AppRouter::NotFound => Shell::boxing(AppShell { active_tab }, move |_| {
-                transitioned_page(transition_key, not_found_page()).boxed()
+            AppRouter::NotFound => Shell::boxing(AppShell { active_tab }, move |ctx| {
+                let theme = ThemeData::of(ctx);
+                transitioned_page(transition_key, not_found_page(*theme)).boxed()
             }),
         }
     }
@@ -112,9 +113,9 @@ impl Router for AppRouter {
 
 /// A simple "page not found" placeholder rendered inside the shell content
 /// area.
-fn not_found_page() -> impl Widget {
+fn not_found_page(theme: ThemeData) -> impl Widget {
     Container::new()
-        .color(Color::WHITE)
+        .color(theme.background_color)
         .child(
             Column::new()
                 .horizontal_alignment(BoxAlignment::Center)
@@ -122,7 +123,11 @@ fn not_found_page() -> impl Widget {
                 .children(vec![
                     Text::new("Page not found")
                         .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new().font_size(44)),
+                        .text_style(
+                            TextStyle::new()
+                                .font_size(44)
+                                .color(theme.on_background_color),
+                        ),
                 ]),
         )
 }
@@ -154,14 +159,15 @@ mod tests {
     #[test]
     fn route_transition_has_stable_switcher_identity() {
         assert_eq!(
-            Widget::key(&transitioned_page("home", not_found_page())),
+            Widget::key(&transitioned_page("home", not_found_page(ThemeData::light()))),
             Some(Key::Value(ROUTE_SWITCHER_KEY.to_owned()))
         );
     }
 
     #[test]
     fn route_transition_erases_page_type_for_state_reuse() {
-        let _: AnimatedSwitcher<Box<dyn Widget>> = transitioned_page("home", not_found_page());
+        let _: AnimatedSwitcher<Box<dyn Widget>> =
+            transitioned_page("home", not_found_page(ThemeData::light()));
     }
 
     #[test]

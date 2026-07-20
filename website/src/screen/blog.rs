@@ -5,7 +5,7 @@ use aimer::console::error;
 use aimer::router::NavigatorController;
 use aimer::style::{
     FontStyle, FontWeight, TextDecoration, TextDecorationLine, TextDecorationStyle, TextOverflow,
-    TextStyle,
+    TextStyle, Theme, ThemeData,
 };
 use aimer::{BuildContext, Widget, widget, *};
 
@@ -20,28 +20,37 @@ impl BlogListPage {
 }
 impl StatelessWidget for BlogListPage {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::of(ctx);
         let store = ctx.watch::<BlogStore>();
         if matches!(store.list, LoadState::Idle) {
             request_blog_list(ctx, ProviderHandle::<BlogStore>::of(ctx));
         }
 
         let content = match &store.list {
-            LoadState::Idle | LoadState::Loading => status_text("Loading blogs…", Color::GRAY),
+            LoadState::Idle | LoadState::Loading => status_text(
+                "Loading blogs…",
+                theme
+                    .on_background_color
+                    .with_opacity(150),
+            ),
             LoadState::Error(error) => {
                 error!("{}", error);
-                status_text(&error, Color::RED)
+                status_text(error, Color::RED)
             }
-            LoadState::Ready(blogs) if blogs.is_empty() => {
-                status_text("No blogs have been published yet.", Color::GRAY)
-            }
+            LoadState::Ready(blogs) if blogs.is_empty() => status_text(
+                "No blogs have been published yet.",
+                theme
+                    .on_background_color
+                    .with_opacity(150),
+            ),
             LoadState::Ready(blogs) => {
                 let navigator = NavigatorController::<AppRouter>::of(ctx);
-                blog_archive(blogs.clone(), navigator, is_mobile(ctx))
+                blog_archive(blogs.clone(), navigator, is_mobile(ctx), &theme)
             }
         };
 
         Container::new()
-            .color(Color::WHITE)
+            .color(theme.background_color)
             .child(
                 Scrollable::new()
                     .axis(ScrollAxis::Vertical)
@@ -59,13 +68,14 @@ impl StatelessWidget for BlogListPage {
                                             // .text_align(TextAlign::MidCenter)
                                             .text_style(TextStyle::new()
                                                 .text_overflow(TextOverflow::Wrap)
-                                                .font_size(20)).boxed(),
+                                                .font_size(20)
+                                                .color(theme.on_background_color)).boxed(),
                                         SizedBox::new().height(24).boxed(),
 
                                         Text::new("“Updates, notes, and guides from the Aimer project„")
                                             .text_style(TextStyle::new()
                                                 .font_size(20)
-                                                .color(Color::GRAY.with_opacity(180))
+                                                .color(theme.on_background_color.with_opacity(180))
                                                 .font_weight(FontWeight::Normal)
                                                 .text_decoration(TextDecoration::new()
                                                     .line(TextDecorationLine::ITALIC | TextDecorationLine::UNDERLINE)
@@ -86,8 +96,9 @@ fn blog_archive(
     blogs: Vec<BlogSummary>,
     navigator: NavigatorController<AppRouter>,
     mobile: bool,
+    theme: &ThemeData,
 ) -> Box<dyn Widget> {
-    let (heading_style, _) = archive_text_styles();
+    let (heading_style, _) = archive_text_styles(theme);
     let mut current_year = None;
     let mut children = Vec::new();
 
@@ -113,7 +124,7 @@ fn blog_archive(
             );
             current_year = Some(year.to_owned());
         }
-        children.push(blog_row(blog, navigator.clone(), mobile));
+        children.push(blog_row(blog, navigator.clone(), mobile, theme));
         children.push(
             SizedBox::new()
                 .height(if mobile { 28 } else { 36 })
@@ -131,10 +142,11 @@ fn blog_row(
     blog: BlogSummary,
     navigator: NavigatorController<AppRouter>,
     mobile: bool,
+    theme: &ThemeData,
 ) -> AnyWidget {
     let route_id = blog.id.clone();
-    let (style, hover_style) = blog_link_styles();
-    let (_, date_style) = archive_text_styles();
+    let (style, hover_style) = blog_link_styles(theme);
+    let (_, date_style) = archive_text_styles(theme);
     let date = Text::new(display_archive_date(&blog.upload_time))
         .text_style(date_style)
         .boxed();
@@ -219,25 +231,33 @@ fn display_archive_date(upload_time: &str) -> String {
     format!("{month} {day}")
 }
 
-fn archive_text_styles() -> (TextStyle, TextStyle) {
+fn archive_text_styles(theme: &ThemeData) -> (TextStyle, TextStyle) {
     let heading_style = TextStyle::new()
         .font_size(54)
         .font_weight(FontWeight::Bolder)
-        .color(Color::GRAY)
+        .color(
+            theme
+                .on_background_color
+                .with_opacity(150),
+        )
         .text_overflow(TextOverflow::Wrap);
     let date_style = TextStyle::new()
         .font_size(24)
         .font_weight(FontWeight::Bold)
-        .color(Color::GRAY)
+        .color(
+            theme
+                .on_background_color
+                .with_opacity(150),
+        )
         .text_overflow(TextOverflow::Wrap);
     (heading_style, date_style)
 }
 
-fn blog_link_styles() -> (TextStyle, TextStyle) {
+fn blog_link_styles(theme: &ThemeData) -> (TextStyle, TextStyle) {
     let style = TextStyle::new()
         .font_size(24)
         .font_weight(FontWeight::Bold)
-        .color(Color::BLACK)
+        .color(theme.on_background_color)
         .text_overflow(TextOverflow::Wrap);
     let hover_style = style
         .font_style(FontStyle::Italic)
@@ -286,13 +306,24 @@ mod tests {
     }
 
     #[test]
-    fn archive_text_is_gray_and_blog_links_are_black() {
-        let (heading_style, date_style) = archive_text_styles();
-        let (link_style, _) = blog_link_styles();
+    fn archive_text_uses_muted_theme_color_and_links_use_theme_foreground() {
+        let theme = ThemeData::dark();
+        let (heading_style, date_style) = archive_text_styles(&theme);
+        let (link_style, _) = blog_link_styles(&theme);
 
-        assert!(heading_style.color == Color::GRAY);
-        assert!(date_style.color == Color::GRAY);
-        assert!(link_style.color == Color::BLACK);
+        assert!(
+            heading_style.color
+                == theme
+                    .on_background_color
+                    .with_opacity(150)
+        );
+        assert!(
+            date_style.color
+                == theme
+                    .on_background_color
+                    .with_opacity(150)
+        );
+        assert!(link_style.color == theme.on_background_color);
     }
 
     #[test]

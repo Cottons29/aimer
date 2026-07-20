@@ -59,7 +59,7 @@ impl ThemedPanel {
 
 impl StatelessWidget for ThemedPanel {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
-        let theme = Theme::of(ctx);
+        let theme = ThemeData::of(ctx);
         let updater = self.updater.clone();
 
         Container::new()

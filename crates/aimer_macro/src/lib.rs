@@ -8,6 +8,7 @@ use syn::{Item, ItemFn, parse_macro_input};
 
 use crate::auto_trait_impl::auto_impl;
 use crate::codegen::router::RouterCodegen;
+use crate::codegen::theme::{generate_theme_impl, style_path};
 use crate::codegen::{RawWidgetCodegen, StatefulWidgetCodegen, StatelessWidgetCodegen};
 use crate::unique_key::UniqueKeyInput;
 
@@ -223,6 +224,16 @@ pub fn reconcilable_derive(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Drawable)]
 pub fn drawable_element_derive(input: TokenStream) -> TokenStream {
     auto_impl("aimer_widget::Drawable", input)
+}
+
+/// Derives field-by-field interpolation and theme lookup behavior for a named struct.
+#[proc_macro_derive(Theme)]
+pub fn theme_derive(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as syn::DeriveInput);
+    let output = style_path().and_then(|style_path| generate_theme_impl(input, style_path));
+    output
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 #[proc_macro]

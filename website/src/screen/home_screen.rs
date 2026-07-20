@@ -7,7 +7,8 @@ use crate::{CURRENT_INDEX, TEST_STATE_UPDATED};
 use aimer::router::{Navigator, NavigatorController, NavigatorInstance};
 use aimer::style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing, Spacing,
-    TextDecoration, TextDecorationLine, TextDecorationStyle, TextOverflow, TextStyle,
+    TextDecoration, TextDecorationLine, TextDecorationStyle, TextOverflow, TextStyle, Theme,
+    ThemeData,
 };
 use aimer::{
     BuildContext, Container, Dimension, Positioned, ScrollController, State, StateUpdater,
@@ -62,6 +63,7 @@ impl State<HomePage> for HomePageState {
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::of(ctx);
         #[cfg(test)]
         {
             let is_navigated = TEST_STATE_UPDATED.load(Ordering::Relaxed);
@@ -74,7 +76,7 @@ impl State<HomePage> for HomePageState {
             }
         }
         Container::new()
-            .color(Color::WHITE)
+            .color(theme.background_color)
             .child(
                 Scrollable::new()
                     .key(key!())
@@ -95,11 +97,13 @@ impl State<HomePage> for HomePageState {
 }
 
 /// The hero section: a large underlined `Aimer` title, a tagline paragraph,
-/// a `Get Started` button and a version label on a white background.
+/// a `Get Started` button and a version label on the themed background.
 fn hero_section(ctx: &BuildContext) -> AnyWidget {
+    let theme = ThemeData::of(ctx);
+
     Container::new()
         .padding(app_padding(ctx))
-        .color(Color::WHITE)
+        .color(theme.background_color)
         .child(Column::new()
             .horizontal_alignment(BoxAlignment::Start)
             .children([
@@ -107,7 +111,7 @@ fn hero_section(ctx: &BuildContext) -> AnyWidget {
                 Text::new("Aimer")
                     .text_style(TextStyle::new()
                         .font_size(72)
-                        .color(Color::BLACK)
+                        .color(theme.on_background_color)
                         .font_weight(FontWeight::Bolder)
                         .text_decoration(TextDecoration::Underline))
                     .boxed(),
@@ -115,7 +119,7 @@ fn hero_section(ctx: &BuildContext) -> AnyWidget {
                 Text::new("“Aimer, c’est choisir avec le cœur „")
                     .text_style(TextStyle::new()
                         .font_size(20)
-                        .color(Color::GRAY.with_opacity(120))
+                        .color(theme.on_background_color.with_opacity(120))
                         .font_weight(FontWeight::Normal)
                         .text_decoration(TextDecoration::new()
                             .line(TextDecorationLine::ITALIC)
@@ -125,7 +129,7 @@ fn hero_section(ctx: &BuildContext) -> AnyWidget {
                 Text::new("A cross-platform UI framework built with Rust, inspired by Flutter's widget model. Build native user interfaces from a single codebase using a declarative, composable widget tree.")
                     .text_style(TextStyle::new()
                         .font_size(22)
-                        .color(Color::BLACK.with_opacity(200))
+                        .color(theme.on_background_color.with_opacity(200))
                         .text_overflow(TextOverflow::Wrap))
                     .boxed(),
                 SizedBox::new().height(40).boxed(),
@@ -141,7 +145,7 @@ fn hero_section(ctx: &BuildContext) -> AnyWidget {
                     .child(Text::new("Version 0.0.1")
                         .text_style(TextStyle::new()
                             .font_size(14)
-                            .color(Color::GRAY)))
+                            .color(theme.on_background_color.with_opacity(150))))
                     .boxed(),
             ])
         )

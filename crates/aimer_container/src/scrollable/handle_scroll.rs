@@ -11,6 +11,14 @@ use crate::scrollable::constants::*;
 
 const DRAG_AXIS_DOMINANCE_RATIO: f32 = 1.2;
 
+fn drag_start_threshold() -> f32 {
+    DRAG_START_THRESHOLD_DP
+}
+
+fn owns_pointer(active_pointer: Option<u64>, pointer: u64) -> bool {
+    active_pointer == Some(pointer)
+}
+
 fn pending_content_drag_wins(
     axis: ScrollAxis,
     start: Vec2d,
@@ -101,11 +109,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             self.ctrl.axis,
                             start,
                             *current,
-                            DRAG_START_THRESHOLD_DP
-                                * self
-                                    .ctrl
-                                    .last_scale
-                                    .get(),
+                            drag_start_threshold(),
                         )
                     })
             }
@@ -114,6 +118,31 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         let mut child_consumed = false;
 
         if matches!(event, ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel) {
+            if let ElementEvent::PointerUp(_, _, pointer) = event
+                && self
+                    .ctrl
+                    .active_touch_id
+                    .get()
+                    .is_some_and(|active| active != *pointer)
+            {
+                return false;
+            }
+            let owned_pointer = match event {
+                ElementEvent::PointerUp(_, _, pointer) => owns_pointer(
+                    self.ctrl
+                        .active_touch_id
+                        .get(),
+                    *pointer,
+                ),
+                ElementEvent::Cancel => {
+                    self.ctrl
+                        .active_touch_id
+                        .get()
+                        .is_some()
+                        || mode_before != DragMode::None
+                }
+                _ => false,
+            };
             if matches!(mode_before, DragMode::VerticalScrollbar | DragMode::HorizontalScrollbar) {
                 match event {
                     ElementEvent::PointerUp(_, _, pointer) => {
@@ -202,7 +231,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     .set(None),
             }
             aimer_events::window::request_animation_frame();
-            return false;
+            return owned_pointer;
         }
 
         if pending_content_drag_won && let ElementEvent::PointerMove(_, _, pointer) = event {
@@ -378,7 +407,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     } else {
                         // info!("[scroll] DOWN REJECTED — secondary finger prev_id={} new_id={}",
                         // prev_id, id);
-                        return false;
+                        return true;
                     }
                 }
                 self.ctrl
@@ -502,7 +531,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 self.ctrl
                     .last_pointer_pos
                     .set(Some(*p));
-                false
+                true
             }
             ElementEvent::PointerMove(p, _, id) => {
                 // Ignore moves from non-primary fingers.
@@ -881,7 +910,9 @@ impl<E: Element> LayoutElement for RawScrollableContainer<E> {
 
 #[cfg(test)]
 mod tests {
-    use super::{pending_content_drag_wins, pointer_drag_delta};
+    use super::{
+        drag_start_threshold, owns_pointer, pending_content_drag_wins, pointer_drag_delta,
+    };
     use crate::ScrollAxis;
     use aimer_attribute::Vec2d;
 
@@ -893,6 +924,18 @@ mod tests {
             Vec2d { x: 0.0, y: 10.0 },
             10.0,
         ));
+    }
+
+    #[test]
+    fn drag_threshold_stays_in_logical_pixels_at_high_display_scale() {
+        assert_eq!(drag_start_threshold(), 10.0);
+    }
+
+    #[test]
+    fn scrollable_only_owns_its_active_pointer() {
+        assert!(owns_pointer(Some(7), 7));
+        assert!(!owns_pointer(Some(7), 8));
+        assert!(!owns_pointer(None, 7));
     }
 
     #[test]

@@ -3,7 +3,9 @@ use std::time::Duration;
 // use std::time::Duration;
 
 use aimer::animation::{AnimatedSwitcher, Curve};
-use aimer::style::{FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle};
+use aimer::style::{
+    FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle, Theme, ThemeData,
+};
 use aimer::*;
 
 use crate::utils::{app_padding, is_mobile, mobile_title};
@@ -62,9 +64,10 @@ impl State<SameLookingSection> for SameLookingSectionState {
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::of(ctx);
         // eprintln!("Current index: {}", self.current_index);
         Container::new()
-            .color(Color::WHITE)
+            .color(theme.background_color)
             .padding(app_padding(ctx))
             .child(
                 Column::new()
@@ -76,7 +79,7 @@ impl State<SameLookingSection> for SameLookingSectionState {
                                 Text::new("Consistence Looking").text_style(
                                     TextStyle::new()
                                         .font_size(mobile_title(ctx))
-                                        .color(Color::BLACK)
+                                        .color(theme.on_background_color)
                                         .font_weight(FontWeight::Bolder)
                                         .text_decoration(TextDecoration::Underline),
                                 ),
@@ -96,7 +99,7 @@ impl State<SameLookingSection> for SameLookingSectionState {
                             .horizontal_alignment(BoxAlignment::Center)
                             .vertical_alignment(BoxAlignment::Center)
                             .gaps(LayoutSpacing::horizontal(Spacing::Px(8)))
-                            .children(self.build_platform_button_list(ctx))
+                            .children(self.build_platform_button_list(&theme))
                             .boxed(),
                         SizedBox::new()
                             .height(40)
@@ -107,7 +110,7 @@ impl State<SameLookingSection> for SameLookingSectionState {
 }
 
 impl SameLookingSectionState {
-    fn build_platform_button_list(&self, _ctx: &BuildContext) -> Vec<Box<dyn Widget>> {
+    fn build_platform_button_list(&self, theme: &ThemeData) -> Vec<Box<dyn Widget>> {
         let selected = self.current_index;
         PLATFORMS
             .iter()
@@ -124,7 +127,11 @@ impl SameLookingSectionState {
                         .style(
                             TextStyle::new()
                                 .font_size(20)
-                                .color(if is_selected { Color::BLUE } else { Color::BLACK })
+                                .color(if is_selected {
+                                    theme.primary_color
+                                } else {
+                                    theme.on_background_color
+                                })
                                 .font_weight(font_weight)
                                 .text_decoration(if is_selected {
                                     TextDecoration::Underline
@@ -136,9 +143,11 @@ impl SameLookingSectionState {
                             TextStyle::new()
                                 .font_size(20)
                                 .color(if is_selected {
-                                    Color::BLUE
+                                    theme.primary_color
                                 } else {
-                                    Color::BLUE.lighten(0.6)
+                                    theme
+                                        .primary_color
+                                        .lighten(0.2)
                                 })
                                 .font_weight(font_weight)
                                 .text_decoration(TextDecoration::Underline),

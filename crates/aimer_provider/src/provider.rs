@@ -262,6 +262,15 @@ pub trait ProviderContext {
     /// Panics when no matching provider is in the current widget scope.
     fn read<T: 'static>(&self) -> Snapshot<T>;
 
+    /// Returns a copy of the nearest provided `T` without subscribing.
+    ///
+    /// # Panics
+    ///
+    /// Panics when no matching provider is in the current widget scope.
+    fn copied<T: Copy + 'static>(&self) -> T {
+        *self.read::<T>()
+    }
+
     /// Returns and subscribes to the nearest provided `T`, if one exists.
     ///
     /// # Panics
@@ -1039,6 +1048,19 @@ mod tests {
             let snapshot: Snapshot<NonClone> = ProviderContext::read(context);
 
             assert_eq!(snapshot.value, 7);
+        });
+    }
+
+    #[test]
+    fn copied_returns_a_copy_without_subscribing() {
+        let context = context();
+        let handle = ProviderHandle::new(7_u32);
+
+        context.with_state(Provided(handle.clone()), |context| {
+            let value = ProviderContext::copied::<u32>(context);
+
+            assert_eq!(value, 7);
+            assert_eq!(handle.subscriber_count(), 0);
         });
     }
 

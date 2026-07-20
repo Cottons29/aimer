@@ -1,7 +1,10 @@
 use std::rc::Rc;
 
-use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, State, StateUpdater, StatefulElement, StatefulWidget, Widget};
+use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
+use aimer_widget::{
+    Drawable, Element, EventElement, LayoutElement, Rebuildable, State, StateUpdater,
+    StatefulElement, StatefulWidget, VisitorElement, Widget,
+};
 
 use crate::Route;
 use crate::outlet::{OutletChildBuilder, OutletSlot};
@@ -49,17 +52,120 @@ impl Shell {
 
 impl Widget for Shell {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        // Make the active child available to the descendant `Outlet`.
-        ctx.insert_state(OutletSlot::new(
+        let slot = OutletSlot::new(
             self.child_builder
                 .clone(),
-        ));
-        self.frame
-            .to_element(ctx)
+        );
+        let child = ctx.with_state(slot.clone(), |ctx| {
+            self.frame
+                .to_element(ctx)
+        });
+        Box::new(ShellElement { slot, child })
     }
 
     fn debug_name(&self) -> &'static str {
         "Shell"
+    }
+}
+
+struct ShellElement {
+    slot: OutletSlot,
+    child: Box<dyn Element>,
+}
+
+impl ShellElement {
+    fn scoped<R>(&self, ctx: &BuildContext, callback: impl FnOnce(&BuildContext) -> R) -> R {
+        ctx.with_state(self.slot.clone(), callback)
+    }
+}
+
+impl VisitorElement for ShellElement {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "ShellScope"
+    }
+}
+
+impl Drawable for ShellElement {
+    fn draw(&self, ctx: &BuildContext) {
+        self.scoped(ctx, |ctx| self.child.draw(ctx));
+    }
+}
+
+impl LayoutElement for ShellElement {
+    fn pos(&self) -> Option<Vec2d> {
+        self.child.pos()
+    }
+
+    fn size(&self) -> Option<Size> {
+        self.child.size()
+    }
+
+    fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.scoped(ctx, |ctx| {
+            self.child
+                .layout(ctx)
+        })
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.scoped(ctx, |ctx| {
+            self.child
+                .computed_size(ctx)
+        })
+    }
+
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.scoped(ctx, |ctx| {
+            self.child
+                .content_size(ctx)
+        })
+    }
+
+    fn layer(&self) -> u32 {
+        self.child.layer()
+    }
+
+    fn flex(&self) -> Option<f32> {
+        self.child.flex()
+    }
+
+    fn get_size_from_child(&self) -> Option<Size> {
+        self.child
+            .get_size_from_child()
+    }
+
+    fn invalidate_layout(&self) {
+        self.child
+            .invalidate_layout();
+    }
+
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.child
+            .pos_start_end()
+    }
+}
+
+impl EventElement for ShellElement {}
+
+impl Rebuildable for ShellElement {
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.scoped(ctx, |ctx| {
+            self.child
+                .rebuild_if_dirty(ctx)
+        });
+    }
+
+    fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
+        self.scoped(ctx, callback);
+    }
+
+    fn mark_needs_rebuild(&self) {
+        self.child
+            .mark_needs_rebuild();
     }
 }
 
@@ -289,7 +395,105 @@ impl<R: Route> Widget for StatefulShell<R> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
+    use aimer_widget::base::{BuildContext, ResolvedSize, WindowHandle};
+    use aimer_widget::{Drawable, EventElement, LayoutElement, Rebuildable, VisitorElement};
+
     use super::*;
+
+    struct DeferredOutletWidget {
+        child_built: Rc<Cell<bool>>,
+    }
+
+    impl Widget for DeferredOutletWidget {
+        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+            Box::new(DeferredOutletElement {
+                child_built: self
+                    .child_built
+                    .clone(),
+            })
+        }
+    }
+
+    struct DeferredOutletElement {
+        child_built: Rc<Cell<bool>>,
+    }
+
+    impl VisitorElement for DeferredOutletElement {
+        fn debug_name(&self) -> &'static str {
+            "DeferredOutletElement"
+        }
+    }
+
+    impl EventElement for DeferredOutletElement {}
+    impl LayoutElement for DeferredOutletElement {}
+    impl Drawable for DeferredOutletElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for DeferredOutletElement {
+        fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+            let _ = crate::Outlet.to_element(ctx);
+            self.child_built
+                .set(true);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn context() -> BuildContext<'static> {
+        use std::sync::OnceLock;
+
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        });
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        let _guard = runtime.enter();
+        BuildContext::new(
+            canvas,
+            ResolvedSize::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn outlet_slot_remains_scoped_during_a_delayed_descendant_rebuild() {
+        let child_built = Rc::new(Cell::new(false));
+        let shell = Shell::new(DeferredOutletWidget { child_built: child_built.clone() }, |_| {
+            Box::new(DeferredOutletWidget { child_built: Rc::new(Cell::new(false)) })
+        });
+        let element = shell.to_element(&context());
+
+        element.rebuild_if_dirty(&context());
+
+        assert!(child_built.get());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn shell_scope_does_not_claim_parent_state_ownership() {
+        let shell =
+            Shell::new(DeferredOutletWidget { child_built: Rc::new(Cell::new(false)) }, |_| {
+                Box::new(DeferredOutletWidget { child_built: Rc::new(Cell::new(false)) })
+            });
+
+        assert!(
+            !shell
+                .to_element(&context())
+                .is_carry_state()
+        );
+    }
 
     #[test]
     fn branch_push_updates_active_top_and_depth() {
