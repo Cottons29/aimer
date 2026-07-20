@@ -27,6 +27,8 @@ pub mod render_ctx {
             }
 
             let gpu = GpuContext::initialize(window, size);
+            #[cfg(target_os = "macos")]
+            crate::ffi_utils::macos_surface::enable_transactional_surface_presentation(window);
             let canvas = CupidCanvas::new();
             let renderer = Renderer::new(&gpu.device, gpu.format);
 
