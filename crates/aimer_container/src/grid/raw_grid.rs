@@ -435,16 +435,9 @@ impl RawGrid {
             .iter()
             .map(|item| item.placement)
             .collect::<Vec<_>>();
-        let resolved_placements = resolve_placements(
-            &placements,
-            self.columns
-                .len(),
-            self.rows
-                .len(),
-        )?;
-        let mut rows = self
-            .rows
-            .clone();
+        let resolved_placements =
+            resolve_placements(&placements, self.columns.len(), self.rows.len())?;
+        let mut rows = self.rows.clone();
         rows.resize(resolved_placements.row_count, GridTrack::Auto);
 
         let intrinsic = self
@@ -464,11 +457,7 @@ impl RawGrid {
             })
             .collect::<Vec<_>>();
 
-        let mut column_minima = vec![
-            0.0_f32;
-            self.columns
-                .len()
-        ];
+        let mut column_minima = vec![0.0_f32; self.columns.len()];
         for (size, placement) in intrinsic
             .iter()
             .zip(&resolved_placements.items)
@@ -616,22 +605,19 @@ impl RawGrid {
             });
         let overflow = detect_overflow(child_size, cell_size, offset);
 
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
         ctx.canvas
             .translate(cell_pos);
         if self.overflow == GridOverflow::Clip {
             ctx.canvas
                 .set_clip(Vec2d::default(), cell_size);
         }
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
         ctx.canvas
             .translate(offset);
         item.child
             .draw(&child_ctx);
-        ctx.canvas
-            .restore();
+        ctx.canvas.restore();
         paint_overflow_indicator(
             ctx,
             cell_size,
@@ -643,8 +629,7 @@ impl RawGrid {
             ctx.canvas
                 .clear_clip();
         }
-        ctx.canvas
-            .restore();
+        ctx.canvas.restore();
     }
 }
 
@@ -668,10 +653,7 @@ impl Drawable for RawGrid {
 impl EventElement for RawGrid {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for item in &self.children {
-            visitor(
-                item.child
-                    .as_ref(),
-            );
+            visitor(item.child.as_ref());
         }
     }
 }
@@ -681,10 +663,7 @@ impl Rebuildable for RawGrid {}
 impl VisitorElement for RawGrid {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for item in &self.children {
-            visitor(
-                item.child
-                    .as_ref(),
-            );
+            visitor(item.child.as_ref());
         }
     }
 

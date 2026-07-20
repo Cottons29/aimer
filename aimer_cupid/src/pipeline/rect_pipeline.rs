@@ -240,9 +240,7 @@ impl RectPipeline {
             bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
         );
 
-        let instance_count = self
-            .instances
-            .len();
+        let instance_count = self.instances.len();
         let stride = std::mem::size_of::<RectInstance>();
         // Write this batch *after* any batches already flushed this frame so that
         // earlier draw calls keep reading their own data. Reusing offset 0 for

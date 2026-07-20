@@ -111,9 +111,7 @@ impl Drawable for RawStackElement {
         let content_size = self.content_size(ctx);
         let child_ctx = BuildContext {
             parent_size: content_size,
-            canvas: ctx
-                .canvas
-                .clone(),
+            canvas: ctx.canvas.clone(),
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             cursor_pos: ctx.cursor_pos,
@@ -124,9 +122,7 @@ impl Drawable for RawStackElement {
                 max_height: content_size.height,
             },
             visible_rect: ctx.visible_rect,
-            window: ctx
-                .window
-                .clone(),
+            window: ctx.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx
                 .async_handle

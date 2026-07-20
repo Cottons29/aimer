@@ -258,9 +258,7 @@ impl Widget for Svg {
                 .clone(),
             width: self.width,
             height: self.height,
-            styles: self
-                .styles
-                .clone(),
+            styles: self.styles.clone(),
             hover_styles: self
                 .hover_styles
                 .clone(),
@@ -502,14 +500,9 @@ impl SvgAsset {
 
 impl Widget for SvgAsset {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let loader = SvgLoader::new(SvgSource::Asset(
-            self.key
-                .clone(),
-        ));
+        let loader = SvgLoader::new(SvgSource::Asset(self.key.clone()));
         let background_loader = loader.clone();
-        let window = ctx
-            .window
-            .clone();
+        let window = ctx.window.clone();
 
         #[cfg(not(target_arch = "wasm32"))]
         ctx.async_handle
@@ -533,9 +526,7 @@ impl Widget for SvgAsset {
             phase: Cell::new(SvgAssetPhase::Loading),
             width: self.width,
             height: self.height,
-            styles: self
-                .styles
-                .clone(),
+            styles: self.styles.clone(),
             hover_styles: self
                 .hover_styles
                 .clone(),
@@ -585,26 +576,17 @@ struct RawSvgAsset {
 
 impl RawSvgAsset {
     fn refresh(&self, ctx: &BuildContext) {
-        if self
-            .phase
-            .get()
-            != SvgAssetPhase::Loading
-        {
+        if self.phase.get() != SvgAssetPhase::Loading {
             return;
         }
-        match self
-            .loader
-            .state()
-        {
+        match self.loader.state() {
             SvgLoadState::Loading => {}
             SvgLoadState::Ready(document) => {
                 let svg = Svg {
                     document,
                     width: self.width,
                     height: self.height,
-                    styles: self
-                        .styles
-                        .clone(),
+                    styles: self.styles.clone(),
                     hover_styles: self
                         .hover_styles
                         .clone(),
@@ -632,10 +614,7 @@ impl RawSvgAsset {
     }
 
     fn active_element(&self) -> Option<&dyn Element> {
-        match self
-            .phase
-            .get()
-        {
+        match self.phase.get() {
             SvgAssetPhase::Loading => self
                 .loading_element
                 .as_deref(),
@@ -786,9 +765,7 @@ impl RawSvg {
                 )
             })
             .collect::<Vec<_>>();
-        if let Some(hovered) = self
-            .hovered
-            .get()
+        if let Some(hovered) = self.hovered.get()
             && let Some(node) = self
                 .document
                 .scene()
@@ -944,15 +921,14 @@ impl Drawable for RawSvg {
         self.bounds
             .save(ctx.scale, x, y, size.width, size.height);
         let overrides = self.overrides();
-        ctx.canvas
-            .draw_svg(
-                self.document
-                    .scene()
-                    .clone(),
-                (0.0, 0.0).into(),
-                size,
-                overrides.into(),
-            );
+        ctx.canvas.draw_svg(
+            self.document
+                .scene()
+                .clone(),
+            (0.0, 0.0).into(),
+            size,
+            overrides.into(),
+        );
     }
 }
 
@@ -1024,9 +1000,7 @@ impl SvgInteraction {
     }
 
     pub(crate) fn pointer_up(&mut self, hit: Option<SvgNodeId>) -> Option<SvgNodeId> {
-        let pressed = self
-            .pressed
-            .take();
+        let pressed = self.pressed.take();
         if pressed == hit { pressed } else { None }
     }
 
@@ -1073,10 +1047,7 @@ pub(crate) fn overrides_for_rules(
                 .filter(|(selector, _)| selector.matches(node))
             {
                 matched = true;
-                if style
-                    .fill
-                    .is_some()
-                {
+                if style.fill.is_some() {
                     result.fill = style.fill;
                 }
                 if style
@@ -1120,11 +1091,7 @@ pub(crate) fn hit_test_scene(
         return None;
     }
     let scene_point = (
-        (x - bounds.x)
-            * scene
-                .viewport
-                .width
-            / bounds.width,
+        (x - bounds.x) * scene.viewport.width / bounds.width,
         (y - bounds.y)
             * scene
                 .viewport
@@ -1162,12 +1129,8 @@ pub(crate) fn hit_test_scene(
             return Some(SvgHit {
                 node_id: node.node_id,
                 metadata: SvgNodeMetadata {
-                    svg_id: node
-                        .svg_id
-                        .clone(),
-                    classes: node
-                        .classes
-                        .clone(),
+                    svg_id: node.svg_id.clone(),
+                    classes: node.classes.clone(),
                     element: node.element,
                 },
             });
@@ -1186,9 +1149,7 @@ fn hits_geometry(
     let fill_visible = match node_override.map(|value| value.fill) {
         Some(Some(None)) => false,
         Some(Some(Some(_))) => true,
-        Some(None) | None => node
-            .fill
-            .is_some(),
+        Some(None) | None => node.fill.is_some(),
     };
     let fill_rule = node
         .fill

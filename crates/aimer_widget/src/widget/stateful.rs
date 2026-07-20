@@ -122,15 +122,9 @@ impl<S> Clone for StateUpdater<S> {
                 .inner
                 .as_ref()
                 .map(|inner| StateUpdaterInner {
-                    tx: inner
-                        .tx
-                        .clone(),
-                    state: inner
-                        .state
-                        .clone(),
-                    dirty: inner
-                        .dirty
-                        .clone(),
+                    tx: inner.tx.clone(),
+                    state: inner.state.clone(),
+                    dirty: inner.dirty.clone(),
                 }),
         }
     }
@@ -149,16 +143,9 @@ impl<S: 'static> StateUpdater<S> {
         match self
             .inner
             .as_ref()
-            .map(|inner| {
-                inner
-                    .state
-                    .clone()
-            }) {
-            Some(state) => unsafe {
-                &*state
-                    .0
-                    .get()
-            },
+            .map(|inner| inner.state.clone())
+        {
+            Some(state) => unsafe { &*state.0.get() },
             None => {
                 let loc = Location::caller();
                 error!("Attempted to read state from an uninitialized StateUpdater");
@@ -233,10 +220,7 @@ impl<S: 'static> StateUpdater<S> {
     /// and only a single rebuild happens during the next `draw`.
     #[track_caller]
     pub fn set_state(&self, f: impl FnOnce(&mut S) + 'static) {
-        let inner = match self
-            .inner
-            .as_ref()
-        {
+        let inner = match self.inner.as_ref() {
             Some(inner) => inner,
             None => {
                 let loc = Location::caller();
@@ -266,10 +250,7 @@ impl<S: 'static> StateUpdater<S> {
     /// `rebuild_if_dirty`.
     #[track_caller]
     pub fn read<R>(&self, f: impl FnOnce(&S) -> R) -> R {
-        let inner = match self
-            .inner
-            .as_ref()
-        {
+        let inner = match self.inner.as_ref() {
             Some(inner) => inner,
             None => {
                 let loc = Location::caller();
@@ -279,12 +260,7 @@ impl<S: 'static> StateUpdater<S> {
             }
         };
         // Safety: single-threaded rendering pipeline — no concurrent mutation.
-        let state = unsafe {
-            &*inner
-                .state
-                .0
-                .get()
-        };
+        let state = unsafe { &*inner.state.0.get() };
         f(state)
     }
 
@@ -539,11 +515,7 @@ impl StatefulElement {
 
         {
             // Safety: single-threaded — we are the only accessor during construction.
-            let s = unsafe {
-                &mut *state_cell
-                    .0
-                    .get()
-            };
+            let s = unsafe { &mut *state_cell.0.get() };
             s.init_state(init_updater.clone());
         }
 
@@ -570,11 +542,7 @@ impl StatefulElement {
 
         let child = {
             // Safety: single-threaded — initial build during construction.
-            let s = unsafe {
-                &*state_cell
-                    .0
-                    .get()
-            };
+            let s = unsafe { &*state_cell.0.get() };
             ctx.with_build_consumer(build_consumer, |ctx| Widget::to_element(&s.build(ctx), ctx))
         };
 
@@ -595,11 +563,7 @@ impl StatefulElement {
                         .0
                         .get()
                 };
-                let new_state = unsafe {
-                    &*new_cell
-                        .0
-                        .get()
-                };
+                let new_state = unsafe { &*new_cell.0.get() };
                 old_state.adopt_config_from(new_state);
             }
         });
@@ -643,12 +607,7 @@ impl StatefulElement {
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         let _keyed_state_scope = KeyedStateScope::enter();
         register_keyed_state(self);
-        let existing_child = unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        };
+        let existing_child = unsafe { &*self.child.0.get() };
         register_keyed_subtree(existing_child.as_ref());
         if !self
             .dirty
@@ -657,12 +616,7 @@ impl StatefulElement {
         {
             // Self is clean — but a nested StatefulElement might be dirty.
             // Propagate rebuild through the existing child tree.
-            let child = unsafe {
-                &*self
-                    .child
-                    .0
-                    .get()
-            };
+            let child = unsafe { &*self.child.0.get() };
             Self::propagate_rebuild(child.as_ref(), ctx);
             return;
         }
@@ -708,12 +662,7 @@ impl StatefulElement {
         // Then let nested dirty StatefulElements in the existing subtree rebuild
         // in-place, now that the parent-provided context is populated.
         {
-            let child = unsafe {
-                &*self
-                    .child
-                    .0
-                    .get()
-            };
+            let child = unsafe { &*self.child.0.get() };
             Self::propagate_rebuild(child.as_ref(), ctx);
         }
 
@@ -721,12 +670,7 @@ impl StatefulElement {
         // freshly-built new tree before replacing. This preserves runtime state
         // (e.g. selected tab index, scroll position) across the rebuild.
         {
-            let old_child = unsafe {
-                &*self
-                    .child
-                    .0
-                    .get()
-            };
+            let old_child = unsafe { &*self.child.0.get() };
             carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
         }
 
@@ -734,10 +678,7 @@ impl StatefulElement {
         // Safety: single-threaded rendering pipeline; old_child is not used past this
         // point.
         unsafe {
-            *self
-                .child
-                .0
-                .get() = new_child;
+            *self.child.0.get() = new_child;
         }
 
         self.dirty
@@ -1021,10 +962,7 @@ impl StatefulElement {
         }
         // Inherit name so inspector and future reconciliation still match.
         self.debug_name
-            .set(
-                old.debug_name
-                    .get(),
-            );
+            .set(old.debug_name.get());
 
         // Adopt the OLD element's dirty flag so the *live* element
         *self
@@ -1140,22 +1078,14 @@ impl StatefulElement {
         };
         // Carry live state from nested StatefulElements into the new tree.
         {
-            let old_child = unsafe {
-                &*self
-                    .child
-                    .0
-                    .get()
-            };
+            let old_child = unsafe { &*self.child.0.get() };
             carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
         }
         // Install the newly-built child, replacing the old subtree.
         // Safety: single-threaded reconciliation; old child is not used past this
         // point.
         unsafe {
-            *self
-                .child
-                .0
-                .get() = new_child;
+            *self.child.0.get() = new_child;
         }
 
         // The adopted state has already been materialized with the current
@@ -1201,10 +1131,7 @@ fn lookup_keyed_state(key: &crate::key::Key, debug_name: &'static str) -> Option
 }
 
 fn register_keyed_state(element: &StatefulElement) {
-    let Some(key) = element
-        .key
-        .clone()
-    else {
+    let Some(key) = element.key.clone() else {
         return;
     };
     let rebuild_fn = unsafe {
@@ -1334,12 +1261,7 @@ impl Drawable for StatefulElement {
         }
         self.rebuild_if_dirty(ctx);
         // Safety: single-threaded rendering pipeline
-        let child = unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        };
+        let child = unsafe { &*self.child.0.get() };
         child.draw(ctx);
     }
 }
@@ -1347,12 +1269,7 @@ impl Drawable for StatefulElement {
 impl VisitorElement for StatefulElement {
     fn visit_children<'a>(&self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         // Safety: single-threaded rendering pipeline
-        let child = unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        };
+        let child = unsafe { &*self.child.0.get() };
         visitor(child.as_ref());
     }
 
@@ -1368,12 +1285,7 @@ impl VisitorElement for StatefulElement {
 
 impl EventElement for StatefulElement {
     fn on_event(&self, event: &ElementEvent) -> bool {
-        let child = unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        };
+        let child = unsafe { &*self.child.0.get() };
         crate::components::element::dispatch_event(
             child.as_ref(),
             match event {
@@ -1393,73 +1305,32 @@ impl EventElement for StatefulElement {
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         // Safety: single-threaded rendering pipeline
-        let child = unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        };
+        let child = unsafe { &*self.child.0.get() };
         visitor(child.as_ref());
     }
 }
 
 impl LayoutElement for StatefulElement {
     fn pos(&self) -> Option<Vec2d> {
-        unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        }
-        .pos()
+        unsafe { &*self.child.0.get() }.pos()
     }
 
     fn size(&self) -> Option<Size> {
-        unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        }
-        .size()
+        unsafe { &*self.child.0.get() }.size()
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        }
-        .computed_size(ctx)
+        unsafe { &*self.child.0.get() }.computed_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        }
-        .content_size(ctx)
+        unsafe { &*self.child.0.get() }.content_size(ctx)
     }
     fn get_size_from_child(&self) -> Option<Size> {
-        unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        }
-        .get_size_from_child()
+        unsafe { &*self.child.0.get() }.get_size_from_child()
     }
     fn invalidate_layout(&self) {
-        unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        }
-        .invalidate_layout();
+        unsafe { &*self.child.0.get() }.invalidate_layout();
     }
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         if self
@@ -1467,17 +1338,9 @@ impl LayoutElement for StatefulElement {
             .get()
             .is_some()
         {
-            return self
-                .bounds
-                .get();
+            return self.bounds.get();
         }
-        unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        }
-        .pos_start_end()
+        unsafe { &*self.child.0.get() }.pos_start_end()
     }
 }
 
@@ -1492,12 +1355,7 @@ impl Rebuildable for StatefulElement {
 
     fn mark_needs_rebuild(&self) {
         // Safety: single-threaded rendering pipeline.
-        let child = unsafe {
-            &*self
-                .child
-                .0
-                .get()
-        };
+        let child = unsafe { &*self.child.0.get() };
         if !child.is_carry_state() {
             self.dirty
                 .borrow()

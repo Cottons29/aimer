@@ -184,8 +184,7 @@ impl LayoutElement for RawAspectRatio {
     }
 
     fn layer(&self) -> u32 {
-        self.child
-            .layer()
+        self.child.layer()
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
@@ -196,10 +195,7 @@ impl LayoutElement for RawAspectRatio {
 
 impl VisitorElement for RawAspectRatio {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {

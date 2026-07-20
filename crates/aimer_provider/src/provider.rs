@@ -30,10 +30,7 @@ pub struct Snapshot<T>(Rc<T>);
 
 impl<T> Clone for Snapshot<T> {
     fn clone(&self) -> Self {
-        Self(
-            self.0
-                .clone(),
-        )
+        Self(self.0.clone())
     }
 }
 
@@ -41,8 +38,7 @@ impl<T> Deref for Snapshot<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.0
-            .as_ref()
+        self.0.as_ref()
     }
 }
 
@@ -54,10 +50,7 @@ pub struct ProviderHandle<T>(Rc<ProviderStore<T>>);
 
 impl<T> Clone for ProviderHandle<T> {
     fn clone(&self) -> Self {
-        Self(
-            self.0
-                .clone(),
-        )
+        Self(self.0.clone())
     }
 }
 
@@ -85,11 +78,7 @@ impl<T: 'static> ProviderHandle<T> {
     pub fn try_of(context: &BuildContext) -> Option<Self> {
         context
             .get_state::<Provided<T>>()
-            .map(|provided| {
-                provided
-                    .0
-                    .clone()
-            })
+            .map(|provided| provided.0.clone())
     }
 
     /// Returns the nearest handle for `T`.
@@ -236,10 +225,7 @@ struct Provided<T>(ProviderHandle<T>);
 
 impl<T> Clone for Provided<T> {
     fn clone(&self) -> Self {
-        Self(
-            self.0
-                .clone(),
-        )
+        Self(self.0.clone())
     }
 }
 
@@ -248,10 +234,7 @@ type StoreReducer<T, A> = dyn Fn(&mut T, A);
 
 impl<A> Clone for StoreDispatcher<A> {
     fn clone(&self) -> Self {
-        Self(
-            self.0
-                .clone(),
-        )
+        Self(self.0.clone())
     }
 }
 
@@ -299,11 +282,7 @@ pub trait ProviderContext {
 impl ProviderContext for BuildContext<'_> {
     fn try_read<T: 'static>(&self) -> Option<Snapshot<T>> {
         self.get_state::<Provided<T>>()
-            .map(|provided| {
-                provided
-                    .0
-                    .read()
-            })
+            .map(|provided| provided.0.read())
     }
 
     fn read<T: 'static>(&self) -> Snapshot<T> {
@@ -323,11 +302,7 @@ impl ProviderContext for BuildContext<'_> {
         provided
             .0
             .subscribe_watch(&consumer, &self.window);
-        Some(
-            provided
-                .0
-                .read(),
-        )
+        Some(provided.0.read())
     }
 
     fn watch<T: 'static>(&self) -> Snapshot<T> {
@@ -351,11 +326,7 @@ impl ProviderContext for BuildContext<'_> {
             .unwrap_or_else(|| {
                 panic!("select::<{}>() must be called while building a widget", type_name::<T>())
             });
-        let selected = selector(
-            &provided
-                .0
-                .read(),
-        );
+        let selected = selector(&provided.0.read());
         provided
             .0
             .subscribe_selector(&consumer, &self.window, selector);
@@ -439,7 +410,8 @@ impl<T, W> Provider<T, W> {
     where
         T: 'static,
     {
-        self.child(child).boxed()
+        self.child(child)
+            .boxed()
     }
 }
 
@@ -468,12 +440,7 @@ impl<T: 'static, W: Widget + 'static> StatefulWidget for Provider<T, W> {
                     });
                 ProviderHandle::new(create())
             });
-        ProviderState {
-            handle,
-            child: self
-                .child
-                .clone(),
-        }
+        ProviderState { handle, child: self.child.clone() }
     }
 }
 
@@ -481,20 +448,11 @@ impl<T: 'static, W: Widget + 'static> State<Provider<T, W>> for ProviderState<T,
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
     fn adopt_config_from(&mut self, new: &Self) {
-        self.child = new
-            .child
-            .clone();
+        self.child = new.child.clone();
     }
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
-        ProviderScope {
-            handle: self
-                .handle
-                .clone(),
-            child: self
-                .child
-                .clone(),
-        }
+        ProviderScope { handle: self.handle.clone(), child: self.child.clone() }
     }
 }
 
@@ -517,22 +475,11 @@ struct ProviderScope<T, W> {
 
 impl<T: 'static, W: Widget + 'static> Widget for ProviderScope<T, W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = ctx.with_state(
-            Provided(
-                self.handle
-                    .clone(),
-            ),
-            |ctx| {
-                self.child
-                    .to_element(ctx)
-            },
-        );
-        Box::new(ProviderElement {
-            handle: self
-                .handle
-                .clone(),
-            child,
-        })
+        let child = ctx.with_state(Provided(self.handle.clone()), |ctx| {
+            self.child
+                .to_element(ctx)
+        });
+        Box::new(ProviderElement { handle: self.handle.clone(), child })
     }
 }
 
@@ -543,22 +490,13 @@ struct ProviderElement<T> {
 
 impl<T: 'static> ProviderElement<T> {
     fn scoped<R>(&self, ctx: &BuildContext, callback: impl FnOnce(&BuildContext) -> R) -> R {
-        ctx.with_state(
-            Provided(
-                self.handle
-                    .clone(),
-            ),
-            callback,
-        )
+        ctx.with_state(Provided(self.handle.clone()), callback)
     }
 }
 
 impl<T: 'static> VisitorElement for ProviderElement<T> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {
@@ -568,21 +506,16 @@ impl<T: 'static> VisitorElement for ProviderElement<T> {
 
 impl<T: 'static> Drawable for ProviderElement<T> {
     fn draw(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .draw(ctx)
-        });
+        self.scoped(ctx, |ctx| self.child.draw(ctx));
     }
 }
 
 impl<T: 'static> LayoutElement for ProviderElement<T> {
     fn pos(&self) -> Option<Vec2d> {
-        self.child
-            .pos()
+        self.child.pos()
     }
     fn size(&self) -> Option<Size> {
-        self.child
-            .size()
+        self.child.size()
     }
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
         self.scoped(ctx, |ctx| {
@@ -603,12 +536,10 @@ impl<T: 'static> LayoutElement for ProviderElement<T> {
         })
     }
     fn layer(&self) -> u32 {
-        self.child
-            .layer()
+        self.child.layer()
     }
     fn flex(&self) -> Option<f32> {
-        self.child
-            .flex()
+        self.child.flex()
     }
     fn get_size_from_child(&self) -> Option<Size> {
         self.child
@@ -696,7 +627,8 @@ impl<T, A, W> StoreProvider<T, A, W> {
         T: Clone + 'static,
         A: 'static,
     {
-        self.child(child).boxed()
+        self.child(child)
+            .boxed()
     }
 }
 
@@ -727,9 +659,7 @@ impl<T: Clone + 'static, A: 'static, W: Widget + 'static> StatefulWidget
         StoreState {
             handle: ProviderHandle::new(create()),
             reducer: reducer.clone(),
-            child: self
-                .child
-                .clone(),
+            child: self.child.clone(),
         }
     }
 }
@@ -739,24 +669,14 @@ impl<T: Clone + 'static, A: 'static, W: Widget + 'static> State<StoreProvider<T,
 {
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
     fn adopt_config_from(&mut self, new: &Self) {
-        self.reducer = new
-            .reducer
-            .clone();
-        self.child = new
-            .child
-            .clone();
+        self.reducer = new.reducer.clone();
+        self.child = new.child.clone();
     }
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         StoreScope {
-            handle: self
-                .handle
-                .clone(),
-            reducer: self
-                .reducer
-                .clone(),
-            child: self
-                .child
-                .clone(),
+            handle: self.handle.clone(),
+            reducer: self.reducer.clone(),
+            child: self.child.clone(),
         }
     }
 }
@@ -781,32 +701,20 @@ struct StoreScope<T, A, W> {
 
 impl<T: Clone + 'static, A: 'static, W: Widget + 'static> Widget for StoreScope<T, A, W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let handle = self
-            .handle
-            .clone();
-        let reducer = self
-            .reducer
-            .clone();
+        let handle = self.handle.clone();
+        let reducer = self.reducer.clone();
         let dispatcher = StoreDispatcher(Rc::new(move |action| {
             let reducer = reducer.clone();
             handle.update(|state| reducer(state, action));
         }));
-        let child = ctx.with_state(
-            Provided(
-                self.handle
-                    .clone(),
-            ),
-            |ctx| {
-                ctx.with_state(dispatcher.clone(), |ctx| {
-                    self.child
-                        .to_element(ctx)
-                })
-            },
-        );
+        let child = ctx.with_state(Provided(self.handle.clone()), |ctx| {
+            ctx.with_state(dispatcher.clone(), |ctx| {
+                self.child
+                    .to_element(ctx)
+            })
+        });
         Box::new(StoreElement {
-            handle: self
-                .handle
-                .clone(),
+            handle: self.handle.clone(),
             dispatcher,
             child,
             marker: PhantomData,
@@ -823,28 +731,19 @@ struct StoreElement<T, A> {
 
 impl<T: 'static, A: 'static> StoreElement<T, A> {
     fn scoped<R>(&self, ctx: &BuildContext, callback: impl FnOnce(&BuildContext) -> R) -> R {
-        ctx.with_state(
-            Provided(
-                self.handle
+        ctx.with_state(Provided(self.handle.clone()), |ctx| {
+            ctx.with_state(
+                self.dispatcher
                     .clone(),
-            ),
-            |ctx| {
-                ctx.with_state(
-                    self.dispatcher
-                        .clone(),
-                    callback,
-                )
-            },
-        )
+                callback,
+            )
+        })
     }
 }
 
 impl<T: 'static, A: 'static> VisitorElement for StoreElement<T, A> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
     fn debug_name(&self) -> &'static str {
         "StoreProviderScope"
@@ -852,20 +751,15 @@ impl<T: 'static, A: 'static> VisitorElement for StoreElement<T, A> {
 }
 impl<T: 'static, A: 'static> Drawable for StoreElement<T, A> {
     fn draw(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .draw(ctx)
-        });
+        self.scoped(ctx, |ctx| self.child.draw(ctx));
     }
 }
 impl<T: 'static, A: 'static> LayoutElement for StoreElement<T, A> {
     fn pos(&self) -> Option<Vec2d> {
-        self.child
-            .pos()
+        self.child.pos()
     }
     fn size(&self) -> Option<Size> {
-        self.child
-            .size()
+        self.child.size()
     }
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
         self.scoped(ctx, |ctx| {
@@ -886,12 +780,10 @@ impl<T: 'static, A: 'static> LayoutElement for StoreElement<T, A> {
         })
     }
     fn layer(&self) -> u32 {
-        self.child
-            .layer()
+        self.child.layer()
     }
     fn flex(&self) -> Option<f32> {
-        self.child
-            .flex()
+        self.child.flex()
     }
     fn get_size_from_child(&self) -> Option<Size> {
         self.child
@@ -1016,12 +908,8 @@ mod tests {
 
         fn create_state(&self) -> Self::State {
             WatchingState {
-                builds: self
-                    .builds
-                    .clone(),
-                handle: self
-                    .handle
-                    .clone(),
+                builds: self.builds.clone(),
+                handle: self.handle.clone(),
                 select_count: self.select_count,
             }
         }
@@ -1032,11 +920,7 @@ mod tests {
 
         fn build(&self, context: &BuildContext) -> impl Widget {
             self.builds
-                .set(
-                    self.builds
-                        .get()
-                        + 1,
-                );
+                .set(self.builds.get() + 1);
             if self.select_count {
                 ProviderContext::select::<Counter, usize>(context, |counter| counter.count);
             } else {
@@ -1061,14 +945,7 @@ mod tests {
         type State = MultiSelectorState;
 
         fn create_state(&self) -> Self::State {
-            MultiSelectorState {
-                builds: self
-                    .builds
-                    .clone(),
-                handle: self
-                    .handle
-                    .clone(),
-            }
+            MultiSelectorState { builds: self.builds.clone(), handle: self.handle.clone() }
         }
     }
 
@@ -1077,11 +954,7 @@ mod tests {
 
         fn build(&self, context: &BuildContext) -> impl Widget {
             self.builds
-                .set(
-                    self.builds
-                        .get()
-                        + 1,
-                );
+                .set(self.builds.get() + 1);
             ProviderContext::select::<Counter, usize>(context, |counter| counter.count);
             ProviderContext::select::<Counter, &'static str>(context, |counter| counter.label);
             *self
@@ -1144,12 +1017,7 @@ mod tests {
 
         handle.update(|counter| counter.count += 1);
 
-        assert_eq!(
-            handle
-                .read()
-                .count,
-            1
-        );
+        assert_eq!(handle.read().count, 1);
         assert!(dirty.get());
         assert!(window.take_redraw_request());
     }
@@ -1237,12 +1105,7 @@ mod tests {
             Action::Increment => counter.count += 1,
         });
 
-        assert_eq!(
-            handle
-                .read()
-                .count,
-            1
-        );
+        assert_eq!(handle.read().count, 1);
         assert!(dirty.get());
     }
 
@@ -1302,12 +1165,7 @@ mod tests {
             ProviderContext::dispatch(context, Increment);
         });
 
-        assert_eq!(
-            handle
-                .read()
-                .count,
-            1
-        );
+        assert_eq!(handle.read().count, 1);
     }
 
     #[test]
@@ -1328,11 +1186,7 @@ mod tests {
         impl Drop for Droppable {
             fn drop(&mut self) {
                 self.0
-                    .set(
-                        self.0
-                            .get()
-                            + 1,
-                    );
+                    .set(self.0.get() + 1);
             }
         }
         struct Child;

@@ -177,8 +177,7 @@ impl<E: Element> RawScrollableContainer<E> {
             Dimension::Auto => thumb_width / 2.0,
         };
 
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
 
         // Position the scrollbar at the edge of the viewport
         if is_vertical {
@@ -206,9 +205,7 @@ impl<E: Element> RawScrollableContainer<E> {
 
         // Draw up/left button
         if let Some(ref btn) = scroll_bar.up_button {
-            let btn_color: Color = btn
-                .color
-                .into();
+            let btn_color: Color = btn.color.into();
             let (bw, bh) =
                 if is_vertical { (track_width, button_h.0) } else { (button_h.0, track_width) };
             ctx.canvas
@@ -222,9 +219,7 @@ impl<E: Element> RawScrollableContainer<E> {
 
         // Draw down/right button
         if let Some(ref btn) = scroll_bar.down_button {
-            let btn_color: Color = btn
-                .color
-                .into();
+            let btn_color: Color = btn.color.into();
             let (bx, by, bw, bh) = if is_vertical {
                 (0.0, track_length - button_h.1, track_width, button_h.1)
             } else {
@@ -312,7 +307,6 @@ impl<E: Element> RawScrollableContainer<E> {
                 [thumb_radius; 4],
             );
 
-        ctx.canvas
-            .restore();
+        ctx.canvas.restore();
     }
 }

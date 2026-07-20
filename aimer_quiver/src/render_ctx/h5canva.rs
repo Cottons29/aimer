@@ -75,9 +75,7 @@ pub mod render_ctx {
             }
 
             // Spawn async GPU initialization
-            let state = self
-                .state
-                .clone();
+            let state = self.state.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 info!("Initializing GPU context (wasm)...");
                 let gpu = GpuContext::initialize_async(window, size).await;
@@ -126,12 +124,8 @@ pub mod render_ctx {
                 .texture
                 .create_view(&Default::default());
 
-            let width = state
-                .gpu
-                .width();
-            let height = state
-                .gpu
-                .height();
+            let width = state.gpu.width();
+            let height = state.gpu.height();
 
             state
                 .canvas
@@ -144,18 +138,12 @@ pub mod render_ctx {
             state
                 .renderer
                 .render(
-                    &state
-                        .gpu
-                        .device,
-                    &state
-                        .gpu
-                        .queue,
+                    &state.gpu.device,
+                    &state.gpu.queue,
                     &view,
                     width,
                     height,
-                    state
-                        .gpu
-                        .is_srgb,
+                    state.gpu.is_srgb,
                     &draw_list,
                 );
 

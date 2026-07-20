@@ -232,9 +232,7 @@ impl<W: Widget + 'static> StatefulWidget for Button<W> {
                 .clone(),
             state_updater: StateUpdater::empty(),
             current_state: Rc::new(Cell::new(PointerState::Outside)),
-            child: self
-                .child
-                .clone(),
+            child: self.child.clone(),
             is_disabled: self.is_disabled,
         }
     }
@@ -257,9 +255,7 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
     }
 
     fn adopt_config_from(&mut self, new: &Self) {
-        self.on_press = new
-            .on_press
-            .clone();
+        self.on_press = new.on_press.clone();
         self.is_disabled = new.is_disabled;
         self.on_long_press = new
             .on_long_press
@@ -273,15 +269,11 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
         self.decoration = new
             .decoration
             .clone();
-        self.child = new
-            .child
-            .clone();
+        self.child = new.child.clone();
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
-        let child = self
-            .child
-            .clone();
+        let child = self.child.clone();
 
         let mut decor = self
             .decoration

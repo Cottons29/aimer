@@ -117,10 +117,7 @@ impl FontRecord {
 
     pub(crate) fn should_use_fontdue(&self) -> bool {
         #[cfg(any(target_os = "ios", target_os = "macos"))]
-        if self
-            ._path
-            .is_some()
-        {
+        if self._path.is_some() {
             return false;
         }
 
@@ -168,10 +165,7 @@ impl FontRecord {
     /// Retain shared in-memory data or memory-map a file-backed font without
     /// copying the entire font into the process heap.
     pub(crate) fn data(&self) -> Option<FontData> {
-        if let Some(bytes) = self
-            .bytes
-            .as_ref()
-        {
+        if let Some(bytes) = self.bytes.as_ref() {
             return Some(FontData::Shared(bytes.clone()));
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -194,10 +188,7 @@ impl FontRecord {
 
     #[allow(dead_code)]
     pub(crate) fn ensure_face(&self) -> Option<()> {
-        if let Some(bytes) = self
-            .bytes
-            .as_ref()
-        {
+        if let Some(bytes) = self.bytes.as_ref() {
             ttf_parser::Face::parse(bytes.as_ref(), self.collection_index).ok()?;
             return Some(());
         }
@@ -220,18 +211,12 @@ impl FontRecord {
             return None;
         }
 
-        if self
-            .font
-            .is_none()
-        {
+        if self.font.is_none() {
             let settings = fontdue::FontSettings {
                 collection_index: self.collection_index,
                 ..fontdue::FontSettings::default()
             };
-            let font = if let Some(bytes) = self
-                .bytes
-                .as_ref()
-            {
+            let font = if let Some(bytes) = self.bytes.as_ref() {
                 fontdue::Font::from_bytes(bytes.as_ref(), settings).ok()?
             } else {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -248,24 +233,17 @@ impl FontRecord {
             self.font = Some(Arc::new(font));
         }
 
-        self.font
-            .clone()
+        self.font.clone()
     }
 
     pub(crate) fn glyph_index(&self, codepoint: char) -> Option<u16> {
-        if let Some(font) = self
-            .font
-            .as_ref()
-        {
+        if let Some(font) = self.font.as_ref() {
             return font
                 .has_glyph(codepoint)
                 .then(|| font.lookup_glyph_index(codepoint));
         }
 
-        if let Some(bytes) = self
-            .bytes
-            .as_ref()
-        {
+        if let Some(bytes) = self.bytes.as_ref() {
             let face = ttf_parser::Face::parse(bytes.as_ref(), self.collection_index).ok()?;
             return face
                 .glyph_index(codepoint)
@@ -288,20 +266,14 @@ impl FontRecord {
     }
 
     pub(crate) fn advance_width_for_glyph(&self, glyph_id: u16, font_size: f32) -> Option<f32> {
-        if let Some(font) = self
-            .font
-            .as_ref()
-        {
+        if let Some(font) = self.font.as_ref() {
             return Some(
                 font.metrics_indexed(glyph_id, font_size)
                     .advance_width,
             );
         }
 
-        if let Some(bytes) = self
-            .bytes
-            .as_ref()
-        {
+        if let Some(bytes) = self.bytes.as_ref() {
             return advance_width_from_face(
                 bytes.as_ref(),
                 self.collection_index,

@@ -278,14 +278,13 @@ fn why_aimer_section(ctx: &BuildContext) -> AnyWidget {
                                 ),
                                 feature_block(
                                     "Performance",
-                                    Row::new()
-                                        .box_children(vec![
-                                            word("GPU-accelerated rendering via ", false),
-                                            word("Cupid", true),
-                                            word(" & ", false),
-                                            word("wgpu", true),
-                                            word(".", false),
-                                        ]),
+                                    Row::new().box_children(vec![
+                                        word("GPU-accelerated rendering via ", false),
+                                        word("Cupid", true),
+                                        word(" & ", false),
+                                        word("wgpu", true),
+                                        word(".", false),
+                                    ]),
                                     resp_position(ctx, 72.0, 46.0),
                                     resp_position(ctx, 32.0, 0.0),
                                 ),

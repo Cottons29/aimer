@@ -106,10 +106,7 @@ impl AssetImage {
 impl Widget for AssetImage {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawImageWidget {
-            source: ImageSource::Asset(
-                self.key
-                    .clone(),
-            ),
+            source: ImageSource::Asset(self.key.clone()),
             size: Size::new(self.width, self.height),
             fit: self.fit,
             keep_aspect_ratio: self.fit != BoxFit::Fill,

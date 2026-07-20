@@ -5,13 +5,13 @@ mod color_sync;
 mod custom_font;
 mod markdown_example;
 pub mod routing;
+mod scroll_and_row;
 mod selectable_text;
 mod starter;
 pub mod stateful;
 mod stateful_2;
 mod svg_test;
 mod test_animation;
-mod scroll_and_row;
 
 use aimer::style::*;
 #[allow(unused_imports)]
@@ -40,7 +40,7 @@ pub fn my_app() {
     // animated_theme::start_animated_theme_example()
     // test_scrollable()
     // test_scrollable_row()
-    start_markdown_example();
+    // start_markdown_example();
     // test_scroll_and_row();
 }
 #[allow(unused)]
@@ -354,59 +354,59 @@ pub fn test_scrollable() {
     let app = Container::new()
         .color(Color::WHITE)
         .child(
-        Column::new()
-            .children(vec![
-                Container::new()
-                    .height(Dimension::Px(80.0))
-                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
-                    .child(
-                        Text::new("This is header")
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(
-                                TextStyle::new()
-                                    .font_size(15)
-                                    .color(Colors::Black),
-                            ),
-                    )
-                    .boxed(),
-                Row::new()
-                    .children(vec![
-                        Container::new()
-                            .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
-                            .child(
-                                Scrollable::new()
-                                    .axis(ScrollAxis::Vertical)
-                                    .vertical_scroll_bar(Some(scrollbar))
-                                    .child(content),
-                            )
-                            .boxed(),
-                        Container::new()
-                            .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
-                            .child(
-                                Scrollable::new()
-                                    .axis(ScrollAxis::Vertical)
-                                    .vertical_scroll_bar(Some(scrollbar))
-                                    .child(content_2),
-                            )
-                            .boxed(),
-                    ])
-                    .boxed(),
-                Container::new()
-                    .height(Dimension::Px(80.0))
-                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
-                    .child(
-                        Text::new("This is footer")
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(
-                                TextStyle::new()
-                                    .font_size(15)
-                                    .color(Colors::Black),
-                            ),
-                    )
-                    .boxed(),
-            ])
-            .boxed(),
-    );
+            Column::new()
+                .children(vec![
+                    Container::new()
+                        .height(Dimension::Px(80.0))
+                        .box_decoration(BoxDecoration::new().background_color(Colors::Green))
+                        .child(
+                            Text::new("This is header")
+                                .text_align(TextAlign::MidCenter)
+                                .text_style(
+                                    TextStyle::new()
+                                        .font_size(15)
+                                        .color(Colors::Black),
+                                ),
+                        )
+                        .boxed(),
+                    Row::new()
+                        .children(vec![
+                            Container::new()
+                                .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
+                                .child(
+                                    Scrollable::new()
+                                        .axis(ScrollAxis::Vertical)
+                                        .vertical_scroll_bar(Some(scrollbar))
+                                        .child(content),
+                                )
+                                .boxed(),
+                            Container::new()
+                                .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
+                                .child(
+                                    Scrollable::new()
+                                        .axis(ScrollAxis::Vertical)
+                                        .vertical_scroll_bar(Some(scrollbar))
+                                        .child(content_2),
+                                )
+                                .boxed(),
+                        ])
+                        .boxed(),
+                    Container::new()
+                        .height(Dimension::Px(80.0))
+                        .box_decoration(BoxDecoration::new().background_color(Colors::Green))
+                        .child(
+                            Text::new("This is footer")
+                                .text_align(TextAlign::MidCenter)
+                                .text_style(
+                                    TextStyle::new()
+                                        .font_size(15)
+                                        .color(Colors::Black),
+                                ),
+                        )
+                        .boxed(),
+                ])
+                .boxed(),
+        );
 
     AimerApp::start(app);
 }

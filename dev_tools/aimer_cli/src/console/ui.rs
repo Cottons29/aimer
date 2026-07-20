@@ -432,10 +432,7 @@ fn build_selection_view(
     for line in lines {
         let mut row: Vec<(char, Style)> = Vec::new();
         for span in &line.spans {
-            for ch in span
-                .content
-                .chars()
-            {
+            for ch in span.content.chars() {
                 row.push((ch, span.style));
             }
         }

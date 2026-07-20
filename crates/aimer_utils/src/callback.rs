@@ -93,12 +93,7 @@ impl<Args, Return> Callback<Args, Return> {
     pub fn call(&self, args: Args) -> Option<Return> {
         // SAFETY: mirrors the established `CallbackExecutor` access pattern —
         // the inner cell is only ever read here on the single UI thread.
-        match unsafe {
-            (*self
-                .inner
-                .get())
-            .as_ref()
-        } {
+        match unsafe { (*self.inner.get()).as_ref() } {
             Some(RawInnerCallback::Sync(f)) => Some(f(args)),
             _ => None,
         }
@@ -126,11 +121,7 @@ impl<Args, Return> Default for Callback<Args, Return> {
 
 impl<Args, Return> Clone for Callback<Args, Return> {
     fn clone(&self) -> Self {
-        Self {
-            inner: self
-                .inner
-                .clone(),
-        }
+        Self { inner: self.inner.clone() }
     }
 }
 
@@ -177,11 +168,7 @@ impl<P, R> CallbackExecutor for Callback<P, R> {
     type Args = P;
     type Output = R;
     fn get(&self) -> &Option<RawInnerCallback<Self::Args, Self::Output>> {
-        unsafe {
-            &*self
-                .inner
-                .get()
-        }
+        unsafe { &*self.inner.get() }
     }
 }
 
@@ -314,11 +301,7 @@ impl CallbackExecutor for VoidCallback {
     type Args = ();
     type Output = ();
     fn get(&self) -> &Option<RawInnerCallback<Self::Args, Self::Output>> {
-        unsafe {
-            &*self
-                .inner
-                .get()
-        }
+        unsafe { &*self.inner.get() }
     }
 }
 

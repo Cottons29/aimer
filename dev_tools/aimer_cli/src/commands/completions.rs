@@ -51,14 +51,8 @@ pub fn execute(shell: Shell, install: bool) -> anyhow::Result<()> {
     }
 
     let target = install_target(shell, &bin_name)?;
-    std::fs::create_dir_all(&target.dir).with_context(|| {
-        format!(
-            "creating completion directory {}",
-            target
-                .dir
-                .display()
-        )
-    })?;
+    std::fs::create_dir_all(&target.dir)
+        .with_context(|| format!("creating completion directory {}", target.dir.display()))?;
 
     let path = target
         .dir

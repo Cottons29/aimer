@@ -163,10 +163,7 @@ fn fetch_devices() -> Vec<Device> {
                 if in_devices && !line.is_empty() {
                     let parts: Vec<&str> = line
                         .split("   ")
-                        .filter(|s| {
-                            !s.trim()
-                                .is_empty()
-                        })
+                        .filter(|s| !s.trim().is_empty())
                         .collect();
                     if parts.len() >= 4 {
                         let name = parts[0]
@@ -248,10 +245,7 @@ fn fetch_devices() -> Vec<Device> {
     let mut seen_ids = std::collections::HashSet::new();
     for dev in devices {
         if !seen_ids.contains(&dev.id) {
-            seen_ids.insert(
-                dev.id
-                    .clone(),
-            );
+            seen_ids.insert(dev.id.clone());
             unique_devices.push(dev);
         }
     }
@@ -595,9 +589,7 @@ mod tests {
             .iter()
             .map(|d| &d.id)
             .collect();
-        let unique: std::collections::HashSet<_> = ids
-            .iter()
-            .collect();
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
         assert_eq!(ids.len(), unique.len(), "Device list contains duplicates");
     }
 

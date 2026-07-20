@@ -94,10 +94,7 @@ impl Image {
 impl Widget for Image {
     fn to_element(&self, _: &BuildContext) -> Box<dyn Element> {
         Box::new(RawImageWidget {
-            source: ImageSource::File(
-                self.path
-                    .clone(),
-            ),
+            source: ImageSource::File(self.path.clone()),
             size: Size { width: self.width, height: self.height },
             cache: LayoutCache::new(),
             fit: self.fit,
@@ -137,9 +134,7 @@ impl<P: ImageProvider> VisitorElement for RawImageWidget<P> {
 
 impl<P: ImageProvider> LayoutElement for RawImageWidget<P> {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let scale_bits = ctx
-            .scale
-            .to_bits();
+        let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self
             .cache
             .get_computed(ctx.box_constraint, scale_bits)
@@ -194,21 +189,13 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
             }
         }
         let size = self.computed_size(ctx);
-        let image_result = if let Some(result) = unsafe {
-            &*self
-                .cached_id
-                .get()
-        } {
+        let image_result = if let Some(result) = unsafe { &*self.cached_id.get() } {
             if result == &ImageResult::Loading {
                 let r = self
                     .source
                     .get_image(ctx);
                 if r != ImageResult::Loading {
-                    unsafe {
-                        *self
-                            .cached_id
-                            .get() = Some(r.clone())
-                    };
+                    unsafe { *self.cached_id.get() = Some(r.clone()) };
                 }
                 r
             } else {
@@ -219,11 +206,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                 .source
                 .get_image(ctx);
             if result != ImageResult::Loading {
-                unsafe {
-                    *self
-                        .cached_id
-                        .get() = Some(result.clone())
-                };
+                unsafe { *self.cached_id.get() = Some(result.clone()) };
             }
             result
         };
@@ -238,12 +221,8 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                         let iw = iw as f32;
                         let ih = ih as f32;
                         if iw > 0.0 && ih > 0.0 {
-                            let target_w = size
-                                .width
-                                .max(0.0);
-                            let target_h = size
-                                .height
-                                .max(0.0);
+                            let target_w = size.width.max(0.0);
+                            let target_h = size.height.max(0.0);
                             let mut draw_pos = Vec2d { x: 0.0, y: 0.0 };
                             #[allow(unused_assignments)]
                             let mut draw_size = size;

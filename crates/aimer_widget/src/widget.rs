@@ -35,8 +35,7 @@ pub trait Widget {
 
 impl Widget for Box<dyn Widget> {
     fn key(&self) -> Option<crate::key::Key> {
-        self.as_ref()
-            .key()
+        self.as_ref().key()
     }
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         self.as_ref()
@@ -53,8 +52,7 @@ impl Widget for Box<dyn Widget> {
 
 impl Widget for Rc<dyn Widget> {
     fn key(&self) -> Option<crate::key::Key> {
-        self.as_ref()
-            .key()
+        self.as_ref().key()
     }
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         self.as_ref()

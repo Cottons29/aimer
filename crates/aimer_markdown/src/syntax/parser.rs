@@ -1,7 +1,6 @@
 use aimer_color::prelude::Color;
 use arborium::advanced::Span;
 
-
 pub trait CaptureColor {
     fn color(input: CaptureSpan) -> Color;
 }
@@ -136,13 +135,7 @@ impl CaptureSpan {
                 Some("link") => CaptureSpan::Link { start, end },
                 Some("raw" | "literal") => CaptureSpan::Literal { start, end },
                 Some("strikethrough") => CaptureSpan::Strikethrough { start, end },
-                _ => CaptureSpan::Other {
-                    start,
-                    end,
-                    capture: span
-                        .capture
-                        .clone(),
-                },
+                _ => CaptureSpan::Other { start, end, capture: span.capture.clone() },
             },
             "diff" => match span
                 .capture
@@ -151,23 +144,11 @@ impl CaptureSpan {
             {
                 Some("plus" | "add") => CaptureSpan::DiffAdd { start, end },
                 Some("minus" | "delete") => CaptureSpan::DiffDelete { start, end },
-                _ => CaptureSpan::Other {
-                    start,
-                    end,
-                    capture: span
-                        .capture
-                        .clone(),
-                },
+                _ => CaptureSpan::Other { start, end, capture: span.capture.clone() },
             },
             "embedded" => CaptureSpan::Embedded { start, end },
             "error" => CaptureSpan::Error { start, end },
-            _ => CaptureSpan::Other {
-                start,
-                end,
-                capture: span
-                    .capture
-                    .clone(),
-            },
+            _ => CaptureSpan::Other { start, end, capture: span.capture.clone() },
         }
     }
 

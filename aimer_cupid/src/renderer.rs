@@ -19,19 +19,8 @@ struct ClipState {
 }
 
 fn clip_to_array(clip: Option<&ClipState>) -> [f32; 4] {
-    clip.map(|c| {
-        [
-            c.rect
-                .x,
-            c.rect
-                .y,
-            c.rect
-                .width,
-            c.rect
-                .height,
-        ]
-    })
-    .unwrap_or([0.0, 0.0, -1.0, 0.0])
+    clip.map(|c| [c.rect.x, c.rect.y, c.rect.width, c.rect.height])
+        .unwrap_or([0.0, 0.0, -1.0, 0.0])
 }
 
 fn clip_border_radius(clip: Option<&ClipState>) -> [f32; 4] {
@@ -414,34 +403,14 @@ impl Renderer {
                     {
                         let x = new_rect
                             .x
-                            .max(
-                                parent
-                                    .rect
-                                    .x,
-                            );
+                            .max(parent.rect.x);
                         let y = new_rect
                             .y
-                            .max(
-                                parent
-                                    .rect
-                                    .y,
-                            );
-                        let r = (new_rect.x + new_rect.width).min(
-                            parent
-                                .rect
-                                .x
-                                + parent
-                                    .rect
-                                    .width,
-                        );
-                        let b = (new_rect.y + new_rect.height).min(
-                            parent
-                                .rect
-                                .y
-                                + parent
-                                    .rect
-                                    .height,
-                        );
+                            .max(parent.rect.y);
+                        let r =
+                            (new_rect.x + new_rect.width).min(parent.rect.x + parent.rect.width);
+                        let b =
+                            (new_rect.y + new_rect.height).min(parent.rect.y + parent.rect.height);
                         Rect::new(x, y, (r - x).max(0.0), (b - y).max(0.0))
                     } else {
                         new_rect
@@ -657,9 +626,7 @@ impl Renderer {
                             spans: spans
                                 .iter()
                                 .map(|span| RichTextSpan {
-                                    text: span
-                                        .text
-                                        .clone(),
+                                    text: span.text.clone(),
                                     font_size: span.font_size,
                                     color: span
                                         .color
@@ -713,9 +680,7 @@ impl Renderer {
                         .push(ResolvedCmd { kind: ResolvedKind::TextDecoration(deco_idx) });
                 }
                 DrawCommand::Svg { scene, destination, overrides } => {
-                    let index = self
-                        .svg_items
-                        .len();
+                    let index = self.svg_items.len();
                     self.svg_items
                         .push(resolve_svg_item(
                             scene.clone(),
@@ -854,11 +819,7 @@ impl Renderer {
                     if let Some(idx) = self
                         .custom_pipelines
                         .iter()
-                        .position(|s| {
-                            s.pipeline
-                                .name()
-                                == pipeline_name.as_str()
-                        })
+                        .position(|s| s.pipeline.name() == pipeline_name.as_str())
                     {
                         self.resolved
                             .push(ResolvedCmd {
@@ -971,10 +932,7 @@ impl Renderer {
             let mut image_batch: Vec<ImageInstance> = Vec::new();
             let mut current_texture_id: Option<u32> = None;
 
-            for i in 0..self
-                .resolved
-                .len()
-            {
+            for i in 0..self.resolved.len() {
                 match &self.resolved[i].kind {
                     ResolvedKind::Rect(inst) => {
                         // Flush any pending image batch before switching to rects
@@ -1171,10 +1129,8 @@ mod tests {
         assert!(Arc::ptr_eq(&item.scene, &scene));
         assert_eq!(
             [
-                item.destination
-                    .x,
-                item.destination
-                    .y,
+                item.destination.x,
+                item.destination.y,
                 item.destination
                     .width,
                 item.destination

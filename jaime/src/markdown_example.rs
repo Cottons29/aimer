@@ -9,7 +9,6 @@ pub fn jaime_markdown_source() -> &'static str {
 
 pub fn jaime_markdown_content() -> MarkdownViewer {
     MarkdownViewer::new()
-        
         .padding(LayoutSpacing::all(Spacing::Px(16)))
         .theme(MarkdownTheme::default())
         .markdown(jaime_markdown_source())

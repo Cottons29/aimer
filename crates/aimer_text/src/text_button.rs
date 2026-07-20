@@ -185,20 +185,14 @@ impl RawTextButton {
     const DOUBLE_TAP_INTERVAL: Duration = Duration::from_millis(500);
 
     fn active_style(&self) -> TextStyle {
-        let (mut style, color) = if self
-            .widget
-            .disabled
-        {
+        let (mut style, color) = if self.widget.disabled {
             (
                 self.widget
                     .disabled_style,
                 self.widget
                     .disabled_color,
             )
-        } else if self
-            .hovered
-            .get()
-        {
+        } else if self.hovered.get() {
             (
                 self.widget
                     .hover_style,
@@ -206,12 +200,7 @@ impl RawTextButton {
                     .hover_color,
             )
         } else {
-            (
-                self.widget
-                    .style,
-                self.widget
-                    .color,
-            )
+            (self.widget.style, self.widget.color)
         };
         if let Some(color) = color {
             style.color = color;
@@ -253,11 +242,7 @@ impl RawTextButton {
     }
 
     fn press(&self) {
-        Self::execute(
-            &self
-                .widget
-                .on_press,
-        );
+        Self::execute(&self.widget.on_press);
         let now = AnimInstant::now();
         if self
             .last_tap
@@ -301,9 +286,7 @@ impl EventElement for RawTextButton {
                 self.set_hovered(
                     self.bounds
                         .is_inside(pos.x, pos.y)
-                        && !self
-                            .widget
-                            .disabled,
+                        && !self.widget.disabled,
                 );
                 false
             }
@@ -320,15 +303,8 @@ impl EventElement for RawTextButton {
                     .is_inside(pos.x, pos.y);
                 self.interaction
                     .borrow_mut()
-                    .pointer_down(
-                        inside,
-                        self.widget
-                            .disabled,
-                    );
-                inside
-                    && !self
-                        .widget
-                        .disabled
+                    .pointer_down(inside, self.widget.disabled);
+                inside && !self.widget.disabled
             }
             ElementEvent::PointerUp(pos, _, _) => {
                 let action = self
@@ -337,8 +313,7 @@ impl EventElement for RawTextButton {
                     .pointer_up(
                         self.bounds
                             .is_inside(pos.x, pos.y),
-                        self.widget
-                            .disabled,
+                        self.widget.disabled,
                     );
                 if action == ButtonAction::Press {
                     self.press();
@@ -386,18 +361,10 @@ impl Drawable for RawTextButton {
             .get_transform_translation();
         self.bounds
             .save(ctx.scale, x, y, size.width, size.height);
-        if !self
-            .widget
-            .disabled
-        {
+        if !self.widget.disabled {
             self.set_hovered(
                 self.bounds
-                    .is_inside(
-                        ctx.cursor_pos
-                            .x,
-                        ctx.cursor_pos
-                            .y,
-                    ),
+                    .is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y),
             );
         }
         text.draw(ctx);

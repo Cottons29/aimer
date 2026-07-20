@@ -120,19 +120,10 @@ impl<R: Route> NavigatorState<R> {
     pub fn pop(&self) {
         self.updater
             .set_state(|state| {
-                if state
-                    .history
-                    .len()
-                    > 1
-                {
-                    state
-                        .history
-                        .pop();
+                if state.history.len() > 1 {
+                    state.history.pop();
                     #[cfg(target_arch = "wasm32")]
-                    if let Some(prev) = state
-                        .history
-                        .last()
-                    {
+                    if let Some(prev) = state.history.last() {
                         browser_replace_state(&prev.format());
                     }
                 }
@@ -181,10 +172,7 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
-        let controller = navigator_controller(
-            self.updater
-                .clone(),
-        );
+        let controller = navigator_controller(self.updater.clone());
         ctx.insert_state(controller.clone());
 
         let top = self
@@ -223,10 +211,7 @@ impl<R: 'static> NavigatorElement<R> {
 
 impl<R: 'static> VisitorElement for NavigatorElement<R> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {
@@ -236,22 +221,17 @@ impl<R: 'static> VisitorElement for NavigatorElement<R> {
 
 impl<R: 'static> Drawable for NavigatorElement<R> {
     fn draw(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .draw(ctx)
-        });
+        self.scoped(ctx, |ctx| self.child.draw(ctx));
     }
 }
 
 impl<R: 'static> LayoutElement for NavigatorElement<R> {
     fn pos(&self) -> Option<Vec2d> {
-        self.child
-            .pos()
+        self.child.pos()
     }
 
     fn size(&self) -> Option<Size> {
-        self.child
-            .size()
+        self.child.size()
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -276,13 +256,11 @@ impl<R: 'static> LayoutElement for NavigatorElement<R> {
     }
 
     fn layer(&self) -> u32 {
-        self.child
-            .layer()
+        self.child.layer()
     }
 
     fn flex(&self) -> Option<f32> {
-        self.child
-            .flex()
+        self.child.flex()
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
@@ -337,12 +315,8 @@ unsafe impl<R> Sync for NavigatorController<R> {}
 impl<R> Clone for NavigatorController<R> {
     fn clone(&self) -> Self {
         NavigatorController {
-            push_fn: self
-                .push_fn
-                .clone(),
-            pop_fn: self
-                .pop_fn
-                .clone(),
+            push_fn: self.push_fn.clone(),
+            pop_fn: self.pop_fn.clone(),
             can_pop_fn: self
                 .can_pop_fn
                 .clone(),
@@ -441,19 +415,10 @@ fn navigator_controller<R: Route>(
             let updater = updater.clone();
             Rc::new(move || {
                 updater.set_state(|state| {
-                    if state
-                        .history
-                        .len()
-                        > 1
-                    {
-                        state
-                            .history
-                            .pop();
+                    if state.history.len() > 1 {
+                        state.history.pop();
                         #[cfg(target_arch = "wasm32")]
-                        if let Some(previous) = state
-                            .history
-                            .last()
-                        {
+                        if let Some(previous) = state.history.last() {
                             browser_replace_state(&previous.format());
                         }
                     }
@@ -462,22 +427,9 @@ fn navigator_controller<R: Route>(
         },
         can_pop_fn: {
             let updater = updater.clone();
-            Rc::new(move || {
-                updater.read(|state| {
-                    state
-                        .history
-                        .len()
-                        > 1
-                })
-            })
+            Rc::new(move || updater.read(|state| state.history.len() > 1))
         },
-        history_len_fn: Rc::new(move || {
-            updater.read(|state| {
-                state
-                    .history
-                    .len()
-            })
-        }),
+        history_len_fn: Rc::new(move || updater.read(|state| state.history.len())),
     }
 }
 

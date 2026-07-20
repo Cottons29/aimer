@@ -43,9 +43,7 @@ use crate::unique_key::UniqueKeyInput;
 #[proc_macro_attribute]
 pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_fn = parse_macro_input!(item as ItemFn);
-    let fn_name = &input_fn
-        .sig
-        .ident;
+    let fn_name = &input_fn.sig.ident;
 
     let expanded = quote! {
 

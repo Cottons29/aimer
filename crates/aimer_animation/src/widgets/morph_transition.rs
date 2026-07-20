@@ -167,17 +167,12 @@ impl<T: Widget + 'static> StatefulWidget for MorphTransition<T> {
 
     fn create_state(&self) -> Self::State {
         MorphTransitionState {
-            current_child: self
-                .child
-                .clone(),
+            current_child: self.child.clone(),
             old_child: None,
             child_key: self
                 .transition_key
                 .clone()
-                .or_else(|| {
-                    self.child
-                        .key()
-                }),
+                .or_else(|| self.child.key()),
             duration: self.duration,
             curve: self.curve,
             current_color: self.background_color,
@@ -311,9 +306,7 @@ impl<T: Widget + 'static> Widget for MorphTransitionFrame<T> {
             controller: self
                 .controller
                 .clone(),
-            window: ctx
-                .window
-                .clone(),
+            window: ctx.window.clone(),
             old_snapshot: LocalCell::new(LayoutSnapshot {
                 size: (old_size.width, old_size.height),
                 position: (0.0, 0.0),
@@ -375,11 +368,9 @@ impl SyncChild {
     /// Must only be called from the single rendering thread.
     unsafe fn get(&self) -> Option<&dyn Element> {
         unsafe {
-            (*self
-                .0
-                .get())
-            .as_ref()
-            .map(|b| b.as_ref())
+            (*self.0.get())
+                .as_ref()
+                .map(|b| b.as_ref())
         }
     }
 
@@ -387,12 +378,7 @@ impl SyncChild {
     /// # Safety
     /// Must only be called from the single rendering thread.
     unsafe fn take(&self) -> Option<Box<dyn Element>> {
-        unsafe {
-            (*self
-                .0
-                .get())
-            .take()
-        }
+        unsafe { (*self.0.get()).take() }
     }
 }
 
@@ -465,38 +451,22 @@ impl Drawable for MorphTransitionElement {
                         .map(|c| c.computed_size(ctx))
                         .unwrap_or(ResolvedSize { width: 0.0, height: 0.0 })
                 };
-                let scale_x = if new_size.width > 0.01 {
-                    layout
-                        .size
-                        .0
-                        / new_size.width
-                } else {
-                    1.0
-                };
-                let scale_y = if new_size.height > 0.01 {
-                    layout
-                        .size
-                        .1
-                        / new_size.height
-                } else {
-                    1.0
-                };
+                let scale_x =
+                    if new_size.width > 0.01 { layout.size.0 / new_size.width } else { 1.0 };
+                let scale_y =
+                    if new_size.height > 0.01 { layout.size.1 / new_size.height } else { 1.0 };
 
                 // --- Phase 1: Draw old child fading out (first half) ---
                 if curved_value < 0.5 {
                     unsafe {
-                        if let Some(old) = self
-                            .old_child
-                            .get()
-                        {
+                        if let Some(old) = self.old_child.get() {
                             let old_alpha = 1.0 - curved_value * 2.0;
                             let old_snap = self
                                 .old_snapshot
                                 .with(Clone::clone);
                             let old_size = old_snap.size;
 
-                            ctx.canvas
-                                .save();
+                            ctx.canvas.save();
 
                             if self.has_background_color {
                                 let bg = old_snap.color;
@@ -517,8 +487,7 @@ impl Drawable for MorphTransitionElement {
                             ctx.canvas
                                 .set_alpha(old_alpha);
                             old.draw(ctx);
-                            ctx.canvas
-                                .restore();
+                            ctx.canvas.restore();
                         }
                     }
                 }
@@ -536,8 +505,7 @@ impl Drawable for MorphTransitionElement {
                         .current_child
                         .get()
                     {
-                        ctx.canvas
-                            .save();
+                        ctx.canvas.save();
 
                         if self.has_background_color {
                             let bg = layout.color;
@@ -568,8 +536,7 @@ impl Drawable for MorphTransitionElement {
                         ctx.canvas
                             .set_alpha(new_alpha);
                         child.draw(ctx);
-                        ctx.canvas
-                            .restore();
+                        ctx.canvas.restore();
                     }
                 }
             }
@@ -598,10 +565,7 @@ impl VisitorElement for MorphTransitionElement {
             {
                 visitor(child);
             }
-            if let Some(old) = self
-                .old_child
-                .get()
-            {
+            if let Some(old) = self.old_child.get() {
                 visitor(old);
             }
         }
@@ -643,10 +607,7 @@ impl Rebuildable for MorphTransitionElement {
             {
                 child.rebuild_if_dirty(ctx);
             }
-            if let Some(old) = self
-                .old_child
-                .get()
-            {
+            if let Some(old) = self.old_child.get() {
                 old.rebuild_if_dirty(ctx);
             }
         }
@@ -721,10 +682,7 @@ mod tests {
 
     impl Widget for TestWidget {
         fn key(&self) -> Option<Key> {
-            Some(Key::Value(
-                self.0
-                    .to_owned(),
-            ))
+            Some(Key::Value(self.0.to_owned()))
         }
 
         fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {

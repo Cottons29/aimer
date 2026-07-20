@@ -118,12 +118,7 @@ impl StatelessWidget for BlogDetailPage {
             .cloned()
             .unwrap_or_default();
         if matches!(state, LoadState::Idle) {
-            request_blog_detail(
-                ctx,
-                ProviderHandle::<BlogStore>::of(ctx),
-                self.id
-                    .clone(),
-            );
+            request_blog_detail(ctx, ProviderHandle::<BlogStore>::of(ctx), self.id.clone());
         }
         let navigator = NavigatorController::<AppRouter>::of(ctx);
         let (content, metadata) = match state {

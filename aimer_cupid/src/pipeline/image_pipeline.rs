@@ -519,9 +519,7 @@ impl ImagePipeline {
             .textures
             .get(&id)
         {
-            let size = entry
-                .texture
-                .size();
+            let size = entry.texture.size();
             if size.width == width && size.height == height {
                 upload_rgba8(queue, &entry.texture, width, height, data.as_ref());
                 return;
@@ -570,8 +568,7 @@ impl ImagePipeline {
     }
 
     pub fn texture_count(&self) -> usize {
-        self.textures
-            .len()
+        self.textures.len()
     }
 
     pub fn texture_bytes(&self) -> u64 {

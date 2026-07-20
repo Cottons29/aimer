@@ -203,10 +203,7 @@ mod tests {
                 .set(self.index);
             *self
                 .live_updater
-                .borrow_mut() = Some(
-                self.updater
-                    .clone(),
-            );
+                .borrow_mut() = Some(self.updater.clone());
             // Content follows the selection (the image in the real app) AND a
             // Row of buttons whose highlight must follow the selection too.
             Column::new().children(vec![
@@ -577,18 +574,15 @@ mod tests {
     impl EventElement for MainAxisProbe {}
     impl LayoutElement for MainAxisProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-            self.seen
-                .set(
-                    ctx.box_constraint
-                        .max_width,
-                );
+            self.seen.set(
+                ctx.box_constraint
+                    .max_width,
+            );
             ResolvedSize {
                 width: ctx
                     .box_constraint
                     .max_width,
-                height: ctx
-                    .box_constraint
-                    .max_height,
+                height: 24.0,
             }
         }
     }
@@ -622,11 +616,10 @@ mod tests {
     impl EventElement for IntrinsicProbe {}
     impl LayoutElement for IntrinsicProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-            self.seen
-                .set(
-                    ctx.box_constraint
-                        .max_width,
-                );
+            self.seen.set(
+                ctx.box_constraint
+                    .max_width,
+            );
             ResolvedSize {
                 width: self.intrinsic_width,
                 height: ctx
@@ -662,9 +655,10 @@ mod tests {
         let c1 = Rc::new(Cell::new(0.0));
         let row = row_of(vec![expanded_probe(1.0, &c1)]);
 
-        let _ = row.computed_size(&ctx);
+        let size = row.computed_size(&ctx);
 
         assert_eq!(c1.get(), 300.0, "the only Expanded must receive the full width");
+        assert_eq!(size, ResolvedSize { width: 300.0, height: 24.0 });
     }
 
     /// Two equal `Expanded` children split the width evenly.

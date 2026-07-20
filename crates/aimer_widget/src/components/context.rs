@@ -182,8 +182,7 @@ impl BuildConsumer {
     }
 
     pub fn mark_needs_rebuild(&self) {
-        self.dirty
-            .set(true);
+        self.dirty.set(true);
     }
 }
 
@@ -214,10 +213,7 @@ impl Drop for StateScopeGuard {
             .states
             .write()
             .unwrap();
-        if let Some(previous) = self
-            .previous
-            .take()
-        {
+        if let Some(previous) = self.previous.take() {
             states.insert(self.type_id, previous);
         } else {
             states.remove(&self.type_id);
@@ -311,11 +307,7 @@ impl<'a> BuildContext<'a> {
     #[doc(hidden)]
     pub fn current_build_consumer(&self) -> Option<Rc<BuildConsumer>> {
         self.get_state::<CurrentBuildConsumer>()
-            .map(|consumer| {
-                consumer
-                    .0
-                    .clone()
-            })
+            .map(|consumer| consumer.0.clone())
     }
 }
 

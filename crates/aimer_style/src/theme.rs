@@ -43,22 +43,26 @@ impl ThemeData {
 
     /// Creates Aimer's built-in light theme.
     pub const fn light() -> Self {
-        Self { primary_color: Color::BLUE,
-               on_primary_color: Color::WHITE,
-               background_color: Color::WHITE,
-               on_background_color: Color::BLACK,
-               surface_color: Color::WHITE,
-               on_surface_color: Color::BLACK }
+        Self {
+            primary_color: Color::BLUE,
+            on_primary_color: Color::WHITE,
+            background_color: Color::WHITE,
+            on_background_color: Color::BLACK,
+            surface_color: Color::WHITE,
+            on_surface_color: Color::BLACK,
+        }
     }
 
     /// Creates Aimer's built-in dark theme.
     pub const fn dark() -> Self {
-        Self { primary_color: Color::Rgba(144, 202, 249, 255),
-               on_primary_color: Color::BLACK,
-               background_color: Color::Rgba(18, 18, 18, 255),
-               on_background_color: Color::WHITE,
-               surface_color: Color::Rgba(30, 30, 30, 255),
-               on_surface_color: Color::WHITE }
+        Self {
+            primary_color: Color::Rgba(144, 202, 249, 255),
+            on_primary_color: Color::BLACK,
+            background_color: Color::Rgba(18, 18, 18, 255),
+            on_background_color: Color::WHITE,
+            surface_color: Color::Rgba(30, 30, 30, 255),
+            on_surface_color: Color::WHITE,
+        }
     }
 
     /// Sets the primary accent color.
@@ -108,18 +112,26 @@ impl ThemeData {
         if t >= 1.0 {
             return other;
         }
-        Self { primary_color: self.primary_color
-                                  .lerp(other.primary_color, t),
-               on_primary_color: self.on_primary_color
-                                     .lerp(other.on_primary_color, t),
-               background_color: self.background_color
-                                     .lerp(other.background_color, t),
-               on_background_color: self.on_background_color
-                                        .lerp(other.on_background_color, t),
-               surface_color: self.surface_color
-                                  .lerp(other.surface_color, t),
-               on_surface_color: self.on_surface_color
-                                     .lerp(other.on_surface_color, t) }
+        Self {
+            primary_color: self
+                .primary_color
+                .lerp(other.primary_color, t),
+            on_primary_color: self
+                .on_primary_color
+                .lerp(other.on_primary_color, t),
+            background_color: self
+                .background_color
+                .lerp(other.background_color, t),
+            on_background_color: self
+                .on_background_color
+                .lerp(other.on_background_color, t),
+            surface_color: self
+                .surface_color
+                .lerp(other.surface_color, t),
+            on_surface_color: self
+                .on_surface_color
+                .lerp(other.on_surface_color, t),
+        }
     }
 }
 
@@ -164,12 +176,13 @@ mod tests {
     use super::*;
 
     fn theme(color: Color) -> ThemeData {
-        ThemeData::new().primary_color(color)
-                        .on_primary_color(color)
-                        .background_color(color)
-                        .on_background_color(color)
-                        .surface_color(color)
-                        .on_surface_color(color)
+        ThemeData::new()
+            .primary_color(color)
+            .on_primary_color(color)
+            .background_color(color)
+            .on_background_color(color)
+            .surface_color(color)
+            .on_surface_color(color)
     }
 
     #[test]

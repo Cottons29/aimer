@@ -817,9 +817,7 @@ impl ScrollState {
         dy: f32,
         now: AnimInstant,
     ) -> Option<(Vec2d, f32)> {
-        let mut accum = self
-            .vel_accum
-            .get();
+        let mut accum = self.vel_accum.get();
         accum.x += dx;
         accum.y += dy;
 
@@ -1129,14 +1127,8 @@ impl ScrollState {
                 // sub-pixel (the curve crawls toward the target for a long time
                 // after covering ~95% of the distance early).
                 let tail_done = u >= FLING_TAIL_START
-                    && step
-                        .x
-                        .abs()
-                        < FLING_END_STEP_PX
-                    && step
-                        .y
-                        .abs()
-                        < FLING_END_STEP_PX;
+                    && step.x.abs() < FLING_END_STEP_PX
+                    && step.y.abs() < FLING_END_STEP_PX;
                 if u >= 1.0 || tail_done {
                     offset = target;
                     self.pointer_velocity
@@ -1144,15 +1136,7 @@ impl ScrollState {
                     self.cancel_fling();
                 }
             }
-        } else if velocity
-            .x
-            .abs()
-            > VELOCITY_EPSILON
-            || velocity
-                .y
-                .abs()
-                > VELOCITY_EPSILON
-        {
+        } else if velocity.x.abs() > VELOCITY_EPSILON || velocity.y.abs() > VELOCITY_EPSILON {
             // Clear any in-flight spring oscillation when fresh momentum begins.
             self.spring_velocity
                 .set(Vec2d { x: 0.0, y: 0.0 });
@@ -1347,14 +1331,8 @@ impl ScrollState {
         let v_check = self
             .pointer_velocity
             .get();
-        let momentum_active = v_check
-            .x
-            .abs()
-            > VELOCITY_EPSILON
-            || v_check
-                .y
-                .abs()
-                > VELOCITY_EPSILON;
+        let momentum_active =
+            v_check.x.abs() > VELOCITY_EPSILON || v_check.y.abs() > VELOCITY_EPSILON;
         if self
             .scroll_behavior
             .bouncy
@@ -1398,21 +1376,11 @@ impl ScrollState {
             needs_redraw = true;
 
             // Snap to rest when distance from edge and velocity are both negligible.
-            if (offset.x - clamped.x).abs() < SNAP_EPSILON
-                && sv
-                    .x
-                    .abs()
-                    < VELOCITY_EPSILON
-            {
+            if (offset.x - clamped.x).abs() < SNAP_EPSILON && sv.x.abs() < VELOCITY_EPSILON {
                 offset.x = clamped.x;
                 sv.x = 0.0;
             }
-            if (offset.y - clamped.y).abs() < SNAP_EPSILON
-                && sv
-                    .y
-                    .abs()
-                    < VELOCITY_EPSILON
-            {
+            if (offset.y - clamped.y).abs() < SNAP_EPSILON && sv.y.abs() < VELOCITY_EPSILON {
                 offset.y = clamped.y;
                 sv.y = 0.0;
             }
@@ -1734,12 +1702,7 @@ mod tests {
             -120.0,
             "internal offset is negated"
         );
-        assert_eq!(
-            ctrl.offset()
-                .y,
-            120.0,
-            "public offset reads back the logical position"
-        );
+        assert_eq!(ctrl.offset().y, 120.0, "public offset reads back the logical position");
     }
 
     // `jump_to` clamps to the valid range (never past the bottom edge).
@@ -1747,12 +1710,7 @@ mod tests {
     fn controller_jump_to_clamps_to_range() {
         let (ctrl, _state) = attached(1000.0);
         ctrl.jump_to(Vec2d { x: 0.0, y: 5000.0 });
-        assert_eq!(
-            ctrl.offset()
-                .y,
-            1000.0,
-            "over-scroll target clamps to max extent"
-        );
+        assert_eq!(ctrl.offset().y, 1000.0, "over-scroll target clamps to max extent");
     }
 
     // A position requested before the controller is attached is remembered and
@@ -1762,11 +1720,7 @@ mod tests {
         let ctrl = ScrollController::new();
         ctrl.jump_to(Vec2d { x: 0.0, y: 75.0 });
         // Detached: reported via the pending value.
-        assert_eq!(
-            ctrl.offset()
-                .y,
-            75.0
-        );
+        assert_eq!(ctrl.offset().y, 75.0);
 
         let state = Rc::new(ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 }));
         ctrl.attach(state.clone());
@@ -1784,11 +1738,7 @@ mod tests {
     #[test]
     fn controller_max_extent_reports_logical() {
         let (ctrl, _state) = attached(640.0);
-        assert_eq!(
-            ctrl.max_extent()
-                .y,
-            640.0
-        );
+        assert_eq!(ctrl.max_extent().y, 640.0);
     }
 
     // `animate_to` with a real duration arms the curve-driven fling rather than
@@ -1836,11 +1786,7 @@ mod tests {
     fn controller_animate_to_zero_duration_jumps_immediately() {
         let (ctrl, state) = attached(1000.0);
         ctrl.animate_to(Vec2d { x: 0.0, y: 300.0 }, Duration::ZERO, Curve::EaseInOut);
-        assert_eq!(
-            ctrl.offset()
-                .y,
-            300.0
-        );
+        assert_eq!(ctrl.offset().y, 300.0);
         assert!(
             state
                 .fling_start_time
@@ -1925,21 +1871,11 @@ mod tests {
             1,
             "start fires once on the idle→scrolling edge"
         );
-        assert_eq!(
-            ends.borrow()
-                .len(),
-            0,
-            "end has not fired yet"
-        );
+        assert_eq!(ends.borrow().len(), 0, "end has not fired yet");
 
         state.end_scroll();
         state.end_scroll(); // already idle → ignored
-        assert_eq!(
-            ends.borrow()
-                .len(),
-            1,
-            "end fires once on the scrolling→idle edge"
-        );
+        assert_eq!(ends.borrow().len(), 1, "end fires once on the scrolling→idle edge");
 
         // A brand-new session fires start again.
         state.begin_scroll();
@@ -1989,12 +1925,7 @@ mod tests {
             1,
             "jump fires start once"
         );
-        assert_eq!(
-            ends.borrow()
-                .len(),
-            1,
-            "jump fires end once"
-        );
+        assert_eq!(ends.borrow().len(), 1, "jump fires end once");
         assert_eq!(ends.borrow()[0].y, 120.0, "end reports the landing offset");
     }
 
@@ -2017,21 +1948,11 @@ mod tests {
             1,
             "animation fires start when armed"
         );
-        assert_eq!(
-            ends.borrow()
-                .len(),
-            0,
-            "end waits for the animation to settle"
-        );
+        assert_eq!(ends.borrow().len(), 0, "end waits for the animation to settle");
 
         // Simulate the draw loop reporting the motion as fully settled.
         state.end_scroll();
-        assert_eq!(
-            ends.borrow()
-                .len(),
-            1,
-            "end fires once the session settles"
-        );
+        assert_eq!(ends.borrow().len(), 1, "end fires once the session settles");
     }
 
     // Callbacks are held on the controller, so they keep firing after a rebuild
@@ -2096,24 +2017,14 @@ mod tests {
 
         // First frame: only establishes the baseline, no callback.
         state.notify_scroll();
-        assert_eq!(
-            log.borrow()
-                .len(),
-            0,
-            "the initial frame establishes the baseline silently"
-        );
+        assert_eq!(log.borrow().len(), 0, "the initial frame establishes the baseline silently");
 
         // Offset moves → fires with the new logical offset.
         state
             .scroll_offset
             .set(Vec2d { x: 0.0, y: -40.0 });
         state.notify_scroll();
-        assert_eq!(
-            log.borrow()
-                .len(),
-            1,
-            "a genuine move fires the callback"
-        );
+        assert_eq!(log.borrow().len(), 1, "a genuine move fires the callback");
         assert_eq!(
             log.borrow()[0].y,
             40.0,
@@ -2125,12 +2036,7 @@ mod tests {
             .scroll_offset
             .set(Vec2d { x: 0.0, y: -90.0 });
         state.notify_scroll();
-        assert_eq!(
-            log.borrow()
-                .len(),
-            2,
-            "each frame with movement fires again"
-        );
+        assert_eq!(log.borrow().len(), 2, "each frame with movement fires again");
         assert_eq!(log.borrow()[1].y, 90.0);
     }
 
@@ -2146,24 +2052,14 @@ mod tests {
 
         state.notify_scroll(); // baseline at y = 40 (logical)
         state.notify_scroll(); // identical offset → no fire
-        assert_eq!(
-            log.borrow()
-                .len(),
-            0,
-            "an unchanged offset does not fire"
-        );
+        assert_eq!(log.borrow().len(), 0, "an unchanged offset does not fire");
 
         // Sub-epsilon jitter is ignored too.
         state
             .scroll_offset
             .set(Vec2d { x: 0.0, y: -40.0 - SCROLL_NOTIFY_EPSILON / 2.0 });
         state.notify_scroll();
-        assert_eq!(
-            log.borrow()
-                .len(),
-            0,
-            "sub-epsilon jitter is suppressed"
-        );
+        assert_eq!(log.borrow().len(), 0, "sub-epsilon jitter is suppressed");
     }
 
     // A programmatic `jump_to` moves the offset, so the very next drawn frame
@@ -2176,21 +2072,12 @@ mod tests {
 
         // Establish the baseline (as the first render frame would).
         state.notify_scroll();
-        assert_eq!(
-            log.borrow()
-                .len(),
-            0
-        );
+        assert_eq!(log.borrow().len(), 0);
 
         ctrl.jump_to(Vec2d { x: 0.0, y: 150.0 });
         // The draw loop calls `notify_scroll` once per frame; simulate that.
         state.notify_scroll();
-        assert_eq!(
-            log.borrow()
-                .len(),
-            1,
-            "the jump is reported on the next frame"
-        );
+        assert_eq!(log.borrow().len(), 1, "the jump is reported on the next frame");
         assert_eq!(log.borrow()[0].y, 150.0);
     }
 
@@ -2214,12 +2101,7 @@ mod tests {
             .scroll_offset
             .set(Vec2d { x: 0.0, y: -60.0 });
         second.notify_scroll();
-        assert_eq!(
-            log.borrow()
-                .len(),
-            1,
-            "the callback still fires on the re-attached engine"
-        );
+        assert_eq!(log.borrow().len(), 1, "the callback still fires on the re-attached engine");
         assert_eq!(log.borrow()[0].y, 60.0);
     }
 }

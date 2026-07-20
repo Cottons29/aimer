@@ -79,20 +79,9 @@ mod tests {
             ["accent"]
         );
         assert_eq!(node.opacity, 0.5);
-        assert_eq!(
-            node.transform
-                .tx,
-            2.0
-        );
-        assert_eq!(
-            node.transform
-                .ty,
-            3.0
-        );
-        assert!(
-            node.fill
-                .is_some()
-        );
+        assert_eq!(node.transform.tx, 2.0);
+        assert_eq!(node.transform.ty, 3.0);
+        assert!(node.fill.is_some());
         assert!(
             node.stroke
                 .is_some()

@@ -37,16 +37,12 @@ impl<T: Widget + 'static> Widget for FadeTransition<T> {
         let child = self
             .child
             .to_element(ctx);
-        let controller = self
-            .opacity
-            .clone();
+        let controller = self.opacity.clone();
         let animating = Cell::new(
             self.opacity
                 .is_animating(),
         );
-        let window = ctx
-            .window
-            .clone();
+        let window = ctx.window.clone();
         Box::new(FadeTransitionElement { child, controller, animating, window })
     }
 }
@@ -70,26 +66,19 @@ macro_rules! impl_transition_element {
                     let v = self
                         .controller
                         .tick(now);
-                    self.animating
-                        .set(
-                            self.controller
-                                .is_animating(),
-                        );
+                    self.animating.set(
+                        self.controller
+                            .is_animating(),
+                    );
                     v
                 };
 
-                ctx.canvas
-                    .save();
+                ctx.canvas.save();
                 $apply(ctx, curved_value);
-                self.child
-                    .draw(ctx);
-                ctx.canvas
-                    .restore();
+                self.child.draw(ctx);
+                ctx.canvas.restore();
 
-                if self
-                    .animating
-                    .get()
-                {
+                if self.animating.get() {
                     self.window
                         .request_redraw();
                 }
@@ -101,10 +90,7 @@ macro_rules! impl_transition_element {
                 $debug
             }
             fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-                visitor(
-                    self.child
-                        .as_ref(),
-                );
+                visitor(self.child.as_ref());
             }
         }
 
@@ -114,10 +100,7 @@ macro_rules! impl_transition_element {
                     .on_event(event)
             }
             fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-                visitor(
-                    self.child
-                        .as_ref(),
-                );
+                visitor(self.child.as_ref());
             }
         }
 
@@ -130,12 +113,10 @@ macro_rules! impl_transition_element {
 
         impl LayoutElement for $name {
             fn pos(&self) -> Option<Vec2d> {
-                self.child
-                    .pos()
+                self.child.pos()
             }
             fn size(&self) -> Option<Size> {
-                self.child
-                    .size()
+                self.child.size()
             }
             fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
                 self.child
@@ -203,9 +184,7 @@ impl<T: Widget + 'static> Widget for SlideTransition<T> {
             self.position
                 .is_animating(),
         );
-        let window = ctx
-            .window
-            .clone();
+        let window = ctx.window.clone();
         let offset = self.offset;
         Box::new(SlideTransitionElement { child, controller, animating, window, offset })
     }
@@ -229,39 +208,26 @@ impl Drawable for SlideTransitionElement {
             let v = self
                 .controller
                 .tick(now);
-            self.animating
-                .set(
-                    self.controller
-                        .is_animating(),
-                );
+            self.animating.set(
+                self.controller
+                    .is_animating(),
+            );
             v
         };
 
         // At value 0.0: child is fully offset. At value 1.0: child is at natural
         // position.
         let remaining = 1.0 - curved_value;
-        let dx = self
-            .offset
-            .0
-            * remaining;
-        let dy = self
-            .offset
-            .1
-            * remaining;
+        let dx = self.offset.0 * remaining;
+        let dy = self.offset.1 * remaining;
 
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
         ctx.canvas
             .translate((dx, dy).into());
-        self.child
-            .draw(ctx);
-        ctx.canvas
-            .restore();
+        self.child.draw(ctx);
+        ctx.canvas.restore();
 
-        if self
-            .animating
-            .get()
-        {
+        if self.animating.get() {
             self.window
                 .request_redraw();
         }
@@ -273,10 +239,7 @@ impl VisitorElement for SlideTransitionElement {
         "SlideTransitionElement"
     }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 }
 
@@ -286,10 +249,7 @@ impl EventElement for SlideTransitionElement {
             .on_event(event)
     }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 }
 
@@ -302,12 +262,10 @@ impl Rebuildable for SlideTransitionElement {
 
 impl LayoutElement for SlideTransitionElement {
     fn pos(&self) -> Option<Vec2d> {
-        self.child
-            .pos()
+        self.child.pos()
     }
     fn size(&self) -> Option<Size> {
-        self.child
-            .size()
+        self.child.size()
     }
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.child
@@ -353,16 +311,12 @@ impl<T: Widget + 'static> Widget for ScaleTransition<T> {
         let child = self
             .child
             .to_element(ctx);
-        let controller = self
-            .scale
-            .clone();
+        let controller = self.scale.clone();
         let animating = Cell::new(
             self.scale
                 .is_animating(),
         );
-        let window = ctx
-            .window
-            .clone();
+        let window = ctx.window.clone();
         Box::new(ScaleTransitionElement { child, controller, animating, window })
     }
 }
@@ -384,11 +338,10 @@ impl Drawable for ScaleTransitionElement {
             let v = self
                 .controller
                 .tick(now);
-            self.animating
-                .set(
-                    self.controller
-                        .is_animating(),
-                );
+            self.animating.set(
+                self.controller
+                    .is_animating(),
+            );
             v
         };
 
@@ -401,23 +354,17 @@ impl Drawable for ScaleTransitionElement {
             .max_height
             / 2.0;
 
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
         ctx.canvas
             .translate((cx, cy).into());
         ctx.canvas
             .scale(curved_value, curved_value);
         ctx.canvas
             .translate((-cx, -cy).into());
-        self.child
-            .draw(ctx);
-        ctx.canvas
-            .restore();
+        self.child.draw(ctx);
+        ctx.canvas.restore();
 
-        if self
-            .animating
-            .get()
-        {
+        if self.animating.get() {
             self.window
                 .request_redraw();
         }
@@ -429,10 +376,7 @@ impl VisitorElement for ScaleTransitionElement {
         "ScaleTransitionElement"
     }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 }
 
@@ -442,10 +386,7 @@ impl EventElement for ScaleTransitionElement {
             .on_event(event)
     }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 }
 
@@ -458,12 +399,10 @@ impl Rebuildable for ScaleTransitionElement {
 
 impl LayoutElement for ScaleTransitionElement {
     fn pos(&self) -> Option<Vec2d> {
-        self.child
-            .pos()
+        self.child.pos()
     }
     fn size(&self) -> Option<Size> {
-        self.child
-            .size()
+        self.child.size()
     }
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.child
@@ -510,16 +449,12 @@ impl<T: Widget + 'static> Widget for RotationTransition<T> {
         let child = self
             .child
             .to_element(ctx);
-        let controller = self
-            .turns
-            .clone();
+        let controller = self.turns.clone();
         let animating = Cell::new(
             self.turns
                 .is_animating(),
         );
-        let window = ctx
-            .window
-            .clone();
+        let window = ctx.window.clone();
         Box::new(RotationTransitionElement { child, controller, animating, window })
     }
 }
@@ -541,11 +476,10 @@ impl Drawable for RotationTransitionElement {
             let v = self
                 .controller
                 .tick(now);
-            self.animating
-                .set(
-                    self.controller
-                        .is_animating(),
-                );
+            self.animating.set(
+                self.controller
+                    .is_animating(),
+            );
             v
         };
 
@@ -560,23 +494,17 @@ impl Drawable for RotationTransitionElement {
             .max_height
             / 2.0;
 
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
         ctx.canvas
             .translate((cx, cy).into());
         ctx.canvas
             .rotate(angle);
         ctx.canvas
             .translate((-cx, -cy).into());
-        self.child
-            .draw(ctx);
-        ctx.canvas
-            .restore();
+        self.child.draw(ctx);
+        ctx.canvas.restore();
 
-        if self
-            .animating
-            .get()
-        {
+        if self.animating.get() {
             self.window
                 .request_redraw();
         }
@@ -588,10 +516,7 @@ impl VisitorElement for RotationTransitionElement {
         "RotationTransitionElement"
     }
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 }
 
@@ -601,10 +526,7 @@ impl EventElement for RotationTransitionElement {
             .on_event(event)
     }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 }
 
@@ -617,12 +539,10 @@ impl Rebuildable for RotationTransitionElement {
 
 impl LayoutElement for RotationTransitionElement {
     fn pos(&self) -> Option<Vec2d> {
-        self.child
-            .pos()
+        self.child.pos()
     }
     fn size(&self) -> Option<Size> {
-        self.child
-            .size()
+        self.child.size()
     }
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.child

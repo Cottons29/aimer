@@ -81,8 +81,7 @@ thread_local! {
 
 impl<P, R> CallbackInner<P, R> {
     pub fn get(&self) -> *mut Option<RawInnerCallback<P, R>> {
-        self.0
-            .get()
+        self.0.get()
     }
 
     /// Returns `true` if this is the default (empty) sentinel.
@@ -111,10 +110,7 @@ impl<P, R> Default for CallbackInner<P, R> {
 
 impl<P, R> Clone for CallbackInner<P, R> {
     fn clone(&self) -> Self {
-        CallbackInner(
-            self.0
-                .clone(),
-        )
+        CallbackInner(self.0.clone())
     }
 }
 

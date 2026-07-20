@@ -109,11 +109,7 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
         }
 
         // Find bounding keyframes
-        for i in 0..self
-            .frames
-            .len()
-            - 1
-        {
+        for i in 0..self.frames.len() - 1 {
             let (f0, ref kf0) = self.frames[i];
             let (f1, ref kf1) = self.frames[i + 1];
 
@@ -140,8 +136,7 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
 
     /// Returns the number of keyframes.
     pub fn len(&self) -> usize {
-        self.frames
-            .len()
+        self.frames.len()
     }
 
     /// Returns `true` if there are no keyframes.

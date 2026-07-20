@@ -82,8 +82,7 @@ impl SelectionOwner {
     }
 
     fn borrow(&self) -> Ref<'_, SelectionState> {
-        self.state
-            .borrow()
+        self.state.borrow()
     }
 
     fn borrow_mut(&self) -> RefMut<'_, SelectionState> {
@@ -220,24 +219,17 @@ impl Widget for RichText {
             .flatten(&self.text_style);
         let plain_text: Rc<str> = spans
             .iter()
-            .map(|span| {
-                span.text
-                    .as_ref()
-            })
+            .map(|span| span.text.as_ref())
             .collect::<String>()
             .into();
-        let window = ctx
-            .window
-            .clone();
+        let window = ctx.window.clone();
         let selection = Rc::new(SelectionOwner::new(window.clone(), selection_coordinator(ctx)));
         RawRichText {
             spans,
             plain_text,
             text_align: self.text_align,
             overflow: self.resolved_overflow(),
-            on_link: self
-                .on_link
-                .clone(),
+            on_link: self.on_link.clone(),
             link_hover_color: self.link_hover_color,
             selectable: self.selectable,
             selection_color: self.selection_color,
@@ -248,6 +240,7 @@ impl Widget for RichText {
             selection,
             pressed_link: RefCell::new(None),
             hovered_link: RefCell::new(None),
+            layout_cache: RefCell::new(None),
         }
         .boxed()
     }
@@ -282,6 +275,12 @@ struct PreparedLayout {
     line_breaks: Vec<PreparedLineBreak>,
     line_heights: Vec<f32>,
     size: ResolvedSize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PreparedLayoutKey {
+    width_bits: u32,
+    scale_bits: u32,
 }
 
 struct PreparedLineBreak {
@@ -321,9 +320,7 @@ fn push_selection_run(runs: &mut Vec<PreparedSelection>, run: PreparedSelection)
 fn snap_selection_lines_to_pixels(runs: &mut [PreparedSelection]) {
     for run in runs {
         let bottom = (run.y + run.height).round();
-        run.y = run
-            .y
-            .round();
+        run.y = run.y.round();
         run.height = (bottom - run.y).max(0.0);
     }
 }
@@ -398,6 +395,7 @@ pub struct RawRichText {
     selection: Rc<SelectionOwner>,
     pressed_link: RefCell<Option<Rc<str>>>,
     hovered_link: RefCell<Option<Rc<str>>>,
+    layout_cache: RefCell<Option<(PreparedLayoutKey, Rc<PreparedLayout>)>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -437,19 +435,10 @@ fn display_color(
     hovered_link: Option<&Rc<str>>,
     link_hover_color: Option<Color>,
 ) -> Color {
-    if hovered_link.is_some()
-        && span
-            .link
-            .as_ref()
-            == hovered_link
-    {
-        link_hover_color.unwrap_or(
-            span.style
-                .color,
-        )
+    if hovered_link.is_some() && span.link.as_ref() == hovered_link {
+        link_hover_color.unwrap_or(span.style.color)
     } else {
-        span.style
-            .color
+        span.style.color
     }
 }
 
@@ -472,7 +461,7 @@ impl RawRichText {
         }
     }
 
-    fn prepare_layout(&self, ctx: &BuildContext) -> PreparedLayout {
+    fn compute_layout(&self, ctx: &BuildContext) -> PreparedLayout {
         let wrap_width = if matches!(self.overflow, TextOverflow::Wrap | TextOverflow::Ellipsis) {
             self.available_width(ctx)
         } else {
@@ -651,6 +640,30 @@ impl RawRichText {
             line_heights,
             size: ResolvedSize { width, height },
         }
+    }
+
+    fn prepare_layout(&self, ctx: &BuildContext) -> Rc<PreparedLayout> {
+        let width = if matches!(self.overflow, TextOverflow::Wrap | TextOverflow::Ellipsis) {
+            self.available_width(ctx)
+        } else {
+            0.0
+        };
+        let key =
+            PreparedLayoutKey { width_bits: width.to_bits(), scale_bits: ctx.scale.to_bits() };
+        if let Some((cached_key, layout)) = self
+            .layout_cache
+            .borrow()
+            .as_ref()
+            && *cached_key == key
+        {
+            return Rc::clone(layout);
+        }
+
+        let layout = Rc::new(self.compute_layout(ctx));
+        *self
+            .layout_cache
+            .borrow_mut() = Some((key, Rc::clone(&layout)));
+        layout
     }
 
     fn link_at(&self, x: f32, y: f32) -> Option<Rc<str>> {
@@ -906,6 +919,12 @@ impl LayoutElement for RawRichText {
         self.bounds
             .pos_start_end()
     }
+
+    fn invalidate_layout(&self) {
+        self.layout_cache
+            .borrow_mut()
+            .take();
+    }
 }
 
 impl Drawable for RawRichText {
@@ -915,17 +934,7 @@ impl Drawable for RawRichText {
             .canvas
             .get_transform_translation();
         self.bounds
-            .save(
-                ctx.scale,
-                abs_x,
-                abs_y,
-                layout
-                    .size
-                    .width,
-                layout
-                    .size
-                    .height,
-            );
+            .save(ctx.scale, abs_x, abs_y, layout.size.width, layout.size.height);
         self.link_regions
             .borrow_mut()
             .clear();
@@ -934,18 +943,16 @@ impl Drawable for RawRichText {
             .clear();
 
         if matches!(self.overflow, TextOverflow::Clip | TextOverflow::Ellipsis) {
-            ctx.canvas
-                .save();
-            ctx.canvas
-                .set_clip(
-                    (0.0, 0.0).into(),
-                    ResolvedSize {
-                        width: self.available_width(ctx),
-                        height: ctx
-                            .parent_size
-                            .height,
-                    },
-                );
+            ctx.canvas.save();
+            ctx.canvas.set_clip(
+                (0.0, 0.0).into(),
+                ResolvedSize {
+                    width: self.available_width(ctx),
+                    height: ctx
+                        .parent_size
+                        .height,
+                },
+            );
         }
 
         for background in &layout.backgrounds {
@@ -1202,20 +1209,12 @@ impl Drawable for RawRichText {
             }
         }
 
-        self.set_hovered_link(
-            self.link_at(
-                ctx.cursor_pos
-                    .x,
-                ctx.cursor_pos
-                    .y,
-            ),
-        );
+        self.set_hovered_link(self.link_at(ctx.cursor_pos.x, ctx.cursor_pos.y));
 
         if matches!(self.overflow, TextOverflow::Clip | TextOverflow::Ellipsis) {
             ctx.canvas
                 .clear_clip();
-            ctx.canvas
-                .restore();
+            ctx.canvas.restore();
         }
     }
 }
@@ -1272,6 +1271,7 @@ mod tests {
             selection,
             pressed_link: RefCell::new(None),
             hovered_link: RefCell::new(None),
+            layout_cache: RefCell::new(None),
         }
     }
 
@@ -1345,16 +1345,9 @@ mod tests {
         assert_eq!(super::display_color(&linked, Some(&hovered), Some(hover_color)), hover_color);
         assert_eq!(
             super::display_color(&plain, Some(&hovered), Some(hover_color)),
-            plain
-                .style
-                .color
+            plain.style.color
         );
-        assert_eq!(
-            super::display_color(&plain, None, Some(hover_color)),
-            plain
-                .style
-                .color
-        );
+        assert_eq!(super::display_color(&plain, None, Some(hover_color)), plain.style.color);
     }
 
     #[test]
@@ -1763,6 +1756,7 @@ mod tests {
             selection: selection_owner(&context.window),
             pressed_link: RefCell::new(None),
             hovered_link: RefCell::new(None),
+            layout_cache: RefCell::new(None),
         };
         text.selection
             .borrow_mut()
@@ -1770,10 +1764,8 @@ mod tests {
                 text.plain_text
                     .len(),
             );
-        let fragment = text
-            .prepare_layout(&context)
-            .fragments
-            .remove(0);
+        let layout = text.prepare_layout(&context);
+        let expected_top = layout.fragments[0].baseline - layout.fragments[0].ascent;
 
         text.draw(&context);
 
@@ -1787,7 +1779,7 @@ mod tests {
             })
             .unwrap();
         let expected_color: aimer_cupid::utilities::Color = selection_color.into();
-        assert_eq!(selection_top, fragment.baseline - fragment.ascent);
+        assert_eq!(selection_top, expected_top);
         assert_eq!(rendered_color.to_array(), expected_color.to_array());
     }
 
@@ -1842,6 +1834,7 @@ mod tests {
             selection: selection_owner(&context.window),
             pressed_link: RefCell::new(None),
             hovered_link: RefCell::new(None),
+            layout_cache: RefCell::new(None),
         };
         text.selection
             .borrow_mut()
@@ -1909,6 +1902,7 @@ mod tests {
             selection: selection_owner(&context.window),
             pressed_link: RefCell::new(None),
             hovered_link: RefCell::new(None),
+            layout_cache: RefCell::new(None),
         };
         text.selection
             .borrow_mut()
@@ -1983,6 +1977,7 @@ mod tests {
             selection: selection_owner(&context.window),
             pressed_link: RefCell::new(None),
             hovered_link: RefCell::new(None),
+            layout_cache: RefCell::new(None),
         };
         text.selection
             .borrow_mut()
@@ -2000,18 +1995,8 @@ mod tests {
         );
         assert_eq!(layout.line_breaks[0].source_range, 5..6);
         assert_eq!(layout.line_breaks[1].source_range, 6..7);
-        assert_eq!(
-            layout.line_breaks[0].x + layout.line_breaks[0].hit_width,
-            layout
-                .size
-                .width
-        );
-        assert_eq!(
-            layout.line_breaks[1].hit_width,
-            layout
-                .size
-                .width
-        );
+        assert_eq!(layout.line_breaks[0].x + layout.line_breaks[0].hit_width, layout.size.width);
+        assert_eq!(layout.line_breaks[1].hit_width, layout.size.width);
         assert_eq!(layout.line_breaks[0].selection_width, 1.0);
         assert_eq!(layout.line_breaks[1].selection_width, 1.0);
         assert!(layout.line_breaks[1].height > 0.0);
@@ -2117,6 +2102,7 @@ mod tests {
             selection: selection_owner(&context.window),
             pressed_link: RefCell::new(None),
             hovered_link: RefCell::new(None),
+            layout_cache: RefCell::new(None),
         };
 
         text.draw(&context);
@@ -2182,6 +2168,7 @@ mod tests {
             selection: selection_owner(&context.window),
             pressed_link: RefCell::new(None),
             hovered_link: RefCell::new(None),
+            layout_cache: RefCell::new(None),
         };
         let plain = RawRichText {
             spans: vec![ResolvedTextSpan {
@@ -2204,6 +2191,7 @@ mod tests {
             selection: selection_owner(&context.window),
             pressed_link: RefCell::new(None),
             hovered_link: RefCell::new(None),
+            layout_cache: RefCell::new(None),
         };
 
         assert_eq!(
@@ -2252,11 +2240,8 @@ mod tests {
             ResolvedTextSpan::plain(Rc::from("def"), style),
         ];
 
-        let layout = layout_resolved_spans(&spans, 20.0, |text, _| {
-            text.chars()
-                .count() as f32
-                * 5.0
-        });
+        let layout =
+            layout_resolved_spans(&spans, 20.0, |text, _| text.chars().count() as f32 * 5.0);
 
         assert_eq!(layout.line_count, 2);
         assert_eq!(layout.fragments[0].line, 0);
@@ -2317,15 +2302,30 @@ mod tests {
             selection: selection_owner(&context.window),
             pressed_link: RefCell::new(None),
             hovered_link: RefCell::new(None),
+            layout_cache: RefCell::new(None),
         };
 
         assert_eq!(rich_text.available_width(&context), 20.0);
+        let first_layout = rich_text.prepare_layout(&context);
+        let cached_layout = rich_text.prepare_layout(&context);
         assert_eq!(
-            rich_text
-                .prepare_layout(&context)
+            first_layout
                 .size
                 .width,
             20.0
         );
+        assert!(Rc::ptr_eq(&first_layout, &cached_layout));
+
+        context
+            .parent_size
+            .width = 40.0;
+        let resized_layout = rich_text.prepare_layout(&context);
+        assert_eq!(
+            resized_layout
+                .size
+                .width,
+            40.0
+        );
+        assert!(!Rc::ptr_eq(&first_layout, &resized_layout));
     }
 }

@@ -68,12 +68,10 @@ impl VisitorElement for Box<dyn Element> {
 
 impl LayoutElement for Box<dyn Element> {
     fn pos(&self) -> Option<Vec2d> {
-        self.as_ref()
-            .pos()
+        self.as_ref().pos()
     }
     fn size(&self) -> Option<Size> {
-        self.as_ref()
-            .size()
+        self.as_ref().size()
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -95,8 +93,7 @@ impl LayoutElement for Box<dyn Element> {
     }
 
     fn flex(&self) -> Option<f32> {
-        self.as_ref()
-            .flex()
+        self.as_ref().flex()
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
@@ -317,11 +314,7 @@ mod tests {
     impl EventElement for CapturingElement {
         fn on_event(&self, _event: &ElementEvent) -> bool {
             self.events
-                .set(
-                    self.events
-                        .get()
-                        + 1,
-                );
+                .set(self.events.get() + 1);
             true
         }
 
@@ -350,12 +343,7 @@ mod tests {
         let event = ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, PointerSource::Touch, 7);
 
         assert!(dispatch_event(&element, Vec2d { x: 50.0, y: 50.0 }, &event));
-        assert_eq!(
-            element
-                .events
-                .get(),
-            1
-        );
+        assert_eq!(element.events.get(), 1);
     }
 
     #[test]
@@ -363,12 +351,7 @@ mod tests {
         let element = CapturingElement { events: Cell::new(0) };
 
         assert!(cancel_pointer(&element, 7, Vec2d { x: 50.0, y: 50.0 }));
-        assert_eq!(
-            element
-                .events
-                .get(),
-            1
-        );
+        assert_eq!(element.events.get(), 1);
     }
 
     #[test]
@@ -376,12 +359,7 @@ mod tests {
         let element = CapturingElement { events: Cell::new(0) };
 
         assert!(cancel_pointer(&element, 8, Vec2d { x: 5.0, y: 5.0 }));
-        assert_eq!(
-            element
-                .events
-                .get(),
-            1
-        );
+        assert_eq!(element.events.get(), 1);
     }
 
     #[test]
@@ -389,11 +367,6 @@ mod tests {
         let element = CapturingElement { events: Cell::new(0) };
 
         assert!(cancel_pointer(&element, 7, Vec2d { x: 5.0, y: 5.0 }));
-        assert_eq!(
-            element
-                .events
-                .get(),
-            1
-        );
+        assert_eq!(element.events.get(), 1);
     }
 }

@@ -255,9 +255,7 @@ impl<W: Widget> Widget for Scrollable<W> {
         let state = Rc::new(ScrollState {
             speed_multiplier: ctx.scale,
             scroll_offset: Cell::new(initial_offset),
-            storage_key: self
-                .key
-                .clone(),
+            storage_key: self.key.clone(),
             last_pointer_pos: Cell::new(None),
             drag_mode: Cell::new(DragMode::None),
             cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),

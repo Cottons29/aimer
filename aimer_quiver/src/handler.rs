@@ -142,9 +142,7 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
             self.window = Some(window);
         }
 
-        let window = self
-            .window
-            .unwrap();
+        let window = self.window.unwrap();
 
         // winit's iOS window is created without a `UIWindowScene`. On the
         // iOS 26/27 SDK the scene life cycle is mandatory, so a scene-less
@@ -221,10 +219,7 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
             .get()
             > 0
         {
-            let Some(window) = self
-                .window
-                .as_ref()
-            else {
+            let Some(window) = self.window.as_ref() else {
                 return;
             };
             window.request_redraw();
@@ -278,11 +273,9 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             *hovered = None;
         }
 
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
         widget.draw(ctx);
-        ctx.canvas
-            .restore();
+        ctx.canvas.restore();
     }
 
     #[cfg(debug_assertions)]

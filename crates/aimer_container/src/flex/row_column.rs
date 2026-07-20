@@ -89,16 +89,15 @@ impl Column {
         self
     }
 
-    /// Replaces the children and returns an erased horizontal layout.
+    /// Replaces the children and returns an erased vertical layout.
     ///
-    /// The current implementation carries this builder's alignment, gap, and
-    /// overflow settings into a [`Row`] and boxes it. Use [`Column::children`]
-    /// when the resulting layout must remain vertical.
+    /// This is equivalent to [`Column::children`] followed by [`Widget::boxed`].
+    /// Use it when different branches need to return one [`AnyWidget`] type.
     pub fn box_children<W: Widget + 'static>(
         self,
         children: impl IntoIterator<Item = W>,
     ) -> AnyWidget {
-        Row {
+        Column {
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,

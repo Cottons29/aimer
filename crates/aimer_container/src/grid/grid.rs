@@ -39,8 +39,7 @@ impl<W: Widget + 'static> GridItem<W> {
     }
 
     pub fn row(mut self, row: usize) -> Self {
-        self.placement
-            .row = Some(row);
+        self.placement.row = Some(row);
         self
     }
 
@@ -51,8 +50,7 @@ impl<W: Widget + 'static> GridItem<W> {
     }
 
     pub fn at(mut self, row: usize, column: usize) -> Self {
-        self.placement
-            .row = Some(row);
+        self.placement.row = Some(row);
         self.placement
             .column = Some(column);
         self
@@ -252,17 +250,11 @@ impl<W: Widget + 'static> Widget for Grid<W> {
             .iter()
             .map(|item| item.placement)
             .collect::<Vec<_>>();
-        let validation = resolve_placements(
-            &placements,
-            self.columns
-                .len(),
-            self.rows
-                .len(),
-        )
-        .and_then(|_| {
-            resolve_tracks(&self.columns, 1.0, self.column_gap, &[], "columns").map(|_| ())
-        })
-        .and_then(|_| resolve_tracks(&self.rows, 1.0, self.row_gap, &[], "rows").map(|_| ()));
+        let validation = resolve_placements(&placements, self.columns.len(), self.rows.len())
+            .and_then(|_| {
+                resolve_tracks(&self.columns, 1.0, self.column_gap, &[], "columns").map(|_| ())
+            })
+            .and_then(|_| resolve_tracks(&self.rows, 1.0, self.row_gap, &[], "rows").map(|_| ()));
 
         if let Err(error) = validation {
             return aimer_widget::ErrorWidget::new(format!("Grid layout error: {error}"))
@@ -283,12 +275,8 @@ impl<W: Widget + 'static> Widget for Grid<W> {
             .collect();
 
         Box::new(RawGrid {
-            columns: self
-                .columns
-                .clone(),
-            rows: self
-                .rows
-                .clone(),
+            columns: self.columns.clone(),
+            rows: self.rows.clone(),
             column_gap: self.column_gap,
             row_gap: self.row_gap,
             horizontal_alignment: self.horizontal_alignment,

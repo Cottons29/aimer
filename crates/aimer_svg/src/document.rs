@@ -402,9 +402,7 @@ impl SceneBuilder {
                 });
             nodes.push(SvgNode {
                 node_id,
-                svg_id: group
-                    .svg_id
-                    .clone(),
+                svg_id: group.svg_id.clone(),
                 classes: group
                     .classes
                     .clone(),
@@ -507,16 +505,11 @@ impl SceneBuilder {
     ) -> Result<(), SvgError> {
         check_limit(
             "nodes",
-            self.nodes
-                .len()
-                + 1,
+            self.nodes.len() + 1,
             self.limits
                 .max_nodes,
         )?;
-        let metadata = if path
-            .id()
-            .is_empty()
-        {
+        let metadata = if path.id().is_empty() {
             let metadata = self
                 .unnamed_path_metadata
                 .get(self.path_metadata_index)
@@ -554,10 +547,7 @@ impl SceneBuilder {
             .len();
         self.geometries
             .push(SvgGeometry { commands: commands.into() });
-        let node_id = SvgNodeId(
-            self.nodes
-                .len() as u32,
-        );
+        let node_id = SvgNodeId(self.nodes.len() as u32);
         self.nodes
             .push(SvgNode {
                 node_id,
@@ -568,12 +558,7 @@ impl SceneBuilder {
                             .svg_id
                             .clone()
                     })
-                    .or_else(|| {
-                        (!path
-                            .id()
-                            .is_empty())
-                        .then(|| Arc::from(path.id()))
-                    }),
+                    .or_else(|| (!path.id().is_empty()).then(|| Arc::from(path.id()))),
                 classes: metadata
                     .map(|metadata| metadata.classes)
                     .unwrap_or_default(),
@@ -635,11 +620,7 @@ fn convert_transform(transform: usvg::Transform) -> SvgTransform {
 }
 
 fn convert_fill(fill: &usvg::Fill) -> Option<SvgFill> {
-    let color = convert_paint(
-        fill.paint(),
-        fill.opacity()
-            .get(),
-    )?;
+    let color = convert_paint(fill.paint(), fill.opacity().get())?;
     Some(SvgFill {
         color,
         rule: match fill.rule() {
@@ -657,9 +638,7 @@ fn convert_stroke(stroke: &usvg::Stroke) -> Option<SvgStroke> {
                 .opacity()
                 .get(),
         )?,
-        width: stroke
-            .width()
-            .get(),
+        width: stroke.width().get(),
         line_cap: match stroke.linecap() {
             usvg::LineCap::Butt => SvgLineCap::Butt,
             usvg::LineCap::Round => SvgLineCap::Round,

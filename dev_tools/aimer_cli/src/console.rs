@@ -269,11 +269,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
         // so we don't spam the escape on every frame.
         if progress_supported && last_progress.as_ref() != Some(&state.status) {
             emit_terminal_progress(&state.status);
-            last_progress = Some(
-                state
-                    .status
-                    .clone(),
-            );
+            last_progress = Some(state.status.clone());
         }
 
         let inspector_state = inspector_handle

@@ -182,8 +182,7 @@ impl<E: Element> RawContainer<E> {
     /// visually covers whatever sits behind it in a `Stack`, so it must also
     /// occlude it for hit-testing (Flutter's `HitTestBehavior::opaque`).
     fn is_opaque(&self) -> bool {
-        self.color
-            .is_some()
+        self.color.is_some()
             || self
                 .box_decoration
                 .background_color
@@ -238,8 +237,7 @@ impl<E: Element> RawContainer<E> {
 
 impl<T: Element> Drawable for RawContainer<T> {
     fn draw(&self, ctx: &BuildContext) {
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
 
         let constraint = ctx.box_constraint;
 
@@ -383,34 +381,10 @@ impl<T: Element> Drawable for RawContainer<T> {
                 Dimension::Auto => 0.0,
             }
         };
-        let b_left = get_stroke(
-            border
-                .left
-                .stroke,
-            box_width,
-        )
-        .max(0.0);
-        let b_right = get_stroke(
-            border
-                .right
-                .stroke,
-            box_width,
-        )
-        .max(0.0);
-        let b_top = get_stroke(
-            border
-                .top
-                .stroke,
-            box_height,
-        )
-        .max(0.0);
-        let b_bottom = get_stroke(
-            border
-                .bottom
-                .stroke,
-            box_height,
-        )
-        .max(0.0);
+        let b_left = get_stroke(border.left.stroke, box_width).max(0.0);
+        let b_right = get_stroke(border.right.stroke, box_width).max(0.0);
+        let b_top = get_stroke(border.top.stroke, box_height).max(0.0);
+        let b_bottom = get_stroke(border.bottom.stroke, box_height).max(0.0);
 
         // Draw decoration (background, border, outline)
 
@@ -463,8 +437,7 @@ impl<T: Element> Drawable for RawContainer<T> {
             .draw(&child_ctx);
         ctx.canvas
             .clear_clip();
-        ctx.canvas
-            .restore();
+        ctx.canvas.restore();
     }
 }
 
@@ -506,9 +479,7 @@ impl<T: Element> LayoutElement for RawContainer<T> {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let scale_bits = ctx
-            .scale
-            .to_bits();
+        let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self
             .cache
             .get_computed(ctx.box_constraint, scale_bits)
@@ -663,9 +634,7 @@ impl<T: Element> LayoutElement for RawContainer<T> {
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let scale_bits = ctx
-            .scale
-            .to_bits();
+        let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self
             .cache
             .get_content(ctx.box_constraint, scale_bits)
@@ -747,34 +716,10 @@ impl<T: Element> LayoutElement for RawContainer<T> {
             .box_decoration
             .border;
 
-        let b_left = get_stroke(
-            border
-                .left
-                .stroke,
-            capped_w,
-        )
-        .max(0.0);
-        let b_right = get_stroke(
-            border
-                .right
-                .stroke,
-            capped_w,
-        )
-        .max(0.0);
-        let b_top = get_stroke(
-            border
-                .top
-                .stroke,
-            capped_h,
-        )
-        .max(0.0);
-        let b_bottom = get_stroke(
-            border
-                .bottom
-                .stroke,
-            capped_h,
-        )
-        .max(0.0);
+        let b_left = get_stroke(border.left.stroke, capped_w).max(0.0);
+        let b_right = get_stroke(border.right.stroke, capped_w).max(0.0);
+        let b_top = get_stroke(border.top.stroke, capped_h).max(0.0);
+        let b_bottom = get_stroke(border.bottom.stroke, capped_h).max(0.0);
 
         let result = if width_unbounded || height_unbounded {
             let mut child_ctx = ctx.clone();
@@ -837,28 +782,16 @@ impl<T: Element> LayoutElement for RawContainer<T> {
         // will be ignored or should be handled by the layout system during
         // actual resolution.
 
-        if let Spacing::Px(v) = self
-            .padding
-            .left
-        {
+        if let Spacing::Px(v) = self.padding.left {
             p_w += v as f32;
         }
-        if let Spacing::Px(v) = self
-            .padding
-            .right
-        {
+        if let Spacing::Px(v) = self.padding.right {
             p_w += v as f32;
         }
-        if let Spacing::Px(v) = self
-            .padding
-            .top
-        {
+        if let Spacing::Px(v) = self.padding.top {
             p_h += v as f32;
         }
-        if let Spacing::Px(v) = self
-            .padding
-            .bottom
-        {
+        if let Spacing::Px(v) = self.padding.bottom {
             p_h += v as f32;
         }
 
@@ -924,7 +857,6 @@ impl<T: Element> LayoutElement for RawContainer<T> {
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bounds
-            .get()
+        self.bounds.get()
     }
 }

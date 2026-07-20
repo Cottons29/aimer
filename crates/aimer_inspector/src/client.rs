@@ -157,9 +157,7 @@ fn render_tree_recursive(
     lines.push(format!("{}{}", prefix, node_label(node, full_tree)));
     ids.push(node.id);
 
-    let count = node
-        .children
-        .len();
+    let count = node.children.len();
     for (i, child) in node
         .children
         .iter()
@@ -187,9 +185,7 @@ fn render_tree_with_base(
     lines.push(format!("{}{}", line_prefix, node_label(node, full_tree)));
     ids.push(node.id);
 
-    let count = node
-        .children
-        .len();
+    let count = node.children.len();
     for (i, child) in node
         .children
         .iter()

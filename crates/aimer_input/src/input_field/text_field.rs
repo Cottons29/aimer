@@ -146,12 +146,8 @@ impl Widget for TextField {
             controller: self
                 .controller
                 .clone(),
-            prompt: self
-                .prompt
-                .clone(),
-            hint: self
-                .hint
-                .clone(),
+            prompt: self.prompt.clone(),
+            hint: self.hint.clone(),
             hint_style: self.hint_style,
             text_style: self.text_style,
             prompt_style: self.prompt_style,
@@ -188,9 +184,7 @@ impl Widget for TextField {
             on_focus: self
                 .on_focus
                 .clone(),
-            on_blur: self
-                .on_blur
-                .clone(),
+            on_blur: self.on_blur.clone(),
             read_only: self.read_only,
             mouse_held: Cell::new(false),
             last_click_time: Cell::new(AnimInstant::now()),

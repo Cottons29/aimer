@@ -222,10 +222,7 @@ impl SvgPipeline {
             .instance_policy
             .capacity();
         self.instance_policy
-            .record_usage(
-                self.instances
-                    .len(),
-            );
+            .record_usage(self.instances.len());
         if old_capacity
             != self
                 .instance_policy
@@ -394,9 +391,7 @@ impl SvgPipeline {
         let mesh_key = Arc::as_ptr(&mesh) as usize;
         frame_meshes.insert(mesh_key);
         self.ensure_gpu_mesh(device, mesh_key, &mesh);
-        let instance_index = self
-            .instances
-            .len() as u32;
+        let instance_index = self.instances.len() as u32;
         self.instances
             .push(SvgInstance {
                 transform_x: [
@@ -453,9 +448,7 @@ impl SvgPipeline {
                     _mesh: mesh.clone(),
                     vertex_buffer,
                     index_buffer,
-                    index_count: mesh
-                        .indices
-                        .len() as u32,
+                    index_count: mesh.indices.len() as u32,
                     bytes,
                     last_used: self.usage_clock,
                 },
@@ -562,16 +555,8 @@ fn combined_transform(
     node: &SvgNode,
     node_override: Option<&SvgNodeStyleOverride>,
 ) -> Mat3 {
-    let viewport = item
-        .scene
-        .viewport;
-    let destination = Mat3::translate(
-        item.destination
-            .x,
-        item.destination
-            .y,
-    )
-    .mul(&Mat3::scale(
+    let viewport = item.scene.viewport;
+    let destination = Mat3::translate(item.destination.x, item.destination.y).mul(&Mat3::scale(
         item.destination
             .width
             / viewport

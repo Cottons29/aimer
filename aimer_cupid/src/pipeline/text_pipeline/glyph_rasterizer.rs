@@ -97,12 +97,8 @@ fn rasterize_swash_glyph(
         height: image
             .placement
             .height,
-        offset_x: image
-            .placement
-            .left as f32,
-        offset_y: (image
-            .placement
-            .top
+        offset_x: image.placement.left as f32,
+        offset_y: (image.placement.top
             - image
                 .placement
                 .height as i32) as f32,
@@ -156,9 +152,7 @@ fn load_system_font(family: &str) -> Option<Vec<u8>> {
             &Properties::new(),
         )
         .ok()?;
-    let font = handle
-        .load()
-        .ok()?;
+    let font = handle.load().ok()?;
     let data = font.copy_font_data()?;
     Some(data.to_vec())
 }
@@ -626,8 +620,7 @@ impl GlyphRasterizer {
     }
 
     pub fn primary_font_id(&self) -> FontId {
-        self.primary
-            .id
+        self.primary.id
     }
 
     pub fn font_id_for_family(
@@ -637,11 +630,7 @@ impl GlyphRasterizer {
         style: FontStyle,
     ) -> FontId {
         self.family_record(family, weight, style)
-            .map_or(
-                self.primary
-                    .id,
-                |record| record.id,
-            )
+            .map_or(self.primary.id, |record| record.id)
     }
 
     pub fn glyph_key_for_family_codepoint(
@@ -724,8 +713,7 @@ impl GlyphRasterizer {
                     face.weight
                         .abs_diff(numeric_weight),
                     face.weight,
-                    face.record
-                        .id,
+                    face.record.id,
                 )
             })
             .map(|face| &face.record)
@@ -740,8 +728,7 @@ impl GlyphRasterizer {
             .push(record);
         self.unsupported_codepoints
             .clear();
-        self.cache
-            .clear();
+        self.cache.clear();
         self.advance_cache
             .clear();
         self.font_bytes_cache
@@ -757,15 +744,9 @@ impl GlyphRasterizer {
             .into_iter()
             .flatten()
             .map(|record| record.id)
-            .chain(std::iter::once(
-                self.primary
-                    .id,
-            ))
+            .chain(std::iter::once(self.primary.id))
             .max()
-            .unwrap_or(
-                self.primary
-                    .id,
-            )
+            .unwrap_or(self.primary.id)
             .saturating_add(1)
     }
 
@@ -814,12 +795,7 @@ impl GlyphRasterizer {
             .primary
             .glyph_index(codepoint)
         {
-            (
-                self.primary
-                    .id,
-                glyph_id,
-                true,
-            )
+            (self.primary.id, glyph_id, true)
         } else {
             let fallback = self
                 .fallbacks
@@ -834,31 +810,18 @@ impl GlyphRasterizer {
             if let Some(font) = fallback {
                 (font.0, font.1, true)
             } else {
-                (
-                    self.primary
-                        .id,
-                    0,
-                    false,
-                )
+                (self.primary.id, 0, false)
             }
         }
     }
 
     fn select_font_for_key(&mut self, key: GlyphKey) -> &mut FontRecord {
-        if key.font_id
-            == self
-                .primary
-                .id
-        {
+        if key.font_id == self.primary.id {
             &mut self.primary
         } else if let Some(index) = self
             .family_faces
             .iter()
-            .position(|face| {
-                face.record
-                    .id
-                    == key.font_id
-            })
+            .position(|face| face.record.id == key.font_id)
         {
             &mut self.family_faces[index].record
         } else {
@@ -885,10 +848,7 @@ impl GlyphRasterizer {
         if !self
             .cache
             .contains_key(&key)
-            && key.font_id
-                != self
-                    .primary
-                    .id
+            && key.font_id != self.primary.id
         {
             // debug!("----------------------------------------------------------------------------");
             time_cost!("FallbackFont", || self.ensure_fallbacks())
@@ -1007,9 +967,7 @@ impl GlyphRasterizer {
             .cache
             .get_mut(&key)
         {
-            glyph
-                .bitmap
-                .clear();
+            glyph.bitmap.clear();
             glyph
                 .bitmap
                 .shrink_to_fit();
@@ -1031,9 +989,7 @@ impl GlyphRasterizer {
                     .bitmap
                     .capacity(),
             );
-            glyph
-                .bitmap
-                .clear();
+            glyph.bitmap.clear();
             glyph
                 .bitmap
                 .shrink_to_fit();
@@ -1055,14 +1011,12 @@ impl GlyphRasterizer {
     }
 
     pub fn cached_glyph_count(&self) -> usize {
-        self.cache
-            .len()
+        self.cache.len()
     }
 
     #[cfg(test)]
     fn cached_glyph(&self, key: GlyphKey) -> Option<&RasterizedGlyph> {
-        self.cache
-            .get(&key)
+        self.cache.get(&key)
     }
 
     pub fn glyph_metrics_for_key(&mut self, key: GlyphKey, font_size: f32) -> RasterizedGlyph {
@@ -1095,11 +1049,7 @@ impl GlyphRasterizer {
             return *width;
         }
 
-        if key.font_id
-            != self
-                .primary
-                .id
-        {
+        if key.font_id != self.primary.id {
             self.ensure_fallbacks();
         }
 
@@ -1120,11 +1070,7 @@ impl GlyphRasterizer {
             return *width;
         }
 
-        if key.font_id
-            != self
-                .primary
-                .id
-        {
+        if key.font_id != self.primary.id {
             self.ensure_fallbacks();
         }
 
@@ -1238,24 +1184,11 @@ impl GlyphRasterizer {
             let bytes = self
                 .family_faces
                 .iter()
-                .find(|face| {
-                    face.record
-                        .id
-                        == font_id
-                })
-                .and_then(|face| {
-                    face.record
-                        .data()
-                })
+                .find(|face| face.record.id == font_id)
+                .and_then(|face| face.record.data())
                 .or_else(|| {
-                    if font_id
-                        == self
-                            .primary
-                            .id
-                    {
-                        return self
-                            .primary
-                            .data();
+                    if font_id == self.primary.id {
+                        return self.primary.data();
                     }
                     self.fallbacks
                         .as_ref()
@@ -1283,21 +1216,13 @@ impl GlyphRasterizer {
         let collection_index = self
             .family_faces
             .iter()
-            .find(|face| {
-                face.record
-                    .id
-                    == font_id
-            })
+            .find(|face| face.record.id == font_id)
             .map(|face| {
                 face.record
                     .collection_index
             })
             .unwrap_or_else(|| {
-                if font_id
-                    == self
-                        .primary
-                        .id
-                {
+                if font_id == self.primary.id {
                     return self
                         .primary
                         .collection_index;
@@ -1626,7 +1551,7 @@ mod tests {
                 .is_none()
         );
     }
-    
+
     /// macOS ships AppleColorEmoji at
     /// /System/Library/Fonts/AppleColorEmoji.ttc. On a system without that
     /// font (or in CI containers), the chain just won't contain it; the
@@ -1786,9 +1711,7 @@ mod tests {
             .is_empty()
         {
             assert_eq!(
-                glyph
-                    .bitmap
-                    .len(),
+                glyph.bitmap.len(),
                 (glyph.width * glyph.height * 4) as usize,
                 "'😀' bitmap must be RGBA8 (4 bytes per pixel)"
             );

@@ -214,13 +214,11 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             && self.bottom == Dimension::Auto;
 
         if is_auto && self.transform == Transform::None {
-            self.child
-                .draw(ctx);
+            self.child.draw(ctx);
             return;
         }
 
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
 
         let mut offset_x = 0.0;
         let mut offset_y = 0.0;
@@ -230,46 +228,38 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
 
         if !is_auto {
             if self.left != Dimension::Auto {
-                offset_x = self
-                    .left
-                    .resolve(
-                        ctx.parent_size
-                            .width,
-                        ctx.scale,
-                    );
+                offset_x = self.left.resolve(
+                    ctx.parent_size
+                        .width,
+                    ctx.scale,
+                );
             } else if self.right != Dimension::Auto {
                 offset_x = ctx
                     .parent_size
                     .width
-                    - self
-                        .right
-                        .resolve(
-                            ctx.parent_size
-                                .width,
-                            ctx.scale,
-                        )
+                    - self.right.resolve(
+                        ctx.parent_size
+                            .width,
+                        ctx.scale,
+                    )
                     - child_size.width;
             }
 
             if self.top != Dimension::Auto {
-                offset_y = self
-                    .top
-                    .resolve(
-                        ctx.parent_size
-                            .height,
-                        ctx.scale,
-                    );
+                offset_y = self.top.resolve(
+                    ctx.parent_size
+                        .height,
+                    ctx.scale,
+                );
             } else if self.bottom != Dimension::Auto {
                 offset_y = ctx
                     .parent_size
                     .height
-                    - self
-                        .bottom
-                        .resolve(
-                            ctx.parent_size
-                                .height,
-                            ctx.scale,
-                        )
+                    - self.bottom.resolve(
+                        ctx.parent_size
+                            .height,
+                        ctx.scale,
+                    )
                     - child_size.height;
             }
         }
@@ -310,8 +300,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
         }
 
         if is_auto {
-            self.child
-                .draw(ctx);
+            self.child.draw(ctx);
         } else {
             let parent_pos = ctx.parent_pos;
 
@@ -334,17 +323,13 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
 
             let child_ctx = BuildContext {
                 parent_size,
-                canvas: ctx
-                    .canvas
-                    .clone(),
+                canvas: ctx.canvas.clone(),
                 scale: ctx.scale,
                 parent_pos,
                 cursor_pos: ctx.cursor_pos,
                 box_constraint: child_constraint,
                 visible_rect: child_visible_rect,
-                window: ctx
-                    .window
-                    .clone(),
+                window: ctx.window.clone(),
                 #[cfg(not(target_arch = "wasm32"))]
                 async_handle: ctx
                     .async_handle
@@ -357,8 +342,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             self.child
                 .draw(&child_ctx);
         }
-        ctx.canvas
-            .restore();
+        ctx.canvas.restore();
     }
 }
 

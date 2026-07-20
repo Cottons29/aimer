@@ -185,9 +185,7 @@ impl ImageSource {
                 .unwrap()
                 .insert(path.clone(), DiskImageState::Loading);
             let path_buf = path.clone();
-            let window = ctx
-                .window
-                .clone();
+            let window = ctx.window.clone();
             ctx.async_handle
                 .spawn_blocking(move || {
                     let state = match image::open(&path_buf) {
@@ -219,9 +217,7 @@ impl ImageSource {
                 .to_string_lossy()
                 .to_string();
             let path_buf = path.clone();
-            let window = ctx
-                .window
-                .clone();
+            let window = ctx.window.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let state = match Self::fetch_bytes(&url).await {
                     Ok(bytes) => match Self::decode_image_browser(&bytes).await {
@@ -289,9 +285,7 @@ impl ImageSource {
             .unwrap()
             .insert(key.to_string(), DiskImageState::Loading);
         let key_owned = key.to_string();
-        let window = ctx
-            .window
-            .clone();
+        let window = ctx.window.clone();
         ctx.async_handle
             .spawn_blocking(move || {
                 let state = match Self::load_asset_bytes(&key_owned) {
@@ -413,9 +407,7 @@ impl ImageSource {
                 cache.insert(url.to_string(), NetworkImageState::Loading);
                 let url = url.to_string();
                 let headers = headers.clone();
-                let window = ctx
-                    .window
-                    .clone();
+                let window = ctx.window.clone();
 
                 #[cfg(not(target_arch = "wasm32"))]
                 ctx.async_handle

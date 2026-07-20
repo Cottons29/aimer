@@ -87,9 +87,7 @@ pub fn warn(msg: &str) {
 pub fn error(msg: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let label = "ERROR"
-            .bold()
-            .red();
+        let label = "ERROR".bold().red();
         let colored_msg = msg.red();
         println!("[{}] {}", label, colored_msg);
     }

@@ -103,18 +103,12 @@ pub trait LayoutElement: VisitorElement {
         if self
             .size()
             .is_none()
-            || self
-                .pos()
-                .is_none()
+            || self.pos().is_none()
         {
             return None;
         }
-        let start = self
-            .pos()
-            .unwrap();
-        let size = self
-            .size()
-            .unwrap();
+        let start = self.pos().unwrap();
+        let size = self.size().unwrap();
         let resolved = ResolvedSize {
             width: match size.width {
                 Dimension::Px(v) => v,
