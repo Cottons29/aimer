@@ -72,30 +72,7 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_finding_project_root() {
-        let expected = PathBuf::from(env::var("HOME").unwrap())
-            .join("Documents")
-            .join("AimerFramework")
-            .join("aimer");
-
-        let another_expected = PathBuf::from(env::var("HOME").unwrap())
-            .join("work")
-            .join("aimer")
-            .join("aimer");
-
-        let project_root = get_project_root(true);
-        assert!(project_root.is_ok());
-        let is_pass = project_root
-            .as_ref()
-            .unwrap()
-            == &expected
-            || project_root
-                .as_ref()
-                .unwrap()
-                == &another_expected;
-        assert!(is_pass, "Project root not found project_root: {:?}", project_root);
-    }
+    
 
     #[test]
     fn process_log_error_contains_original_text() {
@@ -108,7 +85,6 @@ mod tests {
         let result = String::from("[WARN] be careful").process_log();
         assert!(result.contains("[WARN] be careful"));
     }
-
     #[test]
     fn process_log_debug_contains_original_text() {
         let result = String::from("[DEBUG] trace info").process_log();

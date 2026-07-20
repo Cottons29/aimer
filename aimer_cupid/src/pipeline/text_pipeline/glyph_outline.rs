@@ -53,9 +53,10 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
         for step in 1..=12 {
             let t = step as f32 / 12.0;
             let mt = 1.0 - t;
-            self.current
-                .push((mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2,
-                       mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2));
+            self.current.push((
+                mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2,
+                mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2,
+            ));
         }
     }
 
@@ -72,15 +73,10 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
         for step in 1..=16 {
             let t = step as f32 / 16.0;
             let mt = 1.0 - t;
-            self.current
-                .push((mt * mt * mt * x0
-                       + 3.0 * mt * mt * t * x1
-                       + 3.0 * mt * t * t * x2
-                       + t * t * t * x3,
-                       mt * mt * mt * y0
-                       + 3.0 * mt * mt * t * y1
-                       + 3.0 * mt * t * t * y2
-                       + t * t * t * y3));
+            self.current.push((
+                mt * mt * mt * x0 + 3.0 * mt * mt * t * x1 + 3.0 * mt * t * t * x2 + t * t * t * x3,
+                mt * mt * mt * y0 + 3.0 * mt * mt * t * y1 + 3.0 * mt * t * t * y2 + t * t * t * y3,
+            ));
         }
     }
 
@@ -89,25 +85,30 @@ impl ttf_parser::OutlineBuilder for GlyphOutline {
     }
 }
 
-pub(crate) fn rasterize_outline_glyph(record: &FontRecord,
-                                      glyph_id: u16,
-                                      font_size: f32)
-                                      -> Option<RasterizedGlyph> {
+pub(crate) fn rasterize_outline_glyph(
+    record: &FontRecord,
+    glyph_id: u16,
+    font_size: f32,
+) -> Option<RasterizedGlyph> {
     let data = time_cost!("   |-MapFontData", || record.data())?;
     let data = data.as_ref();
-    let face =
-        time_cost!("   |-ParseFontFace", || ttf_parser::Face::parse(data,
-                                                                    record.collection_index).ok())?;
+    let face = time_cost!("   |-ParseFontFace", || ttf_parser::Face::parse(
+        data,
+        record.collection_index
+    )
+    .ok())?;
     let glyph = time_cost!("   |-SelectGlyph", || ttf_parser::GlyphId(glyph_id));
     let bbox = time_cost!("   |-ComputeGlyphBoundingBox", || face.glyph_bounding_box(glyph))?;
     let units_per_em = f32::from(face.units_per_em());
     let scale = font_size / units_per_em;
     let offset_x = f32::from(bbox.x_min) * scale;
     let offset_y = f32::from(bbox.y_min) * scale;
-    let width = (f32::from(bbox.x_max - bbox.x_min) * scale).ceil()
-                                                            .max(1.0) as u32;
-    let height = (f32::from(bbox.y_max - bbox.y_min) * scale).ceil()
-                                                             .max(1.0) as u32;
+    let width = (f32::from(bbox.x_max - bbox.x_min) * scale)
+        .ceil()
+        .max(1.0) as u32;
+    let height = (f32::from(bbox.y_max - bbox.y_min) * scale)
+        .ceil()
+        .max(1.0) as u32;
 
     let mut outline = GlyphOutline::new(scale, offset_x, offset_y);
     face.outline_glyph(glyph, &mut outline)?;
@@ -133,16 +134,15 @@ pub(crate) fn rasterize_outline_glyph(record: &FontRecord,
         }
     }
 
-    Some(RasterizedGlyph { bitmap,
-                           width,
-                           height,
-                           offset_x,
-                           offset_y,
-                           advance_width: advance_width_from_face(data,
-                                                                  record.collection_index,
-                                                                  glyph_id,
-                                                                  font_size)?,
-                           is_color: false })
+    Some(RasterizedGlyph {
+        bitmap,
+        width,
+        height,
+        offset_x,
+        offset_y,
+        advance_width: advance_width_from_face(data, record.collection_index, glyph_id, font_size)?,
+        is_color: false,
+    })
 }
 
 /// A minimal outline builder that converts a glyph outline into a list of
@@ -200,9 +200,10 @@ impl ttf_parser::OutlineBuilder for ColrOutlineBuilder {
         for step in 1..=12u32 {
             let t = step as f32 / 12.0;
             let mt = 1.0 - t;
-            self.current
-                .push((mt * mt * x0 + 2.0 * mt * t * x1s + t * t * x2s,
-                       mt * mt * y0 + 2.0 * mt * t * y1s + t * t * y2s));
+            self.current.push((
+                mt * mt * x0 + 2.0 * mt * t * x1s + t * t * x2s,
+                mt * mt * y0 + 2.0 * mt * t * y1s + t * t * y2s,
+            ));
         }
     }
 
@@ -219,15 +220,16 @@ impl ttf_parser::OutlineBuilder for ColrOutlineBuilder {
         for step in 1..=16u32 {
             let t = step as f32 / 16.0;
             let mt = 1.0 - t;
-            self.current
-                .push((mt * mt * mt * x0
-                       + 3.0 * mt * mt * t * x1s
-                       + 3.0 * mt * t * t * x2s
-                       + t * t * t * x3s,
-                       mt * mt * mt * y0
-                       + 3.0 * mt * mt * t * y1s
-                       + 3.0 * mt * t * t * y2s
-                       + t * t * t * y3s));
+            self.current.push((
+                mt * mt * mt * x0
+                    + 3.0 * mt * mt * t * x1s
+                    + 3.0 * mt * t * t * x2s
+                    + t * t * t * x3s,
+                mt * mt * mt * y0
+                    + 3.0 * mt * mt * t * y1s
+                    + 3.0 * mt * t * t * y2s
+                    + t * t * t * y3s,
+            ));
         }
     }
 

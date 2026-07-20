@@ -100,8 +100,10 @@ pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
     let text = String::from_utf8_lossy(bytes).to_string();
 
     let Some(proxy) = EVENT_PROXY.get() else {
-        aimer_utils::debug!("trigger_rust_insert_text: EVENT_PROXY not initialized yet (len={})",
-                            len);
+        aimer_utils::debug!(
+            "trigger_rust_insert_text: EVENT_PROXY not initialized yet (len={})",
+            len
+        );
         return;
     };
 
@@ -121,46 +123,48 @@ pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
 // characters exactly once.
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_aimer_AimerActivity_nativeInsertText<'caller>(mut env: jni::EnvUnowned<'caller>,
-                                                                              _class: jni::objects::JClass<'caller>,
-                                                                              text: jni::objects::JString<'caller>)
-{
+pub extern "system" fn Java_com_aimer_AimerActivity_nativeInsertText<'caller>(
+    mut env: jni::EnvUnowned<'caller>,
+    _class: jni::objects::JClass<'caller>,
+    text: jni::objects::JString<'caller>,
+) {
     env.with_env(|env| -> Result<(), jni::errors::Error> {
-           let text = String::from(text.mutf8_chars(env)?);
-           if text.is_empty() {
-               return Ok(());
-           }
+        let text = String::from(text.mutf8_chars(env)?);
+        if text.is_empty() {
+            return Ok(());
+        }
 
-           let Some(proxy) = EVENT_PROXY.get() else {
-               aimer_utils::debug!("nativeInsertText: EVENT_PROXY not initialized yet");
-               return Ok(());
-           };
+        let Some(proxy) = EVENT_PROXY.get() else {
+            aimer_utils::debug!("nativeInsertText: EVENT_PROXY not initialized yet");
+            return Ok(());
+        };
 
-           if let Err(e) = proxy.send_event(AimerCustomAppEvent::InsertText(text)) {
-               aimer_utils::error!("nativeInsertText: failed to send event: {:?}", e);
-           }
-           Ok(())
-       })
-       .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
+        if let Err(e) = proxy.send_event(AimerCustomAppEvent::InsertText(text)) {
+            aimer_utils::error!("nativeInsertText: failed to send event: {:?}", e);
+        }
+        Ok(())
+    })
+    .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
 }
 
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_aimer_AimerActivity_nativeBackspace<'caller>(mut env: jni::EnvUnowned<'caller>,
-                                                                             _class: jni::objects::JClass<'caller>)
-{
+pub extern "system" fn Java_com_aimer_AimerActivity_nativeBackspace<'caller>(
+    mut env: jni::EnvUnowned<'caller>,
+    _class: jni::objects::JClass<'caller>,
+) {
     env.with_env(|_env| -> Result<(), jni::errors::Error> {
-           let Some(proxy) = EVENT_PROXY.get() else {
-               aimer_utils::debug!("nativeBackspace: EVENT_PROXY not initialized yet");
-               return Ok(());
-           };
+        let Some(proxy) = EVENT_PROXY.get() else {
+            aimer_utils::debug!("nativeBackspace: EVENT_PROXY not initialized yet");
+            return Ok(());
+        };
 
-           if let Err(e) = proxy.send_event(AimerCustomAppEvent::ForceBackspace) {
-               aimer_utils::error!("nativeBackspace: failed to send event: {:?}", e);
-           }
-           Ok(())
-       })
-       .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
+        if let Err(e) = proxy.send_event(AimerCustomAppEvent::ForceBackspace) {
+            aimer_utils::error!("nativeBackspace: failed to send event: {:?}", e);
+        }
+        Ok(())
+    })
+    .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
 }
 
 pub struct AimerApp<T> {
@@ -192,9 +196,10 @@ pub struct HeadlessAimerApp<W: Widget + 'static> {
 
 impl<W: Widget + 'static> HeadlessAimerApp<W> {
     fn new(widget: W, options: HeadlessOptions) -> HeadlessAimerApp<W> {
-        let scale_factor = if options.scale_factor
-                                     .is_finite()
-                              && options.scale_factor > 0.0
+        let scale_factor = if options
+            .scale_factor
+            .is_finite()
+            && options.scale_factor > 0.0
         {
             options.scale_factor
         } else {
@@ -244,37 +249,44 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             return;
         }
 
-        let scale_factor = self.app
-                               .window_scale;
+        let scale_factor = self
+            .app
+            .window_scale;
         let frame_size =
             ResolvedSize { width: self.size.width as f32, height: self.size.height as f32 };
         let canvas = aimer_canvas::Canvas::new(&self.canvas);
         canvas.begin_frame();
-        let ctx = BuildContext { parent_size: frame_size,
-                                 canvas,
-                                 scale: scale_factor as f32,
-                                 parent_pos: Default::default(),
-                                 cursor_pos: self.app.cursor_pos,
-                                 box_constraint: BoxConstraint { min_width: 0.0,
-                                                                 min_height: 0.0,
-                                                                 max_width: frame_size.width,
-                                                                 max_height:
-                                                                     frame_size.height },
-                                 visible_rect: None,
-                                 window: self.window.clone(),
-                                 #[cfg(not(target_arch = "wasm32"))]
-                                 async_handle: self.app
-                                                   .async_runtime
-                                                   .handle()
-                                                   .clone(),
-                                 inherited_states: Default::default() };
+        let ctx = BuildContext {
+            parent_size: frame_size,
+            canvas,
+            scale: scale_factor as f32,
+            parent_pos: Default::default(),
+            cursor_pos: self.app.cursor_pos,
+            box_constraint: BoxConstraint {
+                min_width: 0.0,
+                min_height: 0.0,
+                max_width: frame_size.width,
+                max_height: frame_size.height,
+            },
+            visible_rect: None,
+            window: self.window.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            async_handle: self
+                .app
+                .async_runtime
+                .handle()
+                .clone(),
+            inherited_states: Default::default(),
+        };
 
-        if self.app
-               .widget_root
-               .is_none()
-           && let Some(widget) = self.app
-                                     .pending_widget
-                                     .take()
+        if self
+            .app
+            .widget_root
+            .is_none()
+            && let Some(widget) = self
+                .app
+                .pending_widget
+                .take()
         {
             self.app.widget_root = Some(widget.to_element(&ctx));
         }
@@ -290,18 +302,23 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         if let WindowEvent::Resized(size) = &event {
             self.size = *size;
             self.window
-                .update_headless_metrics(self.size,
-                                         self.app
-                                             .window_scale);
+                .update_headless_metrics(
+                    self.size,
+                    self.app
+                        .window_scale,
+                );
         }
         let action = WindowEventHandler::handle_headless_event(&mut self.app, event);
         self.window
-            .update_headless_metrics(self.size,
-                                     self.app
-                                         .window_scale);
+            .update_headless_metrics(
+                self.size,
+                self.app
+                    .window_scale,
+            );
         match action {
-            HeadlessEventAction::None => self.window
-                                             .request_redraw(),
+            HeadlessEventAction::None => self
+                .window
+                .request_redraw(),
             HeadlessEventAction::Render => self.render_frame(),
             HeadlessEventAction::Exit => self.exit_requested = true,
         }
@@ -320,12 +337,16 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     }
 
     pub fn logical_size(&self) -> ResolvedSize {
-        ResolvedSize { width: self.size.width as f32
-                              / self.app
-                                    .window_scale as f32,
-                       height: self.size.height as f32
-                               / self.app
-                                     .window_scale as f32 }
+        ResolvedSize {
+            width: self.size.width as f32
+                / self
+                    .app
+                    .window_scale as f32,
+            height: self.size.height as f32
+                / self
+                    .app
+                    .window_scale as f32,
+        }
     }
 
     pub fn scale_factor(&self) -> f64 {
@@ -374,17 +395,18 @@ fn start_event_loop(widget: impl Widget + 'static) {
 
     info!("Initializing EventLoop...");
     #[cfg(not(target_os = "android"))]
-    let event_loop =
-        EventLoop::<AimerCustomAppEvent>::with_user_event().build()
-                                                           .expect("Failed to create EventLoop");
+    let event_loop = EventLoop::<AimerCustomAppEvent>::with_user_event()
+        .build()
+        .expect("Failed to create EventLoop");
 
     #[cfg(target_os = "android")]
     let event_loop = {
         use aimer_events::android_app;
         use winit::platform::android::EventLoopBuilderExtAndroid;
-        let app = crate::aimer_app::ANDROID_APP.get()
-                                               .expect("ANDROID_APP not set")
-                                               .clone();
+        let app = crate::aimer_app::ANDROID_APP
+            .get()
+            .expect("ANDROID_APP not set")
+            .clone();
 
         android_app::set_android_app(app.clone());
 
@@ -393,18 +415,21 @@ fn start_event_loop(widget: impl Widget + 'static) {
         // without an explicit reference, the linker may garbage-collect them out of
         // the final `cdylib`, which would make the soft-keyboard text bridge fail
         // with `UnsatisfiedLinkError`.
-        let _keep_jni: [*const (); 2] = [Java_com_aimer_AimerActivity_nativeInsertText
-                                         as *const (),
-                                         Java_com_aimer_AimerActivity_nativeBackspace as *const ()];
+        let _keep_jni: [*const (); 2] = [
+            Java_com_aimer_AimerActivity_nativeInsertText as *const (),
+            Java_com_aimer_AimerActivity_nativeBackspace as *const (),
+        ];
         std::hint::black_box(_keep_jni);
 
-        EventLoop::<AimerCustomAppEvent>::with_user_event().with_android_app(app)
-                                                           .build()
-                                                           .expect("Failed to create EventLoop")
+        EventLoop::<AimerCustomAppEvent>::with_user_event()
+            .with_android_app(app)
+            .build()
+            .expect("Failed to create EventLoop")
     };
 
-    EVENT_PROXY.set(event_loop.create_proxy())
-               .ok();
+    EVENT_PROXY
+        .set(event_loop.create_proxy())
+        .ok();
 
     // Route animation redraws requests through the event loop instead of letting
     // animating widgets (e.g. scroll momentum) spawn a sleeping thread per frame.
@@ -430,41 +455,48 @@ fn start_event_loop(widget: impl Widget + 'static) {
     let async_runtime = Runtime::new().expect("Failed to create async runtime");
 
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-    let inspector = InspectorAppHandle::connect(async_runtime.handle(),
-                                                DEFAULT_INSPECTOR_ADDRESS.parse::<IpAddr>()
-                                                                         .unwrap(),
-                                                DEFAULT_INSPECTOR_PORT.parse::<u16>()
-                                                                      .unwrap());
+    let inspector = InspectorAppHandle::connect(
+        async_runtime.handle(),
+        DEFAULT_INSPECTOR_ADDRESS
+            .parse::<IpAddr>()
+            .unwrap(),
+        DEFAULT_INSPECTOR_PORT
+            .parse::<u16>()
+            .unwrap(),
+    );
     #[cfg(all(debug_assertions, target_arch = "wasm32"))]
-    let inspector = aimer_inspector::start(DEFAULT_INSPECTOR_PORT.parse::<u16>()
-                                                                 .unwrap());
+    let inspector = aimer_inspector::start(
+        DEFAULT_INSPECTOR_PORT
+            .parse::<u16>()
+            .unwrap(),
+    );
 
     info!("Creating App instance...");
-    let mut app =
-        AimerApplicationHandler { window: None,
-                                  render_ctx: AimerRenderContext::default(),
-                                  widget_root: None,
-                                  pending_widget: Some(widget),
-                                  cursor_pos:
-                                      crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
-                                  current_modifiers: Default::default(),
-                                  ime_composing: false,
-                                  window_scale: 1.0,
-                                  native_window_size: None,
-                                  pending_resize: None,
-                                  #[cfg(not(target_arch = "wasm32"))]
-                                  async_runtime,
-                                  #[cfg(debug_assertions)]
-                                  inspector: Some(inspector),
-                                  #[cfg(debug_assertions)]
-                                  inspector_change: Cell::new(false),
-                                  #[cfg(debug_assertions)]
-                                  inspector_prev_enabled: Cell::new(false),
-                                  #[cfg(debug_assertions)]
-                                  inspector_redraw_frames: Cell::new(0),
-                                  start_up_frames: Cell::new(255),
-                                  first_frame_notifier: Default::default(),
-                                  active_touch_id: None };
+    let mut app = AimerApplicationHandler {
+        window: None,
+        render_ctx: AimerRenderContext::default(),
+        widget_root: None,
+        pending_widget: Some(widget),
+        cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
+        current_modifiers: Default::default(),
+        ime_composing: false,
+        window_scale: 1.0,
+        native_window_size: None,
+        pending_resize: None,
+        #[cfg(not(target_arch = "wasm32"))]
+        async_runtime,
+        #[cfg(debug_assertions)]
+        inspector: Some(inspector),
+        #[cfg(debug_assertions)]
+        inspector_change: Cell::new(false),
+        #[cfg(debug_assertions)]
+        inspector_prev_enabled: Cell::new(false),
+        #[cfg(debug_assertions)]
+        inspector_redraw_frames: Cell::new(0),
+        start_up_frames: Cell::new(255),
+        first_frame_notifier: Default::default(),
+        active_touch_id: None,
+    };
 
     info!("Started main event loop");
 
@@ -475,7 +507,7 @@ fn start_event_loop(widget: impl Widget + 'static) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     app.async_runtime
-       .shutdown_background();
+        .shutdown_background();
 }
 
 #[cfg(test)]
@@ -535,9 +567,10 @@ mod tests {
     #[test]
     fn headless_start_builds_without_a_native_window() {
         let builds = Arc::new(AtomicUsize::new(0));
-        let mut app = AimerApp::start_headless(RecordingWidget { builds: builds.clone(),
-                                                                 cancels:
-                                                                     Arc::new(AtomicUsize::new(0)) });
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: builds.clone(),
+            cancels: Arc::new(AtomicUsize::new(0)),
+        });
 
         app.render_frame();
 
@@ -549,12 +582,10 @@ mod tests {
     #[test]
     fn headless_window_events_update_metrics_and_reach_widgets() {
         let cancels = Arc::new(AtomicUsize::new(0));
-        let mut app =
-            AimerApp::start_headless_with(RecordingWidget { builds:
-                                                                Arc::new(AtomicUsize::new(0)),
-                                                            cancels: cancels.clone() },
-                                          HeadlessOptions { size: PhysicalSize::new(640, 480),
-                                                            scale_factor: 2.0 });
+        let mut app = AimerApp::start_headless_with(
+            RecordingWidget { builds: Arc::new(AtomicUsize::new(0)), cancels: cancels.clone() },
+            HeadlessOptions { size: PhysicalSize::new(640, 480), scale_factor: 2.0 },
+        );
         app.render_frame();
 
         app.send_window_event(WindowEvent::Focused(false));
@@ -569,36 +600,47 @@ mod tests {
     #[test]
     fn cursor_boundaries_invalidate_stale_position_without_cancelling_gestures() {
         let cancels = Arc::new(AtomicUsize::new(0));
-        let mut app = AimerApp::start_headless(RecordingWidget { builds:
-                                                                     Arc::new(AtomicUsize::new(0)),
-                                                                 cancels: cancels.clone() });
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: cancels.clone(),
+        });
         app.render_frame();
         let device_id = DeviceId::dummy();
 
-        app.send_window_event(WindowEvent::CursorMoved { device_id,
-                                                         position: PhysicalPosition::new(20.0,
-                                                                                         30.0) });
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id,
+            position: PhysicalPosition::new(20.0, 30.0),
+        });
         assert_eq!((app.app.cursor_pos.x, app.app.cursor_pos.y), (20.0, 30.0));
 
         app.send_window_event(WindowEvent::CursorLeft { device_id });
-        assert_eq!((app.app.cursor_pos.x, app.app.cursor_pos.y),
-                   (crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.x,
-                    crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.y),);
+        assert_eq!(
+            (app.app.cursor_pos.x, app.app.cursor_pos.y),
+            (
+                crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.x,
+                crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.y
+            ),
+        );
         assert_eq!(cancels.load(Ordering::SeqCst), 0);
 
         app.app.cursor_pos = Vec2d { x: 20.0, y: 30.0 };
         app.send_window_event(WindowEvent::CursorEntered { device_id });
-        assert_eq!((app.app.cursor_pos.x, app.app.cursor_pos.y),
-                   (crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.x,
-                    crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.y),);
+        assert_eq!(
+            (app.app.cursor_pos.x, app.app.cursor_pos.y),
+            (
+                crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.x,
+                crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.y
+            ),
+        );
         assert!(app.take_redraw_request());
     }
 
     #[test]
     fn close_requested_stops_headless_application() {
-        let app =
-            AimerApp::start_headless(RecordingWidget { builds: Arc::new(AtomicUsize::new(0)),
-                                                       cancels: Arc::new(AtomicUsize::new(0)) });
+        let app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: Arc::new(AtomicUsize::new(0)),
+        });
         assert!(!app.is_exit_requested());
 
         let mut app = app;
@@ -609,13 +651,13 @@ mod tests {
 
     #[test]
     fn invalid_headless_scale_uses_safe_default() {
-        let app = AimerApp::start_headless_with(RecordingWidget { builds:
-                                                                      Arc::new(AtomicUsize::new(0)),
-                                                                  cancels:
-                                                                      Arc::new(AtomicUsize::new(0)) },
-                                                HeadlessOptions { size: PhysicalSize::new(320,
-                                                                                          240),
-                                                                  scale_factor: 0.0 });
+        let app = AimerApp::start_headless_with(
+            RecordingWidget {
+                builds: Arc::new(AtomicUsize::new(0)),
+                cancels: Arc::new(AtomicUsize::new(0)),
+            },
+            HeadlessOptions { size: PhysicalSize::new(320, 240), scale_factor: 0.0 },
+        );
 
         assert_eq!(app.scale_factor(), 1.0);
         assert_eq!(app.logical_size(), ResolvedSize { width: 320.0, height: 240.0 });
@@ -634,7 +676,7 @@ mod tests {
     impl Drawable for RedrawElement {
         fn draw(&self, ctx: &BuildContext) {
             ctx.window
-               .request_redraw();
+                .request_redraw();
         }
     }
     impl LayoutElement for RedrawElement {}

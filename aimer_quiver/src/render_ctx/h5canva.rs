@@ -43,15 +43,18 @@ pub mod render_ctx {
             // Append the winit canvas to the DOM
             if let Some(canvas) = window.canvas() {
                 let web_window = web_sys::window().unwrap();
-                let document = web_window.document()
-                                         .unwrap();
-                let body = document.body()
-                                   .unwrap();
+                let document = web_window
+                    .document()
+                    .unwrap();
+                let body = document
+                    .body()
+                    .unwrap();
                 info!("Creating canvas...");
                 body.append_child(&canvas)
                     .unwrap();
-                canvas.set_attribute("id", "aimer_app")
-                      .unwrap();
+                canvas
+                    .set_attribute("id", "aimer_app")
+                    .unwrap();
 
                 // Without `touch-action: none`, mobile browsers treat a touch drag
                 // on the canvas as a page pan/pinch and fire `pointercancel`
@@ -65,8 +68,9 @@ pub mod render_ctx {
                 // does not stop scrolling — only `touch-action` does.
                 // Use `style().set_property` (not `set_attribute("style", ..)`) so we
                 // don't clobber the width/height styles winit sets on resize.
-                let _ = canvas.style()
-                              .set_property("touch-action", "none");
+                let _ = canvas
+                    .style()
+                    .set_property("touch-action", "none");
                 info!("Canvas created.");
             }
 
@@ -85,56 +89,67 @@ pub mod render_ctx {
         }
 
         pub fn resize(&mut self, size: PhysicalSize<u32>) {
-            if let Some(state) = self.state
-                                     .borrow_mut()
-                                     .as_mut()
+            if let Some(state) = self
+                .state
+                .borrow_mut()
+                .as_mut()
             {
-                state.gpu
-                     .resize(size);
+                state
+                    .gpu
+                    .resize(size);
             }
         }
 
         /// Render a frame using the GPU pipeline, matching the native WgpuApi
         /// interface.
         pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> bool {
-            let mut state_ref = self.state
-                                    .borrow_mut();
+            let mut state_ref = self
+                .state
+                .borrow_mut();
             let state = match state_ref.as_mut() {
                 Some(s) => s,
                 None => return false, // GPU not ready yet
             };
 
-            let frame = match state.gpu
-                                   .begin_frame()
+            let frame = match state
+                .gpu
+                .begin_frame()
             {
                 wgpu::CurrentSurfaceTexture::Success(texture)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
                 _ => return false,
             };
 
-            let view = frame.texture
-                            .create_view(&Default::default());
+            let view = frame
+                .texture
+                .create_view(&Default::default());
 
             let width = state.gpu.width();
             let height = state.gpu.height();
 
-            state.canvas
-                 .begin_frame();
+            state
+                .canvas
+                .begin_frame();
             draw_fn(&state.canvas, width, height);
 
-            let draw_list = state.canvas
-                                 .draw_list();
-            state.renderer
-                 .render(&state.gpu.device,
-                         &state.gpu.queue,
-                         &view,
-                         width,
-                         height,
-                         state.gpu.is_srgb,
-                         &draw_list);
+            let draw_list = state
+                .canvas
+                .draw_list();
+            state
+                .renderer
+                .render(
+                    &state.gpu.device,
+                    &state.gpu.queue,
+                    &view,
+                    width,
+                    height,
+                    state.gpu.is_srgb,
+                    &draw_list,
+                );
 
-            state.gpu
-                 .end_frame(frame);
+            state
+                .gpu
+                .end_frame(frame);
             true
         }
     }

@@ -36,19 +36,20 @@ use crate::render_ctx::AimerRenderContext;
 /// Walk the snapshot tree and find a node matching the hovered widget by name
 /// and bounds.
 #[cfg(debug_assertions)]
-fn find_hovered_node(node: &aimer_inspector::WidgetNode,
-                     name: &str,
-                     start: Vec2d,
-                     end: Vec2d)
-                     -> Option<u64> {
+fn find_hovered_node(
+    node: &aimer_inspector::WidgetNode,
+    name: &str,
+    start: Vec2d,
+    end: Vec2d,
+) -> Option<u64> {
     const EPS: f32 = 1.0;
     let w = end.x - start.x;
     let h = end.y - start.y;
     if node.name == name
-       && (node.x - start.x).abs() < EPS
-       && (node.y - start.y).abs() < EPS
-       && (node.width - w).abs() < EPS
-       && (node.height - h).abs() < EPS
+        && (node.x - start.x).abs() < EPS
+        && (node.y - start.y).abs() < EPS
+        && (node.width - w).abs() < EPS
+        && (node.height - h).abs() < EPS
     {
         return Some(node.id);
     }
@@ -108,8 +109,9 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
         let window_attributes = {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
-                WindowAttributes::default().with_inner_size(LogicalSize::new(1150, 800))
-                                           .with_title("Aimer")
+                WindowAttributes::default()
+                    .with_inner_size(LogicalSize::new(1150, 800))
+                    .with_title("Aimer")
             }
             #[cfg(target_os = "android")]
             {
@@ -128,11 +130,13 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
             }
         };
 
-        if self.window
-               .is_none()
+        if self
+            .window
+            .is_none()
         {
-            let window = event_loop.create_window(window_attributes)
-                                   .unwrap();
+            let window = event_loop
+                .create_window(window_attributes)
+                .unwrap();
             let window: &'static Window = Box::leak(Box::new(window)); // Leak to static ref
             aimer_events::window::set_window(window);
             self.window = Some(window);
@@ -168,12 +172,13 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
                 size = PhysicalSize::new(full.width, full.height);
             }
             if size.width == 0 || size.height == 0 {
-                let fallback = self.native_window_size
-                                   .map(|s| PhysicalSize::new(s.width as u32, s.height as u32))
-                                   .or_else(|| {
-                                       crate::ios_screen::get_screen_resolution_pixels()
+                let fallback = self
+                    .native_window_size
+                    .map(|s| PhysicalSize::new(s.width as u32, s.height as u32))
+                    .or_else(|| {
+                        crate::ios_screen::get_screen_resolution_pixels()
                             .map(|(w, h)| PhysicalSize::new(w as u32, h as u32))
-                                   });
+                    });
                 if let Some(fallback) = fallback {
                     debug!("iOS zero window size, using native screen resolution: {fallback:?}");
                     size = fallback;
@@ -195,9 +200,11 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
         window.request_redraw();
     }
 
-    fn user_event(&mut self,
-                  _event_loop: &ActiveEventLoop,
-                  event: crate::aimer_app::AimerCustomAppEvent) {
+    fn user_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        event: crate::aimer_app::AimerCustomAppEvent,
+    ) {
         // debug!("User event {:?}", event);
         handle_user_event(self, event);
     }
@@ -207,26 +214,30 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if self.start_up_frames
-               .get()
-           > 0
+        if self
+            .start_up_frames
+            .get()
+            > 0
         {
             let Some(window) = self.window.as_ref() else {
                 return;
             };
             window.request_redraw();
             self.start_up_frames
-                .set(self.start_up_frames
-                         .get()
-                     - 1);
+                .set(
+                    self.start_up_frames
+                        .get()
+                        - 1,
+                );
             // debug!("About to wait, {} frames left",
             // self.start_up_frames.get());
         }
         #[cfg(debug_assertions)]
         {
             let current = self.inspector_enabled();
-            let prev = self.inspector_prev_enabled
-                           .get();
+            let prev = self
+                .inspector_prev_enabled
+                .get();
             if current != prev {
                 self.inspector_prev_enabled
                     .set(current);
@@ -235,8 +246,9 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
                 self.inspector_redraw_frames
                     .set(5);
             }
-            let frames = self.inspector_redraw_frames
-                             .get();
+            let frames = self
+                .inspector_redraw_frames
+                .get();
             if frames > 0 {
                 self.inspector_redraw_frames
                     .set(frames - 1);
@@ -268,28 +280,31 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
     #[cfg(debug_assertions)]
     fn broadcast_inspector_snapshot(&self) {
-        if let Some(inspector) = self.inspector
-                                     .as_ref()
-                                     .filter(|inspector| inspector.is_enabled())
+        if let Some(inspector) = self
+            .inspector
+            .as_ref()
+            .filter(|inspector| inspector.is_enabled())
         {
-            let snapshot = self.widget_root
-                               .as_ref()
-                               .map(|root| {
-                                   #[cfg(not(target_arch = "wasm32"))]
-                                   {
-                                       aimer_inspector::InspectorServer::snapshot_tree(root)
-                                   }
-                                   #[cfg(target_arch = "wasm32")]
-                                   {
-                                       aimer_inspector::snapshot_tree(root.as_ref())
-                                   }
-                               });
+            let snapshot = self
+                .widget_root
+                .as_ref()
+                .map(|root| {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        aimer_inspector::InspectorServer::snapshot_tree(root)
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        aimer_inspector::snapshot_tree(root.as_ref())
+                    }
+                });
 
             let hovered_id =
                 if let Ok(hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.read() {
                     if let Some((name, start, end)) = hovered.as_ref() {
-                        snapshot.as_ref()
-                                .and_then(|s| find_hovered_node(s, name, *start, *end))
+                        snapshot
+                            .as_ref()
+                            .and_then(|s| find_hovered_node(s, name, *start, *end))
                     } else {
                         None
                     }
@@ -317,8 +332,9 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         #[cfg(debug_assertions)]
         {
             let current = self.inspector_enabled();
-            let prev = self.inspector_prev_enabled
-                           .get();
+            let prev = self
+                .inspector_prev_enabled
+                .get();
             if current != prev {
                 self.inspector_prev_enabled
                     .set(current);
@@ -327,8 +343,9 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 self.inspector_redraw_frames
                     .set(5);
             }
-            let frames = self.inspector_redraw_frames
-                             .get();
+            let frames = self
+                .inspector_redraw_frames
+                .get();
             if frames > 0 {
                 self.inspector_redraw_frames
                     .set(frames - 1);
@@ -347,11 +364,13 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         // On web, GPU init is async — consuming the resize before the GPU exists
         // would silently drop it and leave the surface at the wrong size.
         #[allow(clippy::collapsible_if)]
-        if self.render_ctx
-               .is_ready()
+        if self
+            .render_ctx
+            .is_ready()
         {
-            if let Some(size) = self.pending_resize
-                                    .take()
+            if let Some(size) = self
+                .pending_resize
+                .take()
             {
                 self.render_ctx
                     .resize(size);
@@ -363,9 +382,10 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let cursor_pos = self.cursor_pos;
 
         #[cfg(not(target_arch = "wasm32"))]
-        let async_handle = self.async_runtime
-                               .handle()
-                               .clone();
+        let async_handle = self
+            .async_runtime
+            .handle()
+            .clone();
         #[cfg(debug_assertions)]
         let inspector_enabled = self.inspector_enabled();
         let widget_root = &mut self.widget_root;
@@ -373,22 +393,24 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
         let draw_widgets = |canvas: &aimer_canvas::InnerCanvas, width: u32, height: u32| {
             let canvas = aimer_canvas::Canvas::new(canvas);
-            let build_ctx =
-                BuildContext { parent_size: ResolvedSize { width: width as f32,
-                                                           height: height as f32 },
-                               canvas: canvas.clone(),
-                               scale: window_scale as f32,
-                               parent_pos: Default::default(),
-                               cursor_pos,
-                               box_constraint: BoxConstraint { min_width: 0.0,
-                                                               min_height: 0.0,
-                                                               max_width: width as f32,
-                                                               max_height: height as f32 },
-                               visible_rect: None,
-                               window: aimer_widget::base::WindowHandle::native(window),
-                               #[cfg(not(target_arch = "wasm32"))]
-                               async_handle: async_handle.clone(),
-                               inherited_states: Default::default() };
+            let build_ctx = BuildContext {
+                parent_size: ResolvedSize { width: width as f32, height: height as f32 },
+                canvas: canvas.clone(),
+                scale: window_scale as f32,
+                parent_pos: Default::default(),
+                cursor_pos,
+                box_constraint: BoxConstraint {
+                    min_width: 0.0,
+                    min_height: 0.0,
+                    max_width: width as f32,
+                    max_height: height as f32,
+                },
+                visible_rect: None,
+                window: aimer_widget::base::WindowHandle::native(window),
+                #[cfg(not(target_arch = "wasm32"))]
+                async_handle: async_handle.clone(),
+                inherited_states: Default::default(),
+            };
 
             #[allow(clippy::collapsible_if)]
             if widget_root.is_none() {
@@ -404,20 +426,25 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                     // Save and restore canvas state to ensure the inspector overlay
                     // always renders at the top layer above all widgets,
                     // unaffected by any residual transforms.
-                    build_ctx.canvas
-                             .save();
-                    InspectorOverlay::draw(root.as_ref(),
-                                           &build_ctx.canvas,
-                                           cursor_pos,
-                                           build_ctx.scale);
-                    build_ctx.canvas
-                             .restore();
+                    build_ctx
+                        .canvas
+                        .save();
+                    InspectorOverlay::draw(
+                        root.as_ref(),
+                        &build_ctx.canvas,
+                        cursor_pos,
+                        build_ctx.scale,
+                    );
+                    build_ctx
+                        .canvas
+                        .restore();
                 }
             }
         };
 
-        let presented = self.render_ctx
-                            .render_frame(draw_widgets);
+        let presented = self
+            .render_ctx
+            .render_frame(draw_widgets);
         self.first_frame_notifier
             .notify_after_present(presented, crate::first_frame::dispatch_first_frame_rendered);
         if !presented {

@@ -9,18 +9,20 @@ enum MetalLayerLocation {
     Sublayer(usize),
 }
 
-fn metal_layer_location(root_is_metal: bool,
-                        sublayers_are_metal: impl IntoIterator<Item = bool>)
-                        -> Option<MetalLayerLocation> {
+fn metal_layer_location(
+    root_is_metal: bool,
+    sublayers_are_metal: impl IntoIterator<Item = bool>,
+) -> Option<MetalLayerLocation> {
     if root_is_metal {
         return Some(MetalLayerLocation::Root);
     }
 
-    sublayers_are_metal.into_iter()
-                       .enumerate()
-                       .filter_map(|(index, is_metal)| is_metal.then_some(index))
-                       .last()
-                       .map(MetalLayerLocation::Sublayer)
+    sublayers_are_metal
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, is_metal)| is_metal.then_some(index))
+        .last()
+        .map(MetalLayerLocation::Sublayer)
 }
 
 #[allow(unexpected_cfgs)]
@@ -36,9 +38,10 @@ pub fn enable_transactional_surface_presentation(window: &Window) -> bool {
     // called on winit's main event-loop thread immediately after wgpu creates
     // its CAMetalLayer. Objective-C nil messaging is safe for absent layers.
     unsafe {
-        let view = appkit.ns_view
-                         .as_ptr()
-                         .cast::<Object>();
+        let view = appkit
+            .ns_view
+            .as_ptr()
+            .cast::<Object>();
         let root_layer: *mut Object = msg_send![view, layer];
         let Some(metal_layer_class) = Class::get("CAMetalLayer") else {
             return false;
@@ -77,8 +80,10 @@ mod tests {
 
     #[test]
     fn metal_sublayer_is_selected() {
-        assert_eq!(metal_layer_location(false, [true, false, true]),
-                   Some(MetalLayerLocation::Sublayer(2)));
+        assert_eq!(
+            metal_layer_location(false, [true, false, true]),
+            Some(MetalLayerLocation::Sublayer(2))
+        );
     }
 
     #[test]
