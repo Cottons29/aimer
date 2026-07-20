@@ -24,10 +24,7 @@ struct ScrollableLikeWrapper {
 
 impl crate::VisitorElement for ScrollableLikeWrapper {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
     fn debug_name(&self) -> &'static str {
         "ScrollableLikeWrapper"
@@ -76,10 +73,7 @@ mod tests {
     struct Wrapper(Box<dyn Element>);
     impl VisitorElement for Wrapper {
         fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-            visitor(
-                self.0
-                    .as_ref(),
-            );
+            visitor(self.0.as_ref());
         }
         fn debug_name(&self) -> &'static str {
             "Wrapper"
@@ -325,12 +319,8 @@ mod tests {
         fn create_state(&self) -> Self::State {
             BuildRecordingCounterState {
                 counter: 0,
-                builds: self
-                    .builds
-                    .clone(),
-                published_updater: self
-                    .updater
-                    .clone(),
+                builds: self.builds.clone(),
+                published_updater: self.updater.clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -368,9 +358,7 @@ mod tests {
 
         fn create_state(&self) -> Self::State {
             BuildRecordingParentState {
-                builds: self
-                    .builds
-                    .clone(),
+                builds: self.builds.clone(),
                 child_updater: self
                     .child_updater
                     .clone(),
@@ -386,9 +374,7 @@ mod tests {
 
         fn build(&self, ctx: &BuildContext) -> impl Widget {
             let child = BuildRecordingCounterWidget {
-                builds: self
-                    .builds
-                    .clone(),
+                builds: self.builds.clone(),
                 updater: self
                     .child_updater
                     .clone(),
@@ -470,10 +456,7 @@ mod tests {
                 .set(self.runtime);
             *self
                 .live_updater
-                .borrow_mut() = Some(
-                self.updater
-                    .clone(),
-            );
+                .borrow_mut() = Some(self.updater.clone());
             EmptyWidget
         }
     }
@@ -570,10 +553,7 @@ mod tests {
     struct DrawWrapper(Box<dyn Element>);
     impl VisitorElement for DrawWrapper {
         fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-            visitor(
-                self.0
-                    .as_ref(),
-            );
+            visitor(self.0.as_ref());
         }
         fn debug_name(&self) -> &'static str {
             "DrawWrapper"
@@ -581,16 +561,12 @@ mod tests {
     }
     impl Drawable for DrawWrapper {
         fn draw(&self, ctx: &BuildContext) {
-            self.0
-                .draw(ctx);
+            self.0.draw(ctx);
         }
     }
     impl EventElement for DrawWrapper {
         fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-            visitor(
-                self.0
-                    .as_ref(),
-            );
+            visitor(self.0.as_ref());
         }
     }
     impl LayoutElement for DrawWrapper {}
@@ -662,9 +638,7 @@ mod tests {
         fn create_state(&self) -> Self::State {
             DrawCounterState {
                 counter: 1,
-                drawn: self
-                    .drawn
-                    .clone(),
+                drawn: self.drawn.clone(),
                 live_updater: self
                     .live_updater
                     .clone(),
@@ -679,18 +653,11 @@ mod tests {
         fn build(&self, ctx: &BuildContext) -> impl Widget {
             *self
                 .live_updater
-                .borrow_mut() = Some(
-                self.updater
-                    .clone(),
-            );
+                .borrow_mut() = Some(self.updater.clone());
 
             // container -> row -> [ text-leaf(counter), nested stateful button ]
-            let leaf: Box<dyn Element> = Box::new(RecordingLeaf {
-                value: self.counter,
-                drawn: self
-                    .drawn
-                    .clone(),
-            });
+            let leaf: Box<dyn Element> =
+                Box::new(RecordingLeaf { value: self.counter, drawn: self.drawn.clone() });
             let (button, _ctor) =
                 StatefulElement::new_with_name(&NestedButtonWidget, ctx, "NestedButton", None);
             let row: Box<dyn Element> = Box::new(DrawRow(vec![leaf, button.boxed()]));
@@ -1384,10 +1351,7 @@ mod tests {
                     .set(self.counter);
                 *self
                     .live_updater
-                    .borrow_mut() = Some(
-                    self.updater
-                        .clone(),
-                );
+                    .borrow_mut() = Some(self.updater.clone());
                 EmptyWidget
             }
         }
@@ -1442,17 +1406,13 @@ mod tests {
 
         impl Drawable for FakeContainer {
             fn draw(&self, ctx: &BuildContext) {
-                self.child
-                    .draw(ctx);
+                self.child.draw(ctx);
             }
         }
 
         impl EventElement for FakeContainer {
             fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-                visitor(
-                    self.child
-                        .as_ref(),
-                );
+                visitor(self.child.as_ref());
             }
         }
 
@@ -1602,17 +1562,13 @@ mod tests {
 
         impl Drawable for FakePositioned {
             fn draw(&self, ctx: &BuildContext) {
-                self.child
-                    .draw(ctx);
+                self.child.draw(ctx);
             }
         }
 
         impl EventElement for FakePositioned {
             fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-                visitor(
-                    self.child
-                        .as_ref(),
-                );
+                visitor(self.child.as_ref());
             }
         }
 
@@ -1649,10 +1605,7 @@ mod tests {
 
         impl VisitorElement for FakeScrollable {
             fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-                visitor(
-                    self.child
-                        .as_ref(),
-                );
+                visitor(self.child.as_ref());
             }
 
             fn debug_name(&self) -> &'static str {
@@ -1662,8 +1615,7 @@ mod tests {
 
         impl Drawable for FakeScrollable {
             fn draw(&self, ctx: &BuildContext) {
-                self.child
-                    .draw(ctx);
+                self.child.draw(ctx);
             }
         }
 

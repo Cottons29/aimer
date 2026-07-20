@@ -88,10 +88,7 @@ pub fn branch_pop<R>(branches: &mut [Vec<R>], index: usize) {
 pub fn active_top<R: Clone>(branches: &[Vec<R>], active: usize) -> Option<R> {
     branches
         .get(active)
-        .and_then(|b| {
-            b.last()
-                .cloned()
-        })
+        .and_then(|b| b.last().cloned())
 }
 
 /// A tabbed shell that keeps an independent navigation stack per branch, so
@@ -146,25 +143,19 @@ impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
         // Inject the imperative controller for descendants.
         ctx.insert_state(StatefulShellController::<R> {
             go_branch_fn: {
-                let updater = self
-                    .updater
-                    .clone();
+                let updater = self.updater.clone();
                 Rc::new(move |index: usize| {
                     updater.set_state(move |state| state.active = index);
                 })
             },
             push_in_branch_fn: {
-                let updater = self
-                    .updater
-                    .clone();
+                let updater = self.updater.clone();
                 Rc::new(move |index: usize, route: R| {
                     updater.set_state(move |state| branch_push(&mut state.branches, index, route));
                 })
             },
             pop_in_branch_fn: {
-                let updater = self
-                    .updater
-                    .clone();
+                let updater = self.updater.clone();
                 Rc::new(move |index: usize| {
                     updater.set_state(move |state| branch_pop(&mut state.branches, index));
                 })

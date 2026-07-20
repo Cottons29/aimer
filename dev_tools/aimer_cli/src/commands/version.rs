@@ -89,12 +89,7 @@ impl VersionCommand {
             // format!("A {} cross-platform framework for building gui
             // applications.","Rust".red().bold() ),
             "A cross-platform framework for building pretty gui applications.".into(),
-            format!(
-                "Aimer are written in {} 🦀",
-                "Rust"
-                    .red()
-                    .bold()
-            ),
+            format!("Aimer are written in {} 🦀", "Rust".red().bold()),
             String::new(),
             formatted_version,
             cargo_version_line,

@@ -30,14 +30,7 @@ pub struct Vec2d {
 
 impl Vec2d {
     pub const fn round(self) -> Self {
-        Self {
-            x: self
-                .x
-                .round(),
-            y: self
-                .y
-                .round(),
-        }
+        Self { x: self.x.round(), y: self.y.round() }
     }
 }
 

@@ -102,9 +102,7 @@ impl<T: Widget + 'static> Widget for Animated<T> {
 
         // Create a StateUpdater-like mechanism: we use a shared dirty flag + window ref
         // to request redraws while the animation is running.
-        let window = ctx
-            .window
-            .clone();
+        let window = ctx.window.clone();
         AnimatedElement { child: child_element, controller, effect: self.effect, animating, window }
             .boxed()
     }
@@ -132,34 +130,27 @@ impl Drawable for AnimatedElement {
             let v = self
                 .controller
                 .tick(now);
-            self.animating
-                .set(
-                    self.controller
-                        .is_animating(),
-                );
+            self.animating.set(
+                self.controller
+                    .is_animating(),
+            );
             v
         };
 
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
 
         // Clip to the widget's bounds so content outside (e.g. sliding in) is hidden
         self.clip_to_bounds(ctx);
 
         self.apply_effect(ctx, curved_value);
-        self.child
-            .draw(ctx);
+        self.child.draw(ctx);
 
         ctx.canvas
             .clear_clip();
-        ctx.canvas
-            .restore();
+        ctx.canvas.restore();
 
         // Request another frame if still animating
-        if self
-            .animating
-            .get()
-        {
+        if self.animating.get() {
             self.window
                 .request_redraw();
         }
@@ -261,10 +252,7 @@ impl EventElement for AnimatedElement {
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 }
 
@@ -277,13 +265,11 @@ impl Rebuildable for AnimatedElement {
 
 impl LayoutElement for AnimatedElement {
     fn pos(&self) -> Option<Vec2d> {
-        self.child
-            .pos()
+        self.child.pos()
     }
 
     fn size(&self) -> Option<Size> {
-        self.child
-            .size()
+        self.child.size()
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {

@@ -2,12 +2,12 @@ use std::rc::Rc;
 
 use aimer_assets::{AssetImage, NetworkImage};
 use aimer_color::prelude::Color;
-use aimer_container::flex::BoxAlignment;
 use aimer_container::flex::row_column::{Column, Row};
-use aimer_container::{Container, Grid, GridItem, GridTrack, SizedBox, ZeroSizedBox};
+use aimer_container::flex::{BoxAlignment, Expanded};
+use aimer_container::{Container, Grid, GridItem, GridTrack, SizedBox};
 use aimer_style::{
-    BoxDecoration, FontStyle, FontWeight, LayoutSpacing, TextAlign, TextDecoration,
-    TextDecorationLine, TextStyle,
+    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontStyle, FontWeight, LayoutSpacing,
+    TextAlign, TextDecoration, TextDecorationLine, TextStyle,
 };
 use aimer_svg::{Svg, SvgDocument, SvgStyle};
 use aimer_text::{RichText, SpanStyle, Text, TextSpan};
@@ -244,27 +244,27 @@ fn render_block(
         Block::Paragraph(content) => {
             render_paragraph(content, theme.body, theme, link_handler, image_resolver)
         }
-        Block::Blockquote(blocks) => Row::new()
-            .gaps(LayoutSpacing::all(10_u32.into()))
-            .children(vec![
-                Container::new()
-                    .width(4.0)
-                    // .height(0)
-                    .color(theme.rule_color)
-                    .box_child(ZeroSizedBox),
-                Container::new()
-                    .padding(LayoutSpacing::all(8_u32.into()))
-                    .color(theme.quote_background)
-                    .child(render_blocks_with_style(
-                        blocks,
-                        theme.blockquote,
-                        theme,
-                        link_handler,
-                        image_resolver,
-                    ))
-                    .boxed(),
-            ])
-            .boxed(),
+        Block::Blockquote(blocks) => Container::new()
+            .padding(LayoutSpacing::all(8_u32.into()))
+            .box_decoration(
+                BoxDecoration::new()
+                    .background_color(theme.quote_background)
+                    .border(
+                        BoxBorder::new().left(
+                            BorderSlice::new()
+                                .stroke(4)
+                                .color(theme.rule_color)
+                                .style(BorderStyle::Solid),
+                        ),
+                    ),
+            )
+            .box_child(render_blocks_with_style(
+                blocks,
+                theme.blockquote,
+                theme,
+                link_handler,
+                image_resolver,
+            )),
         Block::List { ordered, start, items } => {
             let start = start.unwrap_or(1);
             let rows = items
@@ -296,7 +296,12 @@ fn render_block(
                                     .boxed(),
                                 None => build_tick_box(is_complete),
                             },
-                            render_blocks(&item.blocks, theme, link_handler, image_resolver),
+                            Expanded::new().box_child(render_blocks(
+                                &item.blocks,
+                                theme,
+                                link_handler,
+                                image_resolver,
+                            )),
                         ])
                         .boxed()
                 })
@@ -463,8 +468,140 @@ fn rich_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aimer_attribute::{BoxConstraint, ResolvedSize};
+    use aimer_canvas::{Canvas, InnerCanvas};
     use aimer_style::{FontFamily, TextAlign, TextDecorationLine, TextStyle};
+    use aimer_widget::base::{BuildContext, WindowHandle};
     use std::cell::Cell;
+    use std::sync::OnceLock;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dummy_async_handle() -> tokio::runtime::Handle {
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        });
+        let _guard = runtime.enter();
+        tokio::runtime::Handle::current()
+    }
+
+    fn layout_context(width: f32, height: f32) -> BuildContext<'static> {
+        let canvas = Canvas::new(Box::leak(Box::new(InnerCanvas::new())));
+        let size = ResolvedSize { width, height };
+        let mut ctx = BuildContext::new(
+            canvas,
+            size,
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(width as u32, height as u32), 1.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            dummy_async_handle(),
+        );
+        ctx.box_constraint =
+            BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: width, max_height: height };
+        ctx
+    }
+
+    #[test]
+    fn single_line_blockquote_uses_bounded_width_and_natural_height() {
+        let resolver: ImageResolver = Rc::new(default_image_resolver);
+        let quote = Document::parse("> one line").unwrap();
+        let quote_widget = render_document(&quote, &MarkdownTheme::default(), None, &resolver);
+        let quote_ctx = layout_context(320.0, 200.0);
+        let quote_size = quote_widget
+            .to_element(&quote_ctx)
+            .computed_size(&quote_ctx);
+
+        assert!(
+            quote_size.height < 100.0,
+            "single-line blockquote height was {}",
+            quote_size.height
+        );
+
+        let document = Document::parse("> one line\n\nafter").unwrap();
+        let widget = render_document(&document, &MarkdownTheme::default(), None, &resolver);
+        let ctx = layout_context(320.0, 200.0);
+
+        let size = widget
+            .to_element(&ctx)
+            .computed_size(&ctx);
+
+        assert!(
+            size.width
+                .is_finite()
+        );
+        assert!(
+            size.height
+                .is_finite()
+        );
+        assert!(size.width <= 320.0, "blockquote document width was {}", size.width);
+        assert!(size.height < 100.0, "blockquote document height was {}", size.height);
+    }
+
+    #[test]
+    fn nested_blockquote_increases_the_outer_quote_height() {
+        let resolver: ImageResolver = Rc::new(default_image_resolver);
+        let ctx = layout_context(320.0, 200.0);
+        let single_quote = Document::parse("> outer").unwrap();
+        let nested_quote = Document::parse("> outer\n>> inner").unwrap();
+
+        let single_height =
+            render_document(&single_quote, &MarkdownTheme::default(), None, &resolver)
+                .to_element(&ctx)
+                .computed_size(&ctx)
+                .height;
+        let nested_height =
+            render_document(&nested_quote, &MarkdownTheme::default(), None, &resolver)
+                .to_element(&ctx)
+                .computed_size(&ctx)
+                .height;
+
+        assert!(
+            nested_height > single_height + 30.0,
+            "nested blockquote height {nested_height} did not reserve space for its inner text; single quote height was {single_height}"
+        );
+    }
+
+    #[test]
+    fn list_content_wraps_within_the_space_remaining_after_its_marker() {
+        let resolver: ImageResolver = Rc::new(default_image_resolver);
+        let theme = MarkdownTheme::default();
+        let ctx = layout_context(320.0, 200.0);
+        let paragraph = Document::parse("Use CodeGraph to understand code safely").unwrap();
+        let list = Document::parse("- Use CodeGraph to understand code safely").unwrap();
+
+        let paragraph_size = render_document(&paragraph, &theme, None, &resolver)
+            .to_element(&ctx)
+            .computed_size(&ctx);
+        let list_size = render_document(&list, &theme, None, &resolver)
+            .to_element(&ctx)
+            .computed_size(&ctx);
+
+        assert!(
+            list_size.width
+                <= ctx
+                    .box_constraint
+                    .max_width
+        );
+        assert!(
+            list_size.height
+                < ctx
+                    .box_constraint
+                    .max_height,
+            "a list row expanded to the viewport height: {}",
+            list_size.height
+        );
+        assert!(
+            list_size.height > paragraph_size.height,
+            "list content did not wrap in its reduced width: list height {}, paragraph height {}",
+            list_size.height,
+            paragraph_size.height
+        );
+    }
 
     #[test]
     fn table_columns_share_the_available_width() {

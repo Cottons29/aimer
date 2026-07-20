@@ -157,9 +157,7 @@ impl<W: Widget + 'static> StatefulWidget for AnimatedTheme<W> {
             current: Rc::new(Cell::new(self.data)),
             duration: self.duration,
             curve: self.curve,
-            child: self
-                .child
-                .clone(),
+            child: self.child.clone(),
             controller: AnimationController::new(self.duration, self.curve),
             transition: Rc::new(RefCell::new(ThemeTransition::new(self.data))),
             handle: ProviderHandle::new(self.data),
@@ -173,9 +171,7 @@ impl<W: Widget + 'static> State<AnimatedTheme<W>> for AnimatedThemeState {
     fn adopt_config_from(&mut self, new: &Self) {
         self.duration = new.duration;
         self.curve = new.curve;
-        self.child = new
-            .child
-            .clone();
+        self.child = new.child.clone();
         self.controller
             .set_duration(new.duration);
         self.controller
@@ -204,12 +200,11 @@ impl<W: Widget + 'static> State<AnimatedTheme<W>> for AnimatedThemeState {
                 .set_value(1.0);
             self.publish(self.target);
         } else {
-            self.current
-                .set(
-                    self.transition
-                        .borrow()
-                        .sample(0.0),
-                );
+            self.current.set(
+                self.transition
+                    .borrow()
+                    .sample(0.0),
+            );
             self.controller
                 .forward_from_first_tick();
         }
@@ -217,21 +212,15 @@ impl<W: Widget + 'static> State<AnimatedTheme<W>> for AnimatedThemeState {
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         AnimatedThemeFrame {
-            current: self
-                .current
-                .clone(),
-            child: self
-                .child
-                .clone(),
+            current: self.current.clone(),
+            child: self.child.clone(),
             controller: self
                 .controller
                 .clone(),
             transition: self
                 .transition
                 .clone(),
-            handle: self
-                .handle
-                .clone(),
+            handle: self.handle.clone(),
         }
     }
 }
@@ -272,19 +261,11 @@ struct AnimatedThemeFrame {
 impl Widget for AnimatedThemeFrame {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         let child = Provider::new()
-            .handle(
-                self.handle
-                    .clone(),
-            )
-            .child(
-                self.child
-                    .clone(),
-            )
+            .handle(self.handle.clone())
+            .child(self.child.clone())
             .to_element(ctx);
         Box::new(AnimatedThemeElement {
-            current: self
-                .current
-                .clone(),
+            current: self.current.clone(),
             child,
             controller: self
                 .controller
@@ -292,9 +273,7 @@ impl Widget for AnimatedThemeFrame {
             transition: self
                 .transition
                 .clone(),
-            handle: self
-                .handle
-                .clone(),
+            handle: self.handle.clone(),
         })
     }
 }
@@ -309,10 +288,7 @@ struct AnimatedThemeElement {
 
 impl VisitorElement for AnimatedThemeElement {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {
@@ -340,8 +316,7 @@ impl Drawable for AnimatedThemeElement {
 
         self.child
             .rebuild_if_dirty(ctx);
-        self.child
-            .draw(ctx);
+        self.child.draw(ctx);
 
         if self
             .controller
@@ -373,13 +348,11 @@ impl Rebuildable for AnimatedThemeElement {
 
 impl LayoutElement for AnimatedThemeElement {
     fn pos(&self) -> Option<Vec2d> {
-        self.child
-            .pos()
+        self.child.pos()
     }
 
     fn size(&self) -> Option<Size> {
-        self.child
-            .size()
+        self.child.size()
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -398,13 +371,11 @@ impl LayoutElement for AnimatedThemeElement {
     }
 
     fn layer(&self) -> u32 {
-        self.child
-            .layer()
+        self.child.layer()
     }
 
     fn flex(&self) -> Option<f32> {
-        self.child
-            .flex()
+        self.child.flex()
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
@@ -487,18 +458,8 @@ mod tests {
             &mut state, &new_state,
         );
 
-        assert_eq!(
-            *state
-                .handle
-                .read(),
-            theme(101)
-        );
-        assert_eq!(
-            state
-                .current
-                .get(),
-            theme(101)
-        );
+        assert_eq!(*state.handle.read(), theme(101));
+        assert_eq!(state.current.get(), theme(101));
         assert!(
             !state
                 .controller
@@ -526,11 +487,6 @@ mod tests {
                 .controller
                 .is_animating()
         );
-        assert_eq!(
-            state
-                .current
-                .get(),
-            theme(0)
-        );
+        assert_eq!(state.current.get(), theme(0));
     }
 }

@@ -139,8 +139,7 @@ impl Drawable for RawTextWidget {
             .text_overflow
         {
             TextOverflow::Clip => {
-                ctx.canvas
-                    .save();
+                ctx.canvas.save();
                 let width = ctx
                     .parent_size
                     .width;
@@ -161,8 +160,7 @@ impl Drawable for RawTextWidget {
                     );
                 ctx.canvas
                     .clear_clip();
-                ctx.canvas
-                    .restore();
+                ctx.canvas.restore();
             }
             TextOverflow::Ellipsis => {
                 ctx.canvas
@@ -292,9 +290,7 @@ impl VisitorElement for RawTextWidget {
 
 impl LayoutElement for RawTextWidget {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let scale_bits = ctx
-            .scale
-            .to_bits();
+        let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self
             .cache
             .get_computed(ctx.box_constraint, scale_bits)
@@ -358,9 +354,7 @@ impl LayoutElement for RawTextWidget {
                             .numeric(),
                     );
                 ResolvedSize {
-                    width: metrics
-                        .width
-                        .ceil(),
+                    width: metrics.width.ceil(),
                     height: metrics
                         .height
                         .ceil(),

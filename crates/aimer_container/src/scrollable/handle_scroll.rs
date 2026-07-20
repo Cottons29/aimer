@@ -98,8 +98,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     .get()
                     .is_some_and(|start| {
                         pending_content_drag_wins(
-                            self.ctrl
-                                .axis,
+                            self.ctrl.axis,
                             start,
                             *current,
                             DRAG_START_THRESHOLD_DP
@@ -229,10 +228,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     .ctrl
                     .clamp_offset(offset);
 
-                let mut scroll_delta = match self
-                    .ctrl
-                    .axis
-                {
+                let mut scroll_delta = match self.ctrl.axis {
                     ScrollAxis::Vertical => Vec2d { x: 0.0, y: delta.y },
                     ScrollAxis::Horizontal => Vec2d { x: delta.x, y: 0.0 },
                 };
@@ -245,10 +241,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     // Constant maximum resistance when out-of-bounds.
                     // Content moves at OOB_DRAG_RESISTANCE × finger speed
                     // the instant the boundary is crossed — no gradual ramp.
-                    match self
-                        .ctrl
-                        .axis
-                    {
+                    match self.ctrl.axis {
                         ScrollAxis::Vertical => {
                             if offset.y != clamped.y {
                                 scroll_delta.y *= OOB_DRAG_RESISTANCE;
@@ -302,10 +295,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 {
                     // Maximum damping when velocity pushes further out-of-bounds.
                     // Applied immediately at the boundary — no gradual ramp.
-                    match self
-                        .ctrl
-                        .axis
-                    {
+                    match self.ctrl.axis {
                         ScrollAxis::Vertical => {
                             if (offset.y > clamped.y && scroll_delta.y > 0.0)
                                 || (offset.y < clamped.y && scroll_delta.y < 0.0)
@@ -587,10 +577,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             .accumulate_drag_velocity(dx, dy, now)
                         {
                             let mut new_velocity = match mode {
-                                DragMode::Content => match self
-                                    .ctrl
-                                    .axis
-                                {
+                                DragMode::Content => match self.ctrl.axis {
                                     ScrollAxis::Vertical => Vec2d { x: 0.0, y: raw_velocity.y },
                                     ScrollAxis::Horizontal => Vec2d { x: raw_velocity.x, y: 0.0 },
                                 },
@@ -644,10 +631,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             DragMode::Content => {
                                 // Constant maximum resistance when out-of-bounds.
                                 // Applied immediately — no gradual ramp.
-                                match self
-                                    .ctrl
-                                    .axis
-                                {
+                                match self.ctrl.axis {
                                     ScrollAxis::Vertical => {
                                         let mut actual_dy = dy;
                                         if offset.y != clamped.y {
@@ -722,12 +706,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 let page_v = vp_h * KEYBOARD_PAGE_FRACTION;
                 let page_h = vp_w * KEYBOARD_PAGE_FRACTION;
 
-                let scroll = match (
-                    &self
-                        .ctrl
-                        .axis,
-                    key,
-                ) {
+                let scroll = match (&self.ctrl.axis, key) {
                     (ScrollAxis::Vertical, NamedKey::ArrowUp) => Some(Vec2d { x: 0.0, y: line }),
                     (ScrollAxis::Vertical, NamedKey::ArrowDown) => Some(Vec2d { x: 0.0, y: -line }),
                     (ScrollAxis::Vertical, NamedKey::PageUp) => Some(Vec2d { x: 0.0, y: page_v }),
@@ -880,10 +859,7 @@ impl<E: Element> LayoutElement for RawScrollableContainer<E> {
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let mut child_ctx = ctx.clone();
-        match self
-            .ctrl
-            .axis
-        {
+        match self.ctrl.axis {
             ScrollAxis::Vertical => {
                 child_ctx
                     .box_constraint

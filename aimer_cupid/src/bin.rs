@@ -164,10 +164,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
         debug!("GPU context initialized");
         self.window = Some(window);
         debug!("Window initialized");
-        if let Some(window) = self
-            .window
-            .as_ref()
-        {
+        if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
         debug!("App resumed");
@@ -197,10 +194,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                     // silently dropped if the window isn't fully on-screen yet.
                     // The first Resized event is the reliable signal that the
                     // window is visible and the surface is ready.
-                    if let Some(window) = self
-                        .window
-                        .as_ref()
-                    {
+                    if let Some(window) = self.window.as_ref() {
                         window.request_redraw();
                     }
                 }
@@ -208,9 +202,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
 
             WindowEvent::MouseInput { state, .. } => {
                 if ElementState::Pressed == state
-                    && let Some(window) = self
-                        .window
-                        .as_ref()
+                    && let Some(window) = self.window.as_ref()
                 {
                     window.request_redraw();
                 }

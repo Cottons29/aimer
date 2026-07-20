@@ -28,13 +28,7 @@ pub(crate) fn text_offset_at(regions: &[TextHitRegion], x: f32, y: f32) -> Optio
                     ))
                 })
         })?;
-    let midpoint = region
-        .bounds
-        .x
-        + region
-            .bounds
-            .width
-            / 2.0;
+    let midpoint = region.bounds.x + region.bounds.width / 2.0;
     Some(if x < midpoint {
         region
             .source_range

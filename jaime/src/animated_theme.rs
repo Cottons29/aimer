@@ -62,48 +62,62 @@ impl StatelessWidget for ThemedPanel {
         let theme = Theme::of(ctx);
         let updater = self.updater.clone();
 
-        Container::new().color(theme.background_color).child(
-            Column::new()
-                .horizontal_alignment(BoxAlignment::Center)
-                .vertical_alignment(BoxAlignment::Center)
-                .children([
-                    Text::new("AnimatedTheme")
-                        .text_style(TextStyle::new().font_size(32).color(theme.on_background_color))
-                        .boxed(),
-                    SizedBox::new().height(24).boxed(),
-                    Text::new("Colors interpolate while the widget tree keeps its state.")
-                        .text_style(TextStyle::new().font_size(18).color(theme.on_background_color))
-                        .boxed(),
-                    SizedBox::new().height(32).boxed(),
-                    Container::new()
-                        .width(Dimension::Px(220.0))
-                        .height(Dimension::Px(56.0))
-                        .child(
-                            Button::new()
-                                .on_press(move || {
-                                    updater.set_state(|state| state.is_dark = !state.is_dark);
-                                })
-                                .decoration(
-                                    BoxDecoration::new()
-                                        .background_color(theme.primary_color)
-                                        .border_radius(12),
-                                )
-                                .child(
-                                    Text::new(if self.is_dark {
-                                        "Switch to light theme"
-                                    } else {
-                                        "Switch to dark theme"
+        Container::new()
+            .color(theme.background_color)
+            .child(
+                Column::new()
+                    .horizontal_alignment(BoxAlignment::Center)
+                    .vertical_alignment(BoxAlignment::Center)
+                    .children([
+                        Text::new("AnimatedTheme")
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(32)
+                                    .color(theme.on_background_color),
+                            )
+                            .boxed(),
+                        SizedBox::new()
+                            .height(24)
+                            .boxed(),
+                        Text::new("Colors interpolate while the widget tree keeps its state.")
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(18)
+                                    .color(theme.on_background_color),
+                            )
+                            .boxed(),
+                        SizedBox::new()
+                            .height(32)
+                            .boxed(),
+                        Container::new()
+                            .width(Dimension::Px(220.0))
+                            .height(Dimension::Px(56.0))
+                            .child(
+                                Button::new()
+                                    .on_press(move || {
+                                        updater.set_state(|state| state.is_dark = !state.is_dark);
                                     })
-                                    .text_align(TextAlign::MidCenter)
-                                    .text_style(
-                                        TextStyle::new()
-                                            .font_size(16)
-                                            .color(theme.on_primary_color),
+                                    .decoration(
+                                        BoxDecoration::new()
+                                            .background_color(theme.primary_color)
+                                            .border_radius(12),
+                                    )
+                                    .child(
+                                        Text::new(if self.is_dark {
+                                            "Switch to light theme"
+                                        } else {
+                                            "Switch to dark theme"
+                                        })
+                                        .text_align(TextAlign::MidCenter)
+                                        .text_style(
+                                            TextStyle::new()
+                                                .font_size(16)
+                                                .color(theme.on_primary_color),
+                                        ),
                                     ),
-                                ),
-                        )
-                        .boxed(),
-                ]),
-        )
+                            )
+                            .boxed(),
+                    ]),
+            )
     }
 }

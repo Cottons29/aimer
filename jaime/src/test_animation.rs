@@ -111,9 +111,7 @@ impl SameLookingSectionState {
             .iter()
             .enumerate()
             .map({
-                let updater = self
-                    .state
-                    .clone();
+                let updater = self.state.clone();
                 move |(i, l)| {
                     let index = i;
                     let is_selected = index == selected;

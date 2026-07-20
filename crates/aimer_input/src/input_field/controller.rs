@@ -29,9 +29,7 @@ unsafe impl Sync for TextFieldController {}
 impl Clone for TextFieldController {
     fn clone(&self) -> Self {
         Self {
-            text: self
-                .text
-                .clone(),
+            text: self.text.clone(),
             undo_stack: self
                 .undo_stack
                 .clone(),
@@ -72,11 +70,7 @@ impl TextFieldController {
     /// Returns a shared reference to the text stored within the current
     /// instance.
     pub fn text(&self) -> &str {
-        unsafe {
-            &*self
-                .text
-                .get()
-        }
+        unsafe { &*self.text.get() }
     }
 
     /// Consumes the content of the `text` field, returning its value while also
@@ -96,11 +90,7 @@ impl TextFieldController {
     /// occur.
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn text_mut(&self) -> &mut String {
-        unsafe {
-            &mut *self
-                .text
-                .get()
-        }
+        unsafe { &mut *self.text.get() }
     }
 
     /// Sets the text content of the object.

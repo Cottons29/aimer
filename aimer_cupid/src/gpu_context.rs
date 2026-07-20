@@ -256,10 +256,8 @@ impl<'w> GpuContext<'w> {
                 .limits()
                 .max_texture_dimension_2d;
             let backing_size = render_dimensions(size, max_dim);
-            self.config
-                .width = backing_size.width;
-            self.config
-                .height = backing_size.height;
+            self.config.width = backing_size.width;
+            self.config.height = backing_size.height;
             self.viewport_size = size;
             self.surface
                 .configure(&self.device, &self.config);
@@ -267,13 +265,11 @@ impl<'w> GpuContext<'w> {
     }
 
     pub fn width(&self) -> u32 {
-        self.config
-            .width
+        self.config.width
     }
 
     pub fn height(&self) -> u32 {
-        self.config
-            .height
+        self.config.height
     }
 
     pub fn begin_frame(&self) -> wgpu::CurrentSurfaceTexture {

@@ -149,9 +149,7 @@ impl<W: Widget + 'static> Widget for MouseRegion<W> {
             cached_bounds: self
                 .cached_bounds
                 .clone(),
-            window: ctx
-                .window
-                .clone(),
+            window: ctx.window.clone(),
             child,
         }
         .boxed()
@@ -347,8 +345,7 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
             .is_inside(cursor.x, cursor.y);
         self.sync_hover(is_inside);
 
-        self.child
-            .draw(ctx);
+        self.child.draw(ctx);
     }
 }
 

@@ -355,8 +355,7 @@ where
             self.request_key = new
                 .request_key
                 .clone();
-            self.runtime
-                .reset();
+            self.runtime.reset();
         }
     }
 
@@ -368,9 +367,7 @@ where
             snapshot_builder: self
                 .snapshot_builder
                 .clone(),
-            runtime: self
-                .runtime
-                .clone(),
+            runtime: self.runtime.clone(),
             marker: PhantomData::<fn() -> Fut>,
         }
     }
@@ -400,8 +397,7 @@ where
             self.request_key = new
                 .request_key
                 .clone();
-            self.runtime
-                .reset();
+            self.runtime.reset();
         }
     }
 
@@ -413,9 +409,7 @@ where
             snapshot_builder: self
                 .snapshot_builder
                 .clone(),
-            runtime: self
-                .runtime
-                .clone(),
+            runtime: self.runtime.clone(),
             marker: PhantomData::<fn() -> Fut>,
         }
     }
@@ -513,9 +507,7 @@ where
             snapshot_builder: self
                 .snapshot_builder
                 .clone(),
-            runtime: self
-                .runtime
-                .clone(),
+            runtime: self.runtime.clone(),
             rendered_revision: Cell::new(
                 self.runtime
                     .revision(),
@@ -547,9 +539,7 @@ where
             snapshot_builder: self
                 .snapshot_builder
                 .clone(),
-            runtime: self
-                .runtime
-                .clone(),
+            runtime: self.runtime.clone(),
             rendered_revision: Cell::new(
                 self.runtime
                     .revision(),
@@ -576,23 +566,14 @@ impl<F, Fut, B, T, E> AsyncFrameElement<F, Fut, B, T, E> {
     fn current_child(&self) -> &dyn Element {
         // Safety: Aimer's rendering pipeline is single-threaded. Child replacement
         // happens only while processing this element on that render thread.
-        unsafe {
-            (&*self
-                .child
-                .0
-                .get())
-                .as_ref()
-        }
+        unsafe { (&*self.child.0.get()).as_ref() }
     }
 
     fn replace_child(&self, child: Box<dyn Element>) {
         // Safety: see `current_child`; no child reference is retained across this
         // replacement.
         unsafe {
-            *self
-                .child
-                .0
-                .get() = child;
+            *self.child.0.get() = child;
         }
     }
 }
@@ -638,18 +619,13 @@ where
     E: Send + 'static,
 {
     fn refresh(&self, ctx: &BuildContext) {
-        if let Some((generation, registration)) = self
-            .runtime
-            .begin()
-        {
+        if let Some((generation, registration)) = self.runtime.begin() {
             let future = (self.future_factory)();
             let sender = self
                 .runtime
                 .sender
                 .clone();
-            let window = ctx
-                .window
-                .clone();
+            let window = ctx.window.clone();
             ctx.async_handle
                 .spawn(async move {
                     if let Ok(result) = Abortable::new(future, registration).await {
@@ -674,18 +650,13 @@ where
     E: 'static,
 {
     fn refresh(&self, ctx: &BuildContext) {
-        if let Some((generation, registration)) = self
-            .runtime
-            .begin()
-        {
+        if let Some((generation, registration)) = self.runtime.begin() {
             let future = (self.future_factory)();
             let sender = self
                 .runtime
                 .sender
                 .clone();
-            let window = ctx
-                .window
-                .clone();
+            let window = ctx.window.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 if let Ok(result) = Abortable::new(future, registration).await {
                     let _ = sender.send(Completion { generation, result });

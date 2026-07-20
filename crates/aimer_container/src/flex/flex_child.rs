@@ -91,9 +91,7 @@ impl<W: Widget + 'static> Widget for Expanded<W> {
             child: self
                 .child
                 .to_element(ctx),
-            flex: self
-                .flex
-                .max(0.0),
+            flex: self.flex.max(0.0),
             debug_name: "Expanded",
         })
     }
@@ -107,8 +105,8 @@ impl<W: Widget + 'static> Widget for Expanded<W> {
 ///
 /// It carries a `flex` factor that its flex parent (`RawFlex`) reads through
 /// [`LayoutElement::flex`] to distribute the remaining main-axis space. On
-/// layout it simply fills whatever bounded constraint the parent hands it and
-/// delegates painting to its child.
+/// layout it delegates intrinsic measurement to its child; the flex parent
+/// applies the allocated extent on its own main axis.
 #[derive(Rebuildable, EventElement)]
 pub struct RawExpanded<E: Element> {
     pub(crate) child: E,
@@ -116,17 +114,9 @@ pub struct RawExpanded<E: Element> {
     pub(crate) debug_name: &'static str,
 }
 
-impl<E: Element> RawExpanded<E> {
-    /// Constraints at or above this value are treated as unbounded (the same
-    /// threshold `Container` uses), in which case there is no "remaining space"
-    /// to fill and the element falls back to its child's intrinsic size.
-    const UNBOUNDED: f32 = 1_000_000.0;
-}
-
 impl<E: Element> Drawable for RawExpanded<E> {
     fn draw(&self, ctx: &BuildContext) {
-        self.child
-            .draw(ctx);
+        self.child.draw(ctx);
     }
 }
 
@@ -142,22 +132,8 @@ impl<E: Element> VisitorElement for RawExpanded<E> {
 
 impl<E: Element> LayoutElement for RawExpanded<E> {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let child = self
-            .child
-            .computed_size(ctx);
-        let max_w = ctx
-            .box_constraint
-            .max_width;
-        let max_h = ctx
-            .box_constraint
-            .max_height;
-
-        // Fill every bounded axis; fall back to the child on unbounded axes
-        // (e.g. inside a `Scrollable`) where there is no space to expand into.
-        let width = if max_w < Self::UNBOUNDED { max_w } else { child.width };
-        let height = if max_h < Self::UNBOUNDED { max_h } else { child.height };
-
-        ResolvedSize { width, height }
+        self.child
+            .computed_size(ctx)
     }
 
     fn flex(&self) -> Option<f32> {

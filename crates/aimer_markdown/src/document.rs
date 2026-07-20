@@ -124,15 +124,9 @@ fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
             Ok(Block::List { ordered: list.ordered, start: list.start, items })
         }
         Node::Code(code) => Ok(Block::Code {
-            value: code
-                .value
-                .clone(),
-            language: code
-                .lang
-                .clone(),
-            meta: code
-                .meta
-                .clone(),
+            value: code.value.clone(),
+            language: code.lang.clone(),
+            meta: code.meta.clone(),
         }),
         Node::ThematicBreak(_) => Ok(Block::ThematicBreak),
         Node::Table(table) => {
@@ -191,29 +185,16 @@ fn convert_inlines(nodes: &[Node]) -> Result<Vec<Inline>, MarkdownError> {
             }
             Node::Strong(strong) => result.push(Inline::Strong(convert_inlines(&strong.children)?)),
             Node::Delete(delete) => result.push(Inline::Delete(convert_inlines(&delete.children)?)),
-            Node::InlineCode(code) => result.push(Inline::InlineCode(
-                code.value
-                    .clone(),
-            )),
+            Node::InlineCode(code) => result.push(Inline::InlineCode(code.value.clone())),
             Node::Link(link) => result.push(Inline::Link {
-                url: link
-                    .url
-                    .clone(),
-                title: link
-                    .title
-                    .clone(),
+                url: link.url.clone(),
+                title: link.title.clone(),
                 content: convert_inlines(&link.children)?,
             }),
             Node::Image(image) => result.push(Inline::Image {
-                url: image
-                    .url
-                    .clone(),
-                title: image
-                    .title
-                    .clone(),
-                alt: image
-                    .alt
-                    .clone(),
+                url: image.url.clone(),
+                title: image.title.clone(),
+                alt: image.alt.clone(),
             }),
             Node::FootnoteReference(reference) => result.push(Inline::FootnoteReference {
                 identifier: reference

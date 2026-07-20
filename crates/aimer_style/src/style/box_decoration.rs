@@ -167,9 +167,7 @@ impl BoxDecoration {
         if shadow.color == Color::Transparent {
             return;
         }
-        let blur = shadow
-            .blur
-            .max(0.0);
+        let blur = shadow.blur.max(0.0);
         let spread = shadow.spread;
         if blur == 0.0
             && spread == 0.0

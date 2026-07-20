@@ -186,9 +186,7 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let scale_bits = ctx
-            .scale
-            .to_bits();
+        let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self
             .cache
             .get_computed(ctx.box_constraint, scale_bits)
@@ -200,17 +198,13 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
 
         let mut child_ctx = BuildContext {
             parent_size: ctx.parent_size,
-            canvas: ctx
-                .canvas
-                .clone(),
+            canvas: ctx.canvas.clone(),
             scale: ctx.scale,
             parent_pos: ctx.parent_pos,
             cursor_pos: ctx.cursor_pos,
             box_constraint: ctx.box_constraint,
             visible_rect: ctx.visible_rect,
-            window: ctx
-                .window
-                .clone(),
+            window: ctx.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: ctx
                 .async_handle
@@ -222,22 +216,18 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
 
         child_ctx
             .box_constraint
-            .max_width = self
-            .width
-            .resolve(
-                ctx.box_constraint
-                    .max_width,
-                scale,
-            );
+            .max_width = self.width.resolve(
+            ctx.box_constraint
+                .max_width,
+            scale,
+        );
         child_ctx
             .box_constraint
-            .max_height = self
-            .height
-            .resolve(
-                ctx.box_constraint
-                    .max_height,
-                scale,
-            );
+            .max_height = self.height.resolve(
+            ctx.box_constraint
+                .max_height,
+            scale,
+        );
 
         let width = match self.width {
             Dimension::Px(w) => w * scale,
@@ -295,7 +285,6 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bounds
-            .get()
+        self.bounds.get()
     }
 }

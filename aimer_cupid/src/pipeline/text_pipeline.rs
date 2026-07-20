@@ -659,9 +659,7 @@ impl TextPipelineV2 {
                 device,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
-                &self
-                    .atlas
-                    .view,
+                &self.atlas.view,
                 &self.sampler,
             );
         }
@@ -911,9 +909,7 @@ impl TextPipelineV2 {
             // Record the glyph ranges this request will own. Both instance lists
             // are appended to in request order, so the slice for this request is
             // `[start, len_after)` in each list.
-            let alpha_start = self
-                .instances
-                .len() as u32;
+            let alpha_start = self.instances.len() as u32;
             let color_start = self
                 .color_instances
                 .len() as u32;
@@ -922,14 +918,8 @@ impl TextPipelineV2 {
             // cache hit). Borrow `req.spans` directly when present and only
             // allocate a one-element fallback when the request has no spans.
             let synthesized: [RichTextSpan; 1];
-            let spans: &[RichTextSpan] = if req
-                .spans
-                .is_empty()
-            {
-                synthesized = [RichTextSpan::new(
-                    req.text
-                        .clone(),
-                )];
+            let spans: &[RichTextSpan] = if req.spans.is_empty() {
+                synthesized = [RichTextSpan::new(req.text.clone())];
                 &synthesized
             } else {
                 &req.spans
@@ -1072,10 +1062,7 @@ impl TextPipelineV2 {
                             };
                             (region, true)
                         } else {
-                            let region = if let Some(region) = self
-                                .atlas
-                                .get(&key)
-                            {
+                            let region = if let Some(region) = self.atlas.get(&key) {
                                 region
                             } else {
                                 let rg = self
@@ -1157,9 +1144,7 @@ impl TextPipelineV2 {
             self.request_ranges
                 .push(TextRequestRange {
                     alpha_start,
-                    alpha_end: self
-                        .instances
-                        .len() as u32,
+                    alpha_end: self.instances.len() as u32,
                     color_start,
                     color_end: self
                         .color_instances
@@ -1171,12 +1156,7 @@ impl TextPipelineV2 {
         // their final dimensions for this frame. Resolve UVs against those
         // final dimensions so glyphs inserted before a mid-frame `grow()` are
         // not left referencing stale (smaller) atlas sizes.
-        let (aw, ah) = (
-            self.atlas
-                .width,
-            self.atlas
-                .height,
-        );
+        let (aw, ah) = (self.atlas.width, self.atlas.height);
         for (instance, region) in self
             .instances
             .iter_mut()
@@ -1214,9 +1194,7 @@ impl TextPipelineV2 {
                 device,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
-                &self
-                    .atlas
-                    .view,
+                &self.atlas.view,
                 &self.sampler,
             );
         }
@@ -1255,10 +1233,7 @@ impl TextPipelineV2 {
             .instance_policy
             .capacity();
         self.instance_policy
-            .record_usage(
-                self.instances
-                    .len(),
-            );
+            .record_usage(self.instances.len());
         if self
             .instance_policy
             .capacity()

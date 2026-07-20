@@ -100,12 +100,7 @@ pub fn request_blog_list(_ctx: &BuildContext, handle: ProviderHandle<BlogStore>)
     #[cfg(target_arch = "wasm32")]
     let _ = _ctx;
 
-    if !matches!(
-        handle
-            .read()
-            .list,
-        LoadState::Idle
-    ) {
+    if !matches!(handle.read().list, LoadState::Idle) {
         return;
     }
     handle.update(|store| {

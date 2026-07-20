@@ -55,9 +55,7 @@ pub mod server {
             }
             let msg = InspectorMessage::Status { enabled };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
 
@@ -77,9 +75,7 @@ pub mod server {
             }
             let msg = InspectorMessage::Status { enabled: new_val };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
 
@@ -97,9 +93,7 @@ pub mod server {
             }
             let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
 
@@ -114,9 +108,7 @@ pub mod server {
             }
             let msg = InspectorMessage::Hovered { id };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
     }
@@ -338,9 +330,7 @@ pub mod server {
             }
             let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
 
@@ -348,9 +338,7 @@ pub mod server {
         pub fn broadcast_hovered(&self, id: Option<u64>) {
             let msg = InspectorMessage::Hovered { id };
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = self
-                    .tx
-                    .send(json);
+                let _ = self.tx.send(json);
             }
         }
 
@@ -503,10 +491,7 @@ pub mod server {
         let enabled_msg = enabled.clone();
 
         let onmessage_callback = Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
-            if let Some(txt) = e
-                .data()
-                .as_string()
-            {
+            if let Some(txt) = e.data().as_string() {
                 if let Ok(msg) = serde_json::from_str::<InspectorMessage>(&txt) {
                     match msg {
                         InspectorMessage::Status { enabled } => {

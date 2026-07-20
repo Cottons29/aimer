@@ -252,14 +252,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         let scale_factor = self
             .app
             .window_scale;
-        let frame_size = ResolvedSize {
-            width: self
-                .size
-                .width as f32,
-            height: self
-                .size
-                .height as f32,
-        };
+        let frame_size =
+            ResolvedSize { width: self.size.width as f32, height: self.size.height as f32 };
         let canvas = aimer_canvas::Canvas::new(&self.canvas);
         canvas.begin_frame();
         let ctx = BuildContext {
@@ -267,9 +261,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             canvas,
             scale: scale_factor as f32,
             parent_pos: Default::default(),
-            cursor_pos: self
-                .app
-                .cursor_pos,
+            cursor_pos: self.app.cursor_pos,
             box_constraint: BoxConstraint {
                 min_width: 0.0,
                 min_height: 0.0,
@@ -277,9 +269,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 max_height: frame_size.height,
             },
             visible_rect: None,
-            window: self
-                .window
-                .clone(),
+            window: self.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: self
                 .app
@@ -298,13 +288,9 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 .pending_widget
                 .take()
         {
-            self.app
-                .widget_root = Some(widget.to_element(&ctx));
+            self.app.widget_root = Some(widget.to_element(&ctx));
         }
-        if let Some(root) = &self
-            .app
-            .widget_root
-        {
+        if let Some(root) = &self.app.widget_root {
             root.draw(&ctx);
         }
         self.app
@@ -352,15 +338,11 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 
     pub fn logical_size(&self) -> ResolvedSize {
         ResolvedSize {
-            width: self
-                .size
-                .width as f32
+            width: self.size.width as f32
                 / self
                     .app
                     .window_scale as f32,
-            height: self
-                .size
-                .height as f32
+            height: self.size.height as f32
                 / self
                     .app
                     .window_scale as f32,
@@ -554,11 +536,7 @@ mod tests {
         fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
             self.builds
                 .fetch_add(1, Ordering::SeqCst);
-            Box::new(RecordingElement {
-                cancels: self
-                    .cancels
-                    .clone(),
-            })
+            Box::new(RecordingElement { cancels: self.cancels.clone() })
         }
     }
 
@@ -633,28 +611,11 @@ mod tests {
             device_id,
             position: PhysicalPosition::new(20.0, 30.0),
         });
-        assert_eq!(
-            (
-                app.app
-                    .cursor_pos
-                    .x,
-                app.app
-                    .cursor_pos
-                    .y
-            ),
-            (20.0, 30.0)
-        );
+        assert_eq!((app.app.cursor_pos.x, app.app.cursor_pos.y), (20.0, 30.0));
 
         app.send_window_event(WindowEvent::CursorLeft { device_id });
         assert_eq!(
-            (
-                app.app
-                    .cursor_pos
-                    .x,
-                app.app
-                    .cursor_pos
-                    .y
-            ),
+            (app.app.cursor_pos.x, app.app.cursor_pos.y),
             (
                 crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.x,
                 crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.y,
@@ -662,18 +623,10 @@ mod tests {
         );
         assert_eq!(cancels.load(Ordering::SeqCst), 0);
 
-        app.app
-            .cursor_pos = Vec2d { x: 20.0, y: 30.0 };
+        app.app.cursor_pos = Vec2d { x: 20.0, y: 30.0 };
         app.send_window_event(WindowEvent::CursorEntered { device_id });
         assert_eq!(
-            (
-                app.app
-                    .cursor_pos
-                    .x,
-                app.app
-                    .cursor_pos
-                    .y
-            ),
+            (app.app.cursor_pos.x, app.app.cursor_pos.y),
             (
                 crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.x,
                 crate::handler::event_handler::CURSOR_OUTSIDE_POSITION.y,

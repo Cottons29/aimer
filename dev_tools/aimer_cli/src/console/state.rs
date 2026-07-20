@@ -204,16 +204,11 @@ impl AppState {
     /// Append an app log line (carriage returns stripped, log styling applied),
     /// capping history.
     pub fn push_app_log(&mut self, msg: String) {
-        self.app_logs
-            .push(
-                msg.replace('\r', "")
-                    .process_log(),
-            );
-        if self
-            .app_logs
-            .len()
-            > MAX_LINES
-        {
+        self.app_logs.push(
+            msg.replace('\r', "")
+                .process_log(),
+        );
+        if self.app_logs.len() > MAX_LINES {
             self.app_logs
                 .remove(0);
         }
@@ -231,9 +226,7 @@ impl AppState {
 
     /// Cycle focus to the next pane.
     pub fn next_pane(&mut self) {
-        self.pane = self
-            .pane
-            .next();
+        self.pane = self.pane.next();
     }
 
     /// Clear and reset the build pane.

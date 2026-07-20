@@ -56,10 +56,7 @@ impl BlogStore {
             if !is_valid_id(&blog.id) {
                 return Err(format!("invalid blog id: {}", blog.id));
             }
-            if !ids.insert(
-                blog.id
-                    .clone(),
-            ) {
+            if !ids.insert(blog.id.clone()) {
                 return Err(format!("duplicate blog id: {}", blog.id));
             }
             if blog
@@ -74,9 +71,7 @@ impl BlogStore {
                     .author
                     .trim()
                     .is_empty()
-                || blog
-                    .tags
-                    .is_empty()
+                || blog.tags.is_empty()
                 || blog
                     .tags
                     .iter()
@@ -100,11 +95,7 @@ impl BlogStore {
             if !canonical.is_file() {
                 return Err(format!("markdown is missing for {}", blog.id));
             }
-            paths.insert(
-                blog.id
-                    .clone(),
-                canonical,
-            );
+            paths.insert(blog.id.clone(), canonical);
         }
 
         blogs.sort_by(|left, right| {
@@ -174,9 +165,7 @@ async fn get_blog(State(store): State<BlogStore>, AxumPath(id): AxumPath<String>
 
     match tokio::fs::read_to_string(path).await {
         Ok(markdown) => Json(BlogDetail {
-            id: summary
-                .id
-                .clone(),
+            id: summary.id.clone(),
             upload_time: summary
                 .upload_time
                 .clone(),
@@ -186,9 +175,7 @@ async fn get_blog(State(store): State<BlogStore>, AxumPath(id): AxumPath<String>
             author: summary
                 .author
                 .clone(),
-            tags: summary
-                .tags
-                .clone(),
+            tags: summary.tags.clone(),
             markdown,
         })
         .into_response(),

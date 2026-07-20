@@ -57,11 +57,7 @@ impl Widget for ErrorWidget {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         #[cfg(not(debug_assertions))]
         aimer_utils::log::error(&self.message);
-        Box::new(ErrorElement {
-            message: self
-                .message
-                .clone(),
-        })
+        Box::new(ErrorElement { message: self.message.clone() })
     }
 
     fn debug_name(&self) -> &'static str {
@@ -193,16 +189,13 @@ impl Drawable for RawOverflowIndicator {
             .computed_size(ctx);
         let overflow = detect_overflow(child_size, bounds, Vec2d::default());
 
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
         if self.clip {
             ctx.canvas
                 .set_clip(Vec2d::default(), bounds);
         }
-        self.child
-            .draw(ctx);
-        ctx.canvas
-            .restore();
+        self.child.draw(ctx);
+        ctx.canvas.restore();
 
         paint_overflow_indicator(ctx, bounds, overflow, &self.label);
     }
@@ -210,10 +203,7 @@ impl Drawable for RawOverflowIndicator {
 
 impl EventElement for RawOverflowIndicator {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 }
 
@@ -221,10 +211,7 @@ impl Rebuildable for RawOverflowIndicator {}
 
 impl VisitorElement for RawOverflowIndicator {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {

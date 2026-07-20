@@ -208,9 +208,7 @@ mod tests {
         )));
         assert!(matches!(loader.state(), SvgLoadState::Loading));
 
-        let state = loader
-            .load()
-            .await;
+        let state = loader.load().await;
 
         let SvgLoadState::Ready(document) = state else { panic!("memory SVG should load") };
         assert_eq!(
@@ -244,10 +242,7 @@ mod tests {
                 .to_string_lossy()
                 .as_ref(),
         )));
-        let SvgLoadState::Ready(document) = valid
-            .load()
-            .await
-        else {
+        let SvgLoadState::Ready(document) = valid.load().await else {
             panic!("valid SVG asset should load");
         };
         assert_eq!(
@@ -265,12 +260,7 @@ mod tests {
                 .to_string_lossy()
                 .as_ref(),
         )));
-        assert!(matches!(
-            missing
-                .load()
-                .await,
-            SvgLoadState::Error(_)
-        ));
+        assert!(matches!(missing.load().await, SvgLoadState::Error(_)));
 
         let malformed_path = directory
             .path()

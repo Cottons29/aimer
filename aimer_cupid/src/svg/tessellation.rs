@@ -26,13 +26,7 @@ pub struct SvgMesh {
 
 impl SvgMesh {
     pub fn memory_bytes(&self) -> usize {
-        self.vertices
-            .len()
-            * size_of::<[f32; 2]>()
-            + self
-                .indices
-                .len()
-                * size_of::<u32>()
+        self.vertices.len() * size_of::<[f32; 2]>() + self.indices.len() * size_of::<u32>()
     }
 }
 
@@ -130,9 +124,7 @@ impl SvgGeometryCache {
             .get_mut(&key)
         {
             entry.last_used = self.usage_clock;
-            return Ok(entry
-                .mesh
-                .clone());
+            return Ok(entry.mesh.clone());
         }
 
         let mesh = Arc::new(tessellate(geometry, style, tolerance.tolerance())?);
@@ -147,8 +139,7 @@ impl SvgGeometryCache {
     }
 
     pub fn len(&self) -> usize {
-        self.entries
-            .len()
+        self.entries.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -165,18 +156,12 @@ impl SvgGeometryCache {
     }
 
     pub fn clear(&mut self) {
-        self.entries
-            .clear();
+        self.entries.clear();
         self.memory_bytes = 0;
     }
 
     fn evict_to_limits(&mut self) {
-        while self
-            .entries
-            .len()
-            > self.max_entries
-            || self.memory_bytes > self.max_memory_bytes
-        {
+        while self.entries.len() > self.max_entries || self.memory_bytes > self.max_memory_bytes {
             let Some(oldest_key) = self
                 .entries
                 .iter()

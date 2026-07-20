@@ -185,12 +185,8 @@ impl<W: Widget + 'static> Widget for GestureDetector<W> {
                 .child
                 .to_element(ctx),
             cached_bounds: CacheBounds::new(),
-            window: ctx
-                .window
-                .clone(),
-            on_tap: self
-                .on_tap
-                .clone(),
+            window: ctx.window.clone(),
+            on_tap: self.on_tap.clone(),
             on_double_press: self
                 .on_double_press
                 .clone(),
@@ -363,11 +359,7 @@ impl<E: Element> RawGestureDetector<E> {
                     .touches
                     .insert(pos.id, *pos);
 
-                if state
-                    .touches
-                    .len()
-                    == 2
-                {
+                if state.touches.len() == 2 {
                     let positions: Vec<PointerPosition> = state
                         .touches
                         .values()
@@ -380,11 +372,7 @@ impl<E: Element> RawGestureDetector<E> {
                     return Some(GestureEvent::ScaleStart { focal_x: focal.x, focal_y: focal.y });
                 }
 
-                if state
-                    .touches
-                    .len()
-                    == 1
-                {
+                if state.touches.len() == 1 {
                     state.down_position = Some(*pos);
                     state.down_time = Some(now);
                     state.is_dragging = false;
@@ -403,10 +391,7 @@ impl<E: Element> RawGestureDetector<E> {
                 if state
                     .initial_pinch_distance
                     .is_some()
-                    && state
-                        .touches
-                        .len()
-                        < 2
+                    && state.touches.len() < 2
                 {
                     state.initial_pinch_distance = None;
                     state.current_scale = 1.0;
@@ -562,10 +547,7 @@ impl<E: Element> RawGestureDetector<E> {
                     .touches
                     .insert(pos.id, *pos);
 
-                if state
-                    .touches
-                    .len()
-                    >= 2
+                if state.touches.len() >= 2
                     && state
                         .initial_pinch_distance
                         .is_some()
@@ -806,14 +788,7 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
             _ => return false,
         };
 
-        if !should_accept_pointer_event(
-            &self.cached_bounds,
-            &self
-                .state
-                .borrow(),
-            event,
-            *pos,
-        ) {
+        if !should_accept_pointer_event(&self.cached_bounds, &self.state.borrow(), event, *pos) {
             return false;
         }
 
@@ -881,8 +856,7 @@ impl<E: Element> Drawable for RawGestureDetector<E> {
         self.cached_bounds
             .save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
 
-        self.child
-            .draw(ctx);
+        self.child.draw(ctx);
     }
 }
 

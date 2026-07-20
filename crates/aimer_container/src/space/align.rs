@@ -125,21 +125,18 @@ impl Drawable for RawAlign {
             .visible_rect
             .map(|(x, y, width, height)| (x - offset_x, y - offset_y, width, height));
 
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
         ctx.canvas
             .translate(Vec2d { x: offset_x, y: offset_y });
         self.child
             .draw(&child_ctx);
-        ctx.canvas
-            .restore();
+        ctx.canvas.restore();
     }
 }
 
 impl LayoutElement for RawAlign {
     fn size(&self) -> Option<Size> {
-        self.child
-            .size()
+        self.child.size()
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -164,10 +161,7 @@ impl LayoutElement for RawAlign {
 
 impl VisitorElement for RawAlign {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {

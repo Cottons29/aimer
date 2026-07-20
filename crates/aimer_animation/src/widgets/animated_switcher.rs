@@ -103,17 +103,12 @@ impl<T: Widget + 'static> StatefulWidget for AnimatedSwitcher<T> {
         let in_controller = AnimationController::new(self.duration, self.curve);
         in_controller.set_value(1.0);
         AnimatedSwitcherState {
-            current_child: self
-                .child
-                .clone(),
+            current_child: self.child.clone(),
             old_child: None,
             child_key: self
                 .transition_key
                 .clone()
-                .or_else(|| {
-                    self.child
-                        .key()
-                }),
+                .or_else(|| self.child.key()),
             duration: self.duration,
             curve: self.curve,
             switch_out_curve: self
@@ -276,30 +271,23 @@ impl Drawable for AnimatedSwitcherElement {
             .tick(now);
 
         // Draw old child (fading out)
-        if let Some(old) = unsafe {
-            &*self
-                .old_child
-                .get()
-        } && out_value < 1.0
+        if let Some(old) = unsafe { &*self.old_child.get() }
+            && out_value < 1.0
         {
-            ctx.canvas
-                .save();
+            ctx.canvas.save();
             ctx.canvas
                 .set_alpha(1.0 - out_value);
             old.draw(ctx);
-            ctx.canvas
-                .restore();
+            ctx.canvas.restore();
         }
 
         // Draw new child (fading in)
-        ctx.canvas
-            .save();
+        ctx.canvas.save();
         ctx.canvas
             .set_alpha(in_value);
         self.current_child
             .draw(ctx);
-        ctx.canvas
-            .restore();
+        ctx.canvas.restore();
 
         if self
             .in_controller
@@ -310,11 +298,7 @@ impl Drawable for AnimatedSwitcherElement {
         {
             request_next_frame();
         } else if out_value >= 1.0 {
-            unsafe {
-                *self
-                    .old_child
-                    .get() = None
-            };
+            unsafe { *self.old_child.get() = None };
         }
     }
 }
@@ -325,11 +309,7 @@ impl VisitorElement for AnimatedSwitcherElement {
             self.current_child
                 .as_ref(),
         );
-        if let Some(old) = unsafe {
-            &*self
-                .old_child
-                .get()
-        } {
+        if let Some(old) = unsafe { &*self.old_child.get() } {
             visitor(old.as_ref());
         }
     }
@@ -357,11 +337,7 @@ impl Rebuildable for AnimatedSwitcherElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         self.current_child
             .rebuild_if_dirty(ctx);
-        if let Some(old) = unsafe {
-            &*self
-                .old_child
-                .get()
-        } {
+        if let Some(old) = unsafe { &*self.old_child.get() } {
             old.rebuild_if_dirty(ctx);
         }
     }
@@ -410,10 +386,7 @@ mod tests {
 
     impl Widget for TestWidget {
         fn key(&self) -> Option<Key> {
-            Some(Key::Value(
-                self.0
-                    .to_owned(),
-            ))
+            Some(Key::Value(self.0.to_owned()))
         }
 
         fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
@@ -574,12 +547,7 @@ mod tests {
         }
         impl Widget for RecordingPage {
             fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-                Box::new(RecordingLeaf {
-                    label: self.label,
-                    drawn: self
-                        .drawn
-                        .clone(),
-                })
+                Box::new(RecordingLeaf { label: self.label, drawn: self.drawn.clone() })
             }
             fn debug_name(&self) -> &'static str {
                 "RecordingPage"
@@ -605,9 +573,7 @@ mod tests {
             fn create_state(&self) -> Self::State {
                 RouterMockState {
                     route: 0,
-                    drawn: self
-                        .drawn
-                        .clone(),
+                    drawn: self.drawn.clone(),
                     updater: StateUpdater::new(),
                 }
             }
@@ -621,13 +587,7 @@ mod tests {
                 AnimatedSwitcher::new(
                     Duration::from_millis(50),
                     Curve::Linear,
-                    RecordingPage {
-                        label,
-                        drawn: self
-                            .drawn
-                            .clone(),
-                    }
-                    .boxed(),
+                    RecordingPage { label, drawn: self.drawn.clone() }.boxed(),
                 )
                 .child_key(label)
                 .key("route-switcher")

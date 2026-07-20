@@ -81,8 +81,7 @@ impl Drawable for RawOpacity {
     fn draw(&self, ctx: &BuildContext) {
         ctx.canvas
             .set_alpha(self.opacity);
-        self.child
-            .draw(ctx);
+        self.child.draw(ctx);
         ctx.canvas
             .restore_alpha();
     }
@@ -90,8 +89,7 @@ impl Drawable for RawOpacity {
 
 impl LayoutElement for RawOpacity {
     fn size(&self) -> Option<Size> {
-        self.child
-            .size()
+        self.child.size()
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -105,13 +103,11 @@ impl LayoutElement for RawOpacity {
     }
 
     fn layer(&self) -> u32 {
-        self.child
-            .layer()
+        self.child.layer()
     }
 
     fn flex(&self) -> Option<f32> {
-        self.child
-            .flex()
+        self.child.flex()
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
@@ -122,10 +118,7 @@ impl LayoutElement for RawOpacity {
 
 impl VisitorElement for RawOpacity {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(
-            self.child
-                .as_ref(),
-        );
+        visitor(self.child.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {

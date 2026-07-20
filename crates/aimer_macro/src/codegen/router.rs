@@ -115,10 +115,7 @@ impl RouterCodegen {
                             }
                         }
                     } else if let Meta::List(ml) = &attr.meta {
-                        if let Ok(expr_array) = parse2::<ExprArray>(
-                            ml.tokens
-                                .clone(),
-                        ) {
+                        if let Ok(expr_array) = parse2::<ExprArray>(ml.tokens.clone()) {
                             for elem in expr_array.elems {
                                 if let Expr::Lit(ExprLit { lit: Lit::Str(lit_str), .. }) = elem {
                                     routes.push(lit_str.value());
@@ -205,11 +202,7 @@ impl RouterCodegen {
                         )
                     });
                 match &variant.fields {
-                    Fields::Unnamed(f)
-                        if f.unnamed
-                            .len()
-                            == 1 =>
-                    {
+                    Fields::Unnamed(f) if f.unnamed.len() == 1 => {
                         let child_ty = &f
                             .unnamed
                             .first()
@@ -276,10 +269,7 @@ impl RouterCodegen {
 
                     let mut path_replaces = Vec::new();
                     let mut query_pushes = Vec::new();
-                    for field in fields
-                        .named
-                        .iter()
-                    {
+                    for field in fields.named.iter() {
                         let fname = field
                             .ident
                             .as_ref()
@@ -309,9 +299,7 @@ impl RouterCodegen {
                     });
                 }
                 Fields::Unnamed(fields) => {
-                    let field_names: Vec<_> = (0..fields
-                        .unnamed
-                        .len())
+                    let field_names: Vec<_> = (0..fields.unnamed.len())
                         .map(|i| format_ident!("arg_{}", i))
                         .collect();
                     let bind_pattern = quote! { Self::#variant_name( #(#field_names),* ) };
@@ -364,9 +352,7 @@ impl RouterCodegen {
                         });
                     }
                     Fields::Unnamed(fields) => {
-                        let arg_names: Vec<_> = (0..fields
-                            .unnamed
-                            .len())
+                        let arg_names: Vec<_> = (0..fields.unnamed.len())
                             .map(|i| format_ident!("arg_{}", i))
                             .collect();
                         let extracts = arg_names
@@ -456,9 +442,7 @@ impl RouterCodegen {
                         }
                     }
                     Fields::Unnamed(fields) => {
-                        let n_fields = fields
-                            .unnamed
-                            .len();
+                        let n_fields = fields.unnamed.len();
                         let placeholder_indices: Vec<usize> = template_segments
                             .iter()
                             .enumerate()

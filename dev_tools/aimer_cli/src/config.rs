@@ -76,10 +76,7 @@ impl AimerManifest {
     pub fn asset_files(&self) -> &[String] {
         self.assets
             .as_ref()
-            .map(|a| {
-                a.files
-                    .as_slice()
-            })
+            .map(|a| a.files.as_slice())
             .unwrap_or(&[])
     }
 
@@ -175,12 +172,7 @@ mod tests {
         let loaded = AimerManifest::load_from(dir.path())
             .unwrap()
             .unwrap();
-        assert_eq!(
-            loaded
-                .package
-                .name,
-            "my_app"
-        );
+        assert_eq!(loaded.package.name, "my_app");
         assert_eq!(
             loaded
                 .package
@@ -199,12 +191,7 @@ mod tests {
                 .author,
             "alice"
         );
-        assert_eq!(
-            loaded
-                .package
-                .group,
-            "com.example.myapp"
-        );
+        assert_eq!(loaded.package.group, "com.example.myapp");
     }
 
     #[test]
@@ -270,12 +257,7 @@ mod tests {
         let loaded = AimerManifest::load_from(dir.path())
             .unwrap()
             .unwrap();
-        assert_eq!(
-            loaded
-                .package
-                .name,
-            "Jaime"
-        );
+        assert_eq!(loaded.package.name, "Jaime");
         assert_eq!(
             loaded
                 .package

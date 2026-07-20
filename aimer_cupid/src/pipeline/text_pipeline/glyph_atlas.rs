@@ -196,10 +196,7 @@ impl GlyphAtlas {
         glyph_h: u32,
         bitmap: &[u8],
     ) -> AtlasRegion {
-        if let Some(region) = self
-            .cache
-            .get(&key)
-        {
+        if let Some(region) = self.cache.get(&key) {
             return *region;
         }
 
@@ -276,8 +273,7 @@ impl GlyphAtlas {
         // texture are simply never referenced again (the cache is cleared, so
         // every glyph is re-inserted and re-uploaded on demand).
         if self.width >= Self::MAX_SIZE {
-            self.cache
-                .clear();
+            self.cache.clear();
             self.packer = ShelfPacker::new(self.width, self.height);
             return;
         }
@@ -429,10 +425,7 @@ impl ColorGlyphAtlas {
         glyph_h: u32,
         bitmap: &[u8],
     ) -> AtlasRegion {
-        if let Some(region) = self
-            .cache
-            .get(&key)
-        {
+        if let Some(region) = self.cache.get(&key) {
             return *region;
         }
 
@@ -496,8 +489,7 @@ impl ColorGlyphAtlas {
         // At the size cap: evict and repack into the existing texture rather than
         // allocating a larger one (see `GlyphAtlas::grow`).
         if self.width >= Self::MAX_SIZE {
-            self.cache
-                .clear();
+            self.cache.clear();
             self.packer = ShelfPacker::new(self.width, self.height);
             return;
         }

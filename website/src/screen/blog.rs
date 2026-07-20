@@ -132,9 +132,7 @@ fn blog_row(
     navigator: NavigatorController<AppRouter>,
     mobile: bool,
 ) -> AnyWidget {
-    let route_id = blog
-        .id
-        .clone();
+    let route_id = blog.id.clone();
     let (style, hover_style) = blog_link_styles();
     let (_, date_style) = archive_text_styles();
     let date = Text::new(display_archive_date(&blog.upload_time))
@@ -243,7 +241,9 @@ fn blog_link_styles() -> (TextStyle, TextStyle) {
         .text_overflow(TextOverflow::Wrap);
     let hover_style = style
         .font_style(FontStyle::Italic)
-        .text_decoration(TextDecoration::new().line(TextDecorationLine::ITALIC | TextDecorationLine::UNDERLINE));
+        .text_decoration(
+            TextDecoration::new().line(TextDecorationLine::ITALIC | TextDecorationLine::UNDERLINE),
+        );
 
     (style, hover_style)
 }
@@ -294,7 +294,6 @@ mod tests {
         assert!(date_style.color == Color::GRAY);
         assert!(link_style.color == Color::BLACK);
     }
-
 
     #[test]
     fn upload_time_is_presented_as_a_readable_utc_date() {

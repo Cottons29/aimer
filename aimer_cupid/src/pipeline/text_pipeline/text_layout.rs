@@ -229,11 +229,7 @@ where
     // (Range, Level) pairs for use in `collect_shaping_runs`.
     let visual_run_ranges: Vec<(std::ops::Range<usize>, unicode_bidi::Level)> = paragraph
         .map(|para| {
-            let (levels, ranges) = bidi.visual_runs(
-                para,
-                para.range
-                    .clone(),
-            );
+            let (levels, ranges) = bidi.visual_runs(para, para.range.clone());
             ranges
                 .into_iter()
                 .zip(levels)
@@ -667,19 +663,15 @@ fn apply_ellipsis(
     if let Some(line) = lines.last_mut() {
         let ellipsis_width = options.font_size * 0.5;
         while line.width + ellipsis_width > options.max_width
-            && line
-                .glyph_range
-                .end
+            && line.glyph_range.end
                 > line
                     .glyph_range
                     .start
         {
             if let Some(glyph) = glyphs.pop() {
-                line.glyph_range
-                    .end -= 1;
+                line.glyph_range.end -= 1;
                 line.width -= glyph.advance;
-                line.text_range
-                    .end = glyph.cluster;
+                line.text_range.end = glyph.cluster;
             } else {
                 break;
             }
@@ -688,15 +680,8 @@ fn apply_ellipsis(
         glyphs.push(PositionedShapedGlyph {
             font_id,
             glyph_id: '…' as u32 as u16,
-            cluster: line
-                .text_range
-                .end,
-            text_range: line
-                .text_range
-                .end
-                ..line
-                    .text_range
-                    .end,
+            cluster: line.text_range.end,
+            text_range: line.text_range.end..line.text_range.end,
             x,
             y: line.baseline,
             x_offset: 0.0,
@@ -705,8 +690,7 @@ fn apply_ellipsis(
             font_size: options.font_size,
             source: "…".to_string(),
         });
-        line.glyph_range
-            .end = glyphs.len();
+        line.glyph_range.end = glyphs.len();
         line.width += ellipsis_width;
         line.ascent = metrics.ascent;
     }
@@ -908,12 +892,7 @@ mod tests {
     fn preserves_explicit_newlines() {
         let layout = test_layout("first\nsecond", 0.0);
 
-        assert_eq!(
-            layout
-                .lines
-                .len(),
-            2
-        );
+        assert_eq!(layout.lines.len(), 2);
         assert!(layout.lines[0].hard_break);
         assert_eq!(layout.lines[0].text_range, 0..5);
         assert_eq!(layout.lines[1].text_range, 6..12);
@@ -941,12 +920,7 @@ mod tests {
     fn wraps_without_splitting_grapheme_clusters() {
         let layout = test_layout("Cafe\u{301} noir", 20.0);
 
-        assert!(
-            layout
-                .lines
-                .len()
-                > 1
-        );
+        assert!(layout.lines.len() > 1);
         assert!(
             layout
                 .glyphs
@@ -957,10 +931,7 @@ mod tests {
             !layout
                 .lines
                 .iter()
-                .any(|line| line
-                    .text_range
-                    .end
-                    == 4)
+                .any(|line| line.text_range.end == 4)
         );
     }
 
@@ -987,16 +958,8 @@ mod tests {
             !layout
                 .lines
                 .iter()
-                .any(|line| line
-                    .text_range
-                    .end
-                    == 4)
+                .any(|line| line.text_range.end == 4)
         );
-        assert!(
-            layout
-                .metrics
-                .width
-                <= options.max_width
-        );
+        assert!(layout.metrics.width <= options.max_width);
     }
 }

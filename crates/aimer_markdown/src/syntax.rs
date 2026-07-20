@@ -1,3 +1,4 @@
+mod highlighter;
 mod parser;
 
 use arborium::Highlighter;
