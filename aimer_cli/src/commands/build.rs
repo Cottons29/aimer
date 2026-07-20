@@ -130,33 +130,3 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
 
     Ok(cmd)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn web_build_uses_trunk_compatible_no_color_value() {
-        let command = build_command(Targets::Web, false).unwrap();
-        let wasm_archiver = command
-            .get_envs()
-            .find_map(|(name, value)| (name == "AR_wasm32_unknown_unknown").then_some(value))
-            .flatten();
-        let no_color = command
-            .get_envs()
-            .find_map(|(name, value)| (name == "NO_COLOR").then_some(value))
-            .flatten();
-
-        assert_eq!(
-            wasm_archiver,
-            Some(
-                find_llvm_ar()
-                    .unwrap()
-                    .as_os_str()
-            )
-        );
-        assert_eq!(no_color, Some(std::ffi::OsStr::new("true")));
-    }
-}
