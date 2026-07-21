@@ -123,9 +123,14 @@ struct ErrorBody {
 
 pub fn app(store: BlogStore) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list([
-            HeaderValue::from_str("aimer.cottonsofficial.com").unwrap()
-        ]))
+        .allow_origin(AllowOrigin::list([HeaderValue::from_str(
+            "https://aimer.cottonsofficial.com",
+        )
+        .unwrap(),
+            HeaderValue::from_str(
+                "http://aimer.cottonsofficial.com",
+            )
+                .unwrap()]))
         .allow_methods(Any)
         .allow_headers(Any);
 

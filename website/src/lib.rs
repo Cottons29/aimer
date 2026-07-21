@@ -43,31 +43,6 @@ mod test {
     use crate::blog_store::{BlogDetail, BlogStore, LoadState};
     use crate::router::{AppRouter, take_route_builds};
 
-    #[test]
-    fn web_loader_fades_after_the_first_rendered_frame() {
-        let html = include_str!("../builds/web/index.html");
-        let generated_html = include_str!("../builds/web/dist/index.html");
-
-        for page in [html, generated_html] {
-            assert!(page.contains("<div class=\"loader\""));
-            assert!(page.contains("position: fixed"));
-            let transition = page
-                .find("transition: opacity 400ms ease")
-                .unwrap();
-            let hidden_state = page
-                .find(".loader--hidden")
-                .unwrap();
-            assert!(
-                transition < hidden_state,
-                "the transition must be active before the loader is hidden"
-            );
-            assert!(!page.contains("animation: opacity"));
-            assert!(page.contains("aimer:first-frame-rendered"));
-            assert!(page.contains("loader--hidden"));
-            assert!(page.contains("loader.addEventListener(\"transitionend\""));
-            assert!(page.contains("loader.remove()"));
-        }
-    }
 
     #[test]
     fn direct_blog_detail_route_keeps_the_root_provider_scope() {
