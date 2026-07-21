@@ -7,7 +7,7 @@ use aimer::mouse_region::{MouseRegion, PointerState};
 use aimer::style::{TextAlign, TextDecoration, TextStyle, Theme, ThemeData};
 use aimer::{
     BuildContext, Color, Row, SizedBox, State, StateUpdater, StatefulWidget, Svg, SvgDocument,
-    Text, Widget, widget,
+    SvgStyle, Text, Widget, widget,
 };
 
 #[widget(Stateful)]
@@ -95,6 +95,14 @@ impl State<BlogBackButton> for BlogBackButtonState {
                     .child(
                         Row::new().children([
                             Svg::new(document)
+                                .style(
+                                    "#back_button_body",
+                                    SvgStyle::new().fill(theme.on_background_color),
+                                )
+                                .style(
+                                    "#back_button_head",
+                                    SvgStyle::new().fill(theme.on_background_color),
+                                )
                                 .width(16)
                                 .height(16)
                                 .boxed(),
@@ -122,21 +130,21 @@ mod tests {
 
     #[test]
     fn back_label_is_not_underlined_when_not_hovered() {
-        assert!(
+        assert_eq!(
             back_label_style(false, Color::BLACK)
                 .text_decoration
-                .line
-                == TextDecorationLine::NONE
+                .line,
+            TextDecorationLine::NONE
         );
     }
 
     #[test]
     fn back_label_is_underlined_when_hovered() {
-        assert!(
+        assert_eq!(
             back_label_style(true, Color::BLACK)
                 .text_decoration
-                .line
-                == TextDecorationLine::UNDERLINE
+                .line,
+            TextDecorationLine::UNDERLINE
         );
     }
 }

@@ -2,7 +2,10 @@
 // Hoverable Get Started button
 // ---------------------------------------------------------------------------
 
-use aimer::style::{BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, TextAlign, TextStyle, Theme, ThemeData};
+use aimer::style::{
+    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, TextAlign, TextStyle, Theme,
+    ThemeData,
+};
 use aimer::{BuildContext, Widget, widget, *};
 
 #[widget(Stateless)]
