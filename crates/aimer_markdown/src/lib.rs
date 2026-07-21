@@ -1,3 +1,4 @@
+mod cache;
 mod document;
 mod markdown_theme;
 mod renderer;
@@ -10,6 +11,7 @@ mod syntax;
 #[unsafe(no_mangle)]
 static mut stderr: usize = 0;
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use aimer_container::{Container, ScrollAxis, Scrollable};
@@ -21,6 +23,37 @@ pub use document::{Alignment, Block, Document, Inline, ListItem, MarkdownError, 
 pub use markdown_theme::MarkdownTheme;
 pub use renderer::{ImageResolver, LinkHandler, MarkdownImage, default_image_resolver};
 pub use syntax::{CaptureSpan, highlight};
+
+use cache::LruCache;
+
+const DOCUMENT_CACHE_CAPACITY: usize = 16;
+
+thread_local! {
+    static DOCUMENT_CACHE: RefCell<DocumentCache> = RefCell::new(DocumentCache::new(DOCUMENT_CACHE_CAPACITY));
+}
+
+struct DocumentCache {
+    entries: LruCache<Rc<str>, Rc<Result<Document, MarkdownError>>>,
+}
+
+impl DocumentCache {
+    fn new(capacity: usize) -> Self {
+        Self { entries: LruCache::new(capacity) }
+    }
+
+    fn parse(&mut self, source: Rc<str>) -> Rc<Result<Document, MarkdownError>> {
+        self.entries
+            .get_or_insert_with(source, |source| Rc::new(Document::parse(source)))
+    }
+}
+
+fn parse_document(source: Rc<str>) -> Rc<Result<Document, MarkdownError>> {
+    DOCUMENT_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .parse(source)
+    })
+}
 
 fn open_web_link_with<E>(
     target: &str,
@@ -117,9 +150,10 @@ impl MarkdownViewer {
 
 impl Widget for MarkdownViewer {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let content = match Document::parse(&self.source) {
+        let document = parse_document(self.source.clone());
+        let content = match document.as_ref() {
             Ok(document) => renderer::render_document(
-                &document,
+                document,
                 &self.theme,
                 self.link_handler
                     .as_ref(),
@@ -159,8 +193,54 @@ impl Widget for MarkdownViewer {
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::rc::Rc;
 
-    use super::open_web_link_with;
+    use super::{DocumentCache, open_web_link_with};
+
+    #[test]
+    fn document_cache_reuses_unchanged_markdown() {
+        let mut cache = DocumentCache::new(2);
+        let source: Rc<str> = Rc::from("# Cached");
+
+        let first = cache.parse(source.clone());
+        let second = cache.parse(Rc::from("# Cached"));
+
+        assert!(Rc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn document_cache_parses_updated_markdown() {
+        let mut cache = DocumentCache::new(2);
+
+        let first = cache.parse(Rc::from("# Before"));
+        let second = cache.parse(Rc::from("# After"));
+
+        assert!(!Rc::ptr_eq(&first, &second));
+        assert_ne!(first.as_ref(), second.as_ref());
+    }
+
+    #[test]
+    fn document_cache_reuses_parse_errors() {
+        let mut cache = DocumentCache::new(2);
+
+        let first = cache.parse(Rc::from("<div>unsupported</div>"));
+        let second = cache.parse(Rc::from("<div>unsupported</div>"));
+
+        assert!(first.is_err());
+        assert!(Rc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn document_cache_evicts_the_least_recently_used_source() {
+        let mut cache = DocumentCache::new(2);
+        let first = cache.parse(Rc::from("First"));
+        cache.parse(Rc::from("Second"));
+        cache.parse(Rc::from("Third"));
+
+        let reparsed = cache.parse(Rc::from("First"));
+
+        assert!(!Rc::ptr_eq(&first, &reparsed));
+    }
 
     #[test]
     fn web_links_are_forwarded_to_the_browser() {

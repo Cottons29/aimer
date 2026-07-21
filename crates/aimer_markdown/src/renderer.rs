@@ -14,7 +14,8 @@ use aimer_text::{RichText, SpanStyle, Text, TextSpan};
 use aimer_widget::{AnyWidget, Widget};
 
 pub(crate) use crate::markdown_theme::MarkdownTheme;
-use crate::{Alignment, Block, CaptureSpan, Document, Inline, TableRow, highlight};
+use crate::syntax::highlight_cached;
+use crate::{Alignment, Block, CaptureSpan, Document, Inline, TableRow};
 
 const TICK_SVG_DATA: &'static [u8] = include_bytes!("../tick-checkbox-svgrepo-com.svg");
 
@@ -72,7 +73,8 @@ pub(crate) fn inline_spans(inlines: &[Inline], theme: &MarkdownTheme) -> TextSpa
 fn inline_span(inline: &Inline, theme: &MarkdownTheme) -> TextSpan {
     match inline {
         Inline::Text(text) => TextSpan::new(text.clone()),
-        Inline::SoftBreak | Inline::HardBreak => TextSpan::new("\n"),
+        Inline::SoftBreak => TextSpan::new(" "),
+        Inline::HardBreak => TextSpan::new("\n"),
         Inline::Emphasis(children) => TextSpan::new("")
             .style(SpanStyle::new().font_style(FontStyle::Italic))
             .children(
@@ -353,7 +355,7 @@ fn render_block(
 fn highlighted_code_spans(value: &str, language: Option<&str>) -> Vec<TextSpan> {
     let mut offset = 0;
     let mut spans = Vec::new();
-    for capture in highlight(value, language) {
+    for capture in highlight_cached(value, language).iter() {
         let (start, end) = capture.range();
         let (start, end) = (start as usize, end as usize);
         if start < offset
@@ -671,7 +673,7 @@ mod tests {
                 .iter()
                 .map(|span| span.text.as_ref())
                 .collect::<String>(),
-            "plain both gone\ncodelink[note]"
+            "plain both gone codelink[note]"
         );
         let both = resolved
             .iter()
@@ -716,6 +718,29 @@ mod tests {
                 .font_family,
             FontFamily::MONOSPACE
         );
+    }
+
+    #[test]
+    fn soft_breaks_flow_as_spaces_while_hard_breaks_remain_newlines() {
+        let theme = MarkdownTheme::default();
+        let document = Document::parse("first\nsecond\n\nthird  \nfourth").unwrap();
+        let rendered_paragraphs = document
+            .blocks
+            .iter()
+            .map(|block| {
+                let Block::Paragraph(inlines) = block else { panic!("expected paragraph") };
+                inline_spans(inlines, &theme)
+                    .flatten(&TextStyle::default())
+                    .into_iter()
+                    .map(|span| {
+                        span.text
+                            .to_string()
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered_paragraphs, ["first second", "third\nfourth"]);
     }
 
     #[test]
