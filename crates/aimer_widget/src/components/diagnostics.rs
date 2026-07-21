@@ -87,10 +87,9 @@ impl ErrorElement {
         #[cfg(not(debug_assertions))]
         let _ = message;
 
-
         let (pos_y, font_size) = if cfg!(target_os = "ios") || cfg!(target_os = "android") {
             (400f32, 40.0)
-        }else {
+        } else {
             (200f32, 34f32)
         };
 

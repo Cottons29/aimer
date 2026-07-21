@@ -9,6 +9,12 @@ use aimer_widget::{
 /// element is required, and its layout size remains the default zero size.
 pub struct ZeroSizedBox;
 
+impl ZeroSizedBox {
+    pub fn boxed() -> Box<Self> {
+        Box::new(Self)
+    }
+}
+
 impl Drawable for ZeroSizedBox {
     fn draw(&self, _: &BuildContext) {}
 }

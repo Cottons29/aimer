@@ -1,13 +1,12 @@
-use aimer_attribute::position::Vec2d;
-use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_events::element::ElementEvent;
-
 use crate::Drawable;
 use crate::base::*;
 use crate::components::event_element::EventElement;
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
+use aimer_attribute::position::Vec2d;
+use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_events::element::ElementEvent;
 
 impl<T> Element for T where T: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable
 {}
@@ -166,8 +165,7 @@ impl Drawable for Box<dyn Element> {
 /// Perform a hit-test on the element tree and dispatch the event to the deepest
 /// hit element. Returns `true` if any element consumed the event.
 pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> bool {
-    use smallvec::SmallVec;
-
+    let mut children = Vec::new();
     let captured_pointer = match event {
         ElementEvent::PointerMove(_, _, pointer)
         | ElementEvent::PointerUp(_, _, pointer)
@@ -175,22 +173,32 @@ pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> b
         _ => None,
     };
     if let Some(pointer) = captured_pointer
-        && let Some(handled) = dispatch_captured_event(root, pointer, event)
+        && let Some(handled) = dispatch_captured_event_inner(root, pointer, event, &mut children)
     {
         return handled;
     }
 
-    let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
-    root.event_children(&mut |child| children.push(child));
+    dispatch_event_inner(root, pos, event, &mut children)
+}
 
-    for child in children
-        .into_iter()
-        .rev()
-    {
-        if dispatch_event(child, pos, event) {
+fn dispatch_event_inner<'a>(
+    root: &'a dyn Element,
+    pos: Vec2d,
+    event: &ElementEvent,
+    children: &mut Vec<&'a dyn Element>,
+) -> bool {
+    let start = children.len();
+    root.event_children(&mut |child| children.push(child));
+    let end = children.len();
+
+    for index in (start..end).rev() {
+        let child = children[index];
+        if dispatch_event_inner(child, pos, event, children) {
+            children.truncate(start);
             return true;
         }
     }
+    children.truncate(start);
 
     // Check if pos is inside this element's bounds
     if let Some((start, end)) = root.pos_start_end() {
@@ -213,19 +221,25 @@ pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> b
     false
 }
 
-fn dispatch_captured_event(root: &dyn Element, pointer: u64, event: &ElementEvent) -> Option<bool> {
-    use smallvec::SmallVec;
-
-    let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
+fn dispatch_captured_event_inner<'a>(
+    root: &'a dyn Element,
+    pointer: u64,
+    event: &ElementEvent,
+    children: &mut Vec<&'a dyn Element>,
+) -> Option<bool> {
+    let start = children.len();
     root.event_children(&mut |child| children.push(child));
-    for child in children
-        .into_iter()
-        .rev()
-    {
-        if let Some(handled) = dispatch_captured_event(child, pointer, event) {
+    let end = children.len();
+
+    for index in (start..end).rev() {
+        let child = children[index];
+        if let Some(handled) = dispatch_captured_event_inner(child, pointer, event, children) {
+            children.truncate(start);
             return Some(handled);
         }
     }
+    children.truncate(start);
+
     root.captures_pointer(pointer)
         .then(|| root.on_event(event))
 }
@@ -234,28 +248,35 @@ fn dispatch_captured_event(root: &dyn Element, pointer: u64, event: &ElementEven
 /// Falls back to normal hit-tested dispatch when no element owns the pointer.
 pub fn cancel_pointer(root: &dyn Element, pointer: u64, pos: Vec2d) -> bool {
     let event = ElementEvent::Cancel;
-    dispatch_captured_event(root, pointer, &event)
-        .unwrap_or_else(|| dispatch_event(root, pos, &event))
+    let mut children = Vec::new();
+    dispatch_captured_event_inner(root, pointer, &event, &mut children)
+        .unwrap_or_else(|| dispatch_event_inner(root, pos, &event, &mut children))
 }
 
 /// Broadcast an event to every element in the tree, regardless of hit-testing.
 /// Returns `true` if any element consumed the event.
 pub fn broadcast_event(root: &dyn Element, event: &ElementEvent) -> bool {
-    use smallvec::SmallVec;
+    let mut children = Vec::new();
+    broadcast_event_inner(root, event, &mut children)
+}
 
+fn broadcast_event_inner<'a>(
+    root: &'a dyn Element,
+    event: &ElementEvent,
+    children: &mut Vec<&'a dyn Element>,
+) -> bool {
     let mut consumed = false;
-
-    let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
+    let start = children.len();
     root.event_children(&mut |child| children.push(child));
+    let end = children.len();
 
-    for child in children
-        .into_iter()
-        .rev()
-    {
-        if broadcast_event(child, event) {
+    for index in (start..end).rev() {
+        let child = children[index];
+        if broadcast_event_inner(child, event, children) {
             consumed = true;
         }
     }
+    children.truncate(start);
 
     if root.on_event(event) {
         consumed = true;
@@ -335,6 +356,44 @@ mod tests {
 
     impl Rebuildable for CapturingElement {}
 
+    struct TreeElement {
+        children: Vec<TreeElement>,
+        events: Cell<usize>,
+        captures_pointer: bool,
+    }
+
+    impl VisitorElement for TreeElement {
+        fn debug_name(&self) -> &'static str {
+            "TreeElement"
+        }
+    }
+
+    impl EventElement for TreeElement {
+        fn on_event(&self, _event: &ElementEvent) -> bool {
+            self.events
+                .set(self.events.get() + 1);
+            true
+        }
+
+        fn captures_pointer(&self, _pointer: u64) -> bool {
+            self.captures_pointer
+        }
+
+        fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for child in &self.children {
+                visitor(child);
+            }
+        }
+    }
+
+    impl LayoutElement for TreeElement {}
+
+    impl Drawable for TreeElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for TreeElement {}
+
     #[test]
     fn captured_pointer_move_is_delivered_outside_element_bounds() {
         use aimer_events::pointer::PointerSource;
@@ -368,5 +427,37 @@ mod tests {
 
         assert!(cancel_pointer(&element, 7, Vec2d { x: 5.0, y: 5.0 }));
         assert_eq!(element.events.get(), 1);
+    }
+
+    #[test]
+    fn recursive_dispatch_helpers_reuse_and_clear_the_scratch_vector() {
+        let element = TreeElement {
+            children: vec![TreeElement {
+                children: vec![TreeElement {
+                    children: Vec::new(),
+                    events: Cell::new(0),
+                    captures_pointer: true,
+                }],
+                events: Cell::new(0),
+                captures_pointer: false,
+            }],
+            events: Cell::new(0),
+            captures_pointer: false,
+        };
+        let event = ElementEvent::Cancel;
+        let mut children = Vec::with_capacity(8);
+        let allocation = children.as_ptr();
+
+        assert_eq!(dispatch_captured_event_inner(&element, 7, &event, &mut children), Some(true));
+        assert!(children.is_empty());
+        assert_eq!(children.as_ptr(), allocation);
+
+        assert!(dispatch_event_inner(&element, Vec2d { x: 5.0, y: 5.0 }, &event, &mut children));
+        assert!(children.is_empty());
+        assert_eq!(children.as_ptr(), allocation);
+
+        assert!(broadcast_event_inner(&element, &event, &mut children));
+        assert!(children.is_empty());
+        assert_eq!(children.as_ptr(), allocation);
     }
 }
