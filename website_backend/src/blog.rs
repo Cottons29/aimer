@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::{Path as AxumPath, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BlogSummary {
@@ -123,7 +123,9 @@ struct ErrorBody {
 
 pub fn app(store: BlogStore) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::list([
+            HeaderValue::from_str("aimer.cottonsofficial.com").unwrap()
+        ]))
         .allow_methods(Any)
         .allow_headers(Any);
 

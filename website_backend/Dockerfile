@@ -4,7 +4,7 @@ FROM rust:1.97-slim-bookworm AS builder
 
 WORKDIR /app
 COPY . .
-RUN cargo build --locked --release -p website_backend
+RUN cargo build --release -p website_backend
 
 FROM debian:bookworm-slim AS runtime
 
