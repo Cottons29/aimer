@@ -1,9 +1,9 @@
 use std::time::Duration;
 
+use aimer::console::debug;
 use aimer::macros::widget;
 use aimer::style::*;
 use aimer::*;
-use aimer::console::debug;
 
 #[derive(Clone, Copy, Debug, PartialEq, Theme)]
 struct MyTheme {

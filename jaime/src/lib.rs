@@ -50,8 +50,8 @@ pub fn my_app() {
     // start_panic_recovery_example();
     // test_scroll_and_row();
     // start_svg_test();
-    // panic_recovery::start_panic_recovery_example()
-    start_custom_animated_theme_example()
+    panic_recovery::start_panic_recovery_example()
+    // start_custom_animated_theme_example()
 }
 #[allow(unused)]
 fn test_text() {
