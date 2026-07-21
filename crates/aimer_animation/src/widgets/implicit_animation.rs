@@ -3,7 +3,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, State, StateUpdater,
+    Drawable, Element, EventElement, Key, LayoutElement, Rebuildable, State, StateUpdater,
     StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 use std::cell::UnsafeCell;
@@ -18,6 +18,10 @@ use crate::primitives::time::AnimInstant;
 use crate::primitives::tween::Tween;
 
 type ImplicitElementBuilder<T> = dyn Fn(&T, &BuildContext) -> Box<dyn Element>;
+
+fn request_next_frame() {
+    aimer_events::window::request_animation_frame();
+}
 
 /// A widget that automatically animates when its value changes.
 ///
@@ -46,6 +50,7 @@ pub struct ImplicitAnimatedBuilder<T: Animatable + Clone + PartialEq + 'static> 
     pub duration: Duration,
     pub curve: Curve,
     builder: Rc<ImplicitElementBuilder<T>>,
+    widget_key: Option<Key>,
 }
 
 impl<T> ImplicitAnimatedBuilder<T>
@@ -63,7 +68,13 @@ where
         W: Widget,
     {
         let builder = Rc::new(move |value: &T, ctx: &BuildContext| builder(value).to_element(ctx));
-        Self { value, duration, curve, builder }
+        Self { value, duration, curve, builder, widget_key: None }
+    }
+
+    /// Sets the identity of the animated builder for widget reconciliation.
+    pub fn key(mut self, key: impl Into<Key>) -> Self {
+        self.widget_key = Some(key.into());
+        self
     }
 }
 
@@ -91,6 +102,11 @@ impl<T> Widget for ImplicitAnimatedBuilder<T>
 where
     T: Animatable + Clone + PartialEq + 'static,
 {
+    fn key(&self) -> Option<Key> {
+        self.widget_key
+            .clone()
+    }
+
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         StatefulElement::new_with_name(self, ctx, "ImplicitAnimatedBuilder", self.key())
             .0
@@ -152,7 +168,8 @@ where
             self.controller
                 .reset();
             self.controller
-                .forward();
+                .forward_from_first_tick();
+            request_next_frame();
         }
     }
 
@@ -192,7 +209,6 @@ impl<T: Animatable + Clone + 'static> Widget for ImplicitAnimatedFrame<T> {
                 .controller
                 .clone(),
             tween: self.tween.clone(),
-            window: ctx.window.clone(),
         })
     }
 }
@@ -204,7 +220,6 @@ struct ImplicitAnimatedElement<T: Animatable + Clone + 'static> {
     builder: Rc<ImplicitElementBuilder<T>>,
     controller: AnimationController,
     tween: Rc<LocalCell<Option<Tween<T>>>>,
-    window: WindowHandle,
 }
 
 unsafe impl<T: Animatable + Clone + 'static> Send for ImplicitAnimatedElement<T> {}
@@ -235,8 +250,7 @@ impl<T: Animatable + Clone + 'static> Drawable for ImplicitAnimatedElement<T> {
             .controller
             .is_animating()
         {
-            self.window
-                .request_redraw();
+            request_next_frame();
         } else {
             self.current
                 .with_mut(|current| *current = self.target.clone());
@@ -299,12 +313,65 @@ impl<T: Animatable + Clone + 'static> LayoutElement for ImplicitAnimatedElement<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::widgets::test_frame_requester;
 
     struct TestWidget;
 
+    struct TestElement;
+
+    impl Drawable for TestElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl EventElement for TestElement {}
+
+    impl LayoutElement for TestElement {}
+
+    impl Rebuildable for TestElement {}
+
+    impl VisitorElement for TestElement {
+        fn debug_name(&self) -> &'static str {
+            "TestElement"
+        }
+    }
+
     impl Widget for TestWidget {
         fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-            panic!("not needed for state lifecycle tests")
+            Box::new(TestElement)
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dummy_async_handle() -> tokio::runtime::Handle {
+        static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        });
+        let _guard = runtime.enter();
+        tokio::runtime::Handle::current()
+    }
+
+    fn dummy_build_context() -> BuildContext<'static> {
+        let canvas = {
+            let leaked: &'static aimer_canvas::InnerCanvas =
+                Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(leaked)
+        };
+        BuildContext {
+            parent_size: Default::default(),
+            canvas,
+            scale: 1.0,
+            parent_pos: Default::default(),
+            cursor_pos: Default::default(),
+            box_constraint: Default::default(),
+            visible_rect: None,
+            window: WindowHandle::headless(Default::default(), 1.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            async_handle: dummy_async_handle(),
+            inherited_states: Default::default(),
         }
     }
 
@@ -312,6 +379,39 @@ mod tests {
         ImplicitAnimatedBuilder::new(value, Duration::from_millis(100), Curve::Linear, |_| {
             TestWidget
         })
+    }
+
+    #[test]
+    fn explicit_key_sets_reconciliation_identity() {
+        let animated = widget(1.0).key("implicit-animation");
+
+        assert_eq!(Widget::key(&animated), Some(Key::Value("implicit-animation".to_owned())));
+    }
+
+    #[test]
+    #[cfg(not(target_os = "ios"))]
+    fn active_animation_defers_its_next_frame_request() {
+        test_frame_requester::install();
+        test_frame_requester::reset();
+        let ctx = dummy_build_context();
+        let controller = AnimationController::with_millis(100, Curve::Linear);
+        controller.forward_from_first_tick();
+        let element = ImplicitAnimatedElement {
+            child: UnsafeCell::new(Box::new(TestElement)),
+            current: Rc::new(LocalCell::new(0.0)),
+            target: 1.0,
+            builder: Rc::new(|_, _| Box::new(TestElement)),
+            controller,
+            tween: Rc::new(LocalCell::new(Some(Tween::new(0.0, 1.0)))),
+        };
+
+        element.draw(&ctx);
+
+        assert_eq!(test_frame_requester::count(), 1);
+        assert!(
+            !ctx.window
+                .take_redraw_request()
+        );
     }
 
     #[test]

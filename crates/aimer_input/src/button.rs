@@ -6,7 +6,8 @@ use aimer_container::Container;
 use aimer_style::BoxDecoration;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyWidget, Element, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
+    AnyWidget, Element, Key, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget,
+    Widget,
 };
 
 use crate::callback::VoidCallback;
@@ -41,6 +42,7 @@ pub struct Button<W = RequiredChild> {
     pub decoration: BoxDecoration,
     pub is_disabled: bool,
     child: Rc<W>,
+    widget_key: Option<Key>,
 }
 
 /// Mounted state used internally by [`Button`].
@@ -74,6 +76,7 @@ impl Button {
             decoration: BoxDecoration::default(),
             is_disabled: false,
             child: Rc::new(RequiredChild),
+            widget_key: None,
         }
     }
 }
@@ -182,6 +185,12 @@ impl<W> Button<W> {
         self
     }
 
+    /// Sets the identity of this button for widget reconciliation.
+    pub fn key(mut self, key: impl Into<Key>) -> Self {
+        self.widget_key = Some(key.into());
+        self
+    }
+
     /// Supplies the terminal child and returns a statically typed [`Button`].
     ///
     /// Builder settings made before this call are preserved. A button without a child is only an
@@ -195,6 +204,7 @@ impl<W> Button<W> {
             decoration: self.decoration,
             is_disabled: self.is_disabled,
             child: Rc::new(child),
+            widget_key: self.widget_key,
         }
     }
 
@@ -239,8 +249,13 @@ impl<W: Widget + 'static> StatefulWidget for Button<W> {
 }
 
 impl<W: Widget + 'static> Widget for Button<W> {
+    fn key(&self) -> Option<Key> {
+        self.widget_key
+            .clone()
+    }
+
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        StatefulElement::new(self, ctx)
+        StatefulElement::new_with_name(self, ctx, "Button", self.key())
             .0
             .boxed()
     }
@@ -348,5 +363,21 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
                     .child(child),
             )
             .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aimer_widget::{Key, Widget};
+
+    use super::Button;
+
+    #[test]
+    fn explicit_key_sets_reconciliation_identity() {
+        let button = Button::new()
+            .child(aimer_widget::ErrorWidget::new("button"))
+            .key("platform-button");
+
+        assert_eq!(Widget::key(&button), Some(Key::Value("platform-button".to_owned())));
     }
 }
