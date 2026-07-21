@@ -44,6 +44,18 @@ mod test {
     use crate::router::{AppRouter, take_route_builds};
 
     #[test]
+    fn web_loader_fades_after_the_first_rendered_frame() {
+        let html = include_str!("../builds/web/index.html");
+
+        assert!(html.contains("<div class=\"loader\""));
+        assert!(html.contains("position: fixed"));
+        assert!(html.contains("aimer:first-frame-rendered"));
+        assert!(html.contains("loader--hidden"));
+        assert!(html.contains("transitionend"));
+        assert!(html.contains("loader.remove()"));
+    }
+
+    #[test]
     fn direct_blog_detail_route_keeps_the_root_provider_scope() {
         let id = "introducing-aimer".to_owned();
         let details = HashMap::from([(
