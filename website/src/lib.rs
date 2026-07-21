@@ -1,3 +1,4 @@
+pub mod api;
 mod blog_store;
 mod components;
 mod router;
