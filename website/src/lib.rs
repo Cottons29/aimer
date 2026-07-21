@@ -46,13 +46,27 @@ mod test {
     #[test]
     fn web_loader_fades_after_the_first_rendered_frame() {
         let html = include_str!("../builds/web/index.html");
+        let generated_html = include_str!("../builds/web/dist/index.html");
 
-        assert!(html.contains("<div class=\"loader\""));
-        assert!(html.contains("position: fixed"));
-        assert!(html.contains("aimer:first-frame-rendered"));
-        assert!(html.contains("loader--hidden"));
-        assert!(html.contains("transitionend"));
-        assert!(html.contains("loader.remove()"));
+        for page in [html, generated_html] {
+            assert!(page.contains("<div class=\"loader\""));
+            assert!(page.contains("position: fixed"));
+            let transition = page
+                .find("transition: opacity 400ms ease")
+                .unwrap();
+            let hidden_state = page
+                .find(".loader--hidden")
+                .unwrap();
+            assert!(
+                transition < hidden_state,
+                "the transition must be active before the loader is hidden"
+            );
+            assert!(!page.contains("animation: opacity"));
+            assert!(page.contains("aimer:first-frame-rendered"));
+            assert!(page.contains("loader--hidden"));
+            assert!(page.contains("loader.addEventListener(\"transitionend\""));
+            assert!(page.contains("loader.remove()"));
+        }
     }
 
     #[test]

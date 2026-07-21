@@ -9,6 +9,7 @@
     <link data-trunk rel="rust" href="../../Cargo.toml" data-wasm-opt="z"
           data-wasm-opt-params="--all-features"/>
 </head>
+
 <style>
     html, body {
         width: 100%;
@@ -16,7 +17,7 @@
         margin: 0;
         padding: 0;
         overflow: hidden;
-        background: #000;
+        /*background: #000;*/
     }
 
     /* The winit/wasm renderer creates the <canvas>, appends it to <body> and
@@ -26,6 +27,7 @@
         inset: 0;
         height: 100dvh;
         width: 100%;
+        z-index: 1;
         outline: none;
         background: #000;
     }
@@ -44,6 +46,8 @@
         left: 50%;
         transform: translate(-50%, -50%);
         overflow: hidden;
+        opacity: 1;
+        /*transition: opacity 400ms ease;*/
     }
 
     .loader:before {
@@ -59,9 +63,33 @@
         }
     }
 
-    .loader--hidden {
+
+
+    #loading-holder {
+        width: 100dvw;
+        height: 100dvh;
+        position: fixed;
+        z-index: 3;
+        background: #212525;
+        transition: opacity 360ms ease-out;
+    }
+
+    #loading-holder.hidden {
         opacity: 0;
         pointer-events: none;
+    }
+    
+    @keyframes fade-out-opacity {
+        0% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.5;
+        }
+        100% {
+            opacity: 0;
+            display: none;
+        }
     }
 
     @keyframes loader-text {
@@ -71,23 +99,29 @@
     }
 </style>
 <body>
-<div class="loader"></div>
-<script>
-    const loader = document.querySelector(".loader");
+<div id="loading-holder">
+    <div id="loader" class="loader"></div>
+</div>
 
-    window.addEventListener("aimer:first-frame-rendered", () => {
-        if (!loader) {
-            return;
-        }
-
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-            loader.classList.add("loader--hidden");
-
-            const removeLoader = () => loader.remove();
-            loader.addEventListener("transitionend", removeLoader, {once: true});
-            setTimeout(removeLoader, 500);
-        }));
-    }, {once: true});
-</script>
 </body>
+<script>
+
+    // setTimeout(function () {
+    //     const el = document.getElementById('loading-holder');
+    //     if (!el) return;
+    //     el.classList.add('hidden');
+    // }, 520);
+
+    function hideBoot() {
+        const el = document.getElementById('loading-holder');
+        if (!el) return;
+        el.classList.add('hidden');
+        setTimeout(function () {
+            if (el.parentNode) el.parentNode.removeChild(el);
+        }, 620);
+
+    }
+
+    window.addEventListener("aimer:first-frame-rendered", hideBoot, {once: true});
+</script>
 </html>
