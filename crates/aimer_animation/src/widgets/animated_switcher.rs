@@ -377,10 +377,8 @@ impl LayoutElement for AnimatedSwitcherElement {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
+    use crate::widgets::test_frame_requester;
 
     struct TestWidget(&'static str);
 
@@ -423,11 +421,8 @@ mod tests {
 
     #[test]
     fn changed_key_preserves_outgoing_child_and_starts_both_transitions() {
-        let requests = Arc::new(AtomicUsize::new(0));
-        let observed_requests = requests.clone();
-        aimer_events::window::set_redraw_requester(move || {
-            observed_requests.fetch_add(1, Ordering::Relaxed);
-        });
+        test_frame_requester::install();
+        test_frame_requester::reset();
         let mut current = state("first");
 
         current.adopt_config_from(&state("second"));
@@ -449,7 +444,7 @@ mod tests {
                 .is_animating()
         );
         assert_eq!(
-            requests.load(Ordering::Relaxed),
+            test_frame_requester::count(),
             1,
             "transition startup must schedule its first frame"
         );
