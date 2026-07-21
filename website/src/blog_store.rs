@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::api::BackendApi;
 use aimer::console::error;
 use aimer::{BuildContext, ProviderHandle};
 use serde::Deserialize;
@@ -71,7 +72,7 @@ pub fn decode_blog_detail(json: &str) -> Result<BlogDetail, String> {
 
 pub fn detail_url(id: &str) -> String {
     debug_assert!(is_valid_id(id));
-    format!("{}/api/blogs/{id}", api_base_url())
+    BackendApi::blog_with_id(id)
 }
 
 impl BlogStore {
@@ -109,7 +110,7 @@ pub fn request_blog_list(_ctx: &BuildContext, handle: ProviderHandle<BlogStore>)
 
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_futures::spawn_local(async move {
-        let result = fetch_text(&format!("{}/api/blogs", api_base_url()))
+        let result = fetch_text(&BackendApi::blogs())
             .await
             .and_then(|body| decode_blog_list(&body));
         handle.update(move |store| {
@@ -127,7 +128,7 @@ pub fn request_blog_list(_ctx: &BuildContext, handle: ProviderHandle<BlogStore>)
     {
         let result = _ctx
             .async_handle
-            .block_on(fetch_text(&format!("{}/api/blogs", api_base_url())))
+            .block_on(fetch_text(&BackendApi::blogs()))
             .and_then(|body| decode_blog_list(&body));
         handle.update(move |store| {
             store.list = match result {
@@ -343,6 +344,7 @@ mod tests {
 
     #[test]
     fn detail_api_url_uses_the_validated_slug() {
-        assert_eq!(detail_url("first-post"), "http://localhost:3200/api/blogs/first-post");
+        let expected = BackendApi::blog_with_id("first-post");
+        assert_eq!(detail_url("first-post"), expected);
     }
 }
