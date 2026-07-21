@@ -1,13 +1,10 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
-// use std::time::Duration;
 
 use aimer::animation::{AnimatedSwitcher, Curve};
-use aimer::style::{
-    FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle, Theme, ThemeData,
-};
+use aimer::style::{FontWeight, TextDecoration, TextStyle, Theme, ThemeData};
 use aimer::*;
 
+use crate::components::animation_button::{AnimatedPlatformButtonList, PLATFORMS};
 use crate::utils::{app_padding, is_mobile, mobile_title};
 
 #[widget(Stateful)]
@@ -32,7 +29,6 @@ impl StatefulWidget for SameLookingSection {
     }
 }
 
-const PLATFORMS: &[&str] = &["macOS", "iOS", "Web", "Android"];
 const PLATFORM_IMAGE: &[&str] = &[
     "assets/macos_screenshot.png",
     "assets/ios_screenshot.png",
@@ -95,80 +91,27 @@ impl State<SameLookingSection> for SameLookingSectionState {
                         SizedBox::new()
                             .height(40)
                             .boxed(),
-                        Row::new()
-                            .horizontal_alignment(BoxAlignment::Center)
-                            .vertical_alignment(BoxAlignment::Center)
-                            .gaps(LayoutSpacing::horizontal(Spacing::Px(8)))
-                            .children(self.build_platform_button_list(&theme))
+                        AnimatedPlatformButtonList::new()
+                            .selected_index(self.current_index)
+                            .compact(is_mobile(ctx))
+                            .on_selected({
+                                let updater = self.state.clone();
+                                move |index| {
+                                    if updater
+                                        .read_state()
+                                        .current_index
+                                        != index
+                                    {
+                                        updater.set_state(move |state| state.current_index = index);
+                                    }
+                                }
+                            })
                             .boxed(),
                         SizedBox::new()
                             .height(40)
                             .boxed(),
                     ]),
             )
-    }
-}
-
-impl SameLookingSectionState {
-    fn build_platform_button_list(&self, theme: &ThemeData) -> Vec<Box<dyn Widget>> {
-        let selected = self.current_index;
-        PLATFORMS
-            .iter()
-            .enumerate()
-            .map({
-                let updater = self.state.clone();
-                move |(i, l)| {
-                    let index = i;
-                    let is_selected = index == selected;
-                    let font_weight =
-                        if selected == index { FontWeight::Bolder } else { FontWeight::Normal };
-
-                    TextButton::new(*l)
-                        .style(
-                            TextStyle::new()
-                                .font_size(20)
-                                .color(if is_selected {
-                                    theme.primary_color
-                                } else {
-                                    theme.on_background_color
-                                })
-                                .font_weight(font_weight)
-                                .text_decoration(if is_selected {
-                                    TextDecoration::Underline
-                                } else {
-                                    TextDecoration::None
-                                }),
-                        )
-                        .hover_style(
-                            TextStyle::new()
-                                .font_size(20)
-                                .color(if is_selected {
-                                    theme.primary_color
-                                } else {
-                                    theme
-                                        .primary_color
-                                        .lighten(0.2)
-                                })
-                                .font_weight(font_weight)
-                                .text_decoration(TextDecoration::Underline),
-                        )
-                        .on_press({
-                            let updater = updater.clone();
-                            move || {
-                                // println!("Tab {} pressed", index);
-                                if updater
-                                    .read_state()
-                                    .current_index
-                                    != index
-                                {
-                                    updater.set_state(move |s| s.current_index = index);
-                                }
-                            }
-                        })
-                        .boxed()
-                }
-            })
-            .collect()
     }
 }
 
