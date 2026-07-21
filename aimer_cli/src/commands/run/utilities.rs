@@ -72,8 +72,6 @@ mod tests {
 
     use super::*;
 
-    
-
     #[test]
     fn process_log_error_contains_original_text() {
         let result = String::from("[ERROR] something broke").process_log();
