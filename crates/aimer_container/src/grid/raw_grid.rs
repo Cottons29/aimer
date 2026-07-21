@@ -751,11 +751,9 @@ fn fallback_size(ctx: &BuildContext) -> ResolvedSize {
 
 #[cfg(test)]
 mod tests {
-    use std::any::{Any, TypeId};
     use std::cell::RefCell;
-    use std::collections::HashMap;
     use std::rc::Rc;
-    use std::sync::{OnceLock, RwLock};
+    use std::sync::OnceLock;
 
     use aimer_attribute::{BoxConstraint, ResolvedSize};
     use aimer_canvas::{Canvas, InnerCanvas};
@@ -826,7 +824,7 @@ mod tests {
             window: WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: dummy_async_handle(),
-            inherited_states: Rc::new(RwLock::new(HashMap::<TypeId, Rc<dyn Any>>::new())),
+            inherited_states: Default::default(),
         }
     }
 

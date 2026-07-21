@@ -840,11 +840,8 @@ impl<T: 'static, A: 'static> Rebuildable for StoreElement<T, A> {
 
 #[cfg(test)]
 mod tests {
-    use std::any::{Any, TypeId};
     use std::cell::{Cell, RefCell};
-    use std::collections::HashMap;
     use std::rc::Rc;
-    use std::sync::RwLock;
 
     use aimer_widget::base::{BuildConsumer, BuildContext, WindowHandle};
     use aimer_widget::{
@@ -1020,7 +1017,7 @@ mod tests {
             window: WindowHandle::headless(Default::default(), 1.0),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: dummy_async_handle(),
-            inherited_states: Rc::new(RwLock::new(HashMap::<TypeId, Rc<dyn Any>>::new())),
+            inherited_states: Default::default(),
         }
     }
 

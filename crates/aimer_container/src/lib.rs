@@ -18,11 +18,9 @@ pub use space::stack::Stack;
 
 #[cfg(test)]
 mod tests {
-    use std::any::{Any, TypeId};
     use std::cell::{Cell, RefCell};
-    use std::collections::HashMap;
     use std::rc::Rc;
-    use std::sync::{OnceLock, RwLock};
+    use std::sync::OnceLock;
 
     use aimer_attribute::dimension::Dimension;
     use aimer_attribute::size::{ResolvedSize, Size};
@@ -312,7 +310,7 @@ mod tests {
             ),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: dummy_async_handle(),
-            inherited_states: Rc::new(RwLock::new(HashMap::<TypeId, Rc<dyn Any>>::new())),
+            inherited_states: Default::default(),
         }
     }
 

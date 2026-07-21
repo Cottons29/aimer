@@ -154,11 +154,8 @@ mod tests {
     // freshly-built `StatefulElement` with a different key silently drops the
     // user's state.
 
-    use std::any::TypeId;
     use std::cell::{Cell, RefCell};
-    use std::collections::HashMap;
     use std::rc::Rc;
-    use std::sync::RwLock;
 
     use crate::Widget;
     use crate::key::Key;
@@ -508,7 +505,7 @@ mod tests {
             window: crate::base::WindowHandle::headless(Default::default(), 1.0),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: dummy_async_handle(),
-            inherited_states: Rc::new(RwLock::new(HashMap::<TypeId, Rc<dyn Any>>::new())),
+            inherited_states: Default::default(),
         }
     }
 
