@@ -876,13 +876,29 @@ impl<E: Element> VisitorElement for RawScrollableContainer<E> {
 
 impl<E: Element> LayoutElement for RawScrollableContainer<E> {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        ResolvedSize {
-            width: ctx
-                .box_constraint
-                .max_width,
-            height: ctx
-                .box_constraint
-                .max_height,
+        match self.ctrl.axis {
+            ScrollAxis::Vertical => ResolvedSize {
+                width: ctx
+                    .box_constraint
+                    .max_width,
+                height: ctx
+                    .box_constraint
+                    .max_height,
+            },
+            ScrollAxis::Horizontal => ResolvedSize {
+                width: ctx
+                    .box_constraint
+                    .max_width,
+                height: self
+                    .content_size(ctx)
+                    .height
+                    .clamp(
+                        ctx.box_constraint
+                            .min_height,
+                        ctx.box_constraint
+                            .max_height,
+                    ),
+            },
         }
     }
 
