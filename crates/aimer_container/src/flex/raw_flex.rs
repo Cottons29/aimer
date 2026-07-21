@@ -480,7 +480,7 @@ impl Drawable for RawFlex {
                 .clone(),
         };
 
-        // Pass 1: measure sized children to find remaining space for unsized ones
+        // Pass 1: measure regular children to find remaining space for flex children.
         let child_count = self.children.len();
         let total_gap = if child_count > 1 {
             match self.direction {
@@ -492,23 +492,16 @@ impl Drawable for RawFlex {
         };
 
         let mut sized_main: f32 = 0.0;
-        // Flex weight per child: the flex factor for flexible (`Expanded`)
-        // children, or `0.0` for a regular child that keeps its own size.
         let mut weights: Vec<f32> = Vec::with_capacity(child_count);
+        let mut child_sizes: Vec<Option<ResolvedSize>> = Vec::with_capacity(child_count);
 
         for child in &self.children {
-            // An `Expanded`-style child advertises its flex factor directly.
             if let Some(flex) = child.flex() {
                 weights.push(flex.max(0.0));
+                child_sizes.push(None);
                 continue;
             }
 
-            // Any other child is *not* flexible: it keeps its own intrinsic
-            // main-axis size (measured with an unbounded main axis) and simply
-            // consumes that much space before the flex children get their share.
-            // This matches Flutter, where only `Expanded`/`Flexible` children
-            // grow — a plain `Text`, `Container`, etc. never stretches on its
-            // own.
             match self.direction {
                 LayoutDirection::Row | LayoutDirection::Inherit => {
                     child_ctx
@@ -537,6 +530,7 @@ impl Drawable for RawFlex {
                 LayoutDirection::Column => sized_main += s.height,
             }
             weights.push(0.0);
+            child_sizes.push(Some(s));
         }
 
         let remaining_main = match self.direction {
@@ -554,7 +548,8 @@ impl Drawable for RawFlex {
             .iter()
             .enumerate()
         {
-            if weights[i] > 0.0 && flex_shares[i] != f32::MAX {
+            let is_flex = child_sizes[i].is_none();
+            if is_flex && flex_shares[i] != f32::MAX {
                 match self.direction {
                     LayoutDirection::Row | LayoutDirection::Inherit => {
                         child_ctx
@@ -577,14 +572,30 @@ impl Drawable for RawFlex {
                             .max_width;
                     }
                 }
+            } else if let Some(size) = child_sizes[i] {
+                match self.direction {
+                    LayoutDirection::Row | LayoutDirection::Inherit => {
+                        child_ctx
+                            .box_constraint
+                            .max_width = size.width;
+                        child_ctx
+                            .box_constraint
+                            .max_height = ctx
+                            .box_constraint
+                            .max_height;
+                    }
+                    LayoutDirection::Column => {
+                        child_ctx
+                            .box_constraint
+                            .max_height = size.height;
+                        child_ctx
+                            .box_constraint
+                            .max_width = ctx
+                            .box_constraint
+                            .max_width;
+                    }
+                }
             } else {
-                // Give non-flex children the *remaining* space from their
-                // position to the edge of the Column/Row, not f32::MAX.
-                // f32::MAX is only needed during intrinsic measurement
-                // (computed_size pass 1).  During draw, a widget like
-                // Scrollable uses max_height as its viewport, so it must
-                // receive the actual available space — otherwise it thinks
-                // the viewport is infinite and never scrolls.
                 match self.direction {
                     LayoutDirection::Row | LayoutDirection::Inherit => {
                         child_ctx
@@ -609,8 +620,8 @@ impl Drawable for RawFlex {
                 }
             }
 
-            let mut child_size = child.computed_size(&child_ctx);
-            if weights[i] > 0.0 && flex_shares[i] != f32::MAX {
+            let mut child_size = child_sizes[i].unwrap_or_else(|| child.computed_size(&child_ctx));
+            if is_flex && flex_shares[i] != f32::MAX {
                 match self.direction {
                     LayoutDirection::Row | LayoutDirection::Inherit => {
                         child_size.width = flex_shares[i];
