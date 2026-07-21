@@ -2,8 +2,7 @@ use aimer::macros::widget;
 use aimer::*;
 
 pub fn start_panic_recovery_example() {
-    AimerApp::start(Container::new()
-        .child(PanicRecoveryExample::new()))
+    AimerApp::start(Container::new().child(PanicRecoveryExample::new()))
 }
 
 struct MissingProviderValue;
