@@ -508,9 +508,7 @@ mod tests {
     // the switch is instant (the reported bug).
     mod draw_transition {
         use std::cell::RefCell;
-        use std::collections::HashMap;
         use std::rc::Rc;
-        use std::sync::RwLock;
 
         use aimer_widget::StatefulElement;
         use aimer_widget::base::BuildContext;
@@ -625,7 +623,7 @@ mod tests {
                 window: WindowHandle::headless(Default::default(), 1.0),
                 #[cfg(not(target_arch = "wasm32"))]
                 async_handle: dummy_async_handle(),
-                inherited_states: Rc::new(RwLock::new(HashMap::new())),
+                inherited_states: Default::default(),
             }
         }
 

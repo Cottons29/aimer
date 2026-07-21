@@ -2,8 +2,8 @@ use std::any::{Any, TypeId};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
 
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
@@ -137,7 +137,7 @@ pub struct BuildContext<'a> {
     pub window: WindowHandle,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_handle: Handle,
-    pub inherited_states: Rc<RwLock<HashMap<TypeId, Rc<dyn Any>>>>,
+    pub inherited_states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
 }
 
 #[doc(hidden)]
@@ -202,7 +202,7 @@ impl Drop for BuildConsumer {
 struct CurrentBuildConsumer(Rc<BuildConsumer>);
 
 struct StateScopeGuard {
-    states: Rc<RwLock<HashMap<TypeId, Rc<dyn Any>>>>,
+    states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
     type_id: TypeId,
     previous: Option<Rc<dyn Any>>,
 }
@@ -211,8 +211,7 @@ impl Drop for StateScopeGuard {
     fn drop(&mut self) {
         let mut states = self
             .states
-            .write()
-            .unwrap();
+            .borrow_mut();
         if let Some(previous) = self.previous.take() {
             states.insert(self.type_id, previous);
         } else {
@@ -254,21 +253,19 @@ impl<'a> BuildContext<'a> {
             window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle,
-            inherited_states: Rc::new(RwLock::new(HashMap::new())),
+            inherited_states: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
     pub fn insert_state<T: Any>(&self, state: T) {
         self.inherited_states
-            .write()
-            .unwrap()
+            .borrow_mut()
             .insert(TypeId::of::<T>(), Rc::new(state));
     }
 
     pub fn get_state<T: Any>(&self) -> Option<Rc<T>> {
         self.inherited_states
-            .read()
-            .unwrap()
+            .borrow()
             .get(&TypeId::of::<T>())
             .and_then(|arc| {
                 arc.clone()
@@ -281,8 +278,7 @@ impl<'a> BuildContext<'a> {
         let type_id = TypeId::of::<T>();
         let previous = self
             .inherited_states
-            .write()
-            .unwrap()
+            .borrow_mut()
             .insert(type_id, Rc::new(state));
         let _guard = StateScopeGuard {
             states: self

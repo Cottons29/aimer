@@ -271,10 +271,6 @@ impl VisitorElement for StatelessElement {
 
 #[cfg(test)]
 mod tests {
-    use std::any::{Any, TypeId};
-    use std::collections::HashMap;
-    use std::sync::RwLock;
-
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -308,7 +304,7 @@ mod tests {
             window: WindowHandle::headless(Default::default(), 1.0),
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: dummy_async_handle(),
-            inherited_states: Rc::new(RwLock::new(HashMap::<TypeId, Rc<dyn Any>>::new())),
+            inherited_states: Default::default(),
         }
     }
 
