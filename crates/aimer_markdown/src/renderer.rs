@@ -4,7 +4,7 @@ use aimer_assets::{AssetImage, NetworkImage};
 use aimer_color::prelude::Color;
 use aimer_container::flex::row_column::{Column, Row};
 use aimer_container::flex::{BoxAlignment, Expanded};
-use aimer_container::{Container, Grid, GridItem, GridTrack, SizedBox};
+use aimer_container::{Container, Grid, GridItem, GridTrack, ScrollAxis, Scrollable, SizedBox};
 use aimer_style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontStyle, FontWeight, LayoutSpacing,
     TextAlign, TextDecoration, TextDecorationLine, TextStyle,
@@ -324,10 +324,15 @@ fn render_block(
                         .border_radius(8),
                 )
                 .child(
-                    RichText::new(TextSpan::root(spans))
-                        .text_style(theme.code_block)
-                        .wrapped()
-                        .selectable(),
+                    Scrollable::new()
+                        .axis(ScrollAxis::Horizontal)
+                        .vertical_scroll_bar(None)
+                        .horizontal_scroll_bar(None)
+                        .child(
+                            RichText::new(TextSpan::root(spans))
+                                .text_style(theme.code_block)
+                                .selectable(),
+                        ),
                 )
                 .boxed()
         }
@@ -647,6 +652,32 @@ mod tests {
                 .collect::<String>();
             assert_eq!(text, source);
         }
+    }
+
+    #[test]
+    fn code_blocks_scroll_horizontally_without_wrapping_long_lines() {
+        let resolver: ImageResolver = Rc::new(default_image_resolver);
+        let document = Document::parse(
+            "```rust\nlet message = \"this line is deliberately wider than the narrow viewport\";\n```",
+        )
+        .unwrap();
+
+        let narrow_ctx = layout_context(180.0, 200.0);
+        let narrow_size = render_document(&document, &MarkdownTheme::default(), None, &resolver)
+            .to_element(&narrow_ctx)
+            .computed_size(&narrow_ctx);
+        let wide_ctx = layout_context(800.0, 200.0);
+        let wide_size = render_document(&document, &MarkdownTheme::default(), None, &resolver)
+            .to_element(&wide_ctx)
+            .computed_size(&wide_ctx);
+
+        assert!(narrow_size.width <= 180.0, "code block width was {}", narrow_size.width);
+        assert!(
+            narrow_size.height < 100.0,
+            "code block height should follow its content, but was {}",
+            narrow_size.height
+        );
+        assert_eq!(narrow_size.height, wide_size.height);
     }
 
     #[test]

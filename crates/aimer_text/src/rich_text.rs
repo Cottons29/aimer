@@ -915,15 +915,15 @@ impl LayoutElement for RawRichText {
             .size
     }
 
-    fn pos_start_end(&self) -> Option<(aimer_attribute::Vec2d, aimer_attribute::Vec2d)> {
-        self.bounds
-            .pos_start_end()
-    }
-
     fn invalidate_layout(&self) {
         self.layout_cache
             .borrow_mut()
             .take();
+    }
+
+    fn pos_start_end(&self) -> Option<(aimer_attribute::Vec2d, aimer_attribute::Vec2d)> {
+        self.bounds
+            .pos_start_end()
     }
 }
 
