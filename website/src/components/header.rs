@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering;
-
 use aimer::Dimension::Px;
 use aimer::router::NavigatorController;
 use aimer::style::{
@@ -10,7 +8,6 @@ use aimer::{BuildContext, Container, StatelessWidget, Svg, SvgDocument, Text, Wi
 
 use crate::components::app_shell::{AppShellState, WebsiteThemeMode};
 use crate::router::AppRouter;
-use crate::screen::home_screen::SHOW_ICON;
 
 #[widget(Stateless)]
 #[derive(Clone)]
@@ -77,7 +74,7 @@ impl StatelessWidget for HeaderSection {
                                         .color(
                                             theme
                                                 .on_background_color
-                                                .with_alpha(0.2),
+                                                .with_alpha(0.1),
                                         )
                                         .style(BorderStyle::Solid)
                                         .stroke(2),
@@ -110,11 +107,7 @@ impl StatelessWidget for HeaderSection {
                     BoxBorder::new().bottom(
                         BorderSlice::new()
                             .stroke(Px(1.0))
-                            .color(
-                                theme
-                                    .on_surface_color
-                                    .with_opacity(72),
-                            )
+                            .color(Color::GRAY.with_alpha(0.3))
                             .style(BorderStyle::Solid),
                     ),
                 ),
@@ -128,7 +121,7 @@ impl StatelessWidget for HeaderSection {
 }
 
 impl HeaderSection {
-    const SECTIONS: &[&str] = &["Home", "Blog", "Learn"];
+    const SECTIONS: &[&str] = &["Home", "Blog"];
 
     /// Resolve a section index to the route it navigates to.
     fn route_for(index: usize) -> AppRouter {

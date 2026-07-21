@@ -50,12 +50,13 @@ fn metadata_sidebar(detail: &BlogDetail, theme: &ThemeData) -> Box<dyn Widget> {
             Text::new(label)
                 .text_style(
                     TextStyle::new()
-                        .font_size(16)
+                        .font_size(15)
                         .font_weight(FontWeight::Bold)
                         .color(
                             theme
                                 .on_background_color
-                                .with_opacity(170),
+                                .darken(0.2)
+                                .with_alpha(0.4),
                         ),
                 )
                 .boxed(),
@@ -69,7 +70,7 @@ fn metadata_sidebar(detail: &BlogDetail, theme: &ThemeData) -> Box<dyn Widget> {
             Text::new(value)
                 .text_style(
                     TextStyle::new()
-                        .font_size(18)
+                        .font_size(17)
                         .color(theme.on_background_color)
                         .text_overflow(TextOverflow::Wrap),
                 )
@@ -126,15 +127,26 @@ fn themed_markdown(theme: &ThemeData) -> MarkdownTheme {
     markdown.inline_code = markdown
         .inline_code
         .color(theme.on_surface_color)
-        .background_color(theme.surface_color);
+        .background_color(
+            theme
+                .surface_color
+                .darken(0.1)
+                .with_alpha(0.4),
+        );
     markdown.link = markdown
         .link
         .color(theme.primary_color);
     markdown.link_hover_color = theme
         .primary_color
         .lighten(0.2);
-    markdown.code_background = theme.surface_color;
-    markdown.quote_background = theme.surface_color;
+    markdown.code_background = theme
+        .surface_color
+        .darken(0.1)
+        .with_alpha(0.4);
+    markdown.quote_background = theme
+        .surface_color
+        .darken(0.1)
+        .with_alpha(0.4);
     markdown.rule_color = theme
         .on_background_color
         .with_opacity(72);
@@ -282,19 +294,20 @@ mod tests {
                 .iter()
                 .all(|style| style.color == theme.on_background_color)
         );
-        assert_eq!(markdown.code_background, theme.surface_color);
+        assert_eq!(
+            markdown.code_background,
+            theme
+                .surface_color
+                .darken(0.1)
+                .with_alpha(0.4)
+        );
+        assert_eq!(markdown.quote_background, markdown.code_background);
         assert_eq!(markdown.table_cell_background, theme.background_color);
         assert_eq!(
             markdown
                 .inline_code
                 .color,
             Some(theme.on_surface_color)
-        );
-        assert_eq!(
-            markdown
-                .inline_code
-                .background_color,
-            Some(theme.surface_color)
         );
         assert_eq!(markdown.link.color, Some(theme.primary_color));
     }

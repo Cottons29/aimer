@@ -72,9 +72,9 @@ impl StatelessWidget for BlogListPage {
                                                 .color(theme.on_background_color)).boxed(),
                                         SizedBox::new().height(24).boxed(),
 
-                                        Text::new("“Updates, notes, and guides from the Aimer project„")
+                                        Text::new("“Updates and guides for the Aimer„")
                                             .text_style(TextStyle::new()
-                                                .font_size(20)
+                                                .font_size(if is_mobile(ctx) {18} else {20})
                                                 .color(theme.on_background_color.with_opacity(180))
                                                 .font_weight(FontWeight::Normal)
                                                 .text_decoration(TextDecoration::new()
@@ -114,7 +114,11 @@ fn blog_archive(
             }
             children.push(
                 Text::new(archive_heading(&blog.upload_time))
-                    .text_style(heading_style.font_size(if mobile { 40 } else { 48 }))
+                    .text_style(
+                        heading_style
+                            .font_size(if mobile { 40 } else { 48 })
+                            .text_decoration(TextDecoration::Underline),
+                    )
                     .boxed(),
             );
             children.push(
@@ -235,11 +239,7 @@ fn archive_text_styles(theme: &ThemeData) -> (TextStyle, TextStyle) {
     let heading_style = TextStyle::new()
         .font_size(54)
         .font_weight(FontWeight::Bolder)
-        .color(
-            theme
-                .on_background_color
-                .with_opacity(150),
-        )
+        .color(theme.on_background_color)
         .text_overflow(TextOverflow::Wrap);
     let date_style = TextStyle::new()
         .font_size(24)
@@ -247,7 +247,7 @@ fn archive_text_styles(theme: &ThemeData) -> (TextStyle, TextStyle) {
         .color(
             theme
                 .on_background_color
-                .with_opacity(150),
+                .with_opacity(120),
         )
         .text_overflow(TextOverflow::Wrap);
     (heading_style, date_style)
@@ -311,17 +311,12 @@ mod tests {
         let (heading_style, date_style) = archive_text_styles(&theme);
         let (link_style, _) = blog_link_styles(&theme);
 
-        assert!(
-            heading_style.color
-                == theme
-                    .on_background_color
-                    .with_opacity(150)
-        );
+        assert!(heading_style.color == theme.on_background_color);
         assert!(
             date_style.color
                 == theme
                     .on_background_color
-                    .with_opacity(150)
+                    .with_opacity(120)
         );
         assert!(link_style.color == theme.on_background_color);
     }
