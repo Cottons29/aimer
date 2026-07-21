@@ -632,6 +632,101 @@ mod tests {
         Box::new(IntrinsicProbe { intrinsic_width, seen: seen.clone() })
     }
 
+    struct ConstraintSensitiveProbe {
+        intrinsic_width: f32,
+        drawn_width: Rc<Cell<f32>>,
+    }
+
+    impl VisitorElement for ConstraintSensitiveProbe {
+        fn debug_name(&self) -> &'static str {
+            "ConstraintSensitiveProbe"
+        }
+    }
+    impl Drawable for ConstraintSensitiveProbe {
+        fn draw(&self, ctx: &BuildContext) {
+            self.drawn_width
+                .set(
+                    ctx.box_constraint
+                        .max_width,
+                );
+        }
+    }
+    impl EventElement for ConstraintSensitiveProbe {}
+    impl LayoutElement for ConstraintSensitiveProbe {
+        fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+            ResolvedSize {
+                width: if ctx
+                    .box_constraint
+                    .max_width
+                    == f32::MAX
+                {
+                    self.intrinsic_width
+                } else {
+                    ctx.box_constraint
+                        .max_width
+                },
+                height: 24.0,
+            }
+        }
+    }
+    impl Rebuildable for ConstraintSensitiveProbe {}
+
+    fn constraint_sensitive_probe(
+        intrinsic_width: f32,
+        drawn_width: &Rc<Cell<f32>>,
+    ) -> Box<dyn Element> {
+        Box::new(ConstraintSensitiveProbe { intrinsic_width, drawn_width: drawn_width.clone() })
+    }
+
+    struct ConstraintSensitiveColumnProbe {
+        intrinsic_height: f32,
+        drawn_height: Rc<Cell<f32>>,
+    }
+
+    impl VisitorElement for ConstraintSensitiveColumnProbe {
+        fn debug_name(&self) -> &'static str {
+            "ConstraintSensitiveColumnProbe"
+        }
+    }
+    impl Drawable for ConstraintSensitiveColumnProbe {
+        fn draw(&self, ctx: &BuildContext) {
+            self.drawn_height
+                .set(
+                    ctx.box_constraint
+                        .max_height,
+                );
+        }
+    }
+    impl EventElement for ConstraintSensitiveColumnProbe {}
+    impl LayoutElement for ConstraintSensitiveColumnProbe {
+        fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+            ResolvedSize {
+                width: 24.0,
+                height: if ctx
+                    .box_constraint
+                    .max_height
+                    == f32::MAX
+                {
+                    self.intrinsic_height
+                } else {
+                    ctx.box_constraint
+                        .max_height
+                },
+            }
+        }
+    }
+    impl Rebuildable for ConstraintSensitiveColumnProbe {}
+
+    fn constraint_sensitive_column_probe(
+        intrinsic_height: f32,
+        drawn_height: &Rc<Cell<f32>>,
+    ) -> Box<dyn Element> {
+        Box::new(ConstraintSensitiveColumnProbe {
+            intrinsic_height,
+            drawn_height: drawn_height.clone(),
+        })
+    }
+
     fn row_of(children: Vec<Box<dyn Element>>) -> RawFlex {
         RawFlex {
             direction: LayoutDirection::Row,
@@ -644,6 +739,10 @@ mod tests {
             debug_name: "Row",
             cache_bound: CacheBounds::new(),
         }
+    }
+
+    fn column_of(children: Vec<Box<dyn Element>>) -> RawFlex {
+        RawFlex { direction: LayoutDirection::Column, debug_name: "Column", ..row_of(children) }
     }
 
     /// A single `Expanded` in a `Row` fills the whole parent width.
@@ -685,6 +784,17 @@ mod tests {
 
         assert_eq!(c1.get(), 100.0, "flex=1 child gets 1/3 of the width");
         assert_eq!(c2.get(), 200.0, "flex=2 child gets 2/3 of the width");
+    }
+
+    #[test]
+    fn zero_weight_expanded_child_receives_no_remaining_space() {
+        let ctx = dummy_build_context(300.0, 100.0, None);
+        let child = Rc::new(Cell::new(f32::MAX));
+        let row = row_of(vec![expanded_probe(0.0, &child)]);
+
+        row.draw(&ctx);
+
+        assert_eq!(child.get(), 0.0);
     }
 
     /// A fixed-size sibling is subtracted first; the remaining space is shared
@@ -746,6 +856,54 @@ mod tests {
         let _ = row.computed_size(&ctx);
 
         assert_eq!(exp.get(), 200.0, "Expanded fills 300 - 30 - 70 = 200");
+    }
+
+    #[test]
+    fn regular_row_children_draw_at_intrinsic_width() {
+        let ctx = dummy_build_context(300.0, 100.0, None);
+        let first = Rc::new(Cell::new(0.0));
+        let second = Rc::new(Cell::new(0.0));
+        let row = row_of(vec![
+            constraint_sensitive_probe(50.0, &first),
+            constraint_sensitive_probe(70.0, &second),
+        ]);
+
+        row.draw(&ctx);
+
+        assert_eq!(first.get(), 50.0);
+        assert_eq!(second.get(), 70.0);
+    }
+
+    #[test]
+    fn expanded_draws_in_space_left_by_regular_child() {
+        let ctx = dummy_build_context(300.0, 100.0, None);
+        let regular = Rc::new(Cell::new(0.0));
+        let expanded = Rc::new(Cell::new(0.0));
+        let row = row_of(vec![
+            constraint_sensitive_probe(50.0, &regular),
+            expanded_probe(1.0, &expanded),
+        ]);
+
+        row.draw(&ctx);
+
+        assert_eq!(regular.get(), 50.0);
+        assert_eq!(expanded.get(), 250.0);
+    }
+
+    #[test]
+    fn regular_column_children_draw_at_intrinsic_height() {
+        let ctx = dummy_build_context(100.0, 300.0, None);
+        let first = Rc::new(Cell::new(0.0));
+        let second = Rc::new(Cell::new(0.0));
+        let column = column_of(vec![
+            constraint_sensitive_column_probe(50.0, &first),
+            constraint_sensitive_column_probe(70.0, &second),
+        ]);
+
+        column.draw(&ctx);
+
+        assert_eq!(first.get(), 50.0);
+        assert_eq!(second.get(), 70.0);
     }
 
     #[test]
