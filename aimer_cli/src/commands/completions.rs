@@ -26,9 +26,7 @@ const COMPLETE_VAR: &str = "COMPLETE";
 /// printed.
 pub fn execute(shell: Shell, install: bool) -> anyhow::Result<()> {
     let cmd = Cli::command();
-    let bin_name = cmd
-        .get_name()
-        .to_string();
+    let bin_name = cmd.get_name().to_string();
 
     // Map the requested shell to its dynamic-completion adapter.
     let shell_name = shell.to_string();

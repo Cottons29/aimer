@@ -6,6 +6,13 @@ use aimer_widget::{Drawable, Element, LayoutElement};
 use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
 
+fn snap_scroll_offset(offset: Vec2d) -> Vec2d {
+    Vec2d {
+        x: offset.x.round(),
+        y: offset.y.round(),
+    }
+}
+
 impl<E: Element> Drawable for RawScrollableContainer<E> {
     fn draw(&self, ctx: &BuildContext) {
         // println!("Scrollable drawing child: {})", self.child.debug_name() );
@@ -64,23 +71,18 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             .min_scroll;
         self.ctrl
             .cached_min_scroll
-            .set(Vec2d { x: user_min.x * ctx.scale, y: user_min.y * ctx.scale });
+            .set(Vec2d {
+                x: user_min.x * ctx.scale,
+                y: user_min.y * ctx.scale,
+            });
 
         self.ctrl
             .last_scale
             .set(ctx.scale);
 
-        let mut offset = self
-            .ctrl
-            .scroll_offset
-            .get();
+        let mut offset = self.ctrl.scroll_offset.get();
 
-        if self
-            .ctrl
-            .drag_mode
-            .get()
-            == DragMode::None
-        {
+        if self.ctrl.drag_mode.get() == DragMode::None {
             // let vel = self.ctrl.pointer_velocity.get();
             // let vel_mag = (vel.x * vel.x + vel.y * vel.y).sqrt();
             // if vel_mag > VELOCITY_EPSILON {
@@ -98,8 +100,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 // this is where a scroll session ends. `end_scroll` is edge-
                 // triggered, so it fires the callback only once (on the actual
                 // scrolling → idle transition) and is a no-op on later idle frames.
-                self.ctrl
-                    .end_scroll();
+                self.ctrl.end_scroll();
             }
         }
 
@@ -111,17 +112,17 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // logical offset actually moved since the last frame (epsilon-guarded), so
         // it covers drags, wheel/keyboard, momentum, spring-back and programmatic
         // scrolls without emitting on idle frames.
-        self.ctrl
-            .notify_scroll();
+        self.ctrl.notify_scroll();
 
         // Write-back: persist the live position so a full teardown/re-create can
         // restore it (see `scroll_storage`). Stored in logical (unscaled) pixels
         // to survive a scale change. Only when the user opted in via `storage_key`.
         crate::scrollable::scroll_storage::save_offset(
-            &self
-                .ctrl
-                .storage_key,
-            Vec2d { x: offset.x / ctx.scale, y: offset.y / ctx.scale },
+            &self.ctrl.storage_key,
+            Vec2d {
+                x: offset.x / ctx.scale,
+                y: offset.y / ctx.scale,
+            },
         );
 
         let offset = self
@@ -132,20 +133,23 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         ctx.canvas.save();
         ctx.canvas.set_clip(
             Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize { width: viewport_w.round(), height: viewport_h.round() },
+            ResolvedSize {
+                width: viewport_w.round(),
+                height: viewport_h.round(),
+            },
         );
 
-        // Translate by scroll offset.  Round to device pixels at every scale
-        // so that child widget edges always land on exact device-pixel
-        // boundaries — without this, a fractional offset combined with the
-        // flex layout's child positions produces sub-pixel seams that the GPU
-        // anti-aliases into a visible white line between adjacent items.
-        let scale = ctx.scale.max(1.0);
-        let offset_x = (offset.x * scale).round() / scale;
-        let offset_y = (offset.y * scale).round() / scale;
+        // Scroll offsets are already scaled into physical canvas coordinates.
+        // Snap them directly so text keeps a stable rasterization phase while
+        // moving and adjacent child edges cannot develop sub-pixel seams.
+        let snapped_offset = snap_scroll_offset(offset);
+        let offset_x = snapped_offset.x;
+        let offset_y = snapped_offset.y;
 
-        ctx.canvas
-            .translate(Vec2d { x: offset_x, y: offset_y });
+        ctx.canvas.translate(Vec2d {
+            x: offset_x,
+            y: offset_y,
+        });
 
         let mut child_ctx = ctx.clone();
         match self.ctrl.axis {
@@ -163,19 +167,20 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         child_ctx.visible_rect = Some((-offset_x, -offset_y, viewport_w, viewport_h));
 
         // Draw child content
-        self.child
-            .draw(&child_ctx);
+        self.child.draw(&child_ctx);
 
         // Restore before drawing scrollbars (they should not be offset by scroll)
-        ctx.canvas
-            .clear_clip();
+        ctx.canvas.clear_clip();
         ctx.canvas.restore();
 
         // Draw scrollbars on top, clipped to viewport
         ctx.canvas.save();
         ctx.canvas.set_clip(
             Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize { width: viewport_w.round(), height: viewport_h.round() },
+            ResolvedSize {
+                width: viewport_w.round(),
+                height: viewport_h.round(),
+            },
         );
         {
             if let Some(ref vertical_bar) = self.vertical_scroll_bar
@@ -189,8 +194,27 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 self.draw_scrollbar(ctx, horizontal_bar, viewport_w, viewport_h, false);
             }
         }
-        ctx.canvas
-            .clear_clip();
+        ctx.canvas.clear_clip();
         ctx.canvas.restore();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scroll_translation_snaps_scaled_offsets_to_physical_pixels() {
+        let offset = Vec2d {
+            x: -10.49,
+            y: -20.51,
+        };
+
+        let snapped = snap_scroll_offset(offset);
+
+        assert_eq!(snapped.x, -10.0);
+        assert_eq!(snapped.y, -21.0);
+        assert_eq!(snapped.x.fract(), 0.0);
+        assert_eq!(snapped.y.fract(), 0.0);
     }
 }

@@ -56,8 +56,7 @@ impl VisitorElement for Box<dyn Element> {
             .visit_children(visitor)
     }
     fn debug_name(&self) -> &'static str {
-        self.as_ref()
-            .debug_name()
+        self.as_ref().debug_name()
     }
     fn element_type_id(&self) -> std::any::TypeId {
         self.as_ref()
@@ -74,8 +73,7 @@ impl LayoutElement for Box<dyn Element> {
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.as_ref()
-            .layout(ctx)
+        self.as_ref().layout(ctx)
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -87,8 +85,7 @@ impl LayoutElement for Box<dyn Element> {
             .content_size(ctx)
     }
     fn layer(&self) -> u32 {
-        self.as_ref()
-            .layer()
+        self.as_ref().layer()
     }
 
     fn flex(&self) -> Option<f32> {
@@ -106,8 +103,7 @@ impl LayoutElement for Box<dyn Element> {
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.as_ref()
-            .pos_start_end()
+        self.as_ref().pos_start_end()
     }
 }
 
@@ -118,13 +114,11 @@ impl Rebuildable for Box<dyn Element> {
     }
 
     fn option_any(&self) -> Option<&dyn std::any::Any> {
-        self.as_ref()
-            .option_any()
+        self.as_ref().option_any()
     }
 
     fn is_carry_state(&self) -> bool {
-        self.as_ref()
-            .is_carry_state()
+        self.as_ref().is_carry_state()
     }
 
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
@@ -140,8 +134,7 @@ impl Rebuildable for Box<dyn Element> {
 
 impl EventElement for Box<dyn Element> {
     fn on_event(&self, event: &ElementEvent) -> bool {
-        self.as_ref()
-            .on_event(event)
+        self.as_ref().on_event(event)
     }
 
     fn captures_pointer(&self, pointer: u64) -> bool {
@@ -157,8 +150,7 @@ impl EventElement for Box<dyn Element> {
 
 impl Drawable for Box<dyn Element> {
     fn draw(&self, ctx: &BuildContext) {
-        self.as_ref()
-            .draw(ctx)
+        self.as_ref().draw(ctx)
     }
 }
 
@@ -211,10 +203,7 @@ fn dispatch_event_inner<'a>(
     // If the element has no position info, still try to dispatch the event.
     // This allows elements like Button (which don't track absolute position)
     // to receive events when reached through the tree traversal.
-    if root
-        .pos_start_end()
-        .is_none()
-    {
+    if root.pos_start_end().is_none() {
         return root.on_event(event);
     }
 
@@ -398,7 +387,9 @@ mod tests {
     fn captured_pointer_move_is_delivered_outside_element_bounds() {
         use aimer_events::pointer::PointerSource;
 
-        let element = CapturingElement { events: Cell::new(0) };
+        let element = CapturingElement {
+            events: Cell::new(0),
+        };
         let event = ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, PointerSource::Touch, 7);
 
         assert!(dispatch_event(&element, Vec2d { x: 50.0, y: 50.0 }, &event));
@@ -407,7 +398,9 @@ mod tests {
 
     #[test]
     fn cancel_pointer_reaches_captured_element_outside_bounds() {
-        let element = CapturingElement { events: Cell::new(0) };
+        let element = CapturingElement {
+            events: Cell::new(0),
+        };
 
         assert!(cancel_pointer(&element, 7, Vec2d { x: 50.0, y: 50.0 }));
         assert_eq!(element.events.get(), 1);
@@ -415,7 +408,9 @@ mod tests {
 
     #[test]
     fn cancel_pointer_falls_back_to_hit_testing_without_capture() {
-        let element = CapturingElement { events: Cell::new(0) };
+        let element = CapturingElement {
+            events: Cell::new(0),
+        };
 
         assert!(cancel_pointer(&element, 8, Vec2d { x: 5.0, y: 5.0 }));
         assert_eq!(element.events.get(), 1);
@@ -423,7 +418,9 @@ mod tests {
 
     #[test]
     fn cancel_pointer_is_not_delivered_twice_to_captured_target() {
-        let element = CapturingElement { events: Cell::new(0) };
+        let element = CapturingElement {
+            events: Cell::new(0),
+        };
 
         assert!(cancel_pointer(&element, 7, Vec2d { x: 5.0, y: 5.0 }));
         assert_eq!(element.events.get(), 1);
@@ -448,11 +445,19 @@ mod tests {
         let mut children = Vec::with_capacity(8);
         let allocation = children.as_ptr();
 
-        assert_eq!(dispatch_captured_event_inner(&element, 7, &event, &mut children), Some(true));
+        assert_eq!(
+            dispatch_captured_event_inner(&element, 7, &event, &mut children),
+            Some(true)
+        );
         assert!(children.is_empty());
         assert_eq!(children.as_ptr(), allocation);
 
-        assert!(dispatch_event_inner(&element, Vec2d { x: 5.0, y: 5.0 }, &event, &mut children));
+        assert!(dispatch_event_inner(
+            &element,
+            Vec2d { x: 5.0, y: 5.0 },
+            &event,
+            &mut children
+        ));
         assert!(children.is_empty());
         assert_eq!(children.as_ptr(), allocation);
 

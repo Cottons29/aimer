@@ -58,24 +58,21 @@ impl RouterCodegen {
             let mut new_attrs = Vec::new();
             #[allow(clippy::collapsible_if)]
             for attr in &variant.attrs {
-                if attr
-                    .path()
-                    .is_ident("route")
-                {
+                if attr.path().is_ident("route") {
                     if let Ok(exprs) =
                         attr.parse_args_with(Punctuated::<Expr, Token![,]>::parse_terminated)
                     {
                         for expr in exprs {
                             match expr {
-                                Expr::Lit(ExprLit { lit: Lit::Str(lit_str), .. }) => {
+                                Expr::Lit(ExprLit {
+                                    lit: Lit::Str(lit_str),
+                                    ..
+                                }) => {
                                     routes.push(lit_str.value());
                                 }
                                 Expr::Assign(assign) => {
                                     if let Expr::Path(ep) = &*assign.left {
-                                        if ep
-                                            .path
-                                            .is_ident("name")
-                                        {
+                                        if ep.path.is_ident("name") {
                                             if let Expr::Lit(ExprLit {
                                                 lit: Lit::Str(lit_str),
                                                 ..
@@ -96,10 +93,7 @@ impl RouterCodegen {
                             }
                         }
                     }
-                } else if attr
-                    .path()
-                    .is_ident("routes")
-                {
+                } else if attr.path().is_ident("routes") {
                     if let Ok(meta) =
                         attr.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)
                     {
@@ -109,7 +103,11 @@ impl RouterCodegen {
                     } else if let Meta::NameValue(mnv) = &attr.meta {
                         if let Expr::Array(ExprArray { elems, .. }) = &mnv.value {
                             for elem in elems {
-                                if let Expr::Lit(ExprLit { lit: Lit::Str(lit_str), .. }) = elem {
+                                if let Expr::Lit(ExprLit {
+                                    lit: Lit::Str(lit_str),
+                                    ..
+                                }) = elem
+                                {
                                     routes.push(lit_str.value());
                                 }
                             }
@@ -117,31 +115,32 @@ impl RouterCodegen {
                     } else if let Meta::List(ml) = &attr.meta {
                         if let Ok(expr_array) = parse2::<ExprArray>(ml.tokens.clone()) {
                             for elem in expr_array.elems {
-                                if let Expr::Lit(ExprLit { lit: Lit::Str(lit_str), .. }) = elem {
+                                if let Expr::Lit(ExprLit {
+                                    lit: Lit::Str(lit_str),
+                                    ..
+                                }) = elem
+                                {
                                     routes.push(lit_str.value());
                                 }
                             }
                         }
                     }
-                } else if attr
-                    .path()
-                    .is_ident("shell")
-                {
+                } else if attr.path().is_ident("shell") {
                     is_shell = true;
                     if let Ok(exprs) =
                         attr.parse_args_with(Punctuated::<Expr, Token![,]>::parse_terminated)
                     {
                         for expr in exprs {
                             match expr {
-                                Expr::Lit(ExprLit { lit: Lit::Str(lit_str), .. }) => {
+                                Expr::Lit(ExprLit {
+                                    lit: Lit::Str(lit_str),
+                                    ..
+                                }) => {
                                     shell_prefix = Some(lit_str.value());
                                 }
                                 Expr::Assign(assign) => {
                                     if let Expr::Path(ep) = &*assign.left {
-                                        if ep
-                                            .path
-                                            .is_ident("name")
-                                        {
+                                        if ep.path.is_ident("name") {
                                             if let Expr::Lit(ExprLit {
                                                 lit: Lit::Str(lit_str),
                                                 ..
@@ -165,18 +164,18 @@ impl RouterCodegen {
                     {
                         for m in metas {
                             if let Meta::NameValue(nv) = m {
-                                if nv
-                                    .path
-                                    .is_ident("guard")
-                                {
-                                    if let Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) = &nv.value {
+                                if nv.path.is_ident("guard") {
+                                    if let Expr::Lit(ExprLit {
+                                        lit: Lit::Str(s), ..
+                                    }) = &nv.value
+                                    {
                                         redirect_guard = Some(s.value());
                                     }
-                                } else if nv
-                                    .path
-                                    .is_ident("to")
-                                {
-                                    if let Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) = &nv.value {
+                                } else if nv.path.is_ident("to") {
+                                    if let Expr::Lit(ExprLit {
+                                        lit: Lit::Str(s), ..
+                                    }) = &nv.value
+                                    {
                                         redirect_to = Some(s.value());
                                     }
                                 }
@@ -203,11 +202,7 @@ impl RouterCodegen {
                     });
                 match &variant.fields {
                     Fields::Unnamed(f) if f.unnamed.len() == 1 => {
-                        let child_ty = &f
-                            .unnamed
-                            .first()
-                            .unwrap()
-                            .ty;
+                        let child_ty = &f.unnamed.first().unwrap().ty;
                         let prefix_slash = format!("{}/", prefix);
 
                         format_arms.push(quote! {
@@ -270,10 +265,7 @@ impl RouterCodegen {
                     let mut path_replaces = Vec::new();
                     let mut query_pushes = Vec::new();
                     for field in fields.named.iter() {
-                        let fname = field
-                            .ident
-                            .as_ref()
-                            .unwrap();
+                        let fname = field.ident.as_ref().unwrap();
                         let placeholder = format!("{{{}}}", fname);
                         if let Some((key, _)) = qpairs
                             .iter()

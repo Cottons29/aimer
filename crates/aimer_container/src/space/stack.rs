@@ -51,7 +51,10 @@ impl Stack {
     ///
     /// The empty stack is already a valid [`Widget`].
     pub fn new() -> Self {
-        Self { children: Vec::new(), direction: StackDirection::default() }
+        Self {
+            children: Vec::new(),
+            direction: StackDirection::default(),
+        }
     }
 
     /// Replaces all children with a homogeneous collection.
@@ -62,9 +65,7 @@ impl Stack {
     /// values, or use [`Stack::add_child`] instead.
     pub fn children<W: Widget>(self, children: impl IntoIterator<Item = W>) -> Stack<W> {
         Stack {
-            children: children
-                .into_iter()
-                .collect(),
+            children: children.into_iter().collect(),
             direction: self.direction,
         }
     }
@@ -96,7 +97,10 @@ impl Widget for Stack {
             .iter()
             .map(|c| c.to_element(ctx))
             .collect();
-        Box::new(RawStackElement { children, direction: self.direction })
+        Box::new(RawStackElement {
+            children,
+            direction: self.direction,
+        })
     }
 }
 
@@ -124,26 +128,16 @@ impl Drawable for RawStackElement {
             visible_rect: ctx.visible_rect,
             window: ctx.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx
-                .async_handle
-                .clone(),
-            inherited_states: ctx
-                .inherited_states
-                .clone(),
+            async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
 
-        let mut sorted_children: Vec<_> = self
-            .children
-            .iter()
-            .collect();
+        let mut sorted_children: Vec<_> = self.children.iter().collect();
 
         sorted_children.sort_by_key(|child| child.layer());
 
         if self.direction == StackDirection::Reverse {
-            for child in sorted_children
-                .iter()
-                .rev()
-            {
+            for child in sorted_children.iter().rev() {
                 child.draw(&child_ctx);
             }
         } else {

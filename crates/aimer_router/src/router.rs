@@ -149,8 +149,10 @@ mod tests {
 
     #[test]
     fn format_query_is_sorted_and_prefixed() {
-        let params =
-            vec![("page".to_string(), "2".to_string()), ("q".to_string(), "foo".to_string())];
+        let params = vec![
+            ("page".to_string(), "2".to_string()),
+            ("q".to_string(), "foo".to_string()),
+        ];
         assert_eq!(format_query_string(&params), "?page=2&q=foo");
     }
 

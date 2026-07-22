@@ -40,7 +40,10 @@ pub struct SvgLoader {
 
 impl SvgLoader {
     pub fn new(source: SvgSource) -> Self {
-        Self { source, state: Arc::new(Mutex::new(SvgLoadState::Loading)) }
+        Self {
+            source,
+            state: Arc::new(Mutex::new(SvgLoadState::Loading)),
+        }
     }
 
     pub fn state(&self) -> SvgLoadState {
@@ -80,11 +83,11 @@ async fn load_bytes(source: &SvgSource) -> Result<Vec<u8>, String> {
             let response = reqwest::get(url.as_ref())
                 .await
                 .map_err(|error| error.to_string())?;
-            if !response
-                .status()
-                .is_success()
-            {
-                return Err(format!("SVG request failed with status {}", response.status()));
+            if !response.status().is_success() {
+                return Err(format!(
+                    "SVG request failed with status {}",
+                    response.status()
+                ));
             }
             response
                 .bytes()
@@ -118,7 +121,10 @@ async fn load_bytes(source: &SvgSource) -> Result<Vec<u8>, String> {
         .dyn_into::<web_sys::Response>()
         .map_err(js_error)?;
     if !response.ok() {
-        return Err(format!("SVG request failed with status {}", response.status()));
+        return Err(format!(
+            "SVG request failed with status {}",
+            response.status()
+        ));
     }
     let buffer = JsFuture::from(
         response
@@ -135,7 +141,11 @@ async fn load_bytes(source: &SvgSource) -> Result<Vec<u8>, String> {
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn asset_url(key: &str) -> String {
-    if key.starts_with('/') { key.to_owned() } else { format!("/{key}") }
+    if key.starts_with('/') {
+        key.to_owned()
+    } else {
+        format!("/{key}")
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -210,7 +220,9 @@ mod tests {
 
         let state = loader.load().await;
 
-        let SvgLoadState::Ready(document) = state else { panic!("memory SVG should load") };
+        let SvgLoadState::Ready(document) = state else {
+            panic!("memory SVG should load")
+        };
         assert_eq!(
             document
                 .scene()
@@ -271,12 +283,7 @@ mod tests {
                 .to_string_lossy()
                 .as_ref(),
         )));
-        assert!(matches!(
-            malformed
-                .load()
-                .await,
-            SvgLoadState::Error(_)
-        ));
+        assert!(matches!(malformed.load().await, SvgLoadState::Error(_)));
     }
 
     #[test]

@@ -40,7 +40,13 @@ struct ShelfPacker {
 
 impl ShelfPacker {
     fn new(width: u32, height: u32) -> Self {
-        Self { width, height, cursor_x: 0, shelf_y: 0, shelf_height: 0 }
+        Self {
+            width,
+            height,
+            cursor_x: 0,
+            shelf_y: 0,
+            shelf_height: 0,
+        }
     }
 
     /// Try to allocate a region of `w × h`. Returns `None` if the atlas is
@@ -153,7 +159,11 @@ impl GlyphAtlas {
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("glyph atlas"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -171,9 +181,7 @@ impl GlyphAtlas {
 
     /// Look up a cached glyph region without inserting.
     pub fn get(&self, key: &GlyphKey) -> Option<AtlasRegion> {
-        self.cache
-            .get(key)
-            .copied()
+        self.cache.get(key).copied()
     }
 
     /// Returns the current atlas generation (incremented on texture recreate).
@@ -218,11 +226,21 @@ impl GlyphAtlas {
         // Stage the glyph bitmap for the next `upload`. We keep only this glyph's
         // bytes (dropped after upload) rather than a full-size CPU mirror.
         self.pending
-            .push(PendingGlyph { x, y, width: glyph_w, height: glyph_h, data: bitmap.to_vec() });
+            .push(PendingGlyph {
+                x,
+                y,
+                width: glyph_w,
+                height: glyph_h,
+                data: bitmap.to_vec(),
+            });
 
-        let region = AtlasRegion { x, y, width: glyph_w, height: glyph_h };
-        self.cache
-            .insert(key, region);
+        let region = AtlasRegion {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+        };
+        self.cache.insert(key, region);
         region
     }
 
@@ -230,21 +248,19 @@ impl GlyphAtlas {
     /// drop the staged bytes. Each glyph is written directly at its packed
     /// position, so no full-size CPU buffer is materialized.
     pub fn upload(&mut self, queue: &wgpu::Queue) {
-        if self
-            .pending
-            .is_empty()
-        {
+        if self.pending.is_empty() {
             return;
         }
-        for glyph in self
-            .pending
-            .drain(..)
-        {
+        for glyph in self.pending.drain(..) {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
                     mip_level: 0,
-                    origin: wgpu::Origin3d { x: glyph.x, y: glyph.y, z: 0 },
+                    origin: wgpu::Origin3d {
+                        x: glyph.x,
+                        y: glyph.y,
+                        z: 0,
+                    },
                     aspect: wgpu::TextureAspect::All,
                 },
                 &glyph.data,
@@ -307,7 +323,11 @@ impl GlyphAtlas {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::Extent3d { width: old_w, height: old_h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: old_w,
+                height: old_h,
+                depth_or_array_layers: 1,
+            },
         );
         queue.submit(Some(encoder.finish()));
 
@@ -386,7 +406,11 @@ impl ColorGlyphAtlas {
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("color glyph atlas"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -402,9 +426,7 @@ impl ColorGlyphAtlas {
     }
 
     pub fn get(&self, key: &GlyphKey) -> Option<AtlasRegion> {
-        self.cache
-            .get(key)
-            .copied()
+        self.cache.get(key).copied()
     }
 
     pub fn generation(&self) -> u64 {
@@ -444,30 +466,38 @@ impl ColorGlyphAtlas {
 
         // Stage this glyph's RGBA8 bytes for the next `upload`; no full-size mirror.
         self.pending
-            .push(PendingGlyph { x, y, width: glyph_w, height: glyph_h, data: bitmap.to_vec() });
+            .push(PendingGlyph {
+                x,
+                y,
+                width: glyph_w,
+                height: glyph_h,
+                data: bitmap.to_vec(),
+            });
 
-        let region = AtlasRegion { x, y, width: glyph_w, height: glyph_h };
-        self.cache
-            .insert(key, region);
+        let region = AtlasRegion {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+        };
+        self.cache.insert(key, region);
         region
     }
 
     pub fn upload(&mut self, queue: &wgpu::Queue) {
-        if self
-            .pending
-            .is_empty()
-        {
+        if self.pending.is_empty() {
             return;
         }
-        for glyph in self
-            .pending
-            .drain(..)
-        {
+        for glyph in self.pending.drain(..) {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
                     mip_level: 0,
-                    origin: wgpu::Origin3d { x: glyph.x, y: glyph.y, z: 0 },
+                    origin: wgpu::Origin3d {
+                        x: glyph.x,
+                        y: glyph.y,
+                        z: 0,
+                    },
                     aspect: wgpu::TextureAspect::All,
                 },
                 &glyph.data,
@@ -519,7 +549,11 @@ impl ColorGlyphAtlas {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::Extent3d { width: old_w, height: old_h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: old_w,
+                height: old_h,
+                depth_or_array_layers: 1,
+            },
         );
         queue.submit(Some(encoder.finish()));
 
@@ -574,7 +608,12 @@ mod tests {
         let mut regions: Vec<AtlasRegion> = Vec::new();
         for &(w, h) in &sample_glyphs() {
             if let Some((x, y)) = packer.allocate(w, h) {
-                regions.push(AtlasRegion { x, y, width: w, height: h });
+                regions.push(AtlasRegion {
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                });
             }
         }
         (packer, regions)
@@ -626,7 +665,12 @@ mod tests {
         let (_packer, regions) = pack_initial(512);
         let next = (40, 30);
         let pos = old_grow_next_allocation(&regions, 1024, 1024, next);
-        let new_region = AtlasRegion { x: pos.0, y: pos.1, width: next.0, height: next.1 };
+        let new_region = AtlasRegion {
+            x: pos.0,
+            y: pos.1,
+            width: next.0,
+            height: next.1,
+        };
         let overlap = regions
             .iter()
             .any(|r| overlaps(r, &new_region));
@@ -646,7 +690,12 @@ mod tests {
         let old_h = 512;
         for &next in &[(40u32, 30u32), (1u32, 1u32), (300u32, 200u32)] {
             let pos = new_grow_next_allocation(old_h, 1024, 1024, next);
-            let new_region = AtlasRegion { x: pos.0, y: pos.1, width: next.0, height: next.1 };
+            let new_region = AtlasRegion {
+                x: pos.0,
+                y: pos.1,
+                width: next.0,
+                height: next.1,
+            };
             assert!(
                 new_region.y >= old_h,
                 "new glyph must start below preserved content: {:?}",

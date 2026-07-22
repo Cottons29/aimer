@@ -102,9 +102,7 @@ impl Column {
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow: self.overflow,
-            children: children
-                .into_iter()
-                .collect(),
+            children: children.into_iter().collect(),
         }
         .boxed()
     }
@@ -119,9 +117,7 @@ impl Column {
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow: self.overflow,
-            children: children
-                .into_iter()
-                .collect(),
+            children: children.into_iter().collect(),
         }
     }
 }
@@ -227,9 +223,7 @@ impl Row {
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow: self.overflow,
-            children: children
-                .into_iter()
-                .collect(),
+            children: children.into_iter().collect(),
         }
     }
 
@@ -246,9 +240,7 @@ impl Row {
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow: self.overflow,
-            children: children
-                .into_iter()
-                .collect(),
+            children: children.into_iter().collect(),
         }
         .boxed()
     }

@@ -16,9 +16,14 @@ pub struct WidgetRcInner<T> {
 
 impl<T> WidgetRc<T> {
     pub fn new(data: T) -> Self {
-        let boxed = Box::new(WidgetRcInner { counter: UnsafeCell::new(1), value: data });
+        let boxed = Box::new(WidgetRcInner {
+            counter: UnsafeCell::new(1),
+            value: data,
+        });
 
-        WidgetRc { ptr: unsafe { NonNull::new_unchecked(Box::into_raw(boxed)) } }
+        WidgetRc {
+            ptr: unsafe { NonNull::new_unchecked(Box::into_raw(boxed)) },
+        }
     }
 
     fn inner(&self) -> &WidgetRcInner<T> {

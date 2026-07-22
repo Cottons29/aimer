@@ -47,10 +47,7 @@ pub mod server {
             self.enabled
                 .store(enabled, Ordering::Relaxed);
             {
-                let mut s = self
-                    .state
-                    .lock()
-                    .unwrap();
+                let mut s = self.state.lock().unwrap();
                 s.enabled = enabled;
             }
             let msg = InspectorMessage::Status { enabled };
@@ -67,10 +64,7 @@ pub mod server {
             self.enabled
                 .store(new_val, Ordering::Relaxed);
             {
-                let mut s = self
-                    .state
-                    .lock()
-                    .unwrap();
+                let mut s = self.state.lock().unwrap();
                 s.enabled = new_val;
             }
             let msg = InspectorMessage::Status { enabled: new_val };
@@ -85,10 +79,7 @@ pub mod server {
                 return;
             }
             {
-                let mut s = self
-                    .state
-                    .lock()
-                    .unwrap();
+                let mut s = self.state.lock().unwrap();
                 s.tree = root.clone();
             }
             let msg = InspectorMessage::Tree { root };
@@ -100,10 +91,7 @@ pub mod server {
         /// Broadcast the currently hovered widget ID.
         pub fn broadcast_hovered(&self, id: Option<u64>) {
             {
-                let mut s = self
-                    .state
-                    .lock()
-                    .unwrap();
+                let mut s = self.state.lock().unwrap();
                 s.hovered_widget_id = id;
             }
             let msg = InspectorMessage::Hovered { id };
@@ -427,11 +415,7 @@ pub mod server {
             inspector_overlay::set_enabled(enabled);
             let msg = InspectorMessage::Status { enabled };
             if let Ok(json) = serde_json::to_string(&msg) {
-                if let Some(ws) = self
-                    .ws
-                    .borrow()
-                    .as_ref()
-                {
+                if let Some(ws) = self.ws.borrow().as_ref() {
                     if ws.ready_state() == 1 {
                         let _ = ws.send_with_str(&json);
                     }
@@ -445,11 +429,7 @@ pub mod server {
             }
             let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
-                if let Some(ws) = self
-                    .ws
-                    .borrow()
-                    .as_ref()
-                {
+                if let Some(ws) = self.ws.borrow().as_ref() {
                     if ws.ready_state() == 1 {
                         // WebSocket::OPEN
                         let _ = ws.send_with_str(&json);
@@ -461,11 +441,7 @@ pub mod server {
         pub fn broadcast_hovered(&self, id: Option<u64>) {
             let msg = InspectorMessage::Hovered { id };
             if let Ok(json) = serde_json::to_string(&msg) {
-                if let Some(ws) = self
-                    .ws
-                    .borrow()
-                    .as_ref()
-                {
+                if let Some(ws) = self.ws.borrow().as_ref() {
                     if ws.ready_state() == 1 {
                         let _ = ws.send_with_str(&json);
                     }
@@ -482,7 +458,10 @@ pub mod server {
         let ws = match WebSocket::new(&url) {
             Ok(ws) => ws,
             Err(_) => {
-                return InspectorHandle { enabled, ws: ws_ref };
+                return InspectorHandle {
+                    enabled,
+                    ws: ws_ref,
+                };
             }
         };
 
@@ -511,7 +490,10 @@ pub mod server {
         ));
         onmessage_callback.forget();
 
-        InspectorHandle { enabled, ws: ws_ref }
+        InspectorHandle {
+            enabled,
+            ws: ws_ref,
+        }
     }
 
     pub fn snapshot_tree(element: &dyn Element) -> WidgetNode {
@@ -519,7 +501,12 @@ pub mod server {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         fn build(element: &dyn Element, counter: &AtomicU64) -> WidgetNode {
             let (x, y, width, height) = if let Some((start, end)) = element.pos_start_end() {
-                (start.x as f32, start.y as f32, (end.x - start.x) as f32, (end.y - start.y) as f32)
+                (
+                    start.x as f32,
+                    start.y as f32,
+                    (end.x - start.x) as f32,
+                    (end.y - start.y) as f32,
+                )
             } else {
                 (0.0, 0.0, 0.0, 0.0)
             };

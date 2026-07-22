@@ -143,9 +143,7 @@ impl Widget for TextField {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawTextField {
             input_type: self.input_type,
-            controller: self
-                .controller
-                .clone(),
+            controller: self.controller.clone(),
             prompt: self.prompt.clone(),
             hint: self.hint.clone(),
             hint_style: self.hint_style,
@@ -159,15 +157,9 @@ impl Widget for TextField {
             enable: self.enable,
             expand: self.expand,
             cursor: Cursor::new(self.cursor_color),
-            decoration: self
-                .decoration
-                .clone(),
-            hover_decoration: self
-                .hover_decoration
-                .clone(),
-            focus_decoration: self
-                .focus_decoration
-                .clone(),
+            decoration: self.decoration.clone(),
+            hover_decoration: self.hover_decoration.clone(),
+            focus_decoration: self.focus_decoration.clone(),
             disabled_decoration: self
                 .disabled_decoration
                 .clone(),
@@ -175,15 +167,9 @@ impl Widget for TextField {
             focused: Cell::new(self.auto_focus),
             hovered: Cell::new(false),
             cached_bounds: CacheBounds::new(),
-            on_changed: self
-                .on_changed
-                .clone(),
-            on_submitted: self
-                .on_submitted
-                .clone(),
-            on_focus: self
-                .on_focus
-                .clone(),
+            on_changed: self.on_changed.clone(),
+            on_submitted: self.on_submitted.clone(),
+            on_focus: self.on_focus.clone(),
             on_blur: self.on_blur.clone(),
             read_only: self.read_only,
             mouse_held: Cell::new(false),

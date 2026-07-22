@@ -18,7 +18,11 @@ pub fn is_mobile(ctx: &BuildContext) -> bool {
 }
 
 pub fn resp_position(ctx: &BuildContext, wide: f32, slim: f32) -> Dimension {
-    if is_mobile(ctx) { Percent(slim) } else { Percent(wide) }
+    if is_mobile(ctx) {
+        Percent(slim)
+    } else {
+        Percent(wide)
+    }
 }
 
 pub fn mobile_title(ctx: &BuildContext) -> u32 {

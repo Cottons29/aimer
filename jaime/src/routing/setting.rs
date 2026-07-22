@@ -19,14 +19,20 @@ impl StatelessWidget for SettingPage {
             Column::new()
                 .horizontal_alignment(BoxAlignment::Center)
                 .vertical_alignment(BoxAlignment::Center)
-                .gaps(LayoutSpacing { top: Spacing::Px(40), ..Default::default() })
+                .gaps(LayoutSpacing {
+                    top: Spacing::Px(40),
+                    ..Default::default()
+                })
                 .children(vec![
                     Text::new("Setting Page")
                         .text_align(TextAlign::MidCenter)
                         .text_style(TextStyle::new().color(Colors::Black))
                         .boxed(),
                     Row::new()
-                        .gaps(LayoutSpacing { right: Spacing::Px(10), ..Default::default() })
+                        .gaps(LayoutSpacing {
+                            right: Spacing::Px(10),
+                            ..Default::default()
+                        })
                         .children(vec![
                             Button::new()
                                 .on_press({
@@ -51,7 +57,9 @@ impl StatelessWidget for SettingPage {
                                 .on_press({
                                     let navi = NavigatorController::<AppRouting>::of(ctx);
                                     move || {
-                                        navi.push(AppRouting::Profile { name: "Javier".into() });
+                                        navi.push(AppRouting::Profile {
+                                            name: "Javier".into(),
+                                        });
                                     }
                                 })
                                 .decoration(BoxDecoration::new().background_color(Colors::Blue))

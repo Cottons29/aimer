@@ -16,7 +16,10 @@ impl Drop for BorrowGuard<'_> {
 
 impl<T> LocalCell<T> {
     pub(crate) fn new(value: T) -> Self {
-        Self { value: UnsafeCell::new(value), borrowed: Cell::new(false) }
+        Self {
+            value: UnsafeCell::new(value),
+            borrowed: Cell::new(false),
+        }
     }
 
     pub(crate) fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
@@ -35,9 +38,7 @@ impl<T> LocalCell<T> {
 
     fn borrow(&self) -> BorrowGuard<'_> {
         assert!(
-            !self
-                .borrowed
-                .replace(true),
+            !self.borrowed.replace(true),
             "LocalCell is already borrowed"
         );
         BorrowGuard(&self.borrowed)

@@ -72,24 +72,19 @@ pub fn spawn_cargo_build(
                 CargoBuildTarget::Android { .. } => "cargo ndk build",
                 _ => "cargo build",
             };
-            let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to run {}: {}", label, e)));
+            let _ = tx.send(RunnerEvent::BuildLog(format!(
+                "Failed to run {}: {}",
+                label, e
+            )));
             let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
             return None;
         }
     };
 
-    let stdout = child
-        .stdout
-        .take()
-        .unwrap();
-    let stderr = child
-        .stderr
-        .take()
-        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
 
-    *current_child
-        .lock()
-        .unwrap() = Some(child);
+    *current_child.lock().unwrap() = Some(child);
 
     stream_stdout_as_build_log(stdout, tx.clone());
     stream_stderr_with_cargo_progress(stderr, tx.clone());
@@ -278,9 +273,7 @@ pub fn stream_stdout_with_gradle_progress(
 
 pub fn wait_for_child(current_child: &Arc<Mutex<Option<Child>>>) -> Option<ExitStatus> {
     loop {
-        let mut guard = current_child
-            .lock()
-            .unwrap();
+        let mut guard = current_child.lock().unwrap();
 
         let child = guard.as_mut()?;
 

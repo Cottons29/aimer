@@ -84,10 +84,7 @@ impl<'w> App<'w> {
 #[cfg(not(target_arch = "wasm32"))]
 impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self
-            .window
-            .is_some()
-        {
+        if self.window.is_some() {
             return;
         }
 
@@ -232,8 +229,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 let height = gpu.height();
 
                 // Build draw commands using CupidCanvas
-                self.canvas
-                    .begin_frame();
+                self.canvas.begin_frame();
 
                 // Draw a blue background rect
                 // self.canvas
@@ -297,29 +293,27 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 // self.canvas.draw_text(30.0, 340.0, "អរគុណ 你哈皮  With State 你好 きみなと
                 // 👉", 44.0, Color::black()); self.canvas
                 //     .draw_text(30.0, 740.0, "هَمْزَة عَلَى الأَلِفْ	", 44.0, Color::black());
-                self.canvas
-                    .draw_text_wrapped(
-                        30.0,
-                        30.0,
-                        WELCOME_TEXT,
-                        44.0,
-                        Color::black(),
-                        self.window
-                            .as_ref()
-                            .unwrap()
-                            .inner_size()
-                            .width as f32
-                            - 60.0,
-                        400,
-                    );
+                self.canvas.draw_text_wrapped(
+                    30.0,
+                    30.0,
+                    WELCOME_TEXT,
+                    44.0,
+                    Color::black(),
+                    self.window
+                        .as_ref()
+                        .unwrap()
+                        .inner_size()
+                        .width as f32
+                        - 60.0,
+                    400,
+                );
 
                 // Draw test image if available
                 // if let Some(tex_id) = self.texture_id {
                 //     self.canvas.draw_image(500.0, 200.0, 300.0, 300.0, tex_id);
                 // }
 
-                self.canvas
-                    .clear_clip();
+                self.canvas.clear_clip();
 
                 ExecTimes::print_time(|| {
                     renderer.render(
@@ -329,9 +323,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                         width,
                         height,
                         gpu.is_srgb,
-                        &self
-                            .canvas
-                            .draw_list(),
+                        &self.canvas.draw_list(),
                     )
                 });
 

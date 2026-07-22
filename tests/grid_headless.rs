@@ -18,9 +18,7 @@ struct SizeProbeElement {
 impl Widget for SizeProbe {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(SizeProbeElement {
-            observed: self
-                .observed
-                .clone(),
+            observed: self.observed.clone(),
         })
     }
 }
@@ -50,15 +48,31 @@ fn grid_assigns_cell_constraints_during_a_headless_frame() {
         .columns([GridTrack::Px(100.0), GridTrack::Px(200.0)])
         .rows([GridTrack::Px(50.0)])
         .children([
-            GridItem::new(SizeProbe { observed: first.clone() }),
-            GridItem::new(SizeProbe { observed: second.clone() }),
+            GridItem::new(SizeProbe {
+                observed: first.clone(),
+            }),
+            GridItem::new(SizeProbe {
+                observed: second.clone(),
+            }),
         ]);
 
     let mut app = AimerApp::start_headless(grid);
     app.render_frame();
 
-    assert_eq!(first.get(), ResolvedSize { width: 100.0, height: 50.0 });
-    assert_eq!(second.get(), ResolvedSize { width: 200.0, height: 50.0 });
+    assert_eq!(
+        first.get(),
+        ResolvedSize {
+            width: 100.0,
+            height: 50.0
+        }
+    );
+    assert_eq!(
+        second.get(),
+        ResolvedSize {
+            width: 200.0,
+            height: 50.0
+        }
+    );
 }
 
 #[test]

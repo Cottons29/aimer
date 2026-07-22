@@ -157,14 +157,20 @@ impl<'w> GpuContext<'w> {
                         break;
                     }
                     Err(err) => {
-                        warn!("GPU initialization with {:?} failed, Trying other Backend", backend);
+                        warn!(
+                            "GPU initialization with {:?} failed, Trying other Backend",
+                            backend
+                        );
                         failures.push(format!("{backend:?}: {err}"));
                     }
                 }
             }
 
             initialized.unwrap_or_else(|| {
-                panic!("Failed to initialize WebGPU or WebGL: {}", failures.join("; "))
+                panic!(
+                    "Failed to initialize WebGPU or WebGL: {}",
+                    failures.join("; ")
+                )
             })
         };
 
@@ -198,9 +204,7 @@ impl<'w> GpuContext<'w> {
 
         debug!(
             "Current Activated Backend: {:?}",
-            adapter
-                .get_info()
-                .backend
+            adapter.get_info().backend
         );
 
         let caps = surface.get_capabilities(&adapter);
@@ -224,12 +228,8 @@ impl<'w> GpuContext<'w> {
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: selected_format,
-            width: backing_size
-                .width
-                .max(1),
-            height: backing_size
-                .height
-                .max(1),
+            width: backing_size.width.max(1),
+            height: backing_size.height.max(1),
             present_mode,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
@@ -280,8 +280,7 @@ impl<'w> GpuContext<'w> {
     pub fn end_frame(&self, frame: SurfaceTexture) {
         // wgpu 30: presentation moved from `SurfaceTexture::present()` to
         // `Queue::present()`.
-        self.queue
-            .present(frame);
+        self.queue.present(frame);
     }
 }
 
@@ -291,7 +290,10 @@ mod tests {
 
     #[test]
     fn wasm_gpu_backends_try_webgpu_before_webgl() {
-        assert_eq!(wasm_gpu_backends(), [wgpu::Backends::BROWSER_WEBGPU, wgpu::Backends::GL]);
+        assert_eq!(
+            wasm_gpu_backends(),
+            [wgpu::Backends::BROWSER_WEBGPU, wgpu::Backends::GL]
+        );
     }
 
     #[test]

@@ -97,7 +97,14 @@ impl RawBoxBorder {
         mode: BorderMode,
         radius: [f32; 4],
     ) -> Self {
-        Self { left, right, top, bottom, mode, radius }
+        Self {
+            left,
+            right,
+            top,
+            bottom,
+            mode,
+            radius,
+        }
     }
 }
 
@@ -127,7 +134,12 @@ impl BoxBorder {
     }
 
     pub fn all(border: BorderSlice) -> Self {
-        Self { left: border, right: border, top: border, bottom: border }
+        Self {
+            left: border,
+            right: border,
+            top: border,
+            bottom: border,
+        }
     }
 
     /// Returns the resolved border stroke for each side: (left, top, right,
@@ -175,11 +187,19 @@ impl BoxBorder {
     }
 
     pub fn horizontal(border: BorderSlice) -> Self {
-        Self { top: border, bottom: border, ..Default::default() }
+        Self {
+            top: border,
+            bottom: border,
+            ..Default::default()
+        }
     }
 
     pub fn vertical(border: BorderSlice) -> Self {
-        Self { left: border, right: border, ..Default::default() }
+        Self {
+            left: border,
+            right: border,
+            ..Default::default()
+        }
     }
 }
 
@@ -209,7 +229,12 @@ impl BoxOutline {
     }
 
     pub fn all(border: BorderSlice) -> Self {
-        Self { left: border, right: border, top: border, bottom: border }
+        Self {
+            left: border,
+            right: border,
+            top: border,
+            bottom: border,
+        }
     }
 
     /// Returns true if any side has a non-None style and non-zero stroke.
@@ -241,11 +266,19 @@ impl BoxOutline {
     }
 
     pub fn horizontal(border: BorderSlice) -> Self {
-        Self { top: border, bottom: border, ..Default::default() }
+        Self {
+            top: border,
+            bottom: border,
+            ..Default::default()
+        }
     }
 
     pub fn vertical(border: BorderSlice) -> Self {
-        Self { left: border, right: border, ..Default::default() }
+        Self {
+            left: border,
+            right: border,
+            ..Default::default()
+        }
     }
 
     /// Returns the resolved outline stroke for each side: (left, top, right,
@@ -264,12 +297,8 @@ impl BoxOutline {
 impl Drawable for RawBoxBorder {
     fn draw(&self, ctx: &BuildContext) {
         let canvas = &ctx.canvas;
-        let box_width = ctx
-            .parent_size
-            .width;
-        let box_height = ctx
-            .parent_size
-            .height;
+        let box_width = ctx.parent_size.width;
+        let box_height = ctx.parent_size.height;
         let scale = ctx.scale;
         let is_outline = self.mode == BorderMode::Outside;
 
@@ -312,7 +341,10 @@ impl Drawable for RawBoxBorder {
             };
             canvas.stroke_rect(
                 Vec2d { x, y },
-                ResolvedSize { width: w, height: h },
+                ResolvedSize {
+                    width: w,
+                    height: h,
+                },
                 self.left.color,
                 left_stroke,
                 self.radius,
@@ -328,7 +360,10 @@ impl Drawable for RawBoxBorder {
 
             canvas.stroke_rect_per_side(
                 Vec2d { x: 0.0, y: 0.0 },
-                ResolvedSize { width: box_width, height: box_height },
+                ResolvedSize {
+                    width: box_width,
+                    height: box_height,
+                },
                 self.left.color,
                 border_width,
                 border_radius,
@@ -340,13 +375,21 @@ impl Drawable for RawBoxBorder {
         // Top border
         if self.top.style != BorderStyle::None && top_stroke > 0.0 {
             let (x, y, w, h) = if is_outline {
-                (-left_stroke, -top_stroke, box_width + left_stroke + right_stroke, top_stroke)
+                (
+                    -left_stroke,
+                    -top_stroke,
+                    box_width + left_stroke + right_stroke,
+                    top_stroke,
+                )
             } else {
                 (0.0, 0.0, box_width, top_stroke)
             };
             canvas.fill_color_rect(
                 Vec2d { x, y },
-                ResolvedSize { width: w, height: h },
+                ResolvedSize {
+                    width: w,
+                    height: h,
+                },
                 self.top.color,
                 self.radius,
             );
@@ -355,13 +398,21 @@ impl Drawable for RawBoxBorder {
         // Bottom border
         if self.bottom.style != BorderStyle::None && bottom_stroke > 0.0 {
             let (x, y, w, h) = if is_outline {
-                (-left_stroke, box_height, box_width + left_stroke + right_stroke, bottom_stroke)
+                (
+                    -left_stroke,
+                    box_height,
+                    box_width + left_stroke + right_stroke,
+                    bottom_stroke,
+                )
             } else {
                 (0.0, box_height - bottom_stroke, box_width, bottom_stroke)
             };
             canvas.fill_color_rect(
                 Vec2d { x, y },
-                ResolvedSize { width: w, height: h },
+                ResolvedSize {
+                    width: w,
+                    height: h,
+                },
                 self.bottom.color,
                 self.radius,
             );
@@ -370,13 +421,21 @@ impl Drawable for RawBoxBorder {
         // Left border
         if self.left.style != BorderStyle::None && left_stroke > 0.0 {
             let (x, y, w, h) = if is_outline {
-                (-left_stroke, -top_stroke, left_stroke, box_height + top_stroke + bottom_stroke)
+                (
+                    -left_stroke,
+                    -top_stroke,
+                    left_stroke,
+                    box_height + top_stroke + bottom_stroke,
+                )
             } else {
                 (0.0, 0.0, left_stroke, box_height)
             };
             canvas.fill_color_rect(
                 Vec2d { x, y },
-                ResolvedSize { width: w, height: h },
+                ResolvedSize {
+                    width: w,
+                    height: h,
+                },
                 self.left.color,
                 self.radius,
             );
@@ -385,13 +444,21 @@ impl Drawable for RawBoxBorder {
         // Right border
         if self.right.style != BorderStyle::None && right_stroke > 0.0 {
             let (x, y, w, h) = if is_outline {
-                (box_width, -top_stroke, right_stroke, box_height + top_stroke + bottom_stroke)
+                (
+                    box_width,
+                    -top_stroke,
+                    right_stroke,
+                    box_height + top_stroke + bottom_stroke,
+                )
             } else {
                 (box_width - right_stroke, 0.0, right_stroke, box_height)
             };
             canvas.fill_color_rect(
                 Vec2d { x, y },
-                ResolvedSize { width: w, height: h },
+                ResolvedSize {
+                    width: w,
+                    height: h,
+                },
                 self.right.color,
                 self.radius,
             );
@@ -404,7 +471,11 @@ mod tests {
     use super::*;
 
     fn slice(stroke: f32, color: Color) -> BorderSlice {
-        BorderSlice { style: BorderStyle::Solid, stroke: Dimension::Px(stroke), color }
+        BorderSlice {
+            style: BorderStyle::Solid,
+            stroke: Dimension::Px(stroke),
+            color,
+        }
     }
 
     /// Regression for the website header: a `bottom`-only border must paint
@@ -412,7 +483,10 @@ mod tests {
     /// `left` color.
     #[test]
     fn effective_color_uses_bottom_only_side() {
-        let border = BoxBorder { bottom: slice(8.0, Color::BLACK), ..Default::default() };
+        let border = BoxBorder {
+            bottom: slice(8.0, Color::BLACK),
+            ..Default::default()
+        };
         // Before the fix this returned `left.color` == Transparent (invisible).
         assert_eq!(border.effective_color(200.0, 60.0, 1.0), Color::BLACK);
     }
@@ -451,7 +525,10 @@ mod tests {
 
     #[test]
     fn outline_effective_color_uses_visible_side() {
-        let outline = BoxOutline { right: slice(3.0, Color::BLACK), ..Default::default() };
+        let outline = BoxOutline {
+            right: slice(3.0, Color::BLACK),
+            ..Default::default()
+        };
         assert_eq!(outline.effective_color(200.0, 60.0, 1.0), Color::BLACK);
     }
 }

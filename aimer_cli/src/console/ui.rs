@@ -75,16 +75,16 @@ pub fn render(
     let inspector_block = Block::default()
         .borders(Borders::ALL)
         .title(inspector_title)
-        .border_style(Style::default().fg(if state.pane == ConsoleType::Inspector {
-            Color::Cyan
-        } else {
-            Color::White
-        }));
+        .border_style(
+            Style::default().fg(if state.pane == ConsoleType::Inspector {
+                Color::Cyan
+            } else {
+                Color::White
+            }),
+        );
 
     let area = chunks[0];
-    let height = area
-        .height
-        .saturating_sub(2) as usize;
+    let height = area.height.saturating_sub(2) as usize;
     let width = area
         .width
         .saturating_sub(2)
@@ -118,11 +118,7 @@ pub fn render(
         let mut start = 0;
         let mut wrapped_lines = 0;
 
-        for (i, line) in logs
-            .iter()
-            .enumerate()
-            .rev()
-        {
+        for (i, line) in logs.iter().enumerate().rev() {
             let line_width = line.width();
             let w = line_width.div_ceil(width);
             wrapped_lines += w.max(1);
@@ -143,33 +139,19 @@ pub fn render(
                 &build_text,
                 area.x + 1,
                 area.y + 1,
-                area.width
-                    .saturating_sub(2),
-                area.height
-                    .saturating_sub(2),
-                state
-                    .build_pane
-                    .scroll,
+                area.width.saturating_sub(2),
+                area.height.saturating_sub(2),
+                state.build_pane.scroll,
                 state.selection,
                 selection_highlight,
             );
-            state
-                .build_pane
-                .scroll = new_scroll;
+            state.build_pane.scroll = new_scroll;
             state.last_view = Some(view);
             f.render_widget(Paragraph::new(rendered).block(build_block), area);
         } else {
-            let (start, skip_top, new_scroll) = calc_scroll(
-                &build_text,
-                height,
-                width,
-                state
-                    .build_pane
-                    .scroll as usize,
-            );
-            state
-                .build_pane
-                .scroll = new_scroll;
+            let (start, skip_top, new_scroll) =
+                calc_scroll(&build_text, height, width, state.build_pane.scroll as usize);
+            state.build_pane.scroll = new_scroll;
             let p = Paragraph::new(build_text[start..].to_vec())
                 .block(build_block)
                 .wrap(Wrap { trim: false })
@@ -182,33 +164,19 @@ pub fn render(
                 &app_text,
                 area.x + 1,
                 area.y + 1,
-                area.width
-                    .saturating_sub(2),
-                area.height
-                    .saturating_sub(2),
-                state
-                    .app_pane
-                    .scroll,
+                area.width.saturating_sub(2),
+                area.height.saturating_sub(2),
+                state.app_pane.scroll,
                 state.selection,
                 selection_highlight,
             );
-            state
-                .app_pane
-                .scroll = new_scroll;
+            state.app_pane.scroll = new_scroll;
             state.last_view = Some(view);
             f.render_widget(Paragraph::new(rendered).block(app_block), area);
         } else {
-            let (start, skip_top, new_scroll) = calc_scroll(
-                &app_text,
-                height,
-                width,
-                state
-                    .app_pane
-                    .scroll as usize,
-            );
-            state
-                .app_pane
-                .scroll = new_scroll;
+            let (start, skip_top, new_scroll) =
+                calc_scroll(&app_text, height, width, state.app_pane.scroll as usize);
+            state.app_pane.scroll = new_scroll;
             let p = Paragraph::new(app_text[start..].to_vec())
                 .block(app_block)
                 .wrap(Wrap { trim: false })
@@ -236,7 +204,9 @@ pub fn render(
                 None => tree_lines.push("No widget tree received yet.".to_string()),
             }
             // Auto-move cursor to hovered widget
-            let Some(hid) = inspector_state.hovered_widget_id else { return };
+            let Some(hid) = inspector_state.hovered_widget_id else {
+                return;
+            };
             if let Some(idx) = tree_ids
                 .iter()
                 .position(|&id| id == hid)
@@ -253,23 +223,11 @@ pub fn render(
             state.inspector_cursor = 0;
         }
         // Auto-scroll to keep cursor visible
-        if (state.inspector_cursor as u16)
-            < state
-                .inspector_pane
-                .scroll
-        {
-            state
-                .inspector_pane
-                .scroll = state.inspector_cursor as u16;
-        } else if state.inspector_cursor as u16
-            >= state
-                .inspector_pane
-                .scroll
-                + height as u16
-        {
-            state
-                .inspector_pane
-                .scroll = (state.inspector_cursor as u16).saturating_sub(height as u16 - 1);
+        if (state.inspector_cursor as u16) < state.inspector_pane.scroll {
+            state.inspector_pane.scroll = state.inspector_cursor as u16;
+        } else if state.inspector_cursor as u16 >= state.inspector_pane.scroll + height as u16 {
+            state.inspector_pane.scroll =
+                (state.inspector_cursor as u16).saturating_sub(height as u16 - 1);
         }
         let highlight_style = Style::default()
             .bg(Color::DarkGray)
@@ -286,21 +244,14 @@ pub fn render(
             })
             .collect();
         let max_scroll = (inspector_text.len() as u16).saturating_sub(height as u16);
-        state
-            .inspector_pane
-            .scroll = state
+        state.inspector_pane.scroll = state
             .inspector_pane
             .scroll
             .min(max_scroll);
         let p = Paragraph::new(inspector_text)
             .block(inspector_block)
             .wrap(Wrap { trim: false })
-            .scroll((
-                state
-                    .inspector_pane
-                    .scroll,
-                0,
-            ));
+            .scroll((state.inspector_pane.scroll, 0));
         f.render_widget(p, area);
     }
 
@@ -365,7 +316,11 @@ pub fn render(
                 .fg(Color::LightGreen)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(if state.selection_mode { "select " } else { "scroll " }),
+        Span::raw(if state.selection_mode {
+            "select "
+        } else {
+            "scroll "
+        }),
         Span::raw("| "),
         // Span::styled("[y] ",
         // Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
@@ -446,17 +401,22 @@ fn build_selection_view(
 
     // Character-wrap into a flat list of visual rows (empty lines keep a row).
     let mut rows: Vec<VisualRow> = Vec::new();
-    for (l, row) in cells
-        .iter()
-        .enumerate()
-    {
+    for (l, row) in cells.iter().enumerate() {
         if row.is_empty() {
-            rows.push(VisualRow { line: l, start: 0, len: 0 });
+            rows.push(VisualRow {
+                line: l,
+                start: 0,
+                len: 0,
+            });
         } else {
             let mut start = 0;
             while start < row.len() {
                 let len = w.min(row.len() - start);
-                rows.push(VisualRow { line: l, start, len });
+                rows.push(VisualRow {
+                    line: l,
+                    start,
+                    len,
+                });
                 start += len;
             }
         }
@@ -496,8 +456,11 @@ fn build_selection_view(
         let mut buf_style: Option<Style> = None;
         for i in 0..vr.len {
             let (ch, base) = src[vr.start + i];
-            let style =
-                if is_selected(vr.line, vr.start + i) { base.patch(highlight) } else { base };
+            let style = if is_selected(vr.line, vr.start + i) {
+                base.patch(highlight)
+            } else {
+                base
+            };
             match buf_style {
                 Some(s) if s == style => buf.push(ch),
                 _ => {

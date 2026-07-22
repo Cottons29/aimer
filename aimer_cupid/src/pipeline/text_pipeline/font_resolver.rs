@@ -137,15 +137,7 @@ impl FontRecord {
         // sbix  — AppleColorEmoji (macOS/iOS)
         // cbdt  — Noto Color Emoji (Android/Linux, older builds)
         // colr  — Windows/Linux Segoe/Twemoji v1 layered outlines
-        tables
-            .sbix
-            .is_some()
-            || tables
-                .cbdt
-                .is_some()
-            || tables
-                .colr
-                .is_some()
+        tables.sbix.is_some() || tables.cbdt.is_some() || tables.colr.is_some()
     }
 
     /// Probe the font with each `probes` codepoint; accept on the first match.
@@ -156,10 +148,7 @@ impl FontRecord {
     fn probes_match(face: &ttf_parser::Face<'_>, probes: &[char]) -> bool {
         probes
             .iter()
-            .any(|&c| {
-                face.glyph_index(c)
-                    .is_some()
-            })
+            .any(|&c| face.glyph_index(c).is_some())
     }
 
     /// Retain shared in-memory data or memory-map a file-backed font without
@@ -170,9 +159,7 @@ impl FontRecord {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let path = self
-                ._path
-                .as_ref()?;
+            let path = self._path.as_ref()?;
             let file = std::fs::File::open(path.as_ref()).ok()?;
             // SAFETY: the read-only mapping owns its file-backed virtual memory
             // region and remains valid independently of the `File` handle.
@@ -194,9 +181,7 @@ impl FontRecord {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let path = self
-                ._path
-                .as_ref()?;
+            let path = self._path.as_ref()?;
             let file = std::fs::File::open(path.as_ref()).ok()?;
             let map = unsafe { memmap2::Mmap::map(&file).ok()? };
             ttf_parser::Face::parse(&map, self.collection_index).ok()?;
@@ -221,9 +206,7 @@ impl FontRecord {
             } else {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let path = self
-                        ._path
-                        .as_ref()?;
+                    let path = self._path.as_ref()?;
                     let data = std::fs::read(path.as_ref()).ok()?;
                     fontdue::Font::from_bytes(data, settings).ok()?
                 }
@@ -252,9 +235,7 @@ impl FontRecord {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let path = self
-                ._path
-                .as_ref()?;
+            let path = self._path.as_ref()?;
             let file = std::fs::File::open(path.as_ref()).ok()?;
             let map = unsafe { memmap2::Mmap::map(&file).ok()? };
             let face = ttf_parser::Face::parse(&map, self.collection_index).ok()?;
@@ -284,9 +265,7 @@ impl FontRecord {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let path = self
-                ._path
-                .as_ref()?;
+            let path = self._path.as_ref()?;
             let file = std::fs::File::open(path.as_ref()).ok()?;
             let map = unsafe { memmap2::Mmap::map(&file).ok()? };
             advance_width_from_face(&map, self.collection_index, glyph_id, font_size)
@@ -319,7 +298,11 @@ struct ProbeGroup {
 }
 
 const fn probe_group(label: &'static str, probes: &'static [char], hint_color: bool) -> ProbeGroup {
-    ProbeGroup { label, probes, hint_color }
+    ProbeGroup {
+        label,
+        probes,
+        hint_color,
+    }
 }
 
 /// All script / category probe groups we want covered in the fallback chain.
@@ -385,13 +368,7 @@ fn font_data_matches_probes(
         // fonts with COLR decorative glyphs) are not usable as emoji fonts here
         // because our `rasterize_color_glyph` path prefers sbix/cbdt.
         let tables = face.tables();
-        if tables
-            .sbix
-            .is_none()
-            && tables
-                .cbdt
-                .is_none()
-        {
+        if tables.sbix.is_none() && tables.cbdt.is_none() {
             return None;
         }
         return Some(true); // confirmed bitmap-color emoji font
@@ -420,13 +397,11 @@ fn font_data_matches_probes(
 
     // Additionally verify at least one probe glyph has a non-empty bounding box
     // so we know the font can actually produce visible outlines for it.
-    let has_usable_outline = probes
-        .iter()
-        .any(|&c| {
-            face.glyph_index(c)
-                .and_then(|id| face.glyph_bounding_box(id))
-                .is_some()
-        });
+    let has_usable_outline = probes.iter().any(|&c| {
+        face.glyph_index(c)
+            .and_then(|id| face.glyph_bounding_box(id))
+            .is_some()
+    });
     if !has_usable_outline {
         return None;
     }
@@ -484,12 +459,8 @@ fn core_text_fallback_path_for_probes(probes: &[char]) -> Option<PathBuf> {
     }
 
     let base_name = CFString::new(".AppleSystemUIFont");
-    let sample: String = probes
-        .iter()
-        .collect();
-    let sample_len = sample
-        .encode_utf16()
-        .count() as isize;
+    let sample: String = probes.iter().collect();
+    let sample_len = sample.encode_utf16().count() as isize;
     if sample_len == 0 {
         return None;
     }
@@ -505,7 +476,10 @@ fn core_text_fallback_path_for_probes(probes: &[char]) -> Option<PathBuf> {
         let fallback_font = CTFontCreateForString(
             base_font,
             sample.as_concrete_TypeRef() as _,
-            CFRange { location: 0, length: sample_len },
+            CFRange {
+                location: 0,
+                length: sample_len,
+            },
         );
         CFRelease(base_font);
 
@@ -637,9 +611,7 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
                         .map(|m| m.len()),
                 ),
                 fontdb::Source::SharedFile(p, _) => {
-                    let path = p
-                        .as_path()
-                        .to_path_buf();
+                    let path = p.as_path().to_path_buf();
                     let byte_len = std::fs::metadata(&path)
                         .ok()
                         .map(|m| m.len());
@@ -647,10 +619,7 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
                 }
                 fontdb::Source::Binary(arc) => {
                     // Keep the bytes in memory so the record is self-contained.
-                    let bytes: Arc<[u8]> = Arc::from(
-                        arc.as_ref()
-                            .as_ref(),
-                    );
+                    let bytes: Arc<[u8]> = Arc::from(arc.as_ref().as_ref());
                     let byte_len = Some(bytes.len() as u64);
                     (Some(bytes), None, byte_len)
                 }
@@ -704,12 +673,7 @@ pub fn warm_fallbacks() {
     for record in &chain {
         let _ = record.ensure_face();
     }
-    info!(
-        "warm_fallbacks() took {} ms",
-        start
-            .elapsed()
-            .as_millis()
-    );
+    info!("warm_fallbacks() took {} ms", start.elapsed().as_millis());
 }
 
 #[cfg(test)]

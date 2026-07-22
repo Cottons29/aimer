@@ -25,7 +25,10 @@ impl StatefulWidget for SameLookingSection {
         // (e.g. a window resize) by adopting it during reconciliation, so the
         // selected tab survives without any manual persistence — this only
         // needs to provide the initial value.
-        SameLookingSectionState { current_index: 0, state: StateUpdater::new() }
+        SameLookingSectionState {
+            current_index: 0,
+            state: StateUpdater::new(),
+        }
     }
 }
 
@@ -126,7 +129,10 @@ mod tests {
 
     #[test]
     fn platform_image_wraps_out_of_range_index() {
-        assert_eq!(platform_image(PLATFORM_IMAGE.len()), "assets/macos_screenshot.png");
+        assert_eq!(
+            platform_image(PLATFORM_IMAGE.len()),
+            "assets/macos_screenshot.png"
+        );
     }
 
     #[test]

@@ -29,10 +29,7 @@ fn execute_in(target: String, dir: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("resolving project directory {}", dir.display()))?;
     let dir = canonical.as_path();
 
-    let name = manifest
-        .package
-        .name
-        .clone();
+    let name = manifest.package.name.clone();
     let group = if manifest
         .package
         .group
@@ -40,10 +37,7 @@ fn execute_in(target: String, dir: &Path) -> anyhow::Result<()> {
     {
         "com.example.app".to_string()
     } else {
-        manifest
-            .package
-            .group
-            .clone()
+        manifest.package.group.clone()
     };
 
     match target.as_str() {
@@ -78,7 +72,12 @@ fn execute_in(target: String, dir: &Path) -> anyhow::Result<()> {
 fn migrate_web(dir: &Path, name: &str, group: &str) -> anyhow::Result<()> {
     let web_dir = dir.join("builds/web");
     if web_dir.exists() {
-        for file in &["Trunk.toml", "index.html", "favicon.ico", "apple-touch-icon.png"] {
+        for file in &[
+            "Trunk.toml",
+            "index.html",
+            "favicon.ico",
+            "apple-touch-icon.png",
+        ] {
             let path = web_dir.join(file);
             if path.exists() {
                 fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
@@ -160,8 +159,14 @@ mod tests {
         fs::create_dir_all(&linux_dir).unwrap();
         fs::write(linux_dir.join("old_file.txt"), "old").unwrap();
 
-        migrate_platform(dir, "linux", "demo-app", "com.example.demo", &create::linux::create)
-            .unwrap();
+        migrate_platform(
+            dir,
+            "linux",
+            "demo-app",
+            "com.example.demo",
+            &create::linux::create,
+        )
+        .unwrap();
 
         // Old files are gone, new scaffold is present.
         assert!(
@@ -182,8 +187,11 @@ mod tests {
     fn migrate_rejects_unknown_target() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        fs::write(dir.join("aimer.toml"), "[application]\nname = \"test\"\nversion = \"0.1.0\"\n")
-            .unwrap();
+        fs::write(
+            dir.join("aimer.toml"),
+            "[application]\nname = \"test\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
 
         let result = execute_in("playstation".to_string(), dir);
         assert!(result.is_err());

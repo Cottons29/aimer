@@ -70,10 +70,7 @@ fn public_monospace_and_highlighted_rich_text_contracts_compose() {
     assert!(
         flattened
             .iter()
-            .all(|span| span
-                .style
-                .font_family
-                == family)
+            .all(|span| span.style.font_family == family)
     );
     assert_eq!(
         flattened[0]

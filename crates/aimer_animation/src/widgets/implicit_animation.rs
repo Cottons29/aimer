@@ -68,7 +68,13 @@ where
         W: Widget,
     {
         let builder = Rc::new(move |value: &T, ctx: &BuildContext| builder(value).to_element(ctx));
-        Self { value, duration, curve, builder, widget_key: None }
+        Self {
+            value,
+            duration,
+            curve,
+            builder,
+            widget_key: None,
+        }
     }
 
     /// Sets the identity of the animated builder for widget reconciliation.
@@ -103,8 +109,7 @@ where
     T: Animatable + Clone + PartialEq + 'static,
 {
     fn key(&self) -> Option<Key> {
-        self.widget_key
-            .clone()
+        self.widget_key.clone()
     }
 
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
@@ -144,29 +149,21 @@ where
             .set_curve(new.curve);
 
         if self.target != new.target {
-            let current = self
-                .tween
-                .with(|tween| {
-                    tween
-                        .as_ref()
-                        .map(|tween| {
-                            tween.lerp(
-                                self.controller
-                                    .value(),
-                            )
-                        })
-                        .unwrap_or_else(|| {
-                            self.current
-                                .with(Clone::clone)
-                        })
-                });
+            let current = self.tween.with(|tween| {
+                tween
+                    .as_ref()
+                    .map(|tween| tween.lerp(self.controller.value()))
+                    .unwrap_or_else(|| {
+                        self.current
+                            .with(Clone::clone)
+                    })
+            });
             self.current
                 .with_mut(|value| *value = current.clone());
             self.tween
                 .with_mut(|tween| *tween = Some(Tween::new(current, new.target.clone())));
             self.target = new.target.clone();
-            self.controller
-                .reset();
+            self.controller.reset();
             self.controller
                 .forward_from_first_tick();
             request_next_frame();
@@ -178,9 +175,7 @@ where
             current: self.current.clone(),
             target: self.target.clone(),
             builder: self.builder.clone(),
-            controller: self
-                .controller
-                .clone(),
+            controller: self.controller.clone(),
             tween: self.tween.clone(),
         }
     }
@@ -205,9 +200,7 @@ impl<T: Animatable + Clone + 'static> Widget for ImplicitAnimatedFrame<T> {
             current: self.current.clone(),
             target: self.target.clone(),
             builder: self.builder.clone(),
-            controller: self
-                .controller
-                .clone(),
+            controller: self.controller.clone(),
             tween: self.tween.clone(),
         })
     }
@@ -230,26 +223,21 @@ impl<T: Animatable + Clone + 'static> Drawable for ImplicitAnimatedElement<T> {
         let progress = self
             .controller
             .tick(AnimInstant::now());
-        let value = self
-            .tween
-            .with(|tween| {
-                tween
-                    .as_ref()
-                    .map(|tween| tween.lerp(progress))
-                    .unwrap_or_else(|| {
-                        self.current
-                            .with(Clone::clone)
-                    })
-            });
+        let value = self.tween.with(|tween| {
+            tween
+                .as_ref()
+                .map(|tween| tween.lerp(progress))
+                .unwrap_or_else(|| {
+                    self.current
+                        .with(Clone::clone)
+                })
+        });
         self.current
             .with_mut(|current| *current = value.clone());
         unsafe { *self.child.get() = (self.builder)(&value, ctx) };
         unsafe { &*self.child.get() }.draw(ctx);
 
-        if self
-            .controller
-            .is_animating()
-        {
+        if self.controller.is_animating() {
             request_next_frame();
         } else {
             self.current
@@ -385,7 +373,10 @@ mod tests {
     fn explicit_key_sets_reconciliation_identity() {
         let animated = widget(1.0).key("implicit-animation");
 
-        assert_eq!(Widget::key(&animated), Some(Key::Value("implicit-animation".to_owned())));
+        assert_eq!(
+            Widget::key(&animated),
+            Some(Key::Value("implicit-animation".to_owned()))
+        );
     }
 
     #[test]
@@ -421,15 +412,11 @@ mod tests {
 
         state.adopt_config_from(&new_state);
 
-        state
-            .tween
-            .with(|tween| {
-                let tween = tween
-                    .as_ref()
-                    .unwrap();
-                assert_eq!(tween.begin, 2.0);
-                assert_eq!(tween.end, 10.0);
-            });
+        state.tween.with(|tween| {
+            let tween = tween.as_ref().unwrap();
+            assert_eq!(tween.begin, 2.0);
+            assert_eq!(tween.end, 10.0);
+        });
         assert!(
             state
                 .controller
@@ -447,15 +434,11 @@ mod tests {
 
         state.adopt_config_from(&widget(20.0).create_state());
 
-        state
-            .tween
-            .with(|tween| {
-                let tween = tween
-                    .as_ref()
-                    .unwrap();
-                assert!((tween.begin - 5.0).abs() < f32::EPSILON);
-                assert_eq!(tween.end, 20.0);
-            });
+        state.tween.with(|tween| {
+            let tween = tween.as_ref().unwrap();
+            assert!((tween.begin - 5.0).abs() < f32::EPSILON);
+            assert_eq!(tween.end, 20.0);
+        });
     }
 
     #[test]

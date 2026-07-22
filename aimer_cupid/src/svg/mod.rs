@@ -25,7 +25,14 @@ pub struct SvgTransform {
 
 impl Default for SvgTransform {
     fn default() -> Self {
-        Self { sx: 1.0, ky: 0.0, kx: 0.0, sy: 1.0, tx: 0.0, ty: 0.0 }
+        Self {
+            sx: 1.0,
+            ky: 0.0,
+            kx: 0.0,
+            sy: 1.0,
+            tx: 0.0,
+            ty: 0.0,
+        }
     }
 }
 
@@ -53,7 +60,10 @@ impl SvgTransform {
     }
 
     pub fn transform_point(self, x: f32, y: f32) -> (f32, f32) {
-        (self.sx * x + self.kx * y + self.tx, self.ky * x + self.sy * y + self.ty)
+        (
+            self.sx * x + self.kx * y + self.tx,
+            self.ky * x + self.sy * y + self.ty,
+        )
     }
 }
 
@@ -115,7 +125,12 @@ impl From<Color> for SvgColor {
 
 impl SvgColor {
     pub const fn rgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
-        Self { r: r as f32 / 255.0, g: g as f32 / 255.0, b: b as f32 / 255.0, a: a as f32 / 255.0 }
+        Self {
+            r: r as f32 / 255.0,
+            g: g as f32 / 255.0,
+            b: b as f32 / 255.0,
+            a: a as f32 / 255.0,
+        }
     }
 }
 
@@ -138,10 +153,28 @@ pub struct SvgStroke {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SvgPathCommand {
-    MoveTo { x: f32, y: f32 },
-    LineTo { x: f32, y: f32 },
-    QuadraticTo { control_x: f32, control_y: f32, x: f32, y: f32 },
-    CubicTo { control1_x: f32, control1_y: f32, control2_x: f32, control2_y: f32, x: f32, y: f32 },
+    MoveTo {
+        x: f32,
+        y: f32,
+    },
+    LineTo {
+        x: f32,
+        y: f32,
+    },
+    QuadraticTo {
+        control_x: f32,
+        control_y: f32,
+        x: f32,
+        y: f32,
+    },
+    CubicTo {
+        control1_x: f32,
+        control1_y: f32,
+        control2_x: f32,
+        control2_y: f32,
+        x: f32,
+        y: f32,
+    },
     Close,
 }
 
@@ -244,23 +277,9 @@ mod tests {
             .mesh_for(&concave, SvgMeshStyle::Fill(SvgFillRule::EvenOdd), 1.0)
             .unwrap();
 
-        assert!(
-            !non_zero
-                .vertices
-                .is_empty()
-        );
-        assert_eq!(
-            non_zero
-                .indices
-                .len()
-                % 3,
-            0
-        );
-        assert!(
-            !even_odd
-                .indices
-                .is_empty()
-        );
+        assert!(!non_zero.vertices.is_empty());
+        assert_eq!(non_zero.indices.len() % 3, 0);
+        assert!(!even_odd.indices.is_empty());
         assert!(!Arc::ptr_eq(&non_zero, &even_odd));
     }
 
@@ -268,7 +287,12 @@ mod tests {
     fn tessellates_strokes_and_geometry_parameters_invalidate_cache() {
         let line = geometry([
             SvgPathCommand::MoveTo { x: 0.0, y: 0.0 },
-            SvgPathCommand::QuadraticTo { control_x: 5.0, control_y: 8.0, x: 10.0, y: 0.0 },
+            SvgPathCommand::QuadraticTo {
+                control_x: 5.0,
+                control_y: 8.0,
+                x: 10.0,
+                y: 0.0,
+            },
         ]);
         let mut cache = SvgGeometryCache::new(1024 * 1024, 16);
         let thin = SvgMeshStyle::Stroke {
@@ -296,11 +320,7 @@ mod tests {
 
         assert!(Arc::ptr_eq(&first, &reused));
         assert!(!Arc::ptr_eq(&first, &changed));
-        assert!(
-            !first
-                .vertices
-                .is_empty()
-        );
+        assert!(!first.vertices.is_empty());
     }
 
     #[test]
@@ -314,7 +334,10 @@ mod tests {
             .unwrap();
         let _new_color = SvgColor::rgba8(255, 0, 0, 255);
         let _new_opacity = 0.25;
-        let _new_transform = SvgTransform { tx: 30.0, ..SvgTransform::default() };
+        let _new_transform = SvgTransform {
+            tx: 30.0,
+            ..SvgTransform::default()
+        };
         let after_dynamic_change = cache
             .mesh_for(&geometry, style, 1.0)
             .unwrap();
@@ -333,9 +356,18 @@ mod tests {
         let mut cache = SvgGeometryCache::new(1024 * 1024, 2);
         for offset in 0..3 {
             let translated = geometry([
-                SvgPathCommand::MoveTo { x: offset as f32, y: 0.0 },
-                SvgPathCommand::LineTo { x: offset as f32 + 2.0, y: 0.0 },
-                SvgPathCommand::LineTo { x: offset as f32, y: 2.0 },
+                SvgPathCommand::MoveTo {
+                    x: offset as f32,
+                    y: 0.0,
+                },
+                SvgPathCommand::LineTo {
+                    x: offset as f32 + 2.0,
+                    y: 0.0,
+                },
+                SvgPathCommand::LineTo {
+                    x: offset as f32,
+                    y: 2.0,
+                },
                 SvgPathCommand::Close,
             ]);
             cache

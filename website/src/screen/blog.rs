@@ -157,7 +157,11 @@ fn blog_row(
     let link = TextButton::new(blog.title)
         .style(style)
         .hover_style(hover_style)
-        .on_press(move || navigator.push(AppRouter::BlogDetail { id: route_id.clone() }))
+        .on_press(move || {
+            navigator.push(AppRouter::BlogDetail {
+                id: route_id.clone(),
+            })
+        })
         .boxed();
 
     if mobile {
@@ -302,7 +306,10 @@ mod tests {
     fn malformed_archive_dates_fall_back_without_panicking() {
         assert_eq!(archive_heading("not-a-date"), "Posts");
         assert_eq!(display_archive_date("not-a-date"), "not-a-date");
-        assert_eq!(display_archive_date("2026-13-18T02:22:00Z"), "2026-13-18T02:22:00Z");
+        assert_eq!(
+            display_archive_date("2026-13-18T02:22:00Z"),
+            "2026-13-18T02:22:00Z"
+        );
     }
 
     #[test]
@@ -323,6 +330,9 @@ mod tests {
 
     #[test]
     fn upload_time_is_presented_as_a_readable_utc_date() {
-        assert_eq!(display_upload_time("2026-07-18T02:22:00Z"), "2026-07-18 02:22 UTC");
+        assert_eq!(
+            display_upload_time("2026-07-18T02:22:00Z"),
+            "2026-07-18 02:22 UTC"
+        );
     }
 }

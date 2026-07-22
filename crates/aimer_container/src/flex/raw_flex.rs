@@ -115,9 +115,7 @@ impl<W: Widget + 'static> Flex<W> {
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow: self.overflow,
-            children: children
-                .into_iter()
-                .collect(),
+            children: children.into_iter().collect(),
         }
     }
 
@@ -127,8 +125,7 @@ impl<W: Widget + 'static> Flex<W> {
     /// Use [`Flex::children`] to replace the collection or establish a new item
     /// type.
     pub fn add_child(mut self, child: W) -> Self {
-        self.children
-            .push(child);
+        self.children.push(child);
         self
     }
 }
@@ -200,8 +197,11 @@ fn compute_wrap_layout(
             }
             LayoutDirection::Column => (child.height, child.width, max_height, gap_y, gap_x),
         };
-        let required_main =
-            if main_offset > 0.0 { main_offset + main_gap + child_main } else { child_main };
+        let required_main = if main_offset > 0.0 {
+            main_offset + main_gap + child_main
+        } else {
+            child_main
+        };
         if main_offset > 0.0 && required_main > max_main {
             max_line_main = max_line_main.max(main_offset);
             cross_offset += line_cross + cross_gap;
@@ -221,12 +221,20 @@ fn compute_wrap_layout(
     }
 
     max_line_main = max_line_main.max(main_offset);
-    let total_cross = if children.is_empty() { 0.0 } else { cross_offset + line_cross };
+    let total_cross = if children.is_empty() {
+        0.0
+    } else {
+        cross_offset + line_cross
+    };
     let size = match direction {
-        LayoutDirection::Row | LayoutDirection::Inherit => {
-            ResolvedSize { width: max_line_main, height: total_cross }
-        }
-        LayoutDirection::Column => ResolvedSize { width: total_cross, height: max_line_main },
+        LayoutDirection::Row | LayoutDirection::Inherit => ResolvedSize {
+            width: max_line_main,
+            height: total_cross,
+        },
+        LayoutDirection::Column => ResolvedSize {
+            width: total_cross,
+            height: max_line_main,
+        },
     };
     WrapLayout { offsets, size }
 }
@@ -267,10 +275,8 @@ impl RawFlex {
         let layout = compute_wrap_layout(
             &sizes,
             self.direction,
-            ctx.box_constraint
-                .max_width,
-            ctx.box_constraint
-                .max_height,
+            ctx.box_constraint.max_width,
+            ctx.box_constraint.max_height,
             gap_x,
             gap_y,
         );
@@ -279,16 +285,8 @@ impl RawFlex {
 
     fn draw_wrapped(&self, ctx: &BuildContext, gap_x: f32, gap_y: f32) {
         let (sizes, layout) = self.wrapped_layout(ctx, gap_x, gap_y);
-        let extra_width = (ctx
-            .box_constraint
-            .max_width
-            - layout.size.width)
-            .max(0.0);
-        let extra_height = (ctx
-            .box_constraint
-            .max_height
-            - layout.size.height)
-            .max(0.0);
+        let extra_width = (ctx.box_constraint.max_width - layout.size.width).max(0.0);
+        let extra_height = (ctx.box_constraint.max_height - layout.size.height).max(0.0);
         let base_x = match self.horizontal_alignment {
             BoxAlignment::Start => 0.0,
             BoxAlignment::Center => extra_width / 2.0,
@@ -350,12 +348,8 @@ impl RawFlex {
 impl RawFlex {
     #[inline]
     fn resole_gaps(&self, ctx: &BuildContext) -> (f32, f32) {
-        let max_width = ctx
-            .box_constraint
-            .max_width;
-        let max_height = ctx
-            .box_constraint
-            .max_height;
+        let max_width = ctx.box_constraint.max_width;
+        let max_height = ctx.box_constraint.max_height;
         let gap_x = self
             .gaps
             .left
@@ -381,12 +375,8 @@ impl Drawable for RawFlex {
     fn draw(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
         let (gap_x, gap_y) = self.resole_gaps(ctx);
-        let max_w = ctx
-            .box_constraint
-            .max_width;
-        let max_h = ctx
-            .box_constraint
-            .max_height;
+        let max_w = ctx.box_constraint.max_width;
+        let max_h = ctx.box_constraint.max_height;
 
         let actual_w = size.width;
         let actual_h = size.height;
@@ -424,16 +414,13 @@ impl Drawable for RawFlex {
                     .get_transform_translation()
                     .into();
 
-                self.cache_bound
-                    .save(
-                        ctx.scale,
-                        parent_pos.x,
-                        parent_pos.y,
-                        ctx.box_constraint
-                            .max_width,
-                        ctx.box_constraint
-                            .max_height,
-                    );
+                self.cache_bound.save(
+                    ctx.scale,
+                    parent_pos.x,
+                    parent_pos.y,
+                    ctx.box_constraint.max_width,
+                    ctx.box_constraint.max_height,
+                );
 
                 let cp = ctx.cursor_pos;
                 if self
@@ -472,12 +459,8 @@ impl Drawable for RawFlex {
             visible_rect: ctx.visible_rect,
             window: ctx.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx
-                .async_handle
-                .clone(),
-            inherited_states: ctx
-                .inherited_states
-                .clone(),
+            async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
 
         // Pass 1: measure regular children to find remaining space for flex children.
@@ -509,9 +492,7 @@ impl Drawable for RawFlex {
                         .max_width = f32::MAX;
                     child_ctx
                         .box_constraint
-                        .max_height = ctx
-                        .box_constraint
-                        .max_height;
+                        .max_height = ctx.box_constraint.max_height;
                 }
                 LayoutDirection::Column => {
                     child_ctx
@@ -519,9 +500,7 @@ impl Drawable for RawFlex {
                         .max_height = f32::MAX;
                     child_ctx
                         .box_constraint
-                        .max_width = ctx
-                        .box_constraint
-                        .max_width;
+                        .max_width = ctx.box_constraint.max_width;
                 }
             }
             let s = child.computed_size(&child_ctx);
@@ -557,9 +536,7 @@ impl Drawable for RawFlex {
                             .max_width = flex_shares[i];
                         child_ctx
                             .box_constraint
-                            .max_height = ctx
-                            .box_constraint
-                            .max_height;
+                            .max_height = ctx.box_constraint.max_height;
                     }
                     LayoutDirection::Column => {
                         child_ctx
@@ -567,9 +544,7 @@ impl Drawable for RawFlex {
                             .max_height = flex_shares[i];
                         child_ctx
                             .box_constraint
-                            .max_width = ctx
-                            .box_constraint
-                            .max_width;
+                            .max_width = ctx.box_constraint.max_width;
                     }
                 }
             } else if let Some(size) = child_sizes[i] {
@@ -580,9 +555,7 @@ impl Drawable for RawFlex {
                             .max_width = size.width;
                         child_ctx
                             .box_constraint
-                            .max_height = ctx
-                            .box_constraint
-                            .max_height;
+                            .max_height = ctx.box_constraint.max_height;
                     }
                     LayoutDirection::Column => {
                         child_ctx
@@ -590,9 +563,7 @@ impl Drawable for RawFlex {
                             .max_height = size.height;
                         child_ctx
                             .box_constraint
-                            .max_width = ctx
-                            .box_constraint
-                            .max_width;
+                            .max_width = ctx.box_constraint.max_width;
                     }
                 }
             } else {
@@ -603,9 +574,7 @@ impl Drawable for RawFlex {
                             .max_width = (max_w - current_x).max(0.0);
                         child_ctx
                             .box_constraint
-                            .max_height = ctx
-                            .box_constraint
-                            .max_height;
+                            .max_height = ctx.box_constraint.max_height;
                     }
                     LayoutDirection::Column => {
                         child_ctx
@@ -613,9 +582,7 @@ impl Drawable for RawFlex {
                             .max_height = (max_h - current_y).max(0.0);
                         child_ctx
                             .box_constraint
-                            .max_width = ctx
-                            .box_constraint
-                            .max_width;
+                            .max_width = ctx.box_constraint.max_width;
                     }
                 }
             }
@@ -684,12 +651,8 @@ impl Drawable for RawFlex {
                         .map(|(vx, vy, vw, vh)| (vx - offset_x, vy - offset_y, vw, vh)),
                     window: ctx.window.clone(),
                     #[cfg(not(target_arch = "wasm32"))]
-                    async_handle: ctx
-                        .async_handle
-                        .clone(),
-                    inherited_states: ctx
-                        .inherited_states
-                        .clone(),
+                    async_handle: ctx.async_handle.clone(),
+                    inherited_states: ctx.inherited_states.clone(),
                 };
 
                 draw_commands.push((child.layer(), offset_x, offset_y, draw_ctx, child.as_ref()));
@@ -720,22 +683,17 @@ impl Drawable for RawFlex {
             let rx = (offset_x * scale).round() / scale;
             let ry = (offset_y * scale).round() / scale;
 
-            draw_ctx
-                .canvas
-                .save();
+            draw_ctx.canvas.save();
             draw_ctx
                 .canvas
                 .translate(Vec2d { x: rx, y: ry });
             Self::render_child(child, &draw_ctx);
-            draw_ctx
-                .canvas
-                .restore();
+            draw_ctx.canvas.restore();
         }
 
         // Pop the clip pushed by overflow_behavior.apply_overflow_behave()
         if self.overflow_behavior == OverflowBehavior::Hidden {
-            ctx.canvas
-                .clear_clip();
+            ctx.canvas.clear_clip();
         }
         ctx.canvas.restore();
     }
@@ -783,31 +741,19 @@ impl LayoutElement for RawFlex {
         let gap_x = self
             .gaps
             .left
-            .value(
-                ctx.box_constraint
-                    .max_width,
-                ctx.scale,
-            )
+            .value(ctx.box_constraint.max_width, ctx.scale)
             + self
                 .gaps
                 .right
-                .value(
-                    ctx.box_constraint
-                        .max_width,
-                    ctx.scale,
-                );
-        let gap_y = self.gaps.top.value(
-            ctx.box_constraint
-                .max_height,
-            ctx.scale,
-        ) + self
+                .value(ctx.box_constraint.max_width, ctx.scale);
+        let gap_y = self
             .gaps
-            .bottom
-            .value(
-                ctx.box_constraint
-                    .max_height,
-                ctx.scale,
-            );
+            .top
+            .value(ctx.box_constraint.max_height, ctx.scale)
+            + self
+                .gaps
+                .bottom
+                .value(ctx.box_constraint.max_height, ctx.scale);
 
         let total_gap = if child_count > 1 {
             match self.direction {
@@ -819,14 +765,8 @@ impl LayoutElement for RawFlex {
         };
 
         let max_main = match self.direction {
-            LayoutDirection::Row | LayoutDirection::Inherit => {
-                ctx.box_constraint
-                    .max_width
-            }
-            LayoutDirection::Column => {
-                ctx.box_constraint
-                    .max_height
-            }
+            LayoutDirection::Row | LayoutDirection::Inherit => ctx.box_constraint.max_width,
+            LayoutDirection::Column => ctx.box_constraint.max_height,
         };
 
         // Pass 1: measure sized children, collect flex weights
@@ -844,12 +784,8 @@ impl LayoutElement for RawFlex {
             visible_rect: ctx.visible_rect,
             window: ctx.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx
-                .async_handle
-                .clone(),
-            inherited_states: ctx
-                .inherited_states
-                .clone(),
+            async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
 
         for child in &self.children {
@@ -870,9 +806,7 @@ impl LayoutElement for RawFlex {
                         .max_width = f32::MAX;
                     child_ctx
                         .box_constraint
-                        .max_height = ctx
-                        .box_constraint
-                        .max_height;
+                        .max_height = ctx.box_constraint.max_height;
                 }
                 LayoutDirection::Column => {
                     child_ctx
@@ -880,9 +814,7 @@ impl LayoutElement for RawFlex {
                         .max_height = f32::MAX;
                     child_ctx
                         .box_constraint
-                        .max_width = ctx
-                        .box_constraint
-                        .max_width;
+                        .max_width = ctx.box_constraint.max_width;
                 }
             }
             let s = child.computed_size(&child_ctx);
@@ -922,9 +854,7 @@ impl LayoutElement for RawFlex {
                             .max_width = flex_shares[i];
                         child_ctx
                             .box_constraint
-                            .max_height = ctx
-                            .box_constraint
-                            .max_height;
+                            .max_height = ctx.box_constraint.max_height;
                     }
                     LayoutDirection::Column => {
                         child_ctx
@@ -932,9 +862,7 @@ impl LayoutElement for RawFlex {
                             .max_height = flex_shares[i];
                         child_ctx
                             .box_constraint
-                            .max_width = ctx
-                            .box_constraint
-                            .max_width;
+                            .max_width = ctx.box_constraint.max_width;
                     }
                 }
                 child.computed_size(&child_ctx)
@@ -972,7 +900,10 @@ impl LayoutElement for RawFlex {
             }
         }
 
-        let result = ResolvedSize { width: total_width, height: total_height };
+        let result = ResolvedSize {
+            width: total_width,
+            height: total_height,
+        };
         self.cache
             .set_computed(ctx.box_constraint, scale_bits, result);
         result
@@ -983,8 +914,7 @@ impl LayoutElement for RawFlex {
     }
 
     fn invalidate_layout(&self) {
-        self.cache
-            .invalidate();
+        self.cache.invalidate();
         for child in &self.children {
             child.invalidate_layout();
         }
@@ -1005,29 +935,59 @@ mod wrap_tests {
     #[test]
     fn row_wraps_children_onto_additional_lines() {
         let children = vec![
-            ResolvedSize { width: 60.0, height: 10.0 },
-            ResolvedSize { width: 50.0, height: 20.0 },
-            ResolvedSize { width: 40.0, height: 15.0 },
+            ResolvedSize {
+                width: 60.0,
+                height: 10.0,
+            },
+            ResolvedSize {
+                width: 50.0,
+                height: 20.0,
+            },
+            ResolvedSize {
+                width: 40.0,
+                height: 15.0,
+            },
         ];
 
         let layout = compute_wrap_layout(&children, LayoutDirection::Row, 100.0, 100.0, 5.0, 3.0);
 
-        assert_eq!(layout.size, ResolvedSize { width: 95.0, height: 33.0 });
+        assert_eq!(
+            layout.size,
+            ResolvedSize {
+                width: 95.0,
+                height: 33.0
+            }
+        );
         assert_eq!(layout.offsets, vec![(0.0, 0.0), (0.0, 13.0), (55.0, 13.0)]);
     }
 
     #[test]
     fn column_wraps_children_onto_additional_columns() {
         let children = vec![
-            ResolvedSize { width: 10.0, height: 60.0 },
-            ResolvedSize { width: 20.0, height: 50.0 },
-            ResolvedSize { width: 15.0, height: 40.0 },
+            ResolvedSize {
+                width: 10.0,
+                height: 60.0,
+            },
+            ResolvedSize {
+                width: 20.0,
+                height: 50.0,
+            },
+            ResolvedSize {
+                width: 15.0,
+                height: 40.0,
+            },
         ];
 
         let layout =
             compute_wrap_layout(&children, LayoutDirection::Column, 100.0, 100.0, 3.0, 5.0);
 
-        assert_eq!(layout.size, ResolvedSize { width: 33.0, height: 95.0 });
+        assert_eq!(
+            layout.size,
+            ResolvedSize {
+                width: 33.0,
+                height: 95.0
+            }
+        );
         assert_eq!(layout.offsets, vec![(0.0, 0.0), (13.0, 0.0), (13.0, 55.0)]);
     }
 }

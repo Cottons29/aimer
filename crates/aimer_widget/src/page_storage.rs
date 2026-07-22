@@ -63,10 +63,7 @@ pub fn read<T: Clone + 'static>(key: impl Into<Key>) -> Option<T> {
     STORE.with(|m| {
         m.borrow()
             .get(&key)
-            .and_then(|v| {
-                v.downcast_ref::<T>()
-                    .cloned()
-            })
+            .and_then(|v| v.downcast_ref::<T>().cloned())
     })
 }
 
@@ -81,8 +78,7 @@ pub fn read_or<T: Clone + 'static>(key: impl Into<Key>, default: T) -> T {
 pub fn remove(key: impl Into<Key>) {
     let key = key.into();
     STORE.with(|m| {
-        m.borrow_mut()
-            .remove(&key);
+        m.borrow_mut().remove(&key);
     });
 }
 
@@ -95,11 +91,19 @@ mod tests {
     // restores the default, and a wrong-type read does not panic.
     #[test]
     fn write_then_read_round_trips() {
-        assert_eq!(read_or("tab", 0usize), 0, "unknown key falls back to default");
+        assert_eq!(
+            read_or("tab", 0usize),
+            0,
+            "unknown key falls back to default"
+        );
 
         write("tab", 1usize); // user picked iOS
         assert_eq!(read::<usize>("tab"), Some(1), "written value restores");
-        assert_eq!(read_or("tab", 0usize), 1, "read_or restores the picked value, not the default");
+        assert_eq!(
+            read_or("tab", 0usize),
+            1,
+            "read_or restores the picked value, not the default"
+        );
 
         // A later write overwrites (the store always holds the latest value).
         write("tab", 2usize);

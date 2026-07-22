@@ -9,7 +9,11 @@ pub enum SvgError {
     #[error("invalid SVG selector: {0}")]
     InvalidSelector(String),
     #[error("SVG resource limit exceeded for {resource}: {actual} > {limit}")]
-    LimitExceeded { resource: &'static str, actual: usize, limit: usize },
+    LimitExceeded {
+        resource: &'static str,
+        actual: usize,
+        limit: usize,
+    },
     #[error("external SVG resource is not allowed: {0}")]
     ExternalResource(String),
     #[error("SVG selector matched {0} paths; exactly one is required")]

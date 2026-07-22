@@ -15,12 +15,36 @@ struct Tool {
 }
 
 const TOOLS: &[Tool] = &[
-    Tool { bin: "rustc", probe: &["--version"], purpose: "Rust compiler" },
-    Tool { bin: "cargo", probe: &["--version"], purpose: "Rust package manager" },
-    Tool { bin: "trunk", probe: &["--version"], purpose: "Web (wasm) dev server & bundler" },
-    Tool { bin: "xcrun", probe: &["--version"], purpose: "iOS/macOS toolchain (Xcode)" },
-    Tool { bin: "adb", probe: &["--version"], purpose: "Android device bridge" },
-    Tool { bin: "gradle", probe: &["--version"], purpose: "Android project builds" },
+    Tool {
+        bin: "rustc",
+        probe: &["--version"],
+        purpose: "Rust compiler",
+    },
+    Tool {
+        bin: "cargo",
+        probe: &["--version"],
+        purpose: "Rust package manager",
+    },
+    Tool {
+        bin: "trunk",
+        probe: &["--version"],
+        purpose: "Web (wasm) dev server & bundler",
+    },
+    Tool {
+        bin: "xcrun",
+        probe: &["--version"],
+        purpose: "iOS/macOS toolchain (Xcode)",
+    },
+    Tool {
+        bin: "adb",
+        probe: &["--version"],
+        purpose: "Android device bridge",
+    },
+    Tool {
+        bin: "gradle",
+        probe: &["--version"],
+        purpose: "Android project builds",
+    },
 ];
 
 /// Return `true` when `bin` can be executed (i.e. it is installed and on PATH).
@@ -42,7 +66,10 @@ pub fn ensure_tool(bin: &str, probe: &[&str]) -> Result<(), AimerError> {
 }
 
 pub fn execute() -> anyhow::Result<()> {
-    println!("{}", "Checking your Aimer development environment...\n".bold());
+    println!(
+        "{}",
+        "Checking your Aimer development environment...\n".bold()
+    );
 
     let mut missing = 0;
     for tool in TOOLS {
@@ -55,7 +82,10 @@ pub fn execute() -> anyhow::Result<()> {
             missing += 1;
             ("✘".red(), name.red())
         };
-        println!("  {mark}  {name} {}", format!("— {}", tool.purpose).dimmed());
+        println!(
+            "  {mark}  {name} {}",
+            format!("— {}", tool.purpose).dimmed()
+        );
     }
 
     println!();

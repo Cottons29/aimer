@@ -66,14 +66,11 @@ impl SvgDocument {
         let tree = usvg::Tree::from_data(bytes, &usvg::Options::default())
             .map_err(|error| SvgError::Parse(error.to_string()))?;
         let size = tree.size();
-        let viewport = SvgViewport { width: size.width(), height: size.height() };
-        if !viewport
-            .width
-            .is_finite()
-            || !viewport
-                .height
-                .is_finite()
-        {
+        let viewport = SvgViewport {
+            width: size.width(),
+            height: size.height(),
+        };
+        if !viewport.width.is_finite() || !viewport.height.is_finite() {
             return Err(SvgError::NonFinite);
         }
         if viewport.width > limits.max_viewport_dimension
@@ -90,7 +87,10 @@ impl SvgDocument {
 
         let mut builder = SceneBuilder::new(viewport, metadata, limits);
         builder.add_group(tree.root(), None, 1.0)?;
-        Ok(Self { scene: Arc::new(builder.finish()), diagnostics: diagnostics.into() })
+        Ok(Self {
+            scene: Arc::new(builder.finish()),
+            diagnostics: diagnostics.into(),
+        })
     }
 
     pub fn scene(&self) -> &Arc<SvgScene> {
@@ -123,10 +123,7 @@ pub struct SvgPath {
 
 impl SvgPath {
     pub fn from_path_data(data: &str) -> Result<Self, SvgError> {
-        if data
-            .trim()
-            .is_empty()
-        {
+        if data.trim().is_empty() {
             return Err(SvgError::InvalidPath("path data is empty".to_owned()));
         }
         let svg = format!(
@@ -152,11 +149,7 @@ impl SvgPath {
         let matches = document.select(selector)?;
         let path_nodes: Vec<_> = matches
             .into_iter()
-            .filter_map(|node_id| {
-                document
-                    .scene
-                    .node(node_id)
-            })
+            .filter_map(|node_id| document.scene.node(node_id))
             .filter(|node| node.element == SvgElementKind::Path)
             .collect();
         if path_nodes.len() != 1 {
@@ -167,9 +160,7 @@ impl SvgPath {
             .geometry(path_nodes[0])
             .ok_or(SvgError::PathSelection(0))?;
         Ok(Self {
-            commands: geometry
-                .commands
-                .clone(),
+            commands: geometry.commands.clone(),
         })
     }
 
@@ -191,49 +182,34 @@ fn collect_metadata(
     document: &usvg::roxmltree::Document<'_>,
     max_nodes: usize,
 ) -> Result<Vec<SourceMetadata>, SvgError> {
-    let supported =
-        ["svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon"];
+    let supported = [
+        "svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+    ];
     let mut metadata = Vec::new();
     let mut group_indices = HashMap::new();
     for node in document
         .descendants()
         .filter(|node| {
             node.is_element()
-                && supported.contains(
-                    &node
-                        .tag_name()
-                        .name(),
-                )
+                && supported.contains(&node.tag_name().name())
                 && !node
                     .ancestors()
                     .any(|ancestor| {
                         ancestor.is_element()
                             && matches!(
-                                ancestor
-                                    .tag_name()
-                                    .name(),
+                                ancestor.tag_name().name(),
                                 "defs" | "clipPath" | "mask" | "pattern" | "symbol"
                             )
                     })
         })
     {
-        if node
-            .tag_name()
-            .name()
-            == "svg"
-        {
+        if node.tag_name().name() == "svg" {
             continue;
         }
         check_limit("nodes", metadata.len() + 1, max_nodes)?;
         let parent_group_index = node
             .ancestors()
-            .find(|ancestor| {
-                ancestor.is_element()
-                    && ancestor
-                        .tag_name()
-                        .name()
-                        == "g"
-            })
+            .find(|ancestor| ancestor.is_element() && ancestor.tag_name().name() == "g")
             .and_then(|ancestor| {
                 group_indices
                     .get(&ancestor.id())
@@ -255,21 +231,13 @@ fn collect_metadata(
                 .filter(|id| !id.is_empty())
                 .map(Arc::from),
             classes,
-            element: if node
-                .tag_name()
-                .name()
-                == "g"
-            {
+            element: if node.tag_name().name() == "g" {
                 SvgElementKind::Group
             } else {
                 SvgElementKind::Path
             },
         });
-        if node
-            .tag_name()
-            .name()
-            == "g"
-        {
+        if node.tag_name().name() == "g" {
             group_indices.insert(node.id(), source_index);
         }
     }
@@ -309,10 +277,7 @@ fn collect_diagnostics(document: &usvg::roxmltree::Document<'_>) -> Vec<SvgDiagn
         .descendants()
         .filter(|node| node.is_element())
     {
-        let feature = match node
-            .tag_name()
-            .name()
-        {
+        let feature = match node.tag_name().name() {
             "linearGradient" | "radialGradient" => Some("gradient"),
             "pattern" => Some("pattern"),
             "clipPath" => Some("clip-path"),
@@ -341,9 +306,7 @@ fn reject_external_resources(document: &usvg::roxmltree::Document<'_>) -> Result
     {
         for attribute in node.attributes() {
             if matches!(attribute.name(), "href" | "xlink:href") {
-                let value = attribute
-                    .value()
-                    .trim();
+                let value = attribute.value().trim();
                 if !value.is_empty() && !value.starts_with('#') {
                     return Err(SvgError::ExternalResource(value.to_owned()));
                 }
@@ -379,10 +342,7 @@ impl SceneBuilder {
         let unnamed_path_metadata = metadata
             .iter()
             .filter(|metadata| {
-                metadata.element == SvgElementKind::Path
-                    && metadata
-                        .svg_id
-                        .is_none()
+                metadata.element == SvgElementKind::Path && metadata.svg_id.is_none()
             })
             .cloned()
             .collect();
@@ -403,9 +363,7 @@ impl SceneBuilder {
             nodes.push(SvgNode {
                 node_id,
                 svg_id: group.svg_id.clone(),
-                classes: group
-                    .classes
-                    .clone(),
+                classes: group.classes.clone(),
                 element: SvgElementKind::Group,
                 parent,
                 children: Arc::from([]),
@@ -449,9 +407,7 @@ impl SceneBuilder {
         SvgScene {
             viewport: self.viewport,
             nodes: nodes.into(),
-            geometries: self
-                .geometries
-                .into(),
+            geometries: self.geometries.into(),
         }
     }
 
@@ -461,14 +417,8 @@ impl SceneBuilder {
         parent: Option<SvgNodeId>,
         inherited_opacity: f32,
     ) -> Result<(), SvgError> {
-        let group_opacity = inherited_opacity
-            * group
-                .opacity()
-                .get();
-        let group_node_id = if group
-            .id()
-            .is_empty()
-        {
+        let group_opacity = inherited_opacity * group.opacity().get();
+        let group_node_id = if group.id().is_empty() {
             parent
         } else if let Some(metadata) = self
             .metadata_by_id
@@ -503,12 +453,7 @@ impl SceneBuilder {
         parent: Option<SvgNodeId>,
         opacity: f32,
     ) -> Result<(), SvgError> {
-        check_limit(
-            "nodes",
-            self.nodes.len() + 1,
-            self.limits
-                .max_nodes,
-        )?;
+        check_limit("nodes", self.nodes.len() + 1, self.limits.max_nodes)?;
         let metadata = if path.id().is_empty() {
             let metadata = self
                 .unnamed_path_metadata
@@ -535,51 +480,45 @@ impl SceneBuilder {
         check_limit(
             "path commands",
             self.command_count,
-            self.limits
-                .max_path_commands,
+            self.limits.max_path_commands,
         )?;
         let transform = convert_transform(path.abs_transform());
         if !transform.is_finite() || !opacity.is_finite() {
             return Err(SvgError::NonFinite);
         }
-        let geometry = self
-            .geometries
-            .len();
+        let geometry = self.geometries.len();
         self.geometries
-            .push(SvgGeometry { commands: commands.into() });
-        let node_id = SvgNodeId(self.nodes.len() as u32);
-        self.nodes
-            .push(SvgNode {
-                node_id,
-                svg_id: metadata
-                    .as_ref()
-                    .and_then(|metadata| {
-                        metadata
-                            .svg_id
-                            .clone()
-                    })
-                    .or_else(|| (!path.id().is_empty()).then(|| Arc::from(path.id()))),
-                classes: metadata
-                    .map(|metadata| metadata.classes)
-                    .unwrap_or_default(),
-                element: SvgElementKind::Path,
-                parent: source_parent,
-                children: Arc::from([]),
-                transform,
-                opacity,
-                geometry: Some(geometry),
-                fill: path
-                    .fill()
-                    .and_then(convert_fill),
-                stroke: path
-                    .stroke()
-                    .and_then(convert_stroke),
-                paint_order: match path.paint_order() {
-                    usvg::PaintOrder::FillAndStroke => SvgPaintOrder::FillAndStroke,
-                    usvg::PaintOrder::StrokeAndFill => SvgPaintOrder::StrokeAndFill,
-                },
-                visible: path.is_visible(),
+            .push(SvgGeometry {
+                commands: commands.into(),
             });
+        let node_id = SvgNodeId(self.nodes.len() as u32);
+        self.nodes.push(SvgNode {
+            node_id,
+            svg_id: metadata
+                .as_ref()
+                .and_then(|metadata| metadata.svg_id.clone())
+                .or_else(|| (!path.id().is_empty()).then(|| Arc::from(path.id()))),
+            classes: metadata
+                .map(|metadata| metadata.classes)
+                .unwrap_or_default(),
+            element: SvgElementKind::Path,
+            parent: source_parent,
+            children: Arc::from([]),
+            transform,
+            opacity,
+            geometry: Some(geometry),
+            fill: path
+                .fill()
+                .and_then(convert_fill),
+            stroke: path
+                .stroke()
+                .and_then(convert_stroke),
+            paint_order: match path.paint_order() {
+                usvg::PaintOrder::FillAndStroke => SvgPaintOrder::FillAndStroke,
+                usvg::PaintOrder::StrokeAndFill => SvgPaintOrder::StrokeAndFill,
+            },
+            visible: path.is_visible(),
+        });
         Ok(())
     }
 }
@@ -587,8 +526,14 @@ impl SceneBuilder {
 fn convert_path(path: &usvg::tiny_skia_path::Path) -> Vec<SvgPathCommand> {
     path.segments()
         .map(|segment| match segment {
-            PathSegment::MoveTo(point) => SvgPathCommand::MoveTo { x: point.x, y: point.y },
-            PathSegment::LineTo(point) => SvgPathCommand::LineTo { x: point.x, y: point.y },
+            PathSegment::MoveTo(point) => SvgPathCommand::MoveTo {
+                x: point.x,
+                y: point.y,
+            },
+            PathSegment::LineTo(point) => SvgPathCommand::LineTo {
+                x: point.x,
+                y: point.y,
+            },
             PathSegment::QuadTo(control, point) => SvgPathCommand::QuadraticTo {
                 control_x: control.x,
                 control_y: control.y,
@@ -632,12 +577,7 @@ fn convert_fill(fill: &usvg::Fill) -> Option<SvgFill> {
 
 fn convert_stroke(stroke: &usvg::Stroke) -> Option<SvgStroke> {
     Some(SvgStroke {
-        color: convert_paint(
-            stroke.paint(),
-            stroke
-                .opacity()
-                .get(),
-        )?,
+        color: convert_paint(stroke.paint(), stroke.opacity().get())?,
         width: stroke.width().get(),
         line_cap: match stroke.linecap() {
             usvg::LineCap::Butt => SvgLineCap::Butt,
@@ -650,9 +590,7 @@ fn convert_stroke(stroke: &usvg::Stroke) -> Option<SvgStroke> {
             usvg::LineJoin::Round => SvgLineJoin::Round,
             usvg::LineJoin::Bevel => SvgLineJoin::Bevel,
         },
-        miter_limit: stroke
-            .miterlimit()
-            .get(),
+        miter_limit: stroke.miterlimit().get(),
         dash_array: stroke
             .dasharray()
             .unwrap_or_default()
@@ -677,5 +615,13 @@ fn convert_paint(paint: &usvg::Paint, opacity: f32) -> Option<SvgColor> {
 }
 
 fn check_limit(resource: &'static str, actual: usize, limit: usize) -> Result<(), SvgError> {
-    if actual > limit { Err(SvgError::LimitExceeded { resource, actual, limit }) } else { Ok(()) }
+    if actual > limit {
+        Err(SvgError::LimitExceeded {
+            resource,
+            actual,
+            limit,
+        })
+    } else {
+        Ok(())
+    }
 }

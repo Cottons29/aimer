@@ -46,32 +46,14 @@ pub fn my_app() {
     // custom_animated_theme::start_custom_animated_theme_example()
     // test_scrollable()
     // test_scrollable_row()
-    // start_markdown_example();
+    start_markdown_example();
     // start_panic_recovery_example();
     // test_scroll_and_row();
     // start_svg_test();
     // panic_recovery::start_panic_recovery_example()
     // start_custom_animated_theme_example()
-    test_text()
+    // test_text()
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #[allow(unused)]
 fn test_text() {
@@ -268,8 +250,11 @@ fn test_border_outline() {
 pub fn test_scrollable() {
     let items: Vec<Box<dyn Widget>> = (0..1200)
         .map(|i| {
-            let color =
-                if i % 2 == 0 { Color::Rgb(100, 149, 237) } else { Color::Rgb(255, 160, 122) };
+            let color = if i % 2 == 0 {
+                Color::Rgb(100, 149, 237)
+            } else {
+                Color::Rgb(255, 160, 122)
+            };
             if i == 5 {
                 Container::new()
                     .padding(LayoutSpacing::all(Spacing::Px(10)))
@@ -286,7 +271,10 @@ pub fn test_scrollable() {
                     .boxed()
             } else {
                 Container::new()
-                    .margin(LayoutSpacing { top: Spacing::Px(30), ..Default::default() })
+                    .margin(LayoutSpacing {
+                        top: Spacing::Px(30),
+                        ..Default::default()
+                    })
                     .box_decoration(
                         BoxDecoration::new()
                             .border(BoxBorder::all(
@@ -314,8 +302,11 @@ pub fn test_scrollable() {
 
     let items_2: Vec<Box<dyn Widget>> = (0..1200)
         .map(|i| {
-            let color =
-                if i % 2 == 0 { Color::Rgb(100, 149, 237) } else { Color::Rgb(255, 160, 122) };
+            let color = if i % 2 == 0 {
+                Color::Rgb(100, 149, 237)
+            } else {
+                Color::Rgb(255, 160, 122)
+            };
             if i == 5 {
                 Container::new()
                     .padding(LayoutSpacing::all(Spacing::Px(10)))
@@ -333,7 +324,10 @@ pub fn test_scrollable() {
                     .boxed()
             } else {
                 Container::new()
-                    .margin(LayoutSpacing { top: Spacing::Px(30), ..Default::default() })
+                    .margin(LayoutSpacing {
+                        top: Spacing::Px(30),
+                        ..Default::default()
+                    })
                     .box_decoration(
                         BoxDecoration::new()
                             .border(BoxBorder::all(
@@ -444,12 +438,18 @@ pub fn test_scrollable() {
 fn test_scrollable_row() {
     let items: Vec<Box<dyn Widget>> = (0..12000)
         .map(|i| {
-            let color =
-                if i % 2 == 0 { Color::Rgb(100, 149, 237) } else { Color::Rgb(255, 160, 122) };
+            let color = if i % 2 == 0 {
+                Color::Rgb(100, 149, 237)
+            } else {
+                Color::Rgb(255, 160, 122)
+            };
             if i == 5 {
                 Container::new()
                     .padding(LayoutSpacing::all(Spacing::Px(10)))
-                    .margin(LayoutSpacing { right: Spacing::Px(10), ..Default::default() })
+                    .margin(LayoutSpacing {
+                        right: Spacing::Px(10),
+                        ..Default::default()
+                    })
                     .width(Dimension::Px(200.0))
                     .box_decoration(
                         BoxDecoration::new()
@@ -473,7 +473,10 @@ fn test_scrollable_row() {
                     .boxed()
             } else {
                 Container::new()
-                    .margin(LayoutSpacing { right: Spacing::Px(10), ..Default::default() })
+                    .margin(LayoutSpacing {
+                        right: Spacing::Px(10),
+                        ..Default::default()
+                    })
                     .box_decoration(
                         BoxDecoration::new()
                             .border(BoxBorder::all(

@@ -22,7 +22,13 @@ pub struct RichTextSegment {
 
 impl RichTextSegment {
     pub fn new(text: impl Into<Arc<str>>) -> Self {
-        Self { text: text.into(), font_size: None, color: None, font_weight: None, italic: None }
+        Self {
+            text: text.into(),
+            font_size: None,
+            color: None,
+            font_weight: None,
+            italic: None,
+        }
     }
 
     pub fn with_style(mut self, font_size: Option<f32>, color: Option<Color>) -> Self {
@@ -166,16 +172,13 @@ impl DrawList {
     }
 
     pub fn clear(&mut self) {
-        self.commands
-            .clear();
-        self.transform_stack
-            .clear();
+        self.commands.clear();
+        self.transform_stack.clear();
         self.current_transform = Mat3::identity();
     }
 
     pub fn push(&mut self, cmd: DrawCommand) {
-        self.commands
-            .push(cmd);
+        self.commands.push(cmd);
     }
 
     pub fn fill_rect(
@@ -270,7 +273,11 @@ impl DrawList {
         overrides: Arc<[SvgNodeStyleOverride]>,
     ) {
         self.commands
-            .push(DrawCommand::Svg { scene, destination, overrides });
+            .push(DrawCommand::Svg {
+                scene,
+                destination,
+                overrides,
+            });
     }
 
     pub fn draw_text(
@@ -395,17 +402,29 @@ impl DrawList {
         period: f32,
     ) {
         self.commands
-            .push(DrawCommand::DrawTextDecoration { rect, color, style, thickness, period });
+            .push(DrawCommand::DrawTextDecoration {
+                rect,
+                color,
+                style,
+                thickness,
+                period,
+            });
     }
 
     pub fn push_clip(&mut self, rect: Rect) {
         self.commands
-            .push(DrawCommand::PushClip { rect, border_radius: [0.0; 4] });
+            .push(DrawCommand::PushClip {
+                rect,
+                border_radius: [0.0; 4],
+            });
     }
 
     pub fn push_clip_rounded(&mut self, rect: Rect, border_radius: [f32; 4]) {
         self.commands
-            .push(DrawCommand::PushClip { rect, border_radius });
+            .push(DrawCommand::PushClip {
+                rect,
+                border_radius,
+            });
     }
 
     pub fn pop_clip(&mut self) {
@@ -448,7 +467,12 @@ impl DrawList {
             return texture_id;
         }
         self.commands
-            .push(DrawCommand::LoadImage { bytes: bytes.to_vec(), texture_id, width, height });
+            .push(DrawCommand::LoadImage {
+                bytes: bytes.to_vec(),
+                texture_id,
+                width,
+                height,
+            });
         texture_id
     }
 
@@ -485,14 +509,13 @@ impl DrawList {
         self.transform_stack
             .push(self.current_transform);
         self.commands
-            .push(DrawCommand::PushTransform { matrix: self.current_transform });
+            .push(DrawCommand::PushTransform {
+                matrix: self.current_transform,
+            });
     }
 
     pub fn restore(&mut self) {
-        if let Some(prev) = self
-            .transform_stack
-            .pop()
-        {
+        if let Some(prev) = self.transform_stack.pop() {
             self.current_transform = prev;
             self.commands
                 .push(DrawCommand::PopTransform);
@@ -501,29 +524,29 @@ impl DrawList {
 
     pub fn translate(&mut self, x: f32, y: f32) {
         let t = Mat3::translate(x, y);
-        self.current_transform = self
-            .current_transform
-            .mul(&t);
+        self.current_transform = self.current_transform.mul(&t);
         self.commands
-            .push(DrawCommand::SetTransform { matrix: self.current_transform });
+            .push(DrawCommand::SetTransform {
+                matrix: self.current_transform,
+            });
     }
 
     pub fn scale(&mut self, sx: f32, sy: f32) {
         let s = Mat3::scale(sx, sy);
-        self.current_transform = self
-            .current_transform
-            .mul(&s);
+        self.current_transform = self.current_transform.mul(&s);
         self.commands
-            .push(DrawCommand::SetTransform { matrix: self.current_transform });
+            .push(DrawCommand::SetTransform {
+                matrix: self.current_transform,
+            });
     }
 
     pub fn rotate(&mut self, radians: f32) {
         let r = Mat3::rotate(radians);
-        self.current_transform = self
-            .current_transform
-            .mul(&r);
+        self.current_transform = self.current_transform.mul(&r);
         self.commands
-            .push(DrawCommand::SetTransform { matrix: self.current_transform });
+            .push(DrawCommand::SetTransform {
+                matrix: self.current_transform,
+            });
     }
 
     pub fn current_transform(&self) -> &Mat3 {
@@ -577,8 +600,7 @@ mod memory_tests {
 
         assert_eq!(list.get_texture_size(42), None);
         assert!(matches!(
-            list.commands()
-                .last(),
+            list.commands().last(),
             Some(DrawCommand::RemoveTexture { texture_id: 42 })
         ));
     }
@@ -586,7 +608,10 @@ mod memory_tests {
     #[test]
     fn svg_commands_remain_interleaved_with_other_primitives() {
         let scene = Arc::new(SvgScene {
-            viewport: SvgViewport { width: 10.0, height: 10.0 },
+            viewport: SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
             nodes: Arc::from([]),
             geometries: Arc::from([]),
         });
@@ -620,8 +645,7 @@ mod memory_tests {
         );
 
         assert!(matches!(
-            list.commands()
-                .last(),
+            list.commands().last(),
             Some(DrawCommand::DrawText {
                 font_family: FontFamily::MONOSPACE,
                 font_style: FontStyle::Italic,

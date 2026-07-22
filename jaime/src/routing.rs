@@ -93,7 +93,11 @@ fn tab_child(route: TabRoute) -> Box<dyn Widget> {
 /// are sent to `/login`. Extracted from `admin_guard` so it can be unit tested
 /// without a live `BuildContext`.
 fn admin_redirect_decision(authenticated: bool) -> Option<AppRouting> {
-    if authenticated { None } else { Some(AppRouting::Login) }
+    if authenticated {
+        None
+    } else {
+        Some(AppRouting::Login)
+    }
 }
 
 /// Guard hook wired into the generated `Route::redirect` for
@@ -116,7 +120,10 @@ impl Router for AppRouting {
                 let child = child.clone();
                 // Persistent shell frame: a Container wrapping the Outlet where
                 // the active dashboard child route renders.
-                Shell::new(Container::new().child(Outlet), move |_| Box::new(child.clone())).boxed()
+                Shell::new(Container::new().child(Outlet), move |_| {
+                    Box::new(child.clone())
+                })
+                .boxed()
             }
         }
     }
@@ -135,7 +142,9 @@ mod tests {
         assert_eq!(AppRouting::Home.format(), "/");
         assert_eq!(AppRouting::parse("/"), Some(AppRouting::Home));
 
-        let profile = AppRouting::Profile { name: "alice".to_string() };
+        let profile = AppRouting::Profile {
+            name: "alice".to_string(),
+        };
         assert_eq!(profile.format(), "/profile/alice");
         assert_eq!(AppRouting::parse("/profile/alice"), Some(profile));
 
@@ -145,7 +154,10 @@ mod tests {
 
     #[test]
     fn round_trip_query_params() {
-        let search = AppRouting::Search { q: "foo".to_string(), page: 2 };
+        let search = AppRouting::Search {
+            q: "foo".to_string(),
+            page: 2,
+        };
         assert_eq!(search.format(), "/search?page=2&q=foo");
         assert_eq!(AppRouting::parse("/search?q=foo&page=2"), Some(search));
     }
@@ -186,8 +198,21 @@ mod tests {
     #[test]
     fn name_reports_declared_names() {
         assert_eq!(AppRouting::Home.name(), None);
-        assert_eq!(AppRouting::Profile { name: "x".to_string() }.name(), Some("profile"));
-        assert_eq!(AppRouting::Search { q: "x".to_string(), page: 1 }.name(), Some("search"));
+        assert_eq!(
+            AppRouting::Profile {
+                name: "x".to_string()
+            }
+            .name(),
+            Some("profile")
+        );
+        assert_eq!(
+            AppRouting::Search {
+                q: "x".to_string(),
+                page: 1
+            }
+            .name(),
+            Some("search")
+        );
     }
 
     #[test]
@@ -196,7 +221,9 @@ mod tests {
         params.insert("name".to_string(), "bob".to_string());
         assert_eq!(
             AppRouting::resolve_named("profile", &params),
-            Some(AppRouting::Profile { name: "bob".to_string() })
+            Some(AppRouting::Profile {
+                name: "bob".to_string()
+            })
         );
 
         let mut params = HashMap::new();
@@ -204,7 +231,10 @@ mod tests {
         params.insert("page".to_string(), "3".to_string());
         assert_eq!(
             AppRouting::resolve_named("search", &params),
-            Some(AppRouting::Search { q: "rust".to_string(), page: 3 })
+            Some(AppRouting::Search {
+                q: "rust".to_string(),
+                page: 3
+            })
         );
 
         assert_eq!(AppRouting::resolve_named("unknown", &params), None);
@@ -226,7 +256,9 @@ mod tests {
 }
 
 pub fn state_router() {
-    AimerApp::start(Navigator::<AppRouting>::new(AppRouting::Home, |route| Box::new(route)))
+    AimerApp::start(Navigator::<AppRouting>::new(AppRouting::Home, |route| {
+        Box::new(route)
+    }))
 }
 
 /// Launch the tabbed stateful-shell demo: three branches (Feed, Notifications,

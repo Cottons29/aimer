@@ -21,9 +21,7 @@ use winit::window::Window;
 pub fn attach_window_to_active_scene(window: &Window) {
     let ui_view = match window.window_handle() {
         Ok(handle) => match handle.as_raw() {
-            RawWindowHandle::UiKit(uikit) => uikit
-                .ui_view
-                .as_ptr() as *mut Object,
+            RawWindowHandle::UiKit(uikit) => uikit.ui_view.as_ptr() as *mut Object,
             _ => return,
         },
         Err(_) => return,
@@ -48,7 +46,9 @@ pub fn attach_window_to_active_scene(window: &Window) {
             return;
         }
 
-        let Some(app_class) = Class::get("UIApplication") else { return };
+        let Some(app_class) = Class::get("UIApplication") else {
+            return;
+        };
         #[allow(unexpected_cfgs)]
         let app: *mut Object = msg_send![app_class, sharedApplication];
         if app.is_null() {
@@ -62,7 +62,9 @@ pub fn attach_window_to_active_scene(window: &Window) {
         #[allow(unexpected_cfgs)]
         let count: usize = msg_send![all, count];
 
-        let Some(window_scene_class) = Class::get("UIWindowScene") else { return };
+        let Some(window_scene_class) = Class::get("UIWindowScene") else {
+            return;
+        };
 
         // Prefer a foreground-active window scene, otherwise the first one found.
         let mut chosen: *mut Object = std::ptr::null_mut();
@@ -116,14 +118,7 @@ pub fn get_screen_resolution_pixels() -> Option<(f64, f64)> {
         msg_send![main_screen, nativeBounds]
     };
 
-    Some((
-        native_bounds
-            .size
-            .width,
-        native_bounds
-            .size
-            .height,
-    ))
+    Some((native_bounds.size.width, native_bounds.size.height))
 }
 #[derive(Debug)]
 #[repr(C)]

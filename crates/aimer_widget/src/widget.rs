@@ -10,8 +10,6 @@ mod recovery;
 pub mod stateful;
 pub mod stateless;
 
-
-
 pub trait Widget {
     fn key(&self) -> Option<crate::key::Key> {
         None
@@ -41,12 +39,10 @@ impl Widget for Box<dyn Widget> {
         self.as_ref().key()
     }
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        self.as_ref()
-            .to_element(ctx)
+        self.as_ref().to_element(ctx)
     }
     fn debug_name(&self) -> &'static str {
-        self.as_ref()
-            .debug_name()
+        self.as_ref().debug_name()
     }
     // fn text_content(&self) -> Option<&str> {
     //     self.as_ref().text_content()
@@ -58,12 +54,10 @@ impl Widget for Rc<dyn Widget> {
         self.as_ref().key()
     }
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        self.as_ref()
-            .to_element(ctx)
+        self.as_ref().to_element(ctx)
     }
     fn debug_name(&self) -> &'static str {
-        self.as_ref()
-            .debug_name()
+        self.as_ref().debug_name()
     }
     // fn text_content(&self) -> Option<&str> {
     //     self.as_ref().text_content()
@@ -85,14 +79,16 @@ pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &
 
     // Bounding box stroke
     let stroke_color = Color::Rgba(0, 120, 255, 200);
-    ctx.canvas
-        .stroke_rect(
-            (0.0_f32, 0.0_f32).into(),
-            ResolvedSize { width: w, height: h },
-            stroke_color,
-            1.5,
-            [0.0; 4],
-        );
+    ctx.canvas.stroke_rect(
+        (0.0_f32, 0.0_f32).into(),
+        ResolvedSize {
+            width: w,
+            height: h,
+        },
+        stroke_color,
+        1.5,
+        [0.0; 4],
+    );
 
     // Label
     let font_size = 10.0_f32;
@@ -101,15 +97,22 @@ pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &
     let label_h = font_size + 4.0;
 
     let bg_color = Color::Rgba(0, 0, 0, 180);
-    ctx.canvas
-        .fill_color_rect(
-            (0.0_f32, 0.0_f32).into(),
-            ResolvedSize { width: label_w, height: label_h },
-            bg_color,
-            [0.0; 4],
-        );
+    ctx.canvas.fill_color_rect(
+        (0.0_f32, 0.0_f32).into(),
+        ResolvedSize {
+            width: label_w,
+            height: label_h,
+        },
+        bg_color,
+        [0.0; 4],
+    );
 
     let text_color = Color::Rgba(255, 255, 255, 255);
-    ctx.canvas
-        .draw_text(&label, (2.0_f32, font_size).into(), font_size, text_color, 400);
+    ctx.canvas.draw_text(
+        &label,
+        (2.0_f32, font_size).into(),
+        font_size,
+        text_color,
+        400,
+    );
 }

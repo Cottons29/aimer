@@ -21,10 +21,7 @@ pub fn get_project_root(allow_workspace: bool) -> Result<PathBuf, Box<dyn Error>
     }
 
     let output = command.output()?;
-    if !output
-        .status
-        .success()
-    {
+    if !output.status.success() {
         return Err("cargo locate-project failed".into());
     }
     let cargo_toml = String::from_utf8(output.stdout)?;
@@ -43,23 +40,24 @@ pub fn resolve_lib_path(lib_name: &str, rust_target: &str, target: CargoBuildTar
     };
     let project_root = get_project_root(true).unwrap_or_else(|_| current_dir().unwrap());
 
-    format!("{}/target/{}/debug/lib{}{extension}", project_root.display(), rust_target, lib_name)
+    format!(
+        "{}/target/{}/debug/lib{}{extension}",
+        project_root.display(),
+        rust_target,
+        lib_name
+    )
 }
 
 impl LogStyling for String {
     fn process_log(self) -> String {
         if self.contains("[ERROR]") {
-            self.red()
-                .to_string()
+            self.red().to_string()
         } else if self.contains("[WARN]") {
-            self.yellow()
-                .to_string()
+            self.yellow().to_string()
         } else if self.contains("[DEBUG]") || self.contains("hot-reload") {
-            self.green()
-                .to_string()
+            self.green().to_string()
         } else if self.contains("[INFO]") {
-            self.bright_cyan()
-                .to_string()
+            self.bright_cyan().to_string()
         } else {
             self
         }

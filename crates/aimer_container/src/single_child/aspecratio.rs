@@ -29,7 +29,11 @@ impl AspectRatio {
     /// Finish the builder with [`AspectRatio::child`] or
     /// [`AspectRatio::box_child`].
     pub fn new() -> Self {
-        Self { aspect_ratio: 1.0, child: RequiredChild, ratio_option: RatioOption::Width }
+        Self {
+            aspect_ratio: 1.0,
+            child: RequiredChild,
+            ratio_option: RatioOption::Width,
+        }
     }
 
     /// Sets the desired width divided by height.
@@ -57,7 +61,11 @@ impl AspectRatio {
     /// The child receives the ratio-constrained size, and its concrete type is
     /// preserved. Use [`AspectRatio::box_child`] for branch type erasure.
     pub fn child<C: Widget>(self, child: C) -> AspectRatio<C> {
-        AspectRatio { aspect_ratio: self.aspect_ratio, ratio_option: self.ratio_option, child }
+        AspectRatio {
+            aspect_ratio: self.aspect_ratio,
+            ratio_option: self.ratio_option,
+            child,
+        }
     }
 
     /// Attaches `child` and erases the resulting widget's concrete type.
@@ -66,8 +74,7 @@ impl AspectRatio {
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
-        self.child(child)
-            .boxed()
+        self.child(child).boxed()
     }
 }
 
@@ -80,12 +87,8 @@ impl Default for AspectRatio {
 impl<W: Widget> Widget for AspectRatio<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawAspectRatio {
-            child: self
-                .child
-                .to_element(ctx),
-            aspect_ratio: self
-                .aspect_ratio
-                .abs(),
+            child: self.child.to_element(ctx),
+            aspect_ratio: self.aspect_ratio.abs(),
             ratio_option: self.ratio_option,
         })
     }
@@ -100,7 +103,11 @@ fn resolve_ratio_size_with_option(
     aspect_ratio: f32,
     ratio_option: RatioOption,
 ) -> (f32, f32) {
-    let ratio = if aspect_ratio.is_finite() && aspect_ratio > 0.0 { aspect_ratio } else { 1.0 };
+    let ratio = if aspect_ratio.is_finite() && aspect_ratio > 0.0 {
+        aspect_ratio
+    } else {
+        1.0
+    };
     let width_bounded = constraints
         .max_width
         .is_finite()
@@ -143,7 +150,10 @@ fn resolve_ratio_size_with_option(
         width = height * ratio;
     }
 
-    (width.min(constraints.max_width), height.min(constraints.max_height))
+    (
+        width.min(constraints.max_width),
+        height.min(constraints.max_height),
+    )
 }
 
 #[derive(EventElement, Rebuildable)]
@@ -164,8 +174,7 @@ impl Drawable for RawAspectRatio {
             max_width: size.width,
             max_height: size.height,
         };
-        self.child
-            .draw(&child_ctx);
+        self.child.draw(&child_ctx);
     }
 }
 
@@ -211,8 +220,12 @@ mod tests {
 
     #[test]
     fn ratio_size_uses_largest_size_inside_constraints() {
-        let constraints =
-            BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: 320.0, max_height: 200.0 };
+        let constraints = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 320.0,
+            max_height: 200.0,
+        };
 
         assert_eq!(resolve_ratio_size(constraints, 16.0 / 9.0), (320.0, 180.0));
         assert_eq!(resolve_ratio_size(constraints, 0.5), (100.0, 200.0));
@@ -232,8 +245,12 @@ mod tests {
 
     #[test]
     fn height_driven_ratio_still_fits_the_width_constraint() {
-        let constraints =
-            BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: 300.0, max_height: 200.0 };
+        let constraints = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 300.0,
+            max_height: 200.0,
+        };
 
         assert_eq!(
             resolve_ratio_size_with_option(constraints, 2.0, RatioOption::Height),

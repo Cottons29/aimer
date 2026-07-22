@@ -44,13 +44,34 @@ __generated_entrance_point()
     fs::create_dir_all(&appiconset_dir).unwrap();
 
     let icon_sizes: &[(&str, &[u8])] = &[
-        ("icon_16.png", include_bytes!("../../../templates/icons/icon_16.png")),
-        ("icon_32.png", include_bytes!("../../../templates/icons/icon_32.png")),
-        ("icon_64.png", include_bytes!("../../../templates/icons/icon_64.png")),
-        ("icon_128.png", include_bytes!("../../../templates/icons/icon_128.png")),
-        ("icon_256.png", include_bytes!("../../../templates/icons/icon_256.png")),
-        ("icon_512.png", include_bytes!("../../../templates/icons/icon_512.png")),
-        ("icon_1024.png", include_bytes!("../../../templates/icons/icon_1024.png")),
+        (
+            "icon_16.png",
+            include_bytes!("../../../templates/icons/icon_16.png"),
+        ),
+        (
+            "icon_32.png",
+            include_bytes!("../../../templates/icons/icon_32.png"),
+        ),
+        (
+            "icon_64.png",
+            include_bytes!("../../../templates/icons/icon_64.png"),
+        ),
+        (
+            "icon_128.png",
+            include_bytes!("../../../templates/icons/icon_128.png"),
+        ),
+        (
+            "icon_256.png",
+            include_bytes!("../../../templates/icons/icon_256.png"),
+        ),
+        (
+            "icon_512.png",
+            include_bytes!("../../../templates/icons/icon_512.png"),
+        ),
+        (
+            "icon_1024.png",
+            include_bytes!("../../../templates/icons/icon_1024.png"),
+        ),
     ];
     for (name, data) in icon_sizes {
         fs::write(appiconset_dir.join(name), data).unwrap();

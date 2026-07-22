@@ -26,7 +26,12 @@ pub struct GridPlacement {
 
 impl Default for GridPlacement {
     fn default() -> Self {
-        Self { row: None, column: None, row_span: 1, column_span: 1 }
+        Self {
+            row: None,
+            column: None,
+            row_span: 1,
+            column_span: 1,
+        }
     }
 }
 
@@ -58,19 +63,44 @@ impl GridPlacement {
     }
 
     pub(crate) fn resolved(row: usize, column: usize, row_span: usize, column_span: usize) -> Self {
-        Self { row: Some(row), column: Some(column), row_span, column_span }
+        Self {
+            row: Some(row),
+            column: Some(column),
+            row_span,
+            column_span,
+        }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum GridError {
     MissingColumns,
-    ZeroSpan { item: usize },
-    ColumnOutOfRange { item: usize, column: usize, span: usize, columns: usize },
-    OverlappingItems { first: usize, second: usize },
-    InvalidPixels { axis: &'static str, index: usize, value: f32 },
-    InvalidFraction { axis: &'static str, index: usize, value: f32 },
-    UnboundedFractionalTrack { axis: &'static str },
+    ZeroSpan {
+        item: usize,
+    },
+    ColumnOutOfRange {
+        item: usize,
+        column: usize,
+        span: usize,
+        columns: usize,
+    },
+    OverlappingItems {
+        first: usize,
+        second: usize,
+    },
+    InvalidPixels {
+        axis: &'static str,
+        index: usize,
+        value: f32,
+    },
+    InvalidFraction {
+        axis: &'static str,
+        index: usize,
+        value: f32,
+    },
+    UnboundedFractionalTrack {
+        axis: &'static str,
+    },
 }
 
 impl Display for GridError {
@@ -80,7 +110,12 @@ impl Display for GridError {
             Self::ZeroSpan { item } => {
                 write!(formatter, "Grid item {item} has a zero row or column span")
             }
-            Self::ColumnOutOfRange { item, column, span, columns } => write!(
+            Self::ColumnOutOfRange {
+                item,
+                column,
+                span,
+                columns,
+            } => write!(
                 formatter,
                 "Grid item {item} starts at column {column} with span {span}, outside {columns} columns"
             ),
@@ -88,10 +123,16 @@ impl Display for GridError {
                 write!(formatter, "Grid items {first} and {second} overlap")
             }
             Self::InvalidPixels { axis, index, value } => {
-                write!(formatter, "Grid {axis} track {index} has invalid pixel size {value}")
+                write!(
+                    formatter,
+                    "Grid {axis} track {index} has invalid pixel size {value}"
+                )
             }
             Self::InvalidFraction { axis, index, value } => {
-                write!(formatter, "Grid {axis} track {index} has invalid fraction {value}")
+                write!(
+                    formatter,
+                    "Grid {axis} track {index} has invalid fraction {value}"
+                )
             }
             Self::UnboundedFractionalTrack { axis } => {
                 write!(
@@ -139,12 +180,8 @@ fn occupy(
     item: usize,
     columns: usize,
 ) {
-    let row = placement
-        .row
-        .unwrap();
-    let column = placement
-        .column
-        .unwrap();
+    let row = placement.row.unwrap();
+    let column = placement.column.unwrap();
     ensure_rows(occupied, row + placement.row_span, columns);
     for cells in occupied
         .iter_mut()
@@ -193,21 +230,21 @@ pub(crate) fn resolve_placements(
                 columns,
             });
         }
-        if placement
-            .row
-            .is_none()
-            && placement
-                .column
-                .is_none()
-        {
+        if placement.row.is_none() && placement.column.is_none() {
             continue;
         }
 
         let (row, column) = match (placement.row, placement.column) {
             (Some(row), Some(column)) => {
                 ensure_rows(&mut occupied, row + placement.row_span, columns);
-                if !fits(&occupied, row, column, placement.row_span, placement.column_span, columns)
-                {
+                if !fits(
+                    &occupied,
+                    row,
+                    column,
+                    placement.row_span,
+                    placement.column_span,
+                    columns,
+                ) {
                     let first = occupied
                         .iter()
                         .skip(row)
@@ -220,7 +257,10 @@ pub(crate) fn resolve_placements(
                         })
                         .find_map(|slot| *slot)
                         .unwrap();
-                    return Err(GridError::OverlappingItems { first, second: index });
+                    return Err(GridError::OverlappingItems {
+                        first,
+                        second: index,
+                    });
                 }
                 (row, column)
             }
@@ -274,19 +314,20 @@ pub(crate) fn resolve_placements(
         .copied()
         .enumerate()
     {
-        if placement
-            .row
-            .is_some()
-            || placement
-                .column
-                .is_some()
-        {
+        if placement.row.is_some() || placement.column.is_some() {
             continue;
         }
         let (row, column) = (cursor..)
             .map(|cell| (cell / columns, cell % columns))
             .find(|(row, column)| {
-                fits(&occupied, *row, *column, placement.row_span, placement.column_span, columns)
+                fits(
+                    &occupied,
+                    *row,
+                    *column,
+                    placement.row_span,
+                    placement.column_span,
+                    columns,
+                )
             })
             .unwrap();
         let placement =
@@ -312,10 +353,7 @@ pub(crate) fn resolve_tracks(
     axis: &'static str,
 ) -> Result<Vec<f32>, GridError> {
     let mut resolved = vec![0.0; tracks.len()];
-    let mut consumed = gap.max(0.0)
-        * tracks
-            .len()
-            .saturating_sub(1) as f32;
+    let mut consumed = gap.max(0.0) * tracks.len().saturating_sub(1) as f32;
     let mut fraction_sum = 0.0;
 
     for (index, track) in tracks
@@ -352,10 +390,7 @@ pub(crate) fn resolve_tracks(
             return Err(GridError::UnboundedFractionalTrack { axis });
         }
         let unit = (available - consumed).max(0.0) / fraction_sum;
-        for (index, track) in tracks
-            .iter()
-            .enumerate()
-        {
+        for (index, track) in tracks.iter().enumerate() {
             if let GridTrack::Fr(value) = track {
                 resolved[index] = unit * value;
             }
@@ -462,9 +497,7 @@ impl RawGrid {
             .iter()
             .zip(&resolved_placements.items)
         {
-            let start = placement
-                .column
-                .unwrap();
+            let start = placement.column.unwrap();
             apply_auto_minimum(
                 &self.columns,
                 &mut column_minima,
@@ -476,8 +509,7 @@ impl RawGrid {
         }
         let columns = resolve_tracks(
             &self.columns,
-            ctx.box_constraint
-                .max_width,
+            ctx.box_constraint.max_width,
             self.column_gap,
             &column_minima,
             "columns",
@@ -491,14 +523,15 @@ impl RawGrid {
         {
             let cell_width = span_size(
                 &columns,
-                placement
-                    .column
-                    .unwrap(),
+                placement.column.unwrap(),
                 placement.column_span,
                 self.column_gap,
             );
             let mut child_ctx = ctx.clone();
-            child_ctx.parent_size = ResolvedSize { width: cell_width, height: 0.0 };
+            child_ctx.parent_size = ResolvedSize {
+                width: cell_width,
+                height: 0.0,
+            };
             child_ctx.box_constraint = BoxConstraint {
                 min_width: 0.0,
                 min_height: 0.0,
@@ -508,9 +541,7 @@ impl RawGrid {
             let size = item
                 .child
                 .computed_size(&child_ctx);
-            let start = placement
-                .row
-                .unwrap();
+            let start = placement.row.unwrap();
             apply_auto_minimum(
                 &rows,
                 &mut row_minima,
@@ -522,8 +553,7 @@ impl RawGrid {
         }
         let rows = resolve_tracks(
             &rows,
-            ctx.box_constraint
-                .max_height,
+            ctx.box_constraint.max_height,
             self.row_gap,
             &row_minima,
             "rows",
@@ -533,7 +563,12 @@ impl RawGrid {
             height: tracks_size(&rows, self.row_gap),
         };
 
-        Ok(GridLayout { placements: resolved_placements.items, columns, rows, size })
+        Ok(GridLayout {
+            placements: resolved_placements.items,
+            columns,
+            rows,
+            size,
+        })
     }
 
     fn draw_item(
@@ -544,35 +579,19 @@ impl RawGrid {
         layout: &GridLayout,
     ) {
         let cell_pos = Vec2d {
-            x: track_offset(
-                &layout.columns,
-                placement
-                    .column
-                    .unwrap(),
-                self.column_gap,
-            ),
-            y: track_offset(
-                &layout.rows,
-                placement
-                    .row
-                    .unwrap(),
-                self.row_gap,
-            ),
+            x: track_offset(&layout.columns, placement.column.unwrap(), self.column_gap),
+            y: track_offset(&layout.rows, placement.row.unwrap(), self.row_gap),
         };
         let cell_size = ResolvedSize {
             width: span_size(
                 &layout.columns,
-                placement
-                    .column
-                    .unwrap(),
+                placement.column.unwrap(),
                 placement.column_span,
                 self.column_gap,
             ),
             height: span_size(
                 &layout.rows,
-                placement
-                    .row
-                    .unwrap(),
+                placement.row.unwrap(),
                 placement.row_span,
                 self.row_gap,
             ),
@@ -586,8 +605,16 @@ impl RawGrid {
         let mut child_ctx = ctx.clone();
         child_ctx.parent_size = cell_size;
         child_ctx.box_constraint = BoxConstraint {
-            min_width: if horizontal == GridAlignment::Stretch { cell_size.width } else { 0.0 },
-            min_height: if vertical == GridAlignment::Stretch { cell_size.height } else { 0.0 },
+            min_width: if horizontal == GridAlignment::Stretch {
+                cell_size.width
+            } else {
+                0.0
+            },
+            min_height: if vertical == GridAlignment::Stretch {
+                cell_size.height
+            } else {
+                0.0
+            },
             max_width: cell_size.width,
             max_height: cell_size.height,
         };
@@ -601,33 +628,28 @@ impl RawGrid {
         child_ctx.visible_rect = ctx
             .visible_rect
             .map(|(x, y, width, height)| {
-                (x - cell_pos.x - offset.x, y - cell_pos.y - offset.y, width, height)
+                (
+                    x - cell_pos.x - offset.x,
+                    y - cell_pos.y - offset.y,
+                    width,
+                    height,
+                )
             });
         let overflow = detect_overflow(child_size, cell_size, offset);
 
         ctx.canvas.save();
-        ctx.canvas
-            .translate(cell_pos);
+        ctx.canvas.translate(cell_pos);
         if self.overflow == GridOverflow::Clip {
             ctx.canvas
                 .set_clip(Vec2d::default(), cell_size);
         }
         ctx.canvas.save();
-        ctx.canvas
-            .translate(offset);
-        item.child
-            .draw(&child_ctx);
+        ctx.canvas.translate(offset);
+        item.child.draw(&child_ctx);
         ctx.canvas.restore();
-        paint_overflow_indicator(
-            ctx,
-            cell_size,
-            overflow,
-            item.child
-                .debug_name(),
-        );
+        paint_overflow_indicator(ctx, cell_size, overflow, item.child.debug_name());
         if self.overflow == GridOverflow::Clip {
-            ctx.canvas
-                .clear_clip();
+            ctx.canvas.clear_clip();
         }
         ctx.canvas.restore();
     }
@@ -684,20 +706,13 @@ impl LayoutElement for RawGrid {
 
     fn invalidate_layout(&self) {
         for item in &self.children {
-            item.child
-                .invalidate_layout();
+            item.child.invalidate_layout();
         }
     }
 }
 
 fn tracks_size(tracks: &[f32], gap: f32) -> f32 {
-    tracks
-        .iter()
-        .sum::<f32>()
-        + gap
-            * tracks
-                .len()
-                .saturating_sub(1) as f32
+    tracks.iter().sum::<f32>() + gap * tracks.len().saturating_sub(1) as f32
 }
 
 fn span_size(tracks: &[f32], start: usize, span: usize, gap: f32) -> f32 {
@@ -724,27 +739,15 @@ fn alignment_offset(alignment: GridAlignment, available: f32, child: f32) -> f32
 
 fn fallback_size(ctx: &BuildContext) -> ResolvedSize {
     ResolvedSize {
-        width: if ctx
-            .box_constraint
-            .max_width
-            == f32::MAX
-        {
-            ctx.parent_size
-                .width
+        width: if ctx.box_constraint.max_width == f32::MAX {
+            ctx.parent_size.width
         } else {
-            ctx.box_constraint
-                .max_width
+            ctx.box_constraint.max_width
         },
-        height: if ctx
-            .box_constraint
-            .max_height
-            == f32::MAX
-        {
-            ctx.parent_size
-                .height
+        height: if ctx.box_constraint.max_height == f32::MAX {
+            ctx.parent_size.height
         } else {
-            ctx.box_constraint
-                .max_height
+            ctx.box_constraint.max_height
         },
     }
 }
@@ -774,16 +777,17 @@ mod tests {
 
     impl Drawable for VisibleRectRecorder {
         fn draw(&self, ctx: &BuildContext) {
-            *self
-                .visible_rect
-                .borrow_mut() = ctx.visible_rect;
+            *self.visible_rect.borrow_mut() = ctx.visible_rect;
         }
     }
 
     impl EventElement for VisibleRectRecorder {}
     impl LayoutElement for VisibleRectRecorder {
         fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
-            ResolvedSize { width: 20.0, height: 20.0 }
+            ResolvedSize {
+                width: 20.0,
+                height: 20.0,
+            }
         }
     }
     impl Rebuildable for VisibleRectRecorder {}
@@ -809,7 +813,10 @@ mod tests {
 
     fn build_context(canvas: &'static InnerCanvas) -> BuildContext<'static> {
         BuildContext {
-            parent_size: ResolvedSize { width: 200.0, height: 100.0 },
+            parent_size: ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
             canvas: Canvas::new(canvas),
             scale: 1.0,
             parent_pos: Default::default(),
@@ -888,7 +895,9 @@ mod tests {
             vertical_alignment: GridAlignment::Center,
             overflow: GridOverflow::Clip,
             children: vec![RawGridItem {
-                child: Box::new(VisibleRectRecorder { visible_rect: visible_rect.clone() }),
+                child: Box::new(VisibleRectRecorder {
+                    visible_rect: visible_rect.clone(),
+                }),
                 placement: GridPlacement::default().at(1, 0),
                 horizontal_alignment: None,
                 vertical_alignment: None,
@@ -939,11 +948,20 @@ mod tests {
         assert_eq!(zero_span, Err(GridError::ZeroSpan { item: 0 }));
 
         let overlap = resolve_placements(
-            &[GridPlacement::default().at(0, 0), GridPlacement::default().at(0, 0)],
+            &[
+                GridPlacement::default().at(0, 0),
+                GridPlacement::default().at(0, 0),
+            ],
             2,
             1,
         );
-        assert_eq!(overlap, Err(GridError::OverlappingItems { first: 0, second: 1 }));
+        assert_eq!(
+            overlap,
+            Err(GridError::OverlappingItems {
+                first: 0,
+                second: 1
+            })
+        );
 
         let outside = resolve_placements(
             &[GridPlacement::default()
@@ -954,13 +972,23 @@ mod tests {
         );
         assert_eq!(
             outside,
-            Err(GridError::ColumnOutOfRange { item: 0, column: 1, span: 2, columns: 2 })
+            Err(GridError::ColumnOutOfRange {
+                item: 0,
+                column: 1,
+                span: 2,
+                columns: 2
+            })
         );
     }
 
     #[test]
     fn tracks_resolve_fixed_auto_and_fractional_space() {
-        let tracks = [GridTrack::Px(20.0), GridTrack::Auto, GridTrack::Fr(1.0), GridTrack::Fr(2.0)];
+        let tracks = [
+            GridTrack::Px(20.0),
+            GridTrack::Auto,
+            GridTrack::Fr(1.0),
+            GridTrack::Fr(2.0),
+        ];
 
         let resolved =
             resolve_tracks(&tracks, 140.0, 5.0, &[0.0, 30.0, 0.0, 0.0], "columns").unwrap();
@@ -972,18 +1000,29 @@ mod tests {
     fn fractional_tracks_require_a_bounded_axis() {
         let result = resolve_tracks(&[GridTrack::Fr(1.0)], f32::MAX, 0.0, &[0.0], "columns");
 
-        assert_eq!(result, Err(GridError::UnboundedFractionalTrack { axis: "columns" }));
+        assert_eq!(
+            result,
+            Err(GridError::UnboundedFractionalTrack { axis: "columns" })
+        );
     }
 
     #[test]
     fn track_values_must_be_valid() {
         assert_eq!(
             resolve_tracks(&[GridTrack::Fr(0.0)], 100.0, 0.0, &[0.0], "columns"),
-            Err(GridError::InvalidFraction { axis: "columns", index: 0, value: 0.0 })
+            Err(GridError::InvalidFraction {
+                axis: "columns",
+                index: 0,
+                value: 0.0
+            })
         );
         assert_eq!(
             resolve_tracks(&[GridTrack::Px(-1.0)], 100.0, 0.0, &[0.0], "columns"),
-            Err(GridError::InvalidPixels { axis: "columns", index: 0, value: -1.0 })
+            Err(GridError::InvalidPixels {
+                axis: "columns",
+                index: 0,
+                value: -1.0
+            })
         );
     }
 

@@ -58,11 +58,7 @@ pub(crate) fn browser_replace_state(path: &str) {
 
 #[cfg(target_arch = "wasm32")]
 fn browser_current_path() -> Option<String> {
-    web_sys::window().and_then(|w| {
-        w.location()
-            .pathname()
-            .ok()
-    })
+    web_sys::window().and_then(|w| w.location().pathname().ok())
 }
 
 /// A stateful route stack that renders the widget for its current top route.
@@ -92,7 +88,10 @@ impl<R: Route> Navigator<R> {
                 .and_then(|path| R::parse(&path))
                 .unwrap_or(initial_route)
         };
-        Self { initial_route, routes }
+        Self {
+            initial_route,
+            routes,
+        }
     }
 }
 
@@ -111,9 +110,7 @@ impl<R: Route> NavigatorState<R> {
         browser_push_state(&route.format());
         self.updater
             .set_state(|state| {
-                state
-                    .history
-                    .push(route);
+                state.history.push(route);
             });
     }
 
@@ -139,11 +136,7 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
         {
             let updater_clone = updater;
             let closure = Closure::wrap(Box::new(move |_event: web_sys::PopStateEvent| {
-                if let Some(path) = web_sys::window().and_then(|w| {
-                    w.location()
-                        .pathname()
-                        .ok()
-                }) {
+                if let Some(path) = web_sys::window().and_then(|w| w.location().pathname().ok()) {
                     if let Some(route) = R::parse(&path) {
                         updater_clone.set_state(|state| {
                             // Replace the history stack with just this route
@@ -201,11 +194,7 @@ struct NavigatorElement<R> {
 
 impl<R: 'static> NavigatorElement<R> {
     fn scoped<T>(&self, ctx: &BuildContext, callback: impl FnOnce(&BuildContext) -> T) -> T {
-        ctx.with_state(
-            self.controller
-                .clone(),
-            callback,
-        )
+        ctx.with_state(self.controller.clone(), callback)
     }
 }
 
@@ -235,24 +224,15 @@ impl<R: 'static> LayoutElement for NavigatorElement<R> {
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .layout(ctx)
-        })
+        self.scoped(ctx, |ctx| self.child.layout(ctx))
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .computed_size(ctx)
-        })
+        self.scoped(ctx, |ctx| self.child.computed_size(ctx))
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .content_size(ctx)
-        })
+        self.scoped(ctx, |ctx| self.child.content_size(ctx))
     }
 
     fn layer(&self) -> u32 {
@@ -269,13 +249,11 @@ impl<R: 'static> LayoutElement for NavigatorElement<R> {
     }
 
     fn invalidate_layout(&self) {
-        self.child
-            .invalidate_layout();
+        self.child.invalidate_layout();
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.child
-            .pos_start_end()
+        self.child.pos_start_end()
     }
 }
 
@@ -317,12 +295,8 @@ impl<R> Clone for NavigatorController<R> {
         NavigatorController {
             push_fn: self.push_fn.clone(),
             pop_fn: self.pop_fn.clone(),
-            can_pop_fn: self
-                .can_pop_fn
-                .clone(),
-            history_len_fn: self
-                .history_len_fn
-                .clone(),
+            can_pop_fn: self.can_pop_fn.clone(),
+            history_len_fn: self.history_len_fn.clone(),
         }
     }
 }
@@ -375,10 +349,7 @@ impl<R: Route> StatefulWidget for Navigator<R> {
     type State = NavigatorState<R>;
     fn create_state(&self) -> Self::State {
         NavigatorState::<R> {
-            history: vec![
-                self.initial_route
-                    .clone(),
-            ],
+            history: vec![self.initial_route.clone()],
             updater: StateUpdater::empty(),
             routes: self.routes,
         }
@@ -405,9 +376,7 @@ fn navigator_controller<R: Route>(
                 #[cfg(target_arch = "wasm32")]
                 browser_push_state(&route.format());
                 updater.set_state(|state| {
-                    state
-                        .history
-                        .push(route);
+                    state.history.push(route);
                 });
             })
         },

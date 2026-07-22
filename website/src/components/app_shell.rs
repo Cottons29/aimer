@@ -62,9 +62,7 @@ pub struct AppShellState {
 
 impl AppShellState {
     pub(crate) fn toggle_theme(&mut self) {
-        self.theme_mode = self
-            .theme_mode
-            .toggled();
+        self.theme_mode = self.theme_mode.toggled();
     }
 }
 
@@ -91,10 +89,7 @@ impl State<AppShell> for AppShellState {
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         AnimatedTheme::new()
-            .data(
-                self.theme_mode
-                    .theme(),
-            )
+            .data(self.theme_mode.theme())
             .duration(Duration::from_millis(250))
             .curve(Curve::EaseInOut)
             .child(ThemedAppShellFrame {

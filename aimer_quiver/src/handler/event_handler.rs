@@ -14,7 +14,10 @@ use crate::handler::AimerApplicationHandler;
 
 pub struct WindowEventHandler;
 
-pub(crate) const CURSOR_OUTSIDE_POSITION: Vec2d = Vec2d { x: f32::MIN, y: f32::MIN };
+pub(crate) const CURSOR_OUTSIDE_POSITION: Vec2d = Vec2d {
+    x: f32::MIN,
+    y: f32::MIN,
+};
 
 pub(crate) enum HeadlessEventAction {
     None,
@@ -179,8 +182,10 @@ impl WindowEventHandler {
 
     fn handle_touch<W: Widget + 'static>(item: Touch, app: &mut AimerApplicationHandler<W>) {
         let scale = app.window_scale;
-        let pos =
-            Vec2d { x: (item.location.x / scale) as f32, y: (item.location.y / scale) as f32 };
+        let pos = Vec2d {
+            x: (item.location.x / scale) as f32,
+            y: (item.location.y / scale) as f32,
+        };
         let touch_id = item.id;
 
         // All touch events are passed through with their finger ID.
@@ -228,7 +233,10 @@ impl WindowEventHandler {
         app: &mut AimerApplicationHandler<W>,
     ) {
         let scale = app.window_scale as f32;
-        let new_pos = Vec2d { x: position.x as f32 / scale, y: position.y as f32 / scale };
+        let new_pos = Vec2d {
+            x: position.x as f32 / scale,
+            y: position.y as f32 / scale,
+        };
         let dx = (new_pos.x - app.cursor_pos.x).abs();
         let dy = (new_pos.y - app.cursor_pos.y).abs();
         if dx < 1.0 && dy < 1.0 {
@@ -250,7 +258,10 @@ impl WindowEventHandler {
     fn handle_cursor_left<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) {
         app.cursor_pos = CURSOR_OUTSIDE_POSITION;
         if let Some(root) = &app.widget_root {
-            broadcast_event(root.as_ref(), &ElementEvent::PointerExited(PointerSource::Mouse, 0));
+            broadcast_event(
+                root.as_ref(),
+                &ElementEvent::PointerExited(PointerSource::Mouse, 0),
+            );
             if let Some(window) = &app.window {
                 window.request_redraw();
             }
@@ -332,9 +343,7 @@ impl WindowEventHandler {
             }
         };
 
-        let modifiers = app
-            .current_modifiers
-            .clone();
+        let modifiers = app.current_modifiers.clone();
 
         if modifiers.ctrl || modifiers.meta {
             use winit::keyboard::{KeyCode, PhysicalKey};
@@ -346,7 +355,11 @@ impl WindowEventHandler {
                 _ => None,
             };
             if let Some(key) = named {
-                let ev = ElementEvent::KeyInput { key, action, modifiers };
+                let ev = ElementEvent::KeyInput {
+                    key,
+                    action,
+                    modifiers,
+                };
                 if let Some(root) = &app.widget_root {
                     let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                     #[cfg(debug_assertions)]
@@ -434,7 +447,11 @@ impl WindowEventHandler {
                 WinitNamedKey::Tab => NamedKey::Tab,
                 other => NamedKey::Other(format!("{:?}", other)),
             };
-            let ev = ElementEvent::KeyInput { key, action, modifiers: modifiers.clone() };
+            let ev = ElementEvent::KeyInput {
+                key,
+                action,
+                modifiers: modifiers.clone(),
+            };
             if let Some(root) = &app.widget_root {
                 let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
                 #[cfg(debug_assertions)]
@@ -497,7 +514,10 @@ impl WindowEventHandler {
                 app.ime_composing = !text.is_empty();
                 // Forward preedit to focused widget for composition rendering
                 if let Some(root) = &app.widget_root {
-                    let event = ElementEvent::ImePreedit { text: text.clone(), cursor };
+                    let event = ElementEvent::ImePreedit {
+                        text: text.clone(),
+                        cursor,
+                    };
                     dispatch_event(root.as_ref(), app.cursor_pos, &event);
                 }
                 if let Some(window) = &app.window {
@@ -506,9 +526,7 @@ impl WindowEventHandler {
             }
             Ime::Commit(text) => {
                 app.ime_composing = false;
-                let modifiers = app
-                    .current_modifiers
-                    .clone();
+                let modifiers = app.current_modifiers.clone();
                 Self::dispatch_text(&text, &KeyAction::Pressed, &modifiers, app);
             }
             Ime::Disabled => {
@@ -524,14 +542,21 @@ impl WindowEventHandler {
     ) {
         // debug!("Mouse wheel delta: {:?}", delta);
         let scroll_delta = match delta {
-            MouseScrollDelta::LineDelta(x, y) => Vec2d { x: x * 20.0, y: y * 20.0 },
+            MouseScrollDelta::LineDelta(x, y) => Vec2d {
+                x: x * 20.0,
+                y: y * 20.0,
+            },
             // Scale trackpad (PixelDelta) down for more resistance / less sensitivity.
-            MouseScrollDelta::PixelDelta(pos) => {
-                Vec2d { x: pos.x as f32 * 0.85, y: pos.y as f32 * 0.85 }
-            }
+            MouseScrollDelta::PixelDelta(pos) => Vec2d {
+                x: pos.x as f32 * 0.85,
+                y: pos.y as f32 * 0.85,
+            },
         };
 
-        let event = ElementEvent::Scroll { delta: scroll_delta, phase };
+        let event = ElementEvent::Scroll {
+            delta: scroll_delta,
+            phase,
+        };
         if let Some(root) = &app.widget_root {
             let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
             #[cfg(debug_assertions)]
@@ -572,8 +597,10 @@ impl WindowEventHandler {
             use aimer_attribute::ResolvedSize;
             match crate::ios_screen::get_screen_resolution_pixels() {
                 Some((width, height)) => {
-                    app.native_window_size =
-                        Some(ResolvedSize { width: width as f32, height: height as f32 });
+                    app.native_window_size = Some(ResolvedSize {
+                        width: width as f32,
+                        height: height as f32,
+                    });
                     Self::oriented_screen_size(size, (width, height))
                 }
                 None => {

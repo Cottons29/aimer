@@ -26,7 +26,10 @@ impl StatefulWidget for AnimatedThemeExample {
     type State = AnimatedThemeExampleState;
 
     fn create_state(&self) -> Self::State {
-        AnimatedThemeExampleState { is_dark: false, updater: StateUpdater::empty() }
+        AnimatedThemeExampleState {
+            is_dark: false,
+            updater: StateUpdater::empty(),
+        }
     }
 }
 
@@ -37,7 +40,11 @@ impl State<AnimatedThemeExample> for AnimatedThemeExampleState {
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         AnimatedTheme::new()
-            .data(if self.is_dark { ThemeData::dark() } else { ThemeData::light() })
+            .data(if self.is_dark {
+                ThemeData::dark()
+            } else {
+                ThemeData::light()
+            })
             .duration(Duration::from_millis(400))
             .curve(Curve::EaseInOut)
             .child(ThemedPanel::new(self.is_dark, self.updater.clone()))

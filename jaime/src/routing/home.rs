@@ -25,7 +25,10 @@ impl StatelessWidget for HomeWidget {
                             .text_style(TextStyle::new().color(Colors::Black))
                             .boxed(),
                         Row::new()
-                            .gaps(LayoutSpacing { right: Spacing::Px(10), ..Default::default() })
+                            .gaps(LayoutSpacing {
+                                right: Spacing::Px(10),
+                                ..Default::default()
+                            })
                             .children(vec![
                                 Button::new()
                                     .on_press({

@@ -16,9 +16,6 @@ pub use space::align::{Align, Alignment};
 pub use space::positioned::Positioned;
 pub use space::stack::Stack;
 
-
-
-
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
@@ -58,11 +55,17 @@ mod tests {
 
     impl LayoutElement for MeasuredPositionedChild {
         fn content_size(&self, _ctx: &BuildContext) -> ResolvedSize {
-            ResolvedSize { width: 320.0, height: 96.0 }
+            ResolvedSize {
+                width: 320.0,
+                height: 96.0,
+            }
         }
 
         fn get_size_from_child(&self) -> Option<Size> {
-            Some(Size { width: 320.into(), height: 0.into() })
+            Some(Size {
+                width: 320.into(),
+                height: 0.into(),
+            })
         }
     }
 
@@ -106,9 +109,7 @@ mod tests {
                 index: self.index,
                 selected: self.selected,
                 hovered: false,
-                observers: self
-                    .observers
-                    .clone(),
+                observers: self.observers.clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -145,7 +146,11 @@ mod tests {
 
     fn button(index: usize, selected: bool, observers: Rc<Vec<Rc<Cell<i32>>>>) -> Box<dyn Widget> {
         Box::new(NamedWidget::new(
-            Box::new(ButtonLike { index, selected, observers }),
+            Box::new(ButtonLike {
+                index,
+                selected,
+                observers,
+            }),
             "ButtonLike",
         ))
     }
@@ -170,15 +175,9 @@ mod tests {
         fn create_state(&self) -> Self::State {
             TabState {
                 index: 0,
-                observer: self
-                    .observer
-                    .clone(),
-                live_updater: self
-                    .live_updater
-                    .clone(),
-                button_observers: self
-                    .button_observers
-                    .clone(),
+                observer: self.observer.clone(),
+                live_updater: self.live_updater.clone(),
+                button_observers: self.button_observers.clone(),
                 updater: StateUpdater::new(),
             }
         }
@@ -200,11 +199,8 @@ mod tests {
         }
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
-            self.observer
-                .set(self.index);
-            *self
-                .live_updater
-                .borrow_mut() = Some(self.updater.clone());
+            self.observer.set(self.index);
+            *self.live_updater.borrow_mut() = Some(self.updater.clone());
             // Content follows the selection (the image in the real app) AND a
             // Row of buttons whose highlight must follow the selection too.
             Column::new().children(vec![
@@ -214,30 +210,10 @@ mod tests {
                     .boxed(),
                 Row::new()
                     .children(vec![
-                        button(
-                            0,
-                            self.index == 0,
-                            self.button_observers
-                                .clone(),
-                        ),
-                        button(
-                            1,
-                            self.index == 1,
-                            self.button_observers
-                                .clone(),
-                        ),
-                        button(
-                            2,
-                            self.index == 2,
-                            self.button_observers
-                                .clone(),
-                        ),
-                        button(
-                            3,
-                            self.index == 3,
-                            self.button_observers
-                                .clone(),
-                        ),
+                        button(0, self.index == 0, self.button_observers.clone()),
+                        button(1, self.index == 1, self.button_observers.clone()),
+                        button(2, self.index == 2, self.button_observers.clone()),
+                        button(3, self.index == 3, self.button_observers.clone()),
                     ])
                     .boxed(),
             ])
@@ -409,7 +385,11 @@ mod tests {
         );
 
         driver.draw(&initial_ctx);
-        assert_eq!(observer.get(), 0, "initial build should publish the default tab index");
+        assert_eq!(
+            observer.get(),
+            0,
+            "initial build should publish the default tab index"
+        );
 
         current_live_updater(&live_updater).set_state(|state| state.index = 3);
         driver.draw(&initial_ctx);
@@ -543,7 +523,10 @@ mod tests {
         ];
 
         for result in &results {
-            eprintln!("{} => buttons={:?}", result.label, result.button_highlight_after_resize);
+            eprintln!(
+                "{} => buttons={:?}",
+                result.label, result.button_highlight_after_resize
+            );
         }
 
         for result in &results {
@@ -575,14 +558,10 @@ mod tests {
     impl EventElement for MainAxisProbe {}
     impl LayoutElement for MainAxisProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-            self.seen.set(
-                ctx.box_constraint
-                    .max_width,
-            );
+            self.seen
+                .set(ctx.box_constraint.max_width);
             ResolvedSize {
-                width: ctx
-                    .box_constraint
-                    .max_width,
+                width: ctx.box_constraint.max_width,
                 height: 24.0,
             }
         }
@@ -617,22 +596,21 @@ mod tests {
     impl EventElement for IntrinsicProbe {}
     impl LayoutElement for IntrinsicProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-            self.seen.set(
-                ctx.box_constraint
-                    .max_width,
-            );
+            self.seen
+                .set(ctx.box_constraint.max_width);
             ResolvedSize {
                 width: self.intrinsic_width,
-                height: ctx
-                    .box_constraint
-                    .max_height,
+                height: ctx.box_constraint.max_height,
             }
         }
     }
     impl Rebuildable for IntrinsicProbe {}
 
     fn intrinsic_probe(intrinsic_width: f32, seen: &Rc<Cell<f32>>) -> Box<dyn Element> {
-        Box::new(IntrinsicProbe { intrinsic_width, seen: seen.clone() })
+        Box::new(IntrinsicProbe {
+            intrinsic_width,
+            seen: seen.clone(),
+        })
     }
 
     struct ConstraintSensitiveProbe {
@@ -648,25 +626,17 @@ mod tests {
     impl Drawable for ConstraintSensitiveProbe {
         fn draw(&self, ctx: &BuildContext) {
             self.drawn_width
-                .set(
-                    ctx.box_constraint
-                        .max_width,
-                );
+                .set(ctx.box_constraint.max_width);
         }
     }
     impl EventElement for ConstraintSensitiveProbe {}
     impl LayoutElement for ConstraintSensitiveProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
             ResolvedSize {
-                width: if ctx
-                    .box_constraint
-                    .max_width
-                    == f32::MAX
-                {
+                width: if ctx.box_constraint.max_width == f32::MAX {
                     self.intrinsic_width
                 } else {
-                    ctx.box_constraint
-                        .max_width
+                    ctx.box_constraint.max_width
                 },
                 height: 24.0,
             }
@@ -678,7 +648,10 @@ mod tests {
         intrinsic_width: f32,
         drawn_width: &Rc<Cell<f32>>,
     ) -> Box<dyn Element> {
-        Box::new(ConstraintSensitiveProbe { intrinsic_width, drawn_width: drawn_width.clone() })
+        Box::new(ConstraintSensitiveProbe {
+            intrinsic_width,
+            drawn_width: drawn_width.clone(),
+        })
     }
 
     struct ConstraintSensitiveColumnProbe {
@@ -694,10 +667,7 @@ mod tests {
     impl Drawable for ConstraintSensitiveColumnProbe {
         fn draw(&self, ctx: &BuildContext) {
             self.drawn_height
-                .set(
-                    ctx.box_constraint
-                        .max_height,
-                );
+                .set(ctx.box_constraint.max_height);
         }
     }
     impl EventElement for ConstraintSensitiveColumnProbe {}
@@ -705,15 +675,10 @@ mod tests {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
             ResolvedSize {
                 width: 24.0,
-                height: if ctx
-                    .box_constraint
-                    .max_height
-                    == f32::MAX
-                {
+                height: if ctx.box_constraint.max_height == f32::MAX {
                     self.intrinsic_height
                 } else {
-                    ctx.box_constraint
-                        .max_height
+                    ctx.box_constraint.max_height
                 },
             }
         }
@@ -745,7 +710,11 @@ mod tests {
     }
 
     fn column_of(children: Vec<Box<dyn Element>>) -> RawFlex {
-        RawFlex { direction: LayoutDirection::Column, debug_name: "Column", ..row_of(children) }
+        RawFlex {
+            direction: LayoutDirection::Column,
+            debug_name: "Column",
+            ..row_of(children)
+        }
     }
 
     /// A single `Expanded` in a `Row` fills the whole parent width.
@@ -757,8 +726,18 @@ mod tests {
 
         let size = row.computed_size(&ctx);
 
-        assert_eq!(c1.get(), 300.0, "the only Expanded must receive the full width");
-        assert_eq!(size, ResolvedSize { width: 300.0, height: 24.0 });
+        assert_eq!(
+            c1.get(),
+            300.0,
+            "the only Expanded must receive the full width"
+        );
+        assert_eq!(
+            size,
+            ResolvedSize {
+                width: 300.0,
+                height: 24.0
+            }
+        );
     }
 
     /// Two equal `Expanded` children split the width evenly.
@@ -811,13 +790,25 @@ mod tests {
             .width(60)
             .child(crate::ZeroSizedBox)
             .to_element(&ctx);
-        let row = row_of(vec![fixed, expanded_probe(1.0, &c1), expanded_probe(2.0, &c2)]);
+        let row = row_of(vec![
+            fixed,
+            expanded_probe(1.0, &c1),
+            expanded_probe(2.0, &c2),
+        ]);
 
         let _ = row.computed_size(&ctx);
 
         // 300 - 60 = 240 free, split 1:2 => 80 and 160.
-        assert_eq!(c1.get(), 80.0, "flex=1 child gets 1/3 of the remaining 240px");
-        assert_eq!(c2.get(), 160.0, "flex=2 child gets 2/3 of the remaining 240px");
+        assert_eq!(
+            c1.get(),
+            80.0,
+            "flex=1 child gets 1/3 of the remaining 240px"
+        );
+        assert_eq!(
+            c2.get(),
+            160.0,
+            "flex=2 child gets 2/3 of the remaining 240px"
+        );
     }
 
     /// Regression for the website header: a size-less intrinsic child (a
@@ -830,7 +821,10 @@ mod tests {
         let text = Rc::new(Cell::new(0.0));
         let exp = Rc::new(Cell::new(0.0));
         // Row: [ Text(width 50), Expanded ]
-        let row = row_of(vec![intrinsic_probe(50.0, &text), expanded_probe(1.0, &exp)]);
+        let row = row_of(vec![
+            intrinsic_probe(50.0, &text),
+            expanded_probe(1.0, &exp),
+        ]);
 
         let _ = row.computed_size(&ctx);
 
@@ -914,7 +908,9 @@ mod tests {
         let ctx = dummy_build_context(1000.0, 500.0, None);
         let observed_parent_size = Rc::new(Cell::new(ResolvedSize::default()));
         let positioned = RawPositionedElement {
-            child: MeasuredPositionedChild { observed_parent_size: observed_parent_size.clone() },
+            child: MeasuredPositionedChild {
+                observed_parent_size: observed_parent_size.clone(),
+            },
             position: Default::default(),
             left: 12.into(),
             top: 16.into(),
@@ -928,7 +924,10 @@ mod tests {
 
         assert_eq!(
             observed_parent_size.get(),
-            ResolvedSize { width: 320.0, height: 96.0 },
+            ResolvedSize {
+                width: 320.0,
+                height: 96.0
+            },
             "positioned children must receive their measured size, not a zero intrinsic height"
         );
     }

@@ -20,11 +20,8 @@ pub struct HeaderSection {
 impl StatelessWidget for HeaderSection {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let theme = ThemeData::of(ctx);
-        let icon = SvgDocument::from_svg(
-            self.theme_mode
-                .toggle_icon(),
-        )
-        .expect("the bundled theme icon should be valid");
+        let icon = SvgDocument::from_svg(self.theme_mode.toggle_icon())
+            .expect("the bundled theme icon should be valid");
 
         let children = vec![
             SizedBox::new()
@@ -62,9 +59,7 @@ impl StatelessWidget for HeaderSection {
                 .box_child(
                     Button::new()
                         .on_press({
-                            let updater = self
-                                .theme_updater
-                                .clone();
+                            let updater = self.theme_updater.clone();
                             move || updater.set_state(AppShellState::toggle_theme)
                         })
                         .decoration(
@@ -147,8 +142,11 @@ impl HeaderSection {
                 move |(i, l)| {
                     let index = i;
                     let is_selected = index == selected;
-                    let font_weight =
-                        if selected == index { FontWeight::Bolder } else { FontWeight::Normal };
+                    let font_weight = if selected == index {
+                        FontWeight::Bolder
+                    } else {
+                        FontWeight::Normal
+                    };
 
                     TextButton::new(*l)
                         .style(

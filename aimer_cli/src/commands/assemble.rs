@@ -23,7 +23,10 @@ pub fn execute(platform: String, release: bool) -> anyhow::Result<()> {
     let target = Targets::try_from(platform.as_str())
         .map_err(|_| AimerError::UnknownTarget(platform.clone()))?;
 
-    println!("Assembling '{target}' bundle in {} mode...", profile_name(release));
+    println!(
+        "Assembling '{target}' bundle in {} mode...",
+        profile_name(release)
+    );
 
     let pkg_name = resolve_package_name(Path::new("."));
 
@@ -52,7 +55,11 @@ fn xcode_configuration(release: bool) -> &'static str {
 
 /// The Gradle assemble task for the requested build mode.
 fn gradle_task(release: bool) -> &'static str {
-    if release { "assembleRelease" } else { "assembleDebug" }
+    if release {
+        "assembleRelease"
+    } else {
+        "assembleDebug"
+    }
 }
 
 /// Run `cmd` to completion with inherited stdio, bailing with context when it
@@ -131,7 +138,11 @@ fn assemble_macos(pkg_name: &str, release: bool) -> anyhow::Result<String> {
     run_step(cargo, "cargo build for macOS")?;
 
     let src_lib = artifact_path(rust_target, &lib_name, release, ".a");
-    copy_lib(&src_lib, "builds/macos/Libraries", &format!("lib{lib_name}.a"))?;
+    copy_lib(
+        &src_lib,
+        "builds/macos/Libraries",
+        &format!("lib{lib_name}.a"),
+    )?;
     let configuration = xcode_configuration(release);
     let artifact = format!("builds/macos/build/{configuration}/{pkg_name}.app");
     let artifact_path = Path::new(&artifact);
@@ -163,8 +174,11 @@ fn assemble_ios(pkg_name: &str, target: Targets, release: bool) -> anyhow::Resul
     let arch = host_arch();
     let (rust_target, sdk, subdir_suffix) = match target {
         Targets::IosSimulator => {
-            let rust_target =
-                if arch == "x86_64" { "x86_64-apple-ios" } else { "aarch64-apple-ios-sim" };
+            let rust_target = if arch == "x86_64" {
+                "x86_64-apple-ios"
+            } else {
+                "aarch64-apple-ios-sim"
+            };
             (rust_target, "iphonesimulator", "iphonesimulator")
         }
         _ => ("aarch64-apple-ios", "iphoneos", "iphoneos"),
@@ -183,7 +197,11 @@ fn assemble_ios(pkg_name: &str, target: Targets, release: bool) -> anyhow::Resul
     run_step(cargo, "cargo build for iOS")?;
 
     let src_lib = artifact_path(rust_target, &lib_name, release, ".a");
-    copy_lib(&src_lib, "builds/ios/Libraries", &format!("lib{lib_name}.a"))?;
+    copy_lib(
+        &src_lib,
+        "builds/ios/Libraries",
+        &format!("lib{lib_name}.a"),
+    )?;
 
     let configuration = xcode_configuration(release);
     let mut xcode = Command::new("xcodebuild");
@@ -238,7 +256,11 @@ fn assemble_android(pkg_name: &str, release: bool) -> anyhow::Result<String> {
     let android_dir = current_dir()
         .context("resolving current directory")?
         .join("builds/android");
-    let gradlew = if cfg!(windows) { "gradlew.bat" } else { "gradlew" };
+    let gradlew = if cfg!(windows) {
+        "gradlew.bat"
+    } else {
+        "gradlew"
+    };
 
     let mut gradle = Command::new(android_dir.join(gradlew));
     gradle
@@ -324,17 +346,11 @@ fn resolve_compatible_java_home() -> Option<String> {
             else {
                 continue;
             };
-            if !output
-                .status
-                .success()
-            {
+            if !output.status.success() {
                 continue;
             }
             if let Ok(path) = String::from_utf8(output.stdout) {
-                return Some(
-                    path.trim()
-                        .to_string(),
-                );
+                return Some(path.trim().to_string());
             }
         }
     }

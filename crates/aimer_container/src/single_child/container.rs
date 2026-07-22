@@ -130,25 +130,20 @@ impl Container {
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
-        self.child(child)
-            .boxed()
+        self.child(child).boxed()
     }
 }
 
 impl<W: Widget> Widget for Container<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self
-            .child
-            .to_element(ctx);
+        let child = self.child.to_element(ctx);
         Box::new(RawContainer {
             width: self.width,
             height: self.height,
             child,
             padding: self.padding,
             margin: self.margin,
-            box_decoration: self
-                .box_decoration
-                .clone(),
+            box_decoration: self.box_decoration.clone(),
             cache: LayoutCache::new(),
             debug_name: "Container",
             bounds: std::cell::Cell::new(None),
@@ -206,12 +201,8 @@ impl<E: Element> RawContainer<E> {
     }
 
     fn margin(&self, ctx: &BuildContext) -> (f32, f32, f32, f32) {
-        let parent_width = ctx
-            .box_constraint
-            .max_width;
-        let parent_height = ctx
-            .box_constraint
-            .max_height;
+        let parent_width = ctx.box_constraint.max_width;
+        let parent_height = ctx.box_constraint.max_height;
         let scale = ctx.scale;
 
         let m_left = self
@@ -279,7 +270,10 @@ impl<T: Element> Drawable for RawContainer<T> {
             let (start_x, start_y) = ctx
                 .canvas
                 .get_transform_translation();
-            let l_start = Vec2d { x: (start_x + m_left) / scale, y: (start_y + m_top) / scale };
+            let l_start = Vec2d {
+                x: (start_x + m_left) / scale,
+                y: (start_y + m_top) / scale,
+            };
             let l_end = Vec2d {
                 x: (start_x + m_left + draw_width) / scale,
                 y: (start_y + m_top + draw_height) / scale,
@@ -298,8 +292,14 @@ impl<T: Element> Drawable for RawContainer<T> {
                 let end_y = start_y + m_top + box_height;
 
                 let scale = ctx.scale;
-                let l_start = Vec2d { x: (start_x + m_left) / scale, y: (start_y + m_top) / scale };
-                let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
+                let l_start = Vec2d {
+                    x: (start_x + m_left) / scale,
+                    y: (start_y + m_top) / scale,
+                };
+                let l_end = Vec2d {
+                    x: end_x / scale,
+                    y: end_y / scale,
+                };
                 self.bounds
                     .set(Some((l_start, l_end)));
 
@@ -338,7 +338,10 @@ impl<T: Element> Drawable for RawContainer<T> {
         let bg_w = box_width + m_left + m_right;
         let bg_h = box_height + m_top + m_bottom;
         let bg_ctx = BuildContext {
-            parent_size: ResolvedSize { width: bg_w, height: bg_h + 1.0 },
+            parent_size: ResolvedSize {
+                width: bg_w,
+                height: bg_h + 1.0,
+            },
             ..ctx.clone()
         };
         self.box_decoration
@@ -346,8 +349,10 @@ impl<T: Element> Drawable for RawContainer<T> {
 
         // Now translate by the margin so that child content and clip are
         // positioned correctly inside the margin inset.
-        ctx.canvas
-            .translate(Vec2d { x: m_left, y: m_top });
+        ctx.canvas.translate(Vec2d {
+            x: m_left,
+            y: m_top,
+        });
 
         let p_left = self
             .padding
@@ -366,9 +371,7 @@ impl<T: Element> Drawable for RawContainer<T> {
             .bottom
             .value(box_height, scale);
 
-        let border = self
-            .box_decoration
-            .border;
+        let border = self.box_decoration.border;
         let radii = self
             .box_decoration
             .border_radius
@@ -401,15 +404,22 @@ impl<T: Element> Drawable for RawContainer<T> {
             (radii[3] - b_bottom.max(b_left)).max(0.0),  // bottom-left
         ];
 
-        ctx.canvas
-            .set_clip_rounded(
-                Vec2d { x: clip_x, y: clip_y },
-                ResolvedSize { width: clip_w, height: clip_h },
-                inner_radii,
-            );
+        ctx.canvas.set_clip_rounded(
+            Vec2d {
+                x: clip_x,
+                y: clip_y,
+            },
+            ResolvedSize {
+                width: clip_w,
+                height: clip_h,
+            },
+            inner_radii,
+        );
 
-        ctx.canvas
-            .translate(Vec2d { x: p_left + b_left, y: p_top + b_top });
+        ctx.canvas.translate(Vec2d {
+            x: p_left + b_left,
+            y: p_top + b_top,
+        });
 
         let mut child_ctx = ctx.clone();
         let content_w = (box_width - p_left - b_left - _p_right - b_right).max(0.0);
@@ -420,7 +430,10 @@ impl<T: Element> Drawable for RawContainer<T> {
         child_ctx
             .box_constraint
             .max_height = content_h;
-        child_ctx.parent_size = ResolvedSize { width: content_w, height: content_h };
+        child_ctx.parent_size = ResolvedSize {
+            width: content_w,
+            height: content_h,
+        };
 
         // The child is drawn after translating the canvas by the margin and the
         // padding + border inset, so the visibility rect (used for scroll
@@ -433,10 +446,8 @@ impl<T: Element> Drawable for RawContainer<T> {
             .visible_rect
             .map(|(vx, vy, vw, vh)| (vx - inset_x, vy - inset_y, vw, vh));
 
-        self.child
-            .draw(&child_ctx);
-        ctx.canvas
-            .clear_clip();
+        self.child.draw(&child_ctx);
+        ctx.canvas.clear_clip();
         ctx.canvas.restore();
     }
 }
@@ -475,7 +486,10 @@ impl<T: Element> EventElement for RawContainer<T> {
 
 impl<T: Element> LayoutElement for RawContainer<T> {
     fn size(&self) -> Option<Size> {
-        Some(Size { width: self.width, height: self.height })
+        Some(Size {
+            width: self.width,
+            height: self.height,
+        })
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -488,12 +502,8 @@ impl<T: Element> LayoutElement for RawContainer<T> {
         }
 
         let scale = ctx.scale;
-        let p_w = ctx
-            .box_constraint
-            .max_width;
-        let p_h = ctx
-            .box_constraint
-            .max_height;
+        let p_w = ctx.box_constraint.max_width;
+        let p_h = ctx.box_constraint.max_height;
         let threshold = 1_000_000.0f32;
 
         let m_left = self
@@ -621,7 +631,10 @@ impl<T: Element> LayoutElement for RawContainer<T> {
                 box_height + m_top + m_bottom
             };
 
-            ResolvedSize { width: final_w.max(0.0), height: final_h.max(0.0) }
+            ResolvedSize {
+                width: final_w.max(0.0),
+                height: final_h.max(0.0),
+            }
         } else {
             ResolvedSize {
                 width: (box_width + m_left + m_right).max(0.0),
@@ -643,12 +656,8 @@ impl<T: Element> LayoutElement for RawContainer<T> {
         }
 
         let scale = ctx.scale;
-        let p_w = ctx
-            .box_constraint
-            .max_width;
-        let p_h = ctx
-            .box_constraint
-            .max_height;
+        let p_w = ctx.box_constraint.max_width;
+        let p_h = ctx.box_constraint.max_height;
         let threshold = 1_000_000.0f32;
 
         let m_left = self
@@ -712,9 +721,7 @@ impl<T: Element> LayoutElement for RawContainer<T> {
             }
         };
 
-        let border = self
-            .box_decoration
-            .border;
+        let border = self.box_decoration.border;
 
         let b_left = get_stroke(border.left.stroke, capped_w).max(0.0);
         let b_right = get_stroke(border.right.stroke, capped_w).max(0.0);
@@ -850,10 +857,8 @@ impl<T: Element> LayoutElement for RawContainer<T> {
     }
 
     fn invalidate_layout(&self) {
-        self.cache
-            .invalidate();
-        self.child
-            .invalidate_layout();
+        self.cache.invalidate();
+        self.child.invalidate_layout();
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {

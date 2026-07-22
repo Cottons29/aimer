@@ -144,7 +144,11 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Create { project_name }) => {
             commands::create::execute(project_name)?;
         }
-        Some(Commands::Run { target, device, no_tui }) => {
+        Some(Commands::Run {
+            target,
+            device,
+            no_tui,
+        }) => {
             commands::run::execute(target.map(|t| t.to_string()), device.clone(), *no_tui)?;
         }
         Some(Commands::Build { target, release }) => {
@@ -163,11 +167,7 @@ fn main() -> anyhow::Result<()> {
             commands::completions::execute(*shell, *install)?;
         }
         Some(Commands::Migrate { target }) => {
-            commands::migrate::execute(
-                target
-                    .as_str()
-                    .to_string(),
-            )?;
+            commands::migrate::execute(target.as_str().to_string())?;
         }
         None => {
             Cli::parse_from(["aimer", "--help"]);

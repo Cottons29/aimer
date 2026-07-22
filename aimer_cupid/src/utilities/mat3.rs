@@ -6,11 +6,15 @@ pub struct Mat3 {
 
 impl Mat3 {
     pub const fn identity() -> Self {
-        Self { cols: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] }
+        Self {
+            cols: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        }
     }
 
     pub const fn translate(tx: f32, ty: f32) -> Self {
-        Self { cols: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [tx, ty, 1.0]] }
+        Self {
+            cols: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [tx, ty, 1.0]],
+        }
     }
 
     /// Multiply self * other (apply self after other).
@@ -27,19 +31,26 @@ impl Mat3 {
     }
 
     pub fn scale(sx: f32, sy: f32) -> Self {
-        Self { cols: [[sx, 0.0, 0.0], [0.0, sy, 0.0], [0.0, 0.0, 1.0]] }
+        Self {
+            cols: [[sx, 0.0, 0.0], [0.0, sy, 0.0], [0.0, 0.0, 1.0]],
+        }
     }
 
     pub fn rotate(radians: f32) -> Self {
         let c = radians.cos();
         let s = radians.sin();
-        Self { cols: [[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]] }
+        Self {
+            cols: [[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]],
+        }
     }
 
     /// Transform a 2D point by this matrix.
     pub const fn transform_point(&self, x: f32, y: f32) -> (f32, f32) {
         let c = &self.cols;
-        (c[0][0] * x + c[1][0] * y + c[2][0], c[0][1] * x + c[1][1] * y + c[2][1])
+        (
+            c[0][0] * x + c[1][0] * y + c[2][0],
+            c[0][1] * x + c[1][1] * y + c[2][1],
+        )
     }
 
     /// Align the transform origin to physical pixel boundaries without
@@ -79,11 +90,6 @@ mod tests {
     fn pixel_alignment_keeps_integer_translation_stable() {
         let transform = Mat3::translate(12.0, -7.0);
 
-        assert_eq!(
-            transform
-                .pixel_aligned()
-                .cols,
-            transform.cols
-        );
+        assert_eq!(transform.pixel_aligned().cols, transform.cols);
     }
 }

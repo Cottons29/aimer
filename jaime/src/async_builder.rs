@@ -46,7 +46,10 @@ mod tests {
 
     #[test]
     fn snapshot_message_covers_loading_success_and_error() {
-        assert_eq!(snapshot_message(&AsyncSnapshot::Waiting), "Loading example.com...");
+        assert_eq!(
+            snapshot_message(&AsyncSnapshot::Waiting),
+            "Loading example.com..."
+        );
         assert_eq!(
             snapshot_message(&AsyncSnapshot::Data("Example Domain".to_owned())),
             "Example Domain"

@@ -30,14 +30,20 @@ impl StatelessWidget for ProfilePage {
             Column::new()
                 .horizontal_alignment(BoxAlignment::Center)
                 .vertical_alignment(BoxAlignment::Center)
-                .gaps(LayoutSpacing { top: Spacing::Px(40), ..Default::default() })
+                .gaps(LayoutSpacing {
+                    top: Spacing::Px(40),
+                    ..Default::default()
+                })
                 .children(vec![
                     Text::new(format!("Hello, {}", self.name))
                         .text_align(TextAlign::MidCenter)
                         .text_style(TextStyle::new().color(Colors::Black))
                         .boxed(),
                     Row::new()
-                        .gaps(LayoutSpacing { right: Spacing::Px(10), ..Default::default() })
+                        .gaps(LayoutSpacing {
+                            right: Spacing::Px(10),
+                            ..Default::default()
+                        })
                         .children(vec![
                             Button::new()
                                 .on_press({

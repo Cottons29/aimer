@@ -22,11 +22,23 @@ fn assert_theme<T: Theme>() {}
 #[test]
 fn named_theme_interpolates_fields_and_preserves_exact_endpoints() {
     assert_theme::<AppTheme>();
-    let begin = AppTheme { opacity: 0.0, inset: 2 };
-    let end = AppTheme { opacity: 1.0, inset: 10 };
+    let begin = AppTheme {
+        opacity: 0.0,
+        inset: 2,
+    };
+    let end = AppTheme {
+        opacity: 1.0,
+        inset: 10,
+    };
 
     assert_eq!(begin.lerp(&end, -1.0), begin);
-    assert_eq!(begin.lerp(&end, 0.5), AppTheme { opacity: 0.5, inset: 6 });
+    assert_eq!(
+        begin.lerp(&end, 0.5),
+        AppTheme {
+            opacity: 0.5,
+            inset: 6
+        }
+    );
     assert_eq!(begin.lerp(&end, 2.0), end);
 }
 
@@ -51,7 +63,10 @@ fn animated_theme_builder_accepts_a_derived_custom_theme() {
     fn assert_widget<T: Widget>(_widget: &T) {}
 
     let widget = AnimatedTheme::new()
-        .data(AppTheme { opacity: 0.5, inset: 8 })
+        .data(AppTheme {
+            opacity: 0.5,
+            inset: 8,
+        })
         .child(Text::new("child"));
 
     assert_widget(&widget);

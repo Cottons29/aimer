@@ -22,7 +22,11 @@ fn load_cache_data() -> Option<Vec<u8>> {
     let path = cache_path()?;
     match std::fs::read(&path) {
         Ok(data) => {
-            debug!("Pipeline cache loaded from {:?} ({} bytes)", path, data.len());
+            debug!(
+                "Pipeline cache loaded from {:?} ({} bytes)",
+                path,
+                data.len()
+            );
             Some(data)
         }
         Err(_) => {

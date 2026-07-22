@@ -112,10 +112,7 @@ impl AimerManifest {
     pub fn default_target(&self) -> Option<&str> {
         self.build
             .as_ref()
-            .and_then(|b| {
-                b.default_target
-                    .as_deref()
-            })
+            .and_then(|b| b.default_target.as_deref())
     }
 }
 
@@ -130,9 +127,7 @@ pub fn resolve_package_name(dir: &Path) -> String {
             .name
             .is_empty()
     {
-        return manifest
-            .package
-            .name;
+        return manifest.package.name;
     }
     parse_cargo_package_name(dir).unwrap_or_else(|| DEFAULT_PACKAGE_NAME.to_string())
 }
@@ -163,8 +158,13 @@ mod tests {
     #[test]
     fn manifest_round_trips() {
         let dir = tempfile::tempdir().unwrap();
-        let manifest =
-            AimerManifest::new("my_app", "0.2.0", "a cool app", "alice", "com.example.myapp");
+        let manifest = AimerManifest::new(
+            "my_app",
+            "0.2.0",
+            "a cool app",
+            "alice",
+            "com.example.myapp",
+        );
         manifest
             .write_to(dir.path())
             .unwrap();
@@ -173,24 +173,9 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(loaded.package.name, "my_app");
-        assert_eq!(
-            loaded
-                .package
-                .version,
-            "0.2.0"
-        );
-        assert_eq!(
-            loaded
-                .package
-                .description,
-            "a cool app"
-        );
-        assert_eq!(
-            loaded
-                .package
-                .author,
-            "alice"
-        );
+        assert_eq!(loaded.package.version, "0.2.0");
+        assert_eq!(loaded.package.description, "a cool app");
+        assert_eq!(loaded.package.author, "alice");
         assert_eq!(loaded.package.group, "com.example.myapp");
     }
 
@@ -207,7 +192,9 @@ mod tests {
     #[test]
     fn default_target_is_read() {
         let mut manifest = AimerManifest::new("app", "0.1.0", "", "", "com.example.app");
-        manifest.build = Some(BuildMeta { default_target: Some("web".to_string()) });
+        manifest.build = Some(BuildMeta {
+            default_target: Some("web".to_string()),
+        });
         let dir = tempfile::tempdir().unwrap();
         manifest
             .write_to(dir.path())
@@ -221,9 +208,15 @@ mod tests {
     #[test]
     fn resolve_package_name_prefers_manifest() {
         let dir = tempfile::tempdir().unwrap();
-        AimerManifest::new("from_manifest", "0.1.0", "", "", "com.example.from_manifest")
-            .write_to(dir.path())
-            .unwrap();
+        AimerManifest::new(
+            "from_manifest",
+            "0.1.0",
+            "",
+            "",
+            "com.example.from_manifest",
+        )
+        .write_to(dir.path())
+        .unwrap();
         assert_eq!(resolve_package_name(dir.path()), "from_manifest");
     }
 
@@ -231,8 +224,7 @@ mod tests {
     fn resolve_package_name_falls_back_to_cargo_toml() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
-            dir.path()
-                .join("Cargo.toml"),
+            dir.path().join("Cargo.toml"),
             "[package]\nname = \"from_cargo\"\nversion = \"0.1.0\"\n",
         )
         .unwrap();
@@ -258,15 +250,13 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(loaded.package.name, "Jaime");
-        assert_eq!(
-            loaded
-                .package
-                .version,
-            "0.0.1"
-        );
+        assert_eq!(loaded.package.version, "0.0.1");
         assert_eq!(
             loaded.asset_files(),
-            ["assets/logo.png".to_string(), "assets/fonts/Inter.ttf".to_string()]
+            [
+                "assets/logo.png".to_string(),
+                "assets/fonts/Inter.ttf".to_string()
+            ]
         );
     }
 
@@ -283,12 +273,10 @@ mod tests {
     #[test]
     fn parse_cargo_package_name_works() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path()
-                .join("Cargo.toml"),
-            "[package]\nname = \"pkg\"\n",
-        )
-        .unwrap();
-        assert_eq!(parse_cargo_package_name(dir.path()), Some("pkg".to_string()));
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"pkg\"\n").unwrap();
+        assert_eq!(
+            parse_cargo_package_name(dir.path()),
+            Some("pkg".to_string())
+        );
     }
 }

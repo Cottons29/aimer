@@ -85,7 +85,11 @@ pub enum FontError {
     EmptyFamily,
     InvalidFont,
     ReservedFamily,
-    DuplicateVariant { family: FontFamily, weight: u16, style: FontStyle },
+    DuplicateVariant {
+        family: FontFamily,
+        weight: u16,
+        style: FontStyle,
+    },
     HandleCollision,
 }
 
@@ -100,7 +104,10 @@ impl Display for FontError {
                 formatter.write_str("generic Aimer font family names are reserved")
             }
             Self::DuplicateVariant { weight, style, .. } => {
-                write!(formatter, "font variant {weight}/{style:?} is already registered")
+                write!(
+                    formatter,
+                    "font variant {weight}/{style:?} is already registered"
+                )
             }
             Self::HandleCollision => formatter.write_str("font family or face handle collision"),
         }
@@ -133,9 +140,7 @@ fn registry() -> &'static RwLock<RegistryState> {
 }
 
 fn normalize_family(name: &str) -> Result<String, FontError> {
-    let normalized = name
-        .trim()
-        .to_lowercase();
+    let normalized = name.trim().to_lowercase();
     if normalized.is_empty() {
         Err(FontError::EmptyFamily)
     } else if matches!(normalized.as_str(), "sans-serif" | "monospace") {
@@ -150,7 +155,9 @@ fn stable_hash(bytes: &[u8]) -> u64 {
     const PRIME: u64 = 0x100000001b3;
     bytes
         .iter()
-        .fold(OFFSET, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(PRIME))
+        .fold(OFFSET, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(PRIME)
+        })
 }
 
 fn family_handle(name: &str) -> FontFamily {
@@ -185,18 +192,13 @@ impl FontRegistry {
     /// the same normalized family, numeric weight, and style twice is rejected.
     pub fn register(registration: FontRegistration<'_>) -> Result<FontFamily, FontError> {
         let family_name = normalize_family(registration.family)?;
-        if registration
-            .bytes
-            .is_empty()
-            || ttf_parser::Face::parse(registration.bytes, 0).is_err()
+        if registration.bytes.is_empty() || ttf_parser::Face::parse(registration.bytes, 0).is_err()
         {
             return Err(FontError::InvalidFont);
         }
 
         let family = family_handle(&family_name);
-        let weight = registration
-            .weight
-            .numeric();
+        let weight = registration.weight.numeric();
         let id = face_id(family, weight, registration.style);
         let mut state = registry()
             .write()
@@ -209,9 +211,7 @@ impl FontRegistry {
         {
             return Err(FontError::HandleCollision);
         }
-        if let Some(owner) = state
-            .face_owners
-            .get(&id)
+        if let Some(owner) = state.face_owners.get(&id)
             && *owner != (family, weight, registration.style)
         {
             return Err(FontError::HandleCollision);
@@ -225,7 +225,11 @@ impl FontRegistry {
                     .any(|face| face.weight == weight && face.style == registration.style)
             })
         {
-            return Err(FontError::DuplicateVariant { family, weight, style: registration.style });
+            return Err(FontError::DuplicateVariant {
+                family,
+                weight,
+                style: registration.style,
+            });
         }
 
         state
@@ -252,9 +256,7 @@ impl FontRegistry {
     }
 
     pub fn family(name: &str) -> Option<FontFamily> {
-        let normalized = name
-            .trim()
-            .to_lowercase();
+        let normalized = name.trim().to_lowercase();
         match normalized.as_str() {
             "sans-serif" => Some(FontFamily::SANS_SERIF),
             "monospace" => Some(FontFamily::MONOSPACE),
@@ -346,7 +348,10 @@ mod tests {
 
         let exact_style =
             FontRegistry::resolve(family, FontWeight::Bold, FontStyle::Italic).unwrap();
-        assert_eq!((exact_style.weight, exact_style.style), (400, FontStyle::Italic));
+        assert_eq!(
+            (exact_style.weight, exact_style.style),
+            (400, FontStyle::Italic)
+        );
 
         let normal_style_fallback =
             FontRegistry::resolve(family, FontWeight::Bold, FontStyle::Oblique).unwrap();

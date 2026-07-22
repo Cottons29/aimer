@@ -37,7 +37,10 @@ impl StatefulWidget for HomePage {
     type State = HomePageState;
 
     fn create_state(&self) -> Self::State {
-        HomePageState { controller: ScrollController::new(), updater: StateUpdater::new() }
+        HomePageState {
+            controller: ScrollController::new(),
+            updater: StateUpdater::new(),
+        }
     }
 }
 
@@ -80,10 +83,7 @@ impl State<HomePage> for HomePageState {
             .child(
                 Scrollable::new()
                     .key(key!())
-                    .controller(
-                        self.controller
-                            .clone(),
-                    )
+                    .controller(self.controller.clone())
                     .axis(ScrollAxis::Vertical)
                     .child(Column::new().children(vec![
                         hero_section(ctx),
@@ -160,8 +160,16 @@ fn word(text: &str, bold: bool) -> AnyWidget {
         .text_style(
             TextStyle::new()
                 .font_size(16)
-                .color(if bold { Color::WHITE } else { Color::Rgb(180, 180, 180) })
-                .font_weight(if bold { FontWeight::Bolder } else { FontWeight::Normal }),
+                .color(if bold {
+                    Color::WHITE
+                } else {
+                    Color::Rgb(180, 180, 180)
+                })
+                .font_weight(if bold {
+                    FontWeight::Bolder
+                } else {
+                    FontWeight::Normal
+                }),
         )
         .boxed()
 }
@@ -337,12 +345,30 @@ fn tooling_grid_tracks(mobile: bool) -> (Vec<GridTrack>, Vec<GridTrack>) {
 }
 
 const TOOLING_FEATURES: [(&str, &str); 6] = [
-    ("create", "Scaffold a new Aimer app with its workspace, assets, and platform files ready."),
-    ("run", "Launch on desktop, web, or a connected device from one consistent command."),
-    ("build", "Compile optimized artifacts for the platform and profile you choose."),
-    ("doctor", "Check toolchains, platform dependencies, and devices with actionable diagnostics."),
-    ("assemble", "Package release-ready bundles from your compiled Aimer application."),
-    ("migrate", "Keep existing projects aligned as Aimer templates and APIs evolve."),
+    (
+        "create",
+        "Scaffold a new Aimer app with its workspace, assets, and platform files ready.",
+    ),
+    (
+        "run",
+        "Launch on desktop, web, or a connected device from one consistent command.",
+    ),
+    (
+        "build",
+        "Compile optimized artifacts for the platform and profile you choose.",
+    ),
+    (
+        "doctor",
+        "Check toolchains, platform dependencies, and devices with actionable diagnostics.",
+    ),
+    (
+        "assemble",
+        "Package release-ready bundles from your compiled Aimer application.",
+    ),
+    (
+        "migrate",
+        "Keep existing projects aligned as Aimer templates and APIs evolve.",
+    ),
 ];
 
 fn tooling_card(title: &str, description: &str, mobile: bool) -> AnyWidget {
@@ -353,7 +379,11 @@ fn tooling_card(title: &str, description: &str, mobile: bool) -> AnyWidget {
 
     Container::new()
         .height(Dimension::Px(if mobile { 160.0 } else { 200.0 }))
-        .padding(LayoutSpacing::all(Spacing::Px(if mobile { 20 } else { 28 })))
+        .padding(LayoutSpacing::all(Spacing::Px(if mobile {
+            20
+        } else {
+            28
+        })))
         .box_decoration(BoxDecoration::new().border(BoxBorder::all(border)))
         .child(
             Column::new()

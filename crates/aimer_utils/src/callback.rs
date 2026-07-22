@@ -75,10 +75,7 @@ pub struct Callback<Args = (), Return = ()> {
 
 impl<Args, Return> Callback<Args, Return> {
     pub fn callable(&self) -> Option<&Self> {
-        if self
-            .inner
-            .is_default()
-        {
+        if self.inner.is_default() {
             None
         } else {
             Some(self)
@@ -115,13 +112,17 @@ where
 
 impl<Args, Return> Default for Callback<Args, Return> {
     fn default() -> Self {
-        Self { inner: CallbackInner::default() }
+        Self {
+            inner: CallbackInner::default(),
+        }
     }
 }
 
 impl<Args, Return> Clone for Callback<Args, Return> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -135,7 +136,9 @@ impl<Args, Return> Debug for Callback<Args, Return> {
 
 impl<Args, Return, F: Fn(Args) -> Return + 'static> From<F> for Callback<Args, Return> {
     fn from(f: F) -> Self {
-        Self { inner: CallbackInner::from(f) }
+        Self {
+            inner: CallbackInner::from(f),
+        }
     }
 }
 
@@ -149,10 +152,7 @@ where
         Self {
             inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
                 Box::new(move |args| {
-                    let f = f
-                        .lock()
-                        .unwrap()
-                        .take();
+                    let f = f.lock().unwrap().take();
                     if let Some(f) = f {
                         Box::pin(f(args))
                     } else {
@@ -203,10 +203,7 @@ pub struct VoidCallback {
 
 impl VoidCallback {
     pub fn callable(&self) -> Option<&Self> {
-        if self
-            .inner
-            .is_default()
-        {
+        if self.inner.is_default() {
             None
         } else {
             Some(self)
@@ -240,11 +237,12 @@ impl VoidCallback {
         Self {
             inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
                 Box::new(move |_| {
-                    let f = f
-                        .lock()
-                        .unwrap()
-                        .take();
-                    if let Some(f) = f { Box::pin(f()) } else { Box::pin(async {}) }
+                    let f = f.lock().unwrap().take();
+                    if let Some(f) = f {
+                        Box::pin(f())
+                    } else {
+                        Box::pin(async {})
+                    }
                 }),
             ))))),
         }
@@ -263,7 +261,9 @@ impl Debug for VoidCallback {
 
 impl<F: Fn() + 'static> From<F> for VoidCallback {
     fn from(f: F) -> Self {
-        Self { inner: CallbackInner::from(move |_| f()) }
+        Self {
+            inner: CallbackInner::from(move |_| f()),
+        }
     }
 }
 
@@ -286,11 +286,12 @@ where
         Self {
             inner: CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
                 Box::new(move |_| {
-                    let f = f
-                        .lock()
-                        .unwrap()
-                        .take();
-                    if let Some(f) = f { Box::pin(f()) } else { Box::pin(async {}) }
+                    let f = f.lock().unwrap().take();
+                    if let Some(f) = f {
+                        Box::pin(f())
+                    } else {
+                        Box::pin(async {})
+                    }
                 }),
             ))))),
         }

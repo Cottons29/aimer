@@ -187,7 +187,10 @@ mod tests {
     #[test]
     fn targets_debug_format() {
         assert_eq!(format!("{:?}", Targets::Web), "Web");
-        assert_eq!(format!("{:?}", Targets::AndroidSimulator), "AndroidSimulator");
+        assert_eq!(
+            format!("{:?}", Targets::AndroidSimulator),
+            "AndroidSimulator"
+        );
     }
 
     #[test]

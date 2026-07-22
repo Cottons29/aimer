@@ -16,7 +16,12 @@ impl Color {
     }
 
     pub const fn rgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
-        Self { r: r as f32 / 255.0, g: g as f32 / 255.0, b: b as f32 / 255.0, a: a as f32 / 255.0 }
+        Self {
+            r: r as f32 / 255.0,
+            g: g as f32 / 255.0,
+            b: b as f32 / 255.0,
+            a: a as f32 / 255.0,
+        }
     }
 
     pub const fn white() -> Self {
@@ -47,7 +52,10 @@ impl Color {
 impl Mul<u8> for Color {
     type Output = Self;
     fn mul(self, rhs: u8) -> Self::Output {
-        Self { a: self.a * rhs as f32, ..self }
+        Self {
+            a: self.a * rhs as f32,
+            ..self
+        }
     }
 }
 

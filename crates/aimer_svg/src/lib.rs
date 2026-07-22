@@ -82,10 +82,7 @@ mod tests {
         assert_eq!(node.transform.tx, 2.0);
         assert_eq!(node.transform.ty, 3.0);
         assert!(node.fill.is_some());
-        assert!(
-            node.stroke
-                .is_some()
-        );
+        assert!(node.stroke.is_some());
     }
 
     #[test]
@@ -125,14 +122,20 @@ mod tests {
                 .unwrap(),
             []
         );
-        assert!(matches!("#".parse::<SvgSelector>(), Err(SvgError::InvalidSelector(_))));
+        assert!(matches!(
+            "#".parse::<SvgSelector>(),
+            Err(SvgError::InvalidSelector(_))
+        ));
     }
 
     #[test]
     fn standalone_path_data_and_selected_svg_path_are_retained() {
         let path = SvgPath::from_path_data("M1 2 Q3 4 5 6 C7 8 9 10 11 12 Z").unwrap();
         assert!(matches!(path.commands()[0], SvgPathCommand::MoveTo { .. }));
-        assert!(matches!(path.commands()[1], SvgPathCommand::QuadraticTo { .. }));
+        assert!(matches!(
+            path.commands()[1],
+            SvgPathCommand::QuadraticTo { .. }
+        ));
         assert!(matches!(path.commands()[2], SvgPathCommand::CubicTo { .. }));
         assert!(matches!(path.commands()[3], SvgPathCommand::Close));
 
@@ -141,30 +144,44 @@ mod tests {
             "#p",
         )
         .unwrap();
-        assert!(
-            !selected
-                .commands()
-                .is_empty()
-        );
+        assert!(!selected.commands().is_empty());
     }
 
     #[test]
     fn rejects_empty_malformed_non_finite_and_oversized_input() {
-        assert!(matches!(SvgDocument::from_svg([]), Err(SvgError::EmptyInput)));
-        assert!(matches!(SvgDocument::from_svg(b"<svg>"), Err(SvgError::Parse(_))));
-        assert!(matches!(SvgPath::from_path_data("M NaN 0"), Err(SvgError::InvalidPath(_))));
+        assert!(matches!(
+            SvgDocument::from_svg([]),
+            Err(SvgError::EmptyInput)
+        ));
+        assert!(matches!(
+            SvgDocument::from_svg(b"<svg>"),
+            Err(SvgError::Parse(_))
+        ));
+        assert!(matches!(
+            SvgPath::from_path_data("M NaN 0"),
+            Err(SvgError::InvalidPath(_))
+        ));
 
-        let limits = SvgLimits { max_source_bytes: 8, ..SvgLimits::default() };
+        let limits = SvgLimits {
+            max_source_bytes: 8,
+            ..SvgLimits::default()
+        };
         assert!(matches!(
             SvgDocument::from_svg_with_limits(b"<svg width='1' height='1'/>", limits),
-            Err(SvgError::LimitExceeded { resource: "source bytes", .. })
+            Err(SvgError::LimitExceeded {
+                resource: "source bytes",
+                ..
+            })
         ));
     }
 
     #[test]
     fn rejects_external_resources_and_reports_deferred_content() {
         let external = br#"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/a.png"/></svg>"#;
-        assert!(matches!(SvgDocument::from_svg(external), Err(SvgError::ExternalResource(_))));
+        assert!(matches!(
+            SvgDocument::from_svg(external),
+            Err(SvgError::ExternalResource(_))
+        ));
 
         let gradient = br#"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g"/></defs><path d="M0 0h10v10z" fill="url(#g)"/></svg>"#;
         let document = SvgDocument::from_svg(gradient).unwrap();
@@ -178,10 +195,22 @@ mod tests {
 
     #[test]
     fn intrinsic_size_uses_viewport_and_preserves_ratio_for_one_dimension() {
-        let viewport = aimer_cupid::svg::SvgViewport { width: 40.0, height: 20.0 };
-        assert_eq!(widget::resolved_svg_size(viewport, None, None), (40.0, 20.0));
-        assert_eq!(widget::resolved_svg_size(viewport, Some(100.0), None), (100.0, 50.0));
-        assert_eq!(widget::resolved_svg_size(viewport, None, Some(50.0)), (100.0, 50.0));
+        let viewport = aimer_cupid::svg::SvgViewport {
+            width: 40.0,
+            height: 20.0,
+        };
+        assert_eq!(
+            widget::resolved_svg_size(viewport, None, None),
+            (40.0, 20.0)
+        );
+        assert_eq!(
+            widget::resolved_svg_size(viewport, Some(100.0), None),
+            (100.0, 50.0)
+        );
+        assert_eq!(
+            widget::resolved_svg_size(viewport, None, Some(50.0)),
+            (100.0, 50.0)
+        );
     }
 
     #[test]
@@ -194,15 +223,8 @@ mod tests {
         )
         .unwrap();
         let style = SvgStyle::new().fill(aimer_cupid::svg::SvgColor::rgba8(255, 0, 0, 255));
-        let overrides = widget::overrides_for_rules(
-            document.scene(),
-            &[(
-                ".accent"
-                    .parse()
-                    .unwrap(),
-                style,
-            )],
-        );
+        let overrides =
+            widget::overrides_for_rules(document.scene(), &[(".accent".parse().unwrap(), style)]);
 
         assert_eq!(overrides.len(), 1);
         assert_eq!(
@@ -234,12 +256,7 @@ mod tests {
             &[],
         )
         .unwrap();
-        assert_eq!(
-            hit.metadata
-                .svg_id
-                .as_deref(),
-            Some("front")
-        );
+        assert_eq!(hit.metadata.svg_id.as_deref(), Some("front"));
         let back = widget::hit_test_scene(
             document.scene(),
             Bounds::new(0.0, 0.0, 20.0, 20.0),
@@ -311,9 +328,7 @@ mod tests {
         )
         .unwrap();
 
-        let groups = document
-            .select("g")
-            .unwrap();
+        let groups = document.select("g").unwrap();
         let clusters = document
             .select(".cluster")
             .unwrap();
@@ -335,25 +350,46 @@ mod tests {
     #[test]
     fn enforces_node_command_and_viewport_limits_and_non_finite_values() {
         let two_paths = br#"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/><path d="M2 0h1v1z"/></svg>"#;
-        let node_limits = SvgLimits { max_nodes: 1, ..SvgLimits::default() };
+        let node_limits = SvgLimits {
+            max_nodes: 1,
+            ..SvgLimits::default()
+        };
         assert!(matches!(
             SvgDocument::from_svg_with_limits(two_paths, node_limits),
-            Err(SvgError::LimitExceeded { resource: "nodes", .. })
+            Err(SvgError::LimitExceeded {
+                resource: "nodes",
+                ..
+            })
         ));
 
-        let command_limits = SvgLimits { max_path_commands: 2, ..SvgLimits::default() };
+        let command_limits = SvgLimits {
+            max_path_commands: 2,
+            ..SvgLimits::default()
+        };
         assert!(matches!(
             SvgDocument::from_svg_with_limits(two_paths, command_limits),
-            Err(SvgError::LimitExceeded { resource: "path commands", .. })
+            Err(SvgError::LimitExceeded {
+                resource: "path commands",
+                ..
+            })
         ));
 
-        let viewport_limits = SvgLimits { max_viewport_dimension: 5.0, ..SvgLimits::default() };
+        let viewport_limits = SvgLimits {
+            max_viewport_dimension: 5.0,
+            ..SvgLimits::default()
+        };
         assert!(matches!(
             SvgDocument::from_svg_with_limits(two_paths, viewport_limits),
-            Err(SvgError::LimitExceeded { resource: "viewport dimension", .. })
+            Err(SvgError::LimitExceeded {
+                resource: "viewport dimension",
+                ..
+            })
         ));
 
         let non_finite = br#"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg"><path transform="matrix(NaN 0 0 1 0 0)" d="M0 0h1v1z"/></svg>"#;
-        assert!(matches!(SvgDocument::from_svg(non_finite), Err(SvgError::NonFinite)));
+        assert!(matches!(
+            SvgDocument::from_svg(non_finite),
+            Err(SvgError::NonFinite)
+        ));
     }
 }

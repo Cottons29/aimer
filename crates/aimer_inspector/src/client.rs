@@ -40,9 +40,7 @@ impl InspectorClient {
                 };
 
                 {
-                    let mut s = state_bg
-                        .lock()
-                        .unwrap();
+                    let mut s = state_bg.lock().unwrap();
                     s.connected = true;
                 }
 
@@ -59,9 +57,7 @@ impl InspectorClient {
                     match ws.read() {
                         Ok(Message::Text(text)) => {
                             if let Ok(msg) = serde_json::from_str::<InspectorMessage>(&text) {
-                                let mut s = state_bg
-                                    .lock()
-                                    .unwrap();
+                                let mut s = state_bg.lock().unwrap();
                                 match msg {
                                     InspectorMessage::Tree { root } => {
                                         s.tree = root;
@@ -87,9 +83,7 @@ impl InspectorClient {
                 }
 
                 {
-                    let mut s = state_bg
-                        .lock()
-                        .unwrap();
+                    let mut s = state_bg.lock().unwrap();
                     s.connected = false;
                 }
             }
@@ -101,9 +95,7 @@ impl InspectorClient {
     /// Send a toggle command to the engine.
     pub fn send_toggle(&self) {
         let cmd = r#"{"type":"toggle"}"#.to_string();
-        let _ = self
-            .cmd_tx
-            .send(cmd);
+        let _ = self.cmd_tx.send(cmd);
     }
 }
 
@@ -132,15 +124,14 @@ pub fn render_tree_lines_with_ids(
 
 fn node_label(node: &WidgetNode, full_tree: bool) -> String {
     let pos_info = if node.width > 0.0 || node.height > 0.0 {
-        format!("  [{:.0}×{:.0} @ ({:.0},{:.0})]", node.width, node.height, node.x, node.y)
+        format!(
+            "  [{:.0}×{:.0} @ ({:.0},{:.0})]",
+            node.width, node.height, node.x, node.y
+        )
     } else {
         String::new()
     };
-    if full_tree
-        && !node
-            .element_type
-            .is_empty()
-    {
+    if full_tree && !node.element_type.is_empty() {
         format!("{}  ({}){}", node.name, node.element_type, pos_info)
     } else {
         format!("{}{}", node.name, pos_info)
@@ -170,7 +161,14 @@ fn render_tree_recursive(
         let child_prefix = format!("{}{}", prefix, connector);
         let grandchild_base = format!("{}{}", prefix, continuation);
 
-        render_tree_with_base(child, lines, ids, &child_prefix, &grandchild_base, full_tree);
+        render_tree_with_base(
+            child,
+            lines,
+            ids,
+            &child_prefix,
+            &grandchild_base,
+            full_tree,
+        );
     }
 }
 
@@ -198,6 +196,13 @@ fn render_tree_with_base(
         let child_line_prefix = format!("{}{}", child_base, connector);
         let grandchild_base = format!("{}{}", child_base, continuation);
 
-        render_tree_with_base(child, lines, ids, &child_line_prefix, &grandchild_base, full_tree);
+        render_tree_with_base(
+            child,
+            lines,
+            ids,
+            &child_line_prefix,
+            &grandchild_base,
+            full_tree,
+        );
     }
 }

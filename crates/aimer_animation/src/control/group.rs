@@ -101,16 +101,16 @@ pub struct SequentialAnimation {
 
 impl SequentialAnimation {
     pub fn new(controllers: Vec<AnimationController>) -> Self {
-        Self { controllers, current_index: 0 }
+        Self {
+            controllers,
+            current_index: 0,
+        }
     }
 
     /// Start the sequence forward (starts the first controller).
     pub fn forward(&mut self) {
         self.current_index = 0;
-        if let Some(ctrl) = self
-            .controllers
-            .first_mut()
-        {
+        if let Some(ctrl) = self.controllers.first_mut() {
             ctrl.forward();
         }
     }
@@ -121,10 +121,7 @@ impl SequentialAnimation {
             .controllers
             .len()
             .saturating_sub(1);
-        if let Some(ctrl) = self
-            .controllers
-            .last_mut()
-        {
+        if let Some(ctrl) = self.controllers.last_mut() {
             ctrl.reverse();
         }
     }
@@ -139,10 +136,7 @@ impl SequentialAnimation {
 
     /// Returns `true` if the sequence is still running.
     pub fn is_animating(&self) -> bool {
-        self.current_index
-            < self
-                .controllers
-                .len()
+        self.current_index < self.controllers.len()
             && self.controllers[self.current_index].is_animating()
     }
 
@@ -164,11 +158,7 @@ impl SequentialAnimation {
 
     /// Tick the current controller. Advances to the next when complete.
     pub fn tick(&mut self, now: AnimInstant) -> f32 {
-        if self.current_index
-            >= self
-                .controllers
-                .len()
-        {
+        if self.current_index >= self.controllers.len() {
             return 0.0;
         }
 
@@ -177,11 +167,7 @@ impl SequentialAnimation {
         // Advance to next controller if current completed
         if self.controllers[self.current_index].status() == AnimationStatus::Completed {
             self.current_index += 1;
-            if self.current_index
-                < self
-                    .controllers
-                    .len()
-            {
+            if self.current_index < self.controllers.len() {
                 self.controllers[self.current_index].forward();
             }
         }
@@ -204,22 +190,20 @@ pub struct StaggeredAnimation {
 impl StaggeredAnimation {
     pub fn new(controllers: Vec<AnimationController>, stagger_delay: Duration) -> Self {
         let len = controllers.len();
-        Self { controllers, stagger_delay, start_time: None, started: vec![false; len] }
+        Self {
+            controllers,
+            stagger_delay,
+            start_time: None,
+            started: vec![false; len],
+        }
     }
 
     /// Start all controllers (they will activate with stagger delays).
     pub fn forward(&mut self) {
         self.start_time = Some(AnimInstant::now());
-        self.started = vec![
-            false;
-            self.controllers
-                .len()
-        ];
+        self.started = vec![false; self.controllers.len()];
         // Start the first one immediately
-        if let Some(ctrl) = self
-            .controllers
-            .first_mut()
-        {
+        if let Some(ctrl) = self.controllers.first_mut() {
             ctrl.forward();
             self.started[0] = true;
         }
@@ -228,11 +212,7 @@ impl StaggeredAnimation {
     /// Reset all controllers.
     pub fn reset(&mut self) {
         self.start_time = None;
-        self.started = vec![
-            false;
-            self.controllers
-                .len()
-        ];
+        self.started = vec![false; self.controllers.len()];
         for ctrl in &mut self.controllers {
             ctrl.reset();
         }
@@ -241,10 +221,7 @@ impl StaggeredAnimation {
     /// Returns `true` if any controller is still animating or hasn't started
     /// yet.
     pub fn is_animating(&self) -> bool {
-        if self
-            .start_time
-            .is_none()
-        {
+        if self.start_time.is_none() {
             return false;
         }
         let all_started = self
@@ -275,10 +252,7 @@ impl StaggeredAnimation {
         let elapsed = now.duration_since(start);
 
         // Start delayed controllers
-        for i in 1..self
-            .controllers
-            .len()
-        {
+        for i in 1..self.controllers.len() {
             if !self.started[i] {
                 let delay = self.stagger_delay * i as u32;
                 if elapsed >= delay {

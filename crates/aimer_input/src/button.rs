@@ -214,8 +214,7 @@ impl<W> Button<W> {
     /// [`Widget::boxed`]. Use it when branching APIs need to return one [`AnyWidget`] despite using
     /// different concrete child types.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
-        self.child(child)
-            .boxed()
+        self.child(child).boxed()
     }
 }
 
@@ -225,21 +224,11 @@ impl<W: Widget + 'static> StatefulWidget for Button<W> {
     fn create_state(&self) -> Self::State {
         ButtonState {
             is_hover: false,
-            on_press: self
-                .on_press
-                .clone(),
-            on_long_press: self
-                .on_long_press
-                .clone(),
-            on_double_press: self
-                .on_double_press
-                .clone(),
-            on_right_press: self
-                .on_right_press
-                .clone(),
-            decoration: self
-                .decoration
-                .clone(),
+            on_press: self.on_press.clone(),
+            on_long_press: self.on_long_press.clone(),
+            on_double_press: self.on_double_press.clone(),
+            on_right_press: self.on_right_press.clone(),
+            decoration: self.decoration.clone(),
             state_updater: StateUpdater::empty(),
             current_state: Rc::new(Cell::new(PointerState::Outside)),
             child: self.child.clone(),
@@ -250,8 +239,7 @@ impl<W: Widget + 'static> StatefulWidget for Button<W> {
 
 impl<W: Widget + 'static> Widget for Button<W> {
     fn key(&self) -> Option<Key> {
-        self.widget_key
-            .clone()
+        self.widget_key.clone()
     }
 
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
@@ -272,27 +260,17 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
     fn adopt_config_from(&mut self, new: &Self) {
         self.on_press = new.on_press.clone();
         self.is_disabled = new.is_disabled;
-        self.on_long_press = new
-            .on_long_press
-            .clone();
-        self.on_double_press = new
-            .on_double_press
-            .clone();
-        self.on_right_press = new
-            .on_right_press
-            .clone();
-        self.decoration = new
-            .decoration
-            .clone();
+        self.on_long_press = new.on_long_press.clone();
+        self.on_double_press = new.on_double_press.clone();
+        self.on_right_press = new.on_right_press.clone();
+        self.decoration = new.decoration.clone();
         self.child = new.child.clone();
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
         let child = self.child.clone();
 
-        let mut decor = self
-            .decoration
-            .clone();
+        let mut decor = self.decoration.clone();
 
         if self.is_hover
             && let Some(color) = decor.background_color
@@ -313,9 +291,7 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
 
         MouseRegion::new()
             .on_hover_enter({
-                let updater = self
-                    .state_updater
-                    .clone();
+                let updater = self.state_updater.clone();
                 move || {
                     updater.set_state(|s| {
                         s.is_hover = true;
@@ -323,43 +299,32 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
                 }
             })
             .on_hover_exit({
-                let updater = self
-                    .state_updater
-                    .clone();
+                let updater = self.state_updater.clone();
                 move || {
                     updater.set_state(|s| {
                         s.is_hover = false;
                     })
                 }
             })
-            .current_state(
-                self.current_state
-                    .clone(),
-            )
+            .current_state(self.current_state.clone())
             .child(
                 GestureDetector::new()
                     .on_tap(if self.is_disabled {
                         VoidCallback::default()
                     } else {
-                        self.on_press
-                            .clone()
+                        self.on_press.clone()
                     })
                     .on_double_press(if self.is_disabled {
                         VoidCallback::default()
                     } else {
-                        self.on_double_press
-                            .clone()
+                        self.on_double_press.clone()
                     })
                     .on_long_press(if self.is_disabled {
                         VoidCallback::default()
                     } else {
-                        self.on_long_press
-                            .clone()
+                        self.on_long_press.clone()
                     })
-                    .on_right_tap(
-                        self.on_right_press
-                            .clone(),
-                    )
+                    .on_right_tap(self.on_right_press.clone())
                     .child(child),
             )
             .boxed()
@@ -378,6 +343,9 @@ mod tests {
             .child(aimer_widget::ErrorWidget::new("button"))
             .key("platform-button");
 
-        assert_eq!(Widget::key(&button), Some(Key::Value("platform-button".to_owned())));
+        assert_eq!(
+            Widget::key(&button),
+            Some(Key::Value("platform-button".to_owned()))
+        );
     }
 }

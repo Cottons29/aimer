@@ -14,7 +14,10 @@ pub struct LayoutCache {
 
 impl LayoutCache {
     pub fn new() -> Self {
-        Self { computed: UnsafeCell::new(None), content: UnsafeCell::new(None) }
+        Self {
+            computed: UnsafeCell::new(None),
+            content: UnsafeCell::new(None),
+        }
     }
 
     /// Returns cached computed_size if constraint and scale match, otherwise

@@ -22,8 +22,11 @@ pub fn create(dir: &Path, name: &str, _group: &str) {
     .unwrap();
 
     // Default favicon and icons
-    fs::write(web_dir.join("favicon.ico"), include_bytes!("../../../templates/icons/favicon.ico"))
-        .unwrap();
+    fs::write(
+        web_dir.join("favicon.ico"),
+        include_bytes!("../../../templates/icons/favicon.ico"),
+    )
+    .unwrap();
     fs::write(
         web_dir.join("apple-touch-icon.png"),
         include_bytes!("../../../templates/icons/icon_180.png"),
@@ -38,9 +41,7 @@ mod tests {
     #[test]
     fn create_web_scaffold() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp
-            .path()
-            .join("test-app");
+        let dir = tmp.path().join("test-app");
         fs::create_dir_all(&dir).unwrap();
 
         create(&dir, "test-app", "com.example.test");
@@ -93,8 +94,17 @@ mod tests {
 
         // index.html should contain Trunk data-trunk attribute
         let html = fs::read_to_string(web_dir.join("index.html")).unwrap();
-        assert!(html.contains("data-trunk"), "index.html missing data-trunk attribute");
-        assert!(html.contains("test-app"), "index.html missing project name in title");
-        assert!(html.contains("id=\"aimer_app\""), "index.html missing #aimer_app div");
+        assert!(
+            html.contains("data-trunk"),
+            "index.html missing data-trunk attribute"
+        );
+        assert!(
+            html.contains("test-app"),
+            "index.html missing project name in title"
+        );
+        assert!(
+            html.contains("id=\"aimer_app\""),
+            "index.html missing #aimer_app div"
+        );
     }
 }
