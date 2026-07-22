@@ -13,7 +13,9 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 
 use crate::base::*;
 use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
-use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
+use crate::{
+    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+};
 
 trait FetchAdd {
     fn fetch_add(&self, val: u64) -> u64;
@@ -27,14 +29,14 @@ impl FetchAdd for Cell<u64> {
     }
 }
 
-/// A `Send + Sync` wrapper around `UnsafeCell<Box<dyn Element>>`.
+/// A `Send + Sync` wrapper around `UnsafeCell<AnyElement>`.
 /// Safety: the rendering pipeline is single-threaded, so concurrent access does
 /// not occur.
 ///
 /// `pub(crate)` so `StatelessElement` can reuse the same swappable-child slot
 /// (needed so `visit_children<'a>` can hand out `&'a` refs to a child that may
 /// be replaced on rebuild).
-pub(crate) struct SyncChild(pub(crate) UnsafeCell<Box<dyn Element>>);
+pub(crate) struct SyncChild(pub(crate) UnsafeCell<AnyElement>);
 unsafe impl Send for SyncChild {}
 unsafe impl Sync for SyncChild {}
 
@@ -339,7 +341,7 @@ pub trait State<W: StatefulWidget> {
     /// Override this method to build the widget
     fn build(&self, ctx: &BuildContext) -> impl Widget;
 }
-pub type RebuildCallBack = dyn Fn(&BuildContext) -> Box<dyn Element>;
+pub type RebuildCallBack = dyn Fn(&BuildContext) -> AnyElement;
 
 struct KeyedStateEntry {
     rebuild_fn: Weak<RebuildCallBack>,
@@ -422,8 +424,8 @@ pub struct StatefulElement {
 }
 
 impl StatefulElement {
-    pub fn boxed(self) -> Box<dyn Element> {
-        Box::new(self)
+    pub fn boxed(self) -> AnyElement {
+        Element::boxed(self)
     }
 }
 
@@ -436,14 +438,14 @@ impl StatefulElement {
         ctx: &BuildContext,
         debug_name: &'static str,
         key: Option<crate::key::Key>,
-    ) -> Box<dyn Element>
+    ) -> AnyElement
     where
         W::State: 'static,
     {
         match recover_operation(debug_name, BuildPhase::KeyedState, || {
             Self::try_new_with_identity(widget, ctx, debug_name, key)
         }) {
-            Ok(Ok((element, _updater))) => Box::new(element),
+            Ok(Ok((element, _updater))) => element.boxed(),
             Ok(Err(diagnostic)) | Err(diagnostic) => diagnostic.into_error_element(),
         }
     }
@@ -1327,11 +1329,11 @@ mod tests {
     }
 
     impl Widget for LifecycleChild {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
             if self.panic_in_to_element {
                 panic!("child conversion failed");
             }
-            Box::new(TestLeaf)
+            TestLeaf.boxed()
         }
     }
 

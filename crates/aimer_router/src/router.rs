@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use aimer_widget::Widget;
+use aimer_widget::AnyWidget;
 use aimer_widget::base::BuildContext;
 
 /// The result of matching a URL against a [`Route`].
@@ -118,7 +118,7 @@ pub fn format_query_string(params: &[(String, String)]) -> String {
 }
 
 pub trait Router {
-    fn build(&self, ctx: &BuildContext) -> Box<dyn Widget>;
+    fn build(&self, ctx: &BuildContext) -> AnyWidget;
 }
 
 #[cfg(test)]

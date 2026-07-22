@@ -1,5 +1,5 @@
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, RequiredChild, Widget};
+use aimer_widget::{AnyElement, RequiredChild, Widget};
 
 pub struct Scalable<W = RequiredChild> {
     scale: f32,
@@ -28,7 +28,7 @@ impl Scalable {
 }
 
 impl<W: Widget + 'static> Widget for Scalable<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
         todo!()
     }
 }

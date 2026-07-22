@@ -541,10 +541,30 @@ impl RouterCodegen {
             }
 
             impl aimer::widget::Widget for #enum_name {
-                fn to_element(&self, ctx: &aimer::widget::base::BuildContext) -> Box<dyn aimer::widget::Element> {
+                fn to_element(&self, ctx: &aimer::widget::base::BuildContext) -> aimer::widget::AnyElement {
                     router::Router::build(self, ctx).to_element(ctx)
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+
+    #[test]
+    fn generated_widget_uses_any_element_owner() {
+        let generated = RouterCodegen::generate(quote! {
+            enum TestRouter {
+                #[route("/")]
+                Home,
+            }
+        })
+        .to_string();
+
+        assert!(generated.contains("-> aimer :: widget :: AnyElement"));
+        assert!(!generated.contains("Box < dyn aimer :: widget :: Element >"));
     }
 }

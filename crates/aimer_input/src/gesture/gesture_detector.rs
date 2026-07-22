@@ -9,8 +9,8 @@ use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerEvent, PointerPosition};
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
-    AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild,
-    VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
+    RequiredChild, VisitorElement, Widget,
 };
 
 use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback, VoidParamedFunction};
@@ -178,7 +178,7 @@ impl<W> GestureDetector<W> {
 }
 
 impl<W: Widget + 'static> Widget for GestureDetector<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         RawGestureDetector {
             child: self.child.to_element(ctx),
             cached_bounds: CacheBounds::new(),
@@ -857,7 +857,7 @@ mod tests {
     struct TestWidget;
 
     impl Widget for TestWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
             panic!("not needed for builder tests")
         }
     }

@@ -1,7 +1,7 @@
 use aimer_attribute::CacheBounds;
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyWidget, Element, RequiredChild, Widget};
+use aimer_widget::{AnyElement, AnyWidget, Element, RequiredChild, Widget};
 
 use crate::flex::raw_flex::RawFlex;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
@@ -123,13 +123,13 @@ impl Column {
 }
 
 impl<W: Widget + 'static> Widget for Column<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let children = self
             .children
             .iter()
             .map(|c| c.to_element(ctx))
             .collect();
-        Box::new(RawFlex {
+        RawFlex {
             direction: LayoutDirection::Column,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
@@ -139,7 +139,8 @@ impl<W: Widget + 'static> Widget for Column<W> {
             cache: Default::default(),
             debug_name: "Column",
             cache_bound: CacheBounds::new(),
-        })
+        }
+        .boxed()
     }
 }
 
@@ -149,7 +150,7 @@ impl<W: Widget + 'static> Widget for Column<W> {
 /// axis, vertical alignment controls the cross axis, and overflow defaults to
 /// clipping. Unlike [`Column`], an empty `Row::new()` is already a valid erased
 /// widget and supports incremental insertion.
-pub struct Row<W: Widget + 'static = Box<dyn Widget>> {
+pub struct Row<W: Widget + 'static = AnyWidget> {
     vertical_alignment: BoxAlignment,
     horizontal_alignment: BoxAlignment,
     gaps: LayoutSpacing,
@@ -251,7 +252,7 @@ impl Row {
     /// concrete widget types. Existing children are retained.
     pub fn add_child<W: Widget + 'static>(mut self, child: W) -> Self {
         self.children
-            .push(Box::new(child));
+            .push(child.boxed());
         self
     }
 
@@ -262,7 +263,7 @@ impl Row {
     /// like [`Vec::insert`].
     pub fn insert_child<W: Widget + 'static>(mut self, index: usize, child: W) -> Self {
         self.children
-            .insert(index, Box::new(child));
+            .insert(index, child.boxed());
         self
     }
 }
@@ -276,13 +277,13 @@ impl Row {
 // }
 
 impl<W: Widget + 'static> Widget for Row<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let children = self
             .children
             .iter()
             .map(|c| c.to_element(ctx))
             .collect();
-        Box::new(RawFlex {
+        RawFlex {
             direction: LayoutDirection::Row,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
@@ -292,6 +293,7 @@ impl<W: Widget + 'static> Widget for Row<W> {
             cache: Default::default(),
             debug_name: "Row",
             cache_bound: CacheBounds::new(),
-        })
+        }
+        .boxed()
     }
 }

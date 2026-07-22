@@ -242,7 +242,7 @@ impl State<MyList> for MyListState {
                                                         ).boxed(),
                                                 ]).boxed()
                                         ).boxed()
-                                }).collect::<Vec<Box<dyn Widget>>>()
+                                }).collect::<Vec<AnyWidget>>()
                                 ))
                             .boxed()
                     ]).boxed()

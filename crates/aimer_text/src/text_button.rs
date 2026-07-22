@@ -12,8 +12,8 @@ use aimer_utils::AnimInstant;
 use aimer_utils::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutCache, LayoutElement, Rebuildable, VisitorElement,
-    Widget,
+    AnyElement, Drawable, Element, EventElement, LayoutCache, LayoutElement, Rebuildable,
+    VisitorElement, Widget,
 };
 
 use crate::RawTextWidget;
@@ -133,7 +133,7 @@ impl TextButton {
 }
 
 impl Widget for TextButton {
-    fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
         RawTextButton {
             widget: self.clone(),
             hovered: Cell::new(false),

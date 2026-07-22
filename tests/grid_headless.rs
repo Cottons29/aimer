@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use aimer::{
-    AimerApp, BuildContext, Drawable, Element, EventElement, Grid, GridItem, GridTrack,
+    AimerApp, AnyElement, BuildContext, Drawable, Element, EventElement, Grid, GridItem, GridTrack,
     LayoutElement, Rebuildable, ResolvedSize, VisitorElement, Widget,
 };
 
@@ -16,10 +16,11 @@ struct SizeProbeElement {
 }
 
 impl Widget for SizeProbe {
-    fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(SizeProbeElement {
+    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        SizeProbeElement {
             observed: self.observed.clone(),
-        })
+        }
+        .boxed()
     }
 }
 

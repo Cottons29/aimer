@@ -81,11 +81,12 @@ impl Align {
 
 impl<W: Widget + 'static> Widget for Align<W> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        Box::new(RawAlign {
+        RawAlign {
             child: self.child.to_element(ctx),
             layer: self.layer,
             alignment: self.alignment,
-        })
+        }
+        .boxed()
     }
 }
 
@@ -107,7 +108,7 @@ fn alignment_offset(alignment: Alignment, parent: ResolvedSize, child: ResolvedS
 
 #[derive(EventElement, Rebuildable)]
 struct RawAlign {
-    child: Box<dyn Element>,
+    child: AnyElement,
     layer: u32,
     alignment: Alignment,
 }
@@ -174,7 +175,7 @@ impl VisitorElement for RawAlign {
 #[cfg(test)]
 mod tests {
     use aimer_attribute::size::ResolvedSize;
-    use aimer_widget::LayoutElement;
+    use aimer_widget::{Element, LayoutElement};
 
     use crate::ZeroSizedBox;
 
@@ -229,7 +230,7 @@ mod tests {
     #[test]
     fn configured_layer_is_exposed_to_stack_ordering() {
         let align = RawAlign {
-            child: Box::new(ZeroSizedBox),
+            child: Element::boxed(ZeroSizedBox),
             layer: 10,
             alignment: Alignment::TopLeft,
         };

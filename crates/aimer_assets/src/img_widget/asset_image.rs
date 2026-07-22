@@ -4,7 +4,7 @@ use aimer_attribute::Dimension;
 use aimer_attribute::size::Size;
 use aimer_style::BoxFit;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyWidget, Element, LayoutCache, Widget};
+use aimer_widget::{AnyElement, AnyWidget, Element, LayoutCache, Widget};
 
 use crate::img_widget::image_widget::RawImageWidget;
 use crate::img_widget::source::ImageSource;
@@ -80,7 +80,7 @@ impl AssetImage {
     /// It replaces the built-in magenta-and-black error pattern. The fallback is
     /// converted to an element with the same build context as this image.
     pub fn error_widget(mut self, error_widget: impl Widget + 'static) -> Self {
-        self.error_widget = Some(Box::new(error_widget));
+        self.error_widget = Some(error_widget.boxed());
         self
     }
 
@@ -88,7 +88,7 @@ impl AssetImage {
     ///
     /// Without a loading widget, the image draws no content until it is ready.
     pub fn loading_widget(mut self, loading_widget: impl Widget + 'static) -> Self {
-        self.loading_widget = Some(Box::new(loading_widget));
+        self.loading_widget = Some(loading_widget.boxed());
         self
     }
 
@@ -104,8 +104,8 @@ impl AssetImage {
 }
 
 impl Widget for AssetImage {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(RawImageWidget {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        RawImageWidget {
             source: ImageSource::Asset(self.key.clone()),
             size: Size::new(self.width, self.height),
             fit: self.fit,
@@ -122,7 +122,8 @@ impl Widget for AssetImage {
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),
             scale: self.scale,
-        })
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {

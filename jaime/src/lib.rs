@@ -248,7 +248,7 @@ fn test_border_outline() {
 
 #[allow(unused)]
 pub fn test_scrollable() {
-    let items: Vec<Box<dyn Widget>> = (0..1200)
+    let items: Vec<AnyWidget> = (0..1200)
         .map(|i| {
             let color = if i % 2 == 0 {
                 Color::Rgb(100, 149, 237)
@@ -300,7 +300,7 @@ pub fn test_scrollable() {
         })
         .collect();
 
-    let items_2: Vec<Box<dyn Widget>> = (0..1200)
+    let items_2: Vec<AnyWidget> = (0..1200)
         .map(|i| {
             let color = if i % 2 == 0 {
                 Color::Rgb(100, 149, 237)
@@ -436,7 +436,7 @@ pub fn test_scrollable() {
 }
 #[allow(unused)]
 fn test_scrollable_row() {
-    let items: Vec<Box<dyn Widget>> = (0..12000)
+    let items: Vec<AnyWidget> = (0..12000)
         .map(|i| {
             let color = if i % 2 == 0 {
                 Color::Rgb(100, 149, 237)

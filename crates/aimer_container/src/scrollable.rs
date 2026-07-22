@@ -16,7 +16,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_macro::key;
 use aimer_utils::callback::Callback;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyWidget, Element, Key, RequiredChild, Widget};
+use aimer_widget::{AnyElement, AnyWidget, Element, Key, RequiredChild, Widget};
 pub use controller::{DragMode, ScrollController};
 use controller::{ScrollState, VelocityHistory};
 pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
@@ -192,7 +192,7 @@ impl Scrollable {
 }
 
 impl<W: Widget> Widget for Scrollable<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let mut child_ctx = ctx.clone();
         child_ctx
             .box_constraint
@@ -313,12 +313,13 @@ impl<W: Widget> Widget for Scrollable<W> {
             ctrl.attach(state.clone());
         }
 
-        Box::new(RawScrollableContainer {
+        RawScrollableContainer {
             child,
             ctrl: state,
             vertical_scroll_bar: self.vertical_scroll_bar,
             horizontal_scroll_bar: self.horizontal_scroll_bar,
             bounds: CacheBounds::with_vec2d(child_ctx.parent_pos),
-        })
+        }
+        .boxed()
     }
 }

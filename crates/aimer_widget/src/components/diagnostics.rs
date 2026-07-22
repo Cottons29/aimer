@@ -2,7 +2,9 @@ use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
 use aimer_color::prelude::Color;
 
 use crate::base::BuildContext;
-use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
+use crate::{
+    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct OverflowEdges {
@@ -56,12 +58,13 @@ impl ErrorWidget {
 }
 
 impl Widget for ErrorWidget {
-    fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
         #[cfg(not(debug_assertions))]
         aimer_utils::log::error(&self.message);
-        Box::new(ErrorElement {
+        ErrorElement {
             message: self.message.clone(),
-        })
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -170,7 +173,7 @@ impl<W: Widget + 'static> OverflowIndicator<W> {
 }
 
 impl<W: Widget + 'static> Widget for OverflowIndicator<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         let label = self
             .label
@@ -180,11 +183,12 @@ impl<W: Widget + 'static> Widget for OverflowIndicator<W> {
                     .debug_name()
                     .to_string()
             });
-        Box::new(RawOverflowIndicator {
+        RawOverflowIndicator {
             child,
             label,
             clip: self.clip,
-        })
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -193,7 +197,7 @@ impl<W: Widget + 'static> Widget for OverflowIndicator<W> {
 }
 
 struct RawOverflowIndicator {
-    child: Box<dyn Element>,
+    child: AnyElement,
     label: String,
     clip: bool,
 }

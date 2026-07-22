@@ -5,7 +5,7 @@ use aimer_animation::AnimInstant;
 use aimer_attribute::CacheBounds;
 use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
 use aimer_widget::base::{BuildContext, Color, Colors};
-use aimer_widget::{Element, Widget};
+use aimer_widget::{AnyElement, Element, Widget};
 
 use crate::input_field::controller::TextFieldController;
 use crate::input_field::raw_fields::{
@@ -140,8 +140,8 @@ pub struct TextField {
 }
 
 impl Widget for TextField {
-    fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(RawTextField {
+    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        RawTextField {
             input_type: self.input_type,
             controller: self.controller.clone(),
             prompt: self.prompt.clone(),
@@ -181,7 +181,8 @@ impl Widget for TextField {
             preedit_cursor: Cell::new(None),
             blink_scheduled: Cell::new(false),
             padding: self.padding,
-        })
+        }
+        .boxed()
     }
 }
 

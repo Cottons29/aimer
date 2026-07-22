@@ -20,10 +20,47 @@ mod widget;
 /// ```
 pub struct RequiredChild;
 
-pub type AnyElement = Box<dyn Element>;
+/// An owned, type-erased [`Element`] with inline storage and heap fallback.
+///
+/// `AnyElement` embeds a concrete element directly when its size and alignment
+/// fit [`aimer_rubick::Rubick`]'s inline capacity. Larger or over-aligned
+/// elements use one heap allocation. Borrowing through `Deref` or `AsRef`
+/// provides a `dyn Element` view with normal dynamic dispatch.
+///
+/// Moving an inline owner also moves its concrete element, so the element's
+/// address is not stable. Use Rust pinning when an element requires a stable
+/// address. The name of [`Element::boxed`] is retained for source familiarity;
+/// that method returns this owner and does not necessarily allocate.
+pub type AnyElement = aimer_rubick::Rubick<dyn Element>;
 
-/// An alias of `Box<dyn Widget>`.
-pub type AnyWidget = Box<dyn Widget>;
+/// An owned, type-erased [`Widget`] with inline storage and heap fallback.
+///
+/// Small, sufficiently aligned widgets are embedded in the owner without an
+/// additional allocation. Larger or over-aligned widgets transparently use one
+/// heap allocation. `Deref` and `AsRef` expose the stored widget as
+/// `dyn Widget`, and [`aimer_rubick::Rubick::is_inline`] and
+/// [`aimer_rubick::Rubick::is_heap`] report the selected mode.
+///
+/// Moving an inline `AnyWidget` changes the address of its concrete widget. The
+/// owner does not provide implicit unsizing or a stable-address guarantee;
+/// construct it through [`Widget::boxed`].
+///
+/// ```
+/// use aimer_widget::base::BuildContext;
+/// use aimer_widget::{AnyElement, Widget};
+///
+/// struct Badge;
+///
+/// impl Widget for Badge {
+///     fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+///         unreachable!("this example only erases the widget")
+///     }
+/// }
+///
+/// let widget = Badge.boxed();
+/// assert!(widget.is_inline());
+/// ```
+pub type AnyWidget = aimer_rubick::Rubick<dyn Widget>;
 
 // #[cfg(debug_assertions)]
 pub mod inspector_overlay {

@@ -6,7 +6,7 @@ use std::ffi::OsStr;
 #[cfg(panic = "unwind")]
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use crate::Element;
+use crate::{AnyElement, Element};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BuildPhase {
@@ -56,10 +56,10 @@ impl fmt::Display for PanicDiagnostic {
 }
 
 impl PanicDiagnostic {
-    pub(crate) fn into_error_element(self) -> Box<dyn Element> {
+    pub(crate) fn into_error_element(self) -> AnyElement {
         let message = self.to_string();
         aimer_utils::log::error(&message);
-        Box::new(crate::ErrorElement::new(message))
+        crate::ErrorElement::new(message).boxed()
     }
 }
 
@@ -109,8 +109,8 @@ fn panic_payload(payload: &(dyn std::any::Any + Send)) -> String {
 pub(crate) fn build_or_error(
     widget_name: &'static str,
     phase: BuildPhase,
-    operation: impl FnOnce() -> Box<dyn Element>,
-) -> Box<dyn Element> {
+    operation: impl FnOnce() -> AnyElement,
+) -> AnyElement {
     recover_operation(widget_name, phase, operation)
         .unwrap_or_else(|diagnostic| diagnostic.into_error_element())
 }

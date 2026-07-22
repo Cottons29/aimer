@@ -47,18 +47,18 @@ pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
         impl #impl_generics aimer_widget::Widget for #struct_name #ty_generics #where_clause {
             #key_method
 
-            fn to_element(&self, ctx: &aimer_widget::base::BuildContext) -> Box<dyn aimer_widget::Element> {
+            fn to_element(&self, ctx: &aimer_widget::base::BuildContext) -> aimer_widget::AnyElement {
                 // Capture an owned copy of the widget so the element can re-run
                 // `build()` (re-reading `MediaQuery`) when marked dirty on resize.
                 // This requires the widget to be `Clone` (widgets are cheap,
                 // immutable configuration, like Flutter's).
                 let __rebuild_source = ::std::clone::Clone::clone(self);
-                let __rebuild = move |ctx: &aimer_widget::base::BuildContext| -> Box<dyn aimer_widget::Element> {
+                let __rebuild = move |ctx: &aimer_widget::base::BuildContext| -> aimer_widget::AnyElement {
                     use widget::StatelessWidget;
                     let child_widget = __rebuild_source.build(ctx);
                     aimer_widget::Widget::to_element(&child_widget, ctx)
                 };
-                Box::new(aimer_widget::StatelessElement::from_builder(
+                aimer_widget::Element::boxed(aimer_widget::StatelessElement::from_builder(
                     ctx,
                     __rebuild,
                     #key_pass,
@@ -71,4 +71,25 @@ pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
         }
     };
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+
+    use super::*;
+
+    #[test]
+    fn generated_widget_uses_any_element_for_rebuild_and_erasure() {
+        let output = generate_stateless_widget_impl(quote! {
+            #[derive(Clone)]
+            struct GeneratedWidget;
+        })
+        .to_string();
+
+        assert!(output.contains("aimer_widget :: AnyElement"));
+        assert!(output.contains("aimer_widget :: Element :: boxed"));
+        assert!(!output.contains("Box < dyn aimer_widget :: Element >"));
+        assert!(!output.contains("Box :: new"));
+    }
 }

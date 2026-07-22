@@ -76,6 +76,7 @@ This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `e
   developers will curse. Solve the actual problem cleanly.
 - **Follow Test Driven Development.** Write the failing test first, then the code that makes it pass.
 - **The Widget-implemented struct always has new() with no parameter and child always in the last for building valid Widget**
+- **Write Rust's std Standard Document Comment** when implementing new feature should provided detailed documentation like Rust's std does.
 
 ### Builder Pattern Example 
 
@@ -174,21 +175,6 @@ cargo install --git https://github.com/Cottons29/aimer.git aimer_cli --branch ni
 ---
 
 ## Code Style Guidelines
-
-Formatting is enforced by `rustfmt.toml`. Do not hand-format against these rules — run `cargo fmt`.
-
-- **Edition:** Rust 2024.
-- **Line width:** `max_width = 140`, `chain_width = 80`.
-- **Indentation:** 4 spaces, no hard tabs; Unix newlines.
-- **Imports:** grouped `StdExternalCrate` (std → external crates → local), granularity `Module`,
-  reordered automatically. Do not manually reorder imports.
-- **Heuristics:** `use_small_heuristics = "Max"`.
-- **Trailing commas:** `Vertical`.
-- **Doc comments:** code inside doc comments is formatted; comments are wrapped.
-- **Clippy:** `avoid-breaking-exported-api = false` — the API is pre-1.0 and may change; prefer the
-  cleaner design over API stability, but call out breaking changes.
-
-General conventions:
 
 - Match the surrounding code's patterns and idioms; keep changes consistent with the module.
 - Crate names use the `aimer_*` prefix; keep new crates consistent.

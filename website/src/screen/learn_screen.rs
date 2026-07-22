@@ -11,8 +11,8 @@ use crate::utils::{app_padding, mobile_title};
 pub struct LearnPage;
 
 impl LearnPage {
-    pub fn boxing(_: &BuildContext) -> Box<dyn Widget> {
-        Box::new(Self)
+    pub fn boxing(_: &BuildContext) -> AnyWidget {
+        Self.boxed()
     }
 }
 
@@ -70,7 +70,7 @@ impl StatelessWidget for LearnPage {
 }
 
 /// A single learning step: a bold title above a wrapped body paragraph.
-fn learn_step(title: &str, body: &str, theme: &ThemeData) -> Box<dyn Widget> {
+fn learn_step(title: &str, body: &str, theme: &ThemeData) -> AnyWidget {
     Container::new()
         .padding(LayoutSpacing::new().bottom(24))
         .child(

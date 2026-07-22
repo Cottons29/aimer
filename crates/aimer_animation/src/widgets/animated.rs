@@ -3,8 +3,8 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild, VisitorElement,
-    Widget,
+    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild,
+    VisitorElement, Widget,
 };
 use std::cell::Cell;
 
@@ -96,7 +96,7 @@ impl<T: Widget> Animated<T> {
 }
 
 impl<T: Widget + 'static> Widget for Animated<T> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child_element = self.child.to_element(ctx);
 
         let controller = self.controller.clone();
@@ -120,7 +120,7 @@ impl<T: Widget + 'static> Widget for Animated<T> {
 /// controller, applies the canvas transform, draws the child, then requests
 /// another redraw if the animation is still running.
 struct AnimatedElement {
-    child: Box<dyn Element>,
+    child: AnyElement,
     controller: AnimationController,
     effect: AnimationEffect,
     animating: Cell<bool>,

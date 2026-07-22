@@ -3,7 +3,7 @@ use aimer_attribute::{BoxConstraint, Size};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
 };
 
 #[derive(Clone, Copy)]
@@ -85,12 +85,13 @@ impl Default for AspectRatio {
 }
 
 impl<W: Widget> Widget for AspectRatio<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(RawAspectRatio {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        RawAspectRatio {
             child: self.child.to_element(ctx),
             aspect_ratio: self.aspect_ratio.abs(),
             ratio_option: self.ratio_option,
-        })
+        }
+        .boxed()
     }
 }
 
@@ -158,7 +159,7 @@ fn resolve_ratio_size_with_option(
 
 #[derive(EventElement, Rebuildable)]
 struct RawAspectRatio {
-    child: Box<dyn Element>,
+    child: AnyElement,
     aspect_ratio: f32,
     ratio_option: RatioOption,
 }

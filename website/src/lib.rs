@@ -10,6 +10,7 @@ use crate::router::AppRouter;
 use aimer::console::debug;
 use aimer::router::Navigator;
 use aimer::*;
+#[cfg(test)]
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 #[cfg(test)]
@@ -23,7 +24,7 @@ pub fn my_app() {
     let app = Provider::<BlogStore>::new()
         .create(BlogStore::default)
         .child(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
-            Box::new(route)
+            route.boxed()
         }));
     debug!("App Size {}", size_of::<Container<ZeroSizedBox>>());
     AimerApp::start(app);
@@ -39,7 +40,7 @@ mod test {
     use aimer::aimer_quiver::winit::event::WindowEvent;
     use aimer::quiver::winit::dpi::PhysicalSize;
     use aimer::router::Navigator;
-    use aimer::{AimerApp, Provider};
+    use aimer::{AimerApp, Provider, Widget};
 
     use crate::TEST_STATE_UPDATED;
     use crate::blog_store::{BlogDetail, BlogStore, LoadState};
@@ -67,7 +68,7 @@ mod test {
                 })
                 .child(Navigator::<AppRouter>::new(
                     AppRouter::BlogDetail { id },
-                    |route| Box::new(route),
+                    |route| route.boxed(),
                 )),
         );
 
@@ -83,7 +84,7 @@ mod test {
             Provider::<BlogStore>::new()
                 .create(BlogStore::default)
                 .child(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
-                    Box::new(route)
+                    route.boxed()
                 })),
         );
         sleep(Duration::from_millis(50));

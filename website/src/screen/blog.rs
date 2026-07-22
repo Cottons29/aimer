@@ -14,8 +14,8 @@ use aimer::{BuildContext, Widget, widget, *};
 pub struct BlogListPage;
 
 impl BlogListPage {
-    pub fn boxing(_: &BuildContext) -> Box<dyn Widget> {
-        Box::new(Self)
+    pub fn boxing(_: &BuildContext) -> AnyWidget {
+        Self.boxed()
     }
 }
 impl StatelessWidget for BlogListPage {
@@ -97,7 +97,7 @@ fn blog_archive(
     navigator: NavigatorController<AppRouter>,
     mobile: bool,
     theme: &ThemeData,
-) -> Box<dyn Widget> {
+) -> AnyWidget {
     let (heading_style, _) = archive_text_styles(theme);
     let mut current_year = None;
     let mut children = Vec::new();
@@ -272,7 +272,7 @@ fn blog_link_styles(theme: &ThemeData) -> (TextStyle, TextStyle) {
     (style, hover_style)
 }
 
-pub(crate) fn status_text(message: &str, color: Color) -> Box<dyn Widget> {
+pub(crate) fn status_text(message: &str, color: Color) -> AnyWidget {
     Text::new(message.to_owned())
         .text_style(
             TextStyle::new()

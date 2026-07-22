@@ -6,7 +6,9 @@ use aimer_container::ZeroSizedBox;
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::BoxFit;
 use aimer_widget::base::{BuildContext, Color, Colors, ResolvedSize, Size, Vec2d};
-use aimer_widget::{Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget};
+use aimer_widget::{
+    AnyElement, Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget,
+};
 
 use crate::ImageResult::Success;
 use crate::img_widget::source::ImageSource;
@@ -92,8 +94,8 @@ impl Image {
 }
 
 impl Widget for Image {
-    fn to_element(&self, _: &BuildContext) -> Box<dyn Element> {
-        Box::new(RawImageWidget {
+    fn to_element(&self, _: &BuildContext) -> AnyElement {
+        RawImageWidget {
             source: ImageSource::File(self.path.clone()),
             size: Size {
                 width: self.width,
@@ -107,7 +109,8 @@ impl Widget for Image {
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),
             scale: self.scale,
-        })
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -123,8 +126,8 @@ pub struct RawImageWidget<P: ImageProvider> {
     pub fit: BoxFit,
     pub keep_aspect_ratio: bool,
     pub original_size: Cell<Option<Size>>,
-    pub loading_element: Option<Box<dyn Element>>,
-    pub error_element: Option<Box<dyn Element>>,
+    pub loading_element: Option<AnyElement>,
+    pub error_element: Option<AnyElement>,
     pub cached_id: UnsafeCell<Option<ImageResult>>,
     pub scale: f32,
 }

@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, State, StateUpdater,
-    StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, State,
+    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -72,7 +72,7 @@ where
     R: Route,
 {
     pub initial_route: R,
-    pub routes: fn(R) -> Box<dyn Widget>,
+    pub routes: fn(R) -> AnyWidget,
 }
 
 impl<R: Route> Navigator<R> {
@@ -80,7 +80,7 @@ impl<R: Route> Navigator<R> {
     ///
     /// `routes` is called for the active route after redirect resolution. The
     /// initial route remains the bottom of the in-memory stack.
-    pub fn new(initial_route: R, routes: fn(R) -> Box<dyn Widget>) -> Self {
+    pub fn new(initial_route: R, routes: fn(R) -> AnyWidget) -> Self {
         // On WASM, try to restore the initial route from the browser URL
         #[cfg(target_arch = "wasm32")]
         let initial_route = {
@@ -101,7 +101,7 @@ where
 {
     pub history: Vec<R>,
     pub updater: StateUpdater<Self>,
-    pub routes: fn(R) -> Box<dyn Widget>,
+    pub routes: fn(R) -> AnyWidget,
 }
 
 impl<R: Route> NavigatorState<R> {
@@ -189,7 +189,7 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
 
 struct NavigatorElement<R> {
     controller: NavigatorController<R>,
-    child: Box<dyn Element>,
+    child: AnyElement,
 }
 
 impl<R: 'static> NavigatorElement<R> {
@@ -357,12 +357,13 @@ impl<R: Route> StatefulWidget for Navigator<R> {
 }
 
 impl<R: Route> Widget for Navigator<R> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let (child, updater) = StatefulElement::new(self, ctx);
-        Box::new(NavigatorElement {
+        NavigatorElement {
             controller: navigator_controller(updater),
-            child: Box::new(child),
-        })
+            child: child.boxed(),
+        }
+        .boxed()
     }
 }
 
@@ -433,8 +434,8 @@ mod tests {
     struct NavigatorLookupWidget;
 
     impl Widget for NavigatorLookupWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-            Box::new(NavigatorLookupElement)
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            NavigatorLookupElement.boxed()
         }
     }
 
@@ -455,8 +456,8 @@ mod tests {
         }
     }
 
-    fn lookup_route(_: TestRoute) -> Box<dyn Widget> {
-        Box::new(NavigatorLookupWidget)
+    fn lookup_route(_: TestRoute) -> AnyWidget {
+        NavigatorLookupWidget.boxed()
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -6,13 +6,13 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
 use crate::primitives::time::AnimInstant;
 
-type AnimatedElementBuilder = dyn Fn(f32, &BuildContext) -> Box<dyn Element>;
+type AnimatedElementBuilder = dyn Fn(f32, &BuildContext) -> AnyElement;
 
 /// A widget that rebuilds its child on every animation tick.
 ///
@@ -58,7 +58,7 @@ impl AnimatedBuilder {
 }
 
 impl Widget for AnimatedBuilder {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let curved_value = self
             .controller
             .curve()
@@ -66,13 +66,14 @@ impl Widget for AnimatedBuilder {
         let child = (self.builder)(curved_value, ctx);
         let window = ctx.window.clone();
 
-        Box::new(AnimatedBuilderElement {
+        AnimatedBuilderElement {
             child: UnsafeCell::new(child),
             controller: self.controller.clone(),
             builder: self.builder.clone(),
             last_value: Cell::new(curved_value),
             window,
-        })
+        }
+        .boxed()
     }
 }
 
@@ -83,7 +84,7 @@ impl Widget for AnimatedBuilder {
 /// This approach means the child is rebuilt every frame while animating,
 /// which is the intended behavior for responsive animations.
 struct AnimatedBuilderElement {
-    child: UnsafeCell<Box<dyn Element>>,
+    child: UnsafeCell<AnyElement>,
     controller: AnimationController,
     builder: Rc<AnimatedElementBuilder>,
     last_value: Cell<f32>,

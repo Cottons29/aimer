@@ -45,7 +45,7 @@ pub fn generate_stateful_widget_impl(input: TokenStream) -> TokenStream {
         impl #impl_generics widget::Widget for #struct_name #ty_generics #where_clause {
             #key_method
 
-            fn to_element(&self, ctx: &widget::base::BuildContext) -> Box<dyn widget::Element> {
+            fn to_element(&self, ctx: &widget::base::BuildContext) -> widget::AnyElement {
                 widget::StatefulElement::from_widget(self, ctx, stringify!(#struct_name), #key_pass)
             }
             fn debug_name(&self) -> &'static str {
@@ -71,6 +71,8 @@ mod tests {
         .to_string();
 
         assert!(output.contains("StatefulElement :: from_widget"));
+        assert!(output.contains("widget :: AnyElement"));
         assert!(!output.contains("StatefulElement :: new_with_name"));
+        assert!(!output.contains("Box < dyn widget :: Element >"));
     }
 }

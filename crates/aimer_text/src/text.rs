@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use aimer_style::{TextAlign, TextOverflow, TextStyle};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, LayoutCache, Widget};
+use aimer_widget::{AnyElement, Element, LayoutCache, Widget};
 
 use crate::text::raw_text::RawTextWidget;
 
@@ -86,7 +86,7 @@ impl Text {
 }
 
 impl Widget for Text {
-    fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
         // println!("Creating text widget : {:?}", self.text);
         RawTextWidget {
             text: self.text.clone(),

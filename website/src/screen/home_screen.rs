@@ -1,10 +1,12 @@
 use crate::components::get_started_button::HoverableGetStartedButton;
 use crate::components::same_looking::SameLookingSection;
+#[cfg(test)]
 use crate::router::AppRouter;
 use crate::utils::{app_padding, is_mobile, mobile_title, resp_position};
 #[cfg(test)]
 use crate::{CURRENT_INDEX, TEST_STATE_UPDATED};
-use aimer::router::{Navigator, NavigatorController, NavigatorInstance};
+#[cfg(test)]
+use aimer::router::NavigatorController;
 use aimer::style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing, Spacing,
     TextDecoration, TextDecorationLine, TextDecorationStyle, TextOverflow, TextStyle, Theme,
@@ -24,7 +26,7 @@ pub struct HomePage;
 
 impl HomePage {
     pub fn boxing(_: &BuildContext) -> AnyWidget {
-        Box::new(Self)
+        Self.boxed()
     }
 }
 
@@ -177,7 +179,7 @@ fn word(text: &str, bold: bool) -> AnyWidget {
 /// A feature block: a bold white title above a body of inline-emphasized text.
 fn feature_block(
     title: &str,
-    body: Box<dyn Widget>,
+    body: AnyWidget,
     top: impl Into<Dimension>,
     left: impl Into<Dimension>,
 ) -> AnyWidget {

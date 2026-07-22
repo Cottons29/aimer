@@ -1,8 +1,8 @@
 use aimer::console::debug;
 use aimer::style::{LayoutSpacing, Spacing};
 use aimer::{
-    AimerApp, BuildContext, Color, Container, Dimension, Element, Row, SizedBox, StatelessWidget,
-    Widget,
+    AimerApp, AnyElement, AnyWidget, BuildContext, Color, Container, Dimension, Row, SizedBox,
+    StatelessWidget, Widget,
 };
 #[allow(unused)]
 pub struct ColorSync;
@@ -13,7 +13,7 @@ pub fn start_color_sync() {
 }
 
 impl Widget for ColorSync {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         self.build(ctx)
             .to_element(ctx)
     }
@@ -37,7 +37,7 @@ impl StatelessWidget for ColorSync {
             Color::Rgb(128, 0, 255),
         ];
         debug!("Loading the colors:");
-        let children: Vec<Box<dyn Widget>> = colors
+        let children: Vec<AnyWidget> = colors
             .iter()
             .map(|color| {
                 SizedBox::new()

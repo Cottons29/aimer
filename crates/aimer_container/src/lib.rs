@@ -29,8 +29,9 @@ mod tests {
     use aimer_macro::key;
     use aimer_widget::base::BuildContext;
     use aimer_widget::{
-        Drawable, Element, EventElement, Key, LayoutElement, NamedWidget, Rebuildable, State,
-        StateUpdater, StatefulElement, StatefulWidget, StatelessElement, VisitorElement, Widget,
+        AnyElement, AnyWidget, Drawable, Element, EventElement, Key, LayoutElement, NamedWidget,
+        Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, StatelessElement,
+        VisitorElement, Widget,
     };
 
     use super::*;
@@ -116,11 +117,13 @@ mod tests {
     }
 
     impl Widget for ButtonLike {
-        fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
             // Bare stateful with the default "Unknown" name, exactly like
             // `TextButton::to_element`. The surrounding `NamedWidget` then
             // wraps it in a `StatelessElement("ButtonLike")`.
-            Box::new(StatefulElement::new(self, ctx).0)
+            StatefulElement::new(self, ctx)
+                .0
+                .boxed()
         }
     }
 
@@ -144,15 +147,17 @@ mod tests {
         }
     }
 
-    fn button(index: usize, selected: bool, observers: Rc<Vec<Rc<Cell<i32>>>>) -> Box<dyn Widget> {
-        Box::new(NamedWidget::new(
-            Box::new(ButtonLike {
+    fn button(index: usize, selected: bool, observers: Rc<Vec<Rc<Cell<i32>>>>) -> AnyWidget {
+        NamedWidget::new(
+            ButtonLike {
                 index,
                 selected,
                 observers,
-            }),
+            }
+            .boxed(),
             "ButtonLike",
-        ))
+        )
+        .boxed()
     }
 
     struct TabWidget {
@@ -184,8 +189,10 @@ mod tests {
     }
 
     impl Widget for TabWidget {
-        fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-            Box::new(StatefulElement::new_with_name(self, ctx, "TabWidget", None).0)
+        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+            StatefulElement::new_with_name(self, ctx, "TabWidget", None)
+                .0
+                .boxed()
         }
 
         fn debug_name(&self) -> &'static str {
@@ -293,7 +300,7 @@ mod tests {
         }
     }
 
-    fn placeholder_section(height: i32) -> Box<dyn Widget> {
+    fn placeholder_section(height: i32) -> AnyWidget {
         Container::new()
             .height(height)
             .child(crate::ZeroSizedBox)
@@ -305,39 +312,40 @@ mod tests {
         observer: Rc<Cell<usize>>,
         live_updater: Rc<RefCell<Option<StateUpdater<TabState>>>>,
         button_observers: Rc<Vec<Rc<Cell<i32>>>>,
-    ) -> Box<dyn Element> {
-        Container::new()
-            .child(Stack::new().children(vec![
-                        Box::new(Positioned::new()
-                            .top(0)
-                            .left(0)
-                            .layer(1)
-                            .child(
-                                Container::new()
-                                    .height(48)
-                                    .child(ZeroSizedBox)
-                            )) as Box<dyn Widget>,
-                        Box::new(Positioned::new()
-                            .top(0)
-                            .left(0)
-                            .layer(0)
-                            .child(
-                                Scrollable::new()
-                                    .axis(ScrollAxis::Vertical)
-                                    .child(Column::new()
-                                        .children(vec![
-                                            placeholder_section(100),
-                                            placeholder_section(100),
-                                            placeholder_section(100),
-                                            Box::new(TabWidget {
-                                                observer,
-                                                live_updater,
-                                                button_observers,
-                                            }) as Box<dyn Widget>,
-                                        ]))
+    ) -> AnyElement {
+        let header = Positioned::new()
+            .top(0)
+            .left(0)
+            .layer(1)
+            .child(
+                Container::new()
+                    .height(48)
+                    .child(ZeroSizedBox),
+            )
+            .boxed();
+        let content = Positioned::new()
+            .top(0)
+            .left(0)
+            .layer(0)
+            .child(
+                Scrollable::new()
+                    .axis(ScrollAxis::Vertical)
+                    .child(Column::new().children(vec![
+                        placeholder_section(100),
+                        placeholder_section(100),
+                        placeholder_section(100),
+                        TabWidget {
+                            observer,
+                            live_updater,
+                            button_observers,
+                        }
+                        .boxed(),
+                    ])),
+            )
+            .boxed();
 
-                            )) as Box<dyn Widget>,
-                    ]))
+        Container::new()
+            .child(Stack::new().children(vec![header, content]))
             .to_element(ctx)
     }
 
@@ -482,11 +490,11 @@ mod tests {
     // Locate the `RawScrollableContainer` buried anywhere in an element tree so
     // a test can read its live scroll offset / cached scroll range.
     // fn find_scrollable(el: &dyn Element) ->
-    // Option<&RawScrollableContainer<Box<dyn Element>>> {     if let Some(s) =
-    // el.as_any().downcast_ref::<RawScrollableContainer<Box<dyn Element>>>() {
+    // Option<&RawScrollableContainer<AnyElement>> {     if let Some(s) =
+    // el.as_any().downcast_ref::<RawScrollableContainer<AnyElement>>() {
     //         return Some(s);
     //     }
-    //     let mut found: Option<&RawScrollableContainer<Box<dyn Element>>> = None;
+    //     let mut found: Option<&RawScrollableContainer<AnyElement>> = None;
     //     // Some layout elements (e.g. `Positioned`) expose their child through
     //     // `event_children` rather than `visit_children`, so walk both.
     //     el.visit_children(&mut |c| {
@@ -568,12 +576,13 @@ mod tests {
     }
     impl Rebuildable for MainAxisProbe {}
 
-    fn expanded_probe(flex: f32, seen: &Rc<Cell<f32>>) -> Box<dyn Element> {
-        Box::new(RawExpanded {
+    fn expanded_probe(flex: f32, seen: &Rc<Cell<f32>>) -> AnyElement {
+        RawExpanded {
             child: MainAxisProbe { seen: seen.clone() },
             flex,
             debug_name: "Expanded",
-        })
+        }
+        .boxed()
     }
 
     // A leaf element with a fixed intrinsic main-axis size that ignores the
@@ -606,11 +615,12 @@ mod tests {
     }
     impl Rebuildable for IntrinsicProbe {}
 
-    fn intrinsic_probe(intrinsic_width: f32, seen: &Rc<Cell<f32>>) -> Box<dyn Element> {
-        Box::new(IntrinsicProbe {
+    fn intrinsic_probe(intrinsic_width: f32, seen: &Rc<Cell<f32>>) -> AnyElement {
+        IntrinsicProbe {
             intrinsic_width,
             seen: seen.clone(),
-        })
+        }
+        .boxed()
     }
 
     struct ConstraintSensitiveProbe {
@@ -644,14 +654,12 @@ mod tests {
     }
     impl Rebuildable for ConstraintSensitiveProbe {}
 
-    fn constraint_sensitive_probe(
-        intrinsic_width: f32,
-        drawn_width: &Rc<Cell<f32>>,
-    ) -> Box<dyn Element> {
-        Box::new(ConstraintSensitiveProbe {
+    fn constraint_sensitive_probe(intrinsic_width: f32, drawn_width: &Rc<Cell<f32>>) -> AnyElement {
+        ConstraintSensitiveProbe {
             intrinsic_width,
             drawn_width: drawn_width.clone(),
-        })
+        }
+        .boxed()
     }
 
     struct ConstraintSensitiveColumnProbe {
@@ -688,14 +696,15 @@ mod tests {
     fn constraint_sensitive_column_probe(
         intrinsic_height: f32,
         drawn_height: &Rc<Cell<f32>>,
-    ) -> Box<dyn Element> {
-        Box::new(ConstraintSensitiveColumnProbe {
+    ) -> AnyElement {
+        ConstraintSensitiveColumnProbe {
             intrinsic_height,
             drawn_height: drawn_height.clone(),
-        })
+        }
+        .boxed()
     }
 
-    fn row_of(children: Vec<Box<dyn Element>>) -> RawFlex {
+    fn row_of(children: Vec<AnyElement>) -> RawFlex {
         RawFlex {
             direction: LayoutDirection::Row,
             vertical_alignment: Default::default(),
@@ -709,7 +718,7 @@ mod tests {
         }
     }
 
-    fn column_of(children: Vec<Box<dyn Element>>) -> RawFlex {
+    fn column_of(children: Vec<AnyElement>) -> RawFlex {
         RawFlex {
             direction: LayoutDirection::Column,
             debug_name: "Column",
@@ -786,7 +795,7 @@ mod tests {
         let ctx = dummy_build_context(300.0, 100.0, None);
         let c1 = Rc::new(Cell::new(0.0));
         let c2 = Rc::new(Cell::new(0.0));
-        let fixed: Box<dyn Element> = Container::new()
+        let fixed: AnyElement = Container::new()
             .width(60)
             .child(crate::ZeroSizedBox)
             .to_element(&ctx);

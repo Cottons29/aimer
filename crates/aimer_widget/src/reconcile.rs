@@ -45,14 +45,12 @@ impl crate::Rebuildable for ScrollableLikeWrapper {}
 
 #[cfg(test)]
 mod tests {
-    use std::any::Any;
-
     use super::*;
-    use crate::Drawable;
     use crate::components::event_element::EventElement;
     use crate::components::layout_element::LayoutElement;
     use crate::components::rebuildable::Rebuildable;
     use crate::components::visitor_element::VisitorElement;
+    use crate::{AnyElement, Drawable};
 
     // Minimal fake elements: all trait methods except the listed ones use defaults.
     struct Leaf(&'static str);
@@ -70,7 +68,7 @@ mod tests {
     // A single-child wrapper (like `Container`) that surfaces its child only
     // through `visit_children` — exactly the shape that previously hid the
     // nested scrollable from reconciliation.
-    struct Wrapper(Box<dyn Element>);
+    struct Wrapper(AnyElement);
     impl VisitorElement for Wrapper {
         fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
             visitor(self.0.as_ref());
@@ -86,7 +84,7 @@ mod tests {
     impl LayoutElement for Wrapper {}
     impl Rebuildable for Wrapper {}
 
-    struct Branches(Vec<Box<dyn Element>>);
+    struct Branches(Vec<AnyElement>);
     impl VisitorElement for Branches {
         fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
             for child in &self.0 {
@@ -105,8 +103,8 @@ mod tests {
     impl Rebuildable for Branches {}
 
     struct SplitTraversal {
-        event_child: Box<dyn Element>,
-        visual_child: Box<dyn Element>,
+        event_child: AnyElement,
+        visual_child: AnyElement,
     }
     impl VisitorElement for SplitTraversal {
         fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -132,7 +130,7 @@ mod tests {
     // state-owning element and hand its scroll offset to the rebuilt one.
     #[test]
     fn event_children_reach_wrapper_child() {
-        let wrapper = Wrapper(Box::new(Leaf("Scrollable")));
+        let wrapper = Wrapper(Leaf("Scrollable").boxed());
         let children = event_children_of(&wrapper);
         assert_eq!(children.len(), 1, "wrapper must expose its single child");
         assert_eq!(children[0].debug_name(), "Scrollable");
@@ -162,8 +160,8 @@ mod tests {
     /// the dummy `BuildContext` is safe.
     struct EmptyWidget;
     impl Widget for EmptyWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-            Box::new(EmptyLeaf)
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            EmptyLeaf.boxed()
         }
         fn debug_name(&self) -> &'static str {
             "EmptyWidget"
@@ -183,22 +181,22 @@ mod tests {
     impl LayoutElement for EmptyLeaf {}
     impl Rebuildable for EmptyLeaf {}
 
-    /// Adapts an already-constructed `Box<dyn Element>` into a `Widget` so a
+    /// Adapts an already-constructed `AnyElement` into a `Widget` so a
     /// `State::build` (which must return `impl Widget`) can hand back a subtree
     /// that was assembled directly from elements. `to_element` is called once
     /// per build; the element is taken out on that call.
     struct ElementWidget {
-        element: RefCell<Option<Box<dyn Element>>>,
+        element: RefCell<Option<AnyElement>>,
     }
     impl ElementWidget {
-        fn new(element: Box<dyn Element>) -> Self {
+        fn new(element: AnyElement) -> Self {
             Self {
                 element: RefCell::new(Some(element)),
             }
         }
     }
     impl Widget for ElementWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
             self.element
                 .borrow_mut()
                 .take()
@@ -518,7 +516,7 @@ mod tests {
 
     /// Single-child wrapper that DRAWS its child (like `Container`) and is
     /// always replaced on reconcile (`update_from_widget` -> false, default).
-    struct DrawWrapper(Box<dyn Element>);
+    struct DrawWrapper(AnyElement);
     impl VisitorElement for DrawWrapper {
         fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
             visitor(self.0.as_ref());
@@ -540,7 +538,7 @@ mod tests {
     impl LayoutElement for DrawWrapper {}
     impl Rebuildable for DrawWrapper {}
     /// Multi-child wrapper that DRAWS every child in order (like `Flex`).
-    struct DrawRow(Vec<Box<dyn Element>>);
+    struct DrawRow(Vec<AnyElement>);
     impl VisitorElement for DrawRow {
         fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
             for c in &self.0 {
@@ -622,14 +620,15 @@ mod tests {
             *self.live_updater.borrow_mut() = Some(self.updater.clone());
 
             // container -> row -> [ text-leaf(counter), nested stateful button ]
-            let leaf: Box<dyn Element> = Box::new(RecordingLeaf {
+            let leaf: AnyElement = RecordingLeaf {
                 value: self.counter,
                 drawn: self.drawn.clone(),
-            });
+            }
+            .boxed();
             let (button, _ctor) =
                 StatefulElement::new_with_name(&NestedButtonWidget, ctx, "NestedButton", None);
-            let row: Box<dyn Element> = Box::new(DrawRow(vec![leaf, button.boxed()]));
-            ElementWidget::new(Box::new(DrawWrapper(row)))
+            let row: AnyElement = DrawRow(vec![leaf, button.boxed()]).boxed();
+            ElementWidget::new(DrawWrapper(row).boxed())
         }
     }
 
@@ -697,7 +696,7 @@ mod tests {
         );
         assert_eq!(observer.get(), 1, "the replacement starts with fresh state");
 
-        let old_tree = Wrapper(Box::new(Wrapper(old_stateful.boxed())));
+        let old_tree = Wrapper(Wrapper(old_stateful.boxed()).boxed());
         let new_tree = Wrapper(new_stateful.boxed());
         carry_child_state(&old_tree, &new_tree, &ctx);
 
@@ -863,12 +862,12 @@ mod tests {
         );
 
         let old_tree = Branches(vec![
-            Box::new(Wrapper(Box::new(EmptyLeaf))),
-            Box::new(Wrapper(old_stateful.boxed())),
+            Wrapper(EmptyLeaf.boxed()).boxed(),
+            Wrapper(old_stateful.boxed()).boxed(),
         ]);
         let new_tree = Branches(vec![
-            Box::new(Wrapper(new_stateful.boxed())),
-            Box::new(Wrapper(Box::new(EmptyLeaf))),
+            Wrapper(new_stateful.boxed()).boxed(),
+            Wrapper(EmptyLeaf.boxed()).boxed(),
         ]);
         carry_child_state(&old_tree, &new_tree, &ctx);
 
@@ -906,10 +905,10 @@ mod tests {
             Some(Key::Static("responsive-counter")),
         );
 
-        let old_tree = Branches(vec![Box::new(EmptyLeaf), old_stateful.boxed()]);
+        let old_tree = Branches(vec![EmptyLeaf.boxed(), old_stateful.boxed()]);
         let new_tree = Branches(vec![
-            Box::new(Wrapper(new_stateful.boxed())),
-            Box::new(EmptyLeaf),
+            Wrapper(new_stateful.boxed()).boxed(),
+            EmptyLeaf.boxed(),
         ]);
         carry_child_state(&old_tree, &new_tree, &ctx);
 
@@ -959,12 +958,12 @@ mod tests {
         );
 
         let old_tree = Branches(vec![
-            Box::new(Wrapper(Box::new(EmptyLeaf))),
-            Box::new(Wrapper(old_stateful.boxed())),
+            Wrapper(EmptyLeaf.boxed()).boxed(),
+            Wrapper(old_stateful.boxed()).boxed(),
         ]);
         let new_tree = Branches(vec![
-            Box::new(Wrapper(new_stateful.boxed())),
-            Box::new(Wrapper(Box::new(EmptyLeaf))),
+            Wrapper(new_stateful.boxed()).boxed(),
+            Wrapper(EmptyLeaf.boxed()).boxed(),
         ]);
         carry_child_state(&old_tree, &new_tree, &ctx);
 
@@ -1013,7 +1012,7 @@ mod tests {
         );
 
         let old_tree = SplitTraversal {
-            event_child: Box::new(EmptyLeaf),
+            event_child: EmptyLeaf.boxed(),
             visual_child: old_stateful.boxed(),
         };
         let new_tree = Wrapper(new_stateful.boxed());
@@ -1053,7 +1052,7 @@ mod tests {
             Some(Key::Static("new-counter")),
         );
 
-        let old_tree = Wrapper(Box::new(Wrapper(old_stateful.boxed())));
+        let old_tree = Wrapper(Wrapper(old_stateful.boxed()).boxed());
         let new_tree = Wrapper(new_stateful.boxed());
         carry_child_state(&old_tree, &new_tree, &ctx);
 
@@ -1117,7 +1116,7 @@ mod tests {
         fn key(&self) -> Option<Key> {
             Some(Key::Static("route-switcher"))
         }
-        fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
             StatefulElement::new_with_name(self, ctx, "AnimatedSwitcher", self.key())
                 .0
                 .boxed()
@@ -1130,7 +1129,7 @@ mod tests {
         transitions: Rc<Cell<usize>>,
     }
     impl Widget for OutletMock {
-        fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
             let slot = ctx
                 .get_state::<RouteKeySlot>()
                 .expect("Shell must insert RouteKeySlot");
@@ -1197,8 +1196,8 @@ mod tests {
                 transitions: self.transitions.clone(),
             }
             .to_element(ctx);
-            let content: Box<dyn Element> = Box::new(DrawWrapper(Box::new(DrawWrapper(outlet))));
-            let frame: Box<dyn Element> = Box::new(DrawRow(vec![header, content]));
+            let content: AnyElement = DrawWrapper(DrawWrapper(outlet).boxed()).boxed();
+            let frame: AnyElement = DrawRow(vec![header, content]).boxed();
             ElementWidget::new(frame)
         }
     }
@@ -1416,12 +1415,12 @@ mod tests {
         impl Rebuildable for FakeLeaf {}
 
         struct FakeContainer {
-            child: Box<dyn Element>,
+            child: AnyElement,
             size: ResolvedSize,
         }
 
         impl FakeContainer {
-            fn new(child: Box<dyn Element>, width: f32, height: f32) -> Self {
+            fn new(child: AnyElement, width: f32, height: f32) -> Self {
                 Self {
                     child,
                     size: ResolvedSize { width, height },
@@ -1456,11 +1455,11 @@ mod tests {
         impl Rebuildable for FakeContainer {}
 
         struct FakeFlex {
-            children: Vec<Box<dyn Element>>,
+            children: Vec<AnyElement>,
         }
 
         impl FakeFlex {
-            fn new(children: Vec<Box<dyn Element>>) -> Self {
+            fn new(children: Vec<AnyElement>) -> Self {
                 Self { children }
             }
         }
@@ -1527,11 +1526,11 @@ mod tests {
         impl Rebuildable for FakeFlex {}
 
         struct FakeStack {
-            children: Vec<Box<dyn Element>>,
+            children: Vec<AnyElement>,
         }
 
         impl FakeStack {
-            fn new(children: Vec<Box<dyn Element>>) -> Self {
+            fn new(children: Vec<AnyElement>) -> Self {
                 Self { children }
             }
         }
@@ -1574,11 +1573,11 @@ mod tests {
         impl Rebuildable for FakeStack {}
 
         struct FakePositioned {
-            child: Box<dyn Element>,
+            child: AnyElement,
         }
 
         impl FakePositioned {
-            fn new(child: Box<dyn Element>) -> Self {
+            fn new(child: AnyElement) -> Self {
                 Self { child }
             }
         }
@@ -1622,13 +1621,13 @@ mod tests {
         }
 
         struct FakeScrollable {
-            child: Box<dyn Element>,
+            child: AnyElement,
             #[allow(unused)]
             key: Option<Key>,
         }
 
         impl FakeScrollable {
-            fn new(child: Box<dyn Element>) -> Self {
+            fn new(child: AnyElement) -> Self {
                 Self {
                     child,
                     key: Some(Key::Static("scrollable-default")),
@@ -1675,7 +1674,7 @@ mod tests {
             ctx: &BuildContext,
             observer: Rc<Cell<usize>>,
             live_updater: Rc<RefCell<Option<StateUpdater<ResizeCounterState>>>>,
-        ) -> Box<dyn Element> {
+        ) -> AnyElement {
             let counter_widget = ResizeCounterWidget {
                 observer,
                 live_updater,
@@ -1911,9 +1910,9 @@ mod tests {
             ctx: &BuildContext,
             selected_index: Rc<Cell<usize>>,
             observers: Rc<Vec<Rc<Cell<i32>>>>,
-        ) -> Box<dyn Element> {
+        ) -> AnyElement {
             let selected = selected_index.get();
-            let mut children: Vec<Box<dyn Element>> = Vec::with_capacity(TAB_COUNT);
+            let mut children: Vec<AnyElement> = Vec::with_capacity(TAB_COUNT);
             for index in 0..TAB_COUNT {
                 let widget = TabButtonWidget {
                     index,
@@ -1929,7 +1928,7 @@ mod tests {
                 let (stateful, _updater) =
                     StatefulElement::new_with_name(&widget, ctx, "Unknown", None);
                 let wrapped = StatelessElement::wrapper(stateful.boxed(), None, "TextButton");
-                children.push(Box::new(wrapped));
+                children.push(wrapped.boxed());
             }
             FakeFlex::new(children).boxed()
         }

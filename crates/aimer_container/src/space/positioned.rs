@@ -3,7 +3,8 @@ use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
+    VisitorElement, Widget,
 };
 
 use crate::ZeroSizedBox;
@@ -151,9 +152,9 @@ impl<W: Widget + 'static> Positioned<W> {
 }
 
 impl<W: Widget> Widget for Positioned<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
-        Box::new(RawPositionedElement {
+        RawPositionedElement {
             child,
             position: self.position,
             left: self.left,
@@ -162,7 +163,8 @@ impl<W: Widget> Widget for Positioned<W> {
             bottom: self.bottom,
             transform: self.transform,
             layer: self.layer,
-        })
+        }
+        .boxed()
     }
 }
 

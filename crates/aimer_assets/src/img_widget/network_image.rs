@@ -5,7 +5,7 @@ use aimer_attribute::Dimension;
 use aimer_attribute::size::Size;
 use aimer_style::BoxFit;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, LayoutCache, Widget};
+use aimer_widget::{AnyElement, AnyWidget, Element, LayoutCache, Widget};
 
 use crate::img_widget::image_widget::RawImageWidget;
 use crate::img_widget::source::ImageSource;
@@ -40,8 +40,8 @@ pub struct NetworkImage {
     pub height: Dimension,
     pub fit: BoxFit,
     pub header: Option<HashMap<String, String>>,
-    pub error_widget: Option<Box<dyn Widget>>,
-    pub loading_widget: Option<Box<dyn Widget>>,
+    pub error_widget: Option<AnyWidget>,
+    pub loading_widget: Option<AnyWidget>,
     pub delay: Option<u64>,
     pub scale: f32,
 }
@@ -104,7 +104,7 @@ impl NetworkImage {
     ///
     /// It replaces the built-in magenta-and-black error pattern.
     pub fn error_widget(mut self, error_widget: impl Widget + 'static) -> Self {
-        self.error_widget = Some(Box::new(error_widget));
+        self.error_widget = Some(error_widget.boxed());
         self
     }
 
@@ -112,7 +112,7 @@ impl NetworkImage {
     ///
     /// Without a loading widget, the image draws no content until it is ready.
     pub fn loading_widget(mut self, loading_widget: impl Widget + 'static) -> Self {
-        self.loading_widget = Some(Box::new(loading_widget));
+        self.loading_widget = Some(loading_widget.boxed());
         self
     }
 
@@ -138,7 +138,7 @@ impl NetworkImage {
 
 impl Widget for NetworkImage {
     #[track_caller]
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let source = match self.header.as_ref() {
             Some(header) => ImageSource::NetworkWithHeaders(self.url.clone(), header.clone()),
             None => ImageSource::Network(self.url.clone()),
@@ -146,7 +146,7 @@ impl Widget for NetworkImage {
 
         // debug!("creating network image widget with url: {}", self.url);
 
-        Box::new(RawImageWidget {
+        RawImageWidget {
             source,
             size: Size::new(self.width, self.height),
             fit: self.fit,
@@ -163,7 +163,8 @@ impl Widget for NetworkImage {
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),
             scale: self.scale,
-        })
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {

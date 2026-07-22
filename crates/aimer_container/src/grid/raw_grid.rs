@@ -3,8 +3,8 @@ use std::fmt::{Display, Formatter};
 use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    Drawable, Element, ErrorElement, EventElement, LayoutElement, Rebuildable, VisitorElement,
-    detect_overflow, paint_overflow_indicator,
+    AnyElement, Drawable, Element, ErrorElement, EventElement, LayoutElement, Rebuildable,
+    VisitorElement, detect_overflow, paint_overflow_indicator,
 };
 
 use super::grid::{GridAlignment, GridOverflow};
@@ -439,7 +439,7 @@ fn apply_auto_minimum(
 }
 
 pub(crate) struct RawGridItem {
-    pub child: Box<dyn Element>,
+    pub child: AnyElement,
     pub placement: GridPlacement,
     pub horizontal_alignment: Option<GridAlignment>,
     pub vertical_alignment: Option<GridAlignment>,
@@ -762,7 +762,9 @@ mod tests {
     use aimer_canvas::{Canvas, InnerCanvas};
     use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_widget::base::{BuildContext, WindowHandle};
-    use aimer_widget::{Drawable, EventElement, LayoutElement, Rebuildable, VisitorElement};
+    use aimer_widget::{
+        Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
+    };
 
     use crate::ZeroSizedBox;
 
@@ -849,13 +851,13 @@ mod tests {
             overflow: GridOverflow::Clip,
             children: vec![
                 RawGridItem {
-                    child: Box::new(ZeroSizedBox),
+                    child: Element::boxed(ZeroSizedBox),
                     placement: GridPlacement::default(),
                     horizontal_alignment: None,
                     vertical_alignment: None,
                 },
                 RawGridItem {
-                    child: Box::new(ZeroSizedBox),
+                    child: Element::boxed(ZeroSizedBox),
                     placement: GridPlacement::default(),
                     horizontal_alignment: None,
                     vertical_alignment: None,
@@ -895,9 +897,10 @@ mod tests {
             vertical_alignment: GridAlignment::Center,
             overflow: GridOverflow::Clip,
             children: vec![RawGridItem {
-                child: Box::new(VisibleRectRecorder {
+                child: VisibleRectRecorder {
                     visible_rect: visible_rect.clone(),
-                }),
+                }
+                .boxed(),
                 placement: GridPlacement::default().at(1, 0),
                 horizontal_alignment: None,
                 vertical_alignment: None,

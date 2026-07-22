@@ -1,8 +1,7 @@
 use aimer::animation::{AnimatedSwitcher, Curve};
-use aimer::router::{Router, Shell};
+use aimer::router::{Route, Router, Shell, split_path_query};
 use aimer::style::{TextAlign, TextStyle, Theme, ThemeData};
 use aimer::*;
-use std::panic::Location;
 use std::time::Duration;
 
 use crate::components::app_shell::AppShell;
@@ -24,19 +23,49 @@ pub(crate) fn take_route_builds() -> Vec<AppRouter> {
     ROUTE_BUILDS.with(|builds| std::mem::take(&mut *builds.borrow_mut()))
 }
 
-#[widget(Router)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppRouter {
-    #[route("/")]
     Home,
-    #[route("/blog")]
     Blog,
-    #[route("/blog/{id}")]
     BlogDetail { id: String },
-    #[route("/learn")]
     Learn,
-    #[route("/not-found")]
     NotFound,
+}
+
+impl Route for AppRouter {
+    fn parse(full_path: &str) -> Option<Self> {
+        let (path, _) = split_path_query(full_path);
+        match path {
+            "/" => Some(Self::Home),
+            "/blog" => Some(Self::Blog),
+            "/learn" => Some(Self::Learn),
+            "/not-found" => Some(Self::NotFound),
+            _ => path
+                .strip_prefix("/blog/")
+                .filter(|id| !id.contains('/'))
+                .map(|id| Self::BlogDetail { id: id.to_owned() }),
+        }
+    }
+
+    fn format(&self) -> String {
+        match self {
+            Self::Home => "/".to_owned(),
+            Self::Blog => "/blog".to_owned(),
+            Self::BlogDetail { id } => format!("/blog/{id}"),
+            Self::Learn => "/learn".to_owned(),
+            Self::NotFound => "/not-found".to_owned(),
+        }
+    }
+
+    fn name(&self) -> Option<&'static str> {
+        None
+    }
+}
+
+impl Widget for AppRouter {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        Router::build(self, ctx).to_element(ctx)
+    }
 }
 
 impl AppRouter {
@@ -61,17 +90,10 @@ impl AppRouter {
     }
 }
 
-fn transitioned_page(
-    key: &'static str,
-    child: impl Widget + 'static,
-) -> AnimatedSwitcher<Box<dyn Widget>> {
-    AnimatedSwitcher::new(
-        ROUTE_TRANSITION_DURATION,
-        Curve::FastOutSlowIn,
-        child.boxed(),
-    )
-    .child_key(key)
-    .key(ROUTE_SWITCHER_KEY)
+fn transitioned_page(key: &'static str, child: AnyWidget) -> AnimatedSwitcher<AnyWidget> {
+    AnimatedSwitcher::new(ROUTE_TRANSITION_DURATION, Curve::FastOutSlowIn, child)
+        .child_key(key)
+        .key(ROUTE_SWITCHER_KEY)
 }
 
 impl Router for AppRouter {
@@ -91,26 +113,31 @@ impl Router for AppRouter {
         let active_tab = self.active_tab();
         let transition_key = self.transition_key();
         match self {
-            AppRouter::Home => Shell::boxing(AppShell { active_tab }, move |ctx| {
+            AppRouter::Home => Shell::new(AppShell { active_tab }, move |ctx| {
                 transitioned_page(transition_key, HomePage::boxing(ctx)).boxed()
-            }),
-            AppRouter::Blog => Shell::boxing(AppShell { active_tab }, move |ctx| {
+            })
+            .boxed(),
+            AppRouter::Blog => Shell::new(AppShell { active_tab }, move |ctx| {
                 transitioned_page(transition_key, BlogListPage::boxing(ctx)).boxed()
-            }),
+            })
+            .boxed(),
             AppRouter::BlogDetail { id } => {
                 let id = id.clone();
-                Shell::boxing(AppShell { active_tab }, move |ctx| {
+                Shell::new(AppShell { active_tab }, move |ctx| {
                     transitioned_page(transition_key, BlogDetailPage::boxing(id.clone(), ctx))
                         .boxed()
                 })
+                .boxed()
             }
-            AppRouter::Learn => Shell::boxing(AppShell { active_tab }, move |ctx| {
+            AppRouter::Learn => Shell::new(AppShell { active_tab }, move |ctx| {
                 transitioned_page(transition_key, LearnPage::boxing(ctx)).boxed()
-            }),
-            AppRouter::NotFound => Shell::boxing(AppShell { active_tab }, move |ctx| {
+            })
+            .boxed(),
+            AppRouter::NotFound => Shell::new(AppShell { active_tab }, move |ctx| {
                 let theme = ThemeData::of(ctx);
-                transitioned_page(transition_key, not_found_page(*theme)).boxed()
-            }),
+                transitioned_page(transition_key, not_found_page(*theme).boxed()).boxed()
+            })
+            .boxed(),
         }
     }
 }
@@ -168,7 +195,7 @@ mod tests {
         assert_eq!(
             Widget::key(&transitioned_page(
                 "home",
-                not_found_page(ThemeData::light())
+                not_found_page(ThemeData::light()).boxed()
             )),
             Some(Key::Value(ROUTE_SWITCHER_KEY.to_owned()))
         );
@@ -176,8 +203,8 @@ mod tests {
 
     #[test]
     fn route_transition_erases_page_type_for_state_reuse() {
-        let _: AnimatedSwitcher<Box<dyn Widget>> =
-            transitioned_page("home", not_found_page(ThemeData::light()));
+        let _: AnimatedSwitcher<AnyWidget> =
+            transitioned_page("home", not_found_page(ThemeData::light()).boxed());
     }
 
     #[test]
@@ -193,5 +220,26 @@ mod tests {
         );
         assert_eq!(route.active_tab(), 1);
         assert_eq!(route.transition_key(), "blog-detail");
+    }
+
+    #[test]
+    fn static_routes_round_trip_and_ignore_query_parameters() {
+        for route in [
+            AppRouter::Home,
+            AppRouter::Blog,
+            AppRouter::Learn,
+            AppRouter::NotFound,
+        ] {
+            assert_eq!(AppRouter::parse(&route.format()), Some(route));
+        }
+        assert_eq!(
+            AppRouter::parse("/blog?source=header"),
+            Some(AppRouter::Blog)
+        );
+    }
+
+    #[test]
+    fn blog_detail_route_rejects_additional_path_segments() {
+        assert_eq!(AppRouter::parse("/blog/first/extra"), None);
     }
 }

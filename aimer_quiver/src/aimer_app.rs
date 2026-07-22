@@ -8,8 +8,8 @@ use aimer_attribute::size::ResolvedSize;
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_inspector::InspectorAppHandle;
 use aimer_utils::info;
+use aimer_widget::Widget;
 use aimer_widget::base::{BuildContext, WindowHandle};
-use aimer_widget::{AnyWidget, Widget};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 use winit::dpi::PhysicalSize;
@@ -496,7 +496,7 @@ mod tests {
     use aimer_events::element::ElementEvent;
     use aimer_widget::base::BuildContext;
     use aimer_widget::{
-        Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
+        AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
     };
     use winit::dpi::{PhysicalPosition, PhysicalSize};
     use winit::event::{DeviceId, WindowEvent};
@@ -509,12 +509,13 @@ mod tests {
     }
 
     impl Widget for RecordingWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
             self.builds
                 .fetch_add(1, Ordering::SeqCst);
-            Box::new(RecordingElement {
+            RecordingElement {
                 cancels: self.cancels.clone(),
-            })
+            }
+            .boxed()
         }
     }
 
@@ -671,8 +672,8 @@ mod tests {
     struct RedrawWidget;
 
     impl Widget for RedrawWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-            Box::new(RedrawElement)
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            RedrawElement.boxed()
         }
     }
 

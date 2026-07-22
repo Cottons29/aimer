@@ -3,8 +3,8 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, Key, LayoutElement, Rebuildable, State, StateUpdater,
-    StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, Key, LayoutElement, Rebuildable, State,
+    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 use std::cell::UnsafeCell;
 use std::rc::Rc;
@@ -17,7 +17,7 @@ use crate::primitives::curve::Curve;
 use crate::primitives::time::AnimInstant;
 use crate::primitives::tween::Tween;
 
-type ImplicitElementBuilder<T> = dyn Fn(&T, &BuildContext) -> Box<dyn Element>;
+type ImplicitElementBuilder<T> = dyn Fn(&T, &BuildContext) -> AnyElement;
 
 fn request_next_frame() {
     aimer_events::window::request_animation_frame();
@@ -112,7 +112,7 @@ where
         self.widget_key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "ImplicitAnimatedBuilder", self.key())
             .0
             .boxed()
@@ -190,24 +190,25 @@ struct ImplicitAnimatedFrame<T: Animatable + Clone + 'static> {
 }
 
 impl<T: Animatable + Clone + 'static> Widget for ImplicitAnimatedFrame<T> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let value = self
             .current
             .with(Clone::clone);
         let child = (self.builder)(&value, ctx);
-        Box::new(ImplicitAnimatedElement {
+        ImplicitAnimatedElement {
             child: UnsafeCell::new(child),
             current: self.current.clone(),
             target: self.target.clone(),
             builder: self.builder.clone(),
             controller: self.controller.clone(),
             tween: self.tween.clone(),
-        })
+        }
+        .boxed()
     }
 }
 
 struct ImplicitAnimatedElement<T: Animatable + Clone + 'static> {
-    child: UnsafeCell<Box<dyn Element>>,
+    child: UnsafeCell<AnyElement>,
     current: Rc<LocalCell<T>>,
     target: T,
     builder: Rc<ImplicitElementBuilder<T>>,
@@ -324,8 +325,8 @@ mod tests {
     }
 
     impl Widget for TestWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-            Box::new(TestElement)
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            TestElement.boxed()
         }
     }
 
@@ -388,10 +389,10 @@ mod tests {
         let controller = AnimationController::with_millis(100, Curve::Linear);
         controller.forward_from_first_tick();
         let element = ImplicitAnimatedElement {
-            child: UnsafeCell::new(Box::new(TestElement)),
+            child: UnsafeCell::new(TestElement.boxed()),
             current: Rc::new(LocalCell::new(0.0)),
             target: 1.0,
-            builder: Rc::new(|_, _| Box::new(TestElement)),
+            builder: Rc::new(|_, _| TestElement.boxed()),
             controller,
             tween: Rc::new(LocalCell::new(Some(Tween::new(0.0, 1.0)))),
         };

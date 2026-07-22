@@ -216,6 +216,32 @@ mod tests {
         root
     }
 
+    #[test]
+    fn published_content_includes_rubick_migration_blog() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("content/blogs");
+        let store = BlogStore::load(&root).expect("published blog content must be valid");
+        let summary = store
+            .0
+            .blogs
+            .iter()
+            .find(|blog| blog.id == "migrating-widgets-to-rubick")
+            .expect("Rubick migration blog must be indexed");
+
+        assert_eq!(summary.author, "Cottons29");
+        assert!(
+            summary
+                .tags
+                .iter()
+                .any(|tag| tag == "Rubick")
+        );
+
+        let markdown = fs::read_to_string(root.join("migrating-widgets-to-rubick.md")).unwrap();
+        assert!(markdown.contains("# Migrating Aimer Widgets to Rubick"));
+        assert!(markdown.contains("### Performance Comparison"));
+        assert!(markdown.contains("AnyWidget"));
+        assert!(markdown.contains("AnyElement"));
+    }
+
     #[tokio::test]
     async fn list_blogs_returns_metadata_newest_first() {
         let root = fixture();

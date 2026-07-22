@@ -43,11 +43,10 @@ impl StatelessWidget for HoverableGetStartedButton {
                         .vertical_alignment(BoxAlignment::Center)
                         .horizontal_alignment(BoxAlignment::Center)
                         .children(vec![
-                            Box::new(
-                                AssetImage::new("assets/github-svgrepo-com.png")
-                                    .width(24)
-                                    .height(24),
-                            ),
+                            AssetImage::new("assets/github-svgrepo-com.png")
+                                .width(24)
+                                .height(24)
+                                .boxed(),
                             SizedBox::new()
                                 .width(20)
                                 .boxed(),

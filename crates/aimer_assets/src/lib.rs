@@ -72,13 +72,38 @@ pub trait ImageProvider: Clone + Debug {
 
 #[cfg(test)]
 mod public_api_tests {
-    use aimer_widget::Widget;
+    use aimer_widget::{AnyElement, AnyWidget, Widget};
 
-    use super::{FontFamily, SvgAsset};
+    use super::img_widget::image_widget::RawImageWidget;
+    use super::{AssetImage, FontFamily, Image, ImageProvider, NetworkImage, SvgAsset};
 
     #[test]
     fn exposes_font_and_svg_assets_from_one_crate() {
         assert_ne!(FontFamily::SANS_SERIF, FontFamily::MONOSPACE);
         assert_eq!(SvgAsset::new("assets/icon.svg").debug_name(), "SvgAsset");
+    }
+
+    #[test]
+    fn image_widgets_use_rubick_erased_ownership() {
+        fn assert_widget<W: Widget>() {}
+        fn assert_asset_fallbacks(image: &AssetImage) {
+            let _: &Option<AnyWidget> = &image.error_widget;
+            let _: &Option<AnyWidget> = &image.loading_widget;
+        }
+        fn assert_network_fallbacks(image: &NetworkImage) {
+            let _: &Option<AnyWidget> = &image.error_widget;
+            let _: &Option<AnyWidget> = &image.loading_widget;
+        }
+        fn assert_element_fallbacks<P: ImageProvider>(element: &RawImageWidget<P>) {
+            let _: &Option<AnyElement> = &element.error_element;
+            let _: &Option<AnyElement> = &element.loading_element;
+        }
+
+        assert_widget::<Image>();
+        assert_widget::<AssetImage>();
+        assert_widget::<NetworkImage>();
+        assert_asset_fallbacks(&AssetImage::new("asset.png"));
+        assert_network_fallbacks(&NetworkImage::new("https://example.com/image.png"));
+        let _ = assert_element_fallbacks::<super::ImageSource>;
     }
 }

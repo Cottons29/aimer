@@ -2,10 +2,8 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
 };
-
-use crate::ZeroSizedBox;
 
 /// A flex child that fills the remaining main-axis space inside a flex
 /// container (`Row`, `Column`, `Flex`), mirroring Flutter's `Expanded` widget.
@@ -91,12 +89,13 @@ impl Expanded {
 }
 
 impl<W: Widget + 'static> Widget for Expanded<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(RawExpanded {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        RawExpanded {
             child: self.child.to_element(ctx),
             flex: self.flex.max(0.0),
             debug_name: "Expanded",
-        })
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
