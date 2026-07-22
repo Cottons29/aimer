@@ -10,8 +10,8 @@ use futures_util::future::{AbortHandle, Abortable};
 use crate::base::BuildContext;
 use crate::widget::stateful::{SyncChild, carry_child_state};
 use crate::{
-    AnyWidget, Drawable, Element, EventElement, Key, LayoutElement, Rebuildable, RequiredChild,
-    State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, Key, LayoutElement, Rebuildable,
+    RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 /// The current state of an [`AsyncBuilder`] operation.
@@ -394,7 +394,7 @@ where
         self.widget_key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "AsyncBuilder", self.key())
             .0
             .boxed()
@@ -420,7 +420,7 @@ where
         self.widget_key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "AsyncBuilder", self.key())
             .0
             .boxed()
@@ -442,7 +442,7 @@ impl<F, Fut, B, T, E> AsyncFrame<F, Fut, B, T, E>
 where
     B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget,
 {
-    fn child_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn child_element(&self, ctx: &BuildContext) -> AnyElement {
         let inner = self.runtime.inner.borrow();
         (self.snapshot_builder)(&inner.snapshot).to_element(ctx)
     }
@@ -457,15 +457,16 @@ where
     T: Send + 'static,
     E: Send + 'static,
 {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(AsyncFrameElement {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        AsyncFrameElement {
             child: SyncChild(UnsafeCell::new(self.child_element(ctx))),
             future_factory: self.future_factory.clone(),
             snapshot_builder: self.snapshot_builder.clone(),
             runtime: self.runtime.clone(),
             rendered_revision: Cell::new(self.runtime.revision()),
             marker: PhantomData::<fn() -> Fut>,
-        })
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -482,15 +483,16 @@ where
     T: 'static,
     E: 'static,
 {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(AsyncFrameElement {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        AsyncFrameElement {
             child: SyncChild(UnsafeCell::new(self.child_element(ctx))),
             future_factory: self.future_factory.clone(),
             snapshot_builder: self.snapshot_builder.clone(),
             runtime: self.runtime.clone(),
             rendered_revision: Cell::new(self.runtime.revision()),
             marker: PhantomData::<fn() -> Fut>,
-        })
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -514,7 +516,7 @@ impl<F, Fut, B, T, E> AsyncFrameElement<F, Fut, B, T, E> {
         unsafe { (&*self.child.0.get()).as_ref() }
     }
 
-    fn replace_child(&self, child: Box<dyn Element>) {
+    fn replace_child(&self, child: AnyElement) {
         // Safety: see `current_child`; no child reference is retained across this
         // replacement.
         unsafe {
@@ -733,7 +735,7 @@ fn async_builder_accepts_local_futures() {
     struct ProbeWidget;
 
     impl Widget for ProbeWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
             unreachable!("compile-time WebAssembly API probe")
         }
     }
@@ -765,15 +767,15 @@ mod tests {
 
     use crate::base::{BuildContext, WindowHandle};
     use crate::{
-        AnyWidget, AsyncBuilder, AsyncSnapshot, Drawable, Element, EventElement, LayoutElement,
-        Rebuildable, VisitorElement, Widget,
+        AnyElement, AnyWidget, AsyncBuilder, AsyncSnapshot, Drawable, Element, EventElement,
+        LayoutElement, Rebuildable, VisitorElement, Widget,
     };
 
     struct MarkerWidget(&'static str);
 
     impl Widget for MarkerWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-            Box::new(MarkerElement(self.0))
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            MarkerElement(self.0).boxed()
         }
 
         fn debug_name(&self) -> &'static str {

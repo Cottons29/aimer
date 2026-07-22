@@ -12,7 +12,8 @@ use aimer_events::window::request_animation_frame;
 use aimer_utils::callback::{Callback, CallbackExecutor, RawInnerCallback};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
+    VisitorElement, Widget,
 };
 
 use crate::{SvgDocument, SvgError, SvgLoadState, SvgLoader, SvgSelector, SvgSource, SvgStyle};
@@ -239,7 +240,7 @@ impl Svg {
 }
 
 impl Widget for Svg {
-    fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
         RawSvg {
             document: self.document.clone(),
             width: self.width,
@@ -465,7 +466,7 @@ impl SvgAsset {
 }
 
 impl Widget for SvgAsset {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let loader = SvgLoader::new(SvgSource::Asset(self.key.clone()));
         let background_loader = loader.clone();
         let window = ctx.window.clone();
@@ -483,7 +484,7 @@ impl Widget for SvgAsset {
             window.request_redraw();
         });
 
-        Box::new(RawSvgAsset {
+        RawSvgAsset {
             loader,
             phase: Cell::new(SvgAssetPhase::Loading),
             width: self.width,
@@ -501,7 +502,8 @@ impl Widget for SvgAsset {
                 .as_ref()
                 .map(|widget| widget.to_element(ctx)),
             svg_element: UnsafeCell::new(None),
-        })
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -525,9 +527,9 @@ struct RawSvgAsset {
     hover_styles: Vec<StyleRule>,
     pressed_styles: Vec<StyleRule>,
     callbacks: Vec<CallbackRule>,
-    loading_element: Option<Box<dyn Element>>,
-    error_element: Option<Box<dyn Element>>,
-    svg_element: UnsafeCell<Option<Box<dyn Element>>>,
+    loading_element: Option<AnyElement>,
+    error_element: Option<AnyElement>,
+    svg_element: UnsafeCell<Option<AnyElement>>,
 }
 
 impl RawSvgAsset {

@@ -8,8 +8,8 @@ use aimer_events::window::request_animation_frame;
 use aimer_macro::Rebuildable;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyWidget, Drawable, Element, EventElement, LayoutElement, RequiredChild, VisitorElement,
-    Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, RequiredChild,
+    VisitorElement, Widget,
 };
 
 use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
@@ -130,7 +130,7 @@ impl<W> MouseRegion<W> {
 }
 
 impl<W: Widget + 'static> Widget for MouseRegion<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         RawMouseRegion {
             on_hover_enter: self.on_hover_enter.clone(),
@@ -328,7 +328,7 @@ mod tests {
     struct TestWidget;
 
     impl Widget for TestWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
             panic!("not needed for builder tests")
         }
     }

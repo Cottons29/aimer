@@ -95,8 +95,8 @@ impl State<CustomAnimatedThemeExample> for CustomAnimatedThemeExampleState {
     }
 }
 
-#[widget(Stateless)]
 #[derive(Clone)]
+#[widget(Stateless)]
 struct CustomThemedPanel {
     is_dark: bool,
     updater: StateUpdater<CustomAnimatedThemeExampleState>,

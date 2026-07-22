@@ -5,7 +5,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -33,24 +33,25 @@ impl<T: Widget> FadeTransition<T> {
 }
 
 impl<T: Widget + 'static> Widget for FadeTransition<T> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         let controller = self.opacity.clone();
         let animating = Cell::new(self.opacity.is_animating());
         let window = ctx.window.clone();
-        Box::new(FadeTransitionElement {
+        FadeTransitionElement {
             child,
             controller,
             animating,
             window,
-        })
+        }
+        .boxed()
     }
 }
 
 macro_rules! impl_transition_element {
     ($name:ident, $debug:expr, $apply:expr) => {
         struct $name {
-            child: Box<dyn Element>,
+            child: AnyElement,
             controller: AnimationController,
             animating: Cell<bool>,
             window: WindowHandle,
@@ -168,24 +169,25 @@ impl<T: Widget> SlideTransition<T> {
 }
 
 impl<T: Widget + 'static> Widget for SlideTransition<T> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         let controller = self.position.clone();
         let animating = Cell::new(self.position.is_animating());
         let window = ctx.window.clone();
         let offset = self.offset;
-        Box::new(SlideTransitionElement {
+        SlideTransitionElement {
             child,
             controller,
             animating,
             window,
             offset,
-        })
+        }
+        .boxed()
     }
 }
 
 struct SlideTransitionElement {
-    child: Box<dyn Element>,
+    child: AnyElement,
     controller: AnimationController,
     animating: Cell<bool>,
     window: WindowHandle,
@@ -292,22 +294,23 @@ impl<T: Widget> ScaleTransition<T> {
 }
 
 impl<T: Widget + 'static> Widget for ScaleTransition<T> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         let controller = self.scale.clone();
         let animating = Cell::new(self.scale.is_animating());
         let window = ctx.window.clone();
-        Box::new(ScaleTransitionElement {
+        ScaleTransitionElement {
             child,
             controller,
             animating,
             window,
-        })
+        }
+        .boxed()
     }
 }
 
 struct ScaleTransitionElement {
-    child: Box<dyn Element>,
+    child: AnyElement,
     controller: AnimationController,
     animating: Cell<bool>,
     window: WindowHandle,
@@ -415,22 +418,23 @@ impl<T: Widget> RotationTransition<T> {
 }
 
 impl<T: Widget + 'static> Widget for RotationTransition<T> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         let controller = self.turns.clone();
         let animating = Cell::new(self.turns.is_animating());
         let window = ctx.window.clone();
-        Box::new(RotationTransitionElement {
+        RotationTransitionElement {
             child,
             controller,
             animating,
             window,
-        })
+        }
+        .boxed()
     }
 }
 
 struct RotationTransitionElement {
-    child: Box<dyn Element>,
+    child: AnyElement,
     controller: AnimationController,
     animating: Cell<bool>,
     window: WindowHandle,

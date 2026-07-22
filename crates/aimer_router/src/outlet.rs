@@ -3,11 +3,11 @@ use std::rc::Rc;
 
 use aimer_utils::PanicHelper;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, Widget};
+use aimer_widget::{AnyElement, AnyWidget, Widget};
 
 /// Type-erased builder for the active child route rendered inside an
 /// [`Outlet`].
-pub type OutletChildBuilder = Rc<dyn Fn(&BuildContext) -> Box<dyn Widget>>;
+pub type OutletChildBuilder = Rc<dyn Fn(&BuildContext) -> AnyWidget>;
 
 /// State injected by a [`crate::shell::Shell`] into the [`BuildContext`] so a
 /// descendant [`Outlet`] knows which child to render. Cheaply cloneable (holds
@@ -25,7 +25,7 @@ impl OutletSlot {
     }
 
     /// Build the active child widget for the current context.
-    pub fn build_child(&self, ctx: &BuildContext) -> Box<dyn Widget> {
+    pub fn build_child(&self, ctx: &BuildContext) -> AnyWidget {
         (self.build)(ctx)
     }
 }
@@ -41,7 +41,7 @@ pub struct Outlet;
 
 impl Widget for Outlet {
     #[track_caller]
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let caller = Location::caller();
         let slot = ctx.get_state::<OutletSlot>().unwrap_or_else(|| {
             panic!(

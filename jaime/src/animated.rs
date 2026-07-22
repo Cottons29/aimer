@@ -184,7 +184,7 @@ impl State<MyAnimatedList> for MyListState {
                                                     ]).boxed()
                                             )
                                     ).boxed()
-                                }).collect::<Vec<Box<dyn Widget>>>()
+                                }).collect::<Vec<AnyWidget>>()
                                 ))
                             .boxed()
                     ]).boxed()

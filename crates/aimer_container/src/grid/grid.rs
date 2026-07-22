@@ -1,5 +1,5 @@
 use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyWidget, Element, Widget};
+use aimer_widget::{AnyElement, AnyWidget, Element, Widget};
 
 use super::raw_grid::{
     GridPlacement, GridTrack, RawGrid, RawGridItem, resolve_placements, resolve_tracks,
@@ -234,7 +234,7 @@ impl<W: Widget + 'static> Grid<W> {
 }
 
 impl<W: Widget + 'static> Widget for Grid<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let placements = self
             .children
             .iter()
@@ -262,7 +262,7 @@ impl<W: Widget + 'static> Widget for Grid<W> {
             })
             .collect();
 
-        Box::new(RawGrid {
+        RawGrid {
             columns: self.columns.clone(),
             rows: self.rows.clone(),
             column_gap: self.column_gap,
@@ -271,7 +271,8 @@ impl<W: Widget + 'static> Widget for Grid<W> {
             vertical_alignment: self.vertical_alignment,
             overflow: self.overflow,
             children,
-        })
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {

@@ -1,9 +1,9 @@
-use crate::Drawable;
 use crate::base::*;
 use crate::components::event_element::EventElement;
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
+use crate::{AnyElement, Drawable};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
@@ -12,41 +12,142 @@ impl<T> Element for T where T: VisitorElement + EventElement + LayoutElement + R
 {}
 
 pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable {
-    /// Converts the implementing instance into a `Box` containing a dynamic
-    /// trait object of type `Element`.
+    /// Erases this element into an inline-or-heap [`AnyElement`].
     ///
-    /// This method is useful when you want to box a type that implements the
-    /// `Element` trait to enable dynamic dispatch at runtime. It requires
-    /// the size of the type to be known at compile time (`Self: Sized`) and
-    /// the type to have a `'static` lifetime.
+    /// Elements fitting `Rubick`'s configured size and alignment are embedded
+    /// directly in the returned owner. Larger or over-aligned elements use one
+    /// heap allocation. The historical method name is retained for source
+    /// familiarity and does not imply that allocation occurred.
     ///
-    /// # Returns
+    /// Borrowing the owner provides a `dyn Element` view. Moving an inline owner
+    /// also moves its concrete element, so callers must not rely on a stable
+    /// payload address without pinning.
     ///
-    /// A `Box` containing the implementing instance as a dynamic `Element`
-    /// trait object.
-    ///
-    /// # Example
-    ///
-    /// ```rust ignore
-    /// struct MyElement;
-    ///
-    /// impl Element for MyElement {
-    ///     // implementation details
-    /// }
-    ///
-    /// let element = MyElement;
-    /// let boxed_element: Box<dyn Element> = element.boxed();
-    /// ```
-    ///
-    /// # Constraints
-    ///
-    /// - The type must implement the `Element` trait.
-    /// - The type must be `Sized` and `'static`.
-    fn boxed(self) -> Box<dyn Element>
+    /// This method requires a sized, `'static` concrete element because stable
+    /// Rust does not support general implicit unsizing for custom smart
+    /// pointers.
+    fn boxed(self) -> AnyElement
     where
         Self: Sized + 'static,
     {
-        Box::new(self)
+        AnyElement::new_projected(self, project_element, project_element_mut)
+    }
+}
+
+fn project_element<E: Element + 'static>(value: &E) -> &(dyn Element + 'static) {
+    value
+}
+
+fn project_element_mut<E: Element + 'static>(value: &mut E) -> &mut (dyn Element + 'static) {
+    value
+}
+
+impl VisitorElement for AnyElement {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref()
+            .visit_children(visitor)
+    }
+
+    fn debug_name(&self) -> &'static str {
+        self.as_ref().debug_name()
+    }
+
+    fn element_type_id(&self) -> std::any::TypeId {
+        self.as_ref()
+            .element_type_id()
+    }
+}
+
+impl LayoutElement for AnyElement {
+    fn pos(&self) -> Option<Vec2d> {
+        self.as_ref().pos()
+    }
+
+    fn size(&self) -> Option<Size> {
+        self.as_ref().size()
+    }
+
+    fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.as_ref().layout(ctx)
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.as_ref()
+            .computed_size(ctx)
+    }
+
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.as_ref()
+            .content_size(ctx)
+    }
+
+    fn layer(&self) -> u32 {
+        self.as_ref().layer()
+    }
+
+    fn flex(&self) -> Option<f32> {
+        self.as_ref().flex()
+    }
+
+    fn get_size_from_child(&self) -> Option<Size> {
+        self.as_ref()
+            .get_size_from_child()
+    }
+
+    fn invalidate_layout(&self) {
+        self.as_ref()
+            .invalidate_layout()
+    }
+
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.as_ref().pos_start_end()
+    }
+}
+
+impl Rebuildable for AnyElement {
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.as_ref()
+            .rebuild_if_dirty(ctx)
+    }
+
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        self.as_ref().option_any()
+    }
+
+    fn is_carry_state(&self) -> bool {
+        self.as_ref().is_carry_state()
+    }
+
+    fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
+        self.as_ref()
+            .with_rebuild_context(ctx, callback)
+    }
+
+    fn mark_needs_rebuild(&self) {
+        self.as_ref()
+            .mark_needs_rebuild()
+    }
+}
+
+impl EventElement for AnyElement {
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        self.as_ref().on_event(event)
+    }
+
+    fn captures_pointer(&self, pointer: u64) -> bool {
+        self.as_ref()
+            .captures_pointer(pointer)
+    }
+
+    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref()
+            .event_children(visitor)
+    }
+}
+
+impl Drawable for AnyElement {
+    fn draw(&self, ctx: &BuildContext) {
+        self.as_ref().draw(ctx)
     }
 }
 
@@ -279,6 +380,8 @@ mod tests {
     use std::any::Any;
     use std::cell::Cell;
 
+    use aimer_rubick::INLINE_CAPACITY;
+
     use super::*;
 
     struct DowncastableElement;
@@ -308,6 +411,42 @@ mod tests {
             element
                 .option_any()
                 .is_some_and(|value| value.is::<DowncastableElement>())
+        );
+    }
+
+    struct StorageElement<const N: usize>([u8; N]);
+
+    impl<const N: usize> VisitorElement for StorageElement<N> {
+        fn debug_name(&self) -> &'static str {
+            "StorageElement"
+        }
+    }
+
+    impl<const N: usize> EventElement for StorageElement<N> {}
+    impl<const N: usize> LayoutElement for StorageElement<N> {}
+    impl<const N: usize> Drawable for StorageElement<N> {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl<const N: usize> Rebuildable for StorageElement<N> {
+        fn option_any(&self) -> Option<&dyn Any> {
+            Some(self)
+        }
+    }
+
+    #[test]
+    fn erased_elements_select_inline_or_heap_storage_and_dispatch_after_moves() {
+        let inline = StorageElement([]).boxed();
+        let heap = StorageElement([0; INLINE_CAPACITY + 1]).boxed();
+
+        assert!(inline.is_inline());
+        assert!(heap.is_heap());
+
+        let owners = std::hint::black_box([inline, heap]);
+        assert_eq!(owners[0].debug_name(), "StorageElement");
+        assert!(
+            owners[1]
+                .option_any()
+                .is_some_and(|value| value.is::<StorageElement<{ INLINE_CAPACITY + 1 }>>())
         );
     }
 

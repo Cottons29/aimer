@@ -12,6 +12,7 @@ categories = ["development-tools", "gui"]
 
 [dependencies]
 aimer_attribute.workspace = true
+aimer_rubick.workspace = true
 aimer_widget.workspace = true
 aimer_color.workspace = true
 aimer_container.workspace = true
@@ -43,6 +44,7 @@ members = [
     "aimer_cli",
     "aimer_cupid",
     "crates/aimer_widget",
+    "crates/aimer_rubick",
     "crates/aimer_container",
     "crates/aimer_color",
     "crates/aimer_input",
@@ -63,6 +65,7 @@ members = [
 
 [workspace.dependencies]
 aimer_canvas = { path = "crates/aimer_canvas" }
+aimer_rubick = { path = "crates/aimer_rubick" }
 aimer_animation = { path = "crates/aimer_animation" }
 aimer_input = { path = "crates/aimer_input" }
 aimer_container = { path = "crates/aimer_container" }

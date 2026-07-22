@@ -9,8 +9,8 @@ use std::rc::{Rc, Weak};
 use aimer_utils::PanicHelper;
 use aimer_widget::base::{BuildConsumer, BuildContext, ResolvedSize, Size, Vec2d, WindowHandle};
 use aimer_widget::{
-    AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild, State,
-    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
+    RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 struct Subscriber<T> {
@@ -484,7 +484,7 @@ impl<T: 'static, W: Widget + 'static> State<Provider<T, W>> for ProviderState<T,
 }
 
 impl<T: 'static, W: Widget + 'static> Widget for Provider<T, W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, type_name::<Provider<T>>(), None)
             .0
             .boxed()
@@ -501,20 +501,21 @@ struct ProviderScope<T, W> {
 }
 
 impl<T: 'static, W: Widget + 'static> Widget for ProviderScope<T, W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = ctx.with_state(Provided(self.handle.clone()), |ctx| {
             self.child.to_element(ctx)
         });
-        Box::new(ProviderElement {
+        ProviderElement {
             handle: self.handle.clone(),
             child,
-        })
+        }
+        .boxed()
     }
 }
 
 struct ProviderElement<T> {
     handle: ProviderHandle<T>,
-    child: Box<dyn Element>,
+    child: AnyElement,
 }
 
 impl<T: 'static> ProviderElement<T> {
@@ -713,7 +714,7 @@ impl<T: Clone + 'static, A: 'static, W: Widget + 'static> State<StoreProvider<T,
 }
 
 impl<T: Clone + 'static, A: 'static, W: Widget + 'static> Widget for StoreProvider<T, A, W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, type_name::<StoreProvider<T, A>>(), None)
             .0
             .boxed()
@@ -731,7 +732,7 @@ struct StoreScope<T, A, W> {
 }
 
 impl<T: Clone + 'static, A: 'static, W: Widget + 'static> Widget for StoreScope<T, A, W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let handle = self.handle.clone();
         let reducer = self.reducer.clone();
         let dispatcher = StoreDispatcher(Rc::new(move |action| {
@@ -741,19 +742,20 @@ impl<T: Clone + 'static, A: 'static, W: Widget + 'static> Widget for StoreScope<
         let child = ctx.with_state(Provided(self.handle.clone()), |ctx| {
             ctx.with_state(dispatcher.clone(), |ctx| self.child.to_element(ctx))
         });
-        Box::new(StoreElement {
+        StoreElement {
             handle: self.handle.clone(),
             dispatcher,
             child,
             marker: PhantomData,
-        })
+        }
+        .boxed()
     }
 }
 
 struct StoreElement<T, A> {
     handle: ProviderHandle<T>,
     dispatcher: StoreDispatcher<A>,
-    child: Box<dyn Element>,
+    child: AnyElement,
     marker: PhantomData<A>,
 }
 
@@ -876,18 +878,18 @@ mod tests {
     }
 
     impl Widget for ReadingWidget {
-        fn to_element(&self, context: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, context: &BuildContext) -> AnyElement {
             self.observed
                 .set(ProviderContext::read::<Counter>(context).count);
-            Box::new(Leaf)
+            Leaf.boxed()
         }
     }
 
     struct LeafWidget;
 
     impl Widget for LeafWidget {
-        fn to_element(&self, _context: &BuildContext) -> Box<dyn Element> {
-            Box::new(Leaf)
+        fn to_element(&self, _context: &BuildContext) -> AnyElement {
+            Leaf.boxed()
         }
     }
 
@@ -942,7 +944,7 @@ mod tests {
     }
 
     impl Widget for WatchingWidget {
-        fn to_element(&self, context: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, context: &BuildContext) -> AnyElement {
             StatefulElement::new_with_name(self, context, "WatchingWidget", None)
                 .0
                 .boxed()
@@ -974,7 +976,7 @@ mod tests {
     }
 
     impl Widget for MultiSelectorWidget {
-        fn to_element(&self, context: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, context: &BuildContext) -> AnyElement {
             StatefulElement::new_with_name(self, context, "MultiSelectorWidget", None)
                 .0
                 .boxed()
@@ -1238,8 +1240,8 @@ mod tests {
         }
         struct Child;
         impl Widget for Child {
-            fn to_element(&self, _context: &BuildContext) -> Box<dyn Element> {
-                Box::new(Leaf)
+            fn to_element(&self, _context: &BuildContext) -> AnyElement {
+                Leaf.boxed()
             }
         }
 

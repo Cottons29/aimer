@@ -4,7 +4,7 @@ use std::rc::Rc;
 use aimer_attribute::size::ResolvedSize;
 
 use crate::base::BuildContext;
-use crate::{AnyElement, AnyWidget, Element};
+use crate::{AnyElement, AnyWidget};
 
 mod recovery;
 pub mod stateful;
@@ -20,17 +20,49 @@ pub trait Widget {
         "Unknown"
     }
 
+    /// Erases this widget into an inline-or-heap [`AnyWidget`].
+    ///
+    /// Values fitting the configured `Rubick` size and alignment are embedded
+    /// directly in the returned owner. Other values use one heap allocation.
+    /// Despite the historical method name, allocation is therefore not
+    /// guaranteed. Moving an inline owner also moves this widget.
     fn boxed(self) -> AnyWidget
     where
         Self: Sized + 'static,
     {
-        Box::new(self)
+        AnyWidget::new_projected(self, project_widget, project_widget_mut)
     }
 
     /// Returns the text content if this is a text widget.
     /// Used by the reconciliation system to update text elements in-place.
     fn text_content(&self) -> Option<&str> {
         None
+    }
+}
+
+fn project_widget<W: Widget + 'static>(value: &W) -> &(dyn Widget + 'static) {
+    value
+}
+
+fn project_widget_mut<W: Widget + 'static>(value: &mut W) -> &mut (dyn Widget + 'static) {
+    value
+}
+
+impl Widget for AnyWidget {
+    fn key(&self) -> Option<crate::key::Key> {
+        self.as_ref().key()
+    }
+
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        self.as_ref().to_element(ctx)
+    }
+
+    fn debug_name(&self) -> &'static str {
+        self.as_ref().debug_name()
+    }
+
+    fn text_content(&self) -> Option<&str> {
+        self.as_ref().text_content()
     }
 }
 
@@ -53,7 +85,7 @@ impl Widget for Rc<dyn Widget> {
     fn key(&self) -> Option<crate::key::Key> {
         self.as_ref().key()
     }
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         self.as_ref().to_element(ctx)
     }
     fn debug_name(&self) -> &'static str {
@@ -115,4 +147,79 @@ pub(crate) fn draw_inspector_box(ctx: &BuildContext, size: ResolvedSize, name: &
         text_color,
         400,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use aimer_rubick::INLINE_CAPACITY;
+
+    use super::*;
+
+    struct StorageWidget<const N: usize>([u8; N]);
+
+    impl<const N: usize> Widget for StorageWidget<N> {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            panic!("storage contract test does not build an element")
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "StorageWidget"
+        }
+    }
+
+    #[test]
+    fn erased_widgets_select_inline_or_heap_storage_and_dispatch_after_moves() {
+        let inline = StorageWidget([]).boxed();
+        let heap = StorageWidget([0; INLINE_CAPACITY + 1]).boxed();
+
+        assert!(inline.is_inline());
+        assert!(heap.is_heap());
+
+        let owners = std::hint::black_box([inline, heap]);
+        assert_eq!(owners[0].debug_name(), "StorageWidget");
+        assert_eq!(owners[1].debug_name(), "StorageWidget");
+    }
+
+    struct DroppingWidget<const N: usize> {
+        drops: Rc<Cell<usize>>,
+        _bytes: [u8; N],
+    }
+
+    impl<const N: usize> Drop for DroppingWidget<N> {
+        fn drop(&mut self) {
+            self.drops
+                .set(self.drops.get() + 1);
+        }
+    }
+
+    impl<const N: usize> Widget for DroppingWidget<N> {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            panic!("drop contract test does not build an element")
+        }
+    }
+
+    #[test]
+    fn erased_widgets_drop_inline_and_heap_values_exactly_once() {
+        let drops = Rc::new(Cell::new(0));
+        {
+            let inline = DroppingWidget {
+                drops: Rc::clone(&drops),
+                _bytes: [],
+            }
+            .boxed();
+            let heap = DroppingWidget {
+                drops: Rc::clone(&drops),
+                _bytes: [0; INLINE_CAPACITY],
+            }
+            .boxed();
+
+            assert!(inline.is_inline());
+            assert!(heap.is_heap());
+        }
+
+        assert_eq!(drops.get(), 2);
+    }
 }

@@ -127,11 +127,7 @@ impl HeaderSection {
         }
     }
 
-    fn build_platform_button_list(
-        &self,
-        ctx: &BuildContext,
-        theme: &ThemeData,
-    ) -> Vec<Box<dyn Widget>> {
+    fn build_platform_button_list(&self, ctx: &BuildContext, theme: &ThemeData) -> Vec<AnyWidget> {
         let selected = self.active_tab;
         // Reach the enclosing Navigator so header buttons can drive navigation.
         let navigator = NavigatorController::<AppRouter>::of(ctx);

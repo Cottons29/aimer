@@ -7,7 +7,8 @@ use aimer_macro::Rebuildable;
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyWidget, Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutCache, LayoutElement,
+    VisitorElement, Widget,
 };
 
 /// Arranges a homogeneous collection of children along a configurable main axis.
@@ -131,13 +132,13 @@ impl<W: Widget + 'static> Flex<W> {
 }
 
 impl<W: Widget + 'static> Widget for Flex<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let elements = self
             .children
             .iter()
             .map(|c| c.to_element(ctx))
             .collect();
-        Box::new(RawFlex {
+        RawFlex {
             direction: self.direction,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
@@ -147,7 +148,8 @@ impl<W: Widget + 'static> Widget for Flex<W> {
             overflow_behavior: self.overflow,
             debug_name: "Flex",
             cache_bound: CacheBounds::new(),
-        })
+        }
+        .boxed()
     }
 }
 /// #### lower level flex container also the base of the flex layout such as
@@ -164,7 +166,7 @@ pub struct RawFlex {
     pub(crate) vertical_alignment: BoxAlignment,
     pub(crate) horizontal_alignment: BoxAlignment,
     pub(crate) gaps: LayoutSpacing,
-    pub(crate) children: Vec<Box<dyn Element>>,
+    pub(crate) children: Vec<AnyElement>,
     pub(crate) cache: LayoutCache,
     pub(crate) overflow_behavior: OverflowBehavior,
     pub(crate) debug_name: &'static str,

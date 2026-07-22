@@ -6,8 +6,8 @@ use aimer_container::Container;
 use aimer_style::BoxDecoration;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyWidget, Element, Key, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget,
-    Widget,
+    AnyElement, AnyWidget, Key, RequiredChild, State, StateUpdater, StatefulElement,
+    StatefulWidget, Widget,
 };
 
 use crate::callback::VoidCallback;
@@ -242,7 +242,7 @@ impl<W: Widget + 'static> Widget for Button<W> {
         self.widget_key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "Button", self.key())
             .0
             .boxed()

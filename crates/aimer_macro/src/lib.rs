@@ -120,7 +120,7 @@ impl TryFrom<&str> for AttributeKind {
 /// }
 ///
 /// impl StatelessWidget for MyWidget {
-///     fn build(&self, ctx: &BuildContext) -> Box<dyn Widget> {
+///     fn build(&self, ctx: &BuildContext) -> AnyWidget {
 ///         // ...
 ///     }
 /// }

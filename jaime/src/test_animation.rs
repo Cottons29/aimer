@@ -5,8 +5,8 @@ use aimer::animation::{AnimatedSwitcher, Curve};
 use aimer::provider::media_query::MediaQuery;
 use aimer::style::{FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle};
 use aimer::{
-    AssetImage, BoxAlignment, BuildContext, Color, Column, Container, Dimension, Row, SizedBox,
-    State, StateUpdater, StatefulWidget, Text, TextButton, Widget, widget,
+    AnyWidget, AssetImage, BoxAlignment, BuildContext, Color, Column, Container, Dimension, Row,
+    SizedBox, State, StateUpdater, StatefulWidget, Text, TextButton, Widget, widget,
 };
 
 #[widget(Stateful)]
@@ -108,7 +108,7 @@ impl State<TestFadingAnimation> for SameLookingSectionState {
 }
 
 impl SameLookingSectionState {
-    fn build_platform_button_list(&self, _ctx: &BuildContext) -> Vec<Box<dyn Widget>> {
+    fn build_platform_button_list(&self, _ctx: &BuildContext) -> Vec<AnyWidget> {
         let selected = self.current_index;
         PLATFORMS
             .iter()

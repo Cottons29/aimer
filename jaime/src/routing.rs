@@ -44,10 +44,10 @@ pub enum DashRoute {
 }
 
 impl Router for DashRoute {
-    fn build(&self, _: &BuildContext) -> Box<dyn Widget> {
+    fn build(&self, _: &BuildContext) -> AnyWidget {
         match self {
-            DashRoute::Overview => Box::new(HomeWidget {}),
-            DashRoute::Reports => Box::new(HomeWidget {}),
+            DashRoute::Overview => HomeWidget {}.boxed(),
+            DashRoute::Reports => HomeWidget {}.boxed(),
         }
     }
 }
@@ -66,11 +66,11 @@ pub enum TabRoute {
 }
 
 impl Router for TabRoute {
-    fn build(&self, _: &BuildContext) -> Box<dyn Widget> {
+    fn build(&self, _: &BuildContext) -> AnyWidget {
         match self {
-            TabRoute::Feed => Box::new(HomeWidget {}),
-            TabRoute::Notifications => Box::new(HomeWidget {}),
-            TabRoute::Profile => Box::new(HomeWidget {}),
+            TabRoute::Feed => HomeWidget {}.boxed(),
+            TabRoute::Notifications => HomeWidget {}.boxed(),
+            TabRoute::Profile => HomeWidget {}.boxed(),
         }
     }
 }
@@ -79,14 +79,16 @@ impl Router for TabRoute {
 /// active branch's top route renders. A real app would add a bottom nav bar
 /// here whose buttons call
 /// `StatefulShellController::<TabRoute>::of(ctx).go_branch(i)`.
-fn tab_frame(_: &BuildContext) -> Box<dyn Widget> {
-    Box::new(Container::new().child(Outlet))
+fn tab_frame(_: &BuildContext) -> AnyWidget {
+    Container::new()
+        .child(Outlet)
+        .boxed()
 }
 
 /// Builds the widget for a given tab route (each `TabRoute` is itself a
 /// widget).
-fn tab_child(route: TabRoute) -> Box<dyn Widget> {
-    Box::new(route)
+fn tab_child(route: TabRoute) -> AnyWidget {
+    route.boxed()
 }
 
 /// Pure redirect decision for the guarded `/admin` route: unauthenticated users
@@ -108,20 +110,20 @@ fn admin_guard(_route: &AppRouting, _ctx: &BuildContext) -> Option<AppRouting> {
 }
 
 impl Router for AppRouting {
-    fn build(&self, _: &BuildContext) -> Box<dyn Widget> {
+    fn build(&self, _: &BuildContext) -> AnyWidget {
         match self {
-            AppRouting::Home => Box::new(HomeWidget {}),
-            AppRouting::Settings => Box::new(SettingPage {}),
-            AppRouting::Profile { name } => Box::new(ProfilePage::new(name.clone())),
-            AppRouting::Search { .. } => Box::new(HomeWidget {}),
-            AppRouting::Login => Box::new(HomeWidget {}),
-            AppRouting::Admin => Box::new(HomeWidget {}),
+            AppRouting::Home => HomeWidget {}.boxed(),
+            AppRouting::Settings => SettingPage {}.boxed(),
+            AppRouting::Profile { name } => ProfilePage::new(name.clone()).boxed(),
+            AppRouting::Search { .. } => HomeWidget {}.boxed(),
+            AppRouting::Login => HomeWidget {}.boxed(),
+            AppRouting::Admin => HomeWidget {}.boxed(),
             AppRouting::Dashboard(child) => {
                 let child = child.clone();
                 // Persistent shell frame: a Container wrapping the Outlet where
                 // the active dashboard child route renders.
                 Shell::new(Container::new().child(Outlet), move |_| {
-                    Box::new(child.clone())
+                    child.clone().boxed()
                 })
                 .boxed()
             }
@@ -257,7 +259,7 @@ mod tests {
 
 pub fn state_router() {
     AimerApp::start(Navigator::<AppRouting>::new(AppRouting::Home, |route| {
-        Box::new(route)
+        route.boxed()
     }))
 }
 

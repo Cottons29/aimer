@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, State, StateUpdater,
-    StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, State,
+    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::Route;
@@ -17,7 +17,7 @@ use crate::outlet::{OutletChildBuilder, OutletSlot};
 /// When built, the shell injects an [`OutletSlot`] into the context so the
 /// descendant outlet can render the child.
 pub struct Shell {
-    frame: Box<dyn Widget>,
+    frame: AnyWidget,
     child_builder: OutletChildBuilder,
 }
 
@@ -29,10 +29,10 @@ impl Shell {
     /// the closure supplies the content requested by its descendant outlet.
     pub fn new(
         frame: impl Widget + 'static,
-        child_builder: impl Fn(&BuildContext) -> Box<dyn Widget> + 'static,
+        child_builder: impl Fn(&BuildContext) -> AnyWidget + 'static,
     ) -> Self {
         Self {
-            frame: Box::new(frame),
+            frame: frame.boxed(),
             child_builder: Rc::new(child_builder),
         }
     }
@@ -40,8 +40,8 @@ impl Shell {
     /// Creates the heap-allocated [`Widget`] form of [`Shell::new`].
     pub fn boxing(
         frame: impl Widget + 'static,
-        child_builder: impl Fn(&BuildContext) -> Box<dyn Widget> + 'static,
-    ) -> Box<dyn Widget> {
+        child_builder: impl Fn(&BuildContext) -> AnyWidget + 'static,
+    ) -> AnyWidget {
         Self::new(frame, child_builder).boxed()
     }
 
@@ -49,15 +49,15 @@ impl Shell {
     ///
     /// The child is cloned each time the outlet requests it.
     pub fn with_child(frame: impl Widget + 'static, child: impl Widget + Clone + 'static) -> Self {
-        Self::new(frame, move |_| Box::new(child.clone()))
+        Self::new(frame, move |_| child.clone().boxed())
     }
 }
 
 impl Widget for Shell {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let slot = OutletSlot::new(self.child_builder.clone());
         let child = ctx.with_state(slot.clone(), |ctx| self.frame.to_element(ctx));
-        Box::new(ShellElement { slot, child })
+        ShellElement { slot, child }.boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -67,7 +67,7 @@ impl Widget for Shell {
 
 struct ShellElement {
     slot: OutletSlot,
-    child: Box<dyn Element>,
+    child: AnyElement,
 }
 
 impl ShellElement {
@@ -193,8 +193,8 @@ pub fn active_top<R: Clone>(branches: &[Vec<R>], active: usize) -> Option<R> {
 pub struct StatefulShell<R: Route> {
     pub branches: Vec<Vec<R>>,
     pub active: usize,
-    pub frame: fn(&BuildContext) -> Box<dyn Widget>,
-    pub routes: fn(R) -> Box<dyn Widget>,
+    pub frame: fn(&BuildContext) -> AnyWidget,
+    pub routes: fn(R) -> AnyWidget,
 }
 
 impl<R: Route> StatefulShell<R> {
@@ -207,8 +207,8 @@ impl<R: Route> StatefulShell<R> {
     /// every branch created by this constructor has a non-empty history stack.
     pub fn new(
         initial_routes: Vec<R>,
-        frame: fn(&BuildContext) -> Box<dyn Widget>,
-        routes: fn(R) -> Box<dyn Widget>,
+        frame: fn(&BuildContext) -> AnyWidget,
+        routes: fn(R) -> AnyWidget,
     ) -> Self {
         let branches = initial_routes
             .into_iter()
@@ -227,8 +227,8 @@ pub struct StatefulShellState<R: Route> {
     pub branches: Vec<Vec<R>>,
     pub active: usize,
     pub updater: StateUpdater<Self>,
-    pub frame: fn(&BuildContext) -> Box<dyn Widget>,
-    pub routes: fn(R) -> Box<dyn Widget>,
+    pub frame: fn(&BuildContext) -> AnyWidget,
+    pub routes: fn(R) -> AnyWidget,
 }
 
 impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
@@ -364,9 +364,9 @@ impl<R: Route> StatefulWidget for StatefulShell<R> {
 }
 
 impl<R: Route> Widget for StatefulShell<R> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let (el, _) = StatefulElement::new(self, ctx);
-        Box::new(el)
+        el.boxed()
     }
 }
 
@@ -384,10 +384,11 @@ mod tests {
     }
 
     impl Widget for DeferredOutletWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-            Box::new(DeferredOutletElement {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            DeferredOutletElement {
                 child_built: self.child_built.clone(),
-            })
+            }
+            .boxed()
         }
     }
 
@@ -449,9 +450,10 @@ mod tests {
                 child_built: child_built.clone(),
             },
             |_| {
-                Box::new(DeferredOutletWidget {
+                DeferredOutletWidget {
                     child_built: Rc::new(Cell::new(false)),
-                })
+                }
+                .boxed()
             },
         );
         let element = shell.to_element(&context());
@@ -469,9 +471,10 @@ mod tests {
                 child_built: Rc::new(Cell::new(false)),
             },
             |_| {
-                Box::new(DeferredOutletWidget {
+                DeferredOutletWidget {
                     child_built: Rc::new(Cell::new(false)),
-                })
+                }
+                .boxed()
             },
         );
 

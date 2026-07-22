@@ -17,7 +17,7 @@ use std::rc::Rc;
 use aimer_container::{Container, ScrollAxis, Scrollable};
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyWidget, Element, Key, Widget};
+use aimer_widget::{AnyElement, AnyWidget, Key, Widget};
 
 pub use document::{Alignment, Block, Document, Inline, ListItem, MarkdownError, TableRow};
 pub use markdown_theme::MarkdownTheme;
@@ -159,7 +159,7 @@ impl MarkdownViewer {
 }
 
 impl Widget for MarkdownViewer {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let document = parse_document(self.source.clone());
         let content = match document.as_ref() {
             Ok(document) => renderer::render_document(

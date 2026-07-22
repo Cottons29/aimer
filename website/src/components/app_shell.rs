@@ -117,11 +117,11 @@ impl StatelessWidget for ThemedAppShellFrame {
             .child(Column::new().children(vec![
             #[cfg(any(target_os = "android", target_os = "ios") )]
             SizedBox::new().height(40).boxed(),
-            Box::new(HeaderSection {
+            HeaderSection {
                 active_tab: self.active_tab,
                 theme_mode: self.theme_mode,
                 theme_updater: self.theme_updater.clone(),
-            }),
+            }.boxed(),
             Expanded::new()
                 .child(Container::new().color(theme.background_color).child(Outlet))
                 .boxed(),

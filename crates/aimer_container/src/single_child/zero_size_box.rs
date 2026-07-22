@@ -1,6 +1,6 @@
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
 };
 /// A leaf widget that occupies no space and paints nothing.
 ///
@@ -32,7 +32,7 @@ impl LayoutElement for ZeroSizedBox {}
 impl Rebuildable for ZeroSizedBox {}
 
 impl Widget for ZeroSizedBox {
-    fn to_element(&self, _: &BuildContext) -> Box<dyn Element> {
-        Box::new(ZeroSizedBox)
+    fn to_element(&self, _: &BuildContext) -> AnyElement {
+        Element::boxed(ZeroSizedBox)
     }
 }

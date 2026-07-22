@@ -7,7 +7,10 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use crate::base::*;
 use crate::widget::recovery::{BuildPhase, build_or_error};
 use crate::widget::stateful::{RebuildCallBack, SyncChild};
-use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget};
+use crate::{
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
+    VisitorElement, Widget,
+};
 // StatelessWidget is effectively just a Widget.
 // We rely on direct Widget implementation to avoid blanket implementation
 // conflicts. The trait is kept for backward compatibility if needed, but
@@ -23,7 +26,7 @@ pub trait StatelessWidget {
 /// the produced element already reports the requested name, no extra wrapper
 /// is created.
 pub struct NamedWidget {
-    inner: Box<dyn Widget>,
+    inner: AnyWidget,
     name: &'static str,
 }
 
@@ -32,13 +35,13 @@ impl NamedWidget {
     ///
     /// The wrapper forwards dirty rebuilding to its child but cannot recreate
     /// the source widget itself because it stores no build closure.
-    pub fn new(inner: Box<dyn Widget>, name: &'static str) -> Self {
+    pub fn new(inner: AnyWidget, name: &'static str) -> Self {
         Self { inner, name }
     }
 }
 
 impl Widget for NamedWidget {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = self.inner.to_element(ctx);
         if child.debug_name() == self.name {
             return child;
@@ -46,7 +49,7 @@ impl Widget for NamedWidget {
         // A `NamedWidget` only wraps an already-built element for the inspector;
         // it has no build closure of its own, so it is not self-rebuildable —
         // it still forwards rebuild/dirty marking to its child.
-        Box::new(StatelessElement::wrapper(child, None, self.name))
+        StatelessElement::wrapper(child, None, self.name).boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -87,7 +90,7 @@ pub struct StatelessElement {
 impl StatelessElement {
     pub fn from_builder(
         ctx: &BuildContext,
-        rebuild_fn: impl Fn(&BuildContext) -> Box<dyn Element> + 'static,
+        rebuild_fn: impl Fn(&BuildContext) -> AnyElement + 'static,
         key: Option<crate::key::Key>,
         debug_name: &'static str,
     ) -> Self {
@@ -117,8 +120,8 @@ impl StatelessElement {
     /// `MediaQuery`-dependent widgets update when marked dirty (e.g. on
     /// window resize).
     pub fn new(
-        child: Box<dyn Element>,
-        rebuild_fn: impl Fn(&BuildContext) -> Box<dyn Element> + 'static,
+        child: AnyElement,
+        rebuild_fn: impl Fn(&BuildContext) -> AnyElement + 'static,
         key: Option<crate::key::Key>,
         debug_name: &'static str,
     ) -> Self {
@@ -135,7 +138,7 @@ impl StatelessElement {
     /// Create a non-rebuildable wrapper. It never re-runs a `build()` of its
     /// own but still propagates dirty marking and rebuilds to its child.
     pub fn wrapper(
-        child: Box<dyn Element>,
+        child: AnyElement,
         key: Option<crate::key::Key>,
         debug_name: &'static str,
     ) -> Self {
@@ -324,14 +327,14 @@ mod tests {
     // the child that can rebuild.
     #[test]
     fn mark_needs_rebuild_propagates_through_wrapper() {
-        let inner = StatelessElement::new(Box::new(Leaf), |_| Box::new(Leaf), None, "Inner");
+        let inner = StatelessElement::new(Leaf.boxed(), |_| Leaf.boxed(), None, "Inner");
         // Rebuildable elements start clean and carry a build closure.
         assert!(inner.rebuild_fn.is_some());
         assert!(!inner.dirty.get());
         let inner_dirty = inner.dirty.clone();
 
         // A wrapper cannot rebuild itself but must still forward the mark.
-        let outer = StatelessElement::wrapper(Box::new(inner), None, "Outer");
+        let outer = StatelessElement::wrapper(inner.boxed(), None, "Outer");
         assert!(outer.rebuild_fn.is_none());
         assert!(!outer.dirty.get());
 
@@ -349,10 +352,10 @@ mod tests {
         let rebuilds = Rc::new(Cell::new(0));
         let rebuild_observer = rebuilds.clone();
         let element = StatelessElement::new(
-            Box::new(Leaf),
+            Leaf.boxed(),
             move |_| {
                 rebuild_observer.set(rebuild_observer.get() + 1);
-                Box::new(Leaf)
+                Leaf.boxed()
             },
             None,
             "Rebuildable",
@@ -391,7 +394,7 @@ mod tests {
             move |_| {
                 build_observer.set(build_observer.get() + 1);
                 if build_observer.get() == 1 {
-                    Box::new(Leaf)
+                    Leaf.boxed()
                 } else {
                     panic!("missing provider during rebuild")
                 }
@@ -429,7 +432,7 @@ mod tests {
                 {
                     observer.set(observer.get() + 1);
                 }
-                Box::new(Leaf)
+                Leaf.boxed()
             },
             None,
             "Reactive",

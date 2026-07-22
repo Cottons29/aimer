@@ -7,8 +7,8 @@ pub fn start_panic_recovery_example() {
 
 struct MissingProviderValue;
 
-#[widget(Stateless)]
 #[derive(Clone)]
+#[widget(Stateless)]
 struct PanicRecoveryExample {}
 
 impl PanicRecoveryExample {

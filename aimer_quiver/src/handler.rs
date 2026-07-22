@@ -9,7 +9,7 @@ use aimer_attribute::size::ResolvedSize;
 use aimer_inspector::InspectorOverlay;
 use aimer_utils::debug;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, Widget};
+use aimer_widget::{AnyElement, Element, Widget};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 use winit::application::ApplicationHandler;
@@ -64,7 +64,7 @@ fn find_hovered_node(
 pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub window: Option<&'static Window>,
     pub render_ctx: AimerRenderContext,
-    pub widget_root: Option<Box<dyn Element>>,
+    pub widget_root: Option<AnyElement>,
     pub pending_widget: Option<W>,
     pub cursor_pos: Vec2d,
     pub current_modifiers: aimer_events::element::Modifiers,

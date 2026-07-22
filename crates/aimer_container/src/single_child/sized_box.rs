@@ -4,7 +4,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::{Color, *};
 use aimer_widget::{
-    AnyWidget, Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget,
 };
 
 use crate::ZeroSizedBox;
@@ -98,13 +98,13 @@ impl SizedBox {
 }
 
 impl<W: Widget + 'static> Widget for SizedBox<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = self
             .child
             .as_ref()
             .map(|child| child.to_element(ctx))
             .unwrap_or(ZeroSizedBox.to_element(ctx));
-        Box::new(RawSizedBox {
+        RawSizedBox {
             width: self.width,
             height: self.height,
             child,
@@ -112,7 +112,8 @@ impl<W: Widget + 'static> Widget for SizedBox<W> {
             cache: LayoutCache::new(),
             debug_name: "SizedBox",
             bounds: std::cell::Cell::new(None),
-        })
+        }
+        .boxed()
     }
 }
 #[derive(Rebuildable, EventElement)]

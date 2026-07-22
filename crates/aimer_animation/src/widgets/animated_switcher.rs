@@ -7,8 +7,8 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, Key, LayoutElement, Rebuildable, State, StateUpdater,
-    StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, Key, LayoutElement, Rebuildable, State,
+    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -130,7 +130,7 @@ impl<T: Widget + 'static> Widget for AnimatedSwitcher<T> {
         self.widget_key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "AnimatedSwitcher", self.key())
             .0
             .boxed()
@@ -209,8 +209,8 @@ struct AnimatedSwitcherFrame<T: Widget + 'static> {
 }
 
 impl<T: Widget + 'static> Widget for AnimatedSwitcherFrame<T> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(AnimatedSwitcherElement {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        AnimatedSwitcherElement {
             current_child: self
                 .current_child
                 .to_element(ctx),
@@ -221,13 +221,14 @@ impl<T: Widget + 'static> Widget for AnimatedSwitcherFrame<T> {
             ),
             in_controller: self.in_controller.clone(),
             out_controller: self.out_controller.clone(),
-        })
+        }
+        .boxed()
     }
 }
 
 struct AnimatedSwitcherElement {
-    current_child: Box<dyn Element>,
-    old_child: UnsafeCell<Option<Box<dyn Element>>>,
+    current_child: AnyElement,
+    old_child: UnsafeCell<Option<AnyElement>>,
     in_controller: AnimationController,
     out_controller: AnimationController,
 }
@@ -350,7 +351,7 @@ mod tests {
             Some(Key::Value(self.0.to_owned()))
         }
 
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
             panic!("not needed for state lifecycle tests")
         }
     }
@@ -485,11 +486,12 @@ mod tests {
             drawn: Rc<RefCell<Vec<&'static str>>>,
         }
         impl Widget for RecordingPage {
-            fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
-                Box::new(RecordingLeaf {
+            fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+                RecordingLeaf {
                     label: self.label,
                     drawn: self.drawn.clone(),
-                })
+                }
+                .boxed()
             }
             fn debug_name(&self) -> &'static str {
                 "RecordingPage"

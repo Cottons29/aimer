@@ -6,8 +6,8 @@ use aimer_macro::Rebuildable;
 pub use aimer_style::*;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyWidget, Drawable, Element, EventElement, LayoutCache, LayoutElement, RequiredChild,
-    VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutCache, LayoutElement,
+    RequiredChild, VisitorElement, Widget,
 };
 
 /// A decorated single-child layout box with optional size, spacing, and color.
@@ -135,9 +135,9 @@ impl Container {
 }
 
 impl<W: Widget> Widget for Container<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
-        Box::new(RawContainer {
+        RawContainer {
             width: self.width,
             height: self.height,
             child,
@@ -148,7 +148,8 @@ impl<W: Widget> Widget for Container<W> {
             debug_name: "Container",
             bounds: std::cell::Cell::new(None),
             color: self.color,
-        })
+        }
+        .boxed()
     }
 }
 

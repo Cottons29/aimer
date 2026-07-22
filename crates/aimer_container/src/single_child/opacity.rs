@@ -2,7 +2,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
 };
 
 /// Paints a single child with a normalized alpha value.
@@ -62,11 +62,12 @@ impl Default for Opacity {
 }
 
 impl<W: Widget + 'static> Widget for Opacity<W> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        Box::new(RawOpacity {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        RawOpacity {
             child: self.child.to_element(ctx),
             opacity: normalized_opacity(self.opacity),
-        })
+        }
+        .boxed()
     }
 }
 
@@ -80,7 +81,7 @@ fn normalized_opacity(opacity: f32) -> f32 {
 
 #[derive(EventElement, Rebuildable)]
 struct RawOpacity {
-    child: Box<dyn Element>,
+    child: AnyElement,
     opacity: f32,
 }
 

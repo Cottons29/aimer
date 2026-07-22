@@ -9,7 +9,9 @@ use aimer_macro::Rebuildable;
 use aimer_style::{FontStyle, TextAlign, TextDecorationLine, TextOverflow, TextStyle};
 use aimer_utils::callback::{Callback, CallbackExecutor, RawInnerCallback};
 use aimer_widget::base::{BuildContext, Color};
-use aimer_widget::{Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget};
+use aimer_widget::{
+    AnyElement, Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget,
+};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::selection::{SelectionState, TextHitRegion, text_offset_at};
@@ -204,7 +206,7 @@ impl RichText {
 }
 
 impl Widget for RichText {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let spans = self
             .span
             .flatten(&self.text_style);

@@ -7,8 +7,8 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    Drawable, Element, EventElement, Key, LayoutElement, Rebuildable, State, StateUpdater,
-    StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, Key, LayoutElement, Rebuildable, State,
+    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -203,7 +203,7 @@ impl<T: Widget + 'static> Widget for MorphTransition<T> {
         self.widget_key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "MorphTransition", self.key())
             .0
             .boxed()
@@ -277,7 +277,7 @@ struct MorphTransitionFrame<T: Widget + 'static> {
 }
 
 impl<T: Widget + 'static> Widget for MorphTransitionFrame<T> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let current_child = self
             .current_child
             .to_element(ctx);
@@ -292,7 +292,7 @@ impl<T: Widget + 'static> Widget for MorphTransitionFrame<T> {
             .unwrap_or(current_size);
         let morphing = old_child.is_some();
 
-        Box::new(MorphTransitionElement {
+        MorphTransitionElement {
             current_child: SyncChild::new(current_child),
             old_child: SyncChild(UnsafeCell::new(old_child)),
             controller: self.controller.clone(),
@@ -317,7 +317,8 @@ impl<T: Widget + 'static> Widget for MorphTransitionFrame<T> {
             } else {
                 MorphState::Idle
             }),
-        })
+        }
+        .boxed()
     }
 }
 
@@ -338,14 +339,14 @@ enum MorphState {
     MorphingIn,
 }
 
-/// Unsafe wrapper for single-threaded mutable access to a boxed element.
+/// Unsafe wrapper for single-threaded mutable access to an element.
 /// Safety: the rendering pipeline is single-threaded.
-struct SyncChild(UnsafeCell<Option<Box<dyn Element>>>);
+struct SyncChild(UnsafeCell<Option<AnyElement>>);
 unsafe impl Send for SyncChild {}
 unsafe impl Sync for SyncChild {}
 
 impl SyncChild {
-    fn new(element: Box<dyn Element>) -> Self {
+    fn new(element: AnyElement) -> Self {
         Self(UnsafeCell::new(Some(element)))
     }
 
@@ -362,7 +363,7 @@ impl SyncChild {
     /// Take the element out, leaving `None` in its place.
     /// # Safety
     /// Must only be called from the single rendering thread.
-    unsafe fn take(&self) -> Option<Box<dyn Element>> {
+    unsafe fn take(&self) -> Option<AnyElement> {
         unsafe { (*self.0.get()).take() }
     }
 }
@@ -660,7 +661,7 @@ mod tests {
             Some(Key::Value(self.0.to_owned()))
         }
 
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
             panic!("not needed for state lifecycle tests")
         }
     }

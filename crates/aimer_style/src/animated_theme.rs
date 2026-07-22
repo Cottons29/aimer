@@ -6,8 +6,8 @@ use aimer_animation::{AnimInstant, AnimationController, Curve};
 use aimer_provider::{Provider, ProviderHandle};
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
-    AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild, State,
-    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
+    RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::{Theme, ThemeData};
@@ -234,7 +234,7 @@ impl<T: Theme> AnimatedThemeState<T> {
 }
 
 impl<W: Widget + 'static, T: Theme> Widget for AnimatedTheme<W, T> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "AnimatedTheme", self.key())
             .0
             .boxed()
@@ -254,24 +254,25 @@ struct AnimatedThemeFrame<T: Theme> {
 }
 
 impl<T: Theme> Widget for AnimatedThemeFrame<T> {
-    fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         let child = Provider::new()
             .handle(self.handle.clone())
             .child(self.child.clone())
             .to_element(ctx);
-        Box::new(AnimatedThemeElement {
+        AnimatedThemeElement {
             current: self.current.clone(),
             child,
             controller: self.controller.clone(),
             transition: self.transition.clone(),
             handle: self.handle.clone(),
-        })
+        }
+        .boxed()
     }
 }
 
 struct AnimatedThemeElement<T: Theme> {
     current: Rc<RefCell<T>>,
-    child: Box<dyn Element>,
+    child: AnyElement,
     controller: AnimationController,
     transition: Rc<RefCell<ThemeTransition<T>>>,
     handle: ProviderHandle<T>,
@@ -409,7 +410,7 @@ mod tests {
     struct TestWidget;
 
     impl Widget for TestWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
             panic!("not needed for state lifecycle tests")
         }
     }

@@ -155,7 +155,7 @@ impl State<AnimatedPlatformButtonList> for AnimatedPlatformButtonListState {
 }
 
 impl AnimatedPlatformButtonListState {
-    fn build_platform_button_list(&self, theme: &ThemeData) -> Vec<Box<dyn Widget>> {
+    fn build_platform_button_list(&self, theme: &ThemeData) -> Vec<AnyWidget> {
         PLATFORMS
             .iter()
             .enumerate()

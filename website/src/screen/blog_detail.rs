@@ -3,11 +3,10 @@ use crate::blog_store::{BlogDetail, BlogStore, LoadState, request_blog_detail};
 use crate::components::BlogBackButton;
 use crate::router::AppRouter;
 use crate::utils::{app_padding, is_mobile};
-use aimer::console::info;
 use aimer::router::NavigatorController;
 use aimer::style::{FontWeight, LayoutSpacing, TextOverflow, TextStyle, Theme, ThemeData};
 use aimer::{
-    BoxAlignment, BuildContext, Color, Column, Container, Expanded, Key, MarkdownTheme,
+    AnyWidget, BoxAlignment, BuildContext, Color, Column, Container, Expanded, Key, MarkdownTheme,
     MarkdownViewer, ProviderContext, ProviderHandle, Row, ScrollAxis, Scrollable, SizedBox,
     StatelessWidget, Text, Widget, ZeroSizedBox, widget,
 };
@@ -37,7 +36,7 @@ fn metadata_fields(detail: &BlogDetail) -> [(&'static str, String); 3] {
     ]
 }
 
-fn metadata_sidebar(detail: &BlogDetail, theme: &ThemeData) -> Box<dyn Widget> {
+fn metadata_sidebar(detail: &BlogDetail, theme: &ThemeData) -> AnyWidget {
     let mut children = Vec::new();
     for (index, (label, value)) in metadata_fields(detail)
         .into_iter()
@@ -157,8 +156,8 @@ pub struct BlogDetailPage {
 }
 
 impl BlogDetailPage {
-    pub fn boxing(id: String, _: &BuildContext) -> Box<dyn Widget> {
-        Box::new(Self { id })
+    pub fn boxing(id: String, _: &BuildContext) -> AnyWidget {
+        Self { id }.boxed()
     }
 }
 

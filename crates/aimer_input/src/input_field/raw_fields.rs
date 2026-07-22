@@ -14,7 +14,7 @@ use aimer_macro::Rebuildable;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use aimer_text::RawTextWidget;
 use aimer_widget::base::{BuildContext, Color, Colors};
-use aimer_widget::{Drawable, Element, EventElement, LayoutCache, LayoutElement, VisitorElement};
+use aimer_widget::{Drawable, EventElement, LayoutCache, LayoutElement, VisitorElement};
 
 use crate::input_field::controller::TextFieldController;
 
