@@ -76,7 +76,10 @@ fn open_web_link(target: Rc<str>) {
 /// A scrollable Markdown document rendered with native Aimer widgets.
 ///
 /// Create an empty viewer with [`MarkdownViewer::new`], then provide source
-/// with [`MarkdownViewer::markdown`].
+/// with [`MarkdownViewer::markdown`]. Fenced code blocks display their language
+/// in a header and provide a copy control that writes the complete code source
+/// to the platform clipboard. Unlabelled fences keep the header without showing
+/// a language name.
 #[derive(Clone)]
 pub struct MarkdownViewer {
     source: Rc<str>,

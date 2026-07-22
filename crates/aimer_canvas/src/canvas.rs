@@ -165,6 +165,29 @@ pub trait CanvasRendering: Clone {
         let _ = (font_family, font_style, font_weight);
         self.measure_text_metrics(text, font_size, max_width)
     }
+    /// Measures the rendered width of each line after wrapping.
+    #[allow(clippy::too_many_arguments)]
+    fn measure_text_line_widths_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> Vec<f32> {
+        vec![
+            self.measure_text_metrics_styled(
+                text,
+                font_size,
+                max_width,
+                font_family,
+                font_style,
+                font_weight,
+            )
+            .width,
+        ]
+    }
     fn stroke_rect(
         &self,
         pos: Vec2d,
@@ -687,6 +710,29 @@ impl<'a> AimerCanvas<'a> {
         font_weight: u16,
     ) -> TextMetrics {
         CanvasRendering::measure_text_metrics_styled(
+            self.inner,
+            text,
+            font_size,
+            max_width,
+            font_family,
+            font_style,
+            font_weight,
+        )
+    }
+
+    /// Measures the rendered width of each line after applying styled text wrapping.
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn measure_text_line_widths_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> Vec<f32> {
+        CanvasRendering::measure_text_line_widths_styled(
             self.inner,
             text,
             font_size,

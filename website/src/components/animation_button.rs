@@ -182,9 +182,9 @@ impl AnimatedPlatformButtonListState {
                     PLATFORM_BUTTON_TRANSITION_DURATION,
                     Curve::FastOutSlowIn,
                     move |progress| {
-                        debug!(
-                            "platform: {label}, selected: {is_selected}, progress: {progress:?}"
-                        );
+                        // debug!(
+                        //     "platform: {label}, selected: {is_selected}, progress: {progress:?}"
+                        // );
                         let border_radius =
                             border_radius_inactive.lerp(&border_radius_active, *progress);
                         let width = normal_width.lerp(&slected, *progress);
