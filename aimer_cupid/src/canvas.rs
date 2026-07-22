@@ -32,11 +32,17 @@ struct TextMetricsKey {
     font_weight: u16,
 }
 
+#[derive(Clone, Debug)]
+struct CachedTextMetrics {
+    metrics: TextMetrics,
+    line_widths: Vec<f32>,
+}
+
 #[derive(Clone)]
 pub struct CupidCanvas {
     draw_list: Rc<RefCell<DrawList>>,
     rasterizer: Rc<RefCell<GlyphRasterizer>>,
-    metrics_cache: Rc<RefCell<HashMap<TextMetricsKey, TextMetrics>>>,
+    metrics_cache: Rc<RefCell<HashMap<TextMetricsKey, CachedTextMetrics>>>,
 }
 
 impl CupidCanvas {
@@ -432,12 +438,12 @@ impl CupidCanvas {
             font_style,
             font_weight,
         };
-        if let Some(metrics) = self
+        if let Some(cached) = self
             .metrics_cache
             .borrow()
             .get(&key)
         {
-            return *metrics;
+            return cached.metrics;
         }
 
         let mut rasterizer = self.rasterizer.borrow_mut();
@@ -448,6 +454,7 @@ impl CupidCanvas {
         let mut width = 0.0_f32;
         let mut current_width = 0.0_f32;
         let mut line_count = 1_usize;
+        let mut line_widths = Vec::new();
         // Width position right after the most recent whitespace on the current
         // line (relative to the line start). `None` means no break opportunity
         // is available on the current line yet. This mirrors the word-wrapping
@@ -458,6 +465,7 @@ impl CupidCanvas {
         for c in text.chars() {
             if c == '\n' {
                 width = width.max(current_width);
+                line_widths.push(current_width);
                 current_width = 0.0;
                 line_count += 1;
                 last_space_end = None;
@@ -478,12 +486,14 @@ impl CupidCanvas {
                     // the next line, so the current line ends at the space.
                     let moved_width = (current_width - space_end).max(0.0);
                     width = width.max(space_end);
+                    line_widths.push(space_end);
                     current_width = moved_width;
                     line_count += 1;
                     last_space_end = None;
                 } else {
                     // No break opportunity — fall back to character wrapping.
                     width = width.max(current_width);
+                    line_widths.push(current_width);
                     current_width = 0.0;
                     line_count += 1;
                 }
@@ -492,6 +502,7 @@ impl CupidCanvas {
         }
 
         width = width.max(current_width);
+        line_widths.push(current_width);
 
         // Subtract one line_gap: it only appears *between* lines, not after
         // the last one.  This matches the corrected layout_paragraph height.
@@ -511,8 +522,48 @@ impl CupidCanvas {
         if cache.len() > 1024 {
             cache.clear();
         }
-        cache.insert(key, metrics);
+        cache.insert(
+            key,
+            CachedTextMetrics {
+                metrics,
+                line_widths,
+            },
+        );
         metrics
+    }
+
+    /// Measures the rendered width of each line after applying the same wrapping rules as drawing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn measure_text_line_widths_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> Vec<f32> {
+        let key = TextMetricsKey {
+            text: text.to_string(),
+            font_size_tenths: (font_size * 10.0) as u32,
+            max_width_tenths: (max_width.max(0.0) * 10.0) as u32,
+            font_family,
+            font_style,
+            font_weight,
+        };
+        self.measure_text_metrics_styled(
+            text,
+            font_size,
+            max_width,
+            font_family,
+            font_style,
+            font_weight,
+        );
+        self.metrics_cache
+            .borrow()
+            .get(&key)
+            .map(|cached| cached.line_widths.clone())
+            .unwrap_or_default()
     }
 
     /// Draws a filled rectangle with border and outline in a single pass (no
@@ -815,5 +866,21 @@ mod family_metrics_tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn wrapped_line_widths_preserve_short_final_line() {
+        let canvas = CupidCanvas::new();
+        let widths = canvas.measure_text_line_widths_styled(
+            "MMMM i",
+            13.0,
+            45.0,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+
+        assert_eq!(widths.len(), 2);
+        assert!(widths[1] < widths[0]);
     }
 }

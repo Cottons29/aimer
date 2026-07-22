@@ -5,6 +5,7 @@ use aimer_color::prelude::Color;
 use aimer_container::flex::row_column::{Column, Row};
 use aimer_container::flex::{BoxAlignment, Expanded};
 use aimer_container::{Container, Grid, GridItem, GridTrack, ScrollAxis, Scrollable, SizedBox};
+use aimer_input::gesture::gesture_detector::GestureDetector;
 use aimer_style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontStyle, FontWeight, LayoutSpacing,
     TextAlign, TextDecoration, TextDecorationLine, TextStyle,
@@ -17,7 +18,8 @@ pub(crate) use crate::markdown_theme::MarkdownTheme;
 use crate::syntax::highlight_cached;
 use crate::{Alignment, Block, CaptureSpan, Document, Inline, TableRow};
 
-const TICK_SVG_DATA: &'static [u8] = include_bytes!("../tick-checkbox-svgrepo-com.svg");
+const TICK_SVG_DATA: &[u8] = include_bytes!("../tick-checkbox-svgrepo-com.svg");
+const COPY_SVG_DATA: &[u8] = include_bytes!("../copy-2-svgrepo-com.svg");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Metadata passed to a [`ImageResolver`] for each image node.
@@ -54,6 +56,77 @@ fn build_tick_box(ticked: bool) -> AnyWidget {
         })
         .boxed(),
     }
+}
+
+fn code_block_language_label(language: Option<&str>) -> Option<&str> {
+    language.filter(|language| !language.trim().is_empty())
+}
+
+fn copy_code_with<E>(source: &str, copy: impl FnOnce(&str) -> Result<(), E>) -> Result<(), E> {
+    copy(source)
+}
+
+fn build_code_header(value: &str, language: Option<&str>, theme: &MarkdownTheme) -> AnyWidget {
+    let language = match code_block_language_label(language) {
+        Some(language) => Text::new(language)
+            .text_style(
+                theme
+                    .code_block
+                    .font_family(aimer_assets::FontFamily::SANS_SERIF)
+                    .color(
+                        theme
+                            .code_block
+                            .color
+                            .with_opacity(160),
+                    ),
+            )
+            .boxed(),
+        None => SizedBox::new().boxed(),
+    };
+    let source: Rc<str> = Rc::from(value);
+    let copy = match SvgDocument::from_svg(COPY_SVG_DATA) {
+        Ok(document) => GestureDetector::new()
+            .on_tap(move || {
+                if let Err(error) = copy_code_with(&source, aimer_widget::clipboard::set_text) {
+                    eprintln!("Failed to copy Markdown code block: {error}");
+                }
+            })
+            .child(
+                Container::new()
+                    .width(28)
+                    .height(28)
+                    .padding(LayoutSpacing::all(4_u32.into()))
+                    .child(
+                        Svg::new(document)
+                            .width(20.0)
+                            .height(20.0)
+                            .style(
+                                "path",
+                                SvgStyle::new().stroke(theme.code_block.color.into()),
+                            ),
+                    ),
+            )
+            .boxed(),
+        Err(_) => SizedBox::new()
+            .width(28)
+            .height(28)
+            .boxed(),
+    };
+
+    Container::new()
+        .padding(
+            LayoutSpacing::new()
+                .left(16)
+                .right(12)
+                .top(8)
+                .bottom(8),
+        )
+        .child(
+            Row::new()
+                .vertical_alignment(BoxAlignment::Center)
+                .children(vec![Expanded::new().box_child(language), copy]),
+        )
+        .boxed()
 }
 
 /// Resolves network URLs with `NetworkImage` and other sources with `AssetImage`.
@@ -328,22 +401,36 @@ fn render_block(
         } => {
             let spans = highlighted_code_spans(value, language.as_deref());
             Container::new()
-                .padding(LayoutSpacing::all(12_u32.into()))
                 .box_decoration(
                     BoxDecoration::new()
                         .background_color(theme.code_background)
                         .border_radius(8),
                 )
                 .child(
-                    Scrollable::new()
-                        .axis(ScrollAxis::Horizontal)
-                        .vertical_scroll_bar(None)
-                        .horizontal_scroll_bar(None)
-                        .child(
-                            RichText::new(TextSpan::root(spans))
-                                .text_style(theme.code_block)
-                                .selectable(),
-                        ),
+                    Column::new()
+                        .horizontal_alignment(BoxAlignment::Start)
+                        .children(vec![
+                            build_code_header(value, language.as_deref(), theme),
+                            Container::new()
+                                .padding(
+                                    LayoutSpacing::new()
+                                        .left(16)
+                                        .right(16)
+                                        .bottom(16),
+                                )
+                                .child(
+                                    Scrollable::new()
+                                        .axis(ScrollAxis::Horizontal)
+                                        .vertical_scroll_bar(None)
+                                        .horizontal_scroll_bar(None)
+                                        .child(
+                                            RichText::new(TextSpan::root(spans))
+                                                .text_style(theme.code_block)
+                                                .selectable(),
+                                        ),
+                                )
+                                .boxed(),
+                        ]),
                 )
                 .boxed()
         }
@@ -488,9 +575,10 @@ mod tests {
     use super::*;
     use aimer_attribute::{BoxConstraint, ResolvedSize};
     use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_style::{FontFamily, TextAlign, TextDecorationLine, TextStyle};
     use aimer_widget::base::{BuildContext, WindowHandle};
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::sync::OnceLock;
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -507,7 +595,12 @@ mod tests {
     }
 
     fn layout_context(width: f32, height: f32) -> BuildContext<'static> {
-        let canvas = Canvas::new(Box::leak(Box::new(InnerCanvas::new())));
+        layout_context_with_canvas(width, height).0
+    }
+
+    fn layout_context_with_canvas(width: f32, height: f32) -> (BuildContext<'static>, InnerCanvas) {
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(Box::leak(Box::new(inner.clone())));
         let size = ResolvedSize { width, height };
         let mut ctx = BuildContext::new(
             canvas,
@@ -528,7 +621,7 @@ mod tests {
             max_width: width,
             max_height: height,
         };
-        ctx
+        (ctx, inner)
     }
 
     #[test]
@@ -676,6 +769,83 @@ mod tests {
                 .collect::<String>();
             assert_eq!(text, source);
         }
+    }
+
+    #[test]
+    fn code_block_header_preserves_the_fence_language() {
+        assert_eq!(code_block_language_label(Some("rust")), Some("rust"));
+        assert_eq!(code_block_language_label(None), None);
+    }
+
+    #[test]
+    fn code_block_copy_forwards_the_exact_source() {
+        let copied = RefCell::new(String::new());
+
+        copy_code_with("fn main() {}\n", |source| {
+            copied.replace(source.to_owned());
+            Ok::<(), ()>(())
+        })
+        .unwrap();
+
+        assert_eq!(copied.into_inner(), "fn main() {}\n");
+    }
+
+    #[test]
+    fn code_block_copy_icon_is_valid_svg() {
+        assert!(SvgDocument::from_svg(COPY_SVG_DATA).is_ok());
+    }
+
+    #[test]
+    fn rendered_code_block_exposes_its_language_and_source_text() {
+        let resolver: ImageResolver = Rc::new(default_image_resolver);
+        let document = Document::parse("```rust\nfn main() {}\n```").unwrap();
+        let (ctx, canvas) = layout_context_with_canvas(320.0, 200.0);
+        let element =
+            render_document(&document, &MarkdownTheme::default(), None, &resolver).to_element(&ctx);
+        element.layout(&ctx);
+        element.draw(&ctx);
+        let text = canvas
+            .draw_list()
+            .commands()
+            .iter()
+            .flat_map(|command| match command {
+                DrawCommand::DrawText { text, .. } => vec![text.as_ref()],
+                DrawCommand::DrawRichText { spans, .. } => spans
+                    .iter()
+                    .map(|span| span.text.as_ref())
+                    .collect(),
+                _ => Vec::new(),
+            })
+            .collect::<String>();
+
+        assert!(text.contains("rust"));
+        assert!(text.contains("fn main() {}"));
+    }
+
+    #[test]
+    fn code_block_copy_control_fits_its_header_track() {
+        let resolver: ImageResolver = Rc::new(default_image_resolver);
+        let document = Document::parse("```rust\nfn main() {}\n```").unwrap();
+        let (mut ctx, canvas) = layout_context_with_canvas(1700.0, 200.0);
+        ctx.scale = 2.0;
+        let element =
+            render_document(&document, &MarkdownTheme::default(), None, &resolver).to_element(&ctx);
+
+        element.layout(&ctx);
+        element.draw(&ctx);
+
+        assert!(
+            canvas
+                .draw_list()
+                .commands()
+                .iter()
+                .all(|command| {
+                    !matches!(
+                        command,
+                        DrawCommand::DrawText { text, .. } if text.contains("overflowed by")
+                    )
+                })
+        );
     }
 
     #[test]

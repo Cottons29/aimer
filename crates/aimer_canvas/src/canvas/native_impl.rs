@@ -347,6 +347,27 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
+    fn measure_text_line_widths_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> Vec<f32> {
+        CupidCanvas::measure_text_line_widths_styled(
+            self,
+            text,
+            font_size,
+            max_width,
+            font_family,
+            font_style,
+            font_weight,
+        )
+    }
+
+    #[inline]
     fn stroke_rect(
         &self,
         pos: Vec2d,

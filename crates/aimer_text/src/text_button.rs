@@ -7,7 +7,7 @@ use aimer_attribute::CacheBounds;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
 use aimer_events::window::request_animation_frame;
-use aimer_style::TextStyle;
+use aimer_style::{TextOverflow, TextStyle};
 use aimer_utils::AnimInstant;
 use aimer_utils::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
 use aimer_widget::base::{BuildContext, Color};
@@ -22,8 +22,11 @@ use crate::RawTextWidget;
 ///
 /// The control lays out exactly like its text and has no container or padding. Its normal, hover,
 /// and disabled styles each default to [`TextStyle::default`]; explicit color builders override the
-/// color of the corresponding style. A press fires on pointer-up only when pointer-down and
-/// pointer-up both occur inside the label. Disabled controls neither hover nor invoke callbacks.
+/// color of the corresponding style. Wrapped labels shrink to their intrinsic width when space is
+/// available and use the available width only when wrapping is necessary. For wrapped labels, each
+/// line is hit-tested only across its rendered width, so blank space after a short line is not
+/// interactive. A press fires on pointer-up only when pointer-down and pointer-up both occur inside
+/// the label. Disabled controls neither hover nor invoke callbacks.
 ///
 /// # Example
 ///
@@ -139,7 +142,7 @@ impl Widget for TextButton {
             hovered: Cell::new(false),
             interaction: RefCell::new(ButtonInteraction::default()),
             last_tap: Cell::new(None),
-            bounds: CacheBounds::new(),
+            bounds: TextHitBounds::default(),
         }
         .boxed()
     }
@@ -182,7 +185,45 @@ struct RawTextButton {
     hovered: Cell<bool>,
     interaction: RefCell<ButtonInteraction>,
     last_tap: Cell<Option<AnimInstant>>,
-    bounds: CacheBounds,
+    bounds: TextHitBounds,
+}
+
+#[derive(Debug, Default)]
+struct TextHitBounds {
+    lines: RefCell<Vec<CacheBounds>>,
+}
+
+impl TextHitBounds {
+    fn save(
+        &self,
+        scale: f32,
+        x: f32,
+        y: f32,
+        line_widths: &[f32],
+        line_height: f32,
+        total_height: f32,
+    ) {
+        let mut lines = self.lines.borrow_mut();
+        lines.clear();
+        for (index, width) in line_widths
+            .iter()
+            .copied()
+            .enumerate()
+        {
+            let offset_y = index as f32 * line_height;
+            let height = line_height.min((total_height - offset_y).max(0.0));
+            let bounds = CacheBounds::new();
+            bounds.save(scale, x, y + offset_y, width, height);
+            lines.push(bounds);
+        }
+    }
+
+    fn is_inside(&self, x: f32, y: f32) -> bool {
+        self.lines
+            .borrow()
+            .iter()
+            .any(|bounds| bounds.is_inside(x, y))
+    }
 }
 
 impl RawTextButton {
@@ -210,6 +251,97 @@ impl RawTextButton {
             cache: LayoutCache::new(),
             _typeface: Mutex::new(None),
         }
+    }
+
+    fn text_layout<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+    ) -> (
+        RawTextWidget,
+        BuildContext<'a>,
+        aimer_attribute::ResolvedSize,
+        Vec<f32>,
+        f32,
+    ) {
+        let mut intrinsic_text = self.text_element();
+        let wraps = matches!(
+            intrinsic_text
+                .text_style
+                .text_overflow,
+            TextOverflow::Wrap
+        );
+        intrinsic_text
+            .text_style
+            .text_overflow = TextOverflow::Clip;
+        let intrinsic_size = intrinsic_text.computed_size(ctx);
+
+        let mut text_ctx = ctx.clone();
+        if wraps {
+            let available_width = if ctx.box_constraint.max_width > 0.0 {
+                ctx.box_constraint.max_width
+            } else {
+                ctx.parent_size.width
+            };
+            let width = intrinsic_size
+                .width
+                .min(available_width);
+            text_ctx
+                .box_constraint
+                .max_width = width;
+            text_ctx.parent_size.width = width;
+        }
+
+        let text = self.text_element();
+        let size = if wraps {
+            text.computed_size(&text_ctx)
+        } else {
+            intrinsic_size
+        };
+        let (line_widths, line_height) = if wraps {
+            let font_size = text.font_size(text_ctx.scale);
+            let metrics = text_ctx
+                .canvas
+                .measure_text_metrics_styled(
+                    &text.text,
+                    font_size,
+                    text_ctx.parent_size.width,
+                    text.text_style.font_family,
+                    text.text_style.font_style,
+                    text.text_style
+                        .font_weight
+                        .numeric(),
+                );
+            let widths = text_ctx
+                .canvas
+                .measure_text_line_widths_styled(
+                    &text.text,
+                    font_size,
+                    text_ctx.parent_size.width,
+                    text.text_style.font_family,
+                    text.text_style.font_style,
+                    text.text_style
+                        .font_weight
+                        .numeric(),
+                );
+            (widths, metrics.line_height)
+        } else {
+            (vec![size.width], size.height)
+        };
+        (text, text_ctx, size, line_widths, line_height)
+    }
+
+    fn save_bounds(
+        &self,
+        ctx: &BuildContext,
+        size: aimer_attribute::ResolvedSize,
+        line_widths: &[f32],
+        line_height: f32,
+    ) {
+        let (x, y) = ctx
+            .canvas
+            .get_transform_translation();
+        self.bounds
+            .save(ctx.scale, x, y, line_widths, line_height, size.height);
     }
 
     fn execute(callback: &VoidCallback) {
@@ -313,39 +445,27 @@ impl EventElement for RawTextButton {
 
 impl LayoutElement for RawTextButton {
     fn layout(&self, ctx: &BuildContext) -> aimer_attribute::ResolvedSize {
-        let size = self
-            .text_element()
-            .layout(ctx);
-        let (x, y) = ctx
-            .canvas
-            .get_transform_translation();
-        self.bounds
-            .save(ctx.scale, x, y, size.width, size.height);
+        let (_, _, size, line_widths, line_height) = self.text_layout(ctx);
+        self.save_bounds(ctx, size, &line_widths, line_height);
         size
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> aimer_attribute::ResolvedSize {
-        self.text_element()
-            .computed_size(ctx)
+        self.text_layout(ctx).2
     }
 }
 
 impl Drawable for RawTextButton {
     fn draw(&self, ctx: &BuildContext) {
-        let text = self.text_element();
-        let size = text.computed_size(ctx);
-        let (x, y) = ctx
-            .canvas
-            .get_transform_translation();
-        self.bounds
-            .save(ctx.scale, x, y, size.width, size.height);
+        let (text, text_ctx, size, line_widths, line_height) = self.text_layout(ctx);
+        self.save_bounds(ctx, size, &line_widths, line_height);
         if !self.widget.disabled {
             self.set_hovered(
                 self.bounds
                     .is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y),
             );
         }
-        text.draw(ctx);
+        text.draw(&text_ctx);
     }
 }
 
@@ -355,7 +475,47 @@ impl Rebuildable for RawTextButton {}
 mod tests {
     use std::cell::Cell;
 
+    use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
+    use aimer_cupid::draw_cmd::DrawCommand;
+    use aimer_style::TextDecoration;
+    use aimer_widget::base::WindowHandle;
+
     use super::*;
+
+    fn context(max_width: f32) -> BuildContext<'static> {
+        context_with_canvas(max_width).0
+    }
+
+    fn context_with_canvas(max_width: f32) -> (BuildContext<'static>, aimer_canvas::InnerCanvas) {
+        let canvas = aimer_canvas::InnerCanvas::new();
+        let inner = Box::leak(Box::new(canvas.clone()));
+        let mut ctx = BuildContext::new(
+            aimer_canvas::Canvas::new(inner),
+            ResolvedSize {
+                width: max_width,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        ctx.box_constraint = BoxConstraint::new()
+            .max_width(max_width)
+            .max_height(100.0);
+        (ctx, canvas)
+    }
+
+    fn raw_button(widget: TextButton) -> RawTextButton {
+        RawTextButton {
+            widget,
+            hovered: Cell::new(false),
+            interaction: RefCell::new(ButtonInteraction::default()),
+            last_tap: Cell::new(None),
+            bounds: TextHitBounds::default(),
+        }
+    }
 
     #[test]
     fn press_requires_down_and_up_inside_the_text_bounds() {
@@ -386,5 +546,123 @@ mod tests {
         RawTextButton::execute(&callback);
 
         assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn wrapped_text_button_shrink_wraps_label_and_hitbox() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let ctx = context(300.0);
+        let button = raw_button(
+            TextButton::new("Open").style(TextStyle::default().text_overflow(TextOverflow::Wrap)),
+        );
+        let mut intrinsic_text = button.text_element();
+        intrinsic_text
+            .text_style
+            .text_overflow = TextOverflow::Clip;
+        let intrinsic = intrinsic_text.computed_size(&ctx);
+
+        let size = button.layout(&ctx);
+
+        assert_eq!(size, intrinsic);
+        assert!(!button.on_event(&ElementEvent::PointerDown(
+            Vec2d {
+                x: intrinsic.width + 1.0,
+                y: intrinsic.height / 2.0,
+            },
+            PointerSource::Mouse,
+            0,
+        )));
+    }
+
+    #[test]
+    fn wrapped_text_button_respects_narrow_available_width() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let ctx = context(30.0);
+        let button = raw_button(
+            TextButton::new("A label that wraps")
+                .style(TextStyle::default().text_overflow(TextOverflow::Wrap)),
+        );
+
+        let size = button.layout(&ctx);
+
+        assert_eq!(size.width, 30.0);
+        assert!(size.height > 17.0);
+        assert!(!button.on_event(&ElementEvent::PointerDown(
+            Vec2d {
+                x: 31.0,
+                y: size.height / 2.0,
+            },
+            PointerSource::Mouse,
+            0,
+        )));
+    }
+
+    #[test]
+    fn wrapped_text_button_excludes_empty_space_after_short_final_line() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let ctx = context(45.0);
+        let button = raw_button(
+            TextButton::new("MMMM i").style(TextStyle::default().text_overflow(TextOverflow::Wrap)),
+        );
+
+        let size = button.layout(&ctx);
+
+        assert!(size.height > 17.0);
+        assert!(button.on_event(&ElementEvent::PointerDown(
+            Vec2d {
+                x: 1.0,
+                y: size.height - 1.0,
+            },
+            PointerSource::Mouse,
+            0,
+        )));
+        assert!(!button.on_event(&ElementEvent::PointerDown(
+            Vec2d {
+                x: size.width - 1.0,
+                y: size.height - 1.0,
+            },
+            PointerSource::Mouse,
+            0,
+        )));
+    }
+
+    #[test]
+    fn wrapped_underlined_text_button_draws_each_line_decoration() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let (ctx, canvas) = context_with_canvas(45.0);
+        let button = raw_button(
+            TextButton::new("MMMM i").style(
+                TextStyle::default()
+                    .text_overflow(TextOverflow::Wrap)
+                    .text_decoration(TextDecoration::Underline),
+            ),
+        );
+
+        button.draw(&ctx);
+
+        let draw_list = canvas.draw_list();
+        let decorations = draw_list
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                DrawCommand::DrawTextDecoration { rect, .. } => Some(rect),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(decorations.len(), 2);
+        assert!(decorations[1].y > decorations[0].y);
+        assert!(decorations[1].width < decorations[0].width);
     }
 }

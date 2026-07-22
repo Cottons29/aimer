@@ -22,7 +22,7 @@ pub struct RawTextWidget {
 }
 
 impl RawTextWidget {
-    fn font_size(&self, scale: f32) -> f32 {
+    pub(crate) fn font_size(&self, scale: f32) -> f32 {
         let base = if self.text_style.font_size == 0 {
             14.0
         } else {
@@ -191,6 +191,19 @@ impl Drawable for RawTextWidget {
             .text_style
             .text_decoration;
         if !decoration.line.is_none() {
+            let line_widths = if matches!(self.text_style.text_overflow, TextOverflow::Wrap) {
+                ctx.canvas
+                    .measure_text_line_widths_styled(
+                        &self.text,
+                        font_size,
+                        max_width,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
+                        font_weight,
+                    )
+            } else {
+                vec![text_width]
+            };
             let scale = ctx.scale;
             // Dedicated decoration color, else inherit the text color.
             let deco_color = decoration
@@ -214,13 +227,13 @@ impl Drawable for RawTextWidget {
                 TextDecorationStyle::Solid => (thickness, 1.0),
             };
 
-            let emit = |center_y: f32| {
+            let emit = |center_y: f32, line_width: f32| {
                 let band_top = center_y - band_height / 2.0;
                 ctx.canvas
                     .draw_text_decoration(
                         (x, band_top).into(),
                         ResolvedSize {
-                            width: text_width,
+                            width: line_width,
                             height: band_height,
                         },
                         deco_color,
@@ -230,23 +243,29 @@ impl Drawable for RawTextWidget {
                     );
             };
 
-            if decoration
-                .line
-                .contains(TextDecorationLine::UNDERLINE)
+            for (index, line_width) in line_widths
+                .into_iter()
+                .enumerate()
             {
-                emit(y + descent.max(1.0) * 0.5 + offset);
-            }
-            if decoration
-                .line
-                .contains(TextDecorationLine::LINE_THROUGH)
-            {
-                emit(y - ascent * 0.35 + offset);
-            }
-            if decoration
-                .line
-                .contains(TextDecorationLine::OVERLINE)
-            {
-                emit(y - ascent + offset);
+                let baseline = y + index as f32 * metrics.line_height;
+                if decoration
+                    .line
+                    .contains(TextDecorationLine::UNDERLINE)
+                {
+                    emit(baseline + descent.max(1.0) * 0.5 + offset, line_width);
+                }
+                if decoration
+                    .line
+                    .contains(TextDecorationLine::LINE_THROUGH)
+                {
+                    emit(baseline - ascent * 0.35 + offset, line_width);
+                }
+                if decoration
+                    .line
+                    .contains(TextDecorationLine::OVERLINE)
+                {
+                    emit(baseline - ascent + offset, line_width);
+                }
             }
         }
     }
