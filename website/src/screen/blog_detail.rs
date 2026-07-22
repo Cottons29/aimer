@@ -7,9 +7,9 @@ use aimer::console::info;
 use aimer::router::NavigatorController;
 use aimer::style::{FontWeight, LayoutSpacing, TextOverflow, TextStyle, Theme, ThemeData};
 use aimer::{
-    BoxAlignment, BuildContext, Color, Column, Container, Expanded, MarkdownTheme, MarkdownViewer,
-    ProviderContext, ProviderHandle, Row, ScrollAxis, Scrollable, SizedBox, StatelessWidget, Text,
-    Widget, ZeroSizedBox, widget,
+    BoxAlignment, BuildContext, Color, Column, Container, Expanded, Key, MarkdownTheme,
+    MarkdownViewer, ProviderContext, ProviderHandle, Row, ScrollAxis, Scrollable, SizedBox,
+    StatelessWidget, Text, Widget, ZeroSizedBox, widget,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -19,24 +19,21 @@ enum DetailLayout {
 }
 
 fn detail_layout(mobile: bool) -> DetailLayout {
-    if mobile { DetailLayout::Vertical } else { DetailLayout::Horizontal }
+    if mobile {
+        DetailLayout::Vertical
+    } else {
+        DetailLayout::Horizontal
+    }
 }
 
 fn metadata_fields(detail: &BlogDetail) -> [(&'static str, String); 3] {
     [
-        ("Published", crate::screen::blog::display_upload_time(&detail.upload_time)),
         (
-            "Author",
-            detail
-                .author
-                .clone(),
+            "Published",
+            crate::screen::blog::display_upload_time(&detail.upload_time),
         ),
-        (
-            "Tags",
-            detail
-                .tags
-                .join(", "),
-        ),
+        ("Author", detail.author.clone()),
+        ("Tags", detail.tags.join(", ")),
     ]
 }
 
@@ -114,13 +111,11 @@ fn themed_markdown(theme: &ThemeData) -> MarkdownTheme {
     markdown.headings = markdown
         .headings
         .map(|style| style.color(theme.on_background_color));
-    markdown.blockquote = markdown
-        .blockquote
-        .color(
-            theme
-                .on_background_color
-                .with_opacity(180),
-        );
+    markdown.blockquote = markdown.blockquote.color(
+        theme
+            .on_background_color
+            .with_opacity(180),
+    );
     markdown.code_block = markdown
         .code_block
         .color(theme.on_surface_color);
@@ -180,11 +175,17 @@ impl StatelessWidget for BlogDetailPage {
             request_blog_detail(ctx, ProviderHandle::<BlogStore>::of(ctx), self.id.clone());
         }
         let navigator = NavigatorController::<AppRouter>::of(ctx);
-        let (content, metadata) = match state {
-            LoadState::Idle | LoadState::Loading => {
-                (crate::screen::blog::status_text("Loading blog…", theme.on_background_color), None)
-            }
-            LoadState::Error(error) => (crate::screen::blog::status_text(&error, Color::RED), None),
+        let (content, metadata, blog_id) = match state {
+            LoadState::Idle | LoadState::Loading => (
+                crate::screen::blog::status_text("Loading blog…", theme.on_background_color),
+                None,
+                None,
+            ),
+            LoadState::Error(error) => (
+                crate::screen::blog::status_text(&error, Color::RED),
+                None,
+                None,
+            ),
             LoadState::Ready(detail) => {
                 // info!("Markdown: {}", detail.markdown);
                 let metadata = metadata_sidebar(&detail, &theme);
@@ -194,14 +195,24 @@ impl StatelessWidget for BlogDetailPage {
                     .theme(markdown_theme)
                     .scrollable(false)
                     .boxed();
-                (content, Some(metadata))
+                (content, Some(metadata), Some(detail.id.clone()))
             }
         };
+
+        let key = match blog_id {
+            Some(blog_id) => Key::from(blog_id),
+            None => Key::unique(),
+        };
+
         let back_button = Container::new()
             .height(40)
             .width(120)
             .child(BlogBackButton::new().on_click(move || {
-                if navigator.can_pop() { navigator.pop() } else { navigator.push(AppRouter::Blog) }
+                if navigator.can_pop() {
+                    navigator.pop()
+                } else {
+                    navigator.push(AppRouter::Blog)
+                }
             }))
             .boxed();
         let mut sidebar_children = vec![back_button];
@@ -248,10 +259,13 @@ impl StatelessWidget for BlogDetailPage {
                 .boxed(),
         };
 
+
+
         Container::new()
             .color(theme.background_color)
             .child(
                 Scrollable::new()
+                    .key(key)
                     .axis(ScrollAxis::Vertical)
                     .child(
                         Container::new()
@@ -268,7 +282,6 @@ impl StatelessWidget for BlogDetailPage {
                             ),
                     ),
             )
-            .boxed()
     }
 }
 
@@ -303,12 +316,7 @@ mod tests {
         );
         assert_eq!(markdown.quote_background, markdown.code_background);
         assert_eq!(markdown.table_cell_background, theme.background_color);
-        assert_eq!(
-            markdown
-                .inline_code
-                .color,
-            Some(theme.on_surface_color)
-        );
+        assert_eq!(markdown.inline_code.color, Some(theme.on_surface_color));
         assert_eq!(markdown.link.color, Some(theme.primary_color));
     }
 

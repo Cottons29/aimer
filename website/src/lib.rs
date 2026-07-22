@@ -8,7 +8,7 @@ mod utils;
 use aimer::router::Navigator;
 use aimer::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-
+use aimer::console::debug;
 use crate::blog_store::BlogStore;
 use crate::router::AppRouter;
 
@@ -20,11 +20,13 @@ pub static CURRENT_INDEX: AtomicUsize = AtomicUsize::new(0);
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
-    AimerApp::start(
-        Provider::<BlogStore>::new()
-            .create(BlogStore::default)
-            .child(Navigator::<AppRouter>::new(AppRouter::Home, |route| Box::new(route))),
-    );
+    let app = Provider::<BlogStore>::new()
+        .create(BlogStore::default)
+        .child(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
+            Box::new(route)
+        }));
+    debug!("App Size {}", size_of::<Container<ZeroSizedBox>>());
+    AimerApp::start(app);
 }
 
 #[cfg(test)]
@@ -43,7 +45,6 @@ mod test {
     use crate::blog_store::{BlogDetail, BlogStore, LoadState};
     use crate::router::{AppRouter, take_route_builds};
 
-
     #[test]
     fn direct_blog_detail_route_keeps_the_root_provider_scope() {
         let id = "introducing-aimer".to_owned();
@@ -60,10 +61,14 @@ mod test {
         )]);
         let mut app = AimerApp::start_headless(
             Provider::<BlogStore>::new()
-                .create(move || BlogStore { list: LoadState::Idle, details: details.clone() })
-                .child(Navigator::<AppRouter>::new(AppRouter::BlogDetail { id }, |route| {
-                    Box::new(route)
-                })),
+                .create(move || BlogStore {
+                    list: LoadState::Idle,
+                    details: details.clone(),
+                })
+                .child(Navigator::<AppRouter>::new(
+                    AppRouter::BlogDetail { id },
+                    |route| Box::new(route),
+                )),
         );
 
         app.render_frame();
@@ -77,7 +82,9 @@ mod test {
         let mut app = AimerApp::start_headless(
             Provider::<BlogStore>::new()
                 .create(BlogStore::default)
-                .child(Navigator::<AppRouter>::new(AppRouter::Home, |route| Box::new(route))),
+                .child(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
+                    Box::new(route)
+                })),
         );
         sleep(Duration::from_millis(50));
         eprintln!("==========Rendered frame 1 call ===============");

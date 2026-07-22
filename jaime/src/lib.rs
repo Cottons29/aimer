@@ -50,9 +50,29 @@ pub fn my_app() {
     // start_panic_recovery_example();
     // test_scroll_and_row();
     // start_svg_test();
-    panic_recovery::start_panic_recovery_example()
+    // panic_recovery::start_panic_recovery_example()
     // start_custom_animated_theme_example()
+    test_text()
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #[allow(unused)]
 fn test_text() {
     AimerApp::start(
@@ -83,7 +103,7 @@ fn test_text() {
             .text_style(TextStyle::new()
                 .text_overflow(TextOverflow::Clip)
                 .font_size(16)
-                .color(Colors::Black)
+                .color(Colors::White)
                 .font_weight(FontWeight::Thin))
         )
     )

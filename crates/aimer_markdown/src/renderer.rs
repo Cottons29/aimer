@@ -40,10 +40,19 @@ fn build_tick_box(ticked: bool) -> AnyWidget {
             .height(16)
             .child(Svg::new(doc).style(
                 "#tick",
-                SvgStyle::new().fill(if ticked { Color::BLACK } else { Color::Transparent }),
+                SvgStyle::new().fill(if ticked {
+                    Color::BLACK
+                } else {
+                    Color::Transparent
+                }),
             ))
             .boxed(),
-        Err(_) => Text::new(if ticked { "[✔]".to_string() } else { "[ ]".to_string() }).boxed(),
+        Err(_) => Text::new(if ticked {
+            "[✔]".to_string()
+        } else {
+            "[ ]".to_string()
+        })
+        .boxed(),
     }
 }
 
@@ -138,11 +147,7 @@ fn render_blocks(
         .collect::<Vec<_>>();
     Column::new()
         .horizontal_alignment(BoxAlignment::Start)
-        .gaps(LayoutSpacing::all(
-            theme
-                .block_spacing
-                .into(),
-        ))
+        .gaps(LayoutSpacing::all(theme.block_spacing.into()))
         .children(children)
         .boxed()
 }
@@ -267,7 +272,11 @@ fn render_block(
                 link_handler,
                 image_resolver,
             )),
-        Block::List { ordered, start, items } => {
+        Block::List {
+            ordered,
+            start,
+            items,
+        } => {
             let start = start.unwrap_or(1);
             let rows = items
                 .iter()
@@ -314,7 +323,9 @@ fn render_block(
                 .children(rows)
                 .boxed()
         }
-        Block::Code { value, language, .. } => {
+        Block::Code {
+            value, language, ..
+        } => {
             let spans = highlighted_code_spans(value, language.as_deref());
             Container::new()
                 .padding(LayoutSpacing::all(12_u32.into()))
@@ -504,12 +515,19 @@ mod tests {
             1.0,
             Default::default(),
             Default::default(),
-            WindowHandle::headless(winit::dpi::PhysicalSize::new(width as u32, height as u32), 1.0),
+            WindowHandle::headless(
+                winit::dpi::PhysicalSize::new(width as u32, height as u32),
+                1.0,
+            ),
             #[cfg(not(target_arch = "wasm32"))]
             dummy_async_handle(),
         );
-        ctx.box_constraint =
-            BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: width, max_height: height };
+        ctx.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: width,
+            max_height: height,
+        };
         ctx
     }
 
@@ -537,16 +555,18 @@ mod tests {
             .to_element(&ctx)
             .computed_size(&ctx);
 
+        assert!(size.width.is_finite());
+        assert!(size.height.is_finite());
         assert!(
+            size.width <= 320.0,
+            "blockquote document width was {}",
             size.width
-                .is_finite()
         );
         assert!(
+            size.height < 100.0,
+            "blockquote document height was {}",
             size.height
-                .is_finite()
         );
-        assert!(size.width <= 320.0, "blockquote document width was {}", size.width);
-        assert!(size.height < 100.0, "blockquote document height was {}", size.height);
     }
 
     #[test]
@@ -588,17 +608,9 @@ mod tests {
             .to_element(&ctx)
             .computed_size(&ctx);
 
+        assert!(list_size.width <= ctx.box_constraint.max_width);
         assert!(
-            list_size.width
-                <= ctx
-                    .box_constraint
-                    .max_width
-        );
-        assert!(
-            list_size.height
-                < ctx
-                    .box_constraint
-                    .max_height,
+            list_size.height < ctx.box_constraint.max_height,
             "a list row expanded to the viewport height: {}",
             list_size.height
         );
@@ -612,7 +624,10 @@ mod tests {
 
     #[test]
     fn table_columns_share_the_available_width() {
-        assert_eq!(table_tracks(2), vec![GridTrack::Fr(1.0), GridTrack::Fr(1.0)]);
+        assert_eq!(
+            table_tracks(2),
+            vec![GridTrack::Fr(1.0), GridTrack::Fr(1.0)]
+        );
     }
 
     #[test]
@@ -629,10 +644,22 @@ mod tests {
 
     #[test]
     fn table_alignment_maps_to_rich_text_alignment() {
-        assert!(matches!(table_text_align(Alignment::Left), TextAlign::TopLeft));
-        assert!(matches!(table_text_align(Alignment::Center), TextAlign::TopCenter));
-        assert!(matches!(table_text_align(Alignment::Right), TextAlign::TopRight));
-        assert!(matches!(table_text_align(Alignment::None), TextAlign::TopLeft));
+        assert!(matches!(
+            table_text_align(Alignment::Left),
+            TextAlign::TopLeft
+        ));
+        assert!(matches!(
+            table_text_align(Alignment::Center),
+            TextAlign::TopCenter
+        ));
+        assert!(matches!(
+            table_text_align(Alignment::Right),
+            TextAlign::TopRight
+        ));
+        assert!(matches!(
+            table_text_align(Alignment::None),
+            TextAlign::TopLeft
+        ));
     }
 
     #[test]
@@ -645,10 +672,7 @@ mod tests {
             let text = TextSpan::root(highlighted_code_spans(source, language))
                 .flatten(&TextStyle::default())
                 .into_iter()
-                .map(|span| {
-                    span.text
-                        .to_string()
-                })
+                .map(|span| span.text.to_string())
                 .collect::<String>();
             assert_eq!(text, source);
         }
@@ -671,7 +695,11 @@ mod tests {
             .to_element(&wide_ctx)
             .computed_size(&wide_ctx);
 
-        assert!(narrow_size.width <= 180.0, "code block width was {}", narrow_size.width);
+        assert!(
+            narrow_size.width <= 180.0,
+            "code block width was {}",
+            narrow_size.width
+        );
         assert!(
             narrow_size.height < 100.0,
             "code block height should follow its content, but was {}",
@@ -695,7 +723,9 @@ mod tests {
                 title: None,
                 content: vec![Inline::Text("link".into())],
             },
-            Inline::FootnoteReference { identifier: "note".into() },
+            Inline::FootnoteReference {
+                identifier: "note".into(),
+            },
         ];
         let resolved = inline_spans(&inlines, &theme).flatten(&TextStyle::default());
 
@@ -710,16 +740,8 @@ mod tests {
             .iter()
             .find(|span| span.text.as_ref() == "both")
             .unwrap();
-        assert_eq!(
-            both.style
-                .font_style,
-            FontStyle::Italic
-        );
-        assert_eq!(
-            both.style
-                .font_weight,
-            FontWeight::Bold
-        );
+        assert_eq!(both.style.font_style, FontStyle::Italic);
+        assert_eq!(both.style.font_weight, FontWeight::Bold);
         let gone = resolved
             .iter()
             .find(|span| span.text.as_ref() == "gone")
@@ -759,14 +781,13 @@ mod tests {
             .blocks
             .iter()
             .map(|block| {
-                let Block::Paragraph(inlines) = block else { panic!("expected paragraph") };
+                let Block::Paragraph(inlines) = block else {
+                    panic!("expected paragraph")
+                };
                 inline_spans(inlines, &theme)
                     .flatten(&TextStyle::default())
                     .into_iter()
-                    .map(|span| {
-                        span.text
-                            .to_string()
-                    })
+                    .map(|span| span.text.to_string())
                     .collect::<String>()
             })
             .collect::<Vec<_>>();

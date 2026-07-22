@@ -11,14 +11,31 @@ pub struct Document {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Block {
-    Heading { depth: u8, content: Vec<Inline> },
+    Heading {
+        depth: u8,
+        content: Vec<Inline>,
+    },
     Paragraph(Vec<Inline>),
     Blockquote(Vec<Block>),
-    List { ordered: bool, start: Option<u32>, items: Vec<ListItem> },
-    Code { value: String, language: Option<String>, meta: Option<String> },
+    List {
+        ordered: bool,
+        start: Option<u32>,
+        items: Vec<ListItem>,
+    },
+    Code {
+        value: String,
+        language: Option<String>,
+        meta: Option<String>,
+    },
     ThematicBreak,
-    Table { alignments: Vec<Alignment>, rows: Vec<TableRow> },
-    FootnoteDefinition { identifier: String, blocks: Vec<Block> },
+    Table {
+        alignments: Vec<Alignment>,
+        rows: Vec<TableRow>,
+    },
+    FootnoteDefinition {
+        identifier: String,
+        blocks: Vec<Block>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -49,9 +66,19 @@ pub enum Inline {
     Strong(Vec<Inline>),
     Delete(Vec<Inline>),
     InlineCode(String),
-    Link { url: String, title: Option<String>, content: Vec<Inline> },
-    Image { url: String, title: Option<String>, alt: String },
-    FootnoteReference { identifier: String },
+    Link {
+        url: String,
+        title: Option<String>,
+        content: Vec<Inline>,
+    },
+    Image {
+        url: String,
+        title: Option<String>,
+        alt: String,
+    },
+    FootnoteReference {
+        identifier: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,7 +88,9 @@ pub struct MarkdownError {
 
 impl MarkdownError {
     fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            message: message.into(),
+        }
     }
 
     pub fn message(&self) -> &str {
@@ -87,9 +116,13 @@ impl Document {
         let root = markdown::to_mdast(source, &options)
             .map_err(|error| MarkdownError::new(error.to_string()))?;
         let Node::Root(root) = root else {
-            return Err(MarkdownError::new("Markdown parser did not produce a document root"));
+            return Err(MarkdownError::new(
+                "Markdown parser did not produce a document root",
+            ));
         };
-        Ok(Self { blocks: convert_blocks(&root.children)? })
+        Ok(Self {
+            blocks: convert_blocks(&root.children)?,
+        })
     }
 }
 
@@ -118,10 +151,17 @@ fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
                             "Markdown list contains a non-list-item node",
                         ));
                     };
-                    Ok(ListItem { checked: item.checked, blocks: convert_blocks(&item.children)? })
+                    Ok(ListItem {
+                        checked: item.checked,
+                        blocks: convert_blocks(&item.children)?,
+                    })
                 })
                 .collect::<Result<_, MarkdownError>>()?;
-            Ok(Block::List { ordered: list.ordered, start: list.start, items })
+            Ok(Block::List {
+                ordered: list.ordered,
+                start: list.start,
+                items,
+            })
         }
         Node::Code(code) => Ok(Block::Code {
             value: code.value.clone(),
@@ -161,12 +201,12 @@ fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
             Ok(Block::Table { alignments, rows })
         }
         Node::FootnoteDefinition(footnote) => Ok(Block::FootnoteDefinition {
-            identifier: footnote
-                .identifier
-                .clone(),
+            identifier: footnote.identifier.clone(),
             blocks: convert_blocks(&footnote.children)?,
         }),
-        Node::Html(_) => Err(MarkdownError::new("Raw HTML is not supported in MarkdownViewer")),
+        Node::Html(_) => Err(MarkdownError::new(
+            "Raw HTML is not supported in MarkdownViewer",
+        )),
         other => Err(MarkdownError::new(format!(
             "Unsupported Markdown block node: {}",
             node_name(other)
@@ -197,13 +237,13 @@ fn convert_inlines(nodes: &[Node]) -> Result<Vec<Inline>, MarkdownError> {
                 alt: image.alt.clone(),
             }),
             Node::FootnoteReference(reference) => result.push(Inline::FootnoteReference {
-                identifier: reference
-                    .identifier
-                    .clone(),
+                identifier: reference.identifier.clone(),
             }),
             Node::Html(item) => {
                 error!("Raw HTML is not supported in MarkdownViewer : {:?}", item);
-                return Err(MarkdownError::new("Raw HTML is not supported in MarkdownViewer"));
+                return Err(MarkdownError::new(
+                    "Raw HTML is not supported in MarkdownViewer",
+                ));
             }
             other => {
                 error!("Unsupported Markdown inline node: {}", node_name(other));
@@ -218,15 +258,10 @@ fn convert_inlines(nodes: &[Node]) -> Result<Vec<Inline>, MarkdownError> {
 }
 
 fn push_text_with_soft_breaks(result: &mut Vec<Inline>, value: &str) {
-    let mut parts = value
-        .split('\n')
-        .peekable();
+    let mut parts = value.split('\n').peekable();
     while let Some(part) = parts.next() {
         push_extended_image_text(result, part);
-        if parts
-            .peek()
-            .is_some()
-        {
+        if parts.peek().is_some() {
             result.push(Inline::SoftBreak);
         }
     }
@@ -348,7 +383,9 @@ mod tests {
         {
             assert!(matches!(block, Block::Heading { depth, .. } if *depth == index as u8 + 1));
         }
-        let Block::Paragraph(inlines) = &document.blocks[6] else { panic!("expected paragraph") };
+        let Block::Paragraph(inlines) = &document.blocks[6] else {
+            panic!("expected paragraph")
+        };
         assert!(matches!(&inlines[0], Inline::Emphasis(_)));
         assert!(
             inlines
@@ -368,7 +405,12 @@ mod tests {
     #[test]
     fn parses_lists_tasks_and_nested_blocks() {
         let document = parse("- plain\n- [x] done\n- [ ] todo\n  1. nested\n  2. second");
-        let Block::List { ordered, start, items } = &document.blocks[0] else {
+        let Block::List {
+            ordered,
+            start,
+            items,
+        } = &document.blocks[0]
+        else {
             panic!("expected list")
         };
         assert!(!ordered);
@@ -381,10 +423,12 @@ mod tests {
             [None, Some(true), Some(false)]
         );
         assert!(matches!(
-            items[2]
-                .blocks
-                .last(),
-            Some(Block::List { ordered: true, start: Some(1), .. })
+            items[2].blocks.last(),
+            Some(Block::List {
+                ordered: true,
+                start: Some(1),
+                ..
+            })
         ));
     }
 
@@ -393,7 +437,9 @@ mod tests {
         let document = parse(
             "[plain](https://example.com) [titled](https://example.com \"title\") <https://a.test> ![alt](image.jpg \"caption\") ref[^One].\n\n[^One]: Footnote *text*.",
         );
-        let Block::Paragraph(inlines) = &document.blocks[0] else { panic!("expected paragraph") };
+        let Block::Paragraph(inlines) = &document.blocks[0] else {
+            panic!("expected paragraph")
+        };
         assert!(inlines.iter().any(|inline| matches!(inline, Inline::Link { url, title: None, .. } if url == "https://example.com")));
         assert!(inlines.iter().any(
             |inline| matches!(inline, Inline::Link { title: Some(title), .. } if title == "title")
@@ -451,7 +497,12 @@ mod tests {
         };
         assert_eq!(
             alignments,
-            &[Alignment::Left, Alignment::Center, Alignment::Right, Alignment::None]
+            &[
+                Alignment::Left,
+                Alignment::Center,
+                Alignment::Right,
+                Alignment::None
+            ]
         );
         assert_eq!(rows.len(), 2);
         assert!(matches!(rows[1].cells[0].as_slice(), [Inline::Emphasis(_)]));

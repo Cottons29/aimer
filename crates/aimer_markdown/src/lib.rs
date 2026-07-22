@@ -17,7 +17,7 @@ use std::rc::Rc;
 use aimer_container::{Container, ScrollAxis, Scrollable};
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyWidget, Element, Widget};
+use aimer_widget::{AnyWidget, Element, Key, Widget};
 
 pub use document::{Alignment, Block, Document, Inline, ListItem, MarkdownError, TableRow};
 pub use markdown_theme::MarkdownTheme;
@@ -38,7 +38,9 @@ struct DocumentCache {
 
 impl DocumentCache {
     fn new(capacity: usize) -> Self {
-        Self { entries: LruCache::new(capacity) }
+        Self {
+            entries: LruCache::new(capacity),
+        }
     }
 
     fn parse(&mut self, source: Rc<str>) -> Rc<Result<Document, MarkdownError>> {
@@ -83,6 +85,7 @@ pub struct MarkdownViewer {
     image_resolver: ImageResolver,
     padding: LayoutSpacing,
     scrollable: bool,
+    key: Key,
 }
 
 impl Default for MarkdownViewer {
@@ -102,6 +105,7 @@ impl MarkdownViewer {
             link_handler: Some(Rc::new(open_web_link)),
             image_resolver: Rc::new(default_image_resolver),
             padding: Default::default(),
+            key: Key::unique(),
             scrollable: true,
         }
     }
@@ -146,6 +150,12 @@ impl MarkdownViewer {
         self.image_resolver = Rc::new(resolver);
         self
     }
+
+    /// Add a key for widget
+    pub fn key(mut self, key: Key) -> Self {
+        self.key = key;
+        self
+    }
 }
 
 impl Widget for MarkdownViewer {
@@ -155,8 +165,7 @@ impl Widget for MarkdownViewer {
             Ok(document) => renderer::render_document(
                 document,
                 &self.theme,
-                self.link_handler
-                    .as_ref(),
+                self.link_handler.as_ref(),
                 &self.image_resolver,
             ),
             Err(error) => aimer_text::Text::new(error.to_string())
@@ -166,6 +175,7 @@ impl Widget for MarkdownViewer {
 
         if self.scrollable {
             Scrollable::new()
+                .key(self.key.clone())
                 .axis(ScrollAxis::Vertical)
                 .child(
                     Container::new()
@@ -269,10 +279,6 @@ mod tests {
         });
 
         assert!(handled.is_none());
-        assert!(
-            opened
-                .into_inner()
-                .is_empty()
-        );
+        assert!(opened.into_inner().is_empty());
     }
 }
