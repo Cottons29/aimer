@@ -18,18 +18,26 @@ thread_local! {
 
 struct HighlightCache {
     entries: LruCache<(Rc<str>, Option<Rc<str>>), Rc<[CaptureSpan]>>,
+    highlighter: Highlighter,
 }
 
 impl HighlightCache {
     fn new(capacity: usize) -> Self {
-        Self { entries: LruCache::new(capacity) }
+        Self {
+            entries: LruCache::new(capacity),
+            highlighter: Highlighter::new(),
+        }
     }
 
     fn highlight(&mut self, code: &str, language: Option<&str>) -> Rc<[CaptureSpan]> {
+        let highlighter = &mut self.highlighter;
         self.entries
-            .get_or_insert_with((Rc::from(code), language.map(Rc::from)), |(code, language)| {
-                Rc::from(parse_highlights(code, language.as_deref()))
-            })
+            .get_or_insert_with(
+                (Rc::from(code), language.map(Rc::from)),
+                |(code, language)| {
+                    Rc::from(parse_highlights(highlighter, code, language.as_deref()))
+                },
+            )
     }
 }
 
@@ -45,7 +53,11 @@ pub(crate) fn highlight_cached(code: &str, language: Option<&str>) -> Rc<[Captur
     })
 }
 
-fn parse_highlights(code: &str, language: Option<&str>) -> Vec<CaptureSpan> {
+fn parse_highlights(
+    highlighter: &mut Highlighter,
+    code: &str,
+    language: Option<&str>,
+) -> Vec<CaptureSpan> {
     let Some(language) = language.map(str::to_ascii_lowercase) else {
         return Vec::new();
     };
@@ -57,7 +69,7 @@ fn parse_highlights(code: &str, language: Option<&str>) -> Vec<CaptureSpan> {
         language => language,
     };
 
-    Highlighter::new()
+    highlighter
         .highlight_spans(language, code)
         .map(|spans| {
             spans
@@ -82,6 +94,17 @@ mod tests {
         let second = cache.highlight("fn main() {}", Some("rust"));
 
         assert!(Rc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn highlight_cache_reuses_highlighter_across_cache_misses() {
+        let mut cache = HighlightCache::new(2);
+        let highlighter = &cache.highlighter as *const Highlighter;
+
+        cache.highlight("fn first() {}", Some("rust"));
+        cache.highlight("fn second() {}", Some("rust"));
+
+        assert_eq!(highlighter, &cache.highlighter as *const Highlighter);
     }
 
     #[test]

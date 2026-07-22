@@ -19,42 +19,127 @@ pub trait CaptureColor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureSpan {
     // --- Code ---
-    Keyword { start: u32, end: u32 },
-    Function { start: u32, end: u32 },
-    String { start: u32, end: u32 },
-    Comment { start: u32, end: u32 },
-    Type { start: u32, end: u32 },
-    Variable { start: u32, end: u32 },
-    Constant { start: u32, end: u32 },
-    Number { start: u32, end: u32 },
-    Operator { start: u32, end: u32 },
-    Punctuation { start: u32, end: u32 },
-    Property { start: u32, end: u32 },
-    Attribute { start: u32, end: u32 },
-    Tag { start: u32, end: u32 },
-    Macro { start: u32, end: u32 },
-    Label { start: u32, end: u32 },
-    Namespace { start: u32, end: u32 },
-    Constructor { start: u32, end: u32 },
+    Keyword {
+        start: u32,
+        end: u32,
+    },
+    Function {
+        start: u32,
+        end: u32,
+    },
+    String {
+        start: u32,
+        end: u32,
+    },
+    Comment {
+        start: u32,
+        end: u32,
+    },
+    Type {
+        start: u32,
+        end: u32,
+    },
+    Variable {
+        start: u32,
+        end: u32,
+    },
+    Constant {
+        start: u32,
+        end: u32,
+    },
+    Number {
+        start: u32,
+        end: u32,
+    },
+    Operator {
+        start: u32,
+        end: u32,
+    },
+    Punctuation {
+        start: u32,
+        end: u32,
+    },
+    Property {
+        start: u32,
+        end: u32,
+    },
+    Attribute {
+        start: u32,
+        end: u32,
+    },
+    Tag {
+        start: u32,
+        end: u32,
+    },
+    Macro {
+        start: u32,
+        end: u32,
+    },
+    Label {
+        start: u32,
+        end: u32,
+    },
+    Namespace {
+        start: u32,
+        end: u32,
+    },
+    Constructor {
+        start: u32,
+        end: u32,
+    },
 
     // --- Markup (Markdown, AsciiDoc, etc.) ---
-    Title { start: u32, end: u32 },
-    Strong { start: u32, end: u32 },
-    Emphasis { start: u32, end: u32 },
-    Link { start: u32, end: u32 },
-    Literal { start: u32, end: u32 },
-    Strikethrough { start: u32, end: u32 },
+    Title {
+        start: u32,
+        end: u32,
+    },
+    Strong {
+        start: u32,
+        end: u32,
+    },
+    Emphasis {
+        start: u32,
+        end: u32,
+    },
+    Link {
+        start: u32,
+        end: u32,
+    },
+    Literal {
+        start: u32,
+        end: u32,
+    },
+    Strikethrough {
+        start: u32,
+        end: u32,
+    },
 
     // --- Diff ---
-    DiffAdd { start: u32, end: u32 },
-    DiffDelete { start: u32, end: u32 },
+    DiffAdd {
+        start: u32,
+        end: u32,
+    },
+    DiffDelete {
+        start: u32,
+        end: u32,
+    },
 
     // --- Special ---
-    Embedded { start: u32, end: u32 },
-    Error { start: u32, end: u32 },
+    Embedded {
+        start: u32,
+        end: u32,
+    },
+    Error {
+        start: u32,
+        end: u32,
+    },
 
     // --- Fallback for anything not covered above ---
-    Other { start: u32, end: u32, capture: String },
+    Other {
+        start: u32,
+        end: u32,
+        capture: String,
+    },
 }
 
 impl CaptureSpan {
@@ -124,31 +209,35 @@ impl CaptureSpan {
             "label" => CaptureSpan::Label { start, end },
             "namespace" | "module" => CaptureSpan::Namespace { start, end },
             "constructor" => CaptureSpan::Constructor { start, end },
-            "markup" => match span
-                .capture
-                .split('.')
-                .nth(1)
-            {
+            "markup" => match span.capture.split('.').nth(1) {
                 Some("heading" | "title") => CaptureSpan::Title { start, end },
                 Some("bold" | "strong") => CaptureSpan::Strong { start, end },
                 Some("italic" | "emphasis") => CaptureSpan::Emphasis { start, end },
                 Some("link") => CaptureSpan::Link { start, end },
                 Some("raw" | "literal") => CaptureSpan::Literal { start, end },
                 Some("strikethrough") => CaptureSpan::Strikethrough { start, end },
-                _ => CaptureSpan::Other { start, end, capture: span.capture.clone() },
+                _ => CaptureSpan::Other {
+                    start,
+                    end,
+                    capture: span.capture.clone(),
+                },
             },
-            "diff" => match span
-                .capture
-                .split('.')
-                .nth(1)
-            {
+            "diff" => match span.capture.split('.').nth(1) {
                 Some("plus" | "add") => CaptureSpan::DiffAdd { start, end },
                 Some("minus" | "delete") => CaptureSpan::DiffDelete { start, end },
-                _ => CaptureSpan::Other { start, end, capture: span.capture.clone() },
+                _ => CaptureSpan::Other {
+                    start,
+                    end,
+                    capture: span.capture.clone(),
+                },
             },
             "embedded" => CaptureSpan::Embedded { start, end },
             "error" => CaptureSpan::Error { start, end },
-            _ => CaptureSpan::Other { start, end, capture: span.capture.clone() },
+            _ => CaptureSpan::Other {
+                start,
+                end,
+                capture: span.capture.clone(),
+            },
         }
     }
 
