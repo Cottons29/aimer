@@ -112,12 +112,9 @@ struct ErrorBody {
     error: &'static str,
 }
 
-pub fn app(store: BlogStore) -> Router {
+pub fn app(store: BlogStore, cors_origins: &[HeaderValue]) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list([
-            HeaderValue::from_str("https://aimer.cottonsofficial.com").unwrap(),
-            HeaderValue::from_str("http://aimer.cottonsofficial.com").unwrap(),
-        ]))
+        .allow_origin(AllowOrigin::list(cors_origins.iter().cloned()))
         .allow_methods(Any)
         .allow_headers(Any);
 
@@ -245,7 +242,7 @@ mod tests {
     #[tokio::test]
     async fn list_blogs_returns_metadata_newest_first() {
         let root = fixture();
-        let response = app(BlogStore::load(root.path()).unwrap())
+        let response = app(BlogStore::load(root.path()).unwrap(), &[])
             .oneshot(
                 Request::get("/api/blogs")
                     .body(Body::empty())
@@ -273,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn get_blog_returns_metadata_and_markdown() {
         let root = fixture();
-        let response = app(BlogStore::load(root.path()).unwrap())
+        let response = app(BlogStore::load(root.path()).unwrap(), &[])
             .oneshot(
                 Request::get("/api/blogs/new-post")
                     .body(Body::empty())
@@ -298,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn get_blog_distinguishes_invalid_and_unknown_ids() {
         let root = fixture();
-        let router = app(BlogStore::load(root.path()).unwrap());
+        let router = app(BlogStore::load(root.path()).unwrap(), &[]);
 
         let invalid = router
             .clone()

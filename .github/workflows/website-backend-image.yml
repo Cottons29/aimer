@@ -68,3 +68,20 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=website-backend
           cache-to: type=gha,mode=max,scope=website-backend
+
+      - name: Deploy website backend
+        if: github.event_name == 'push'
+        uses: appleboy/ssh-action@v1
+        env:
+          PROJECT_PATH: ${{ secrets.PROJECT_PATH }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          envs: PROJECT_PATH
+          script: |
+            set -eu
+            cd "$PROJECT_PATH"
+            podman-compose down
+            podman-compose pull
+            podman-compose up -d
