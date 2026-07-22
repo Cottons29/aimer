@@ -17,7 +17,9 @@ pub struct BlogBackButton {
 
 impl BlogBackButton {
     pub fn new() -> Self {
-        Self { on_click: VoidCallback::default() }
+        Self {
+            on_click: VoidCallback::default(),
+        }
     }
 
     pub fn on_click(mut self, on_click: impl Into<VoidCallback>) -> Self {
@@ -45,9 +47,7 @@ impl StatefulWidget for BlogBackButton {
     fn create_state(&self) -> Self::State {
         Self::State {
             is_hover: false,
-            on_click: self
-                .on_click
-                .clone(),
+            on_click: self.on_click.clone(),
             current_state: Rc::default(),
             updater: StateUpdater::new(),
         }
@@ -57,7 +57,11 @@ impl StatefulWidget for BlogBackButton {
 fn back_label_style(is_hover: bool, color: Color) -> TextStyle {
     TextStyle::new()
         .color(color)
-        .text_decoration(if is_hover { TextDecoration::Underline } else { TextDecoration::None })
+        .text_decoration(if is_hover {
+            TextDecoration::Underline
+        } else {
+            TextDecoration::None
+        })
 }
 
 impl State<BlogBackButton> for BlogBackButtonState {
@@ -82,16 +86,10 @@ impl State<BlogBackButton> for BlogBackButtonState {
                 let updater = self.updater.clone();
                 move || updater.set_state(|state| state.is_hover = false)
             })
-            .current_state(
-                self.current_state
-                    .clone(),
-            )
+            .current_state(self.current_state.clone())
             .child(
                 GestureDetector::new()
-                    .on_tap(
-                        self.on_click
-                            .clone(),
-                    )
+                    .on_tap(self.on_click.clone())
                     .child(
                         Row::new().children([
                             Svg::new(document)

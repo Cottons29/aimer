@@ -47,7 +47,11 @@ fn fetch_devices() -> Vec<Device> {
             target: Targets::Macos,
             id: "local".to_string(),
         },
-        Device { name: "Web Browser".to_string(), target: Targets::Web, id: "web".to_string() },
+        Device {
+            name: "Web Browser".to_string(),
+            target: Targets::Web,
+            id: "web".to_string(),
+        },
     ];
 
     // Android Devices
@@ -56,10 +60,7 @@ fn fetch_devices() -> Vec<Device> {
         .args(["devices", "-l"])
         .output()
     {
-        if output
-            .status
-            .success()
-        {
+        if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if line.contains(" device ") || line.contains(" emulator ") {
@@ -67,8 +68,11 @@ fn fetch_devices() -> Vec<Device> {
                         .split_whitespace()
                         .collect();
                     if let Some(id) = parts.first() {
-                        let connection_type =
-                            if id.contains('.') && id.contains(':') { "Wireless" } else { "Wired" };
+                        let connection_type = if id.contains('.') && id.contains(':') {
+                            "Wireless"
+                        } else {
+                            "Wired"
+                        };
 
                         let mut device_name = "Android Device".to_string();
                         // Try to find a better name from 'adb devices -l' output
@@ -84,10 +88,7 @@ fn fetch_devices() -> Vec<Device> {
                             .output();
 
                         if let Ok(output) = pretty_name_cmd {
-                            if output
-                                .status
-                                .success()
-                            {
+                            if output.status.success() {
                                 let output_str = String::from_utf8_lossy(&output.stdout);
                                 if let Some(name) = output_str
                                     .split_whitespace()
@@ -115,10 +116,7 @@ fn fetch_devices() -> Vec<Device> {
         .args(["simctl", "list", "devices"])
         .output()
     {
-        if output
-            .status
-            .success()
-        {
+        if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if line.contains("(Booted)") {
@@ -133,7 +131,11 @@ fn fetch_devices() -> Vec<Device> {
                                 id = rest[udid_start + 1..udid_start + 1 + udid_end].to_string();
                             }
                         }
-                        devices.push(Device { name, target: Targets::IosSimulator, id });
+                        devices.push(Device {
+                            name,
+                            target: Targets::IosSimulator,
+                            id,
+                        });
                     }
                 }
             }
@@ -146,14 +148,9 @@ fn fetch_devices() -> Vec<Device> {
         .args(["devicectl", "list", "devices"])
         .output()
     {
-        if output
-            .status
-            .success()
-        {
+        if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let lines: Vec<&str> = stdout
-                .lines()
-                .collect();
+            let lines: Vec<&str> = stdout.lines().collect();
             let mut in_devices = false;
             for line in lines {
                 if line.starts_with("---------") {
@@ -166,12 +163,8 @@ fn fetch_devices() -> Vec<Device> {
                         .filter(|s| !s.trim().is_empty())
                         .collect();
                     if parts.len() >= 4 {
-                        let name = parts[0]
-                            .trim()
-                            .to_string();
-                        let identifier = parts[2]
-                            .trim()
-                            .to_string();
+                        let name = parts[0].trim().to_string();
+                        let identifier = parts[2].trim().to_string();
                         let state = parts[3].trim();
                         if state.to_lowercase() == "available" {
                             let connection_type = if parts[1]
@@ -205,10 +198,7 @@ fn fetch_devices() -> Vec<Device> {
         .args(["xctrace", "list", "devices"])
         .output()
     {
-        if output
-            .status
-            .success()
-        {
+        if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut is_offline = false;
             let mut is_simulator = false;
@@ -386,10 +376,7 @@ fn pick_device(devices_arc: &Arc<Mutex<Vec<Device>>>) -> anyhow::Result<Option<D
             stdout,
             "\x1b[36m◆\x1b[0m  \x1b[1mSelect a device to launch (Press 'q' to quit):\x1b[0m\r"
         )?;
-        for (i, device) in devices
-            .iter()
-            .enumerate()
-        {
+        for (i, device) in devices.iter().enumerate() {
             execute!(stdout, cursor::MoveToColumn(0))?;
             if i == selected_index {
                 execute!(stdout, SetForegroundColor(Color::DarkGrey))?;
@@ -494,8 +481,11 @@ mod tests {
 
     #[test]
     fn device_clone() {
-        let d =
-            Device { name: "iPhone".to_string(), target: Targets::Ios, id: "udid-123".to_string() };
+        let d = Device {
+            name: "iPhone".to_string(),
+            target: Targets::Ios,
+            id: "udid-123".to_string(),
+        };
         let d2 = d.clone();
         assert_eq!(d.name, d2.name);
         assert_eq!(d.target, d2.target);
@@ -526,14 +516,22 @@ mod tests {
             (Terminated, "terminated"),
         ];
         for (target, expected) in cases {
-            let d = Device { name: "Dev".to_string(), target, id: "x".to_string() };
+            let d = Device {
+                name: "Dev".to_string(),
+                target,
+                id: "x".to_string(),
+            };
             assert_eq!(format!("{}", d), format!("Dev ({expected})"));
         }
     }
 
     #[test]
     fn device_debug_format() {
-        let d = Device { name: "Test".to_string(), target: Targets::Web, id: "web".to_string() };
+        let d = Device {
+            name: "Test".to_string(),
+            target: Targets::Web,
+            id: "web".to_string(),
+        };
         let debug = format!("{:?}", d);
         assert!(debug.contains("Test"));
         assert!(debug.contains("Web"));
@@ -545,7 +543,10 @@ mod tests {
     #[test]
     fn fetch_devices_always_has_base_devices() {
         let devices = fetch_devices();
-        assert!(devices.len() >= 3, "Expected at least 3 devices (macOS, Web, Quit)");
+        assert!(
+            devices.len() >= 3,
+            "Expected at least 3 devices (macOS, Web, Quit)"
+        );
 
         let has_macos = devices
             .iter()

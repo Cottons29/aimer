@@ -102,8 +102,10 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
 
         #[cfg(target_os = "ios")]
         if let Some((width, height)) = crate::ios_screen::get_screen_resolution_pixels() {
-            self.native_window_size =
-                Some(ResolvedSize { width: width as f32, height: height as f32 })
+            self.native_window_size = Some(ResolvedSize {
+                width: width as f32,
+                height: height as f32,
+            })
         };
 
         let window_attributes = {
@@ -130,10 +132,7 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
             }
         };
 
-        if self
-            .window
-            .is_none()
-        {
+        if self.window.is_none() {
             let window = event_loop
                 .create_window(window_attributes)
                 .unwrap();
@@ -214,21 +213,13 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if self
-            .start_up_frames
-            .get()
-            > 0
-        {
+        if self.start_up_frames.get() > 0 {
             let Some(window) = self.window.as_ref() else {
                 return;
             };
             window.request_redraw();
             self.start_up_frames
-                .set(
-                    self.start_up_frames
-                        .get()
-                        - 1,
-                );
+                .set(self.start_up_frames.get() - 1);
             // debug!("About to wait, {} frames left",
             // self.start_up_frames.get());
         }
@@ -364,16 +355,9 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         // On web, GPU init is async — consuming the resize before the GPU exists
         // would silently drop it and leave the surface at the wrong size.
         #[allow(clippy::collapsible_if)]
-        if self
-            .render_ctx
-            .is_ready()
-        {
-            if let Some(size) = self
-                .pending_resize
-                .take()
-            {
-                self.render_ctx
-                    .resize(size);
+        if self.render_ctx.is_ready() {
+            if let Some(size) = self.pending_resize.take() {
+                self.render_ctx.resize(size);
             }
         }
 
@@ -394,7 +378,10 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let draw_widgets = |canvas: &aimer_canvas::InnerCanvas, width: u32, height: u32| {
             let canvas = aimer_canvas::Canvas::new(canvas);
             let build_ctx = BuildContext {
-                parent_size: ResolvedSize { width: width as f32, height: height as f32 },
+                parent_size: ResolvedSize {
+                    width: width as f32,
+                    height: height as f32,
+                },
                 canvas: canvas.clone(),
                 scale: window_scale as f32,
                 parent_pos: Default::default(),
@@ -426,18 +413,14 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                     // Save and restore canvas state to ensure the inspector overlay
                     // always renders at the top layer above all widgets,
                     // unaffected by any residual transforms.
-                    build_ctx
-                        .canvas
-                        .save();
+                    build_ctx.canvas.save();
                     InspectorOverlay::draw(
                         root.as_ref(),
                         &build_ctx.canvas,
                         cursor_pos,
                         build_ctx.scale,
                     );
-                    build_ctx
-                        .canvas
-                        .restore();
+                    build_ctx.canvas.restore();
                 }
             }
         };

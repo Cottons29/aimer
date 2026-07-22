@@ -24,8 +24,14 @@ pub fn find_llvm_ar() -> Option<PathBuf> {
     }
 
     // 2. Look for versioned or plain names on PATH
-    let candidates =
-        ["llvm-ar", "llvm-ar-18", "llvm-ar-17", "llvm-ar-16", "llvm-ar-15", "llvm-ar-14"];
+    let candidates = [
+        "llvm-ar",
+        "llvm-ar-18",
+        "llvm-ar-17",
+        "llvm-ar-16",
+        "llvm-ar-15",
+        "llvm-ar-14",
+    ];
 
     if let Ok(path_var) = env::var("PATH") {
         for dir in env::split_paths(&path_var) {
@@ -44,10 +50,7 @@ pub fn find_llvm_ar() -> Option<PathBuf> {
         .arg("llvm-ar")
         .output()
     {
-        if output
-            .status
-            .success()
-        {
+        if output.status.success() {
             let found = String::from_utf8_lossy(&output.stdout)
                 .lines()
                 .next()

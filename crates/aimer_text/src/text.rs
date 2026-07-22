@@ -68,8 +68,7 @@ impl Text {
     /// [`Text::text_style`].
     #[deprecated(note = "set TextStyle::text_overflow and pass it to Text::text_style")]
     pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
-        self.text_style
-            .text_overflow = text_overflow;
+        self.text_style.text_overflow = text_overflow;
         self
     }
 

@@ -6,7 +6,10 @@ macro_rules! impl_from_num {
     ($t:ty) => {
         impl From<$t> for Vec2d {
             fn from(x: $t) -> Self {
-                Self { x: x as f32, y: x as f32 }
+                Self {
+                    x: x as f32,
+                    y: x as f32,
+                }
             }
         }
     };
@@ -16,7 +19,10 @@ macro_rules! impl_from_tuple {
     ($t:ty) => {
         impl From<$t> for Vec2d {
             fn from((x, y): $t) -> Self {
-                Self { x: x as f32, y: y as f32 }
+                Self {
+                    x: x as f32,
+                    y: y as f32,
+                }
             }
         }
     };
@@ -30,42 +36,60 @@ pub struct Vec2d {
 
 impl Vec2d {
     pub const fn round(self) -> Self {
-        Self { x: self.x.round(), y: self.y.round() }
+        Self {
+            x: self.x.round(),
+            y: self.y.round(),
+        }
     }
 }
 
 impl Mul<Vec2d> for f32 {
     type Output = Vec2d;
     fn mul(self, rhs: Vec2d) -> Self::Output {
-        Self::Output { x: self * rhs.x, y: self * rhs.y }
+        Self::Output {
+            x: self * rhs.x,
+            y: self * rhs.y,
+        }
     }
 }
 
 impl Mul<f32> for Vec2d {
     type Output = Vec2d;
     fn mul(self, rhs: f32) -> Self::Output {
-        Self::Output { x: self.x * rhs, y: self.y * rhs }
+        Self::Output {
+            x: self.x * rhs,
+            y: self.y * rhs,
+        }
     }
 }
 
 impl Add<Vec2d> for Vec2d {
     type Output = Vec2d;
     fn add(self, rhs: Vec2d) -> Self::Output {
-        Self::Output { x: self.x + rhs.x, y: self.y + rhs.y }
+        Self::Output {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+        }
     }
 }
 
 impl Add<f32> for Vec2d {
     type Output = Vec2d;
     fn add(self, rhs: f32) -> Self::Output {
-        Self::Output { x: self.x + rhs, y: self.y + rhs }
+        Self::Output {
+            x: self.x + rhs,
+            y: self.y + rhs,
+        }
     }
 }
 
 impl Sub<(f32, f32)> for Vec2d {
     type Output = Vec2d;
     fn sub(self, rhs: (f32, f32)) -> Self::Output {
-        Self::Output { x: self.x - rhs.0, y: self.y - rhs.1 }
+        Self::Output {
+            x: self.x - rhs.0,
+            y: self.y - rhs.1,
+        }
     }
 }
 
@@ -78,7 +102,10 @@ impl SubAssign<(f32, f32)> for Vec2d {
 
 impl Vec2d {
     pub fn get_end(&self, size: ResolvedSize) -> Vec2d {
-        Self { x: self.x + size.width, y: self.y + size.height }
+        Self {
+            x: self.x + size.width,
+            y: self.y + size.height,
+        }
     }
 }
 

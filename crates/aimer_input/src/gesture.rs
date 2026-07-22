@@ -55,13 +55,32 @@ pub enum GestureEvent {
     DoubleTap(PointerPosition),
     LongPress(PointerPosition),
     DragStart(PointerPosition),
-    DragUpdate { position: PointerPosition, delta_x: f32, delta_y: f32 },
+    DragUpdate {
+        position: PointerPosition,
+        delta_x: f32,
+        delta_y: f32,
+    },
     DragEnd(PointerPosition),
     RightTap(PointerPosition),
-    Swipe { direction: SwipeDirection, velocity_x: f32, velocity_y: f32 },
-    Scroll { delta_x: f32, delta_y: f32 },
-    ScaleStart { focal_x: f32, focal_y: f32 },
-    ScaleUpdate { focal_x: f32, focal_y: f32, scale: f32, delta_scale: f32 },
+    Swipe {
+        direction: SwipeDirection,
+        velocity_x: f32,
+        velocity_y: f32,
+    },
+    Scroll {
+        delta_x: f32,
+        delta_y: f32,
+    },
+    ScaleStart {
+        focal_x: f32,
+        focal_y: f32,
+    },
+    ScaleUpdate {
+        focal_x: f32,
+        focal_y: f32,
+        scale: f32,
+        delta_scale: f32,
+    },
     ScaleEnd,
 }
 
@@ -86,7 +105,12 @@ mod tests {
         // For now, test via a GestureActions-like interface.
         use std::sync::atomic::AtomicBool;
 
-        let pos = PointerPosition { x: 10.0, y: 10.0, source: PointerSource::Mouse, id: 0 };
+        let pos = PointerPosition {
+            x: 10.0,
+            y: 10.0,
+            source: PointerSource::Mouse,
+            id: 0,
+        };
 
         // Simulate the state machine logic directly
         let _state = gesture_detector::GestureState::default();
@@ -100,44 +124,86 @@ mod tests {
         let dx = 100.0_f32;
         let dy = 10.0_f32;
         let direction = if dx.abs() > dy.abs() {
-            if dx > 0.0 { SwipeDirection::Right } else { SwipeDirection::Left }
+            if dx > 0.0 {
+                SwipeDirection::Right
+            } else {
+                SwipeDirection::Left
+            }
         } else {
-            if dy > 0.0 { SwipeDirection::Down } else { SwipeDirection::Up }
+            if dy > 0.0 {
+                SwipeDirection::Down
+            } else {
+                SwipeDirection::Up
+            }
         };
         assert_eq!(direction, SwipeDirection::Right);
 
         let dx = -100.0_f32;
         let dy = 10.0_f32;
         let direction = if dx.abs() > dy.abs() {
-            if dx > 0.0 { SwipeDirection::Right } else { SwipeDirection::Left }
+            if dx > 0.0 {
+                SwipeDirection::Right
+            } else {
+                SwipeDirection::Left
+            }
         } else {
-            if dy > 0.0 { SwipeDirection::Down } else { SwipeDirection::Up }
+            if dy > 0.0 {
+                SwipeDirection::Down
+            } else {
+                SwipeDirection::Up
+            }
         };
         assert_eq!(direction, SwipeDirection::Left);
 
         let dx = 10.0_f32;
         let dy = 100.0_f32;
         let direction = if dx.abs() > dy.abs() {
-            if dx > 0.0 { SwipeDirection::Right } else { SwipeDirection::Left }
+            if dx > 0.0 {
+                SwipeDirection::Right
+            } else {
+                SwipeDirection::Left
+            }
         } else {
-            if dy > 0.0 { SwipeDirection::Down } else { SwipeDirection::Up }
+            if dy > 0.0 {
+                SwipeDirection::Down
+            } else {
+                SwipeDirection::Up
+            }
         };
         assert_eq!(direction, SwipeDirection::Down);
 
         let dx = 10.0_f32;
         let dy = -100.0_f32;
         let direction = if dx.abs() > dy.abs() {
-            if dx > 0.0 { SwipeDirection::Right } else { SwipeDirection::Left }
+            if dx > 0.0 {
+                SwipeDirection::Right
+            } else {
+                SwipeDirection::Left
+            }
         } else {
-            if dy > 0.0 { SwipeDirection::Down } else { SwipeDirection::Up }
+            if dy > 0.0 {
+                SwipeDirection::Down
+            } else {
+                SwipeDirection::Up
+            }
         };
         assert_eq!(direction, SwipeDirection::Up);
     }
 
     #[test]
     fn test_distance_and_midpoint() {
-        let a = PointerPosition { x: 0.0, y: 0.0, source: PointerSource::Mouse, id: 0 };
-        let b = PointerPosition { x: 3.0, y: 4.0, source: PointerSource::Mouse, id: 0 };
+        let a = PointerPosition {
+            x: 0.0,
+            y: 0.0,
+            source: PointerSource::Mouse,
+            id: 0,
+        };
+        let b = PointerPosition {
+            x: 3.0,
+            y: 4.0,
+            source: PointerSource::Mouse,
+            id: 0,
+        };
         // distance is private, but midpoint is too — test via the module
         // These are simple geometry functions, tested implicitly through gesture
         // detection.

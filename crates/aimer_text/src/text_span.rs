@@ -104,7 +104,12 @@ pub struct TextSpan {
 
 impl TextSpan {
     pub fn new(text: impl Into<Rc<str>>) -> Self {
-        Self { text: text.into(), style: SpanStyle::new(), children: Vec::new(), link: None }
+        Self {
+            text: text.into(),
+            style: SpanStyle::new(),
+            children: Vec::new(),
+            link: None,
+        }
     }
 
     pub fn root(children: impl IntoIterator<Item = TextSpan>) -> Self {
@@ -117,15 +122,12 @@ impl TextSpan {
     }
 
     pub fn children(mut self, children: impl IntoIterator<Item = TextSpan>) -> Self {
-        self.children = children
-            .into_iter()
-            .collect();
+        self.children = children.into_iter().collect();
         self
     }
 
     pub fn child(mut self, child: TextSpan) -> Self {
-        self.children
-            .push(child);
+        self.children.push(child);
         self
     }
 
@@ -154,7 +156,11 @@ impl TextSpan {
             .clone()
             .or(inherited_link);
         if !self.text.is_empty() {
-            result.push(ResolvedTextSpan { text: self.text.clone(), style, link: link.clone() });
+            result.push(ResolvedTextSpan {
+                text: self.text.clone(),
+                style,
+                link: link.clone(),
+            });
         }
         for child in &self.children {
             child.flatten_into(style, link.clone(), result);
@@ -171,7 +177,11 @@ pub struct ResolvedTextSpan {
 
 impl ResolvedTextSpan {
     pub fn plain(text: Rc<str>, style: TextStyle) -> Self {
-        Self { text, style, link: None }
+        Self {
+            text,
+            style,
+            link: None,
+        }
     }
 }
 
@@ -240,20 +250,12 @@ pub(crate) fn layout_resolved_spans(
                 last.source_range
                     .as_mut()
                     .expect("source text fragments have a range")
-                    .end = grapheme
-                    .source_range
-                    .end;
+                    .end = grapheme.source_range.end;
             } else {
                 runs.push(SpanLayoutFragment {
                     span_index: grapheme.span_index,
-                    text: grapheme
-                        .text
-                        .to_owned(),
-                    source_range: Some(
-                        grapheme
-                            .source_range
-                            .clone(),
-                    ),
+                    text: grapheme.text.to_owned(),
+                    source_range: Some(grapheme.source_range.clone()),
                     line: *line,
                     x: 0.0,
                     width: 0.0,
@@ -288,12 +290,7 @@ pub(crate) fn layout_resolved_spans(
                 {
                     text.push_str(&fragment.text);
                 } else {
-                    line_runs.push((
-                        fragment.span_index,
-                        fragment
-                            .text
-                            .clone(),
-                    ));
+                    line_runs.push((fragment.span_index, fragment.text.clone()));
                 }
             }
             verified_width = Some(
@@ -336,9 +333,7 @@ pub(crate) fn layout_resolved_spans(
                 .as_ref()
                 .is_some_and(|fragment| fragment.span_index == grapheme.span_index);
             let mut candidate = if same_span {
-                let mut candidate = chunk
-                    .take()
-                    .unwrap();
+                let mut candidate = chunk.take().unwrap();
                 candidate
                     .text
                     .push_str(grapheme.text);
@@ -346,9 +341,7 @@ pub(crate) fn layout_resolved_spans(
                     .source_range
                     .as_mut()
                     .expect("source text fragments have a range")
-                    .end = grapheme
-                    .source_range
-                    .end;
+                    .end = grapheme.source_range.end;
                 candidate
             } else {
                 if let Some(fragment) = chunk.take() {
@@ -357,14 +350,8 @@ pub(crate) fn layout_resolved_spans(
                 }
                 SpanLayoutFragment {
                     span_index: grapheme.span_index,
-                    text: grapheme
-                        .text
-                        .to_owned(),
-                    source_range: Some(
-                        grapheme
-                            .source_range
-                            .clone(),
-                    ),
+                    text: grapheme.text.to_owned(),
+                    source_range: Some(grapheme.source_range.clone()),
                     line: *line,
                     x: *x,
                     width: 0.0,
@@ -398,9 +385,7 @@ pub(crate) fn layout_resolved_spans(
                 *x = 0.0;
                 chunk = Some(SpanLayoutFragment {
                     span_index: grapheme.span_index,
-                    text: grapheme
-                        .text
-                        .to_owned(),
+                    text: grapheme.text.to_owned(),
                     source_range: Some(grapheme.source_range),
                     line: *line,
                     x: 0.0,
@@ -418,10 +403,7 @@ pub(crate) fn layout_resolved_spans(
         }
     };
 
-    for (span_index, span) in spans
-        .iter()
-        .enumerate()
-    {
+    for (span_index, span) in spans.iter().enumerate() {
         for (grapheme_start, grapheme) in span
             .text
             .grapheme_indices(true)
@@ -430,7 +412,11 @@ pub(crate) fn layout_resolved_spans(
                 span_start + grapheme_start..span_start + grapheme_start + grapheme.len();
             if grapheme == "\n" || grapheme == "\r\n" {
                 place_unit(&mut unit, &mut fragments, &mut line, &mut x, &mut measure);
-                line_breaks.push(SpanLayoutLineBreak { span_index, source_range, line });
+                line_breaks.push(SpanLayoutLineBreak {
+                    span_index,
+                    source_range,
+                    line,
+                });
                 line += 1;
                 x = 0.0;
                 continue;
@@ -439,7 +425,11 @@ pub(crate) fn layout_resolved_spans(
             let is_break = break_offsets
                 .binary_search(&source_range.end)
                 .is_ok();
-            unit.push(PendingGrapheme { span_index, text: grapheme, source_range });
+            unit.push(PendingGrapheme {
+                span_index,
+                text: grapheme,
+                source_range,
+            });
             if is_break {
                 place_unit(&mut unit, &mut fragments, &mut line, &mut x, &mut measure);
             }
@@ -482,7 +472,11 @@ pub(crate) fn layout_resolved_spans(
         measured_x += fragment.width;
     }
 
-    SpanLayout { fragments: merged, line_breaks, line_count: line + 1 }
+    SpanLayout {
+        fragments: merged,
+        line_breaks,
+        line_count: line + 1,
+    }
 }
 
 pub(crate) fn ellipsize_first_line(
@@ -498,9 +492,7 @@ pub(crate) fn ellipsize_first_line(
     layout
         .fragments
         .retain(|fragment| fragment.line == 0);
-    layout
-        .line_breaks
-        .clear();
+    layout.line_breaks.clear();
     let span_index = layout
         .fragments
         .last()
@@ -523,24 +515,18 @@ pub(crate) fn ellipsize_first_line(
             .next_back()
             .map(|(start, grapheme)| (start, grapheme.to_owned()))
         {
-            last.text
-                .truncate(start);
+            last.text.truncate(start);
             last.width -= measure(&grapheme, &spans[last.span_index].style);
             if let Some(source_range) = &mut last.source_range {
                 source_range.end -= grapheme.len();
             }
         }
         if last.text.is_empty() {
-            layout
-                .fragments
-                .pop();
+            layout.fragments.pop();
         }
     }
 
-    if let Some(last) = layout
-        .fragments
-        .last_mut()
-    {
+    if let Some(last) = layout.fragments.last_mut() {
         last.text.push('…');
         last.width += ellipsis_width;
     } else {
@@ -582,12 +568,7 @@ mod tests {
 
         assert_eq!(flattened.len(), 3);
         assert_eq!(&*flattened[1].text, "inherited");
-        assert_eq!(
-            flattened[1]
-                .style
-                .font_size,
-            18
-        );
+        assert_eq!(flattened[1].style.font_size, 18);
         assert_eq!(
             flattened[1]
                 .style
@@ -595,18 +576,8 @@ mod tests {
                 .numeric(),
             FontWeight::Bold.numeric()
         );
-        assert_eq!(
-            flattened[1]
-                .style
-                .color,
-            Color::RED
-        );
-        assert_eq!(
-            flattened[2]
-                .style
-                .color,
-            Color::BLUE
-        );
+        assert_eq!(flattened[1].style.color, Color::RED);
+        assert_eq!(flattened[2].style.color, Color::BLUE);
     }
 
     #[test]
@@ -620,24 +591,9 @@ mod tests {
             ])
             .flatten(&TextStyle::default());
 
-        assert_eq!(
-            flattened[0]
-                .style
-                .font_family,
-            custom
-        );
-        assert_eq!(
-            flattened[1]
-                .style
-                .font_family,
-            custom
-        );
-        assert_eq!(
-            flattened[2]
-                .style
-                .font_family,
-            FontFamily::SANS_SERIF
-        );
+        assert_eq!(flattened[0].style.font_family, custom);
+        assert_eq!(flattened[1].style.font_family, custom);
+        assert_eq!(flattened[2].style.font_family, FontFamily::SANS_SERIF);
     }
 
     #[test]
@@ -697,17 +653,10 @@ mod tests {
             ResolvedTextSpan::plain(Rc::from("👩‍💻b"), TextStyle::default()),
         ];
 
-        let layout = layout_resolved_spans(&spans, 2.0, |text, _| {
-            text.graphemes(true)
-                .count() as f32
-        });
+        let layout =
+            layout_resolved_spans(&spans, 2.0, |text, _| text.graphemes(true).count() as f32);
 
-        assert_eq!(
-            layout
-                .fragments
-                .len(),
-            2
-        );
+        assert_eq!(layout.fragments.len(), 2);
         assert_eq!(layout.fragments[0].text, "aé");
         assert_eq!(layout.fragments[0].source_range, Some(0..3));
         assert_eq!(layout.fragments[1].text, "👩‍💻b");
@@ -716,16 +665,14 @@ mod tests {
 
     #[test]
     fn source_ranges_include_explicit_newlines_between_visible_fragments() {
-        let spans = vec![ResolvedTextSpan::plain(Rc::from("first\nsecond"), TextStyle::default())];
+        let spans = vec![ResolvedTextSpan::plain(
+            Rc::from("first\nsecond"),
+            TextStyle::default(),
+        )];
 
         let layout = layout_resolved_spans(&spans, 0.0, |text, _| text.len() as f32);
 
-        assert_eq!(
-            layout
-                .fragments
-                .len(),
-            2
-        );
+        assert_eq!(layout.fragments.len(), 2);
         assert_eq!(layout.fragments[0].source_range, Some(0..5));
         assert_eq!(layout.fragments[1].source_range, Some(6..12));
     }
@@ -740,12 +687,7 @@ mod tests {
         let layout = layout_resolved_spans(&spans, 0.0, |text, _| text.len() as f32);
 
         assert_eq!(layout.line_count, 3);
-        assert_eq!(
-            layout
-                .line_breaks
-                .len(),
-            2
-        );
+        assert_eq!(layout.line_breaks.len(), 2);
         assert_eq!(layout.line_breaks[0].span_index, 0);
         assert_eq!(layout.line_breaks[0].source_range, 5..6);
         assert_eq!(layout.line_breaks[0].line, 0);
@@ -756,7 +698,10 @@ mod tests {
 
     #[test]
     fn wrapping_prefers_word_boundaries() {
-        let spans = vec![ResolvedTextSpan::plain(Rc::from("hello world"), TextStyle::default())];
+        let spans = vec![ResolvedTextSpan::plain(
+            Rc::from("hello world"),
+            TextStyle::default(),
+        )];
 
         let layout = layout_resolved_spans(&spans, 8.0, |text, _| text.chars().count() as f32);
 
@@ -769,7 +714,10 @@ mod tests {
 
     #[test]
     fn an_overlong_word_falls_back_to_grapheme_wrapping() {
-        let spans = vec![ResolvedTextSpan::plain(Rc::from("abcdefgh"), TextStyle::default())];
+        let spans = vec![ResolvedTextSpan::plain(
+            Rc::from("abcdefgh"),
+            TextStyle::default(),
+        )];
 
         let layout = layout_resolved_spans(&spans, 3.0, |text, _| text.chars().count() as f32);
 
@@ -807,21 +755,13 @@ mod tests {
             .fragments
             .iter()
             .filter(|fragment| fragment.line == 0)
-            .map(|fragment| {
-                fragment
-                    .text
-                    .as_str()
-            })
+            .map(|fragment| fragment.text.as_str())
             .collect::<String>();
         let second_line = layout
             .fragments
             .iter()
             .filter(|fragment| fragment.line == 1)
-            .map(|fragment| {
-                fragment
-                    .text
-                    .as_str()
-            })
+            .map(|fragment| fragment.text.as_str())
             .collect::<String>();
 
         assert_eq!(layout.line_count, 2);
@@ -831,7 +771,10 @@ mod tests {
 
     #[test]
     fn wrapping_uses_the_shaped_width_of_complete_runs() {
-        let spans = vec![ResolvedTextSpan::plain(Rc::from("AV"), TextStyle::default())];
+        let spans = vec![ResolvedTextSpan::plain(
+            Rc::from("AV"),
+            TextStyle::default(),
+        )];
 
         let layout = layout_resolved_spans(&spans, 10.0, |text, _| match text {
             "AV" => 10.0,
@@ -846,7 +789,10 @@ mod tests {
 
     #[test]
     fn wrapping_accounts_for_reshaping_adjacent_words() {
-        let spans = vec![ResolvedTextSpan::plain(Rc::from("one two"), TextStyle::default())];
+        let spans = vec![ResolvedTextSpan::plain(
+            Rc::from("one two"),
+            TextStyle::default(),
+        )];
 
         let layout = layout_resolved_spans(&spans, 7.0, |text, _| match text {
             "one " => 4.0,
@@ -880,7 +826,10 @@ mod tests {
         });
 
         assert_eq!(layout.line_count, 1);
-        assert!(measurements <= 7, "layout performed {measurements} shaping measurements");
+        assert!(
+            measurements <= 7,
+            "layout performed {measurements} shaping measurements"
+        );
     }
 
     #[test]
@@ -899,9 +848,7 @@ mod tests {
             layout
                 .fragments
                 .iter()
-                .map(|fragment| fragment
-                    .text
-                    .as_str())
+                .map(|fragment| fragment.text.as_str())
                 .collect::<String>(),
             "abc…"
         );

@@ -52,7 +52,12 @@ impl LayoutSpacing {
     }
 
     pub const fn all(space: Spacing) -> Self {
-        Self { left: space, right: space, top: space, bottom: space }
+        Self {
+            left: space,
+            right: space,
+            top: space,
+            bottom: space,
+        }
     }
 }
 

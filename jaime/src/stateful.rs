@@ -21,7 +21,10 @@ pub struct CounterWidget {
 
 impl CounterWidget {
     pub fn new(initial_count: i32) -> Self {
-        Self { initial_count, on_switch: None }
+        Self {
+            initial_count,
+            on_switch: None,
+        }
     }
 
     pub fn on_switch(mut self, on_switch: VoidCallback) -> Self {
@@ -65,7 +68,10 @@ impl State<CounterWidget> for CounterState {
         let updater = self.updater.clone();
         Container::new()
             .color(Color::WHITE)
-            .padding(LayoutSpacing { top: Spacing::Px(20), ..Default::default() })
+            .padding(LayoutSpacing {
+                top: Spacing::Px(20),
+                ..Default::default()
+            })
             .child(
                 Flex::new()
                     .direction(LayoutDirection::Column)
@@ -105,9 +111,7 @@ impl State<CounterWidget> for CounterState {
 
                                         println!(
                                             "Button pressed with state : {}",
-                                            updater
-                                                .read_state()
-                                                .count
+                                            updater.read_state().count
                                         );
                                         updater.set_state(|state| {
                                             state.count += 1;
@@ -140,9 +144,7 @@ impl State<CounterWidget> for CounterState {
                                         move || {
                                             println!(
                                                 "Button pressed with state : {}",
-                                                updater
-                                                    .read_state()
-                                                    .count
+                                                updater.read_state().count
                                             );
                                             updater.set_state(|state| {
                                                 state.count -= 1;

@@ -57,17 +57,16 @@ struct ControllerState {
 
 impl std::fmt::Debug for AnimationController {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.state
-            .with(|state| {
-                f.debug_struct("AnimationController")
-                    .field("duration", &state.duration)
-                    .field("curve", &state.curve)
-                    .field("value", &state.value)
-                    .field("status", &state.status)
-                    .field("repeat", &state.repeat)
-                    .field("auto_reverse", &state.auto_reverse)
-                    .finish()
-            })
+        self.state.with(|state| {
+            f.debug_struct("AnimationController")
+                .field("duration", &state.duration)
+                .field("curve", &state.curve)
+                .field("value", &state.value)
+                .field("status", &state.status)
+                .field("repeat", &state.repeat)
+                .field("auto_reverse", &state.auto_reverse)
+                .finish()
+        })
     }
 }
 
@@ -103,13 +102,11 @@ impl AnimationController {
 
     /// Start playing the animation forward from the current value.
     pub fn forward(&self) {
-        let changed = self
-            .state
-            .with_mut(|state| {
-                state.start_value = state.value;
-                state.start_time = Some(AnimInstant::now());
-                Self::set_status(state, AnimationStatus::Forward)
-            });
+        let changed = self.state.with_mut(|state| {
+            state.start_value = state.value;
+            state.start_time = Some(AnimInstant::now());
+            Self::set_status(state, AnimationStatus::Forward)
+        });
         self.notify_if_changed(changed, AnimationStatus::Forward);
     }
 
@@ -117,45 +114,42 @@ impl AnimationController {
     /// first [`Self::tick`]. This prevents widget construction between starting
     /// an animation and rendering its first frame from consuming its duration.
     pub fn forward_from_first_tick(&self) {
-        let changed = self
-            .state
-            .with_mut(|state| {
-                state.start_value = state.value;
-                state.start_time = None;
-                Self::set_status(state, AnimationStatus::Forward)
-            });
+        let changed = self.state.with_mut(|state| {
+            state.start_value = state.value;
+            state.start_time = None;
+            Self::set_status(state, AnimationStatus::Forward)
+        });
         self.notify_if_changed(changed, AnimationStatus::Forward);
     }
 
     /// Start playing the animation in reverse from the current value.
     pub fn reverse(&self) {
-        let changed = self
-            .state
-            .with_mut(|state| {
-                state.start_value = state.value;
-                state.start_time = Some(AnimInstant::now());
-                Self::set_status(state, AnimationStatus::Reverse)
-            });
+        let changed = self.state.with_mut(|state| {
+            state.start_value = state.value;
+            state.start_time = Some(AnimInstant::now());
+            Self::set_status(state, AnimationStatus::Reverse)
+        });
         self.notify_if_changed(changed, AnimationStatus::Reverse);
     }
 
     /// Reset the animation to the beginning (value = 0, dismissed).
     pub fn reset(&self) {
-        let changed = self
-            .state
-            .with_mut(|state| {
-                state.value = 0.0;
-                state.start_value = 0.0;
-                state.start_time = None;
-                Self::set_status(state, AnimationStatus::Dismissed)
-            });
+        let changed = self.state.with_mut(|state| {
+            state.value = 0.0;
+            state.start_value = 0.0;
+            state.start_time = None;
+            Self::set_status(state, AnimationStatus::Dismissed)
+        });
         self.notify_if_changed(changed, AnimationStatus::Dismissed);
     }
 
     /// Returns `true` if the animation is currently running (Forward or
     /// Reverse).
     pub fn is_animating(&self) -> bool {
-        matches!(self.status(), AnimationStatus::Forward | AnimationStatus::Reverse)
+        matches!(
+            self.status(),
+            AnimationStatus::Forward | AnimationStatus::Reverse
+        )
     }
 
     pub fn duration(&self) -> Duration {
@@ -184,11 +178,10 @@ impl AnimationController {
     }
 
     pub fn set_value(&self, value: f32) {
-        self.state
-            .with_mut(|state| {
-                state.value = value.clamp(0.0, 1.0);
-                state.start_value = state.value;
-            });
+        self.state.with_mut(|state| {
+            state.value = value.clamp(0.0, 1.0);
+            state.start_value = state.value;
+        });
     }
 
     pub fn status(&self) -> AnimationStatus {
@@ -242,86 +235,84 @@ impl AnimationController {
     /// updated to `Completed` or `Dismissed` and `is_animating()` returns
     /// false.
     pub fn tick(&self, now: AnimInstant) -> f32 {
-        let (value, curve, notification) = self
-            .state
-            .with_mut(|state| {
-                let Some(start) = state.start_time else {
-                    if matches!(state.status, AnimationStatus::Forward | AnimationStatus::Reverse) {
-                        state.start_time = Some(now);
-                    }
-                    return (state.value, state.curve, None);
-                };
-                if !matches!(state.status, AnimationStatus::Forward | AnimationStatus::Reverse) {
-                    return (state.value, state.curve, None);
+        let (value, curve, notification) = self.state.with_mut(|state| {
+            let Some(start) = state.start_time else {
+                if matches!(
+                    state.status,
+                    AnimationStatus::Forward | AnimationStatus::Reverse
+                ) {
+                    state.start_time = Some(now);
                 }
+                return (state.value, state.curve, None);
+            };
+            if !matches!(
+                state.status,
+                AnimationStatus::Forward | AnimationStatus::Reverse
+            ) {
+                return (state.value, state.curve, None);
+            }
 
-                let elapsed = now
-                    .duration_since(start)
-                    .as_secs_f32();
-                let linear_delta = if state
-                    .duration
-                    .is_zero()
-                {
-                    1.0
-                } else {
-                    elapsed
-                        / state
-                            .duration
-                            .as_secs_f32()
-                };
-                let status = state.status;
-                let mut notification = None;
+            let elapsed = now
+                .duration_since(start)
+                .as_secs_f32();
+            let linear_delta = if state.duration.is_zero() {
+                1.0
+            } else {
+                elapsed / state.duration.as_secs_f32()
+            };
+            let status = state.status;
+            let mut notification = None;
 
-                match status {
-                    AnimationStatus::Forward => {
-                        state.value = (state.start_value + linear_delta).min(1.0);
-                        if state.value >= 1.0 {
-                            if state.repeat {
-                                if state.auto_reverse {
-                                    if Self::set_status(state, AnimationStatus::Reverse) {
-                                        notification = Some(AnimationStatus::Reverse);
-                                    }
-                                    state.start_value = 1.0;
-                                } else {
-                                    state.start_value = 0.0;
-                                    state.value = 0.0;
+            match status {
+                AnimationStatus::Forward => {
+                    state.value = (state.start_value + linear_delta).min(1.0);
+                    if state.value >= 1.0 {
+                        if state.repeat {
+                            if state.auto_reverse {
+                                if Self::set_status(state, AnimationStatus::Reverse) {
+                                    notification = Some(AnimationStatus::Reverse);
                                 }
-                                state.start_time = Some(now);
+                                state.start_value = 1.0;
                             } else {
-                                state.start_time = None;
-                                if Self::set_status(state, AnimationStatus::Completed) {
-                                    notification = Some(AnimationStatus::Completed);
-                                }
+                                state.start_value = 0.0;
+                                state.value = 0.0;
+                            }
+                            state.start_time = Some(now);
+                        } else {
+                            state.start_time = None;
+                            if Self::set_status(state, AnimationStatus::Completed) {
+                                notification = Some(AnimationStatus::Completed);
                             }
                         }
                     }
-                    AnimationStatus::Reverse => {
-                        state.value = (state.start_value - linear_delta).max(0.0);
-                        if state.value <= 0.0 {
-                            if state.repeat {
-                                if state.auto_reverse {
-                                    if Self::set_status(state, AnimationStatus::Forward) {
-                                        notification = Some(AnimationStatus::Forward);
-                                    }
-                                    state.start_value = 0.0;
-                                } else {
-                                    state.start_value = 1.0;
-                                    state.value = 1.0;
+                }
+                AnimationStatus::Reverse => {
+                    state.value = (state.start_value - linear_delta).max(0.0);
+                    if state.value <= 0.0 {
+                        if state.repeat {
+                            if state.auto_reverse {
+                                if Self::set_status(state, AnimationStatus::Forward) {
+                                    notification = Some(AnimationStatus::Forward);
                                 }
-                                state.start_time = Some(now);
+                                state.start_value = 0.0;
                             } else {
-                                state.start_time = None;
-                                if Self::set_status(state, AnimationStatus::Dismissed) {
-                                    notification = Some(AnimationStatus::Dismissed);
-                                }
+                                state.start_value = 1.0;
+                                state.value = 1.0;
+                            }
+                            state.start_time = Some(now);
+                        } else {
+                            state.start_time = None;
+                            if Self::set_status(state, AnimationStatus::Dismissed) {
+                                notification = Some(AnimationStatus::Dismissed);
                             }
                         }
                     }
-                    _ => {}
                 }
+                _ => {}
+            }
 
-                (state.value, state.curve, notification)
-            });
+            (state.value, state.curve, notification)
+        });
 
         if let Some(status) = notification {
             self.notify_if_changed(true, status);
@@ -474,11 +465,7 @@ mod tests {
         first.forward();
         let halfway = first
             .state
-            .with(|state| {
-                state
-                    .start_time
-                    .unwrap()
-            })
+            .with(|state| state.start_time.unwrap())
             + Duration::from_millis(50);
         first.tick(halfway);
 
@@ -497,11 +484,7 @@ mod tests {
 
         let halfway_through_remaining = ctrl
             .state
-            .with(|state| {
-                state
-                    .start_time
-                    .unwrap()
-            })
+            .with(|state| state.start_time.unwrap())
             + Duration::from_millis(30);
         let value = ctrl.tick(halfway_through_remaining);
 
@@ -516,11 +499,7 @@ mod tests {
 
         let halfway_through_remaining = ctrl
             .state
-            .with(|state| {
-                state
-                    .start_time
-                    .unwrap()
-            })
+            .with(|state| state.start_time.unwrap())
             + Duration::from_millis(30);
         let value = ctrl.tick(halfway_through_remaining);
 
@@ -534,11 +513,7 @@ mod tests {
 
         let quarter = ctrl
             .state
-            .with(|state| {
-                state
-                    .start_time
-                    .unwrap()
-            })
+            .with(|state| state.start_time.unwrap())
             + Duration::from_micros(125);
         let value = ctrl.tick(quarter);
 

@@ -259,8 +259,6 @@ impl StatelessWidget for BlogDetailPage {
                 .boxed(),
         };
 
-
-
         Container::new()
             .color(theme.background_color)
             .child(

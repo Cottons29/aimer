@@ -22,7 +22,10 @@ impl RawModeGuard {
     pub fn new() -> anyhow::Result<Self> {
         enable_raw_mode()?;
         execute!(stdout(), cursor::Hide)?;
-        Ok(Self { alternate_screen: false, mouse_capture: false })
+        Ok(Self {
+            alternate_screen: false,
+            mouse_capture: false,
+        })
     }
 
     /// Enable raw mode, enter the alternate screen and capture the mouse.
@@ -30,7 +33,10 @@ impl RawModeGuard {
     pub fn with_alternate_screen() -> anyhow::Result<Self> {
         enable_raw_mode()?;
         execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
-        Ok(Self { alternate_screen: true, mouse_capture: true })
+        Ok(Self {
+            alternate_screen: true,
+            mouse_capture: true,
+        })
     }
 }
 

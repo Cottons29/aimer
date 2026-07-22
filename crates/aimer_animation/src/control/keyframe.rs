@@ -17,7 +17,10 @@ impl<T: Animatable + Clone> Keyframe<T> {
     }
 
     pub fn linear(value: T) -> Self {
-        Self { value, curve: Curve::Linear }
+        Self {
+            value,
+            curve: Curve::Linear,
+        }
     }
 }
 
@@ -48,11 +51,11 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
     /// Panics if `frames` is empty. Frames are sorted by fraction
     /// automatically.
     pub fn new(mut frames: Vec<(f32, Keyframe<T>)>) -> Self {
-        assert!(!frames.is_empty(), "KeyframeAnimation requires at least one keyframe");
-        frames.sort_by(|a, b| {
-            a.0.partial_cmp(&b.0)
-                .unwrap()
-        });
+        assert!(
+            !frames.is_empty(),
+            "KeyframeAnimation requires at least one keyframe"
+        );
+        frames.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         Self { frames }
     }
 
@@ -86,19 +89,11 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
 
         // Before first keyframe
         if t <= self.frames[0].0 {
-            return self.frames[0]
-                .1
-                .value
-                .clone();
+            return self.frames[0].1.value.clone();
         }
 
         // After last keyframe
-        if t >= self
-            .frames
-            .last()
-            .unwrap()
-            .0
-        {
+        if t >= self.frames.last().unwrap().0 {
             return self
                 .frames
                 .last()
@@ -116,9 +111,7 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
             if t >= f0 && t <= f1 {
                 let range = f1 - f0;
                 let local_t = if range > 0.0 { (t - f0) / range } else { 0.0 };
-                let curved_t = kf1
-                    .curve
-                    .transform(local_t);
+                let curved_t = kf1.curve.transform(local_t);
                 return kf0
                     .value
                     .lerp(&kf1.value, curved_t);
@@ -141,8 +134,7 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
 
     /// Returns `true` if there are no keyframes.
     pub fn is_empty(&self) -> bool {
-        self.frames
-            .is_empty()
+        self.frames.is_empty()
     }
 }
 

@@ -38,10 +38,16 @@ pub fn stage_assets(tx: &Sender<RunnerEvent>, dest_root: &str) {
                 build_log(tx, format!("Staged asset {rel} -> {dest_root}/{rel}"));
             }
             for rel in &report.missing {
-                build_log(tx, format!("Warning: registered asset '{rel}' not found; skipping"));
+                build_log(
+                    tx,
+                    format!("Warning: registered asset '{rel}' not found; skipping"),
+                );
             }
         }
-        Err(e) => build_log(tx, format!("Warning: failed to stage assets into {dest_root}: {e}")),
+        Err(e) => build_log(
+            tx,
+            format!("Warning: failed to stage assets into {dest_root}: {e}"),
+        ),
     }
 }
 
@@ -83,18 +89,10 @@ pub fn spawn_streamed(
         }
     };
 
-    let stdout = child
-        .stdout
-        .take()
-        .unwrap();
-    let stderr = child
-        .stderr
-        .take()
-        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
 
-    *current_child
-        .lock()
-        .unwrap() = Some(child);
+    *current_child.lock().unwrap() = Some(child);
 
     stream_out(stdout, tx.clone());
     stream_err(stderr, tx.clone());

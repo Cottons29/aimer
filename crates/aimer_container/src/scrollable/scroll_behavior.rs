@@ -35,7 +35,10 @@ impl Default for ScrollBehavior {
         let defaults = (0.75, 0.045, ScrollBehavior::DEFAULT_FRICTION);
 
         Self {
-            max_scroll: Vec2d { x: f32::MAX, y: f32::MAX },
+            max_scroll: Vec2d {
+                x: f32::MAX,
+                y: f32::MAX,
+            },
             min_scroll: Vec2d { x: 0.0, y: 0.0 },
             velocity: Vec2d { x: 0.0, y: 0.0 },
             scroll_offset: Vec2d { x: 0.0, y: 0.0 },
@@ -49,7 +52,10 @@ impl Default for ScrollBehavior {
 
 impl ScrollBehavior {
     pub fn no_bounce() -> Self {
-        Self { bouncy: false, ..Default::default() }
+        Self {
+            bouncy: false,
+            ..Default::default()
+        }
     }
 }
 

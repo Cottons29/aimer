@@ -88,10 +88,7 @@ enum AttributeKind {
 impl TryFrom<&str> for AttributeKind {
     type Error = syn::Error;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value
-            .to_lowercase()
-            .as_str()
-        {
+        match value.to_lowercase().as_str() {
             "stateless" => Ok(AttributeKind::Stateless),
             "stateful" => Ok(AttributeKind::Stateful),
             "router" => Ok(AttributeKind::Router),

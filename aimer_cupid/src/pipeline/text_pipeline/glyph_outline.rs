@@ -14,12 +14,19 @@ struct GlyphOutline {
 
 impl GlyphOutline {
     fn new(scale: f32, offset_x: f32, offset_y: f32) -> Self {
-        Self { scale, offset_x, offset_y, ..Self::default() }
+        Self {
+            scale,
+            offset_x,
+            offset_y,
+            ..Self::default()
+        }
     }
 
     fn push_point(&mut self, x: f32, y: f32) {
-        self.current
-            .push((x * self.scale - self.offset_x, y * self.scale - self.offset_y));
+        self.current.push((
+            x * self.scale - self.offset_x,
+            y * self.scale - self.offset_y,
+        ));
     }
 
     fn finish_contour(&mut self) {
@@ -98,7 +105,8 @@ pub(crate) fn rasterize_outline_glyph(
     )
     .ok())?;
     let glyph = time_cost!("   |-SelectGlyph", || ttf_parser::GlyphId(glyph_id));
-    let bbox = time_cost!("   |-ComputeGlyphBoundingBox", || face.glyph_bounding_box(glyph))?;
+    let bbox = time_cost!("   |-ComputeGlyphBoundingBox", || face
+        .glyph_bounding_box(glyph))?;
     let units_per_em = f32::from(face.units_per_em());
     let scale = font_size / units_per_em;
     let offset_x = f32::from(bbox.x_min) * scale;
@@ -158,15 +166,21 @@ pub struct ColrOutlineBuilder {
 
 impl ColrOutlineBuilder {
     pub(crate) fn new(scale: f32, offset_x: f32, offset_y: f32, height: f32) -> Self {
-        Self { contours: Vec::new(), current: Vec::new(), scale, offset_x, offset_y, height }
+        Self {
+            contours: Vec::new(),
+            current: Vec::new(),
+            scale,
+            offset_x,
+            offset_y,
+            height,
+        }
     }
 
     fn push(&mut self, x: f32, y: f32) {
         // Convert from font coordinates (y-up) to bitmap coordinates (y-down).
         let bx = x * self.scale - self.offset_x;
         let by = self.height - (y * self.scale - self.offset_y);
-        self.current
-            .push((bx, by));
+        self.current.push((bx, by));
     }
 
     pub(crate) fn finish(&mut self) {

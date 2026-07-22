@@ -31,7 +31,10 @@ impl Shell {
         frame: impl Widget + 'static,
         child_builder: impl Fn(&BuildContext) -> Box<dyn Widget> + 'static,
     ) -> Self {
-        Self { frame: Box::new(frame), child_builder: Rc::new(child_builder) }
+        Self {
+            frame: Box::new(frame),
+            child_builder: Rc::new(child_builder),
+        }
     }
 
     /// Creates the heap-allocated [`Widget`] form of [`Shell::new`].
@@ -52,14 +55,8 @@ impl Shell {
 
 impl Widget for Shell {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let slot = OutletSlot::new(
-            self.child_builder
-                .clone(),
-        );
-        let child = ctx.with_state(slot.clone(), |ctx| {
-            self.frame
-                .to_element(ctx)
-        });
+        let slot = OutletSlot::new(self.child_builder.clone());
+        let child = ctx.with_state(slot.clone(), |ctx| self.frame.to_element(ctx));
         Box::new(ShellElement { slot, child })
     }
 
@@ -105,24 +102,15 @@ impl LayoutElement for ShellElement {
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .layout(ctx)
-        })
+        self.scoped(ctx, |ctx| self.child.layout(ctx))
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .computed_size(ctx)
-        })
+        self.scoped(ctx, |ctx| self.child.computed_size(ctx))
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .content_size(ctx)
-        })
+        self.scoped(ctx, |ctx| self.child.content_size(ctx))
     }
 
     fn layer(&self) -> u32 {
@@ -139,13 +127,11 @@ impl LayoutElement for ShellElement {
     }
 
     fn invalidate_layout(&self) {
-        self.child
-            .invalidate_layout();
+        self.child.invalidate_layout();
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.child
-            .pos_start_end()
+        self.child.pos_start_end()
     }
 }
 
@@ -228,7 +214,12 @@ impl<R: Route> StatefulShell<R> {
             .into_iter()
             .map(|r| vec![r])
             .collect();
-        Self { branches, active: 0, frame, routes }
+        Self {
+            branches,
+            active: 0,
+            frame,
+            routes,
+        }
     }
 }
 
@@ -271,9 +262,7 @@ impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
                 Rc::new(move || active)
             },
             branch_len_fn: {
-                let branches = self
-                    .branches
-                    .clone();
+                let branches = self.branches.clone();
                 Rc::new(move |index: usize| {
                     branches
                         .get(index)
@@ -314,21 +303,11 @@ pub struct StatefulShellController<R> {
 impl<R> Clone for StatefulShellController<R> {
     fn clone(&self) -> Self {
         Self {
-            go_branch_fn: self
-                .go_branch_fn
-                .clone(),
-            push_in_branch_fn: self
-                .push_in_branch_fn
-                .clone(),
-            pop_in_branch_fn: self
-                .pop_in_branch_fn
-                .clone(),
-            active_branch_fn: self
-                .active_branch_fn
-                .clone(),
-            branch_len_fn: self
-                .branch_len_fn
-                .clone(),
+            go_branch_fn: self.go_branch_fn.clone(),
+            push_in_branch_fn: self.push_in_branch_fn.clone(),
+            pop_in_branch_fn: self.pop_in_branch_fn.clone(),
+            active_branch_fn: self.active_branch_fn.clone(),
+            branch_len_fn: self.branch_len_fn.clone(),
         }
     }
 }
@@ -375,9 +354,7 @@ impl<R: Route> StatefulWidget for StatefulShell<R> {
     type State = StatefulShellState<R>;
     fn create_state(&self) -> Self::State {
         StatefulShellState::<R> {
-            branches: self
-                .branches
-                .clone(),
+            branches: self.branches.clone(),
             active: self.active,
             updater: StateUpdater::empty(),
             frame: self.frame,
@@ -409,9 +386,7 @@ mod tests {
     impl Widget for DeferredOutletWidget {
         fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
             Box::new(DeferredOutletElement {
-                child_built: self
-                    .child_built
-                    .clone(),
+                child_built: self.child_built.clone(),
             })
         }
     }
@@ -434,8 +409,7 @@ mod tests {
     impl Rebuildable for DeferredOutletElement {
         fn rebuild_if_dirty(&self, ctx: &BuildContext) {
             let _ = crate::Outlet.to_element(ctx);
-            self.child_built
-                .set(true);
+            self.child_built.set(true);
         }
     }
 
@@ -470,9 +444,16 @@ mod tests {
     #[test]
     fn outlet_slot_remains_scoped_during_a_delayed_descendant_rebuild() {
         let child_built = Rc::new(Cell::new(false));
-        let shell = Shell::new(DeferredOutletWidget { child_built: child_built.clone() }, |_| {
-            Box::new(DeferredOutletWidget { child_built: Rc::new(Cell::new(false)) })
-        });
+        let shell = Shell::new(
+            DeferredOutletWidget {
+                child_built: child_built.clone(),
+            },
+            |_| {
+                Box::new(DeferredOutletWidget {
+                    child_built: Rc::new(Cell::new(false)),
+                })
+            },
+        );
         let element = shell.to_element(&context());
 
         element.rebuild_if_dirty(&context());
@@ -483,10 +464,16 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn shell_scope_does_not_claim_parent_state_ownership() {
-        let shell =
-            Shell::new(DeferredOutletWidget { child_built: Rc::new(Cell::new(false)) }, |_| {
-                Box::new(DeferredOutletWidget { child_built: Rc::new(Cell::new(false)) })
-            });
+        let shell = Shell::new(
+            DeferredOutletWidget {
+                child_built: Rc::new(Cell::new(false)),
+            },
+            |_| {
+                Box::new(DeferredOutletWidget {
+                    child_built: Rc::new(Cell::new(false)),
+                })
+            },
+        );
 
         assert!(
             !shell

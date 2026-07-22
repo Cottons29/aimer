@@ -54,7 +54,10 @@ impl Expanded {
     ///
     /// Finish the builder with [`Expanded::child`] or [`Expanded::box_child`].
     pub fn new() -> Self {
-        Self { flex: 1.0, child: RequiredChild }
+        Self {
+            flex: 1.0,
+            child: RequiredChild,
+        }
     }
 
     /// Sets this child's weight when a flex parent distributes remaining space.
@@ -71,7 +74,10 @@ impl Expanded {
     /// This terminal operation preserves the child's concrete type. Use
     /// [`Expanded::box_child`] instead when branch type erasure is needed.
     pub fn child<W: Widget + 'static>(self, child: W) -> Expanded<W> {
-        Expanded { child, flex: self.flex }
+        Expanded {
+            child,
+            flex: self.flex,
+        }
     }
 
     /// Attaches `child` and erases the resulting widget's concrete type.
@@ -80,17 +86,14 @@ impl Expanded {
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
-        self.child(child)
-            .boxed()
+        self.child(child).boxed()
     }
 }
 
 impl<W: Widget + 'static> Widget for Expanded<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawExpanded {
-            child: self
-                .child
-                .to_element(ctx),
+            child: self.child.to_element(ctx),
             flex: self.flex.max(0.0),
             debug_name: "Expanded",
         })
@@ -132,8 +135,7 @@ impl<E: Element> VisitorElement for RawExpanded<E> {
 
 impl<E: Element> LayoutElement for RawExpanded<E> {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child
-            .computed_size(ctx)
+        self.child.computed_size(ctx)
     }
 
     fn flex(&self) -> Option<f32> {
@@ -148,8 +150,7 @@ impl<E: Element> LayoutElement for RawExpanded<E> {
     }
 
     fn invalidate_layout(&self) {
-        self.child
-            .invalidate_layout();
+        self.child.invalidate_layout();
     }
 }
 /// Distribute `remaining` main-axis space across children according to their
@@ -171,7 +172,13 @@ pub(crate) fn distribute_flex_space(remaining: f32, weights: &[f32]) -> Vec<f32>
     }
     weights
         .iter()
-        .map(|&w| if w > 0.0 { remaining * (w / total) } else { 0.0 })
+        .map(|&w| {
+            if w > 0.0 {
+                remaining * (w / total)
+            } else {
+                0.0
+            }
+        })
         .collect()
 }
 

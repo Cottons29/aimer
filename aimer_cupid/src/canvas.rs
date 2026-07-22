@@ -440,9 +440,7 @@ impl CupidCanvas {
             return *metrics;
         }
 
-        let mut rasterizer = self
-            .rasterizer
-            .borrow_mut();
+        let mut rasterizer = self.rasterizer.borrow_mut();
         let weight = FontWeight::Value(u32::from(font_weight));
         let (ascent, descent, line_gap) =
             rasterizer.line_metrics_for_family(font_size, font_family, weight, font_style);
@@ -718,9 +716,7 @@ impl CupidCanvas {
     }
 
     pub fn get_transform_translation(&self) -> (f32, f32) {
-        let transform = self
-            .draw_list
-            .borrow();
+        let transform = self.draw_list.borrow();
         let t = transform.current_transform();
         (t.cols[2][0], t.cols[2][1])
     }
@@ -769,8 +765,7 @@ impl CupidCanvas {
     }
 
     pub fn draw_list(&self) -> Ref<'_, DrawList> {
-        self.draw_list
-            .borrow()
+        self.draw_list.borrow()
     }
 
     pub fn get_image_size(&self, texture_id: TextureId) -> Option<(u32, u32)> {

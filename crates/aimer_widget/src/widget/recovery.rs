@@ -151,9 +151,7 @@ mod tests {
         .expect_err("panic should be recovered");
 
         assert_eq!(
-            diagnostic
-                .backtrace
-                .is_some(),
+            diagnostic.backtrace.is_some(),
             backtrace_enabled(std::env::var_os("RUST_BACKTRACE").as_deref())
         );
     }
@@ -206,9 +204,10 @@ mod tests {
 
     #[test]
     fn recovers_non_string_panic_payload_safely() {
-        let diagnostic =
-            recover_operation("OpaquePayloadWidget", BuildPhase::Build, || panic_any(42_u32))
-                .expect_err("panic should be recovered");
+        let diagnostic = recover_operation("OpaquePayloadWidget", BuildPhase::Build, || {
+            panic_any(42_u32)
+        })
+        .expect_err("panic should be recovered");
 
         assert!(
             diagnostic

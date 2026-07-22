@@ -260,7 +260,15 @@ impl CanvasRendering for CupidCanvas {
         size: ResolvedSize,
         overrides: Arc<[SvgNodeStyleOverride]>,
     ) {
-        CupidCanvas::draw_svg(self, scene, pos.x, pos.y, size.width, size.height, overrides);
+        CupidCanvas::draw_svg(
+            self,
+            scene,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
+            overrides,
+        );
     }
 
     #[inline]

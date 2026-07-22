@@ -21,7 +21,12 @@ pub struct AnimatedPlatformButtonList {
 
 impl AnimatedPlatformButtonList {
     pub fn new() -> Self {
-        Self { key: None, selected_index: 0, compact: false, on_selected: Callback::default() }
+        Self {
+            key: None,
+            selected_index: 0,
+            compact: false,
+            on_selected: Callback::default(),
+        }
     }
 
     pub fn selected_index(mut self, selected_index: usize) -> Self {
@@ -60,9 +65,7 @@ impl StatefulWidget for AnimatedPlatformButtonList {
         AnimatedPlatformButtonListState {
             selected_index: self.selected_index,
             compact: self.compact,
-            on_selected: self
-                .on_selected
-                .clone(),
+            on_selected: self.on_selected.clone(),
             updater: StateUpdater::new(),
         }
     }
@@ -119,7 +122,10 @@ fn platform_button_frame(
     active_foreground: Rgba,
 ) -> PlatformButtonFrame {
     let progress = progress.clamp(0.0, 1.0);
-    let transparent_checkmark = Rgba { a: 0.0, ..active_foreground };
+    let transparent_checkmark = Rgba {
+        a: 0.0,
+        ..active_foreground
+    };
     PlatformButtonFrame {
         background_color: inactive_background.lerp(&active_background, progress),
         foreground_color: inactive_foreground.lerp(&active_foreground, progress),
@@ -136,9 +142,7 @@ impl State<AnimatedPlatformButtonList> for AnimatedPlatformButtonListState {
     fn adopt_config_from(&mut self, new: &Self) {
         self.selected_index = new.selected_index;
         self.compact = new.compact;
-        self.on_selected = new
-            .on_selected
-            .clone();
+        self.on_selected = new.on_selected.clone();
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
@@ -247,9 +251,7 @@ impl AnimatedPlatformButtonListState {
                     },
                 )
                 .key(format!("platform-button-animation-{index}"));
-                let on_selected = self
-                    .on_selected
-                    .clone();
+                let on_selected = self.on_selected.clone();
 
                 Button::new()
                     .on_press(move || {
@@ -384,21 +386,7 @@ mod tests {
         assert_ne!(midpoint.background_color, end.background_color);
         assert!(midpoint.checkmark_gap > start.checkmark_gap);
         assert!(midpoint.checkmark_gap < end.checkmark_gap);
-        assert!(
-            midpoint
-                .checkmark_color
-                .a
-                > start
-                    .checkmark_color
-                    .a
-        );
-        assert!(
-            midpoint
-                .checkmark_color
-                .a
-                < end
-                    .checkmark_color
-                    .a
-        );
+        assert!(midpoint.checkmark_color.a > start.checkmark_color.a);
+        assert!(midpoint.checkmark_color.a < end.checkmark_color.a);
     }
 }

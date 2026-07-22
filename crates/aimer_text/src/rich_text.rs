@@ -40,9 +40,7 @@ impl SelectionCoordinator {
         if let Some(previous) = previous {
             previous.clear();
         }
-        *self
-            .current
-            .borrow_mut() = Rc::downgrade(owner);
+        *self.current.borrow_mut() = Rc::downgrade(owner);
     }
 }
 
@@ -67,18 +65,15 @@ impl SelectionOwner {
     }
 
     fn claim(self: &Rc<Self>) {
-        self.coordinator
-            .claim(self);
+        self.coordinator.claim(self);
     }
 
     fn clear(&self) {
         self.state
             .borrow_mut()
             .clear();
-        self.focused
-            .set(false);
-        self.window
-            .request_redraw();
+        self.focused.set(false);
+        self.window.request_redraw();
     }
 
     fn borrow(&self) -> Ref<'_, SelectionState> {
@@ -86,8 +81,7 @@ impl SelectionOwner {
     }
 
     fn borrow_mut(&self) -> RefMut<'_, SelectionState> {
-        self.state
-            .borrow_mut()
+        self.state.borrow_mut()
     }
 }
 
@@ -166,10 +160,7 @@ impl RichText {
 
     fn resolved_overflow(&self) -> TextOverflow {
         self.overflow
-            .unwrap_or(
-                self.text_style
-                    .text_overflow,
-            )
+            .unwrap_or(self.text_style.text_overflow)
     }
 
     /// Configures spans to wrap onto additional lines when width is constrained.
@@ -223,7 +214,10 @@ impl Widget for RichText {
             .collect::<String>()
             .into();
         let window = ctx.window.clone();
-        let selection = Rc::new(SelectionOwner::new(window.clone(), selection_coordinator(ctx)));
+        let selection = Rc::new(SelectionOwner::new(
+            window.clone(),
+            selection_coordinator(ctx),
+        ));
         RawRichText {
             spans,
             plain_text,
@@ -444,20 +438,10 @@ fn display_color(
 
 impl RawRichText {
     fn available_width(&self, ctx: &BuildContext) -> f32 {
-        if ctx
-            .box_constraint
-            .max_width
-            > 0.0
-            && ctx
-                .box_constraint
-                .max_width
-                < f32::MAX
-        {
-            ctx.box_constraint
-                .max_width
+        if ctx.box_constraint.max_width > 0.0 && ctx.box_constraint.max_width < f32::MAX {
+            ctx.box_constraint.max_width
         } else {
-            ctx.parent_size
-                .width
+            ctx.parent_size.width
         }
     }
 
@@ -468,19 +452,14 @@ impl RawRichText {
             0.0
         };
         let mut layout = layout_resolved_spans(&self.spans, wrap_width, |text, style| {
-            let font_size = style
-                .font_size
-                .max(1) as f32
-                * ctx.scale;
+            let font_size = style.font_size.max(1) as f32 * ctx.scale;
             ctx.canvas
                 .measure_text_styled(
                     text,
                     font_size,
                     style.font_family,
                     style.font_style,
-                    style
-                        .font_weight
-                        .numeric(),
+                    style.font_weight.numeric(),
                 )
         });
         if matches!(self.overflow, TextOverflow::Ellipsis) {
@@ -488,15 +467,10 @@ impl RawRichText {
                 ctx.canvas
                     .measure_text_styled(
                         text,
-                        style
-                            .font_size
-                            .max(1) as f32
-                            * ctx.scale,
+                        style.font_size.max(1) as f32 * ctx.scale,
                         style.font_family,
                         style.font_style,
-                        style
-                            .font_weight
-                            .numeric(),
+                        style.font_weight.numeric(),
                     )
             });
         }
@@ -511,16 +485,11 @@ impl RawRichText {
                 .canvas
                 .measure_text_metrics_styled(
                     &fragment.text,
-                    style
-                        .font_size
-                        .max(1) as f32
-                        * ctx.scale,
+                    style.font_size.max(1) as f32 * ctx.scale,
                     0.0,
                     style.font_family,
                     style.font_style,
-                    style
-                        .font_weight
-                        .numeric(),
+                    style.font_weight.numeric(),
                 );
             line_ascent[fragment.line] = line_ascent[fragment.line].max(metrics.ascent);
             line_descent[fragment.line] = line_descent[fragment.line].max(-metrics.descent);
@@ -533,16 +502,11 @@ impl RawRichText {
                 .canvas
                 .measure_text_metrics_styled(
                     " ",
-                    style
-                        .font_size
-                        .max(1) as f32
-                        * ctx.scale,
+                    style.font_size.max(1) as f32 * ctx.scale,
                     0.0,
                     style.font_family,
                     style.font_style,
-                    style
-                        .font_weight
-                        .numeric(),
+                    style.font_weight.numeric(),
                 );
             for line in line_break.line..=(line_break.line + 1).min(layout.line_count - 1) {
                 line_ascent[line] = line_ascent[line].max(metrics.ascent);
@@ -567,8 +531,11 @@ impl RawRichText {
             .iter()
             .copied()
             .fold(0.0, f32::max);
-        let width =
-            if matches!(self.overflow, TextOverflow::Wrap) { wrap_width } else { natural_width };
+        let width = if matches!(self.overflow, TextOverflow::Wrap) {
+            wrap_width
+        } else {
+            natural_width
+        };
 
         let fragments = layout
             .fragments
@@ -648,8 +615,10 @@ impl RawRichText {
         } else {
             0.0
         };
-        let key =
-            PreparedLayoutKey { width_bits: width.to_bits(), scale_bits: ctx.scale.to_bits() };
+        let key = PreparedLayoutKey {
+            width_bits: width.to_bits(),
+            scale_bits: ctx.scale.to_bits(),
+        };
         if let Some((cached_key, layout)) = self
             .layout_cache
             .borrow()
@@ -660,9 +629,7 @@ impl RawRichText {
         }
 
         let layout = Rc::new(self.compute_layout(ctx));
-        *self
-            .layout_cache
-            .borrow_mut() = Some((key, Rc::clone(&layout)));
+        *self.layout_cache.borrow_mut() = Some((key, Rc::clone(&layout)));
         layout
     }
 
@@ -674,33 +641,18 @@ impl RawRichText {
                 let b = region.bounds;
                 b.x <= x && x <= b.x + b.width && b.y <= y && y <= b.y + b.height
             })
-            .map(|region| {
-                region
-                    .target
-                    .clone()
-            })
+            .map(|region| region.target.clone())
     }
 
     fn set_hovered_link(&self, hovered_link: Option<Rc<str>>) {
-        if *self
-            .hovered_link
-            .borrow()
-            != hovered_link
-        {
-            *self
-                .hovered_link
-                .borrow_mut() = hovered_link;
-            self.window
-                .request_redraw();
+        if *self.hovered_link.borrow() != hovered_link {
+            *self.hovered_link.borrow_mut() = hovered_link;
+            self.window.request_redraw();
         }
     }
 
     fn execute_link(&self, target: Rc<str>) {
-        if let Some(callback) = self
-            .on_link
-            .get()
-            .as_ref()
-        {
+        if let Some(callback) = self.on_link.get().as_ref() {
             match callback {
                 RawInnerCallback::Empty => {}
                 RawInnerCallback::Sync(function) => function(target),
@@ -741,32 +693,19 @@ impl EventElement for RawRichText {
             Some(SelectableCursor::Pointer) => self
                 .window
                 .set_pointer_cursor(),
-            Some(SelectableCursor::Text) => self
-                .window
-                .set_text_cursor(),
-            Some(SelectableCursor::Default) => self
-                .window
-                .reset_cursor(),
+            Some(SelectableCursor::Text) => self.window.set_text_cursor(),
+            Some(SelectableCursor::Default) => self.window.reset_cursor(),
             None => {}
         }
 
         match event {
             ElementEvent::PointerDown(pos, _, pointer) => {
                 let target = self.link_at(pos.x, pos.y);
-                *self
-                    .pressed_link
-                    .borrow_mut() = target;
+                *self.pressed_link.borrow_mut() = target;
                 if self.selectable
-                    && let Some(offset) = text_offset_at(
-                        &self
-                            .text_regions
-                            .borrow(),
-                        pos.x,
-                        pos.y,
-                    )
+                    && let Some(offset) = text_offset_at(&self.text_regions.borrow(), pos.x, pos.y)
                 {
-                    self.selection
-                        .claim();
+                    self.selection.claim();
                     self.selection
                         .focused
                         .set(true);
@@ -780,19 +719,11 @@ impl EventElement for RawRichText {
                     .is_some()
             }
             ElementEvent::PointerMove(pos, _, pointer) if self.selectable => {
-                let mut selection = self
-                    .selection
-                    .borrow_mut();
+                let mut selection = self.selection.borrow_mut();
                 if !selection.is_active() {
                     return false;
                 }
-                if let Some(offset) = text_offset_at(
-                    &self
-                        .text_regions
-                        .borrow(),
-                    pos.x,
-                    pos.y,
-                ) {
+                if let Some(offset) = text_offset_at(&self.text_regions.borrow(), pos.x, pos.y) {
                     selection.update(offset, *pointer);
                     if selection.was_dragged() {
                         self.pressed_link
@@ -804,17 +735,11 @@ impl EventElement for RawRichText {
             }
             ElementEvent::PointerUp(pos, _, pointer) => {
                 let dragged = if self.selectable {
-                    let mut selection = self
-                        .selection
-                        .borrow_mut();
+                    let mut selection = self.selection.borrow_mut();
                     if selection.is_active() {
-                        if let Some(offset) = text_offset_at(
-                            &self
-                                .text_regions
-                                .borrow(),
-                            pos.x,
-                            pos.y,
-                        ) {
+                        if let Some(offset) =
+                            text_offset_at(&self.text_regions.borrow(), pos.x, pos.y)
+                        {
                             selection.update(offset, *pointer);
                         }
                         let dragged = selection.was_dragged();
@@ -857,25 +782,21 @@ impl EventElement for RawRichText {
                 }
                 false
             }
-            ElementEvent::KeyInput { key: NamedKey::Other(key), action, modifiers }
-                if self.selectable
-                    && self
-                        .selection
-                        .focused
-                        .get()
-                    && matches!(action, KeyAction::Pressed | KeyAction::Repeat)
-                    && (modifiers.ctrl || modifiers.meta) =>
+            ElementEvent::KeyInput {
+                key: NamedKey::Other(key),
+                action,
+                modifiers,
+            } if self.selectable
+                && self.selection.focused.get()
+                && matches!(action, KeyAction::Pressed | KeyAction::Repeat)
+                && (modifiers.ctrl || modifiers.meta) =>
             {
                 match key.as_str() {
                     "a" => {
-                        self.selection
-                            .claim();
+                        self.selection.claim();
                         self.selection
                             .borrow_mut()
-                            .select_all(
-                                self.plain_text
-                                    .len(),
-                            );
+                            .select_all(self.plain_text.len());
                         true
                     }
                     "c" => {
@@ -911,8 +832,7 @@ impl EventElement for RawRichText {
 
 impl LayoutElement for RawRichText {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.prepare_layout(ctx)
-            .size
+        self.prepare_layout(ctx).size
     }
 
     fn invalidate_layout(&self) {
@@ -922,8 +842,7 @@ impl LayoutElement for RawRichText {
     }
 
     fn pos_start_end(&self) -> Option<(aimer_attribute::Vec2d, aimer_attribute::Vec2d)> {
-        self.bounds
-            .pos_start_end()
+        self.bounds.pos_start_end()
     }
 }
 
@@ -933,8 +852,13 @@ impl Drawable for RawRichText {
         let (abs_x, abs_y) = ctx
             .canvas
             .get_transform_translation();
-        self.bounds
-            .save(ctx.scale, abs_x, abs_y, layout.size.width, layout.size.height);
+        self.bounds.save(
+            ctx.scale,
+            abs_x,
+            abs_y,
+            layout.size.width,
+            layout.size.height,
+        );
         self.link_regions
             .borrow_mut()
             .clear();
@@ -948,21 +872,21 @@ impl Drawable for RawRichText {
                 (0.0, 0.0).into(),
                 ResolvedSize {
                     width: self.available_width(ctx),
-                    height: ctx
-                        .parent_size
-                        .height,
+                    height: ctx.parent_size.height,
                 },
             );
         }
 
         for background in &layout.backgrounds {
-            ctx.canvas
-                .fill_color_rect(
-                    (background.x, background.y).into(),
-                    ResolvedSize { width: background.width, height: background.height },
-                    background.color,
-                    [0.0; 4],
-                );
+            ctx.canvas.fill_color_rect(
+                (background.x, background.y).into(),
+                ResolvedSize {
+                    width: background.width,
+                    height: background.height,
+                },
+                background.color,
+                [0.0; 4],
+            );
         }
 
         if self.selectable {
@@ -977,11 +901,7 @@ impl Drawable for RawRichText {
                     continue;
                 };
                 let span = &self.spans[fragment.span_index];
-                let font_size = span
-                    .style
-                    .font_size
-                    .max(1) as f32
-                    * ctx.scale;
+                let font_size = span.style.font_size.max(1) as f32 * ctx.scale;
                 let mut x = fragment.x;
                 let mut selected_start: Option<f32> = None;
                 let mut selected_end = x;
@@ -994,10 +914,8 @@ impl Drawable for RawRichText {
                         .measure_text_styled(
                             grapheme,
                             font_size,
-                            span.style
-                                .font_family,
-                            span.style
-                                .font_style,
+                            span.style.font_family,
+                            span.style.font_style,
                             span.style
                                 .font_weight
                                 .numeric(),
@@ -1039,12 +957,7 @@ impl Drawable for RawRichText {
                 self.text_regions
                     .borrow_mut()
                     .push(TextHitRegion::new(
-                        line_break
-                            .source_range
-                            .start
-                            ..line_break
-                                .source_range
-                                .start,
+                        line_break.source_range.start..line_break.source_range.start,
                         Bounds::new(
                             (abs_x + line_break.x) / ctx.scale,
                             (abs_y + line_break.y) / ctx.scale,
@@ -1052,14 +965,8 @@ impl Drawable for RawRichText {
                             line_break.height / ctx.scale,
                         ),
                     ));
-                if line_break
-                    .source_range
-                    .start
-                    < selection.end
-                    && selection.start
-                        < line_break
-                            .source_range
-                            .end
+                if line_break.source_range.start < selection.end
+                    && selection.start < line_break.source_range.end
                 {
                     selection_runs.push(PreparedSelection {
                         line: line_break.line,
@@ -1073,10 +980,7 @@ impl Drawable for RawRichText {
             selection_runs.sort_by(|left, right| {
                 left.line
                     .cmp(&right.line)
-                    .then_with(|| {
-                        left.x
-                            .total_cmp(&right.x)
-                    })
+                    .then_with(|| left.x.total_cmp(&right.x))
             });
             let mut merged_selection_runs = Vec::new();
             for run in selection_runs {
@@ -1084,62 +988,48 @@ impl Drawable for RawRichText {
             }
             snap_selection_lines_to_pixels(&mut merged_selection_runs);
             for run in merged_selection_runs {
-                ctx.canvas
-                    .fill_color_rect(
-                        (run.x, run.y).into(),
-                        ResolvedSize { width: run.width, height: run.height },
-                        self.selection_color,
-                        [0.0; 4],
-                    );
+                ctx.canvas.fill_color_rect(
+                    (run.x, run.y).into(),
+                    ResolvedSize {
+                        width: run.width,
+                        height: run.height,
+                    },
+                    self.selection_color,
+                    [0.0; 4],
+                );
             }
         }
 
         for fragment in &layout.fragments {
             let span = &self.spans[fragment.span_index];
-            let hovered_link = self
-                .hovered_link
-                .borrow();
+            let hovered_link = self.hovered_link.borrow();
             let color = display_color(span, hovered_link.as_ref(), self.link_hover_color);
-            let font_size = span
-                .style
-                .font_size
-                .max(1) as f32
-                * ctx.scale;
-            let italic = span
-                .style
-                .font_style
-                == FontStyle::Italic
+            let font_size = span.style.font_size.max(1) as f32 * ctx.scale;
+            let italic = span.style.font_style == FontStyle::Italic
                 || span
                     .style
                     .text_decoration
                     .line
                     .contains(TextDecorationLine::ITALIC);
             if italic {
-                ctx.canvas
-                    .set_italic(true);
+                ctx.canvas.set_italic(true);
             }
-            ctx.canvas
-                .draw_text_styled(
-                    &fragment.text,
-                    (fragment.x, fragment.baseline).into(),
-                    font_size,
-                    color,
-                    span.style
-                        .font_family,
-                    span.style
-                        .font_style,
-                    span.style
-                        .font_weight
-                        .numeric(),
-                );
+            ctx.canvas.draw_text_styled(
+                &fragment.text,
+                (fragment.x, fragment.baseline).into(),
+                font_size,
+                color,
+                span.style.font_family,
+                span.style.font_style,
+                span.style
+                    .font_weight
+                    .numeric(),
+            );
             if italic {
-                ctx.canvas
-                    .set_italic(false);
+                ctx.canvas.set_italic(false);
             }
 
-            let decoration = span
-                .style
-                .text_decoration;
+            let decoration = span.style.text_decoration;
             let lines = decoration.line;
             if !lines.is_none() {
                 let color = decoration
@@ -1167,24 +1057,18 @@ impl Drawable for RawRichText {
                     ctx.canvas
                         .draw_text_decoration(
                             (fragment.x, center_y - band_height / 2.0).into(),
-                            ResolvedSize { width: fragment.width, height: band_height },
+                            ResolvedSize {
+                                width: fragment.width,
+                                height: band_height,
+                            },
                             color,
-                            decoration
-                                .style
-                                .id(),
+                            decoration.style.id(),
                             thickness,
                             period,
                         );
                 };
                 if lines.contains(TextDecorationLine::UNDERLINE) {
-                    draw_decoration(
-                        fragment.baseline
-                            + fragment
-                                .descent
-                                .max(1.0)
-                                * 0.5
-                            + offset,
-                    );
+                    draw_decoration(fragment.baseline + fragment.descent.max(1.0) * 0.5 + offset);
                 }
                 if lines.contains(TextDecorationLine::LINE_THROUGH) {
                     draw_decoration(fragment.baseline - fragment.ascent * 0.35 + offset);
@@ -1212,8 +1096,7 @@ impl Drawable for RawRichText {
         self.set_hovered_link(self.link_at(ctx.cursor_pos.x, ctx.cursor_pos.y));
 
         if matches!(self.overflow, TextOverflow::Clip | TextOverflow::Ellipsis) {
-            ctx.canvas
-                .clear_clip();
+            ctx.canvas.clear_clip();
             ctx.canvas.restore();
         }
     }
@@ -1250,7 +1133,10 @@ mod tests {
         let window = WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0);
         let selection = Rc::new(SelectionOwner::new(window.clone(), selection_coordinator));
         RawRichText {
-            spans: vec![ResolvedTextSpan::plain(Rc::from("élink"), TextStyle::default())],
+            spans: vec![ResolvedTextSpan::plain(
+                Rc::from("élink"),
+                TextStyle::default(),
+            )],
             plain_text: Rc::from("élink"),
             text_align: TextAlign::TopLeft,
             overflow: TextOverflow::Clip,
@@ -1276,7 +1162,10 @@ mod tests {
     }
 
     fn selection_owner(window: &WindowHandle) -> Rc<SelectionOwner> {
-        Rc::new(SelectionOwner::new(window.clone(), Rc::new(SelectionCoordinator::default())))
+        Rc::new(SelectionOwner::new(
+            window.clone(),
+            Rc::new(SelectionCoordinator::default()),
+        ))
     }
 
     #[test]
@@ -1307,8 +1196,14 @@ mod tests {
             .text_style(TextStyle::new().font_size(20))
             .text_overflow(TextOverflow::Wrap);
 
-        assert!(matches!(before_style.resolved_overflow(), TextOverflow::Wrap));
-        assert!(matches!(after_style.resolved_overflow(), TextOverflow::Wrap));
+        assert!(matches!(
+            before_style.resolved_overflow(),
+            TextOverflow::Wrap
+        ));
+        assert!(matches!(
+            after_style.resolved_overflow(),
+            TextOverflow::Wrap
+        ));
     }
 
     #[test]
@@ -1317,8 +1212,14 @@ mod tests {
         let exit = ElementEvent::PointerExited(PointerSource::Mouse, 0);
         let touch = ElementEvent::PointerMove(Vec2d { x: 1.0, y: 1.0 }, PointerSource::Touch, 1);
 
-        assert_eq!(interactive_cursor_for_event(true, true, &hover), Some(SelectableCursor::Text));
-        assert_eq!(interactive_cursor_for_event(true, false, &hover), Some(SelectableCursor::Text));
+        assert_eq!(
+            interactive_cursor_for_event(true, true, &hover),
+            Some(SelectableCursor::Text)
+        );
+        assert_eq!(
+            interactive_cursor_for_event(true, false, &hover),
+            Some(SelectableCursor::Text)
+        );
         assert_eq!(
             interactive_cursor_for_event(false, true, &hover),
             Some(SelectableCursor::Pointer)
@@ -1342,12 +1243,18 @@ mod tests {
         };
         let plain = ResolvedTextSpan::plain(Rc::from(" docs"), TextStyle::default());
 
-        assert_eq!(super::display_color(&linked, Some(&hovered), Some(hover_color)), hover_color);
+        assert_eq!(
+            super::display_color(&linked, Some(&hovered), Some(hover_color)),
+            hover_color
+        );
         assert_eq!(
             super::display_color(&plain, Some(&hovered), Some(hover_color)),
             plain.style.color
         );
-        assert_eq!(super::display_color(&plain, None, Some(hover_color)), plain.style.color);
+        assert_eq!(
+            super::display_color(&plain, None, Some(hover_color)),
+            plain.style.color
+        );
     }
 
     #[test]
@@ -1398,7 +1305,10 @@ mod tests {
         let handled = text.on_event(&ElementEvent::KeyInput {
             key: NamedKey::Other("a".into()),
             action: KeyAction::Pressed,
-            modifiers: Modifiers { ctrl: true, ..Modifiers::default() },
+            modifiers: Modifiers {
+                ctrl: true,
+                ..Modifiers::default()
+            },
         });
 
         assert!(handled);
@@ -1425,17 +1335,8 @@ mod tests {
         first
             .selection
             .borrow_mut()
-            .select_all(
-                first
-                    .plain_text
-                    .len(),
-            );
-        assert!(
-            first
-                .selection
-                .focused
-                .get()
-        );
+            .select_all(first.plain_text.len());
+        assert!(first.selection.focused.get());
         assert_eq!(
             first
                 .selection
@@ -1460,24 +1361,14 @@ mod tests {
                 .selection(),
             TextSelection::default()
         );
-        assert!(
-            !first
-                .selection
-                .focused
-                .get()
-        );
+        assert!(!first.selection.focused.get());
         assert!(!first.captures_pointer(7));
         assert!(
             first
                 .window
                 .take_redraw_request()
         );
-        assert!(
-            second
-                .selection
-                .focused
-                .get()
-        );
+        assert!(second.selection.focused.get());
         assert!(second.captures_pointer(8));
     }
 
@@ -1493,11 +1384,7 @@ mod tests {
 
         drop(owner);
 
-        assert!(
-            weak_owner
-                .upgrade()
-                .is_none()
-        );
+        assert!(weak_owner.upgrade().is_none());
         assert!(
             coordinator
                 .current
@@ -1532,7 +1419,11 @@ mod tests {
             PointerSource::Mouse,
             0,
         ));
-        text.on_event(&ElementEvent::PointerUp(Vec2d { x: 19.0, y: 5.0 }, PointerSource::Mouse, 0));
+        text.on_event(&ElementEvent::PointerUp(
+            Vec2d { x: 19.0, y: 5.0 },
+            PointerSource::Mouse,
+            0,
+        ));
 
         assert_eq!(
             text.selection
@@ -1572,28 +1463,30 @@ mod tests {
             .selection
             .borrow()
             .selection();
-        assert_eq!(
-            selection,
-            TextSelection::new(
-                0,
-                text.plain_text
-                    .len()
-            )
-        );
+        assert_eq!(selection, TextSelection::new(0, text.plain_text.len()));
         assert_eq!(
             selection.selected_text(&text.plain_text),
-            Some(
-                text.plain_text
-                    .as_ref()
-            )
+            Some(text.plain_text.as_ref())
         );
     }
 
     #[test]
     fn selection_line_overlap_does_not_overflow_past_a_shorter_next_line() {
         let mut highlights = vec![
-            PreparedSelection { line: 0, x: 10.0, y: 20.25, width: 100.0, height: 10.48 },
-            PreparedSelection { line: 1, x: 10.0, y: 30.73, width: 20.0, height: 10.48 },
+            PreparedSelection {
+                line: 0,
+                x: 10.0,
+                y: 20.25,
+                width: 100.0,
+                height: 10.48,
+            },
+            PreparedSelection {
+                line: 1,
+                x: 10.0,
+                y: 30.73,
+                width: 20.0,
+                height: 10.48,
+            },
         ];
 
         snap_selection_lines_to_pixels(&mut highlights);
@@ -1680,7 +1573,10 @@ mod tests {
         let runs = prepare_background_runs(&fragments, &spans);
 
         assert_eq!(runs.len(), 3);
-        assert_eq!((runs[0].x, runs[0].y, runs[0].width, runs[0].height), (10.0, 10.0, 30.0, 12.0));
+        assert_eq!(
+            (runs[0].x, runs[0].y, runs[0].width, runs[0].height),
+            (10.0, 10.0, 30.0, 12.0)
+        );
         assert_eq!(runs[0].color, aimer_widget::base::Color::RED);
         assert_eq!((runs[1].x, runs[1].width), (40.0, 10.0));
         assert_eq!(runs[1].color, aimer_widget::base::Color::BLUE);
@@ -1725,14 +1621,15 @@ mod tests {
             .unwrap();
         let context = BuildContext::new(
             canvas,
-            ResolvedSize { width: 200.0, height: 100.0 },
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
             1.0,
             Vec2d::default(),
             Vec2d::default(),
             WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
-            runtime
-                .handle()
-                .clone(),
+            runtime.handle().clone(),
         );
         let selection_color = Color::Rgba(255, 0, 128, 64);
         let text = RawRichText {
@@ -1747,9 +1644,7 @@ mod tests {
             link_hover_color: None,
             selectable: true,
             selection_color,
-            window: context
-                .window
-                .clone(),
+            window: context.window.clone(),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(Vec::new()),
             text_regions: RefCell::new(Vec::new()),
@@ -1760,10 +1655,7 @@ mod tests {
         };
         text.selection
             .borrow_mut()
-            .select_all(
-                text.plain_text
-                    .len(),
-            );
+            .select_all(text.plain_text.len());
         let layout = text.prepare_layout(&context);
         let expected_top = layout.fragments[0].baseline - layout.fragments[0].ascent;
 
@@ -1799,14 +1691,15 @@ mod tests {
             .unwrap();
         let context = BuildContext::new(
             canvas,
-            ResolvedSize { width: 200.0, height: 100.0 },
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
             1.0,
             Vec2d::default(),
             Vec2d::default(),
             WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
-            runtime
-                .handle()
-                .clone(),
+            runtime.handle().clone(),
         );
         let text = RawRichText {
             spans: vec![
@@ -1825,9 +1718,7 @@ mod tests {
             link_hover_color: None,
             selectable: true,
             selection_color: DEFAULT_SELECTION_COLOR,
-            window: context
-                .window
-                .clone(),
+            window: context.window.clone(),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(Vec::new()),
             text_regions: RefCell::new(Vec::new()),
@@ -1838,10 +1729,7 @@ mod tests {
         };
         text.selection
             .borrow_mut()
-            .select_all(
-                text.plain_text
-                    .len(),
-            );
+            .select_all(text.plain_text.len());
 
         text.draw(&context);
 
@@ -1870,17 +1758,22 @@ mod tests {
             .unwrap();
         let mut context = BuildContext::new(
             canvas,
-            ResolvedSize { width: 70.0, height: 200.0 },
+            ResolvedSize {
+                width: 70.0,
+                height: 200.0,
+            },
             1.0,
             Vec2d::default(),
             Vec2d::default(),
             WindowHandle::headless(winit::dpi::PhysicalSize::new(70, 200), 1.0),
-            runtime
-                .handle()
-                .clone(),
+            runtime.handle().clone(),
         );
-        context.box_constraint =
-            BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: 70.0, max_height: 200.0 };
+        context.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 70.0,
+            max_height: 200.0,
+        };
         let text = RawRichText {
             spans: vec![ResolvedTextSpan::plain(
                 Rc::from("first second third"),
@@ -1893,9 +1786,7 @@ mod tests {
             link_hover_color: None,
             selectable: true,
             selection_color: DEFAULT_SELECTION_COLOR,
-            window: context
-                .window
-                .clone(),
+            window: context.window.clone(),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(Vec::new()),
             text_regions: RefCell::new(Vec::new()),
@@ -1906,10 +1797,7 @@ mod tests {
         };
         text.selection
             .borrow_mut()
-            .select_all(
-                text.plain_text
-                    .len(),
-            );
+            .select_all(text.plain_text.len());
 
         text.draw(&context);
 
@@ -1944,17 +1832,22 @@ mod tests {
             .unwrap();
         let mut context = BuildContext::new(
             canvas,
-            ResolvedSize { width: 200.0, height: 200.0 },
+            ResolvedSize {
+                width: 200.0,
+                height: 200.0,
+            },
             1.0,
             Vec2d::default(),
             Vec2d::default(),
             WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 200), 1.0),
-            runtime
-                .handle()
-                .clone(),
+            runtime.handle().clone(),
         );
-        context.box_constraint =
-            BoxConstraint { min_width: 0.0, min_height: 0.0, max_width: 200.0, max_height: 200.0 };
+        context.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 200.0,
+            max_height: 200.0,
+        };
         let text = RawRichText {
             spans: vec![
                 ResolvedTextSpan::plain(Rc::from("first\n"), TextStyle::new().font_size(20)),
@@ -1968,9 +1861,7 @@ mod tests {
             link_hover_color: None,
             selectable: true,
             selection_color: DEFAULT_SELECTION_COLOR,
-            window: context
-                .window
-                .clone(),
+            window: context.window.clone(),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(Vec::new()),
             text_regions: RefCell::new(Vec::new()),
@@ -1981,21 +1872,16 @@ mod tests {
         };
         text.selection
             .borrow_mut()
-            .select_all(
-                text.plain_text
-                    .len(),
-            );
+            .select_all(text.plain_text.len());
 
         let layout = text.prepare_layout(&context);
-        assert_eq!(
-            layout
-                .line_breaks
-                .len(),
-            2
-        );
+        assert_eq!(layout.line_breaks.len(), 2);
         assert_eq!(layout.line_breaks[0].source_range, 5..6);
         assert_eq!(layout.line_breaks[1].source_range, 6..7);
-        assert_eq!(layout.line_breaks[0].x + layout.line_breaks[0].hit_width, layout.size.width);
+        assert_eq!(
+            layout.line_breaks[0].x + layout.line_breaks[0].hit_width,
+            layout.size.width
+        );
         assert_eq!(layout.line_breaks[1].hit_width, layout.size.width);
         assert_eq!(layout.line_breaks[0].selection_width, 1.0);
         assert_eq!(layout.line_breaks[1].selection_width, 1.0);
@@ -2008,9 +1894,7 @@ mod tests {
 
         text.draw(&context);
 
-        let regions = text
-            .text_regions
-            .borrow();
+        let regions = text.text_regions.borrow();
         assert!(
             regions
                 .iter()
@@ -2070,14 +1954,15 @@ mod tests {
             .unwrap();
         let context = BuildContext::new(
             canvas,
-            ResolvedSize { width: 200.0, height: 100.0 },
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
             1.0,
             Vec2d::default(),
             Vec2d::default(),
             WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
-            runtime
-                .handle()
-                .clone(),
+            runtime.handle().clone(),
         );
         let text = RawRichText {
             spans: vec![ResolvedTextSpan::plain(
@@ -2093,9 +1978,7 @@ mod tests {
             link_hover_color: None,
             selectable: false,
             selection_color: DEFAULT_SELECTION_COLOR,
-            window: context
-                .window
-                .clone(),
+            window: context.window.clone(),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(Vec::new()),
             text_regions: RefCell::new(Vec::new()),
@@ -2113,8 +1996,14 @@ mod tests {
             .iter()
             .position(|command| matches!(command, DrawCommand::DrawText { .. }))
             .unwrap();
-        assert!(matches!(commands[draw_index - 1], DrawCommand::SetItalic { italic: true }));
-        assert!(matches!(commands[draw_index + 1], DrawCommand::SetItalic { italic: false }));
+        assert!(matches!(
+            commands[draw_index - 1],
+            DrawCommand::SetItalic { italic: true }
+        ));
+        assert!(matches!(
+            commands[draw_index + 1],
+            DrawCommand::SetItalic { italic: false }
+        ));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2136,14 +2025,15 @@ mod tests {
             .unwrap();
         let context = BuildContext::new(
             canvas,
-            ResolvedSize { width: 200.0, height: 100.0 },
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
             1.0,
             Vec2d { x: 1.0, y: 5.0 },
             Vec2d::default(),
             WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
-            runtime
-                .handle()
-                .clone(),
+            runtime.handle().clone(),
         );
         let highlighted_span = ResolvedTextSpan {
             text: Rc::from("linked"),
@@ -2159,9 +2049,7 @@ mod tests {
             link_hover_color: None,
             selectable: false,
             selection_color: DEFAULT_SELECTION_COLOR,
-            window: context
-                .window
-                .clone(),
+            window: context.window.clone(),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(Vec::new()),
             text_regions: RefCell::new(Vec::new()),
@@ -2172,7 +2060,10 @@ mod tests {
         };
         let plain = RawRichText {
             spans: vec![ResolvedTextSpan {
-                style: TextStyle { background_color: None, ..highlighted_span.style },
+                style: TextStyle {
+                    background_color: None,
+                    ..highlighted_span.style
+                },
                 ..highlighted_span
             }],
             plain_text: Rc::from("linked"),
@@ -2182,9 +2073,7 @@ mod tests {
             link_hover_color: None,
             selectable: false,
             selection_color: DEFAULT_SELECTION_COLOR,
-            window: context
-                .window
-                .clone(),
+            window: context.window.clone(),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(Vec::new()),
             text_regions: RefCell::new(Vec::new()),
@@ -2266,14 +2155,15 @@ mod tests {
             .unwrap();
         let mut context = BuildContext::new(
             canvas,
-            ResolvedSize { width: 20.0, height: 100.0 },
+            ResolvedSize {
+                width: 20.0,
+                height: 100.0,
+            },
             1.0,
             Vec2d::default(),
             Vec2d::default(),
             WindowHandle::headless(winit::dpi::PhysicalSize::new(20, 100), 1.0),
-            runtime
-                .handle()
-                .clone(),
+            runtime.handle().clone(),
         );
         context.box_constraint = BoxConstraint {
             min_width: 0.0,
@@ -2293,9 +2183,7 @@ mod tests {
             link_hover_color: None,
             selectable: false,
             selection_color: DEFAULT_SELECTION_COLOR,
-            window: context
-                .window
-                .clone(),
+            window: context.window.clone(),
             bounds: CacheBounds::new(),
             link_regions: RefCell::new(Vec::new()),
             text_regions: RefCell::new(Vec::new()),
@@ -2308,24 +2196,12 @@ mod tests {
         assert_eq!(rich_text.available_width(&context), 20.0);
         let first_layout = rich_text.prepare_layout(&context);
         let cached_layout = rich_text.prepare_layout(&context);
-        assert_eq!(
-            first_layout
-                .size
-                .width,
-            20.0
-        );
+        assert_eq!(first_layout.size.width, 20.0);
         assert!(Rc::ptr_eq(&first_layout, &cached_layout));
 
-        context
-            .parent_size
-            .width = 40.0;
+        context.parent_size.width = 40.0;
         let resized_layout = rich_text.prepare_layout(&context);
-        assert_eq!(
-            resized_layout
-                .size
-                .width,
-            40.0
-        );
+        assert_eq!(resized_layout.size.width, 40.0);
         assert!(!Rc::ptr_eq(&first_layout, &resized_layout));
     }
 }

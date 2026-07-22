@@ -187,8 +187,7 @@ impl Scrollable {
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
-        self.child(child)
-            .boxed()
+        self.child(child).boxed()
     }
 }
 
@@ -197,14 +196,10 @@ impl<W: Widget> Widget for Scrollable<W> {
         let mut child_ctx = ctx.clone();
         child_ctx
             .box_constraint
-            .max_width = ctx
-            .box_constraint
-            .max_width;
+            .max_width = ctx.box_constraint.max_width;
         child_ctx
             .box_constraint
-            .max_height = ctx
-            .box_constraint
-            .max_height;
+            .max_height = ctx.box_constraint.max_height;
         match self.axis {
             ScrollAxis::Vertical => {
                 child_ctx
@@ -223,7 +218,10 @@ impl<W: Widget> Widget for Scrollable<W> {
         // `scroll_behavior.scroll_offset`. Stored offsets are logical (unscaled), so
         // re-apply `ctx.scale` here just like the declared offset below.
         let mut initial_offset = scroll_storage::read_offset(&self.key)
-            .map(|logical| Vec2d { x: logical.x * ctx.scale, y: logical.y * ctx.scale })
+            .map(|logical| Vec2d {
+                x: logical.x * ctx.scale,
+                y: logical.y * ctx.scale,
+            })
             .unwrap_or(Vec2d {
                 x: self
                     .scroll_behavior
@@ -246,7 +244,10 @@ impl<W: Widget> Widget for Scrollable<W> {
             && ctrl.is_attached()
         {
             let logical = ctrl.offset();
-            initial_offset = Vec2d { x: -logical.x * ctx.scale, y: -logical.y * ctx.scale };
+            initial_offset = Vec2d {
+                x: -logical.x * ctx.scale,
+                y: -logical.y * ctx.scale,
+            };
         }
 
         let child = self

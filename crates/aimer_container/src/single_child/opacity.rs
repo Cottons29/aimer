@@ -19,7 +19,10 @@ impl Opacity {
     ///
     /// Finish the builder with [`Opacity::child`] or [`Opacity::box_child`].
     pub fn new() -> Self {
-        Self { child: RequiredChild, opacity: 1.0 }
+        Self {
+            child: RequiredChild,
+            opacity: 1.0,
+        }
     }
 
     /// Sets the alpha multiplier applied while painting the child.
@@ -36,7 +39,10 @@ impl Opacity {
     /// The concrete child type is preserved and all opacity configuration is
     /// retained. Use [`Opacity::box_child`] for branch type erasure.
     pub fn child<W: Widget>(self, child: W) -> Opacity<W> {
-        Opacity { child, opacity: self.opacity }
+        Opacity {
+            child,
+            opacity: self.opacity,
+        }
     }
 
     /// Attaches `child` and erases the resulting widget's concrete type.
@@ -45,8 +51,7 @@ impl Opacity {
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
-        self.child(child)
-            .boxed()
+        self.child(child).boxed()
     }
 }
 
@@ -59,16 +64,18 @@ impl Default for Opacity {
 impl<W: Widget + 'static> Widget for Opacity<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
         Box::new(RawOpacity {
-            child: self
-                .child
-                .to_element(ctx),
+            child: self.child.to_element(ctx),
             opacity: normalized_opacity(self.opacity),
         })
     }
 }
 
 fn normalized_opacity(opacity: f32) -> f32 {
-    if opacity.is_nan() { 1.0 } else { opacity.clamp(0.0, 1.0) }
+    if opacity.is_nan() {
+        1.0
+    } else {
+        opacity.clamp(0.0, 1.0)
+    }
 }
 
 #[derive(EventElement, Rebuildable)]
@@ -82,8 +89,7 @@ impl Drawable for RawOpacity {
         ctx.canvas
             .set_alpha(self.opacity);
         self.child.draw(ctx);
-        ctx.canvas
-            .restore_alpha();
+        ctx.canvas.restore_alpha();
     }
 }
 
@@ -93,13 +99,11 @@ impl LayoutElement for RawOpacity {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child
-            .computed_size(ctx)
+        self.child.computed_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child
-            .content_size(ctx)
+        self.child.content_size(ctx)
     }
 
     fn layer(&self) -> u32 {

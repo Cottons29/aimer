@@ -46,7 +46,10 @@ fn pointer_drag_delta(
     if content_drag_just_won {
         return Vec2d::default();
     }
-    Vec2d { x: (current.x - last.x) * speed_multiplier, y: (current.y - last.y) * speed_multiplier }
+    Vec2d {
+        x: (current.x - last.x) * speed_multiplier,
+        y: (current.y - last.y) * speed_multiplier,
+    }
 }
 
 impl<E: Element> EventElement for RawScrollableContainer<E> {
@@ -57,21 +60,13 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 .set(Some(cursor_pos));
         }
 
-        let Some(cursor) = self
-            .ctrl
-            .cursor_pos
-            .get()
-        else {
+        let Some(cursor) = self.ctrl.cursor_pos.get() else {
             return false;
         };
         let inside = self
             .bounds
             .is_inside(cursor.x, cursor.y);
-        let active_drag = self
-            .ctrl
-            .drag_mode
-            .get()
-            != DragMode::None;
+        let active_drag = self.ctrl.drag_mode.get() != DragMode::None;
         if !inside && !active_drag {
             return false;
         }
@@ -88,10 +83,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             | ElementEvent::ImePreedit { .. } => Vec2d::default(),
         };
 
-        let mode_before = self
-            .ctrl
-            .drag_mode
-            .get();
+        let mode_before = self.ctrl.drag_mode.get();
         let pending_content_drag_won = match event {
             ElementEvent::PointerMove(current, _, id)
                 if mode_before == DragMode::Pending
@@ -117,7 +109,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         };
         let mut child_consumed = false;
 
-        if matches!(event, ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel) {
+        if matches!(
+            event,
+            ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel
+        ) {
             if let ElementEvent::PointerUp(_, _, pointer) = event
                 && self
                     .ctrl
@@ -143,7 +138,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 }
                 _ => false,
             };
-            if matches!(mode_before, DragMode::VerticalScrollbar | DragMode::HorizontalScrollbar) {
+            if matches!(
+                mode_before,
+                DragMode::VerticalScrollbar | DragMode::HorizontalScrollbar
+            ) {
                 match event {
                     ElementEvent::PointerUp(_, _, pointer) => {
                         let _ = aimer_widget::cancel_pointer(&self.child, *pointer, pos);
@@ -178,25 +176,17 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         .set(Vec2d::default());
                     self.ctrl
                         .clear_velocity_history();
-                    self.ctrl
-                        .cancel_fling();
+                    self.ctrl.cancel_fling();
                 } else {
-                    let max_v = MAX_SCROLL_VELOCITY
-                        * self
-                            .ctrl
-                            .last_scale
-                            .get();
-                    let raw = self
-                        .ctrl
-                        .smoothed_velocity();
+                    let max_v = MAX_SCROLL_VELOCITY * self.ctrl.last_scale.get();
+                    let raw = self.ctrl.smoothed_velocity();
                     let sv = Vec2d {
                         x: (raw.x * RELEASE_VELOCITY_GAIN).clamp(-max_v, max_v),
                         y: (raw.y * RELEASE_VELOCITY_GAIN).clamp(-max_v, max_v),
                     };
                     // info!("[scroll] FLING ARMED elapsed={}ms raw=({:.2},{:.2}) gain=({:.2},{:.2})
                     // max_v={:.0}", elapsed, raw.x, raw.y, sv.x, sv.y, max_v);
-                    self.ctrl
-                        .cancel_fling();
+                    self.ctrl.cancel_fling();
                     self.ctrl
                         .pointer_velocity
                         .set(sv);
@@ -247,15 +237,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
         let we_consumed = match event {
             ElementEvent::Scroll { delta, .. } => {
-                let mut offset = self
-                    .ctrl
-                    .scroll_offset
-                    .get();
+                let mut offset = self.ctrl.scroll_offset.get();
 
                 // println!("offset: {:?}", offset);
-                let clamped = self
-                    .ctrl
-                    .clamp_offset(offset);
+                let clamped = self.ctrl.clamp_offset(offset);
 
                 let mut scroll_delta = match self.ctrl.axis {
                     ScrollAxis::Vertical => Vec2d { x: 0.0, y: delta.y },
@@ -342,27 +327,20 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     }
                 }
 
-                let max_scroll_v = MAX_SCROLL_VELOCITY
-                    * self
-                        .ctrl
-                        .last_scale
-                        .get();
+                let max_scroll_v = MAX_SCROLL_VELOCITY * self.ctrl.last_scale.get();
                 target_vx = target_vx.clamp(-max_scroll_v, max_scroll_v);
                 target_vy = target_vy.clamp(-max_scroll_v, max_scroll_v);
 
                 // Smooth velocity across recent samples (tames trackpad jitter).
                 self.ctrl
                     .push_velocity(target_vx, target_vy);
-                let sv = self
-                    .ctrl
-                    .smoothed_velocity();
+                let sv = self.ctrl.smoothed_velocity();
                 self.ctrl
                     .pointer_velocity
                     .set(sv);
                 // A wheel/trackpad scroll takes over from any release fling and
                 // uses the velocity-based momentum, not the bézier curve.
-                self.ctrl
-                    .cancel_fling();
+                self.ctrl.cancel_fling();
                 // Reset spring velocity so new input dominates over any
                 // in-progress spring-back recovery.
                 self.ctrl
@@ -371,8 +349,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
                 // A wheel/trackpad tick starts (or continues) a scroll session;
                 // the draw loop fires the matching `end` once the glide settles.
-                self.ctrl
-                    .begin_scroll();
+                self.ctrl.begin_scroll();
                 aimer_events::window::request_animation_frame();
                 true
             }
@@ -416,17 +393,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 // info!("[scroll] PointerDown id={} pos=({:.1},{:.1})", id, p.x, p.y);
 
                 let mut mode = DragMode::Pending;
-                if self
-                    .ctrl
-                    .hit_test_v_thumb(*p)
-                {
+                if self.ctrl.hit_test_v_thumb(*p) {
                     mode = DragMode::VerticalScrollbar;
                 }
-                if mode == DragMode::Pending
-                    && self
-                        .ctrl
-                        .hit_test_h_thumb(*p)
-                {
+                if mode == DragMode::Pending && self.ctrl.hit_test_h_thumb(*p) {
                     mode = DragMode::HorizontalScrollbar;
                 }
 
@@ -454,52 +424,50 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     if self
                         .ctrl
                         .hit_test_v_track(*p, vp_w, vp_h, v_tw)
-                        && let Some((_x, y, _w, _h)) = self
-                            .ctrl
-                            .v_thumb_rect
-                            .get()
+                        && let Some((_x, y, _w, _h)) = self.ctrl.v_thumb_rect.get()
                     {
                         let page = vp_h * KEYBOARD_PAGE_FRACTION;
-                        let vy = if p.y < y { page * vel_scale } else { -page * vel_scale };
+                        let vy = if p.y < y {
+                            page * vel_scale
+                        } else {
+                            -page * vel_scale
+                        };
                         self.ctrl
                             .pointer_velocity
                             .set(Vec2d { x: 0.0, y: vy });
-                        self.ctrl
-                            .cancel_fling();
+                        self.ctrl.cancel_fling();
                         self.ctrl
                             .drag_mode
                             .set(DragMode::None);
                         self.ctrl
                             .last_pointer_pos
                             .set(Some(*p));
-                        self.ctrl
-                            .begin_scroll();
+                        self.ctrl.begin_scroll();
                         aimer_events::window::request_animation_frame();
                         return true;
                     }
                     if self
                         .ctrl
                         .hit_test_h_track(*p, vp_w, vp_h, h_tw)
-                        && let Some((x, _y, _w, _h)) = self
-                            .ctrl
-                            .h_thumb_rect
-                            .get()
+                        && let Some((x, _y, _w, _h)) = self.ctrl.h_thumb_rect.get()
                     {
                         let page = vp_w * KEYBOARD_PAGE_FRACTION;
-                        let vx = if p.x < x { page * vel_scale } else { -page * vel_scale };
+                        let vx = if p.x < x {
+                            page * vel_scale
+                        } else {
+                            -page * vel_scale
+                        };
                         self.ctrl
                             .pointer_velocity
                             .set(Vec2d { x: vx, y: 0.0 });
-                        self.ctrl
-                            .cancel_fling();
+                        self.ctrl.cancel_fling();
                         self.ctrl
                             .drag_mode
                             .set(DragMode::None);
                         self.ctrl
                             .last_pointer_pos
                             .set(Some(*p));
-                        self.ctrl
-                            .begin_scroll();
+                        self.ctrl.begin_scroll();
                         aimer_events::window::request_animation_frame();
                         return true;
                     }
@@ -519,15 +487,12 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     .vel_sample_time
                     .set(None);
                 // A fresh touch/click stops the in-flight release fling.
-                self.ctrl
-                    .cancel_fling();
+                self.ctrl.cancel_fling();
                 self.ctrl
                     .momentum_start_time
                     .set(None);
 
-                self.ctrl
-                    .drag_mode
-                    .set(mode);
+                self.ctrl.drag_mode.set(mode);
                 self.ctrl
                     .last_pointer_pos
                     .set(Some(*p));
@@ -551,10 +516,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     return false;
                 }
 
-                let mut mode = self
-                    .ctrl
-                    .drag_mode
-                    .get();
+                let mut mode = self.ctrl.drag_mode.get();
                 #[allow(clippy::collapsible_if)]
                 if mode == DragMode::Pending {
                     if self
@@ -578,16 +540,13 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     // The content (or a scrollbar thumb) is actively being dragged
                     // — the start of a scroll session. Edge-triggered, so repeated
                     // moves within the same drag don't re-fire.
-                    self.ctrl
-                        .begin_scroll();
+                    self.ctrl.begin_scroll();
                     if let Some(last) = self
                         .ctrl
                         .last_pointer_pos
                         .get()
                     {
-                        let speed_multiplier = self
-                            .ctrl
-                            .speed_multiplier;
+                        let speed_multiplier = self.ctrl.speed_multiplier;
                         let delta = pointer_drag_delta(
                             last,
                             *p,
@@ -607,8 +566,14 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         {
                             let mut new_velocity = match mode {
                                 DragMode::Content => match self.ctrl.axis {
-                                    ScrollAxis::Vertical => Vec2d { x: 0.0, y: raw_velocity.y },
-                                    ScrollAxis::Horizontal => Vec2d { x: raw_velocity.x, y: 0.0 },
+                                    ScrollAxis::Vertical => Vec2d {
+                                        x: 0.0,
+                                        y: raw_velocity.y,
+                                    },
+                                    ScrollAxis::Horizontal => Vec2d {
+                                        x: raw_velocity.x,
+                                        y: 0.0,
+                                    },
                                 },
                                 _ => Vec2d { x: 0.0, y: 0.0 },
                             };
@@ -648,13 +613,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                                 .set(new_velocity);
                         }
 
-                        let mut offset = self
-                            .ctrl
-                            .scroll_offset
-                            .get();
-                        let clamped = self
-                            .ctrl
-                            .clamp_offset(offset);
+                        let mut offset = self.ctrl.scroll_offset.get();
+                        let clamped = self.ctrl.clamp_offset(offset);
 
                         match mode {
                             DragMode::Content => {
@@ -703,9 +663,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             .scroll_behavior
                             .bouncy
                         {
-                            offset = self
-                                .ctrl
-                                .clamp_offset(offset);
+                            offset = self.ctrl.clamp_offset(offset);
                         }
                         self.ctrl
                             .scroll_offset
@@ -719,14 +677,15 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 }
                 false
             }
-            ElementEvent::KeyInput { key, action: KeyAction::Pressed, .. } => {
+            ElementEvent::KeyInput {
+                key,
+                action: KeyAction::Pressed,
+                ..
+            } => {
                 if child_consumed {
                     return true;
                 }
-                let scale = self
-                    .ctrl
-                    .last_scale
-                    .get();
+                let scale = self.ctrl.last_scale.get();
                 let (vp_w, vp_h) = self
                     .ctrl
                     .cached_viewport
@@ -744,23 +703,20 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     }
                     (ScrollAxis::Vertical, NamedKey::Home) => {
                         // Scroll to top: offset.y should be 0 (min_scroll).
-                        let off = self
-                            .ctrl
-                            .scroll_offset
-                            .get();
+                        let off = self.ctrl.scroll_offset.get();
                         Some(Vec2d { x: 0.0, y: -off.y })
                     }
                     (ScrollAxis::Vertical, NamedKey::End) => {
                         // Scroll to bottom: offset.y should be -max_scroll.y.
-                        let off = self
-                            .ctrl
-                            .scroll_offset
-                            .get();
+                        let off = self.ctrl.scroll_offset.get();
                         let max = self
                             .ctrl
                             .cached_max_scroll
                             .get();
-                        Some(Vec2d { x: 0.0, y: -max.y - off.y })
+                        Some(Vec2d {
+                            x: 0.0,
+                            y: -max.y - off.y,
+                        })
                     }
                     (ScrollAxis::Horizontal, NamedKey::ArrowLeft) => {
                         Some(Vec2d { x: line, y: 0.0 })
@@ -773,31 +729,25 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         Some(Vec2d { x: -page_h, y: 0.0 })
                     }
                     (ScrollAxis::Horizontal, NamedKey::Home) => {
-                        let off = self
-                            .ctrl
-                            .scroll_offset
-                            .get();
+                        let off = self.ctrl.scroll_offset.get();
                         Some(Vec2d { x: -off.x, y: 0.0 })
                     }
                     (ScrollAxis::Horizontal, NamedKey::End) => {
-                        let off = self
-                            .ctrl
-                            .scroll_offset
-                            .get();
+                        let off = self.ctrl.scroll_offset.get();
                         let max = self
                             .ctrl
                             .cached_max_scroll
                             .get();
-                        Some(Vec2d { x: -max.x - off.x, y: 0.0 })
+                        Some(Vec2d {
+                            x: -max.x - off.x,
+                            y: 0.0,
+                        })
                     }
                     _ => None,
                 };
 
                 if let Some(delta) = scroll {
-                    let mut offset = self
-                        .ctrl
-                        .scroll_offset
-                        .get();
+                    let mut offset = self.ctrl.scroll_offset.get();
                     offset.x += delta.x;
                     offset.y += delta.y;
                     if !self
@@ -805,9 +755,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         .scroll_behavior
                         .bouncy
                     {
-                        offset = self
-                            .ctrl
-                            .clamp_offset(offset);
+                        offset = self.ctrl.clamp_offset(offset);
                     }
                     self.ctrl
                         .scroll_offset
@@ -817,13 +765,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         .set(Vec2d { x: 0.0, y: 0.0 });
                     self.ctrl
                         .clear_velocity_history();
-                    self.ctrl
-                        .cancel_fling();
+                    self.ctrl.cancel_fling();
                     // A keyboard scroll is a discrete, self-contained session: it
                     // moves the offset with no residual momentum, so the draw loop
                     // reports it settled (and fires `end`) on the next frame.
-                    self.ctrl
-                        .begin_scroll();
+                    self.ctrl.begin_scroll();
                     aimer_events::window::request_animation_frame();
                     true
                 } else {
@@ -878,26 +824,15 @@ impl<E: Element> LayoutElement for RawScrollableContainer<E> {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         match self.ctrl.axis {
             ScrollAxis::Vertical => ResolvedSize {
-                width: ctx
-                    .box_constraint
-                    .max_width,
-                height: ctx
-                    .box_constraint
-                    .max_height,
+                width: ctx.box_constraint.max_width,
+                height: ctx.box_constraint.max_height,
             },
             ScrollAxis::Horizontal => ResolvedSize {
-                width: ctx
-                    .box_constraint
-                    .max_width,
+                width: ctx.box_constraint.max_width,
                 height: self
                     .content_size(ctx)
                     .height
-                    .clamp(
-                        ctx.box_constraint
-                            .min_height,
-                        ctx.box_constraint
-                            .max_height,
-                    ),
+                    .clamp(ctx.box_constraint.min_height, ctx.box_constraint.max_height),
             },
         }
     }
@@ -1008,8 +943,12 @@ mod tests {
 
     #[test]
     fn winning_move_establishes_scroll_origin_without_changing_offset() {
-        let delta =
-            pointer_drag_delta(Vec2d { x: 20.0, y: 110.0 }, Vec2d { x: 20.0, y: 150.0 }, 1.0, true);
+        let delta = pointer_drag_delta(
+            Vec2d { x: 20.0, y: 110.0 },
+            Vec2d { x: 20.0, y: 150.0 },
+            1.0,
+            true,
+        );
 
         assert_eq!(delta.x, 0.0);
         assert_eq!(delta.y, 0.0);

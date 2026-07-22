@@ -209,9 +209,7 @@ struct StateScopeGuard {
 
 impl Drop for StateScopeGuard {
     fn drop(&mut self) {
-        let mut states = self
-            .states
-            .borrow_mut();
+        let mut states = self.states.borrow_mut();
         if let Some(previous) = self.previous.take() {
             states.insert(self.type_id, previous);
         } else {
@@ -281,9 +279,7 @@ impl<'a> BuildContext<'a> {
             .borrow_mut()
             .insert(type_id, Rc::new(state));
         let _guard = StateScopeGuard {
-            states: self
-                .inherited_states
-                .clone(),
+            states: self.inherited_states.clone(),
             type_id,
             previous,
         };

@@ -23,15 +23,10 @@ pub struct RawTextWidget {
 
 impl RawTextWidget {
     fn font_size(&self, scale: f32) -> f32 {
-        let base = if self
-            .text_style
-            .font_size
-            == 0
-        {
+        let base = if self.text_style.font_size == 0 {
             14.0
         } else {
-            self.text_style
-                .font_size as f32
+            self.text_style.font_size as f32
         };
         base * scale
     }
@@ -51,8 +46,14 @@ impl Drawable for RawTextWidget {
                 let end_y = start_y + size.height;
 
                 let scale = ctx.scale;
-                let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
-                let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
+                let l_start = Vec2d {
+                    x: start_x / scale,
+                    y: start_y / scale,
+                };
+                let l_end = Vec2d {
+                    x: end_x / scale,
+                    y: end_y / scale,
+                };
                 let cp = ctx.cursor_pos;
                 if cp.x >= l_start.x
                     && cp.x <= l_end.x
@@ -65,17 +66,9 @@ impl Drawable for RawTextWidget {
             }
         }
         let font_size = self.font_size(ctx.scale);
-        let width = ctx
-            .parent_size
-            .width;
-        let height = ctx
-            .parent_size
-            .height;
-        let max_width = if matches!(
-            self.text_style
-                .text_overflow,
-            TextOverflow::Wrap
-        ) {
+        let width = ctx.parent_size.width;
+        let height = ctx.parent_size.height;
+        let max_width = if matches!(self.text_style.text_overflow, TextOverflow::Wrap) {
             width
         } else {
             0.0
@@ -86,10 +79,8 @@ impl Drawable for RawTextWidget {
                 &self.text,
                 font_size,
                 max_width,
-                self.text_style
-                    .font_family,
-                self.text_style
-                    .font_style,
+                self.text_style.font_family,
+                self.text_style.font_style,
                 self.text_style
                     .font_weight
                     .numeric(),
@@ -114,9 +105,7 @@ impl Drawable for RawTextWidget {
             TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => height - descent,
         };
 
-        let color = self
-            .text_style
-            .color;
+        let color = self.text_style.color;
         let font_weight = self
             .text_style
             .font_weight
@@ -130,19 +119,13 @@ impl Drawable for RawTextWidget {
             .line
             .contains(TextDecorationLine::ITALIC);
         if is_italic {
-            ctx.canvas
-                .set_italic(true);
+            ctx.canvas.set_italic(true);
         }
 
-        match self
-            .text_style
-            .text_overflow
-        {
+        match self.text_style.text_overflow {
             TextOverflow::Clip => {
                 ctx.canvas.save();
-                let width = ctx
-                    .parent_size
-                    .width;
+                let width = ctx.parent_size.width;
                 ctx.canvas
                     .set_clip((0.0, 0.0).into(), ResolvedSize { width, height });
                 ctx.canvas
@@ -152,14 +135,11 @@ impl Drawable for RawTextWidget {
                         font_size,
                         color,
                         width,
-                        self.text_style
-                            .font_family,
-                        self.text_style
-                            .font_style,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
                         font_weight,
                     );
-                ctx.canvas
-                    .clear_clip();
+                ctx.canvas.clear_clip();
                 ctx.canvas.restore();
             }
             TextOverflow::Ellipsis => {
@@ -172,10 +152,8 @@ impl Drawable for RawTextWidget {
                         width,
                         height,
                         TextOverflowMode::Ellipsis,
-                        self.text_style
-                            .font_family,
-                        self.text_style
-                            .font_style,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
                         font_weight,
                     );
             }
@@ -187,41 +165,32 @@ impl Drawable for RawTextWidget {
                         font_size,
                         color,
                         width,
-                        self.text_style
-                            .font_family,
-                        self.text_style
-                            .font_style,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
                         font_weight,
                     );
             }
             _ => {
-                ctx.canvas
-                    .draw_text_styled(
-                        &self.text,
-                        (x, y).into(),
-                        font_size,
-                        color,
-                        self.text_style
-                            .font_family,
-                        self.text_style
-                            .font_style,
-                        font_weight,
-                    );
+                ctx.canvas.draw_text_styled(
+                    &self.text,
+                    (x, y).into(),
+                    font_size,
+                    color,
+                    self.text_style.font_family,
+                    self.text_style.font_style,
+                    font_weight,
+                );
             }
         }
 
         if is_italic {
-            ctx.canvas
-                .set_italic(false);
+            ctx.canvas.set_italic(false);
         }
 
         let decoration = self
             .text_style
             .text_decoration;
-        if !decoration
-            .line
-            .is_none()
-        {
+        if !decoration.line.is_none() {
             let scale = ctx.scale;
             // Dedicated decoration color, else inherit the text color.
             let deco_color = decoration
@@ -233,9 +202,7 @@ impl Drawable for RawTextWidget {
                 .map(|t| t * scale)
                 .unwrap_or((font_size * 0.06).max(1.0));
             let offset = decoration.offset * scale;
-            let style_id = decoration
-                .style
-                .id();
+            let style_id = decoration.style.id();
 
             // The band must be tall enough to hold the styled stroke: wavy needs
             // room for its amplitude, double needs room for two strokes + gap.
@@ -252,7 +219,10 @@ impl Drawable for RawTextWidget {
                 ctx.canvas
                     .draw_text_decoration(
                         (x, band_top).into(),
-                        ResolvedSize { width: text_width, height: band_height },
+                        ResolvedSize {
+                            width: text_width,
+                            height: band_height,
+                        },
                         deco_color,
                         style_id,
                         thickness,
@@ -300,21 +270,12 @@ impl LayoutElement for RawTextWidget {
 
         let font_size = self.font_size(ctx.scale);
 
-        let result = match self
-            .text_style
-            .text_overflow
-        {
+        let result = match self.text_style.text_overflow {
             TextOverflow::Wrap => {
-                let width = if ctx
-                    .box_constraint
-                    .max_width
-                    > 0.0
-                {
-                    ctx.box_constraint
-                        .max_width
+                let width = if ctx.box_constraint.max_width > 0.0 {
+                    ctx.box_constraint.max_width
                 } else {
-                    ctx.parent_size
-                        .width
+                    ctx.parent_size.width
                 };
                 let metrics = ctx
                     .canvas
@@ -322,10 +283,8 @@ impl LayoutElement for RawTextWidget {
                         &self.text,
                         font_size,
                         width,
-                        self.text_style
-                            .font_family,
-                        self.text_style
-                            .font_style,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
                         self.text_style
                             .font_weight
                             .numeric(),
@@ -333,9 +292,7 @@ impl LayoutElement for RawTextWidget {
 
                 ResolvedSize {
                     width,
-                    height: metrics
-                        .height
-                        .ceil(),
+                    height: metrics.height.ceil(),
                 }
             }
             _ => {
@@ -345,19 +302,15 @@ impl LayoutElement for RawTextWidget {
                         &self.text,
                         font_size,
                         0.0,
-                        self.text_style
-                            .font_family,
-                        self.text_style
-                            .font_style,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
                         self.text_style
                             .font_weight
                             .numeric(),
                     );
                 ResolvedSize {
                     width: metrics.width.ceil(),
-                    height: metrics
-                        .height
-                        .ceil(),
+                    height: metrics.height.ceil(),
                 }
             }
         };
@@ -367,7 +320,6 @@ impl LayoutElement for RawTextWidget {
         result
     }
     fn invalidate_layout(&self) {
-        self.cache
-            .invalidate();
+        self.cache.invalidate();
     }
 }

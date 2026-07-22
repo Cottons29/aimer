@@ -116,7 +116,12 @@ impl Div<f32> for Bounds {
 
 impl Bounds {
     pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 }
 impl Default for Bounds {
@@ -140,17 +145,19 @@ pub struct CacheBounds {
 impl CacheBounds {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        Self { bound: Cell::new(None) }
+        Self {
+            bound: Cell::new(None),
+        }
     }
 
     pub const fn with_vec2d(vec2d: Vec2d) -> Self {
-        Self { bound: Cell::new(Some(Bounds::new(vec2d.x, vec2d.y, 0.0, 0.0))) }
+        Self {
+            bound: Cell::new(Some(Bounds::new(vec2d.x, vec2d.y, 0.0, 0.0))),
+        }
     }
 
     pub fn is_cached(&self) -> bool {
-        self.bound
-            .get()
-            .is_some()
+        self.bound.get().is_some()
     }
 
     pub fn get_bounds(&self) -> Option<Bounds> {
@@ -158,22 +165,26 @@ impl CacheBounds {
     }
 
     pub fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bound
-            .get()
-            .map(|b| (Vec2d { x: b.x, y: b.y }, Vec2d { x: b.x + b.width, y: b.y + b.height }))
+        self.bound.get().map(|b| {
+            (
+                Vec2d { x: b.x, y: b.y },
+                Vec2d {
+                    x: b.x + b.width,
+                    y: b.y + b.height,
+                },
+            )
+        })
     }
 
     pub fn set_bounds(&self, bounds: Bounds) {
-        self.bound
-            .set(Some(bounds));
+        self.bound.set(Some(bounds));
     }
 
     pub fn set_size(&self, size: ResolvedSize) {
         if let Some(mut bound) = self.bound.get() {
             bound.width = size.width;
             bound.height = size.height;
-            self.bound
-                .set(Some(bound));
+            self.bound.set(Some(bound));
         }
     }
 
@@ -205,10 +216,19 @@ mod cache_bounds_tests {
     #[test]
     fn save_is_visible_to_is_inside_through_shared_ref() {
         let bounds = CacheBounds::new();
-        assert!(!bounds.is_inside(50.0, 50.0), "empty bounds contain nothing");
+        assert!(
+            !bounds.is_inside(50.0, 50.0),
+            "empty bounds contain nothing"
+        );
 
         bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
-        assert!(bounds.is_inside(50.0, 40.0), "point inside must be detected after save");
-        assert!(!bounds.is_inside(200.0, 40.0), "point outside must be rejected");
+        assert!(
+            bounds.is_inside(50.0, 40.0),
+            "point inside must be detected after save"
+        );
+        assert!(
+            !bounds.is_inside(200.0, 40.0),
+            "point outside must be rejected"
+        );
     }
 }

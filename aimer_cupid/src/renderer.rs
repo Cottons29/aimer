@@ -35,7 +35,10 @@ struct AlphaState {
 
 impl AlphaState {
     fn new() -> Self {
-        Self { current: 1.0, stack: Vec::new() }
+        Self {
+            current: 1.0,
+            stack: Vec::new(),
+        }
     }
 
     fn current(&self) -> f32 {
@@ -47,8 +50,7 @@ impl AlphaState {
     }
 
     fn save(&mut self) {
-        self.stack
-            .push(self.current);
+        self.stack.push(self.current);
     }
 
     fn restore(&mut self) {
@@ -150,7 +152,11 @@ impl MultisampleTarget {
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat, width: u32, height: u32) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("cupid multisample color target"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: RENDER_SAMPLE_COUNT,
             dimension: wgpu::TextureDimension::D2,
@@ -159,7 +165,12 @@ impl MultisampleTarget {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { _texture: texture, view, width, height }
+        Self {
+            _texture: texture,
+            view,
+            width,
+            height,
+        }
     }
 
     fn bytes(&self) -> u64 {
@@ -212,9 +223,7 @@ impl Renderer {
 
         debug!(
             "Renderer initialization ready {}ms",
-            start
-                .elapsed()
-                .as_millis()
+            start.elapsed().as_millis()
         );
         renderer
     }
@@ -344,18 +353,13 @@ impl Renderer {
         is_srgb: bool,
         draw_list: &DrawList,
     ) {
-        self.transform_stack
-            .clear();
-        self.clip_stack
-            .clear();
-        self.text_requests
-            .clear();
+        self.transform_stack.clear();
+        self.clip_stack.clear();
+        self.text_requests.clear();
         self.decoration_requests
             .clear();
-        self.svg_items
-            .clear();
-        self.resolved
-            .clear();
+        self.svg_items.clear();
+        self.resolved.clear();
         self.textures_to_remove
             .clear();
 
@@ -378,15 +382,15 @@ impl Renderer {
                     current_transform = matrix.pixel_aligned();
                 }
                 DrawCommand::PopTransform => {
-                    if let Some(prev) = self
-                        .transform_stack
-                        .pop()
-                    {
+                    if let Some(prev) = self.transform_stack.pop() {
                         current_transform = prev;
                     }
                     alpha_state.restore();
                 }
-                DrawCommand::PushClip { rect, border_radius } => {
+                DrawCommand::PushClip {
+                    rect,
+                    border_radius,
+                } => {
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
                     let (p2x, p2y) = current_transform
                         .transform_point(rect.x + rect.width, rect.y + rect.height);
@@ -394,19 +398,16 @@ impl Renderer {
                         + current_transform.cols[0][1].powi(2))
                     .sqrt();
 
-                    let new_rect =
-                        Rect::new(p1x.min(p2x), p1y.min(p2y), (p2x - p1x).abs(), (p2y - p1y).abs());
+                    let new_rect = Rect::new(
+                        p1x.min(p2x),
+                        p1y.min(p2y),
+                        (p2x - p1x).abs(),
+                        (p2y - p1y).abs(),
+                    );
 
-                    let effective_clip = if let Some(parent) = self
-                        .clip_stack
-                        .last()
-                    {
-                        let x = new_rect
-                            .x
-                            .max(parent.rect.x);
-                        let y = new_rect
-                            .y
-                            .max(parent.rect.y);
+                    let effective_clip = if let Some(parent) = self.clip_stack.last() {
+                        let x = new_rect.x.max(parent.rect.x);
+                        let y = new_rect.y.max(parent.rect.y);
                         let r =
                             (new_rect.x + new_rect.width).min(parent.rect.x + parent.rect.width);
                         let b =
@@ -422,11 +423,13 @@ impl Renderer {
                     }
 
                     self.clip_stack
-                        .push(ClipState { rect: effective_clip, border_radius: scaled_br });
+                        .push(ClipState {
+                            rect: effective_clip,
+                            border_radius: scaled_br,
+                        });
                 }
                 DrawCommand::PopClip => {
-                    self.clip_stack
-                        .pop();
+                    self.clip_stack.pop();
                 }
                 DrawCommand::FillRect {
                     rect,
@@ -496,14 +499,8 @@ impl Renderer {
                                     outline_color.to_array(),
                                     alpha_state.current(),
                                 ),
-                                clip_rect: clip_to_array(
-                                    self.clip_stack
-                                        .last(),
-                                ),
-                                clip_border_radius: clip_border_radius(
-                                    self.clip_stack
-                                        .last(),
-                                ),
+                                clip_rect: clip_to_array(self.clip_stack.last()),
+                                clip_border_radius: clip_border_radius(self.clip_stack.last()),
                                 shadow_params: [0.0; 4],
                                 shadow_color: [0.0; 4],
                                 shadow_flags: [0.0; 4],
@@ -525,14 +522,8 @@ impl Renderer {
                                 border_color: [0.0; 4],
                                 outline_width: [0.0; 4],
                                 outline_color: [0.0; 4],
-                                clip_rect: clip_to_array(
-                                    self.clip_stack
-                                        .last(),
-                                ),
-                                clip_border_radius: clip_border_radius(
-                                    self.clip_stack
-                                        .last(),
-                                ),
+                                clip_rect: clip_to_array(self.clip_stack.last()),
+                                clip_border_radius: clip_border_radius(self.clip_stack.last()),
                                 shadow_params: [0.0; 4],
                                 shadow_color: [0.0; 4],
                                 shadow_flags: [0.0; 4],
@@ -552,9 +543,7 @@ impl Renderer {
                     font_weight,
                 } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
-                    let idx = self
-                        .text_requests
-                        .len();
+                    let idx = self.text_requests.len();
                     self.text_requests
                         .push(TextDrawRequest {
                             x: tx,
@@ -570,18 +559,14 @@ impl Renderer {
                             font_style: *font_style,
                             font_weight: Some(*font_weight),
                             italic: current_italic,
-                            clip_rect: clip_to_array(
-                                self.clip_stack
-                                    .last(),
-                            ),
-                            clip_border_radius: clip_border_radius(
-                                self.clip_stack
-                                    .last(),
-                            ),
+                            clip_rect: clip_to_array(self.clip_stack.last()),
+                            clip_border_radius: clip_border_radius(self.clip_stack.last()),
                             spans: Vec::new(),
                         });
                     self.resolved
-                        .push(ResolvedCmd { kind: ResolvedKind::Text(idx) });
+                        .push(ResolvedCmd {
+                            kind: ResolvedKind::Text(idx),
+                        });
                 }
                 DrawCommand::DrawRichText {
                     position,
@@ -593,9 +578,7 @@ impl Renderer {
                     overflow,
                 } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
-                    let idx = self
-                        .text_requests
-                        .len();
+                    let idx = self.text_requests.len();
                     self.text_requests
                         .push(TextDrawRequest {
                             x: tx,
@@ -615,33 +598,33 @@ impl Renderer {
                             font_style: crate::font::FontStyle::Normal,
                             font_weight: None,
                             italic: false,
-                            clip_rect: clip_to_array(
-                                self.clip_stack
-                                    .last(),
-                            ),
-                            clip_border_radius: clip_border_radius(
-                                self.clip_stack
-                                    .last(),
-                            ),
+                            clip_rect: clip_to_array(self.clip_stack.last()),
+                            clip_border_radius: clip_border_radius(self.clip_stack.last()),
                             spans: spans
                                 .iter()
                                 .map(|span| RichTextSpan {
                                     text: span.text.clone(),
                                     font_size: span.font_size,
-                                    color: span
-                                        .color
-                                        .map(|color| {
-                                            apply_alpha(color.to_array(), alpha_state.current())
-                                        }),
+                                    color: span.color.map(|color| {
+                                        apply_alpha(color.to_array(), alpha_state.current())
+                                    }),
                                     font_weight: span.font_weight,
                                     italic: span.italic,
                                 })
                                 .collect(),
                         });
                     self.resolved
-                        .push(ResolvedCmd { kind: ResolvedKind::Text(idx) });
+                        .push(ResolvedCmd {
+                            kind: ResolvedKind::Text(idx),
+                        });
                 }
-                DrawCommand::DrawTextDecoration { rect, color, style, thickness, period } => {
+                DrawCommand::DrawTextDecoration {
+                    rect,
+                    color,
+                    style,
+                    thickness,
+                    period,
+                } => {
                     // The band is authored in local coordinates; transform its
                     // top-left and scale the extents so decoration follows any
                     // active scale/translation just like the text it underlines.
@@ -654,9 +637,7 @@ impl Renderer {
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
                     let (p2x, p2y) = current_transform
                         .transform_point(rect.x + rect.width, rect.y + rect.height);
-                    let deco_idx = self
-                        .decoration_requests
-                        .len();
+                    let deco_idx = self.decoration_requests.len();
                     self.decoration_requests
                         .push(TextDecorationDraw {
                             x: p1x.min(p2x),
@@ -667,19 +648,19 @@ impl Renderer {
                             period: (*period * sx).max(1.0),
                             style: *style,
                             color: apply_alpha(color.to_array(), alpha_state.current()),
-                            clip_rect: clip_to_array(
-                                self.clip_stack
-                                    .last(),
-                            ),
-                            clip_border_radius: clip_border_radius(
-                                self.clip_stack
-                                    .last(),
-                            ),
+                            clip_rect: clip_to_array(self.clip_stack.last()),
+                            clip_border_radius: clip_border_radius(self.clip_stack.last()),
                         });
                     self.resolved
-                        .push(ResolvedCmd { kind: ResolvedKind::TextDecoration(deco_idx) });
+                        .push(ResolvedCmd {
+                            kind: ResolvedKind::TextDecoration(deco_idx),
+                        });
                 }
-                DrawCommand::Svg { scene, destination, overrides } => {
+                DrawCommand::Svg {
+                    scene,
+                    destination,
+                    overrides,
+                } => {
                     let index = self.svg_items.len();
                     self.svg_items
                         .push(resolve_svg_item(
@@ -687,12 +668,13 @@ impl Renderer {
                             *destination,
                             overrides.clone(),
                             current_transform,
-                            self.clip_stack
-                                .last(),
+                            self.clip_stack.last(),
                             alpha_state.current(),
                         ));
                     self.resolved
-                        .push(ResolvedCmd { kind: ResolvedKind::Svg(index) });
+                        .push(ResolvedCmd {
+                            kind: ResolvedKind::Svg(index),
+                        });
                 }
                 DrawCommand::SetTransform { matrix } => {
                     current_transform = matrix.pixel_aligned();
@@ -719,24 +701,28 @@ impl Renderer {
                                     size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
                                     uv_offset: [0.0, 0.0],
                                     uv_scale: [1.0, 1.0],
-                                    clip_rect: clip_to_array(
-                                        self.clip_stack
-                                            .last(),
-                                    ),
-                                    clip_border_radius: clip_border_radius(
-                                        self.clip_stack
-                                            .last(),
-                                    ),
+                                    clip_rect: clip_to_array(self.clip_stack.last()),
+                                    clip_border_radius: clip_border_radius(self.clip_stack.last()),
                                     alpha: alpha_state.current(),
                                 },
                             },
                         });
                 }
-                DrawCommand::LoadImage { bytes, texture_id, width, height } => {
+                DrawCommand::LoadImage {
+                    bytes,
+                    texture_id,
+                    width,
+                    height,
+                } => {
                     self.image_pipeline
                         .upload_if_absent(device, queue, *texture_id, *width, *height, bytes);
                 }
-                DrawCommand::LoadImageWithId { texture_id, bytes, width, height } => {
+                DrawCommand::LoadImageWithId {
+                    texture_id,
+                    bytes,
+                    width,
+                    height,
+                } => {
                     self.image_pipeline
                         .upload_image_with_id(device, queue, *texture_id, *width, *height, bytes);
                 }
@@ -793,14 +779,8 @@ impl Renderer {
                                 border_color: [0.0; 4],
                                 outline_width: [0.0; 4],
                                 outline_color: [0.0; 4],
-                                clip_rect: clip_to_array(
-                                    self.clip_stack
-                                        .last(),
-                                ),
-                                clip_border_radius: clip_border_radius(
-                                    self.clip_stack
-                                        .last(),
-                                ),
+                                clip_rect: clip_to_array(self.clip_stack.last()),
+                                clip_border_radius: clip_border_radius(self.clip_stack.last()),
                                 shadow_params: scaled_params,
                                 shadow_color: apply_alpha(
                                     shadow_color.to_array(),
@@ -815,7 +795,10 @@ impl Renderer {
                             }),
                         });
                 }
-                DrawCommand::Custom { pipeline_name, data: _ } => {
+                DrawCommand::Custom {
+                    pipeline_name,
+                    data: _,
+                } => {
                     if let Some(idx) = self
                         .custom_pipelines
                         .iter()
@@ -823,7 +806,9 @@ impl Renderer {
                     {
                         self.resolved
                             .push(ResolvedCmd {
-                                kind: ResolvedKind::Custom { pipeline_index: idx },
+                                kind: ResolvedKind::Custom {
+                                    pipeline_index: idx,
+                                },
                             });
                     }
                 }
@@ -842,34 +827,27 @@ impl Renderer {
                 sample_count: RENDER_SAMPLE_COUNT,
             };
             for slot in &mut self.custom_pipelines {
-                if slot
-                    .pipeline
-                    .has_work()
-                {
+                if slot.pipeline.has_work() {
                     slot.pipeline
                         .prepare(&render_ctx);
                 }
             }
         }
 
-        if !self
-            .text_requests
-            .is_empty()
+        if !self.text_requests.is_empty()
             || !self
                 .decoration_requests
                 .is_empty()
         {
-            time_cost!("TextRenderRequest", || self
-                .text_pipeline
-                .prepare(
-                    device,
-                    queue,
-                    width,
-                    height,
-                    is_srgb,
-                    &self.text_requests,
-                    &self.decoration_requests
-                ))
+            time_cost!("TextRenderRequest", || self.text_pipeline.prepare(
+                device,
+                queue,
+                width,
+                height,
+                is_srgb,
+                &self.text_requests,
+                &self.decoration_requests
+            ))
         }
 
         self.svg_pipeline
@@ -943,17 +921,21 @@ impl Renderer {
                                 .draw_batch(device, queue, &mut pass, tid, &image_batch);
                             image_batch.clear();
                         }
-                        self.rect_pipeline
-                            .push(*inst);
+                        self.rect_pipeline.push(*inst);
                     }
-                    ResolvedKind::Image { texture_id, instance } => {
+                    ResolvedKind::Image {
+                        texture_id,
+                        instance,
+                    } => {
                         // Flush any pending rects before switching to images
                         self.rect_pipeline
                             .flush(device, queue, &mut pass, width, height, is_srgb);
 
                         if current_texture_id.is_some() && current_texture_id != Some(*texture_id) {
                             // Flush current image batch for previous texture
-                            let Some(tid) = current_texture_id.take() else { continue };
+                            let Some(tid) = current_texture_id.take() else {
+                                continue;
+                            };
                             if !image_batch.is_empty() {
                                 self.image_pipeline
                                     .draw_batch(device, queue, &mut pass, tid, &image_batch);
@@ -1083,7 +1065,10 @@ mod tests {
 
     #[test]
     fn apply_alpha_multiplies_existing_color_opacity() {
-        assert_eq!(apply_alpha([0.1, 0.2, 0.3, 0.8], 0.25), [0.1, 0.2, 0.3, 0.2]);
+        assert_eq!(
+            apply_alpha([0.1, 0.2, 0.3, 0.8], 0.25),
+            [0.1, 0.2, 0.3, 0.2]
+        );
     }
 
     #[test]
@@ -1106,14 +1091,20 @@ mod tests {
     #[test]
     fn svg_item_captures_transform_clip_alpha_and_destination() {
         let scene = Arc::new(SvgScene {
-            viewport: SvgViewport { width: 24.0, height: 12.0 },
+            viewport: SvgViewport {
+                width: 24.0,
+                height: 12.0,
+            },
             nodes: Arc::from([]),
             geometries: Arc::from([]),
         });
         let transform = Mat3::translate(10.4, 20.6)
             .mul(&Mat3::scale(2.0, 3.0))
             .pixel_aligned();
-        let clip = ClipState { rect: Rect::new(4.0, 5.0, 30.0, 40.0), border_radius: [3.0; 4] };
+        let clip = ClipState {
+            rect: Rect::new(4.0, 5.0, 30.0, 40.0),
+            border_radius: [3.0; 4],
+        };
         let destination = Rect::new(1.0, 2.0, 48.0, 24.0);
 
         let item = resolve_svg_item(
@@ -1130,18 +1121,12 @@ mod tests {
             [
                 item.destination.x,
                 item.destination.y,
-                item.destination
-                    .width,
-                item.destination
-                    .height
+                item.destination.width,
+                item.destination.height
             ],
             [1.0, 2.0, 48.0, 24.0]
         );
-        assert_eq!(
-            item.world_transform
-                .cols,
-            transform.cols
-        );
+        assert_eq!(item.world_transform.cols, transform.cols);
         assert_eq!(item.clip_rect, [4.0, 5.0, 30.0, 40.0]);
         assert_eq!(item.clip_border_radius, [3.0; 4]);
         assert_eq!(item.opacity, 0.4);

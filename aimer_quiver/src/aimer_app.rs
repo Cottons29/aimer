@@ -180,7 +180,10 @@ pub struct HeadlessOptions {
 
 impl Default for HeadlessOptions {
     fn default() -> Self {
-        Self { size: PhysicalSize::new(1150, 800), scale_factor: 1.0 }
+        Self {
+            size: PhysicalSize::new(1150, 800),
+            scale_factor: 1.0,
+        }
     }
 }
 
@@ -249,11 +252,11 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             return;
         }
 
-        let scale_factor = self
-            .app
-            .window_scale;
-        let frame_size =
-            ResolvedSize { width: self.size.width as f32, height: self.size.height as f32 };
+        let scale_factor = self.app.window_scale;
+        let frame_size = ResolvedSize {
+            width: self.size.width as f32,
+            height: self.size.height as f32,
+        };
         let canvas = aimer_canvas::Canvas::new(&self.canvas);
         canvas.begin_frame();
         let ctx = BuildContext {
@@ -279,22 +282,15 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             inherited_states: Default::default(),
         };
 
-        if self
-            .app
-            .widget_root
-            .is_none()
-            && let Some(widget) = self
-                .app
-                .pending_widget
-                .take()
+        if self.app.widget_root.is_none()
+            && let Some(widget) = self.app.pending_widget.take()
         {
             self.app.widget_root = Some(widget.to_element(&ctx));
         }
         if let Some(root) = &self.app.widget_root {
             root.draw(&ctx);
         }
-        self.app
-            .pending_resize = None;
+        self.app.pending_resize = None;
     }
 
     /// Delivers a `winit` window event to the headless application.
@@ -302,23 +298,13 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         if let WindowEvent::Resized(size) = &event {
             self.size = *size;
             self.window
-                .update_headless_metrics(
-                    self.size,
-                    self.app
-                        .window_scale,
-                );
+                .update_headless_metrics(self.size, self.app.window_scale);
         }
         let action = WindowEventHandler::handle_headless_event(&mut self.app, event);
         self.window
-            .update_headless_metrics(
-                self.size,
-                self.app
-                    .window_scale,
-            );
+            .update_headless_metrics(self.size, self.app.window_scale);
         match action {
-            HeadlessEventAction::None => self
-                .window
-                .request_redraw(),
+            HeadlessEventAction::None => self.window.request_redraw(),
             HeadlessEventAction::Render => self.render_frame(),
             HeadlessEventAction::Exit => self.exit_requested = true,
         }
@@ -328,8 +314,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     /// loop.
     pub fn send_user_event(&mut self, event: AimerCustomAppEvent) {
         crate::handler::user_events::handle_user_event(&mut self.app, event);
-        self.window
-            .request_redraw();
+        self.window.request_redraw();
     }
 
     pub fn physical_size(&self) -> PhysicalSize<u32> {
@@ -338,26 +323,17 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 
     pub fn logical_size(&self) -> ResolvedSize {
         ResolvedSize {
-            width: self.size.width as f32
-                / self
-                    .app
-                    .window_scale as f32,
-            height: self.size.height as f32
-                / self
-                    .app
-                    .window_scale as f32,
+            width: self.size.width as f32 / self.app.window_scale as f32,
+            height: self.size.height as f32 / self.app.window_scale as f32,
         }
     }
 
     pub fn scale_factor(&self) -> f64 {
-        self.app
-            .window_scale
+        self.app.window_scale
     }
 
     pub fn has_native_window(&self) -> bool {
-        self.app
-            .window
-            .is_some()
+        self.app.window.is_some()
     }
 
     pub fn is_exit_requested(&self) -> bool {
@@ -536,7 +512,9 @@ mod tests {
         fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
             self.builds
                 .fetch_add(1, Ordering::SeqCst);
-            Box::new(RecordingElement { cancels: self.cancels.clone() })
+            Box::new(RecordingElement {
+                cancels: self.cancels.clone(),
+            })
         }
     }
 
@@ -576,15 +554,27 @@ mod tests {
 
         assert_eq!(builds.load(Ordering::SeqCst), 1);
         assert!(!app.has_native_window());
-        assert_eq!(app.logical_size(), ResolvedSize { width: 1150.0, height: 800.0 });
+        assert_eq!(
+            app.logical_size(),
+            ResolvedSize {
+                width: 1150.0,
+                height: 800.0
+            }
+        );
     }
 
     #[test]
     fn headless_window_events_update_metrics_and_reach_widgets() {
         let cancels = Arc::new(AtomicUsize::new(0));
         let mut app = AimerApp::start_headless_with(
-            RecordingWidget { builds: Arc::new(AtomicUsize::new(0)), cancels: cancels.clone() },
-            HeadlessOptions { size: PhysicalSize::new(640, 480), scale_factor: 2.0 },
+            RecordingWidget {
+                builds: Arc::new(AtomicUsize::new(0)),
+                cancels: cancels.clone(),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(640, 480),
+                scale_factor: 2.0,
+            },
         );
         app.render_frame();
 
@@ -594,7 +584,13 @@ mod tests {
 
         assert_eq!(cancels.load(Ordering::SeqCst), 1);
         assert_eq!(app.physical_size(), PhysicalSize::new(800, 600));
-        assert_eq!(app.logical_size(), ResolvedSize { width: 400.0, height: 300.0 });
+        assert_eq!(
+            app.logical_size(),
+            ResolvedSize {
+                width: 400.0,
+                height: 300.0
+            }
+        );
     }
 
     #[test]
@@ -656,11 +652,20 @@ mod tests {
                 builds: Arc::new(AtomicUsize::new(0)),
                 cancels: Arc::new(AtomicUsize::new(0)),
             },
-            HeadlessOptions { size: PhysicalSize::new(320, 240), scale_factor: 0.0 },
+            HeadlessOptions {
+                size: PhysicalSize::new(320, 240),
+                scale_factor: 0.0,
+            },
         );
 
         assert_eq!(app.scale_factor(), 1.0);
-        assert_eq!(app.logical_size(), ResolvedSize { width: 320.0, height: 240.0 });
+        assert_eq!(
+            app.logical_size(),
+            ResolvedSize {
+                width: 320.0,
+                height: 240.0
+            }
+        );
     }
 
     struct RedrawWidget;
@@ -675,8 +680,7 @@ mod tests {
 
     impl Drawable for RedrawElement {
         fn draw(&self, ctx: &BuildContext) {
-            ctx.window
-                .request_redraw();
+            ctx.window.request_redraw();
         }
     }
     impl LayoutElement for RedrawElement {}

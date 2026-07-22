@@ -109,16 +109,7 @@ fn highlight_source_line(source_line: &str, column: u32) -> Option<String> {
         return None;
     }
 
-    Some(
-        prefix
-            + &iter::repeat_n(
-                '^',
-                expression
-                    .chars()
-                    .count(),
-            )
-            .collect::<String>(),
-    )
+    Some(prefix + &iter::repeat_n('^', expression.chars().count()).collect::<String>())
 }
 
 #[cfg(test)]
@@ -135,7 +126,10 @@ mod tests {
         let location = caller_location();
 
         assert!(location.contains(file!()), "{location}");
-        assert!(location.contains("let location = caller_location();"), "{location}");
+        assert!(
+            location.contains("let location = caller_location();"),
+            "{location}"
+        );
         assert!(location.contains("^^^^^^^^^^^^^^^^^"), "{location}");
     }
 

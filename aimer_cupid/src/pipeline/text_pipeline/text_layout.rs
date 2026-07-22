@@ -25,7 +25,12 @@ impl FontMetrics {
     }
 
     pub fn new(ascent: f32, descent: f32, line_gap: f32) -> Self {
-        Self { ascent, descent, line_gap, line_height: ascent - descent + line_gap }
+        Self {
+            ascent,
+            descent,
+            line_gap,
+            line_height: ascent - descent + line_gap,
+        }
     }
 }
 
@@ -41,7 +46,14 @@ pub struct TextLayoutOptions {
 
 impl TextLayoutOptions {
     pub fn new(font_size: f32, origin_x: f32, origin_y: f32, max_width: f32) -> Self {
-        Self { origin_x, origin_y, max_width, max_height: 0.0, font_size, ellipsis: false }
+        Self {
+            origin_x,
+            origin_y,
+            max_width,
+            max_height: 0.0,
+            font_size,
+            ellipsis: false,
+        }
     }
 }
 
@@ -187,25 +199,23 @@ fn collect_shaping_runs<'a>(
         let merge = result
             .last()
             .is_some_and(|last| {
-                last.level == level
-                    && cluster != "\n"
-                    && !last
-                        .text
-                        .ends_with('\n')
+                last.level == level && cluster != "\n" && !last.text.ends_with('\n')
             });
 
         if merge {
             // Extend the last run to include this cluster.  Because both slices
             // are sub-slices of `text` we can reconstruct a single slice from
             // the original pointer.
-            let last = result
-                .last_mut()
-                .unwrap();
+            let last = result.last_mut().unwrap();
             let new_end = cluster_start + cluster.len();
             // Safety: both are valid sub-slices of the same UTF-8 `text`.
             last.text = &text[last.start..new_end];
         } else {
-            result.push(ShapingRun { text: cluster, start: cluster_start, level });
+            result.push(ShapingRun {
+                text: cluster,
+                start: cluster_start,
+                level,
+            });
         }
     }
     result
@@ -222,9 +232,7 @@ where
     F: FnMut(&str, usize) -> Vec<PositionedShapedGlyph>,
 {
     let bidi = BidiInfo::new(text, None);
-    let paragraph = bidi
-        .paragraphs
-        .first();
+    let paragraph = bidi.paragraphs.first();
     // `visual_runs` returns (Vec<Level>, Vec<Range<usize>>); we zip them into
     // (Range, Level) pairs for use in `collect_shaping_runs`.
     let visual_run_ranges: Vec<(std::ops::Range<usize>, unicode_bidi::Level)> = paragraph
@@ -257,12 +265,8 @@ where
     let mut line_start_glyph = 0;
     let mut line_width = 0.0;
     let mut baseline = options.origin_y;
-    let max_width = options
-        .max_width
-        .max(0.0);
-    let max_height = options
-        .max_height
-        .max(0.0);
+    let max_width = options.max_width.max(0.0);
+    let max_height = options.max_height.max(0.0);
 
     // Use a queue so remainder runs from word-wrapping are re-evaluated for
     // overflow on subsequent lines.  A plain `for` loop would emit the
@@ -414,7 +418,11 @@ where
                     glyphs.push(glyph);
                 }
                 // For word breaks the text_range must include the space byte.
-                let text_end = if is_word_break { break_point + 1 } else { break_point };
+                let text_end = if is_word_break {
+                    break_point + 1
+                } else {
+                    break_point
+                };
                 runs.push(TextRun {
                     text_range: run_start..text_end,
                     level,
@@ -663,10 +671,7 @@ fn apply_ellipsis(
     if let Some(line) = lines.last_mut() {
         let ellipsis_width = options.font_size * 0.5;
         while line.width + ellipsis_width > options.max_width
-            && line.glyph_range.end
-                > line
-                    .glyph_range
-                    .start
+            && line.glyph_range.end > line.glyph_range.start
         {
             if let Some(glyph) = glyphs.pop() {
                 line.glyph_range.end -= 1;
@@ -720,52 +725,105 @@ pub fn shape_text_styled(
     });
     let line_height = ascent - _descent + line_gap;
 
-    let clusters = time_cost!("text_layout::LayoutText - text.graphemes", { text.graphemes(true) });
-    let chars: Vec<&str> = clusters
-        .into_iter()
-        .collect();
-
-    let clusters = time_cost!("text_layout::LayoutText - text.graphemes loops", {
-        chars
-            .into_iter()
-            .filter_map(|cluster| {
-                if cluster == "\n" {
-                    return Some(ShapedCluster {
-                        text: cluster.to_string(),
-                        base_codepoint: '\n',
-                        glyphs: Vec::new(),
-                        width: 0.0,
-                    });
-                }
-
-                // Shape each grapheme cluster once.  The resulting advances and
-                // glyph keys are independent from wrapping width, so resize can
-                // reuse them and only recompute positions.
-                let glyphs = rasterizer.shape_cluster_for_family(
-                    cluster,
-                    font_size,
-                    font_family,
-                    font_weight,
-                    font_style,
-                );
-                if glyphs.is_empty() {
-                    return None;
-                }
-
-                let width = glyphs
-                    .iter()
-                    .map(|(_, adv, _, _)| adv)
-                    .sum();
-                let base_codepoint = cluster
-                    .chars()
-                    .next()
-                    .unwrap_or('\0');
-                Some(ShapedCluster { text: cluster.to_string(), base_codepoint, glyphs, width })
-            })
+    let graphemes: Vec<(usize, &str)> = time_cost!("text_layout::LayoutText - text.graphemes", {
+        text.grapheme_indices(true)
             .collect()
     });
 
-    ShapedText { font_size, line_height, clusters }
+    let clusters = time_cost!("text_layout::LayoutText - shape runs", {
+        let mut clusters = Vec::with_capacity(graphemes.len());
+        let mut grapheme_index = 0;
+
+        while grapheme_index < graphemes.len() {
+            let (cluster_start, cluster) = graphemes[grapheme_index];
+            if cluster == "\n" {
+                clusters.push(ShapedCluster {
+                    text: cluster.to_string(),
+                    base_codepoint: '\n',
+                    glyphs: Vec::new(),
+                    width: 0.0,
+                });
+                grapheme_index += 1;
+                continue;
+            }
+
+            let Some(font_id) = rasterizer.font_id_for_family_cluster(
+                cluster,
+                font_size,
+                font_family,
+                font_weight,
+                font_style,
+            ) else {
+                grapheme_index += 1;
+                continue;
+            };
+
+            let run_start_index = grapheme_index;
+            grapheme_index += 1;
+            while grapheme_index < graphemes.len() {
+                let next_cluster = graphemes[grapheme_index].1;
+                if next_cluster == "\n"
+                    || rasterizer.font_id_for_family_cluster(
+                        next_cluster,
+                        font_size,
+                        font_family,
+                        font_weight,
+                        font_style,
+                    ) != Some(font_id)
+                {
+                    break;
+                }
+                grapheme_index += 1;
+            }
+
+            let run_graphemes = &graphemes[run_start_index..grapheme_index];
+            let run_end = run_graphemes
+                .last()
+                .map_or(cluster_start, |(start, cluster)| start + cluster.len());
+            let shaped_glyphs = rasterizer.shape_run_with_font_id(
+                &text[cluster_start..run_end],
+                font_size,
+                font_id,
+            );
+            let cluster_output_start = clusters.len();
+
+            clusters.extend(
+                run_graphemes
+                    .iter()
+                    .map(|(_, cluster)| ShapedCluster {
+                        text: (*cluster).to_string(),
+                        base_codepoint: cluster
+                            .chars()
+                            .next()
+                            .unwrap_or('\0'),
+                        glyphs: Vec::new(),
+                        width: 0.0,
+                    }),
+            );
+
+            for glyph in shaped_glyphs {
+                let source_cluster = run_graphemes
+                    .partition_point(|(start, _)| *start - cluster_start <= glyph.cluster)
+                    .saturating_sub(1);
+                let cluster = &mut clusters[cluster_output_start + source_cluster];
+                cluster.width += glyph.advance;
+                cluster.glyphs.push((
+                    glyph.glyph_key,
+                    glyph.advance,
+                    glyph.x_offset,
+                    glyph.y_offset,
+                ));
+            }
+        }
+
+        clusters
+    });
+
+    ShapedText {
+        font_size,
+        line_height,
+        clusters,
+    }
 }
 
 pub fn layout_shaped_text(
@@ -837,8 +895,8 @@ pub fn layout_shaped_text(
             }
 
             for &(glyph_key, advance, x_offset, y_offset) in &cluster.glyphs {
-                let rg =
-                    time_cost!("RasterizeKey", || rasterizer.rasterize_key(glyph_key, font_size));
+                let rg = time_cost!("RasterizeKey", || rasterizer
+                    .rasterize_key(glyph_key, font_size));
                 if rg.width > 0 && rg.height > 0 {
                     let gx = pen_x + rg.offset_x + x_offset;
                     // pen_y is the baseline; offset_y (ymin) is distance from baseline to
@@ -896,23 +954,10 @@ mod tests {
         assert!(layout.lines[0].hard_break);
         assert_eq!(layout.lines[0].text_range, 0..5);
         assert_eq!(layout.lines[1].text_range, 6..12);
+        assert_eq!(layout.metrics.line_count, 2);
         assert_eq!(
-            layout
-                .metrics
-                .line_count,
-            2
-        );
-        assert_eq!(
-            layout
-                .metrics
-                .height,
-            layout
-                .metrics
-                .line_height
-                * 2.0
-                - layout
-                    .metrics
-                    .line_gap
+            layout.metrics.height,
+            layout.metrics.line_height * 2.0 - layout.metrics.line_gap
         );
     }
 
@@ -940,18 +985,21 @@ mod tests {
         let metrics = FontMetrics::new(8.0, -2.0, 2.0);
         let mut options = TextLayoutOptions::new(10.0, 0.0, 0.0, 18.0);
         options.ellipsis = true;
-        let layout =
-            layout_paragraph("Cafe\u{301}", 0, &metrics, &options, |segment, text_offset| {
+        let layout = layout_paragraph(
+            "Cafe\u{301}",
+            0,
+            &metrics,
+            &options,
+            |segment, text_offset| {
                 fallback_shape_segment(segment, text_offset, 0, options.font_size)
-            });
+            },
+        );
 
         assert_eq!(
             layout
                 .glyphs
                 .last()
-                .map(|glyph| glyph
-                    .source
-                    .as_str()),
+                .map(|glyph| glyph.source.as_str()),
             Some("…")
         );
         assert!(
@@ -961,5 +1009,83 @@ mod tests {
                 .any(|line| line.text_range.end == 4)
         );
         assert!(layout.metrics.width <= options.max_width);
+    }
+
+    #[test]
+    fn shape_text_styled_shapes_a_same_font_paragraph_as_one_run() {
+        let mut rasterizer = GlyphRasterizer::new();
+        rasterizer.reset_shape_call_count();
+        let text = "A long paragraph with repeated words and enough graphemes to expose per-cluster shaping.";
+
+        let shaped = shape_text_styled(
+            &mut rasterizer,
+            text,
+            16.0,
+            FontFamily::SANS_SERIF,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+
+        assert_eq!(rasterizer.shape_call_count(), 1);
+        assert_eq!(shaped.clusters.len(), text.graphemes(true).count());
+    }
+
+    #[test]
+    fn shape_text_styled_preserves_graphemes_and_hard_breaks() {
+        let mut rasterizer = GlyphRasterizer::new();
+        rasterizer.reset_shape_call_count();
+
+        let shaped = shape_text(&mut rasterizer, "Cafe\u{301}\nnext", 16.0);
+        let cluster_text: Vec<&str> = shaped
+            .clusters
+            .iter()
+            .map(|cluster| cluster.text.as_str())
+            .collect();
+
+        assert_eq!(
+            cluster_text,
+            vec!["C", "a", "f", "e\u{301}", "\n", "n", "e", "x", "t"]
+        );
+        assert_eq!(rasterizer.shape_call_count(), 2);
+    }
+
+    #[test]
+    fn shape_text_styled_maps_ligatures_to_grapheme_clusters() {
+        let mut rasterizer = GlyphRasterizer::new();
+
+        let shaped = shape_text(&mut rasterizer, "office", 16.0);
+        let glyph_count: usize = shaped
+            .clusters
+            .iter()
+            .map(|cluster| cluster.glyphs.len())
+            .sum();
+
+        assert_eq!(shaped.clusters.len(), 6);
+        assert!(glyph_count < shaped.clusters.len());
+        assert_eq!(rasterizer.shape_call_count(), 1);
+    }
+
+    #[test]
+    fn shape_text_styled_splits_runs_at_fallback_font_boundaries() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        rasterizer
+            .register_font_bytes(
+                include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf").to_vec(),
+            )
+            .expect("the bundled CJK fallback should register");
+        rasterizer.reset_shape_call_count();
+
+        let shaped = shape_text(&mut rasterizer, "a你b", 16.0);
+        let font_ids: Vec<FontId> = shaped
+            .clusters
+            .iter()
+            .filter_map(|cluster| cluster.glyphs.first())
+            .map(|(glyph_key, _, _, _)| glyph_key.font_id)
+            .collect();
+
+        assert_eq!(shaped.clusters.len(), 3);
+        assert_eq!(rasterizer.shape_call_count(), 3);
+        assert_ne!(font_ids[0], font_ids[1]);
+        assert_eq!(font_ids[0], font_ids[2]);
     }
 }

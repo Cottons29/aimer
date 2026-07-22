@@ -33,7 +33,12 @@ impl SvgMesh {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SvgMeshStyle {
     Fill(SvgFillRule),
-    Stroke { width: f32, line_cap: SvgLineCap, line_join: SvgLineJoin, miter_limit: f32 },
+    Stroke {
+        width: f32,
+        line_cap: SvgLineCap,
+        line_join: SvgLineJoin,
+        miter_limit: f32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -43,7 +48,11 @@ impl SvgToleranceBucket {
     pub const COUNT: usize = 8;
 
     pub fn from_scale(scale: f32) -> Self {
-        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
         let exponent = scale
             .log2()
             .round()
@@ -67,14 +76,24 @@ struct GeometryKey {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum MeshStyleKey {
     Fill(SvgFillRule),
-    Stroke { width: u32, line_cap: SvgLineCap, line_join: SvgLineJoin, miter_limit: u32 },
+    Stroke {
+        width: u32,
+        line_cap: SvgLineCap,
+        line_join: SvgLineJoin,
+        miter_limit: u32,
+    },
 }
 
 impl From<SvgMeshStyle> for MeshStyleKey {
     fn from(style: SvgMeshStyle) -> Self {
         match style {
             SvgMeshStyle::Fill(rule) => Self::Fill(rule),
-            SvgMeshStyle::Stroke { width, line_cap, line_join, miter_limit } => Self::Stroke {
+            SvgMeshStyle::Stroke {
+                width,
+                line_cap,
+                line_join,
+                miter_limit,
+            } => Self::Stroke {
                 width: width.to_bits(),
                 line_cap,
                 line_join,
@@ -118,11 +137,12 @@ impl SvgGeometryCache {
             .usage_clock
             .wrapping_add(1);
         let tolerance = SvgToleranceBucket::from_scale(physical_scale);
-        let key = GeometryKey { path: path_key(geometry), style: style.into(), tolerance };
-        if let Some(entry) = self
-            .entries
-            .get_mut(&key)
-        {
+        let key = GeometryKey {
+            path: path_key(geometry),
+            style: style.into(),
+            tolerance,
+        };
+        if let Some(entry) = self.entries.get_mut(&key) {
             entry.last_used = self.usage_clock;
             return Ok(entry.mesh.clone());
         }
@@ -131,8 +151,13 @@ impl SvgGeometryCache {
         let mesh_bytes = mesh.memory_bytes();
         if self.max_entries > 0 && mesh_bytes <= self.max_memory_bytes {
             self.memory_bytes += mesh_bytes;
-            self.entries
-                .insert(key, CacheEntry { mesh: mesh.clone(), last_used: self.usage_clock });
+            self.entries.insert(
+                key,
+                CacheEntry {
+                    mesh: mesh.clone(),
+                    last_used: self.usage_clock,
+                },
+            );
             self.evict_to_limits();
         }
         Ok(mesh)
@@ -143,8 +168,7 @@ impl SvgGeometryCache {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries
-            .is_empty()
+        self.entries.is_empty()
     }
 
     pub fn memory_bytes(&self) -> usize {
@@ -176,11 +200,7 @@ impl SvgGeometryCache {
             {
                 self.memory_bytes = self
                     .memory_bytes
-                    .saturating_sub(
-                        entry
-                            .mesh
-                            .memory_bytes(),
-                    );
+                    .saturating_sub(entry.mesh.memory_bytes());
             }
         }
     }
@@ -209,7 +229,12 @@ fn tessellate(
                 )
                 .map_err(|error| SvgTessellationError::Tessellation(error.to_string()))?;
         }
-        SvgMeshStyle::Stroke { width, line_cap, line_join, miter_limit } => {
+        SvgMeshStyle::Stroke {
+            width,
+            line_cap,
+            line_join,
+            miter_limit,
+        } => {
             if !width.is_finite() || width <= 0.0 || !miter_limit.is_finite() {
                 return Err(SvgTessellationError::Tessellation(
                     "invalid stroke parameters".to_owned(),
@@ -246,17 +271,12 @@ fn tessellate(
             .map(|point| [point.x, point.y])
             .collect::<Vec<_>>()
             .into(),
-        indices: output
-            .indices
-            .into(),
+        indices: output.indices.into(),
     })
 }
 
 fn lyon_path(geometry: &SvgGeometry) -> Result<Path, SvgTessellationError> {
-    if geometry
-        .commands
-        .is_empty()
-    {
+    if geometry.commands.is_empty() {
         return Err(SvgTessellationError::EmptyPath);
     }
     let mut builder = Path::builder();
@@ -277,10 +297,22 @@ fn lyon_path(geometry: &SvgGeometry) -> Result<Path, SvgTessellationError> {
             SvgPathCommand::LineTo { x, y } => {
                 builder.line_to(point(x, y));
             }
-            SvgPathCommand::QuadraticTo { control_x, control_y, x, y } => {
+            SvgPathCommand::QuadraticTo {
+                control_x,
+                control_y,
+                x,
+                y,
+            } => {
                 builder.quadratic_bezier_to(point(control_x, control_y), point(x, y));
             }
-            SvgPathCommand::CubicTo { control1_x, control1_y, control2_x, control2_y, x, y } => {
+            SvgPathCommand::CubicTo {
+                control1_x,
+                control1_y,
+                control2_x,
+                control2_y,
+                x,
+                y,
+            } => {
                 builder.cubic_bezier_to(
                     point(control1_x, control1_y),
                     point(control2_x, control2_y),
@@ -300,32 +332,41 @@ fn lyon_path(geometry: &SvgGeometry) -> Result<Path, SvgTessellationError> {
 }
 
 fn path_key(geometry: &SvgGeometry) -> Vec<u32> {
-    let mut key = Vec::with_capacity(
-        geometry
-            .commands
-            .len()
-            * 7,
-    );
-    for command in geometry
-        .commands
-        .iter()
-    {
+    let mut key = Vec::with_capacity(geometry.commands.len() * 7);
+    for command in geometry.commands.iter() {
         match *command {
             SvgPathCommand::MoveTo { x, y } => key.extend([0, x.to_bits(), y.to_bits()]),
             SvgPathCommand::LineTo { x, y } => key.extend([1, x.to_bits(), y.to_bits()]),
-            SvgPathCommand::QuadraticTo { control_x, control_y, x, y } => {
-                key.extend([2, control_x.to_bits(), control_y.to_bits(), x.to_bits(), y.to_bits()]);
-            }
-            SvgPathCommand::CubicTo { control1_x, control1_y, control2_x, control2_y, x, y } => key
-                .extend([
-                    3,
-                    control1_x.to_bits(),
-                    control1_y.to_bits(),
-                    control2_x.to_bits(),
-                    control2_y.to_bits(),
+            SvgPathCommand::QuadraticTo {
+                control_x,
+                control_y,
+                x,
+                y,
+            } => {
+                key.extend([
+                    2,
+                    control_x.to_bits(),
+                    control_y.to_bits(),
                     x.to_bits(),
                     y.to_bits(),
-                ]),
+                ]);
+            }
+            SvgPathCommand::CubicTo {
+                control1_x,
+                control1_y,
+                control2_x,
+                control2_y,
+                x,
+                y,
+            } => key.extend([
+                3,
+                control1_x.to_bits(),
+                control1_y.to_bits(),
+                control2_x.to_bits(),
+                control2_y.to_bits(),
+                x.to_bits(),
+                y.to_bits(),
+            ]),
             SvgPathCommand::Close => key.push(4),
         }
     }

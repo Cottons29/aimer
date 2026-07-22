@@ -70,7 +70,10 @@ impl StatefulWidget for CustomAnimatedThemeExample {
     type State = CustomAnimatedThemeExampleState;
 
     fn create_state(&self) -> Self::State {
-        CustomAnimatedThemeExampleState { is_dark: false, updater: StateUpdater::empty() }
+        CustomAnimatedThemeExampleState {
+            is_dark: false,
+            updater: StateUpdater::empty(),
+        }
     }
 }
 
@@ -81,7 +84,11 @@ impl State<CustomAnimatedThemeExample> for CustomAnimatedThemeExampleState {
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         AnimatedTheme::new()
-            .data(if self.is_dark { MyTheme::dark() } else { MyTheme::light() })
+            .data(if self.is_dark {
+                MyTheme::dark()
+            } else {
+                MyTheme::light()
+            })
             .duration(Duration::from_millis(500))
             .curve(Curve::EaseInOut)
             .child(CustomThemedPanel::new(self.is_dark, self.updater.clone()))
@@ -108,10 +115,18 @@ impl StatelessWidget for CustomThemedPanel {
             .copied::<MyTheme>()
             .panel_width;
         let updater = self.updater.clone();
-        let background =
-            Color::Rgba(theme.background_red, theme.background_green, theme.background_blue, 255);
-        let foreground =
-            Color::Rgba(theme.foreground_tone, theme.foreground_tone, theme.foreground_tone, 255);
+        let background = Color::Rgba(
+            theme.background_red,
+            theme.background_green,
+            theme.background_blue,
+            255,
+        );
+        let foreground = Color::Rgba(
+            theme.foreground_tone,
+            theme.foreground_tone,
+            theme.foreground_tone,
+            255,
+        );
         let accent = Color::Rgba(theme.accent_red, theme.accent_green, theme.accent_blue, 255);
 
         Container::new()

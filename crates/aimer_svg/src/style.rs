@@ -10,7 +10,12 @@ pub struct SvgStyle {
 
 impl SvgStyle {
     pub const fn new() -> Self {
-        Self { fill: None, stroke: None, opacity: None, transform: None }
+        Self {
+            fill: None,
+            stroke: None,
+            opacity: None,
+            transform: None,
+        }
     }
 
     pub fn fill(mut self, fill: impl Into<SvgColor>) -> Self {

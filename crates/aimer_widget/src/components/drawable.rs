@@ -6,7 +6,6 @@ pub trait Drawable {
 
 impl Drawable for Box<dyn Drawable> {
     fn draw(&self, ctx: &BuildContext) {
-        self.as_ref()
-            .draw(ctx);
+        self.as_ref().draw(ctx);
     }
 }

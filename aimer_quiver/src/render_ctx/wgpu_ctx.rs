@@ -70,7 +70,15 @@ pub mod render_ctx {
             draw_fn(canvas, width, height);
 
             let draw_list = canvas.draw_list();
-            renderer.render(&gpu.device, &gpu.queue, &view, width, height, gpu.is_srgb, &draw_list);
+            renderer.render(
+                &gpu.device,
+                &gpu.queue,
+                &view,
+                width,
+                height,
+                gpu.is_srgb,
+                &draw_list,
+            );
 
             gpu.end_frame(frame);
             true

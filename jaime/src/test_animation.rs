@@ -25,7 +25,10 @@ impl StatefulWidget for TestFadingAnimation {
         // (e.g. a window resize) by adopting it during reconciliation, so the
         // selected tab survives without any manual persistence — this only
         // needs to provide the initial value.
-        SameLookingSectionState { current_index: 0, state: StateUpdater::new() }
+        SameLookingSectionState {
+            current_index: 0,
+            state: StateUpdater::new(),
+        }
     }
 }
 
@@ -115,14 +118,21 @@ impl SameLookingSectionState {
                 move |(i, l)| {
                     let index = i;
                     let is_selected = index == selected;
-                    let font_weight =
-                        if selected == index { FontWeight::Bolder } else { FontWeight::Normal };
+                    let font_weight = if selected == index {
+                        FontWeight::Bolder
+                    } else {
+                        FontWeight::Normal
+                    };
 
                     TextButton::new(*l)
                         .style(
                             TextStyle::new()
                                 .font_size(20)
-                                .color(if is_selected { Color::BLUE } else { Color::BLACK })
+                                .color(if is_selected {
+                                    Color::BLUE
+                                } else {
+                                    Color::BLACK
+                                })
                                 .font_weight(font_weight)
                                 .text_decoration(if is_selected {
                                     TextDecoration::Underline
@@ -176,7 +186,11 @@ pub fn is_mobile(ctx: &BuildContext) -> bool {
 }
 
 pub fn resp_position(ctx: &BuildContext, wide: f32, slim: f32) -> Dimension {
-    if is_mobile(ctx) { Percent(slim) } else { Percent(wide) }
+    if is_mobile(ctx) {
+        Percent(slim)
+    } else {
+        Percent(wide)
+    }
 }
 
 pub fn mobile_title(ctx: &BuildContext) -> u32 {

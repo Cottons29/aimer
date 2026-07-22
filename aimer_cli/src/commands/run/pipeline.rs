@@ -78,7 +78,9 @@ pub fn runner_for(target: Targets) -> Option<Box<dyn Runner>> {
 pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>) {
     thread::spawn(move || {
         let _ = tx.send(RunnerEvent::StatusChange(Status::Compiling(0)));
-        let _ = tx.send(RunnerEvent::BuildLog("Running wasm-pack build...".to_string()));
+        let _ = tx.send(RunnerEvent::BuildLog(
+            "Running wasm-pack build...".to_string(),
+        ));
 
         let mut wasm_build = match Command::new("wasm-pack")
             .arg("build")
@@ -93,16 +95,15 @@ pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>) {
         {
             Ok(child) => child,
             Err(e) => {
-                let _ = tx.send(RunnerEvent::BuildLog(format!("Failed to start wasm-pack: {e}")));
+                let _ = tx.send(RunnerEvent::BuildLog(format!(
+                    "Failed to start wasm-pack: {e}"
+                )));
                 let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
                 return;
             }
         };
 
-        if let Some(stdout) = wasm_build
-            .stdout
-            .take()
-        {
+        if let Some(stdout) = wasm_build.stdout.take() {
             let tx_out = tx.clone();
             thread::spawn(move || {
                 let reader = BufReader::new(stdout);
@@ -115,10 +116,7 @@ pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>) {
             });
         }
 
-        if let Some(stderr) = wasm_build
-            .stderr
-            .take()
-        {
+        if let Some(stderr) = wasm_build.stderr.take() {
             let tx_err = tx.clone();
             thread::spawn(move || {
                 let reader = BufReader::new(stderr);

@@ -75,7 +75,10 @@ mod tests {
 
     #[test]
     fn root_metal_layer_takes_priority() {
-        assert_eq!(metal_layer_location(true, [true]), Some(MetalLayerLocation::Root));
+        assert_eq!(
+            metal_layer_location(true, [true]),
+            Some(MetalLayerLocation::Root)
+        );
     }
 
     #[test]

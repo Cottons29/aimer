@@ -105,7 +105,10 @@ mod tests {
             .expect("outlet panic should use an owned diagnostic");
 
         assert!(message.contains(file!()), "{message}");
-        assert!(message.contains("Outlet.to_element(&context())"), "{message}");
+        assert!(
+            message.contains("Outlet.to_element(&context())"),
+            "{message}"
+        );
         assert!(
             message
                 .lines()

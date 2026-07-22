@@ -50,7 +50,10 @@ impl AnimatedBuilder {
         W: Widget,
     {
         let builder = Rc::new(move |value: f32, ctx: &BuildContext| builder(value).to_element(ctx));
-        Self { controller, builder }
+        Self {
+            controller,
+            builder,
+        }
     }
 }
 
@@ -59,18 +62,13 @@ impl Widget for AnimatedBuilder {
         let curved_value = self
             .controller
             .curve()
-            .transform(
-                self.controller
-                    .value(),
-            );
+            .transform(self.controller.value());
         let child = (self.builder)(curved_value, ctx);
         let window = ctx.window.clone();
 
         Box::new(AnimatedBuilderElement {
             child: UnsafeCell::new(child),
-            controller: self
-                .controller
-                .clone(),
+            controller: self.controller.clone(),
             builder: self.builder.clone(),
             last_value: Cell::new(curved_value),
             window,
@@ -101,11 +99,7 @@ impl Drawable for AnimatedBuilderElement {
         let curved_value = self
             .controller
             .tick(AnimInstant::now());
-        if curved_value
-            != self
-                .last_value
-                .get()
-        {
+        if curved_value != self.last_value.get() {
             let child = (self.builder)(curved_value, ctx);
             unsafe { *self.child.get() = child };
             self.last_value
@@ -114,12 +108,8 @@ impl Drawable for AnimatedBuilderElement {
 
         unsafe { &*self.child.get() }.draw(ctx);
 
-        if self
-            .controller
-            .is_animating()
-        {
-            self.window
-                .request_redraw();
+        if self.controller.is_animating() {
+            self.window.request_redraw();
         }
     }
 }

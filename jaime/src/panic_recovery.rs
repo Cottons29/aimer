@@ -21,6 +21,8 @@ impl StatelessWidget for PanicRecoveryExample {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let _missing = ProviderHandle::<MissingProviderValue>::of(ctx);
 
-        Container::new().child(Text::new("This is replaced by the recovered red error screen."))
+        Container::new().child(Text::new(
+            "This is replaced by the recovered red error screen.",
+        ))
     }
 }

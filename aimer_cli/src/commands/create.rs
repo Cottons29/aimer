@@ -94,9 +94,15 @@ pub fn execute(project_name: &str) -> anyhow::Result<()> {
 
     // Run the scaffold inside a helper so that any failure cleans up the
     // partially created directory instead of leaving it behind.
-    if let Err(err) =
-        scaffold(&dir, project_name, &version, &description, &author, &group, &targets)
-    {
+    if let Err(err) = scaffold(
+        &dir,
+        project_name,
+        &version,
+        &description,
+        &author,
+        &group,
+        &targets,
+    ) {
         let _ = fs::remove_dir_all(&dir);
         return Err(err).with_context(|| format!("failed to create project '{project_name}'"));
     }
@@ -142,8 +148,11 @@ fn scaffold(
         web::create(dir, project_name, group);
     }
 
-    fs::write(dir.join(".gitignore"), include_str!("../../templates/.gitignore.template"))
-        .context("writing .gitignore")?;
+    fs::write(
+        dir.join(".gitignore"),
+        include_str!("../../templates/.gitignore.template"),
+    )
+    .context("writing .gitignore")?;
 
     // Cargo.toml
     fs::write(
@@ -155,16 +164,25 @@ fn scaffold(
     .context("writing Cargo.toml")?;
 
     // src/lib.rs
-    fs::write(dir.join("src/lib.rs"), include_str!("../../templates/lib.rs.template"))
-        .context("writing src/lib.rs")?;
+    fs::write(
+        dir.join("src/lib.rs"),
+        include_str!("../../templates/lib.rs.template"),
+    )
+    .context("writing src/lib.rs")?;
 
     // build.rs — iOS cdylib link workaround for the Swift-provided frame-driver
     // symbols (see the template for details).
-    fs::write(dir.join("build.rs"), include_str!("../../templates/build.rs.template"))
-        .context("writing build.rs")?;
+    fs::write(
+        dir.join("build.rs"),
+        include_str!("../../templates/build.rs.template"),
+    )
+    .context("writing build.rs")?;
 
-    fs::write(dir.join("README.md"), format!("# {}\n\n{}", project_name, description))
-        .context("writing README.md")?;
+    fs::write(
+        dir.join("README.md"),
+        format!("# {}\n\n{}", project_name, description),
+    )
+    .context("writing README.md")?;
 
     // Persist project metadata so run/build can read it back instead of
     // re-parsing Cargo.toml.
@@ -181,13 +199,14 @@ fn scaffold(
 /// characters that are reserved on common filesystems.
 pub fn validate_project_name(name: &str) -> Result<(), AimerError> {
     const RESERVED: &[char] = &[':', '*', '?', '"', '<', '>', '|'];
-    let reject =
-        |reason: &str| Err(AimerError::InvalidProjectName(name.to_string(), reason.to_string()));
+    let reject = |reason: &str| {
+        Err(AimerError::InvalidProjectName(
+            name.to_string(),
+            reason.to_string(),
+        ))
+    };
 
-    if name
-        .trim()
-        .is_empty()
-    {
+    if name.trim().is_empty() {
         return reject("name must not be empty");
     }
     if name == "." || name == ".." {
@@ -215,7 +234,10 @@ mod tests {
     #[test]
     fn accepts_valid_names() {
         for name in ["myapp", "my_app", "my-app", "App123"] {
-            assert!(validate_project_name(name).is_ok(), "should accept '{name}'");
+            assert!(
+                validate_project_name(name).is_ok(),
+                "should accept '{name}'"
+            );
         }
     }
 
@@ -246,19 +268,28 @@ mod tests {
     #[test]
     fn rejects_reserved_characters() {
         for name in ["a:b", "a*b", "a?b", "a\"b", "a<b", "a>b", "a|b"] {
-            assert!(validate_project_name(name).is_err(), "should reject '{name}'");
+            assert!(
+                validate_project_name(name).is_err(),
+                "should reject '{name}'"
+            );
         }
     }
 
     #[test]
     fn scaffold_creates_expected_tree() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp
-            .path()
-            .join("myapp");
+        let dir = tmp.path().join("myapp");
 
-        scaffold(&dir, "myapp", "0.2.0", "a test app", "tester", "com.example.myapp", &["web"])
-            .unwrap();
+        scaffold(
+            &dir,
+            "myapp",
+            "0.2.0",
+            "a test app",
+            "tester",
+            "com.example.myapp",
+            &["web"],
+        )
+        .unwrap();
 
         // Core files and directories are present.
         assert!(
@@ -266,11 +297,7 @@ mod tests {
                 .exists(),
             "missing src/lib.rs"
         );
-        assert!(
-            dir.join("build.rs")
-                .exists(),
-            "missing build.rs"
-        );
+        assert!(dir.join("build.rs").exists(), "missing build.rs");
         assert!(
             dir.join("Cargo.toml")
                 .exists(),
@@ -286,11 +313,7 @@ mod tests {
                 .exists(),
             "missing .gitignore"
         );
-        assert!(
-            dir.join("README.md")
-                .exists(),
-            "missing README.md"
-        );
+        assert!(dir.join("README.md").exists(), "missing README.md");
         assert!(
             dir.join("builds/web")
                 .is_dir(),
@@ -298,42 +321,20 @@ mod tests {
         );
 
         // Generated Cargo.toml parses and carries the right package name.
-        assert_eq!(crate::config::parse_cargo_package_name(&dir), Some("myapp".to_string()));
+        assert_eq!(
+            crate::config::parse_cargo_package_name(&dir),
+            Some("myapp".to_string())
+        );
 
         // aimer.toml round-trips with the collected metadata.
         let manifest = AimerManifest::load_from(&dir)
             .unwrap()
             .unwrap();
-        assert_eq!(
-            manifest
-                .package
-                .name,
-            "myapp"
-        );
-        assert_eq!(
-            manifest
-                .package
-                .version,
-            "0.2.0"
-        );
-        assert_eq!(
-            manifest
-                .package
-                .description,
-            "a test app"
-        );
-        assert_eq!(
-            manifest
-                .package
-                .author,
-            "tester"
-        );
-        assert_eq!(
-            manifest
-                .package
-                .group,
-            "com.example.myapp"
-        );
+        assert_eq!(manifest.package.name, "myapp");
+        assert_eq!(manifest.package.version, "0.2.0");
+        assert_eq!(manifest.package.description, "a test app");
+        assert_eq!(manifest.package.author, "tester");
+        assert_eq!(manifest.package.group, "com.example.myapp");
     }
 
     #[test]
@@ -341,10 +342,17 @@ mod tests {
         // Mirrors `execute`: a failed scaffold leaves a directory the caller can
         // remove. Here we just verify scaffolding then removing leaves nothing.
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp
-            .path()
-            .join("throwaway");
-        scaffold(&dir, "throwaway", "0.1.0", "", "", "com.example.throwaway", &[]).unwrap();
+        let dir = tmp.path().join("throwaway");
+        scaffold(
+            &dir,
+            "throwaway",
+            "0.1.0",
+            "",
+            "",
+            "com.example.throwaway",
+            &[],
+        )
+        .unwrap();
         assert!(dir.exists());
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(!dir.exists());

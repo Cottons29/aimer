@@ -49,7 +49,9 @@ impl ErrorWidget {
     /// Creates an error diagnostic with the message used for logging and debug
     /// rendering.
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            message: message.into(),
+        }
     }
 }
 
@@ -57,7 +59,9 @@ impl Widget for ErrorWidget {
     fn to_element(&self, _ctx: &BuildContext) -> Box<dyn Element> {
         #[cfg(not(debug_assertions))]
         aimer_utils::log::error(&self.message);
-        Box::new(ErrorElement { message: self.message.clone() })
+        Box::new(ErrorElement {
+            message: self.message.clone(),
+        })
     }
 
     fn debug_name(&self) -> &'static str {
@@ -72,7 +76,9 @@ pub struct ErrorElement {
 
 impl ErrorElement {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            message: message.into(),
+        }
     }
 
     pub fn draw_message(ctx: &BuildContext, message: &str) {
@@ -93,15 +99,14 @@ impl ErrorElement {
             (200f32, 34f32)
         };
 
-        ctx.canvas
-            .draw_text_wrapped(
-                text,
-                Vec2d { x: 24.0, y: pos_y },
-                font_size,
-                Color::YELLOW,
-                (size.width - 24.0).max(0.0),
-                600,
-            );
+        ctx.canvas.draw_text_wrapped(
+            text,
+            Vec2d { x: 24.0, y: pos_y },
+            font_size,
+            Color::YELLOW,
+            (size.width - 24.0).max(0.0),
+            600,
+        );
     }
 }
 
@@ -141,7 +146,11 @@ impl<W: Widget + 'static> OverflowIndicator<W> {
     /// Creates an indicator for `child`, with clipping enabled and a label
     /// derived from [`Widget::debug_name`].
     pub fn new(child: W) -> Self {
-        Self { child, label: None, clip: true }
+        Self {
+            child,
+            label: None,
+            clip: true,
+        }
     }
 
     /// Overrides the label displayed in the debug overflow message.
@@ -162,9 +171,7 @@ impl<W: Widget + 'static> OverflowIndicator<W> {
 
 impl<W: Widget + 'static> Widget for OverflowIndicator<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self
-            .child
-            .to_element(ctx);
+        let child = self.child.to_element(ctx);
         let label = self
             .label
             .clone()
@@ -173,7 +180,11 @@ impl<W: Widget + 'static> Widget for OverflowIndicator<W> {
                     .debug_name()
                     .to_string()
             });
-        Box::new(RawOverflowIndicator { child, label, clip: self.clip })
+        Box::new(RawOverflowIndicator {
+            child,
+            label,
+            clip: self.clip,
+        })
     }
 
     fn debug_name(&self) -> &'static str {
@@ -190,9 +201,7 @@ struct RawOverflowIndicator {
 impl Drawable for RawOverflowIndicator {
     fn draw(&self, ctx: &BuildContext) {
         let bounds = self.computed_size(ctx);
-        let child_size = self
-            .child
-            .computed_size(ctx);
+        let child_size = self.child.computed_size(ctx);
         let overflow = detect_overflow(child_size, bounds, Vec2d::default());
 
         ctx.canvas.save();
@@ -227,39 +236,41 @@ impl VisitorElement for RawOverflowIndicator {
 
 impl LayoutElement for RawOverflowIndicator {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let child = self
-            .child
-            .computed_size(ctx);
+        let child = self.child.computed_size(ctx);
         ResolvedSize {
             width: constrain(
                 child.width,
-                ctx.box_constraint
-                    .min_width,
-                ctx.box_constraint
-                    .max_width,
+                ctx.box_constraint.min_width,
+                ctx.box_constraint.max_width,
             ),
             height: constrain(
                 child.height,
-                ctx.box_constraint
-                    .min_height,
-                ctx.box_constraint
-                    .max_height,
+                ctx.box_constraint.min_height,
+                ctx.box_constraint.max_height,
             ),
         }
     }
 
     fn invalidate_layout(&self) {
-        self.child
-            .invalidate_layout();
+        self.child.invalidate_layout();
     }
 }
 
 fn constrain(value: f32, min: f32, max: f32) -> f32 {
-    if max == f32::MAX { value.max(min) } else { value.clamp(min, max.max(min)) }
+    if max == f32::MAX {
+        value.max(min)
+    } else {
+        value.clamp(min, max.max(min))
+    }
 }
 
 fn diagnostic_bounds(ctx: &BuildContext) -> ResolvedSize {
-    let BoxConstraint { min_width, min_height, max_width, max_height } = ctx.box_constraint;
+    let BoxConstraint {
+        min_width,
+        min_height,
+        max_width,
+        max_height,
+    } = ctx.box_constraint;
     ResolvedSize {
         width: if max_width == f32::MAX {
             ctx.parent_size
@@ -295,16 +306,15 @@ pub fn paint_overflow_indicator(
         let mut x = 0.0;
         let mut yellow = true;
         while x < bounds.width {
-            ctx.canvas
-                .fill_color_rect(
-                    Vec2d { x, y },
-                    ResolvedSize {
-                        width: STRIPE.min(bounds.width - x),
-                        height: THICKNESS.min(bounds.height),
-                    },
-                    if yellow { Color::YELLOW } else { Color::BLACK },
-                    [0.0; 4],
-                );
+            ctx.canvas.fill_color_rect(
+                Vec2d { x, y },
+                ResolvedSize {
+                    width: STRIPE.min(bounds.width - x),
+                    height: THICKNESS.min(bounds.height),
+                },
+                if yellow { Color::YELLOW } else { Color::BLACK },
+                [0.0; 4],
+            );
             yellow = !yellow;
             x += STRIPE;
         }
@@ -313,16 +323,15 @@ pub fn paint_overflow_indicator(
         let mut y = 0.0;
         let mut yellow = true;
         while y < bounds.height {
-            ctx.canvas
-                .fill_color_rect(
-                    Vec2d { x, y },
-                    ResolvedSize {
-                        width: THICKNESS.min(bounds.width),
-                        height: STRIPE.min(bounds.height - y),
-                    },
-                    if yellow { Color::YELLOW } else { Color::BLACK },
-                    [0.0; 4],
-                );
+            ctx.canvas.fill_color_rect(
+                Vec2d { x, y },
+                ResolvedSize {
+                    width: THICKNESS.min(bounds.width),
+                    height: STRIPE.min(bounds.height - y),
+                },
+                if yellow { Color::YELLOW } else { Color::BLACK },
+                [0.0; 4],
+            );
             yellow = !yellow;
             y += STRIPE;
         }
@@ -343,13 +352,15 @@ pub fn paint_overflow_indicator(
 
     let text = format!("{label} overflowed by {:.1}px", overflow.maximum());
     let width = ((text.len() as f32 * 6.0) + 8.0).min(bounds.width);
-    ctx.canvas
-        .fill_color_rect(
-            Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize { width, height: 18.0_f32.min(bounds.height) },
-            Color::BLACK,
-            [0.0; 4],
-        );
+    ctx.canvas.fill_color_rect(
+        Vec2d { x: 0.0, y: 0.0 },
+        ResolvedSize {
+            width,
+            height: 18.0_f32.min(bounds.height),
+        },
+        Color::BLACK,
+        [0.0; 4],
+    );
     ctx.canvas
         .draw_text(&text, Vec2d { x: 4.0, y: 13.0 }, 10.0, Color::YELLOW, 600);
 }
@@ -372,19 +383,39 @@ mod tests {
     #[test]
     fn detects_each_overflowing_edge() {
         let overflow = detect_overflow(
-            ResolvedSize { width: 120.0, height: 80.0 },
-            ResolvedSize { width: 100.0, height: 60.0 },
+            ResolvedSize {
+                width: 120.0,
+                height: 80.0,
+            },
+            ResolvedSize {
+                width: 100.0,
+                height: 60.0,
+            },
             (-4.0, -3.0).into(),
         );
 
-        assert_eq!(overflow, OverflowEdges { left: 4.0, top: 3.0, right: 16.0, bottom: 17.0 });
+        assert_eq!(
+            overflow,
+            OverflowEdges {
+                left: 4.0,
+                top: 3.0,
+                right: 16.0,
+                bottom: 17.0
+            }
+        );
     }
 
     #[test]
     fn fitting_child_has_no_overflow() {
         let overflow = detect_overflow(
-            ResolvedSize { width: 40.0, height: 30.0 },
-            ResolvedSize { width: 100.0, height: 60.0 },
+            ResolvedSize {
+                width: 40.0,
+                height: 30.0,
+            },
+            ResolvedSize {
+                width: 100.0,
+                height: 60.0,
+            },
             (10.0, 10.0).into(),
         );
 

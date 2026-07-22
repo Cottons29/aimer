@@ -31,7 +31,11 @@ impl Align {
     ///
     /// Finish the builder with [`Align::child`] or [`Align::box_child`].
     pub fn new() -> Self {
-        Self { child: RequiredChild, layer: 0, alignment: Alignment::TopCenter }
+        Self {
+            child: RequiredChild,
+            layer: 0,
+            alignment: Alignment::TopCenter,
+        }
     }
 
     /// Sets where the child is placed within the parent's available size.
@@ -58,7 +62,11 @@ impl Align {
     /// to the selected alignment. Its concrete type is preserved; use
     /// [`Align::box_child`] for branch type erasure.
     pub fn child<W: Widget>(self, child: W) -> Align<W> {
-        Align { child, layer: self.layer, alignment: self.alignment }
+        Align {
+            child,
+            layer: self.layer,
+            alignment: self.alignment,
+        }
     }
 
     /// Attaches `child` and erases the resulting widget's concrete type.
@@ -67,17 +75,14 @@ impl Align {
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
-        self.child(child)
-            .boxed()
+        self.child(child).boxed()
     }
 }
 
 impl<W: Widget + 'static> Widget for Align<W> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         Box::new(RawAlign {
-            child: self
-                .child
-                .to_element(ctx),
+            child: self.child.to_element(ctx),
             layer: self.layer,
             alignment: self.alignment,
         })
@@ -109,9 +114,7 @@ struct RawAlign {
 
 impl Drawable for RawAlign {
     fn draw(&self, ctx: &BuildContext) {
-        let child_size = self
-            .child
-            .computed_size(ctx);
+        let child_size = self.child.computed_size(ctx);
         let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);
         let mut child_ctx = ctx.clone();
         child_ctx.parent_size = child_size;
@@ -126,10 +129,11 @@ impl Drawable for RawAlign {
             .map(|(x, y, width, height)| (x - offset_x, y - offset_y, width, height));
 
         ctx.canvas.save();
-        ctx.canvas
-            .translate(Vec2d { x: offset_x, y: offset_y });
-        self.child
-            .draw(&child_ctx);
+        ctx.canvas.translate(Vec2d {
+            x: offset_x,
+            y: offset_y,
+        });
+        self.child.draw(&child_ctx);
         ctx.canvas.restore();
     }
 }
@@ -140,13 +144,11 @@ impl LayoutElement for RawAlign {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child
-            .computed_size(ctx)
+        self.child.computed_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.child
-            .content_size(ctx)
+        self.child.content_size(ctx)
     }
 
     fn layer(&self) -> u32 {
@@ -180,27 +182,57 @@ mod tests {
 
     #[test]
     fn alignment_offsets_cover_each_axis_position() {
-        let parent = ResolvedSize { width: 100.0, height: 80.0 };
-        let child = ResolvedSize { width: 20.0, height: 10.0 };
+        let parent = ResolvedSize {
+            width: 100.0,
+            height: 80.0,
+        };
+        let child = ResolvedSize {
+            width: 20.0,
+            height: 10.0,
+        };
 
-        assert_eq!(alignment_offset(Alignment::TopLeft, parent, child), (0.0, 0.0));
-        assert_eq!(alignment_offset(Alignment::TopCenter, parent, child), (40.0, 0.0));
-        assert_eq!(alignment_offset(Alignment::MidCenter, parent, child), (40.0, 35.0));
-        assert_eq!(alignment_offset(Alignment::BotRight, parent, child), (80.0, 70.0));
+        assert_eq!(
+            alignment_offset(Alignment::TopLeft, parent, child),
+            (0.0, 0.0)
+        );
+        assert_eq!(
+            alignment_offset(Alignment::TopCenter, parent, child),
+            (40.0, 0.0)
+        );
+        assert_eq!(
+            alignment_offset(Alignment::MidCenter, parent, child),
+            (40.0, 35.0)
+        );
+        assert_eq!(
+            alignment_offset(Alignment::BotRight, parent, child),
+            (80.0, 70.0)
+        );
     }
 
     #[test]
     fn alignment_does_not_produce_negative_offsets_for_oversized_child() {
-        let parent = ResolvedSize { width: 10.0, height: 10.0 };
-        let child = ResolvedSize { width: 20.0, height: 30.0 };
+        let parent = ResolvedSize {
+            width: 10.0,
+            height: 10.0,
+        };
+        let child = ResolvedSize {
+            width: 20.0,
+            height: 30.0,
+        };
 
-        assert_eq!(alignment_offset(Alignment::MidCenter, parent, child), (0.0, 0.0));
+        assert_eq!(
+            alignment_offset(Alignment::MidCenter, parent, child),
+            (0.0, 0.0)
+        );
     }
 
     #[test]
     fn configured_layer_is_exposed_to_stack_ordering() {
-        let align =
-            RawAlign { child: Box::new(ZeroSizedBox), layer: 10, alignment: Alignment::TopLeft };
+        let align = RawAlign {
+            child: Box::new(ZeroSizedBox),
+            layer: 10,
+            alignment: Alignment::TopLeft,
+        };
 
         assert_eq!(align.layer(), 10);
     }

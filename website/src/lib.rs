@@ -5,12 +5,12 @@ mod router;
 mod screen;
 mod utils;
 
+use crate::blog_store::BlogStore;
+use crate::router::AppRouter;
+use aimer::console::debug;
 use aimer::router::Navigator;
 use aimer::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-use aimer::console::debug;
-use crate::blog_store::BlogStore;
-use crate::router::AppRouter;
 
 #[cfg(test)]
 pub static TEST_STATE_UPDATED: AtomicBool = AtomicBool::new(false);

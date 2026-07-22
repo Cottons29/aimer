@@ -65,9 +65,13 @@ fn transitioned_page(
     key: &'static str,
     child: impl Widget + 'static,
 ) -> AnimatedSwitcher<Box<dyn Widget>> {
-    AnimatedSwitcher::new(ROUTE_TRANSITION_DURATION, Curve::FastOutSlowIn, child.boxed())
-        .child_key(key)
-        .key(ROUTE_SWITCHER_KEY)
+    AnimatedSwitcher::new(
+        ROUTE_TRANSITION_DURATION,
+        Curve::FastOutSlowIn,
+        child.boxed(),
+    )
+    .child_key(key)
+    .key(ROUTE_SWITCHER_KEY)
 }
 
 impl Router for AppRouter {
@@ -143,7 +147,10 @@ mod tests {
         let keys = [
             AppRouter::Home.transition_key(),
             AppRouter::Blog.transition_key(),
-            AppRouter::BlogDetail { id: "post".to_owned() }.transition_key(),
+            AppRouter::BlogDetail {
+                id: "post".to_owned(),
+            }
+            .transition_key(),
             AppRouter::Learn.transition_key(),
             AppRouter::NotFound.transition_key(),
         ];
@@ -159,7 +166,10 @@ mod tests {
     #[test]
     fn route_transition_has_stable_switcher_identity() {
         assert_eq!(
-            Widget::key(&transitioned_page("home", not_found_page(ThemeData::light()))),
+            Widget::key(&transitioned_page(
+                "home",
+                not_found_page(ThemeData::light())
+            )),
             Some(Key::Value(ROUTE_SWITCHER_KEY.to_owned()))
         );
     }
@@ -172,10 +182,15 @@ mod tests {
 
     #[test]
     fn blog_detail_route_round_trips_and_keeps_the_blog_tab_active() {
-        let route = AppRouter::BlogDetail { id: "introducing-aimer".to_owned() };
+        let route = AppRouter::BlogDetail {
+            id: "introducing-aimer".to_owned(),
+        };
 
         assert_eq!(route.format(), "/blog/introducing-aimer");
-        assert_eq!(AppRouter::parse("/blog/introducing-aimer"), Some(route.clone()));
+        assert_eq!(
+            AppRouter::parse("/blog/introducing-aimer"),
+            Some(route.clone())
+        );
         assert_eq!(route.active_tab(), 1);
         assert_eq!(route.transition_key(), "blog-detail");
     }

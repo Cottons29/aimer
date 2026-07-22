@@ -8,8 +8,8 @@
     
     
 <script type="module">
-import init, * as bindings from '/website-aaa7f9617b6836b6.js';
-const wasm = await init({ module_or_path: '/website-aaa7f9617b6836b6_bg.wasm' });
+import init, * as bindings from '/website-a0e13d8edea52160.js';
+const wasm = await init({ module_or_path: '/website-a0e13d8edea52160_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -18,7 +18,8 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-<link rel="modulepreload" href="/website-aaa7f9617b6836b6.js" crossorigin="anonymous" integrity="sha384-AFVYYJ+oE+ZnZH/WkalkyiXaCYNLUWGJ+Rdv2erB6uaxKnvUjpgN+4o/8K2LF1Nn"><link rel="preload" href="/website-aaa7f9617b6836b6_bg.wasm" crossorigin="anonymous" integrity="sha384-RyZlvzjIieZ7aTvkT135i3CInliUSCr0guRJ0nv9reI0qs5Zm9/yomPibUOHcsSz" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="/website-a0e13d8edea52160.js" crossorigin="anonymous" integrity="sha384-1dLOoX2rhbWxg7UusH9PKRBazPKjYSF/O1/LVOBjRYz0Ibgs6mOSAOycPpJoV1hM"><link rel="preload" href="/website-a0e13d8edea52160_bg.wasm" crossorigin="anonymous" integrity="sha384-0tIka+INqTxFJD7XKN+PBhcuxYZnJUXV4MkccLlbt6yj0dZBpuuLtbfbnQjxNa2T" as="fetch" type="application/wasm"></head>
+
 <style>
     html, body {
         width: 100%;
@@ -26,21 +27,92 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
         margin: 0;
         padding: 0;
         overflow: hidden;
-        background: #000;
+        /*background: #000;*/
     }
 
     /* The winit/wasm renderer creates the <canvas>, appends it to <body> and
        sets id="aimer_app" on it, so this rule styles that canvas. */
     #aimer_app {
-        display: block;
-        width: 100%;
-        height: 100%;
+        position: fixed;
+        inset: 0;
         height: 100dvh;
+        width: 100%;
+        z-index: 1;
         outline: none;
         background: #000;
     }
+
+    .loader {
+        width: fit-content;
+        font-weight: bold;
+        font-family: monospace;
+        white-space: pre;
+        font-size: 30px;
+        line-height: 1.2em;
+        color: white;
+        height: 1.2em;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        overflow: hidden;
+        opacity: 1;
+        /*transition: opacity 400ms ease;*/
+    }
+
+    .loader:before {
+        content: "Loading...\A⌰oading...\A⌰⍜ading...\A⌰⍜⏃ding...\A⌰⍜⏃⎅ing...\A⌰⍜⏃⎅⟟ng...\A⌰⍜⏃⎅⟟⋏g...\A⌰⍜⏃⎅⟟⋏☌...\A⌰⍜⏃⎅⟟⋏☌⟒..\A⌰⍜⏃⎅⟟⋏☌⟒⏁.\A⌰⍜⏃⎅⟟⋏☌⟒⏁⋔";
+        white-space: pre;
+        display: inline-block;
+        animation: l39 1s infinite steps(11) alternate;
+    }
+
+    @keyframes l39 {
+        100% {
+            transform: translateY(-100%);
+        }
+    }
+
+
+
+    #loading-holder {
+        width: 100dvw;
+        height: 100dvh;
+        position: fixed;
+        z-index: 3;
+        background: #212525;
+        transition: opacity 360ms ease-out;
+    }
+
+    #loading-holder.hidden {
+        opacity: 0;
+        pointer-events: none;
+    }
+    
+    @keyframes fade-out-opacity {
+        0% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.5;
+        }
+        100% {
+            opacity: 0;
+            display: none;
+        }
+    }
+
+    @keyframes loader-text {
+        100% {
+            transform: translateY(-100%);
+        }
+    }
 </style>
 <body>
+<div id="loading-holder">
+    <div id="loader" class="loader"></div>
+</div>
+
 <script>"use strict";
 
 (function () {
@@ -171,8 +243,24 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 })()
 </script></body>
-
 <script>
 
+    // setTimeout(function () {
+    //     const el = document.getElementById('loading-holder');
+    //     if (!el) return;
+    //     el.classList.add('hidden');
+    // }, 520);
+
+    function hideBoot() {
+        const el = document.getElementById('loading-holder');
+        if (!el) return;
+        el.classList.add('hidden');
+        setTimeout(function () {
+            if (el.parentNode) el.parentNode.removeChild(el);
+        }, 620);
+
+    }
+
+    window.addEventListener("aimer:first-frame-rendered", hideBoot, {once: true});
 </script>
 </html>

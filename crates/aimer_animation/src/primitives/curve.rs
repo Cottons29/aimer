@@ -230,9 +230,19 @@ mod tests {
 
     #[test]
     fn test_material_curves_boundaries() {
-        for curve in &[Curve::FastOutSlowIn, Curve::LinearOutSlowIn, Curve::FastOutLinearIn] {
-            assert!((curve.transform(0.0) - 0.0).abs() < 1e-6, "{curve:?} at 0.0");
-            assert!((curve.transform(1.0) - 1.0).abs() < 1e-6, "{curve:?} at 1.0");
+        for curve in &[
+            Curve::FastOutSlowIn,
+            Curve::LinearOutSlowIn,
+            Curve::FastOutLinearIn,
+        ] {
+            assert!(
+                (curve.transform(0.0) - 0.0).abs() < 1e-6,
+                "{curve:?} at 0.0"
+            );
+            assert!(
+                (curve.transform(1.0) - 1.0).abs() < 1e-6,
+                "{curve:?} at 1.0"
+            );
         }
     }
 }

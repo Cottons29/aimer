@@ -23,7 +23,9 @@ fn main() {
             continue;
         };
         let relative_path = relative_path.replace('\\', "/");
-        generated.push_str(&format!("    ({relative_path:?}, include_str!({source_path:?})),\n"));
+        generated.push_str(&format!(
+            "    ({relative_path:?}, include_str!({source_path:?})),\n"
+        ));
         if let Some(parent) = source_file.parent() {
             source_directories.insert(parent.to_owned());
         }
@@ -77,6 +79,9 @@ fn collect_source_files(directory: &Path, source_files: &mut Vec<PathBuf>) {
 fn is_ignored_directory(path: &Path) -> bool {
     path.file_name()
         .is_some_and(|name| {
-            matches!(name.to_str(), Some(".git" | ".junie" | "node_modules" | "target"))
+            matches!(
+                name.to_str(),
+                Some(".git" | ".junie" | "node_modules" | "target")
+            )
         })
 }

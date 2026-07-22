@@ -22,8 +22,11 @@ pub fn create(dir: &Path, name: &str, group: &str) {
     .unwrap();
 
     let gradlew_path = dir.join("builds/android/gradlew");
-    fs::write(&gradlew_path, include_str!("../../../templates/android/dot_gradle/gradlew"))
-        .unwrap();
+    fs::write(
+        &gradlew_path,
+        include_str!("../../../templates/android/dot_gradle/gradlew"),
+    )
+    .unwrap();
 
     #[cfg(unix)]
     {
@@ -51,7 +54,11 @@ pub fn create(dir: &Path, name: &str, group: &str) {
     )
     .unwrap();
 
-    fs::write(dir.join("builds/android/gradle.properties"), "android.useAndroidX=true\n").unwrap();
+    fs::write(
+        dir.join("builds/android/gradle.properties"),
+        "android.useAndroidX=true\n",
+    )
+    .unwrap();
 
     fs::write(
         dir.join("builds/android/build.gradle.kts"),
@@ -113,11 +120,26 @@ plugins {
 
     // Default launcher icons
     let mipmap_sizes: &[(&str, &[u8])] = &[
-        ("mipmap-mdpi", include_bytes!("../../../templates/icons/icon_48.png")),
-        ("mipmap-hdpi", include_bytes!("../../../templates/icons/icon_72.png")),
-        ("mipmap-xhdpi", include_bytes!("../../../templates/icons/icon_96.png")),
-        ("mipmap-xxhdpi", include_bytes!("../../../templates/icons/icon_144.png")),
-        ("mipmap-xxxhdpi", include_bytes!("../../../templates/icons/icon_192.png")),
+        (
+            "mipmap-mdpi",
+            include_bytes!("../../../templates/icons/icon_48.png"),
+        ),
+        (
+            "mipmap-hdpi",
+            include_bytes!("../../../templates/icons/icon_72.png"),
+        ),
+        (
+            "mipmap-xhdpi",
+            include_bytes!("../../../templates/icons/icon_96.png"),
+        ),
+        (
+            "mipmap-xxhdpi",
+            include_bytes!("../../../templates/icons/icon_144.png"),
+        ),
+        (
+            "mipmap-xxxhdpi",
+            include_bytes!("../../../templates/icons/icon_192.png"),
+        ),
     ];
     for (folder, data) in mipmap_sizes {
         let mipmap_dir = dir.join(format!("builds/android/app/src/main/res/{}", folder));

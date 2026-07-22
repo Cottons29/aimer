@@ -14,7 +14,9 @@ pub struct AnimInstant {
 impl AnimInstant {
     /// Capture the current monotonic time.
     pub fn now() -> Self {
-        Self { inner: web_time::Instant::now() }
+        Self {
+            inner: web_time::Instant::now(),
+        }
     }
 
     /// Returns the duration elapsed since `earlier`.
@@ -38,7 +40,9 @@ impl std::ops::Add<Duration> for AnimInstant {
     type Output = AnimInstant;
 
     fn add(self, rhs: Duration) -> Self::Output {
-        AnimInstant { inner: self.inner + rhs }
+        AnimInstant {
+            inner: self.inner + rhs,
+        }
     }
 }
 
@@ -46,7 +50,9 @@ impl std::ops::Sub<Duration> for AnimInstant {
     type Output = AnimInstant;
 
     fn sub(self, rhs: Duration) -> Self::Output {
-        AnimInstant { inner: self.inner - rhs }
+        AnimInstant {
+            inner: self.inner - rhs,
+        }
     }
 }
 

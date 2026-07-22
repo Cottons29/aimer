@@ -10,7 +10,9 @@ impl Parse for UniqueKeyInput {
         if input.is_empty() {
             Ok(Self { prefix: None })
         } else {
-            Ok(Self { prefix: Some(input.parse()?) })
+            Ok(Self {
+                prefix: Some(input.parse()?),
+            })
         }
     }
 }

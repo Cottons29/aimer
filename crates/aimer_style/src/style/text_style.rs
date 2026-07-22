@@ -155,7 +155,13 @@ impl TextDecoration {
     };
 
     pub const fn from_parts(line: TextDecorationLine, style: TextDecorationStyle) -> Self {
-        Self { line, style, color: None, thickness: None, offset: 0.0 }
+        Self {
+            line,
+            style,
+            color: None,
+            thickness: None,
+            offset: 0.0,
+        }
     }
 
     pub const fn with_color(mut self, color: Color) -> Self {
@@ -306,7 +312,10 @@ mod tests {
         assert!(!both.contains(TextDecorationLine::LINE_THROUGH));
         // Italic is a distinct bit, not overlapping any decoration line.
         assert_ne!(TextDecorationLine::ITALIC.bits(), 0);
-        assert_eq!(TextDecorationLine::ITALIC.bits() & TextDecorationLine::UNDERLINE.bits(), 0);
+        assert_eq!(
+            TextDecorationLine::ITALIC.bits() & TextDecorationLine::UNDERLINE.bits(),
+            0
+        );
         assert!(!TextDecorationLine::ITALIC.is_none());
     }
 

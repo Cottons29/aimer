@@ -6,9 +6,7 @@ pub fn auto_impl(trait_name: &str, input: TokenStream) -> TokenStream {
     let input = match syn::parse2::<DeriveInput>(input.into()) {
         Ok(data) => data,
         Err(err) => {
-            return err
-                .to_compile_error()
-                .into();
+            return err.to_compile_error().into();
         }
     };
 
@@ -16,9 +14,7 @@ pub fn auto_impl(trait_name: &str, input: TokenStream) -> TokenStream {
         Ok(path) => path,
 
         Err(err) => {
-            return err
-                .to_compile_error()
-                .into();
+            return err.to_compile_error().into();
         }
     };
     let name = input.ident;

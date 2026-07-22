@@ -42,7 +42,10 @@ pub(crate) fn generate_theme_impl(
             }
         },
         Data::Enum(_) => {
-            return Err(syn::Error::new_spanned(&input.ident, "Theme cannot be derived for enums"));
+            return Err(syn::Error::new_spanned(
+                &input.ident,
+                "Theme cannot be derived for enums",
+            ));
         }
         Data::Union(_) => {
             return Err(syn::Error::new_spanned(
@@ -53,9 +56,7 @@ pub(crate) fn generate_theme_impl(
     };
 
     let name = &input.ident;
-    let mut animation_generics = input
-        .generics
-        .clone();
+    let mut animation_generics = input.generics.clone();
     for field in fields {
         let ty = &field.ty;
         animation_generics
@@ -81,17 +82,15 @@ pub(crate) fn generate_theme_impl(
         animation_generics.split_for_impl();
     let (theme_impl_generics, theme_ty_generics, theme_where_clause) =
         theme_generics.split_for_impl();
-    let interpolated_fields = fields
-        .iter()
-        .map(|field| {
-            let ident = field
-                .ident
-                .as_ref()
-                .expect("named fields have identifiers");
-            quote! {
-                #ident: #style_path::__private::Animatable::lerp(&self.#ident, &other.#ident, t)
-            }
-        });
+    let interpolated_fields = fields.iter().map(|field| {
+        let ident = field
+            .ident
+            .as_ref()
+            .expect("named fields have identifiers");
+        quote! {
+            #ident: #style_path::__private::Animatable::lerp(&self.#ident, &other.#ident, t)
+        }
+    });
 
     Ok(quote! {
         impl #animation_impl_generics #style_path::__private::Animatable
@@ -174,7 +173,10 @@ mod tests {
         )
         .expect_err("tuple structs must be rejected");
 
-        assert_eq!(error.to_string(), "Theme can only be derived for structs with named fields");
+        assert_eq!(
+            error.to_string(),
+            "Theme can only be derived for structs with named fields"
+        );
     }
 
     #[test]
@@ -187,7 +189,10 @@ mod tests {
         )
         .expect_err("unit structs must be rejected");
 
-        assert_eq!(error.to_string(), "Theme can only be derived for structs with named fields");
+        assert_eq!(
+            error.to_string(),
+            "Theme can only be derived for structs with named fields"
+        );
     }
 
     #[test]

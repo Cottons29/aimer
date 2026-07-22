@@ -59,26 +59,17 @@ impl BlogStore {
             if !ids.insert(blog.id.clone()) {
                 return Err(format!("duplicate blog id: {}", blog.id));
             }
-            if blog
-                .title
-                .trim()
-                .is_empty()
+            if blog.title.trim().is_empty()
                 || blog
                     .upload_time
                     .trim()
                     .is_empty()
-                || blog
-                    .author
-                    .trim()
-                    .is_empty()
+                || blog.author.trim().is_empty()
                 || blog.tags.is_empty()
                 || blog
                     .tags
                     .iter()
-                    .any(|tag| {
-                        tag.trim()
-                            .is_empty()
-                    })
+                    .any(|tag| tag.trim().is_empty())
             {
                 return Err(format!("blog metadata is incomplete: {}", blog.id));
             }
@@ -90,7 +81,10 @@ impl BlogStore {
                 .canonicalize()
                 .map_err(|error| format!("markdown is missing for {}: {error}", blog.id))?;
             if !canonical.starts_with(&root) {
-                return Err(format!("markdown path escapes the content directory: {}", blog.id));
+                return Err(format!(
+                    "markdown path escapes the content directory: {}",
+                    blog.id
+                ));
             }
             if !canonical.is_file() {
                 return Err(format!("markdown is missing for {}", blog.id));
@@ -102,10 +96,7 @@ impl BlogStore {
             right
                 .upload_time
                 .cmp(&left.upload_time)
-                .then_with(|| {
-                    left.id
-                        .cmp(&right.id)
-                })
+                .then_with(|| left.id.cmp(&right.id))
         });
         Ok(Self(Arc::new(BlogStoreInner { blogs, paths })))
     }
@@ -123,14 +114,10 @@ struct ErrorBody {
 
 pub fn app(store: BlogStore) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list([HeaderValue::from_str(
-            "https://aimer.cottonsofficial.com",
-        )
-        .unwrap(),
-            HeaderValue::from_str(
-                "http://aimer.cottonsofficial.com",
-            )
-                .unwrap()]))
+        .allow_origin(AllowOrigin::list([
+            HeaderValue::from_str("https://aimer.cottonsofficial.com").unwrap(),
+            HeaderValue::from_str("http://aimer.cottonsofficial.com").unwrap(),
+        ]))
         .allow_methods(Any)
         .allow_headers(Any);
 
@@ -143,10 +130,7 @@ pub fn app(store: BlogStore) -> Router {
 
 async fn list_blogs(State(store): State<BlogStore>) -> Json<BlogList> {
     Json(BlogList {
-        blogs: store
-            .0
-            .blogs
-            .clone(),
+        blogs: store.0.blogs.clone(),
     })
 }
 
@@ -154,11 +138,7 @@ async fn get_blog(State(store): State<BlogStore>, AxumPath(id): AxumPath<String>
     if !is_valid_id(&id) {
         return error_response(StatusCode::BAD_REQUEST, "invalid blog id");
     }
-    let Some(path) = store
-        .0
-        .paths
-        .get(&id)
-    else {
+    let Some(path) = store.0.paths.get(&id) else {
         return error_response(StatusCode::NOT_FOUND, "blog not found");
     };
     let Some(summary) = store
@@ -173,15 +153,9 @@ async fn get_blog(State(store): State<BlogStore>, AxumPath(id): AxumPath<String>
     match tokio::fs::read_to_string(path).await {
         Ok(markdown) => Json(BlogDetail {
             id: summary.id.clone(),
-            upload_time: summary
-                .upload_time
-                .clone(),
-            title: summary
-                .title
-                .clone(),
-            author: summary
-                .author
-                .clone(),
+            upload_time: summary.upload_time.clone(),
+            title: summary.title.clone(),
+            author: summary.author.clone(),
             tags: summary.tags.clone(),
             markdown,
         })
@@ -263,7 +237,10 @@ mod tests {
         assert_eq!(json["blogs"][0]["title"], "New post");
         assert_eq!(json["blogs"][0]["upload_time"], "2026-07-18T02:22:00Z");
         assert_eq!(json["blogs"][0]["author"], "Cottons");
-        assert_eq!(json["blogs"][0]["tags"], serde_json::json!(["Aimer", "GUI"]));
+        assert_eq!(
+            json["blogs"][0]["tags"],
+            serde_json::json!(["Aimer", "GUI"])
+        );
         assert_eq!(json["blogs"][1]["id"], "older-post");
     }
 

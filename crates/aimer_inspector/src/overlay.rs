@@ -7,8 +7,12 @@ use aimer_widget::Element;
 pub struct InspectorOverlay;
 impl InspectorOverlay {
     pub fn draw(_element: &dyn Element, canvas: &Canvas<'_>, _cursor: Vec2d, scale: f32) {
-        let Ok(hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.read() else { return };
-        let Some((name, start, end)) = *hovered else { return };
+        let Ok(hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.read() else {
+            return;
+        };
+        let Some((name, start, end)) = *hovered else {
+            return;
+        };
         canvas.save();
         canvas.scale(scale, scale);
         let w = end.x - start.x;
@@ -17,7 +21,10 @@ impl InspectorOverlay {
             // Stroke border
             canvas.stroke_rect(
                 Vec2d::from((start.x, start.y)),
-                ResolvedSize { width: w, height: h },
+                ResolvedSize {
+                    width: w,
+                    height: h,
+                },
                 Color::Rgba(0, 120, 255, 200),
                 1.5,
                 [0.0; 4],
@@ -25,7 +32,10 @@ impl InspectorOverlay {
             // Fill background
             canvas.fill_color_rect(
                 Vec2d::from((start.x, start.y)),
-                ResolvedSize { width: w, height: h },
+                ResolvedSize {
+                    width: w,
+                    height: h,
+                },
                 Color::Rgba(66, 135, 245, 46),
                 [0.0; 4],
             );
@@ -44,7 +54,10 @@ impl InspectorOverlay {
             // Label background
             canvas.fill_color_rect(
                 Vec2d::from((lx, ly)),
-                ResolvedSize { width: label_w, height: label_h },
+                ResolvedSize {
+                    width: label_w,
+                    height: label_h,
+                },
                 Color::Rgba(66, 135, 245, 200),
                 [0.0; 4],
             );

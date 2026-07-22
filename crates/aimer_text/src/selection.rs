@@ -10,7 +10,10 @@ pub(crate) struct TextHitRegion {
 
 impl TextHitRegion {
     pub const fn new(source_range: Range<usize>, bounds: Bounds) -> Self {
-        Self { source_range, bounds }
+        Self {
+            source_range,
+            bounds,
+        }
     }
 }
 
@@ -30,13 +33,9 @@ pub(crate) fn text_offset_at(regions: &[TextHitRegion], x: f32, y: f32) -> Optio
         })?;
     let midpoint = region.bounds.x + region.bounds.width / 2.0;
     Some(if x < midpoint {
-        region
-            .source_range
-            .start
+        region.source_range.start
     } else {
-        region
-            .source_range
-            .end
+        region.source_range.end
     })
 }
 
@@ -92,11 +91,7 @@ impl TextSelection {
     }
 
     pub fn range(self) -> Range<usize> {
-        self.anchor
-            .min(self.focus)
-            ..self
-                .anchor
-                .max(self.focus)
+        self.anchor.min(self.focus)..self.anchor.max(self.focus)
     }
 
     pub const fn is_collapsed(self) -> bool {
@@ -128,14 +123,8 @@ impl SelectionState {
         if self.active_pointer != Some(pointer) {
             return false;
         }
-        self.selection = TextSelection::new(
-            self.selection
-                .anchor(),
-            offset,
-        );
-        self.dragged |= !self
-            .selection
-            .is_collapsed();
+        self.selection = TextSelection::new(self.selection.anchor(), offset);
+        self.dragged |= !self.selection.is_collapsed();
         true
     }
 
@@ -178,8 +167,7 @@ impl SelectionState {
     }
 
     pub const fn is_active(&self) -> bool {
-        self.active_pointer
-            .is_some()
+        self.active_pointer.is_some()
     }
 
     pub const fn active_pointer(&self) -> Option<u64> {

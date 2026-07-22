@@ -16,7 +16,10 @@ pub fn execute(target: Option<String>, release: bool) -> anyhow::Result<()> {
     let target = resolve_target(target)?;
 
     let mut cmd = build_command(target, release)?;
-    println!("Building for target '{target}'{}...", if release { " (release)" } else { "" });
+    println!(
+        "Building for target '{target}'{}...",
+        if release { " (release)" } else { "" }
+    );
 
     let status = cmd
         .status()
@@ -115,8 +118,7 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
         }
         Targets::Windows | Targets::Linux => {
             let mut c = Command::new("cargo");
-            c.arg("build")
-                .arg("--lib");
+            c.arg("build").arg("--lib");
             if release {
                 c.arg("--release");
             }

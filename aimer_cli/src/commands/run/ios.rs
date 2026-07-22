@@ -63,17 +63,24 @@ pub(crate) fn run_ios(
             (
                 rust_target,
                 "iphoneos",
-                CargoBuildTarget::Ios { rust_target: rust_target.to_string() },
+                CargoBuildTarget::Ios {
+                    rust_target: rust_target.to_string(),
+                },
                 "Debug-iphoneos",
             )
         }
         IosVariant::Simulator => {
-            let rust_target =
-                if xcode_arch == "x86_64" { "x86_64-apple-ios" } else { "aarch64-apple-ios-sim" };
+            let rust_target = if xcode_arch == "x86_64" {
+                "x86_64-apple-ios"
+            } else {
+                "aarch64-apple-ios-sim"
+            };
             (
                 rust_target,
                 "iphonesimulator",
-                CargoBuildTarget::IosSim { rust_target: rust_target.to_string() },
+                CargoBuildTarget::IosSim {
+                    rust_target: rust_target.to_string(),
+                },
                 "Debug-iphonesimulator",
             )
         }
@@ -89,7 +96,10 @@ pub(crate) fn run_ios(
     }
 
     set_status(&tx, Status::Compiling(0));
-    build_log(&tx, format!("Compiling static library for {}...", rust_target));
+    build_log(
+        &tx,
+        format!("Compiling static library for {}...", rust_target),
+    );
 
     let status = match cargo_build::spawn_cargo_build(
         &build_target,
@@ -112,7 +122,9 @@ pub(crate) fn run_ios(
     let src_lib = resolve_lib_path(
         &lib_name,
         rust_target,
-        CargoBuildTarget::Ios { rust_target: rust_target.to_string() },
+        CargoBuildTarget::Ios {
+            rust_target: rust_target.to_string(),
+        },
     );
     let dest_dir = "builds/ios/Libraries";
     let dest_lib = format!("{}/lib{}.a", dest_dir, lib_name);
@@ -209,7 +221,15 @@ fn install_app(
 
             let mut install = Command::new("xcrun");
             install
-                .args(["devicectl", "device", "install", "app", "--device", &device.id, app_path])
+                .args([
+                    "devicectl",
+                    "device",
+                    "install",
+                    "app",
+                    "--device",
+                    &device.id,
+                    app_path,
+                ])
                 .env("TERM", "dumb")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());

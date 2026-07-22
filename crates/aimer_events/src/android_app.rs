@@ -50,7 +50,12 @@ fn with_activity(call: impl FnOnce(&mut jni::Env, &jni::objects::JObject)) {
 #[cfg(target_os = "android")]
 pub fn show_keyboard() {
     with_activity(|env, activity| {
-        let _ = env.call_method(activity, jni::jni_str!("showKeyboard"), jni::jni_sig!("()V"), &[]);
+        let _ = env.call_method(
+            activity,
+            jni::jni_str!("showKeyboard"),
+            jni::jni_sig!("()V"),
+            &[],
+        );
     });
 }
 
@@ -58,6 +63,11 @@ pub fn show_keyboard() {
 #[cfg(target_os = "android")]
 pub fn hide_keyboard() {
     with_activity(|env, activity| {
-        let _ = env.call_method(activity, jni::jni_str!("hideKeyboard"), jni::jni_sig!("()V"), &[]);
+        let _ = env.call_method(
+            activity,
+            jni::jni_str!("hideKeyboard"),
+            jni::jni_sig!("()V"),
+            &[],
+        );
     });
 }

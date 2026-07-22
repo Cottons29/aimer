@@ -146,16 +146,13 @@ impl<W: Widget + 'static> Positioned<W> {
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
-        self.child(child)
-            .boxed()
+        self.child(child).boxed()
     }
 }
 
 impl<W: Widget> Widget for Positioned<W> {
     fn to_element(&self, ctx: &BuildContext) -> Box<dyn Element> {
-        let child = self
-            .child
-            .to_element(ctx);
+        let child = self.child.to_element(ctx);
         Box::new(RawPositionedElement {
             child,
             position: self.position,
@@ -222,50 +219,38 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
 
         let mut offset_x = 0.0;
         let mut offset_y = 0.0;
-        let child_size = self
-            .child
-            .content_size(ctx);
+        let child_size = self.child.content_size(ctx);
 
         if !is_auto {
             if self.left != Dimension::Auto {
-                offset_x = self.left.resolve(
-                    ctx.parent_size
-                        .width,
-                    ctx.scale,
-                );
+                offset_x = self
+                    .left
+                    .resolve(ctx.parent_size.width, ctx.scale);
             } else if self.right != Dimension::Auto {
-                offset_x = ctx
-                    .parent_size
-                    .width
-                    - self.right.resolve(
-                        ctx.parent_size
-                            .width,
-                        ctx.scale,
-                    )
+                offset_x = ctx.parent_size.width
+                    - self
+                        .right
+                        .resolve(ctx.parent_size.width, ctx.scale)
                     - child_size.width;
             }
 
             if self.top != Dimension::Auto {
-                offset_y = self.top.resolve(
-                    ctx.parent_size
-                        .height,
-                    ctx.scale,
-                );
+                offset_y = self
+                    .top
+                    .resolve(ctx.parent_size.height, ctx.scale);
             } else if self.bottom != Dimension::Auto {
-                offset_y = ctx
-                    .parent_size
-                    .height
-                    - self.bottom.resolve(
-                        ctx.parent_size
-                            .height,
-                        ctx.scale,
-                    )
+                offset_y = ctx.parent_size.height
+                    - self
+                        .bottom
+                        .resolve(ctx.parent_size.height, ctx.scale)
                     - child_size.height;
             }
         }
 
-        ctx.canvas
-            .translate(Vec2d { x: offset_x, y: offset_y });
+        ctx.canvas.translate(Vec2d {
+            x: offset_x,
+            y: offset_y,
+        });
 
         match &self.transform {
             Transform::Translate(tx, ty) => {
@@ -281,20 +266,16 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
                     .translate(Vec2d { x: 0.0, y: *ty });
             }
             Transform::Scale(sx, sy) => {
-                ctx.canvas
-                    .scale(*sx, *sy);
+                ctx.canvas.scale(*sx, *sy);
             }
             Transform::ScaleX(sx) => {
-                ctx.canvas
-                    .scale(*sx, 1.0);
+                ctx.canvas.scale(*sx, 1.0);
             }
             Transform::ScaleY(sy) => {
-                ctx.canvas
-                    .scale(1.0, *sy);
+                ctx.canvas.scale(1.0, *sy);
             }
             Transform::Rotate(rad) => {
-                ctx.canvas
-                    .rotate(*rad);
+                ctx.canvas.rotate(*rad);
             }
             Transform::None => {}
         }
@@ -331,16 +312,11 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
                 visible_rect: child_visible_rect,
                 window: ctx.window.clone(),
                 #[cfg(not(target_arch = "wasm32"))]
-                async_handle: ctx
-                    .async_handle
-                    .clone(),
-                inherited_states: ctx
-                    .inherited_states
-                    .clone(),
+                async_handle: ctx.async_handle.clone(),
+                inherited_states: ctx.inherited_states.clone(),
             };
 
-            self.child
-                .draw(&child_ctx);
+            self.child.draw(&child_ctx);
         }
         ctx.canvas.restore();
     }
@@ -435,7 +411,10 @@ mod tests {
         // while the taller body straddles the line and survives — exactly the
         // "title clipped, body left" symptom.
         let unshifted = stack_visible.unwrap();
-        assert!(!visible(0.0, 30.0, unshifted), "buggy path should cull the title");
+        assert!(
+            !visible(0.0, 30.0, unshifted),
+            "buggy path should cull the title"
+        );
         assert!(visible(40.0, 260.0, unshifted), "buggy path keeps the body");
 
         // After the fix: shift by the 110px top offset. The title's real position
@@ -449,7 +428,10 @@ mod tests {
         let top_block =
             shift_visible_rect(Some((0.0, 5.0, 1000.0, 600.0)), 0.0, 10.0, &Transform::None)
                 .unwrap();
-        assert!(visible(0.0, 30.0, top_block), "on-screen title must not be culled");
+        assert!(
+            visible(0.0, 30.0, top_block),
+            "on-screen title must not be culled"
+        );
     }
 
     #[test]
@@ -508,6 +490,9 @@ mod tests {
         // to reach it. The Rebuildable fix above must NOT change this.
         let mut event_count = 0;
         positioned.event_children(&mut |_| event_count += 1);
-        assert_eq!(event_count, 1, "event_children must keep surfacing the wrapped child");
+        assert_eq!(
+            event_count, 1,
+            "event_children must keep surfacing the wrapped child"
+        );
     }
 }

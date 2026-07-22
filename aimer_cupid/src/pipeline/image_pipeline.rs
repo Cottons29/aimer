@@ -12,9 +12,15 @@ fn constrained_texture_size(width: u32, height: u32, max_dimension: u32) -> (u32
     }
 
     if width >= height {
-        (max_dimension, ((height as u64 * max_dimension as u64) / width as u64).max(1) as u32)
+        (
+            max_dimension,
+            ((height as u64 * max_dimension as u64) / width as u64).max(1) as u32,
+        )
     } else {
-        (((width as u64 * max_dimension as u64) / height as u64).max(1) as u32, max_dimension)
+        (
+            ((width as u64 * max_dimension as u64) / height as u64).max(1) as u32,
+            max_dimension,
+        )
     }
 }
 
@@ -107,7 +113,11 @@ fn upload_rgba8(
             bytes_per_row: Some(4 * width),
             rows_per_image: Some(height),
         },
-        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
     );
 }
 
@@ -121,7 +131,11 @@ impl InstanceBufferPolicy {
     pub(crate) const SHRINK_AFTER_FRAMES: u16 = 120;
 
     pub(crate) const fn new(initial_capacity: usize) -> Self {
-        Self { initial_capacity, capacity: initial_capacity, underused_frames: 0 }
+        Self {
+            initial_capacity,
+            capacity: initial_capacity,
+            underused_frames: 0,
+        }
     }
 
     pub(crate) const fn capacity(&self) -> usize {
@@ -229,7 +243,10 @@ impl ImagePipeline {
         }
         #[cfg(not(target_os = "android"))]
         {
-            concat!(include_str!("./shaders/color.wgsl"), include_str!("./shaders/image.wgsl"))
+            concat!(
+                include_str!("./shaders/color.wgsl"),
+                include_str!("./shaders/image.wgsl")
+            )
         }
     }
 
@@ -395,10 +412,7 @@ impl ImagePipeline {
         data: &[u8],
     ) -> bool {
         use std::collections::hash_map::Entry;
-        match self
-            .textures
-            .entry(id)
-        {
+        match self.textures.entry(id) {
             Entry::Occupied(_) => false,
             Entry::Vacant(vacant) => {
                 let (width, height, data) = constrain_rgba8(
@@ -413,7 +427,11 @@ impl ImagePipeline {
                 // so the copy is deferred to the GPU timeline (non-blocking).
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("uploaded image"),
-                    size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
                     mip_level_count: image_mip_level_count(),
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
@@ -515,10 +533,7 @@ impl ImagePipeline {
                 .max_texture_dimension_2d,
         );
         // In-place update if the texture exists and dimensions match.
-        if let Some(entry) = self
-            .textures
-            .get(&id)
-        {
+        if let Some(entry) = self.textures.get(&id) {
             let size = entry.texture.size();
             if size.width == width && size.height == height {
                 upload_rgba8(queue, &entry.texture, width, height, data.as_ref());
@@ -528,7 +543,11 @@ impl ImagePipeline {
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("uploaded image"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: image_mip_level_count(),
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -554,11 +573,14 @@ impl ImagePipeline {
             ],
         });
 
-        self.textures
-            .insert(
-                id,
-                TextureEntry { bind_group, texture, bytes: width as u64 * height as u64 * 4 },
-            );
+        self.textures.insert(
+            id,
+            TextureEntry {
+                bind_group,
+                texture,
+                bytes: width as u64 * height as u64 * 4,
+            },
+        );
     }
 
     pub fn remove_texture(&mut self, id: TextureId) -> bool {
@@ -598,10 +620,7 @@ impl ImagePipeline {
             return;
         }
 
-        let entry = match self
-            .textures
-            .get(&texture_id)
-        {
+        let entry = match self.textures.get(&texture_id) {
             Some(e) => e,
             None => return,
         };
@@ -639,7 +658,11 @@ impl ImagePipeline {
 
         // Viewport uniform is written once in `begin_frame` — no per-batch write
         // needed.
-        queue.write_buffer(&self.instance_buffer, byte_offset, bytemuck::cast_slice(instances));
+        queue.write_buffer(
+            &self.instance_buffer,
+            byte_offset,
+            bytemuck::cast_slice(instances),
+        );
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
@@ -720,8 +743,14 @@ mod tests {
     fn integer_nearest_resize_maps_destination_pixels_to_source_pixels() {
         let data = vec![1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255];
 
-        assert_eq!(resize_rgba8_nearest(4, 1, &data, 2, 1), vec![1, 0, 0, 255, 3, 0, 0, 255],);
-        assert_eq!(resize_rgba8_nearest(1, 4, &data, 1, 2), vec![1, 0, 0, 255, 3, 0, 0, 255],);
+        assert_eq!(
+            resize_rgba8_nearest(4, 1, &data, 2, 1),
+            vec![1, 0, 0, 255, 3, 0, 0, 255],
+        );
+        assert_eq!(
+            resize_rgba8_nearest(1, 4, &data, 1, 2),
+            vec![1, 0, 0, 255, 3, 0, 0, 255],
+        );
     }
 
     #[test]

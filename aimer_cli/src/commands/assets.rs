@@ -56,10 +56,7 @@ pub fn copy_assets_into(dest_root: &str) -> anyhow::Result<AssetCopyReport> {
     let files: Vec<String> = AimerManifest::load_from(Path::new("."))
         .ok()
         .flatten()
-        .map(|m| {
-            m.asset_files()
-                .to_vec()
-        })
+        .map(|m| m.asset_files().to_vec())
         .unwrap_or_default();
 
     copy_files(&files, Path::new("."), Path::new(dest_root))
@@ -94,10 +91,7 @@ fn sync_trunk_copy_entries_in(dir: &Path) -> anyhow::Result<()> {
     let assets: Vec<String> = AimerManifest::load_from(dir)
         .ok()
         .flatten()
-        .map(|m| {
-            m.asset_files()
-                .to_vec()
-        })
+        .map(|m| m.asset_files().to_vec())
         .unwrap_or_default();
 
     let existing = std::fs::read_to_string(&trunk_toml)
@@ -196,7 +190,10 @@ mod tests {
         )
         .unwrap();
 
-        let files = vec!["assets/sub/logo.png".to_string(), "assets/missing.png".to_string()];
+        let files = vec![
+            "assets/sub/logo.png".to_string(),
+            "assets/missing.png".to_string(),
+        ];
         let report = copy_files(&files, src_root.path(), dest.path()).unwrap();
 
         assert!(
@@ -206,11 +203,7 @@ mod tests {
         );
         assert_eq!(report.copied, ["assets/sub/logo.png".to_string()]);
         assert_eq!(report.missing, ["assets/missing.png".to_string()]);
-        assert!(
-            report
-                .skipped
-                .is_empty()
-        );
+        assert!(report.skipped.is_empty());
     }
 
     #[test]
@@ -218,12 +211,7 @@ mod tests {
         let src_root = tempfile::tempdir().unwrap();
         let dest = tempfile::tempdir().unwrap();
 
-        std::fs::create_dir_all(
-            src_root
-                .path()
-                .join("assets"),
-        )
-        .unwrap();
+        std::fs::create_dir_all(src_root.path().join("assets")).unwrap();
         std::fs::write(
             src_root
                 .path()
@@ -239,11 +227,7 @@ mod tests {
 
         // ...a second copy with no changes should skip it.
         let second = copy_files(&files, src_root.path(), dest.path()).unwrap();
-        assert!(
-            second
-                .copied
-                .is_empty()
-        );
+        assert!(second.copied.is_empty());
         assert_eq!(second.skipped, ["assets/logo.png".to_string()]);
     }
 
@@ -252,12 +236,7 @@ mod tests {
         let src_root = tempfile::tempdir().unwrap();
         let dest = tempfile::tempdir().unwrap();
 
-        std::fs::create_dir_all(
-            src_root
-                .path()
-                .join("assets"),
-        )
-        .unwrap();
+        std::fs::create_dir_all(src_root.path().join("assets")).unwrap();
         let src = src_root
             .path()
             .join("assets/logo.png");
@@ -287,9 +266,7 @@ mod tests {
     /// `builds/web/Trunk.toml`, then run `sync_trunk_copy_entries_in`.
     fn setup_trunk_sync(aimer_assets: Option<&str>, trunk_initial: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        let web_dir = dir
-            .path()
-            .join("builds/web");
+        let web_dir = dir.path().join("builds/web");
         std::fs::create_dir_all(&web_dir).unwrap();
         std::fs::write(web_dir.join("Trunk.toml"), trunk_initial).unwrap();
 
@@ -301,12 +278,7 @@ mod tests {
             }
             toml.push_str("]\n");
         }
-        std::fs::write(
-            dir.path()
-                .join("aimer.toml"),
-            &toml,
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("aimer.toml"), &toml).unwrap();
         dir
     }
 
@@ -343,7 +315,10 @@ mod tests {
                 .join("builds/web/Trunk.toml"),
         )
         .unwrap();
-        assert!(!contents.contains("old.png"), "stale entry should be removed");
+        assert!(
+            !contents.contains("old.png"),
+            "stale entry should be removed"
+        );
         assert!(contents.contains("[[copy]]\nfile = \"../../assets/new.png\""));
     }
 

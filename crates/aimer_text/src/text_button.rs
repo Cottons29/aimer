@@ -165,7 +165,11 @@ impl ButtonInteraction {
     fn pointer_up(&mut self, inside: bool, disabled: bool) -> ButtonAction {
         let pressed = self.armed && inside && !disabled;
         self.armed = false;
-        if pressed { ButtonAction::Press } else { ButtonAction::None }
+        if pressed {
+            ButtonAction::Press
+        } else {
+            ButtonAction::None
+        }
     }
 
     fn cancel(&mut self) {
@@ -186,19 +190,9 @@ impl RawTextButton {
 
     fn active_style(&self) -> TextStyle {
         let (mut style, color) = if self.widget.disabled {
-            (
-                self.widget
-                    .disabled_style,
-                self.widget
-                    .disabled_color,
-            )
+            (self.widget.disabled_style, self.widget.disabled_color)
         } else if self.hovered.get() {
-            (
-                self.widget
-                    .hover_style,
-                self.widget
-                    .hover_color,
-            )
+            (self.widget.hover_style, self.widget.hover_color)
         } else {
             (self.widget.style, self.widget.color)
         };
@@ -210,10 +204,7 @@ impl RawTextButton {
 
     fn text_element(&self) -> RawTextWidget {
         RawTextWidget {
-            text: self
-                .widget
-                .label
-                .clone(),
+            text: self.widget.label.clone(),
             text_style: self.active_style(),
             text_align: Default::default(),
             cache: LayoutCache::new(),
@@ -222,10 +213,7 @@ impl RawTextButton {
     }
 
     fn execute(callback: &VoidCallback) {
-        if let Some(callback) = callback
-            .get()
-            .as_ref()
-        {
+        if let Some(callback) = callback.get().as_ref() {
             match callback {
                 RawInnerCallback::Empty => {}
                 RawInnerCallback::Sync(function) => function(()),
@@ -249,25 +237,15 @@ impl RawTextButton {
             .get()
             .is_some_and(|last| now.duration_since(last) <= Self::DOUBLE_TAP_INTERVAL)
         {
-            Self::execute(
-                &self
-                    .widget
-                    .on_double_press,
-            );
-            self.last_tap
-                .set(None);
+            Self::execute(&self.widget.on_double_press);
+            self.last_tap.set(None);
         } else {
-            self.last_tap
-                .set(Some(now));
+            self.last_tap.set(Some(now));
         }
     }
 
     fn set_hovered(&self, hovered: bool) {
-        if self
-            .hovered
-            .replace(hovered)
-            != hovered
-        {
+        if self.hovered.replace(hovered) != hovered {
             request_animation_frame();
         }
     }

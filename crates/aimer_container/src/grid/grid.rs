@@ -44,27 +44,23 @@ impl<W: Widget + 'static> GridItem<W> {
     }
 
     pub fn column(mut self, column: usize) -> Self {
-        self.placement
-            .column = Some(column);
+        self.placement.column = Some(column);
         self
     }
 
     pub fn at(mut self, row: usize, column: usize) -> Self {
         self.placement.row = Some(row);
-        self.placement
-            .column = Some(column);
+        self.placement.column = Some(column);
         self
     }
 
     pub fn row_span(mut self, span: usize) -> Self {
-        self.placement
-            .row_span = span;
+        self.placement.row_span = span;
         self
     }
 
     pub fn column_span(mut self, span: usize) -> Self {
-        self.placement
-            .column_span = span;
+        self.placement.column_span = span;
         self
     }
 
@@ -148,9 +144,7 @@ impl<W: Widget + 'static> Grid<W> {
     /// divide bounded remaining width by weight, and [`GridTrack::Auto`] uses
     /// item content. At least one column is required for a valid layout.
     pub fn columns(mut self, tracks: impl IntoIterator<Item = GridTrack>) -> Self {
-        self.columns = tracks
-            .into_iter()
-            .collect();
+        self.columns = tracks.into_iter().collect();
         self
     }
 
@@ -159,9 +153,7 @@ impl<W: Widget + 'static> Grid<W> {
     /// Track units behave as in [`Grid::columns`]. Additional implicit rows may
     /// be created by auto-placement when the supplied rows are exhausted.
     pub fn rows(mut self, tracks: impl IntoIterator<Item = GridTrack>) -> Self {
-        self.rows = tracks
-            .into_iter()
-            .collect();
+        self.rows = tracks.into_iter().collect();
         self
     }
 
@@ -236,9 +228,7 @@ impl<W: Widget + 'static> Grid<W> {
             horizontal_alignment: self.horizontal_alignment,
             vertical_alignment: self.vertical_alignment,
             overflow: self.overflow,
-            children: children
-                .into_iter()
-                .collect(),
+            children: children.into_iter().collect(),
         }
     }
 }
@@ -265,9 +255,7 @@ impl<W: Widget + 'static> Widget for Grid<W> {
             .children
             .iter()
             .map(|item| RawGridItem {
-                child: item
-                    .child
-                    .to_element(ctx),
+                child: item.child.to_element(ctx),
                 placement: item.placement,
                 horizontal_alignment: item.horizontal_alignment,
                 vertical_alignment: item.vertical_alignment,

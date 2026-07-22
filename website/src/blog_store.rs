@@ -85,10 +85,7 @@ impl BlogStore {
     }
 
     pub fn begin_detail_load(&mut self, id: &str) -> bool {
-        if self
-            .details
-            .contains_key(id)
-        {
+        if self.details.contains_key(id) {
             return false;
         }
         self.details
@@ -164,15 +161,13 @@ pub fn request_blog_detail(ctx: &BuildContext, handle: ProviderHandle<BlogStore>
             .await
             .and_then(|body| decode_blog_detail(&body));
         handle.update(move |store| {
-            store
-                .details
-                .insert(
-                    id,
-                    match result {
-                        Ok(markdown) => LoadState::Ready(markdown),
-                        Err(error) => LoadState::Error(error),
-                    },
-                );
+            store.details.insert(
+                id,
+                match result {
+                    Ok(markdown) => LoadState::Ready(markdown),
+                    Err(error) => LoadState::Error(error),
+                },
+            );
         });
     });
 
@@ -183,15 +178,13 @@ pub fn request_blog_detail(ctx: &BuildContext, handle: ProviderHandle<BlogStore>
             .block_on(fetch_text(&detail_url(&id)))
             .and_then(|body| decode_blog_detail(&body));
         handle.update(move |store| {
-            store
-                .details
-                .insert(
-                    id,
-                    match result {
-                        Ok(markdown) => LoadState::Ready(markdown),
-                        Err(error) => LoadState::Error(error),
-                    },
-                );
+            store.details.insert(
+                id,
+                match result {
+                    Ok(markdown) => LoadState::Ready(markdown),
+                    Err(error) => LoadState::Error(error),
+                },
+            );
         });
     }
 }
@@ -221,10 +214,7 @@ async fn fetch_text(url: &str) -> Result<String, String> {
     let response = reqwest::get(url)
         .await
         .map_err(|error| format!("request failed: {error}"))?;
-    if !response
-        .status()
-        .is_success()
-    {
+    if !response.status().is_success() {
         return Err(format!("request failed with status {}", response.status()));
     }
     response
@@ -244,9 +234,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .unwrap();
-        let address = listener
-            .local_addr()
-            .unwrap();
+        let address = listener.local_addr().unwrap();
         let response = format!(
             "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()

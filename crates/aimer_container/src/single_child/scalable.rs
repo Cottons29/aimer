@@ -8,7 +8,10 @@ pub struct Scalable<W = RequiredChild> {
 
 impl Scalable {
     pub fn new() -> Self {
-        Self { child: RequiredChild, scale: 1.0 }
+        Self {
+            child: RequiredChild,
+            scale: 1.0,
+        }
     }
 
     pub fn scale(mut self, scale: f32) -> Self {
@@ -17,7 +20,10 @@ impl Scalable {
     }
 
     pub fn child<W: Widget>(self, child: W) -> Scalable<W> {
-        Scalable { child, scale: self.scale }
+        Scalable {
+            child,
+            scale: self.scale,
+        }
     }
 }
 

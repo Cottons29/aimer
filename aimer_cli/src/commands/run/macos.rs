@@ -49,8 +49,14 @@ pub fn spawn_macos_runner(
 
     std::fs::create_dir_all(dest_dir).unwrap();
     if let Err(e) = std::fs::copy(&src_lib, &dest_lib) {
-        build_log(&tx, format!("Failed to copy static library: src_lib = {}", src_lib));
-        build_log(&tx, format!("Failed to copy static library: dest_lib = {}", dest_lib));
+        build_log(
+            &tx,
+            format!("Failed to copy static library: src_lib = {}", src_lib),
+        );
+        build_log(
+            &tx,
+            format!("Failed to copy static library: dest_lib = {}", dest_lib),
+        );
         fail(&tx, format!("Failed to copy static library: {}", e));
         return;
     } else {
@@ -89,8 +95,10 @@ pub fn spawn_macos_runner(
     set_status(&tx, Status::Launching);
     build_log(&tx, "Launching macOS app...");
 
-    let app_exec_path =
-        format!("builds/macos/build/Debug/{}.app/Contents/MacOS/{}", pkg_name, pkg_name);
+    let app_exec_path = format!(
+        "builds/macos/build/Debug/{}.app/Contents/MacOS/{}",
+        pkg_name, pkg_name
+    );
 
     let mut app_run = Command::new(&app_exec_path);
     app_run

@@ -45,10 +45,7 @@ where
     fn from(ac: AsyncCallback<F>) -> Self {
         let f = std::sync::Mutex::new(Some(ac.0));
         RawInnerCallback::Async(Box::new(move |param| {
-            let f = f
-                .lock()
-                .unwrap()
-                .take();
+            let f = f.lock().unwrap().take();
             if let Some(f) = f {
                 Box::pin(f(param))
             } else {
@@ -116,7 +113,9 @@ impl<P, R> Clone for CallbackInner<P, R> {
 
 impl<P, R, F: Fn(P) -> R + 'static> From<F> for CallbackInner<P, R> {
     fn from(f: F) -> Self {
-        CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Sync(Box::new(f))))))
+        CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Sync(
+            Box::new(f),
+        )))))
     }
 }
 
@@ -127,18 +126,15 @@ where
 {
     fn from(ac: AsyncCallback<F>) -> Self {
         let f = std::sync::Mutex::new(Some(ac.0));
-        CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(Box::new(
-            move |param| {
-                let f = f
-                    .lock()
-                    .unwrap()
-                    .take();
+        CallbackInner(Rc::new(UnsafeCell::new(Some(RawInnerCallback::Async(
+            Box::new(move |param| {
+                let f = f.lock().unwrap().take();
                 if let Some(f) = f {
                     Box::pin(f(param))
                 } else {
                     Box::pin(async { panic!("AsyncCallback called more than once") })
                 }
-            },
-        ))))))
+            }),
+        )))))
     }
 }

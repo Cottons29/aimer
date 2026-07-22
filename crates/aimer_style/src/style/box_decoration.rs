@@ -53,8 +53,7 @@ impl BoxDecoration {
     }
 
     pub fn add_shadow(mut self, shadow: BoxShadow) -> Self {
-        self.box_shadow
-            .push(shadow);
+        self.box_shadow.push(shadow);
         self
     }
 
@@ -74,12 +73,8 @@ impl BoxDecoration {
 
 impl Drawable for BoxDecoration {
     fn draw(&self, ctx: &BuildContext) {
-        let box_width = ctx
-            .parent_size
-            .width;
-        let box_height = ctx
-            .parent_size
-            .height;
+        let box_width = ctx.parent_size.width;
+        let box_height = ctx.parent_size.height;
         let scale = ctx.scale;
 
         let radii = self
@@ -118,7 +113,10 @@ impl Drawable for BoxDecoration {
             ctx.canvas
                 .fill_rect_with_border_and_outline_per_side(
                     Vec2d { x: 0.0, y: 0.0 },
-                    ResolvedSize { width: box_width, height: box_height },
+                    ResolvedSize {
+                        width: box_width,
+                        height: box_height,
+                    },
                     self.background_color
                         .unwrap_or(Color::Transparent),
                     radii,
@@ -137,7 +135,10 @@ impl Drawable for BoxDecoration {
             ctx.canvas
                 .fill_color_rect_per_corner(
                     Vec2d { x: 0.0, y: 0.0 },
-                    ResolvedSize { width: box_width, height: box_height },
+                    ResolvedSize {
+                        width: box_width,
+                        height: box_height,
+                    },
                     color,
                     radii,
                 );
@@ -178,18 +179,18 @@ impl BoxDecoration {
             return;
         }
 
-        let side_params = shadow
-            .side
-            .to_shader_params();
-        ctx.canvas
-            .draw_shadow_rect(
-                Vec2d { x: 0.0, y: 0.0 },
-                ResolvedSize { width: box_width, height: box_height },
-                shadow.color,
-                [shadow.offset_x, shadow.offset_y, blur, spread],
-                *radii,
-                shadow.inset,
-                [side_params.0, side_params.1, side_params.2],
-            );
+        let side_params = shadow.side.to_shader_params();
+        ctx.canvas.draw_shadow_rect(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize {
+                width: box_width,
+                height: box_height,
+            },
+            shadow.color,
+            [shadow.offset_x, shadow.offset_y, blur, spread],
+            *radii,
+            shadow.inset,
+            [side_params.0, side_params.1, side_params.2],
+        );
     }
 }

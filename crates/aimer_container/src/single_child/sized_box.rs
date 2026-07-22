@@ -75,7 +75,12 @@ impl SizedBox {
     /// preserves the concrete child type; use [`SizedBox::box_child`] when
     /// branches need an erased type.
     pub fn child<W: Widget>(self, child: W) -> SizedBox<W> {
-        SizedBox { width: self.width, height: self.height, color: self.color, child: Some(child) }
+        SizedBox {
+            width: self.width,
+            height: self.height,
+            color: self.color,
+            child: Some(child),
+        }
     }
 
     /// Attaches `child` and erases the resulting widget's concrete type.
@@ -84,8 +89,7 @@ impl SizedBox {
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
-        self.child(child)
-            .boxed()
+        self.child(child).boxed()
     }
 }
 
@@ -138,8 +142,14 @@ impl<E: Element> Drawable for RawSizedBox<E> {
                 let end_y = start_y + height;
 
                 let scale = ctx.scale;
-                let l_start = Vec2d { x: start_x / scale, y: start_y / scale };
-                let l_end = Vec2d { x: end_x / scale, y: end_y / scale };
+                let l_start = Vec2d {
+                    x: start_x / scale,
+                    y: start_y / scale,
+                };
+                let l_end = Vec2d {
+                    x: end_x / scale,
+                    y: end_y / scale,
+                };
                 self.bounds
                     .set(Some((l_start, l_end)));
 
@@ -155,13 +165,12 @@ impl<E: Element> Drawable for RawSizedBox<E> {
             }
         }
 
-        ctx.canvas
-            .fill_color_rect(
-                Vec2d { x: 0.0, y: 0.0 },
-                ResolvedSize { width, height },
-                self.color,
-                [0.0; 4],
-            );
+        ctx.canvas.fill_color_rect(
+            Vec2d { x: 0.0, y: 0.0 },
+            ResolvedSize { width, height },
+            self.color,
+            [0.0; 4],
+        );
     }
 }
 
@@ -178,9 +187,10 @@ impl<E: Element> VisitorElement for RawSizedBox<E> {
 impl<E: Element> LayoutElement for RawSizedBox<E> {
     fn size(&self) -> Option<Size> {
         match (self.width, self.height) {
-            (Dimension::Px(w), Dimension::Px(h)) => {
-                Some(Size { width: Dimension::Px(w), height: Dimension::Px(h) })
-            }
+            (Dimension::Px(w), Dimension::Px(h)) => Some(Size {
+                width: Dimension::Px(w),
+                height: Dimension::Px(h),
+            }),
             _ => None,
         }
     }
@@ -206,36 +216,24 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
             visible_rect: ctx.visible_rect,
             window: ctx.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx
-                .async_handle
-                .clone(),
-            inherited_states: ctx
-                .inherited_states
-                .clone(),
+            async_handle: ctx.async_handle.clone(),
+            inherited_states: ctx.inherited_states.clone(),
         };
 
         child_ctx
             .box_constraint
-            .max_width = self.width.resolve(
-            ctx.box_constraint
-                .max_width,
-            scale,
-        );
+            .max_width = self
+            .width
+            .resolve(ctx.box_constraint.max_width, scale);
         child_ctx
             .box_constraint
-            .max_height = self.height.resolve(
-            ctx.box_constraint
-                .max_height,
-            scale,
-        );
+            .max_height = self
+            .height
+            .resolve(ctx.box_constraint.max_height, scale);
 
         let width = match self.width {
             Dimension::Px(w) => w * scale,
-            Dimension::Percent(p) => {
-                ctx.box_constraint
-                    .max_width
-                    * (p / 100.0)
-            }
+            Dimension::Percent(p) => ctx.box_constraint.max_width * (p / 100.0),
             Dimension::Auto => {
                 self.child
                     .computed_size(&child_ctx)
@@ -245,11 +243,7 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
 
         let height = match self.height {
             Dimension::Px(h) => h * scale,
-            Dimension::Percent(p) => {
-                ctx.box_constraint
-                    .max_height
-                    * (p / 100.0)
-            }
+            Dimension::Percent(p) => ctx.box_constraint.max_height * (p / 100.0),
             Dimension::Auto => {
                 self.child
                     .computed_size(&child_ctx)
@@ -278,10 +272,8 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
     }
 
     fn invalidate_layout(&self) {
-        self.cache
-            .invalidate();
-        self.child
-            .invalidate_layout();
+        self.cache.invalidate();
+        self.child.invalidate_layout();
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
