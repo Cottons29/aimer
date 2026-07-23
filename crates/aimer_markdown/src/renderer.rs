@@ -424,9 +424,13 @@ fn render_block(
                                         .vertical_scroll_bar(None)
                                         .horizontal_scroll_bar(None)
                                         .child(
-                                            RichText::new(TextSpan::root(spans))
-                                                .text_style(theme.code_block)
-                                                .selectable(),
+                                            Container::new()
+                                                .width(1000)
+                                                .child(
+                                                RichText::new(TextSpan::root(spans))
+                                                    .text_style(theme.code_block)
+                                                    .selectable(),
+                                            ),
                                         ),
                                 )
                                 .boxed(),
