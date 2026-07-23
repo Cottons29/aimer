@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, AnyWidget, Element, Widget};
 
@@ -271,6 +273,7 @@ impl<W: Widget + 'static> Widget for Grid<W> {
             vertical_alignment: self.vertical_alignment,
             overflow: self.overflow,
             children,
+            layout_cache: RefCell::new(Vec::new()),
         }
         .boxed()
     }
