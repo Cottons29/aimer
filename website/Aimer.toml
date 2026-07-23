@@ -14,5 +14,6 @@ files = [
     "assets/macos_screenshot.png",
     "assets/android_screenshot.png",
     "assets/github-svgrepo-com.png",
-    "assets/back-svgrepo-com.svg"
+    "assets/back-svgrepo-com.svg",
+    "assets/favicon.ico"
 ]

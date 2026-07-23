@@ -1,6 +1,7 @@
 pub mod event_handler;
 pub(crate) mod user_events;
 
+use std::any::Any;
 use std::cell::Cell;
 
 use aimer_attribute::BoxConstraint;
@@ -72,6 +73,8 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub window_scale: f64,
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
+    pub(crate) startup_hook: Option<Box<dyn FnOnce() -> Box<dyn Any>>>,
+    pub(crate) startup_resource: Option<Box<dyn Any>>,
     pub start_up_frames: Cell<u8>,
     pub(crate) first_frame_notifier: FirstFrameNotifier,
     pub active_touch_id: Option<u64>,
@@ -89,10 +92,21 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub inspector_redraw_frames: Cell<u8>,
 }
 
+fn run_startup_hook(
+    startup_hook: &mut Option<Box<dyn FnOnce() -> Box<dyn Any>>>,
+    startup_resource: &mut Option<Box<dyn Any>>,
+) {
+    if let Some(hook) = startup_hook.take() {
+        *startup_resource = Some(hook());
+    }
+}
+
 impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEvent>
     for AimerApplicationHandler<W>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        run_startup_hook(&mut self.startup_hook, &mut self.startup_resource);
+
         #[cfg(target_os = "android")]
         {
             use winit::event_loop::ControlFlow;
@@ -443,5 +457,48 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
         #[cfg(debug_assertions)]
         self.broadcast_inspector_snapshot();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::any::Any;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use super::run_startup_hook;
+
+    #[test]
+    fn startup_hook_runs_only_once() {
+        let calls = Rc::new(Cell::new(0));
+        let calls_for_hook = calls.clone();
+        let mut hook: Option<Box<dyn FnOnce() -> Box<dyn Any>>> = Some(Box::new(move || {
+            calls_for_hook.set(calls_for_hook.get() + 1);
+            Box::new("native resource")
+        }));
+        let mut resource = None;
+
+        run_startup_hook(&mut hook, &mut resource);
+        run_startup_hook(&mut hook, &mut resource);
+
+        assert_eq!(calls.get(), 1);
+        assert!(hook.is_none());
+        assert_eq!(
+            resource
+                .unwrap()
+                .downcast_ref::<&str>(),
+            Some(&"native resource")
+        );
+    }
+
+    #[test]
+    fn missing_startup_hook_is_a_no_op() {
+        let mut hook: Option<Box<dyn FnOnce() -> Box<dyn Any>>> = None;
+        let mut resource = None;
+
+        run_startup_hook(&mut hook, &mut resource);
+
+        assert!(hook.is_none());
+        assert!(resource.is_none());
     }
 }

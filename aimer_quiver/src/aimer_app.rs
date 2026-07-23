@@ -225,6 +225,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 window_scale: scale_factor,
                 native_window_size: None,
                 pending_resize: None,
+                startup_hook: None,
+                startup_resource: None,
                 #[cfg(not(target_arch = "wasm32"))]
                 async_runtime,
                 #[cfg(debug_assertions)]
@@ -348,8 +350,30 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 }
 
 impl<W: Widget + 'static> AimerApp<W> {
+    /// Starts a native application with `widget` as its root widget.
     pub fn start(widget: W) {
-        start_event_loop(widget);
+        start_event_loop(widget, None);
+    }
+
+    /// Starts a native application and runs `setup` once the platform event
+    /// loop is ready.
+    ///
+    /// The value returned by `setup` is retained until the application exits.
+    /// This allows platform resources such as macOS application menus to remain
+    /// alive for the complete native application lifecycle.
+    ///
+    /// # Platform initialization
+    ///
+    /// The callback runs on the event-loop thread during the application's
+    /// first resume, before Aimer creates its window. APIs that require an
+    /// initialized native application or main-thread access should be called
+    /// from this callback rather than before [`Self::start_with_setup`].
+    pub fn start_with_setup<R>(widget: W, setup: impl FnOnce() -> R + 'static)
+    where
+        R: 'static,
+    {
+        let startup_hook = Box::new(move || Box::new(setup()) as Box<dyn std::any::Any>);
+        start_event_loop(widget, Some(startup_hook));
     }
 
     pub fn start_headless(widget: W) -> HeadlessAimerApp<W> {
@@ -361,7 +385,10 @@ impl<W: Widget + 'static> AimerApp<W> {
     }
 }
 
-fn start_event_loop(widget: impl Widget + 'static) {
+fn start_event_loop(
+    widget: impl Widget + 'static,
+    startup_hook: Option<Box<dyn FnOnce() -> Box<dyn std::any::Any>>>,
+) {
     if APP_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -459,6 +486,8 @@ fn start_event_loop(widget: impl Widget + 'static) {
         window_scale: 1.0,
         native_window_size: None,
         pending_resize: None,
+        startup_hook,
+        startup_resource: None,
         #[cfg(not(target_arch = "wasm32"))]
         async_runtime,
         #[cfg(debug_assertions)]

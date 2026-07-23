@@ -1,3 +1,4 @@
+use aimer_attribute::{Dimension, Size};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
@@ -27,7 +28,14 @@ impl VisitorElement for ZeroSizedBox {
 
 impl EventElement for ZeroSizedBox {}
 
-impl LayoutElement for ZeroSizedBox {}
+impl LayoutElement for ZeroSizedBox {
+    fn size(&self) -> Option<Size> {
+        Some(Size {
+            width: Dimension::Px(0.0),
+            height: Dimension::Px(0.0),
+        })
+    }
+}
 
 impl Rebuildable for ZeroSizedBox {}
 
