@@ -33,8 +33,8 @@ impl SizedBox {
     /// [`SizedBox::box_child`] to attach content.
     pub fn new() -> Self {
         Self {
-            width: Dimension::Auto,
-            height: Dimension::Auto,
+            width: Dimension::Px(0.0),
+            height: Dimension::Px(0.0),
             color: Color::Transparent,
             child: None,
         }

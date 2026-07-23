@@ -4,11 +4,11 @@ use aimer_assets::{AssetImage, NetworkImage};
 use aimer_color::prelude::Color;
 use aimer_container::flex::row_column::{Column, Row};
 use aimer_container::flex::{BoxAlignment, Expanded};
-use aimer_container::{Container, Grid, GridItem, GridTrack, ScrollAxis, Scrollable, SizedBox};
-use aimer_input::gesture::gesture_detector::GestureDetector;
+use aimer_container::{Container, Grid, GridItem, GridTrack, ScrollAxis, Scrollable, SizedBox, ZeroSizedBox};
+use aimer_input::button::Button;
 use aimer_style::{
-    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontStyle, FontWeight, LayoutSpacing,
-    TextAlign, TextDecoration, TextDecorationLine, TextStyle,
+    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontStyle, FontWeight,
+    LayoutSpacing, Spacing, TextAlign, TextDecoration, TextDecorationLine, TextStyle,
 };
 use aimer_svg::{Svg, SvgDocument, SvgStyle};
 use aimer_text::{RichText, SpanStyle, Text, TextSpan};
@@ -81,29 +81,44 @@ fn build_code_header(value: &str, language: Option<&str>, theme: &MarkdownTheme)
                     ),
             )
             .boxed(),
-        None => SizedBox::new().boxed(),
+        None => ZeroSizedBox.boxed(),
     };
     let source: Rc<str> = Rc::from(value);
     let copy = match SvgDocument::from_svg(COPY_SVG_DATA) {
-        Ok(document) => GestureDetector::new()
-            .on_tap(move || {
-                if let Err(error) = copy_code_with(&source, aimer_widget::clipboard::set_text) {
-                    eprintln!("Failed to copy Markdown code block: {error}");
-                }
-            })
+        Ok(document) => Container::new()
+            .width(28)
+            .height(28)
             .child(
-                Container::new()
-                    .width(28)
-                    .height(28)
-                    .padding(LayoutSpacing::all(4_u32.into()))
+                Button::new()
+                    .decoration(
+                        BoxDecoration::new()
+                            .background_color(
+                                theme
+                                    .body
+                                    .color
+                                    .with_alpha(0.1)
+                                    .darken(0.4),
+                            )
+                            .border_radius(4),
+                    )
+                    .on_press(move || {
+                        if let Err(error) =
+                            copy_code_with(&source, aimer_widget::clipboard::set_text)
+                        {
+                            eprintln!("Failed to copy Markdown code block: {error}");
+                        }
+                    })
                     .child(
-                        Svg::new(document)
-                            .width(20.0)
-                            .height(20.0)
-                            .style(
-                                "path",
-                                SvgStyle::new().stroke(theme.code_block.color.into()),
-                            ),
+                        Row::new()
+                            .vertical_alignment(BoxAlignment::Center)
+                            .horizontal_alignment(BoxAlignment::Center)
+                            .children([Svg::new(document)
+                                .width(20.0)
+                                .height(20.0)
+                                .style(
+                                    "path",
+                                    SvgStyle::new().stroke(theme.code_block.color.into()),
+                                )]),
                     ),
             )
             .boxed(),
@@ -138,9 +153,15 @@ pub fn default_image_resolver(image: &MarkdownImage) -> AnyWidget {
             .source
             .starts_with("https://")
     {
-        NetworkImage::new(image.source.clone()).boxed()
+        // debug!("Loading network image {}", image.source);
+        NetworkImage::new(image.source.clone())
+            .height(500)
+            .boxed()
     } else {
-        AssetImage::new(image.source.clone()).boxed()
+        // debug!("Loading asset image {}", image.source);
+        AssetImage::new(image.source.clone())
+            .height(500)
+            .boxed()
     }
 }
 
@@ -427,10 +448,10 @@ fn render_block(
                                             Container::new()
                                                 .width(1000)
                                                 .child(
-                                                RichText::new(TextSpan::root(spans))
-                                                    .text_style(theme.code_block)
-                                                    .selectable(),
-                                            ),
+                                                    RichText::new(TextSpan::root(spans))
+                                                        .text_style(theme.code_block)
+                                                        .selectable(),
+                                                ),
                                         ),
                                 )
                                 .boxed(),

@@ -18,6 +18,44 @@ pub static TEST_STATE_UPDATED: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 pub static CURRENT_INDEX: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(target_os = "macos")]
+fn install_macos_menu() -> muda::Menu {
+    use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+
+    let menu = Menu::new();
+
+    let app_menu = Submenu::new("Aimer", true);
+    app_menu
+        .append_items(&[
+            &PredefinedMenuItem::about(None, None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::quit(None),
+        ])
+        .unwrap();
+
+    let file_menu = Submenu::new("File", true);
+    file_menu
+        .append(&MenuItem::new("New", true, None))
+        .unwrap();
+
+    let edit_menu = Submenu::new("Edit", true);
+    edit_menu
+        .append_items(&[
+            &PredefinedMenuItem::undo(None),
+            &PredefinedMenuItem::redo(None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::cut(None),
+            &PredefinedMenuItem::copy(None),
+            &PredefinedMenuItem::paste(None),
+        ])
+        .unwrap();
+
+    menu.append_items(&[&app_menu, &file_menu, &edit_menu])
+        .unwrap();
+    menu.init_for_nsapp();
+    menu
+}
+
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
@@ -27,6 +65,9 @@ pub fn my_app() {
             route.boxed()
         }));
     debug!("App Size {}", size_of::<Container<ZeroSizedBox>>());
+    #[cfg(target_os = "macos")]
+    AimerApp::start_with_setup(app, install_macos_menu);
+    #[cfg(not(target_os = "macos"))]
     AimerApp::start(app);
 }
 

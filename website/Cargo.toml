@@ -11,6 +11,7 @@ webbrowser = "1.2.1"
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
+muda = "0.19.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true

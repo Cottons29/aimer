@@ -60,7 +60,7 @@ members = [
     "crates/aimer_text",
     "crates/aimer_macro",
     "jaime"
-    , "crates/aimer_provider", "crates/aimer_sdk", "website_backend", "crates/aimer_markdown", "crates/aimer_svg"]
+    , "crates/aimer_provider", "crates/aimer_sdk", "website_backend", "crates/aimer_markdown", "crates/aimer_svg", "crates/aimer_native"]
 
 
 [workspace.dependencies]
