@@ -298,6 +298,17 @@ struct PreparedSelection {
     height: f32,
 }
 
+fn vertical_span_is_visible(
+    y: f32,
+    height: f32,
+    visible_rect: Option<(f32, f32, f32, f32)>,
+) -> bool {
+    let Some((_, visible_y, _, visible_height)) = visible_rect else {
+        return true;
+    };
+    y + height >= visible_y && y <= visible_y + visible_height
+}
+
 fn push_selection_run(runs: &mut Vec<PreparedSelection>, run: PreparedSelection) {
     const TOUCH_EPSILON: f32 = 0.01;
 
@@ -880,6 +891,9 @@ impl Drawable for RawRichText {
         }
 
         for background in &layout.backgrounds {
+            if !vertical_span_is_visible(background.y, background.height, ctx.visible_rect) {
+                continue;
+            }
             ctx.canvas.fill_color_rect(
                 (background.x, background.y).into(),
                 ResolvedSize {
@@ -899,6 +913,13 @@ impl Drawable for RawRichText {
                 .range();
             let mut selection_runs = Vec::new();
             for fragment in &layout.fragments {
+                if !vertical_span_is_visible(
+                    fragment.baseline - fragment.ascent,
+                    fragment.height,
+                    ctx.visible_rect,
+                ) {
+                    continue;
+                }
                 let Some(source_range) = &fragment.source_range else {
                     continue;
                 };
@@ -956,6 +977,9 @@ impl Drawable for RawRichText {
                 }
             }
             for line_break in &layout.line_breaks {
+                if !vertical_span_is_visible(line_break.y, line_break.height, ctx.visible_rect) {
+                    continue;
+                }
                 self.text_regions
                     .borrow_mut()
                     .push(TextHitRegion::new(
@@ -1003,6 +1027,13 @@ impl Drawable for RawRichText {
         }
 
         for fragment in &layout.fragments {
+            if !vertical_span_is_visible(
+                fragment.baseline - fragment.ascent,
+                fragment.height,
+                ctx.visible_rect,
+            ) {
+                continue;
+            }
             let span = &self.spans[fragment.span_index];
             let hovered_link = self.hovered_link.borrow();
             let color = display_color(span, hovered_link.as_ref(), self.link_hover_color);
@@ -1120,6 +1151,7 @@ mod tests {
         DEFAULT_SELECTION_COLOR, LinkCallback, LinkRegion, PreparedFragment, PreparedSelection,
         RawRichText, SelectableCursor, SelectionCoordinator, SelectionOwner,
         interactive_cursor_for_event, prepare_background_runs, snap_selection_lines_to_pixels,
+        vertical_span_is_visible,
     };
     use crate::selection::{TextHitRegion, TextSelection};
     use crate::text_span::{ResolvedTextSpan, layout_resolved_spans};
@@ -1177,6 +1209,17 @@ mod tests {
 
         assert!(!plain.selectable);
         assert!(selectable.selectable);
+    }
+
+    #[test]
+    fn rich_text_visibility_keeps_partial_lines_and_rejects_hidden_lines() {
+        let viewport = Some((0.0, 40.0, 200.0, 20.0));
+
+        assert!(vertical_span_is_visible(35.0, 10.0, viewport));
+        assert!(vertical_span_is_visible(55.0, 10.0, viewport));
+        assert!(!vertical_span_is_visible(10.0, 20.0, viewport));
+        assert!(!vertical_span_is_visible(61.0, 10.0, viewport));
+        assert!(vertical_span_is_visible(500.0, 10.0, None));
     }
 
     #[test]

@@ -44,6 +44,22 @@ struct GlyphInstance {
     _pad: [f32; 3],
 }
 
+fn glyph_intersects_clip(position: [f32; 2], size: [f32; 2], clip: [f32; 4]) -> bool {
+    if clip[2] <= 0.0 {
+        return true;
+    }
+
+    let glyph_right = position[0] + size[0];
+    let glyph_bottom = position[1] + size[1];
+    let clip_right = clip[0] + clip[2];
+    let clip_bottom = clip[1] + clip[3];
+
+    glyph_right > clip[0]
+        && position[0] < clip_right
+        && glyph_bottom > clip[1]
+        && position[1] < clip_bottom
+}
+
 impl GlyphInstance {
     const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
         0 => Float32x2,
@@ -1363,6 +1379,10 @@ impl TextPipelineV2 {
                         } else {
                             [pg.width as f32, pg.height as f32]
                         };
+                        let position = [pg.x + cursor_x, pg.y + cursor_y];
+                        if !glyph_intersects_clip(position, size, req.clip_rect) {
+                            continue;
+                        }
                         // Improvement B: cached glyphs are positioned at origin (0,0);
                         // apply the actual screen-space cursor offset here.
                         //
@@ -1370,7 +1390,7 @@ impl TextPipelineV2 {
                         // resolved after the loop once the atlas has reached its
                         // final size (see `alpha_regions` / `color_regions`).
                         let instance = GlyphInstance {
-                            position: [pg.x + cursor_x, pg.y + cursor_y],
+                            position,
                             size,
                             uv_rect: [0.0, 0.0, 0.0, 0.0],
                             color,
@@ -1676,7 +1696,7 @@ impl TextPipelineV2 {
 
 #[cfg(test)]
 mod tests {
-    use super::{LayoutCacheKey, ShapingCacheKey, TextDecorationDraw};
+    use super::{LayoutCacheKey, ShapingCacheKey, TextDecorationDraw, glyph_intersects_clip};
     use crate::font::{FontFamily, FontStyle, FontWeight};
 
     #[test]
@@ -1714,6 +1734,39 @@ mod tests {
             FontWeight::Normal.numeric(),
         );
         assert_ne!(normal_shape, italic_shape);
+    }
+
+    #[test]
+    fn glyph_culling_keeps_unclipped_and_partially_visible_glyphs() {
+        assert!(glyph_intersects_clip(
+            [500.0, 500.0],
+            [20.0, 20.0],
+            [0.0, 0.0, -1.0, 0.0],
+        ));
+        assert!(glyph_intersects_clip(
+            [90.0, 90.0],
+            [20.0, 20.0],
+            [0.0, 0.0, 100.0, 100.0],
+        ));
+        assert!(glyph_intersects_clip(
+            [-10.0, 10.0],
+            [20.0, 20.0],
+            [0.0, 0.0, 100.0, 100.0],
+        ));
+    }
+
+    #[test]
+    fn glyph_culling_rejects_glyphs_fully_outside_clip() {
+        assert!(!glyph_intersects_clip(
+            [101.0, 10.0],
+            [20.0, 20.0],
+            [0.0, 0.0, 100.0, 100.0],
+        ));
+        assert!(!glyph_intersects_clip(
+            [10.0, -21.0],
+            [20.0, 20.0],
+            [0.0, 0.0, 100.0, 100.0],
+        ));
     }
 
     // Guards the CPU->GPU packing of a decoration line: `params` must be

@@ -82,7 +82,9 @@ impl BatchExecutor {
         #[cfg(not(target_arch = "wasm32"))]
         {
             static POOL: OnceLock<Option<Arc<rayon::ThreadPool>>> = OnceLock::new();
-            let pool = POOL.get_or_init(|| Self::build_pool(workers)).clone();
+            let pool = POOL
+                .get_or_init(|| Self::build_pool(workers))
+                .clone();
             Self {
                 workers,
                 serial_threshold: Self::SERIAL_THRESHOLD,

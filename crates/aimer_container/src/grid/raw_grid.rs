@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
+use std::rc::Rc;
 
 use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
 use aimer_widget::base::BuildContext;
@@ -454,9 +456,11 @@ pub(crate) struct RawGrid {
     pub vertical_alignment: GridAlignment,
     pub overflow: GridOverflow,
     pub children: Vec<RawGridItem>,
+    pub layout_cache: RefCell<Vec<(BoxConstraint, u32, Rc<GridLayout>)>>,
 }
 
-struct GridLayout {
+#[derive(Clone)]
+pub(crate) struct GridLayout {
     placements: Vec<GridPlacement>,
     columns: Vec<f32>,
     rows: Vec<f32>,
@@ -464,7 +468,17 @@ struct GridLayout {
 }
 
 impl RawGrid {
-    fn layout_grid(&self, ctx: &BuildContext) -> Result<GridLayout, GridError> {
+    fn layout_grid(&self, ctx: &BuildContext) -> Result<Rc<GridLayout>, GridError> {
+        if let Some((_, _, layout)) = self
+            .layout_cache
+            .borrow()
+            .iter()
+            .find(|(constraint, scale_bits, _)| {
+                *constraint == ctx.box_constraint && *scale_bits == ctx.scale.to_bits()
+            })
+        {
+            return Ok(Rc::clone(layout));
+        }
         let placements = self
             .children
             .iter()
@@ -475,10 +489,16 @@ impl RawGrid {
         let mut rows = self.rows.clone();
         rows.resize(resolved_placements.row_count, GridTrack::Auto);
 
-        let intrinsic = self
-            .children
-            .iter()
-            .map(|item| {
+        let mut column_minima = vec![0.0_f32; self.columns.len()];
+        if self
+            .columns
+            .contains(&GridTrack::Auto)
+        {
+            for (item, placement) in self
+                .children
+                .iter()
+                .zip(&resolved_placements.items)
+            {
                 let mut child_ctx = ctx.clone();
                 child_ctx.parent_size = ResolvedSize::default();
                 child_ctx.box_constraint = BoxConstraint {
@@ -487,25 +507,19 @@ impl RawGrid {
                     max_width: f32::MAX,
                     max_height: f32::MAX,
                 };
-                item.child
-                    .computed_size(&child_ctx)
-            })
-            .collect::<Vec<_>>();
-
-        let mut column_minima = vec![0.0_f32; self.columns.len()];
-        for (size, placement) in intrinsic
-            .iter()
-            .zip(&resolved_placements.items)
-        {
-            let start = placement.column.unwrap();
-            apply_auto_minimum(
-                &self.columns,
-                &mut column_minima,
-                start,
-                placement.column_span,
-                size.width,
-                self.column_gap,
-            );
+                let size = item
+                    .child
+                    .computed_size(&child_ctx);
+                let start = placement.column.unwrap();
+                apply_auto_minimum(
+                    &self.columns,
+                    &mut column_minima,
+                    start,
+                    placement.column_span,
+                    size.width,
+                    self.column_gap,
+                );
+            }
         }
         let columns = resolve_tracks(
             &self.columns,
@@ -563,12 +577,16 @@ impl RawGrid {
             height: tracks_size(&rows, self.row_gap),
         };
 
-        Ok(GridLayout {
+        let layout = Rc::new(GridLayout {
             placements: resolved_placements.items,
             columns,
             rows,
             size,
-        })
+        });
+        self.layout_cache
+            .borrow_mut()
+            .push((ctx.box_constraint, ctx.scale.to_bits(), Rc::clone(&layout)));
+        Ok(layout)
     }
 
     fn draw_item(
@@ -618,9 +636,13 @@ impl RawGrid {
             max_width: cell_size.width,
             max_height: cell_size.height,
         };
-        let child_size = item
-            .child
-            .computed_size(&child_ctx);
+        let child_size =
+            if horizontal == GridAlignment::Stretch && vertical == GridAlignment::Stretch {
+                cell_size
+            } else {
+                item.child
+                    .computed_size(&child_ctx)
+            };
         let offset = Vec2d {
             x: alignment_offset(horizontal, cell_size.width, child_size.width),
             y: alignment_offset(vertical, cell_size.height, child_size.height),
@@ -664,6 +686,33 @@ impl Drawable for RawGrid {
                     .iter()
                     .zip(&layout.placements)
                 {
+                    let cell_pos = Vec2d {
+                        x: track_offset(
+                            &layout.columns,
+                            placement.column.unwrap(),
+                            self.column_gap,
+                        ),
+                        y: track_offset(&layout.rows, placement.row.unwrap(), self.row_gap),
+                    };
+                    let cell_size = ResolvedSize {
+                        width: span_size(
+                            &layout.columns,
+                            placement.column.unwrap(),
+                            placement.column_span,
+                            self.column_gap,
+                        ),
+                        height: span_size(
+                            &layout.rows,
+                            placement.row.unwrap(),
+                            placement.row_span,
+                            self.row_gap,
+                        ),
+                    };
+                    if self.overflow == GridOverflow::Clip
+                        && !rect_intersects_visible_rect(cell_pos, cell_size, ctx.visible_rect)
+                    {
+                        continue;
+                    }
                     self.draw_item(ctx, item, *placement, &layout);
                 }
             }
@@ -705,10 +754,27 @@ impl LayoutElement for RawGrid {
     }
 
     fn invalidate_layout(&self) {
+        self.layout_cache
+            .borrow_mut()
+            .clear();
         for item in &self.children {
             item.child.invalidate_layout();
         }
     }
+}
+
+fn rect_intersects_visible_rect(
+    position: Vec2d,
+    size: ResolvedSize,
+    visible_rect: Option<(f32, f32, f32, f32)>,
+) -> bool {
+    let Some((visible_x, visible_y, visible_width, visible_height)) = visible_rect else {
+        return true;
+    };
+    position.x + size.width >= visible_x
+        && position.x <= visible_x + visible_width
+        && position.y + size.height >= visible_y
+        && position.y <= visible_y + visible_height
 }
 
 fn tracks_size(tracks: &[f32], gap: f32) -> f32 {
@@ -775,6 +841,34 @@ mod tests {
 
     struct VisibleRectRecorder {
         visible_rect: Rc<RefCell<Option<(f32, f32, f32, f32)>>>,
+    }
+
+    struct WorkRecorder {
+        computed_count: Rc<RefCell<usize>>,
+        draw_count: Rc<RefCell<usize>>,
+        size: ResolvedSize,
+    }
+
+    impl Drawable for WorkRecorder {
+        fn draw(&self, _ctx: &BuildContext) {
+            *self.draw_count.borrow_mut() += 1;
+        }
+    }
+
+    impl EventElement for WorkRecorder {}
+    impl LayoutElement for WorkRecorder {
+        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            *self
+                .computed_count
+                .borrow_mut() += 1;
+            self.size
+        }
+    }
+    impl Rebuildable for WorkRecorder {}
+    impl VisitorElement for WorkRecorder {
+        fn debug_name(&self) -> &'static str {
+            "WorkRecorder"
+        }
     }
 
     impl Drawable for VisibleRectRecorder {
@@ -863,6 +957,7 @@ mod tests {
                     vertical_alignment: None,
                 },
             ],
+            layout_cache: RefCell::new(Vec::new()),
         };
 
         grid.draw(&ctx);
@@ -905,11 +1000,208 @@ mod tests {
                 horizontal_alignment: None,
                 vertical_alignment: None,
             }],
+            layout_cache: RefCell::new(Vec::new()),
         };
 
         grid.draw(&ctx);
 
         assert_eq!(*visible_rect.borrow(), Some((-90.0, -5.0, 200.0, 20.0)));
+    }
+
+    #[test]
+    fn grid_reuses_layout_between_measurement_and_draw() {
+        let canvas = Box::leak(Box::new(InnerCanvas::new()));
+        let ctx = build_context(canvas);
+        let computed_count = Rc::new(RefCell::new(0));
+        let grid = RawGrid {
+            columns: vec![GridTrack::Auto],
+            rows: vec![GridTrack::Auto],
+            column_gap: 0.0,
+            row_gap: 0.0,
+            horizontal_alignment: GridAlignment::Stretch,
+            vertical_alignment: GridAlignment::Stretch,
+            overflow: GridOverflow::Clip,
+            children: vec![RawGridItem {
+                child: WorkRecorder {
+                    computed_count: computed_count.clone(),
+                    draw_count: Rc::new(RefCell::new(0)),
+                    size: ResolvedSize {
+                        width: 80.0,
+                        height: 30.0,
+                    },
+                }
+                .boxed(),
+                placement: GridPlacement::default(),
+                horizontal_alignment: None,
+                vertical_alignment: None,
+            }],
+            layout_cache: RefCell::new(Vec::new()),
+        };
+
+        grid.computed_size(&ctx);
+        assert_eq!(*computed_count.borrow(), 2);
+        grid.draw(&ctx);
+
+        assert_eq!(*computed_count.borrow(), 2);
+
+        grid.invalidate_layout();
+        grid.computed_size(&ctx);
+        assert_eq!(*computed_count.borrow(), 4);
+    }
+
+    #[test]
+    fn fractional_columns_skip_unused_intrinsic_width_measurement() {
+        let canvas = Box::leak(Box::new(InnerCanvas::new()));
+        let ctx = build_context(canvas);
+        let computed_count = Rc::new(RefCell::new(0));
+        let grid = RawGrid {
+            columns: vec![GridTrack::Fr(1.0)],
+            rows: vec![GridTrack::Auto],
+            column_gap: 0.0,
+            row_gap: 0.0,
+            horizontal_alignment: GridAlignment::Stretch,
+            vertical_alignment: GridAlignment::Stretch,
+            overflow: GridOverflow::Clip,
+            children: vec![RawGridItem {
+                child: WorkRecorder {
+                    computed_count: computed_count.clone(),
+                    draw_count: Rc::new(RefCell::new(0)),
+                    size: ResolvedSize {
+                        width: 80.0,
+                        height: 30.0,
+                    },
+                }
+                .boxed(),
+                placement: GridPlacement::default(),
+                horizontal_alignment: None,
+                vertical_alignment: None,
+            }],
+            layout_cache: RefCell::new(Vec::new()),
+        };
+
+        grid.computed_size(&ctx);
+        grid.draw(&ctx);
+
+        assert_eq!(*computed_count.borrow(), 1);
+    }
+
+    #[test]
+    fn grid_reuses_each_constraint_variant_within_a_frame() {
+        let canvas = Box::leak(Box::new(InnerCanvas::new()));
+        let ctx = build_context(canvas);
+        let mut narrower_ctx = ctx.clone();
+        narrower_ctx
+            .box_constraint
+            .max_width = 160.0;
+        let computed_count = Rc::new(RefCell::new(0));
+        let grid = RawGrid {
+            columns: vec![GridTrack::Auto],
+            rows: vec![GridTrack::Auto],
+            column_gap: 0.0,
+            row_gap: 0.0,
+            horizontal_alignment: GridAlignment::Stretch,
+            vertical_alignment: GridAlignment::Stretch,
+            overflow: GridOverflow::Clip,
+            children: vec![RawGridItem {
+                child: WorkRecorder {
+                    computed_count: computed_count.clone(),
+                    draw_count: Rc::new(RefCell::new(0)),
+                    size: ResolvedSize {
+                        width: 80.0,
+                        height: 30.0,
+                    },
+                }
+                .boxed(),
+                placement: GridPlacement::default(),
+                horizontal_alignment: None,
+                vertical_alignment: None,
+            }],
+            layout_cache: RefCell::new(Vec::new()),
+        };
+
+        grid.computed_size(&ctx);
+        grid.computed_size(&narrower_ctx);
+        grid.computed_size(&ctx);
+
+        assert_eq!(*computed_count.borrow(), 4);
+    }
+
+    #[test]
+    fn grid_skips_cells_outside_visible_rect() {
+        let canvas = Box::leak(Box::new(InnerCanvas::new()));
+        let mut ctx = build_context(canvas);
+        ctx.visible_rect = Some((0.0, 0.0, 200.0, 40.0));
+        let visible_draws = Rc::new(RefCell::new(0));
+        let hidden_draws = Rc::new(RefCell::new(0));
+        let child = |draw_count: Rc<RefCell<usize>>, row| RawGridItem {
+            child: WorkRecorder {
+                computed_count: Rc::new(RefCell::new(0)),
+                draw_count,
+                size: ResolvedSize {
+                    width: 200.0,
+                    height: 50.0,
+                },
+            }
+            .boxed(),
+            placement: GridPlacement::default().at(row, 0),
+            horizontal_alignment: None,
+            vertical_alignment: None,
+        };
+        let grid = RawGrid {
+            columns: vec![GridTrack::Px(200.0)],
+            rows: vec![GridTrack::Px(50.0), GridTrack::Px(50.0)],
+            column_gap: 0.0,
+            row_gap: 0.0,
+            horizontal_alignment: GridAlignment::Stretch,
+            vertical_alignment: GridAlignment::Stretch,
+            overflow: GridOverflow::Clip,
+            children: vec![
+                child(visible_draws.clone(), 0),
+                child(hidden_draws.clone(), 1),
+            ],
+            layout_cache: RefCell::new(Vec::new()),
+        };
+
+        grid.draw(&ctx);
+
+        assert_eq!(*visible_draws.borrow(), 1);
+        assert_eq!(*hidden_draws.borrow(), 0);
+    }
+
+    #[test]
+    fn visible_overflow_keeps_offscreen_cells_drawable() {
+        let canvas = Box::leak(Box::new(InnerCanvas::new()));
+        let mut ctx = build_context(canvas);
+        ctx.visible_rect = Some((0.0, 0.0, 200.0, 40.0));
+        let draw_count = Rc::new(RefCell::new(0));
+        let grid = RawGrid {
+            columns: vec![GridTrack::Px(200.0)],
+            rows: vec![GridTrack::Px(50.0), GridTrack::Px(50.0)],
+            column_gap: 0.0,
+            row_gap: 0.0,
+            horizontal_alignment: GridAlignment::Stretch,
+            vertical_alignment: GridAlignment::Stretch,
+            overflow: GridOverflow::Visible,
+            children: vec![RawGridItem {
+                child: WorkRecorder {
+                    computed_count: Rc::new(RefCell::new(0)),
+                    draw_count: draw_count.clone(),
+                    size: ResolvedSize {
+                        width: 200.0,
+                        height: 50.0,
+                    },
+                }
+                .boxed(),
+                placement: GridPlacement::default().at(1, 0),
+                horizontal_alignment: None,
+                vertical_alignment: None,
+            }],
+            layout_cache: RefCell::new(Vec::new()),
+        };
+
+        grid.draw(&ctx);
+
+        assert_eq!(*draw_count.borrow(), 1);
     }
 
     #[test]
