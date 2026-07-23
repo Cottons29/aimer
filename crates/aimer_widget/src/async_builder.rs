@@ -748,7 +748,7 @@ fn async_builder_accepts_local_futures() {
         })
         .child(|snapshot| match snapshot {
             AsyncSnapshot::Waiting | AsyncSnapshot::Data(_) | AsyncSnapshot::Error(_) => {
-                Box::new(ProbeWidget) as AnyWidget
+                ProbeWidget.boxed()
             }
         });
 

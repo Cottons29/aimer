@@ -1,6 +1,6 @@
 pub struct BackendApi;
 
-const BASE_API: &str = "http://localhost:3200";
+const BASE_API: &str = "https://aimer-api.cottonsofficial.com";
 
 impl BackendApi {
     pub fn blogs() -> String {
