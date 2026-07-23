@@ -12,7 +12,10 @@ use crate::text_layout::FontId;
 
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
 static FONT_DB: LazyLock<FontDatabase> = LazyLock::new(|| {
+    #[cfg(not(target_arch = "wasm32"))]
     let mut db = FontDatabase::new();
+    #[cfg(target_arch = "wasm32")]
+    let db = FontDatabase::new();
     // `load_system_fonts` scans every installed font, which is expensive on
     // startup.  Apple platforms use CoreText per-script fallback resolution
     // instead; other desktop platforms keep the fontdb system scan for now.
@@ -35,6 +38,23 @@ pub struct FontRecord {
     /// True when the font carries color glyph data (`sbix` / `CBDT` / `COLR`)
     /// and should be rasterized via color-glyph tables instead of `fontdue`.
     pub is_color: bool,
+}
+
+/// Immutable shared ownership of a font record used to seed local CPU contexts.
+///
+/// The record itself is never mutably exposed. A preparation context obtains a
+/// cheap local copy whose lazy parsed-font slot may be updated independently.
+#[derive(Clone)]
+pub(crate) struct SharedFontRecord(Arc<FontRecord>);
+
+impl SharedFontRecord {
+    pub(crate) fn new(record: &FontRecord) -> Self {
+        Self(Arc::new(record.clone()))
+    }
+
+    pub(crate) fn local_copy(&self) -> FontRecord {
+        self.0.as_ref().clone()
+    }
 }
 
 pub(crate) enum FontData {
@@ -678,9 +698,12 @@ pub fn warm_fallbacks() {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
     use std::path::PathBuf;
+    #[cfg(not(target_arch = "wasm32"))]
     use std::sync::Arc;
 
+    #[cfg(not(target_arch = "wasm32"))]
     use super::{FontData, FontRecord};
 
     #[cfg(not(target_arch = "wasm32"))]

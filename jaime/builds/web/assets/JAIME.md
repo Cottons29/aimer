@@ -6,6 +6,8 @@ Instructions for AI coding assistants and human contributors working on the Aime
 
 ---
 
+![image.png](assets/image.png)
+
 ## Project Overview
 
 AimerMarkdown is a Rust library that provides a set of tools for render the Markdown file in an Aimer framework.
@@ -27,11 +29,15 @@ AimerMarkdown is a Rust library that provides a set of tools for render the Mark
 - [x] Map block nodes to Aimer layout widgets and inline nodes to rich-text spans.
 - [ ] Add a configurable theme, link callback, image resolver, and selectable/copyable code blocks.
 
+
+```
+This is empty block
+
+```
+
 # Main Markdown Syntax Reference
 
-````
-
-
+````markdown
 
 # Headings
 # H1

@@ -35,10 +35,10 @@ memmap2 = "0.9"
 fontdb = "0.23.0"
 unicode-script = "0.5.8"
 swash = "0.2.7"
-rayon = "1.12.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster.workspace = true
+rayon = "1.12.0"
 
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "macos", target_os = "android")))'.dependencies]
 font-kit.workspace = true

@@ -2,7 +2,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-
+use aimer_utils::log::debug;
 use crate::font::{FontFamily, FontStyle};
 
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
@@ -163,9 +163,10 @@ pub struct DrawList {
 
 impl DrawList {
     pub fn new() -> Self {
+        // debug("Creating draw list");
         Self {
-            commands: Vec::with_capacity(512),
-            transform_stack: Vec::with_capacity(512),
+            commands: Vec::with_capacity(16),
+            transform_stack: Vec::with_capacity(16),
             current_transform: Mat3::identity(),
             texture_sizes: HashMap::new(),
         }

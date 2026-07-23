@@ -27,6 +27,7 @@ impl AtlasRegion {
 }
 
 /// Simple shelf/row packer for glyph atlas allocation.
+#[derive(Clone)]
 struct ShelfPacker {
     width: u32,
     height: u32,
@@ -97,6 +98,58 @@ impl ShelfPacker {
         self.shelf_y = y;
         self.shelf_height = 0;
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum BatchCapacityPlan {
+    Keep,
+    Reset,
+    Reject,
+}
+
+fn allocations_fit(mut packer: ShelfPacker, sizes: &[(u32, u32)]) -> bool {
+    sizes
+        .iter()
+        .all(|&(width, height)| {
+            packer
+                .allocate(width, height)
+                .is_some()
+        })
+}
+
+fn plan_batch(
+    packer: &ShelfPacker,
+    max_size: u32,
+    missing_sizes: &[(u32, u32)],
+    all_sizes: &[(u32, u32)],
+) -> BatchCapacityPlan {
+    let mut trial = packer.clone();
+    for &(width, height) in missing_sizes {
+        loop {
+            if trial
+                .allocate(width, height)
+                .is_some()
+            {
+                break;
+            }
+            if trial.width >= max_size {
+                let fresh = ShelfPacker::new(max_size, max_size);
+                return if allocations_fit(fresh, all_sizes) {
+                    BatchCapacityPlan::Reset
+                } else {
+                    BatchCapacityPlan::Reject
+                };
+            }
+
+            let old_height = trial.height;
+            let new_width = (trial.width * 2).min(max_size);
+            let new_height = (trial.height * 2).min(max_size);
+            trial = ShelfPacker::new(new_width, new_height);
+            trial.start_fresh_shelf_at(old_height);
+        }
+    }
+
+    BatchCapacityPlan::Keep
 }
 
 /// A glyph that has been packed into the atlas this frame but whose pixels have
@@ -191,6 +244,27 @@ impl GlyphAtlas {
 
     pub fn memory_bytes(&self) -> u64 {
         self.width as u64 * self.height as u64
+    }
+
+    pub(super) fn plan_batch(&self, glyphs: &[(GlyphKey, u32, u32)]) -> BatchCapacityPlan {
+        let missing = glyphs
+            .iter()
+            .filter(|(key, _, _)| !self.cache.contains_key(key))
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        let all = glyphs
+            .iter()
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        plan_batch(&self.packer, Self::MAX_SIZE, &missing, &all)
+    }
+
+    pub(super) fn apply_batch_plan(&mut self, plan: BatchCapacityPlan) {
+        if plan == BatchCapacityPlan::Reset {
+            self.cache.clear();
+            self.pending.clear();
+            self.packer = ShelfPacker::new(self.width, self.height);
+        }
     }
 
     /// Look up or insert a glyph into the atlas. Returns the atlas region.
@@ -290,6 +364,7 @@ impl GlyphAtlas {
         // every glyph is re-inserted and re-uploaded on demand).
         if self.width >= Self::MAX_SIZE {
             self.cache.clear();
+            self.pending.clear();
             self.packer = ShelfPacker::new(self.width, self.height);
             return;
         }
@@ -437,6 +512,27 @@ impl ColorGlyphAtlas {
         self.width as u64 * self.height as u64 * Self::BYTES_PER_PIXEL as u64
     }
 
+    pub(super) fn plan_batch(&self, glyphs: &[(GlyphKey, u32, u32)]) -> BatchCapacityPlan {
+        let missing = glyphs
+            .iter()
+            .filter(|(key, _, _)| !self.cache.contains_key(key))
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        let all = glyphs
+            .iter()
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        plan_batch(&self.packer, Self::MAX_SIZE, &missing, &all)
+    }
+
+    pub(super) fn apply_batch_plan(&mut self, plan: BatchCapacityPlan) {
+        if plan == BatchCapacityPlan::Reset {
+            self.cache.clear();
+            self.pending.clear();
+            self.packer = ShelfPacker::new(self.width, self.height);
+        }
+    }
+
     /// `bitmap` must be `width * height * 4` bytes (non-premultiplied RGBA8).
     pub fn get_or_insert(
         &mut self,
@@ -520,6 +616,7 @@ impl ColorGlyphAtlas {
         // allocating a larger one (see `GlyphAtlas::grow`).
         if self.width >= Self::MAX_SIZE {
             self.cache.clear();
+            self.pending.clear();
             self.packer = ShelfPacker::new(self.width, self.height);
             return;
         }
@@ -710,5 +807,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn max_size_batch_requests_reset_before_any_frame_allocation() {
+        let mut packer = ShelfPacker::new(8, 8);
+        assert!(
+            packer
+                .allocate(7, 3)
+                .is_some()
+        );
+        assert!(
+            packer
+                .allocate(7, 3)
+                .is_some()
+        );
+
+        let plan = plan_batch(&packer, 8, &[(2, 2)], &[(2, 2), (2, 2)]);
+
+        assert_eq!(plan, BatchCapacityPlan::Reset);
+    }
+
+    #[test]
+    fn max_size_batch_rejects_a_frame_that_cannot_fit_after_reset() {
+        let packer = ShelfPacker::new(8, 8);
+
+        let plan = plan_batch(&packer, 8, &[(7, 7), (7, 7)], &[(7, 7), (7, 7)]);
+
+        assert_eq!(plan, BatchCapacityPlan::Reject);
     }
 }

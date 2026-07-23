@@ -64,7 +64,7 @@ pub fn my_app() {
         .child(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
             route.boxed()
         }));
-    debug!("App Size {}", size_of::<Container<ZeroSizedBox>>());
+    // debug!("App Size {}", size_of::<Container<ZeroSizedBox>>());
     #[cfg(target_os = "macos")]
     AimerApp::start_with_setup(app, install_macos_menu);
     #[cfg(not(target_os = "macos"))]

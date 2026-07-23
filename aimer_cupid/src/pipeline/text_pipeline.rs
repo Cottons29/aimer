@@ -2,9 +2,10 @@ mod font_resolver;
 pub mod glyph_atlas;
 mod glyph_outline;
 pub mod glyph_rasterizer;
+mod preparation_batch;
 pub mod text_layout;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use aimer_utils::time_cost;
@@ -12,10 +13,14 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::font::{FontFamily, FontStyle, FontWeight};
 use crate::pipeline::image_pipeline::InstanceBufferPolicy;
-use crate::text_pipeline::glyph_atlas::{AtlasRegion, ColorGlyphAtlas, GlyphAtlas};
-use crate::text_pipeline::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
+use crate::text_pipeline::glyph_atlas::{
+    AtlasRegion, BatchCapacityPlan, ColorGlyphAtlas, GlyphAtlas,
+};
+use crate::text_pipeline::glyph_rasterizer::{GlyphKey, GlyphPreparationContext, GlyphRasterizer};
+use crate::text_pipeline::preparation_batch::{BatchExecutor, PreparationBatch};
 use crate::text_pipeline::text_layout::{
-    PositionedGlyph, ShapedText, layout_shaped_text, shape_text_styled,
+    PositionedGlyph, ShapedText, layout_shaped_text, prepare_positioned_text, prepare_shaped_text,
+    shape_text_styled,
 };
 
 /// Per-instance data for one glyph quad.
@@ -254,6 +259,26 @@ impl LayoutCacheKey {
     }
 }
 
+#[derive(Clone)]
+struct ShapingInput {
+    text: Arc<str>,
+    font_size: f32,
+    font_family: FontFamily,
+    font_style: FontStyle,
+    font_weight: u16,
+}
+
+#[derive(Clone)]
+struct LayoutInput {
+    shaping_key: ShapingCacheKey,
+    layout_width: f32,
+}
+
+#[derive(Clone, Copy)]
+struct GlyphPreparationInput {
+    font_size: f32,
+}
+
 /// Glyph-instance ranges owned by a single text request. `[alpha_start,
 /// alpha_end)` indexes `instances` and `[color_start, color_end)` indexes
 /// `color_instances`. `prepare` fills both lists in request order, so each
@@ -269,6 +294,7 @@ struct TextRequestRange {
 
 pub struct TextPipelineV2 {
     rasterizer: GlyphRasterizer,
+    executor: BatchExecutor,
     /// Alpha-coverage atlas (R8Unorm) for monochrome glyphs.
     atlas: GlyphAtlas,
     /// RGBA8 atlas for sbix color emoji bitmaps (Apple Color Emoji et al.).
@@ -531,6 +557,7 @@ impl TextPipelineV2 {
 
         Self {
             rasterizer,
+            executor: BatchExecutor::new(),
             atlas,
             color_atlas,
             pipeline,
@@ -843,20 +870,6 @@ impl TextPipelineV2 {
         requests: &[TextDrawRequest],
         decorations: &[TextDecorationDraw],
     ) {
-        self.instances.clear();
-        self.color_instances.clear();
-        self.decoration_instances
-            .clear();
-        self.decoration_instances
-            .extend(
-                decorations
-                    .iter()
-                    .map(|d| d.to_instance()),
-            );
-        self.request_ranges.clear();
-        self.request_ranges
-            .reserve(requests.len());
-
         // Atlas regions recorded in lock-step with `self.instances` /
         // `self.color_instances`. UVs depend on the atlas dimensions, which can
         // change mid-frame if inserting a glyph triggers a `grow()` (the atlas
@@ -882,13 +895,331 @@ impl TextPipelineV2 {
         // them by an absolute capacity, evicting wholesale just when the hard cap
         // is exceeded (rare) instead of on every request-count change. This keeps
         // steady-state frames on the ~1 ms full-hit path needed for 120+ fps.
-        if self.layout_cache.len() > Self::LAYOUT_CACHE_CAPACITY {
-            self.layout_cache.clear();
+        let clear_layout_cache = self.layout_cache.len() > Self::LAYOUT_CACHE_CAPACITY;
+        let clear_shaping_cache = self.shaping_cache.len() > Self::SHAPING_CACHE_CAPACITY;
+
+        let mut shaping_batch = PreparationBatch::new();
+        let mut layout_batch = PreparationBatch::new();
+        time_cost!("TextPipelineV2::prepare - CollectTextJobs", {
+            for req in requests {
+                let synthesized: [RichTextSpan; 1];
+                let spans: &[RichTextSpan] = if req.spans.is_empty() {
+                    synthesized = [RichTextSpan::new(req.text.clone())];
+                    &synthesized
+                } else {
+                    &req.spans
+                };
+
+                for span in spans {
+                    let font_size = span
+                        .font_size
+                        .unwrap_or(req.font_size);
+                    let font_weight = span
+                        .font_weight
+                        .or(req.font_weight)
+                        .unwrap_or(FontWeight::Normal.numeric());
+                    let layout_width = match req.overflow {
+                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
+                        TextOverflowMode::Clip => 0.0,
+                    };
+                    let layout_key = LayoutCacheKey::new(
+                        &span.text,
+                        font_size,
+                        layout_width,
+                        req.font_family,
+                        req.font_style,
+                        font_weight,
+                    );
+                    if !clear_layout_cache
+                        && self
+                            .layout_cache
+                            .contains_key(&layout_key)
+                    {
+                        continue;
+                    }
+
+                    let shaping_key = ShapingCacheKey::new(
+                        &span.text,
+                        font_size,
+                        req.font_family,
+                        req.font_style,
+                        font_weight,
+                    );
+                    if clear_shaping_cache
+                        || !self
+                            .shaping_cache
+                            .contains_key(&shaping_key)
+                    {
+                        shaping_batch.push(
+                            shaping_key.clone(),
+                            ShapingInput {
+                                text: span.text.clone(),
+                                font_size,
+                                font_family: req.font_family,
+                                font_style: req.font_style,
+                                font_weight,
+                            },
+                        );
+                    }
+                    layout_batch.push(
+                        layout_key,
+                        LayoutInput {
+                            shaping_key,
+                            layout_width,
+                        },
+                    );
+                }
+            }
+        });
+
+        let font_snapshot = self
+            .rasterizer
+            .font_snapshot();
+        let shaping_results = time_cost!("TextPipelineV2::prepare - ShapeTextBatch", {
+            self.executor
+                .execute_with_context(
+                    shaping_batch.jobs(),
+                    || GlyphPreparationContext::new(font_snapshot.clone()),
+                    |context, job| {
+                        let input = &job.input;
+                        Some(prepare_shaped_text(
+                            context,
+                            &input.text,
+                            input.font_size,
+                            input.font_family,
+                            FontWeight::Value(u32::from(input.font_weight)),
+                            input.font_style,
+                        ))
+                    },
+                )
+        });
+        let Ok(shaping_results) = shaping_results else {
+            return;
+        };
+        let Ok(prepared_shaping) = shaping_batch.merge(shaping_results) else {
+            return;
+        };
+        let prepared_shaping = prepared_shaping
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        let layout_results = time_cost!("TextPipelineV2::prepare - LayoutTextBatch", {
+            self.executor
+                .execute_with_context(
+                    layout_batch.jobs(),
+                    || GlyphPreparationContext::new(font_snapshot.clone()),
+                    |context, job| {
+                        let input = &job.input;
+                        let shaped = prepared_shaping
+                            .get(&input.shaping_key)
+                            .or_else(|| {
+                                (!clear_shaping_cache)
+                                    .then(|| {
+                                        self.shaping_cache
+                                            .get(&input.shaping_key)
+                                    })
+                                    .flatten()
+                            })?;
+                        Some(prepare_positioned_text(context, shaped, input.layout_width))
+                    },
+                )
+        });
+        let Ok(layout_results) = layout_results else {
+            return;
+        };
+        let Ok(prepared_layouts) = layout_batch.merge(layout_results) else {
+            return;
+        };
+        let prepared_layouts = prepared_layouts
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        let mut glyph_batch = PreparationBatch::new();
+        time_cost!("TextPipelineV2::prepare - CollectGlyphJobs", {
+            for req in requests {
+                let synthesized: [RichTextSpan; 1];
+                let spans: &[RichTextSpan] = if req.spans.is_empty() {
+                    synthesized = [RichTextSpan::new(req.text.clone())];
+                    &synthesized
+                } else {
+                    &req.spans
+                };
+
+                for span in spans {
+                    let font_size = span
+                        .font_size
+                        .unwrap_or(req.font_size);
+                    let font_weight = span
+                        .font_weight
+                        .or(req.font_weight)
+                        .unwrap_or(FontWeight::Normal.numeric());
+                    let layout_width = match req.overflow {
+                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
+                        TextOverflowMode::Clip => 0.0,
+                    };
+                    let layout_key = LayoutCacheKey::new(
+                        &span.text,
+                        font_size,
+                        layout_width,
+                        req.font_family,
+                        req.font_style,
+                        font_weight,
+                    );
+                    let Some(positioned) = prepared_layouts
+                        .get(&layout_key)
+                        .or_else(|| {
+                            (!clear_layout_cache)
+                                .then(|| {
+                                    self.layout_cache
+                                        .get(&layout_key)
+                                })
+                                .flatten()
+                        })
+                    else {
+                        return;
+                    };
+
+                    for glyph in positioned {
+                        let key = glyph.glyph_key;
+                        let needs_bitmap = self.atlas.get(&key).is_none()
+                            && self
+                                .color_atlas
+                                .get(&key)
+                                .is_none();
+                        if self
+                            .rasterizer
+                            .needs_prepared_glyph(key, needs_bitmap)
+                        {
+                            glyph_batch.push(
+                                key,
+                                GlyphPreparationInput {
+                                    font_size: glyph.font_size,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        });
+
+        let glyph_results = time_cost!("TextPipelineV2::prepare - RasterGlyphBatch", {
+            self.executor
+                .execute_with_context(
+                    glyph_batch.jobs(),
+                    || GlyphPreparationContext::new(font_snapshot.clone()),
+                    |context, job| Some(context.prepare_glyph(job.key, job.input.font_size)),
+                )
+        });
+        let Ok(glyph_results) = glyph_results else {
+            return;
+        };
+        let Ok(prepared_glyphs) = glyph_batch.merge(glyph_results) else {
+            return;
+        };
+
+        time_cost!("TextPipelineV2::prepare - MergeCpuBatches", {
+            if clear_shaping_cache {
+                self.shaping_cache.clear();
+            }
+            if clear_layout_cache {
+                self.layout_cache.clear();
+            }
+            self.shaping_cache
+                .extend(prepared_shaping);
+            self.layout_cache
+                .extend(prepared_layouts);
+            for (key, glyph) in prepared_glyphs {
+                self.rasterizer
+                    .commit_prepared_glyph(key, glyph);
+            }
+        });
+
+        let mut alpha_glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+        let mut seen_glyphs = HashSet::new();
+        for req in requests {
+            let synthesized: [RichTextSpan; 1];
+            let spans: &[RichTextSpan] = if req.spans.is_empty() {
+                synthesized = [RichTextSpan::new(req.text.clone())];
+                &synthesized
+            } else {
+                &req.spans
+            };
+
+            for span in spans {
+                let font_size = span
+                    .font_size
+                    .unwrap_or(req.font_size);
+                let font_weight = span
+                    .font_weight
+                    .or(req.font_weight)
+                    .unwrap_or(FontWeight::Normal.numeric());
+                let layout_width = match req.overflow {
+                    TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
+                    TextOverflowMode::Clip => 0.0,
+                };
+                let layout_key = LayoutCacheKey::new(
+                    &span.text,
+                    font_size,
+                    layout_width,
+                    req.font_family,
+                    req.font_style,
+                    font_weight,
+                );
+                let Some(positioned) = self
+                    .layout_cache
+                    .get(&layout_key)
+                else {
+                    return;
+                };
+                for glyph in positioned {
+                    let key = glyph.glyph_key;
+                    if !seen_glyphs.insert(key) {
+                        continue;
+                    }
+                    let Some((is_color, glyph_width, glyph_height)) = self
+                        .rasterizer
+                        .cached_glyph_descriptor(key)
+                    else {
+                        return;
+                    };
+                    let descriptor = (key, glyph_width, glyph_height);
+                    if is_color {
+                        color_glyphs.push(descriptor);
+                    } else {
+                        alpha_glyphs.push(descriptor);
+                    }
+                }
+            }
         }
 
-        if self.shaping_cache.len() > Self::SHAPING_CACHE_CAPACITY {
-            self.shaping_cache.clear();
+        let alpha_plan = self
+            .atlas
+            .plan_batch(&alpha_glyphs);
+        let color_plan = self
+            .color_atlas
+            .plan_batch(&color_glyphs);
+        if alpha_plan == BatchCapacityPlan::Reject || color_plan == BatchCapacityPlan::Reject {
+            return;
         }
+        self.atlas
+            .apply_batch_plan(alpha_plan);
+        self.color_atlas
+            .apply_batch_plan(color_plan);
+
+        self.instances.clear();
+        self.color_instances.clear();
+        self.decoration_instances
+            .clear();
+        self.decoration_instances
+            .extend(
+                decorations
+                    .iter()
+                    .map(|decoration| decoration.to_instance()),
+            );
+        self.request_ranges.clear();
+        self.request_ranges
+            .reserve(requests.len());
 
         for req in requests {
             // Record the glyph ranges this request will own. Both instance lists
@@ -962,46 +1293,10 @@ impl TextPipelineV2 {
                     );
                     // Layout is always computed at origin (0, 0) so the cached
                     // positions are purely relative and can be shifted cheaply.
-                    let positioned: &[PositionedGlyph] =
-                        time_cost!("TextPipelineV2::prepare - LayoutText", {
-                            let shaping_cache = &mut self.shaping_cache;
-                            let rasterizer = &mut self.rasterizer;
-                            self.layout_cache
-                                .entry(cache_key)
-                                .or_insert_with(|| {
-                                    let shaped_key = ShapingCacheKey::new(
-                                        &span.text,
-                                        font_size,
-                                        req.font_family,
-                                        req.font_style,
-                                        font_weight,
-                                    );
-                                    let shaped_text = shaping_cache
-                                        .entry(shaped_key)
-                                        .or_insert_with(|| {
-                                            time_cost!(
-                                                "TextPipelineV2::prepare - ShapeText",
-                                                || {
-                                                    shape_text_styled(
-                                                        rasterizer,
-                                                        &span.text,
-                                                        font_size,
-                                                        req.font_family,
-                                                        FontWeight::Value(u32::from(font_weight)),
-                                                        req.font_style,
-                                                    )
-                                                }
-                                            )
-                                        });
-                                    layout_shaped_text(
-                                        rasterizer,
-                                        shaped_text,
-                                        0.0,
-                                        0.0,
-                                        layout_width,
-                                    )
-                                })
-                        });
+                    let positioned = self
+                        .layout_cache
+                        .get(&cache_key)
+                        .expect("collected text layout must be committed before rendering");
 
                     for pg in positioned {
                         let key = pg.glyph_key;

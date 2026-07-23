@@ -5,7 +5,7 @@ use unicode_bidi::BidiInfo;
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::glyph_rasterizer::{GlyphKey, GlyphRasterizer};
+use super::glyph_rasterizer::{GlyphKey, GlyphPreparationContext, GlyphRasterizer};
 use crate::font::{FontFamily, FontStyle, FontWeight};
 
 pub type FontId = u32;
@@ -826,6 +826,25 @@ pub fn shape_text_styled(
     }
 }
 
+/// Shapes text into an owned result using worker-local CPU preparation state.
+pub(super) fn prepare_shaped_text(
+    context: &mut GlyphPreparationContext,
+    text: &str,
+    font_size: f32,
+    font_family: FontFamily,
+    font_weight: FontWeight,
+    font_style: FontStyle,
+) -> ShapedText {
+    shape_text_styled(
+        context.rasterizer_mut(),
+        text,
+        font_size,
+        font_family,
+        font_weight,
+        font_style,
+    )
+}
+
 pub fn layout_shaped_text(
     rasterizer: &mut GlyphRasterizer,
     shaped_text: &ShapedText,
@@ -919,6 +938,15 @@ pub fn layout_shaped_text(
         }
     });
     glyphs
+}
+
+/// Positions shaped text into an owned result using worker-local CPU state.
+pub(super) fn prepare_positioned_text(
+    context: &mut GlyphPreparationContext,
+    shaped_text: &ShapedText,
+    max_width: f32,
+) -> Vec<PositionedGlyph> {
+    layout_shaped_text(context.rasterizer_mut(), shaped_text, 0.0, 0.0, max_width)
 }
 
 /// Simple horizontal text layout with basic line breaking.
