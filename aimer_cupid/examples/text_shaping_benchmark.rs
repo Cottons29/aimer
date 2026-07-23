@@ -4,10 +4,13 @@ use std::time::{Duration, Instant};
 use aimer_cupid::font::{FontFamily, FontStyle, FontWeight};
 use aimer_cupid::text_layout::shape_text_styled;
 use aimer_cupid::text_pipeline::glyph_rasterizer::GlyphRasterizer;
+#[cfg(not(target_arch = "wasm32"))]
+use rayon::prelude::*;
 use unicode_segmentation::UnicodeSegmentation;
 
 const TARGET_CHARACTERS: usize = 2_000;
 const DEFAULT_ITERATIONS: usize = 10;
+const COLD_BATCH_SIZE: usize = 16;
 const SAMPLE: &str =
     "Aimer shapes styled text into glyph runs before wrapping and painting the markdown document. ";
 
@@ -67,9 +70,58 @@ fn main() {
         ));
     });
 
+    let cold_inputs = (0..COLD_BATCH_SIZE)
+        .map(|index| format!("{text} batch-{index}"))
+        .collect::<Vec<_>>();
+    let cold_serial = benchmark(iterations, || {
+        for input in &cold_inputs {
+            let mut rasterizer = GlyphRasterizer::new();
+            black_box(shape_text_styled(
+                &mut rasterizer,
+                black_box(input),
+                16.0,
+                FontFamily::SANS_SERIF,
+                FontWeight::Normal,
+                FontStyle::Normal,
+            ));
+        }
+    });
+    let cold_parallel = benchmark(iterations, || {
+        #[cfg(not(target_arch = "wasm32"))]
+        cold_inputs
+            .par_iter()
+            .for_each(|input| {
+                let mut rasterizer = GlyphRasterizer::new();
+                black_box(shape_text_styled(
+                    &mut rasterizer,
+                    black_box(input),
+                    16.0,
+                    FontFamily::SANS_SERIF,
+                    FontWeight::Normal,
+                    FontStyle::Normal,
+                ));
+            });
+
+        #[cfg(target_arch = "wasm32")]
+        for input in &cold_inputs {
+            let mut rasterizer = GlyphRasterizer::new();
+            black_box(shape_text_styled(
+                &mut rasterizer,
+                black_box(input),
+                16.0,
+                FontFamily::SANS_SERIF,
+                FontWeight::Normal,
+                FontStyle::Normal,
+            ));
+        }
+    });
+
     let per_cluster_average = average(per_cluster, iterations);
     let per_run_average = average(per_run, iterations);
     let speedup = per_cluster_average.as_secs_f64() / per_run_average.as_secs_f64();
+    let cold_serial_average = average(cold_serial, iterations);
+    let cold_parallel_average = average(cold_parallel, iterations);
+    let cold_speedup = cold_serial_average.as_secs_f64() / cold_parallel_average.as_secs_f64();
 
     println!(
         "debug text shaping benchmark: {} characters, {iterations} iterations",
@@ -78,4 +130,7 @@ fn main() {
     println!("per-cluster average: {per_cluster_average:?}");
     println!("per-run average:     {per_run_average:?}");
     println!("speedup:             {speedup:.2}x");
+    println!("cold serial batch:   {cold_serial_average:?}");
+    println!("cold parallel batch: {cold_parallel_average:?}");
+    println!("cold batch speedup:  {cold_speedup:.2}x");
 }

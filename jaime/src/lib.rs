@@ -46,13 +46,13 @@ pub fn my_app() {
     // custom_animated_theme::start_custom_animated_theme_example()
     // test_scrollable()
     // test_scrollable_row()
-    start_markdown_example();
+    // start_markdown_example();
     // start_panic_recovery_example();
     // test_scroll_and_row();
     // start_svg_test();
     // panic_recovery::start_panic_recovery_example()
     // start_custom_animated_theme_example()
-    // test_text()
+    test_text()
 }
 
 #[allow(unused)]

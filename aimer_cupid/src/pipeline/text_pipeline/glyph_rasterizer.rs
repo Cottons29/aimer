@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 #[allow(unused)]
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use aimer_utils::time_cost;
 use swash::FontRef;
@@ -11,7 +11,7 @@ use swash::zeno::Format;
 use super::text_layout::FontId;
 use crate::font::{FontFamily, FontRegistry, FontStyle, FontWeight, bundled_monospace_bytes};
 use crate::text_pipeline::font_resolver::{
-    FontData, FontRecord, advance_width_from_face, shared_fallback_chain,
+    FontData, FontRecord, SharedFontRecord, advance_width_from_face, shared_fallback_chain,
 };
 use crate::text_pipeline::glyph_outline::{ColrOutlineBuilder, rasterize_outline_glyph};
 
@@ -48,7 +48,7 @@ pub struct RasterizedGlyph {
 }
 
 /// Key for caching rasterized-shaped glyphs.
-#[derive(Hash, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
 pub struct GlyphKey {
     pub font_id: FontId,
     pub glyph_id: u16,
@@ -503,6 +503,54 @@ fn rasterize_color_glyph(
     None
 }
 
+/// Immutable font ownership copied into worker-local preparation contexts.
+///
+/// Font bytes and parsed font objects remain reference counted, while every
+/// context created from this snapshot receives independent shaping and bitmap
+/// caches. Fallback discovery remains lazy when the source rasterizer has not
+/// loaded its fallback chain yet.
+#[derive(Clone)]
+pub(super) struct FontSnapshot {
+    primary: SharedFontRecord,
+    family_faces: Arc<[SharedFamilyFontRecord]>,
+    fallbacks: Option<Arc<[SharedFontRecord]>>,
+    enable_fallbacks: bool,
+}
+
+#[derive(Clone)]
+struct SharedFamilyFontRecord {
+    family: FontFamily,
+    weight: u16,
+    style: FontStyle,
+    record: SharedFontRecord,
+}
+
+/// Mutable CPU-only text preparation state owned by one worker job.
+///
+/// This context contains no atlas, GPU object, canvas state, or renderer cache.
+/// Its rasterizer and scratch buffers are never shared between workers.
+pub(super) struct GlyphPreparationContext {
+    rasterizer: GlyphRasterizer,
+}
+
+impl GlyphPreparationContext {
+    pub(super) fn new(snapshot: FontSnapshot) -> Self {
+        Self {
+            rasterizer: GlyphRasterizer::from_font_snapshot(snapshot),
+        }
+    }
+
+    pub(super) fn rasterizer_mut(&mut self) -> &mut GlyphRasterizer {
+        &mut self.rasterizer
+    }
+
+    pub(super) fn prepare_glyph(&mut self, key: GlyphKey, font_size: f32) -> RasterizedGlyph {
+        self.rasterizer
+            .rasterize_bitmap_key(key, font_size)
+            .clone()
+    }
+}
+
 pub struct GlyphRasterizer {
     /// Primary font (Roboto) for Latin/common glyphs.
     primary: FontRecord,
@@ -533,6 +581,7 @@ pub struct GlyphRasterizer {
     shape_call_count: usize,
 }
 
+#[derive(Clone)]
 struct FamilyFontRecord {
     family: FontFamily,
     weight: u16,
@@ -609,6 +658,69 @@ impl GlyphRasterizer {
             family_faces: registered_family_faces(),
             fallbacks: None,
             enable_fallbacks: false,
+            cache: HashMap::new(),
+            advance_cache: HashMap::new(),
+            unsupported_codepoints: HashSet::new(),
+            font_bytes_cache: HashMap::new(),
+            rb_face_cache: HashMap::new(),
+            shape_buffer: Some(rustybuzz::UnicodeBuffer::new()),
+            #[cfg(test)]
+            shape_call_count: 0,
+        }
+    }
+
+    /// Captures immutable font ownership for worker-local CPU preparation.
+    pub(super) fn font_snapshot(&self) -> FontSnapshot {
+        FontSnapshot {
+            primary: SharedFontRecord::new(&self.primary),
+            family_faces: Arc::from(
+                self.family_faces
+                    .iter()
+                    .map(|face| SharedFamilyFontRecord {
+                        family: face.family,
+                        weight: face.weight,
+                        style: face.style,
+                        record: SharedFontRecord::new(&face.record),
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            fallbacks: self
+                .fallbacks
+                .as_ref()
+                .map(|fallbacks| {
+                    Arc::from(
+                        fallbacks
+                            .iter()
+                            .map(SharedFontRecord::new)
+                            .collect::<Vec<_>>(),
+                    )
+                }),
+            enable_fallbacks: self.enable_fallbacks,
+        }
+    }
+
+    fn from_font_snapshot(snapshot: FontSnapshot) -> Self {
+        Self {
+            primary: snapshot.primary.local_copy(),
+            family_faces: snapshot
+                .family_faces
+                .iter()
+                .map(|face| FamilyFontRecord {
+                    family: face.family,
+                    weight: face.weight,
+                    style: face.style,
+                    record: face.record.local_copy(),
+                })
+                .collect(),
+            fallbacks: snapshot
+                .fallbacks
+                .map(|fallbacks| {
+                    fallbacks
+                        .iter()
+                        .map(SharedFontRecord::local_copy)
+                        .collect()
+                }),
+            enable_fallbacks: snapshot.enable_fallbacks,
             cache: HashMap::new(),
             advance_cache: HashMap::new(),
             unsupported_codepoints: HashSet::new(),
@@ -992,6 +1104,25 @@ impl GlyphRasterizer {
         self.cache.len()
     }
 
+    pub(super) fn needs_prepared_glyph(&self, key: GlyphKey, needs_bitmap: bool) -> bool {
+        self.cache
+            .get(&key)
+            .is_none_or(|glyph| needs_bitmap && glyph.bitmap.is_empty())
+    }
+
+    pub(super) fn commit_prepared_glyph(&mut self, key: GlyphKey, glyph: RasterizedGlyph) {
+        self.make_bitmap_capacity_for(glyph.bitmap.capacity());
+        self.advance_cache
+            .insert(key, glyph.advance_width);
+        self.cache.insert(key, glyph);
+    }
+
+    pub(super) fn cached_glyph_descriptor(&self, key: GlyphKey) -> Option<(bool, u32, u32)> {
+        self.cache
+            .get(&key)
+            .map(|glyph| (glyph.is_color, glyph.width, glyph.height))
+    }
+
     #[cfg(test)]
     fn cached_glyph(&self, key: GlyphKey) -> Option<&RasterizedGlyph> {
         self.cache.get(&key)
@@ -1316,6 +1447,157 @@ mod tests {
 
     use super::*;
     use crate::font::{FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight};
+    use crate::text_pipeline::text_layout::{layout_shaped_text, shape_text_styled};
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn font_snapshot_is_naturally_send_and_sync() {
+        assert_send_sync::<FontSnapshot>();
+    }
+
+    #[test]
+    fn worker_context_matches_shaping_and_layout_output() {
+        let mut renderer = GlyphRasterizer::new();
+        let mut worker = GlyphPreparationContext::new(renderer.font_snapshot());
+        let text = "office text wraps";
+
+        let expected_shaped = shape_text_styled(
+            &mut renderer,
+            text,
+            18.0,
+            FontFamily::SANS_SERIF,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        let actual_shaped = shape_text_styled(
+            worker.rasterizer_mut(),
+            text,
+            18.0,
+            FontFamily::SANS_SERIF,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+
+        assert_eq!(actual_shaped.font_size, expected_shaped.font_size);
+        assert_eq!(actual_shaped.line_height, expected_shaped.line_height);
+        assert_eq!(actual_shaped.clusters.len(), expected_shaped.clusters.len());
+        for (actual, expected) in actual_shaped
+            .clusters
+            .iter()
+            .zip(&expected_shaped.clusters)
+        {
+            assert_eq!(actual.text, expected.text);
+            assert_eq!(actual.base_codepoint, expected.base_codepoint);
+            assert_eq!(actual.width, expected.width);
+            assert_eq!(actual.glyphs, expected.glyphs);
+        }
+
+        let expected_layout = layout_shaped_text(&mut renderer, &expected_shaped, 0.0, 0.0, 80.0);
+        let actual_layout =
+            layout_shaped_text(worker.rasterizer_mut(), &actual_shaped, 0.0, 0.0, 80.0);
+        assert_eq!(actual_layout.len(), expected_layout.len());
+        for (actual, expected) in actual_layout
+            .iter()
+            .zip(&expected_layout)
+        {
+            assert!(actual.glyph_key == expected.glyph_key);
+            assert_eq!((actual.x, actual.y), (expected.x, expected.y));
+            assert_eq!(
+                (actual.width, actual.height),
+                (expected.width, expected.height)
+            );
+            assert_eq!(actual.font_size, expected.font_size);
+        }
+    }
+
+    #[test]
+    fn worker_context_preserves_fallback_resolution() {
+        let mut renderer = GlyphRasterizer::new();
+        let mut worker = GlyphPreparationContext::new(renderer.font_snapshot());
+
+        for codepoint in ['A', '界', '😀'] {
+            let expected = renderer.glyph_key_for_codepoint(codepoint, 20.0);
+            let actual = worker
+                .rasterizer_mut()
+                .glyph_key_for_codepoint(codepoint, 20.0);
+            assert!(actual == expected);
+        }
+    }
+
+    #[test]
+    fn worker_context_returns_owned_alpha_glyph_with_matching_bitmap() {
+        let mut renderer = GlyphRasterizer::new();
+        let mut worker = GlyphPreparationContext::new(renderer.font_snapshot());
+        let key = renderer.glyph_key_for_codepoint('A', 20.0);
+        let expected = renderer
+            .rasterize_key(key, 20.0)
+            .clone();
+        let actual = worker.prepare_glyph(key, 20.0);
+
+        assert!(!actual.is_color);
+        assert_eq!(
+            (actual.width, actual.height),
+            (expected.width, expected.height)
+        );
+        assert_eq!(actual.bitmap, expected.bitmap);
+    }
+
+    #[test]
+    fn worker_context_returns_owned_color_glyph_with_matching_dimensions() {
+        let mut renderer = GlyphRasterizer::new();
+        let mut worker = GlyphPreparationContext::new(renderer.font_snapshot());
+        let key = renderer.glyph_key_for_codepoint('😀', 32.0);
+        let expected = renderer
+            .rasterize_key(key, 32.0)
+            .clone();
+        let actual = worker.prepare_glyph(key, 32.0);
+
+        assert_eq!(actual.is_color, expected.is_color);
+        assert_eq!(
+            (actual.width, actual.height),
+            (expected.width, expected.height)
+        );
+        assert_eq!(actual.bitmap.len(), expected.bitmap.len());
+        if expected.is_color {
+            assert_eq!(actual.bitmap, expected.bitmap);
+        }
+    }
+
+    #[test]
+    fn worker_context_remains_usable_after_malformed_font_is_rejected() {
+        let mut renderer = GlyphRasterizer::new();
+        assert!(
+            renderer
+                .register_font_bytes(vec![0, 1, 2, 3])
+                .is_none()
+        );
+
+        let mut worker = GlyphPreparationContext::new(renderer.font_snapshot());
+        let key = worker
+            .rasterizer_mut()
+            .glyph_key_for_codepoint('A', 16.0);
+        let glyph = worker.prepare_glyph(key, 16.0);
+        assert!(glyph.width > 0);
+        assert!(glyph.height > 0);
+        assert!(!glyph.bitmap.is_empty());
+    }
+
+    #[test]
+    fn warm_renderer_cache_suppresses_worker_jobs_until_bitmap_is_needed() {
+        let mut renderer = GlyphRasterizer::new();
+        let key = renderer.glyph_key_for_codepoint('A', 16.0);
+        let glyph = renderer
+            .rasterize_key(key, 16.0)
+            .clone();
+
+        assert!(!renderer.needs_prepared_glyph(key, true));
+        renderer.commit_prepared_glyph(key, glyph);
+        renderer.release_bitmap(key);
+
+        assert!(!renderer.needs_prepared_glyph(key, false));
+        assert!(renderer.needs_prepared_glyph(key, true));
+    }
 
     #[test]
     fn registered_families_resolve_consistently_across_rasterizers() {
