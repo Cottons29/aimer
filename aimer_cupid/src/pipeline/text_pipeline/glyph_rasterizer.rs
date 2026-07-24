@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
 #[allow(unused)]
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use aimer_utils::time_cost;
+use fxhash::{FxHashMap, FxHashSet};
 use swash::FontRef;
 use swash::scale::{Render, ScaleContext, Source};
 use swash::zeno::Format;
@@ -562,18 +562,19 @@ pub struct GlyphRasterizer {
     fallbacks: Option<Vec<FontRecord>>,
     /// Whether to attempt loading fallbacks when needed.
     enable_fallbacks: bool,
-    cache: HashMap<GlyphKey, RasterizedGlyph>,
-    advance_cache: HashMap<GlyphKey, f32>,
-    unsupported_codepoints: HashSet<char>,
+    cache: FxHashMap<GlyphKey, RasterizedGlyph>,
+    retained_bitmap_bytes: usize,
+    advance_cache: FxHashMap<GlyphKey, f32>,
+    unsupported_codepoints: FxHashSet<char>,
     /// Cached font bytes per font_id to avoid re-reading from disk or
     /// re-cloning Arc<[u8]> on every `shape_cluster` call.
-    font_bytes_cache: HashMap<FontId, FontData>,
+    font_bytes_cache: FxHashMap<FontId, FontData>,
     /// Cached `rustybuzz::Face` per font_id.
     /// Each face borrows from the corresponding `Arc<[u8]>` in
     /// `font_bytes_cache`. The Arc keeps the bytes alive for at least as
     /// long as this struct, so the lifetime extension via `transmute` is
     /// safe.
-    rb_face_cache: HashMap<FontId, rustybuzz::Face<'static>>,
+    rb_face_cache: FxHashMap<FontId, rustybuzz::Face<'static>>,
     /// Reusable `UnicodeBuffer` for rustybuzz — reset between calls instead
     /// of allocating a new buffer per cluster.
     shape_buffer: Option<rustybuzz::UnicodeBuffer>,
@@ -637,11 +638,12 @@ impl GlyphRasterizer {
             family_faces: registered_family_faces(),
             fallbacks: None, // loaded lazily on first miss
             enable_fallbacks: true,
-            cache: HashMap::new(),
-            advance_cache: HashMap::new(),
-            unsupported_codepoints: HashSet::new(),
-            font_bytes_cache: HashMap::new(),
-            rb_face_cache: HashMap::new(),
+            cache: FxHashMap::default(),
+            retained_bitmap_bytes: 0,
+            advance_cache: FxHashMap::default(),
+            unsupported_codepoints: FxHashSet::default(),
+            font_bytes_cache: FxHashMap::default(),
+            rb_face_cache: FxHashMap::default(),
             shape_buffer: Some(rustybuzz::UnicodeBuffer::new()),
             #[cfg(test)]
             shape_call_count: 0,
@@ -658,11 +660,12 @@ impl GlyphRasterizer {
             family_faces: registered_family_faces(),
             fallbacks: None,
             enable_fallbacks: false,
-            cache: HashMap::new(),
-            advance_cache: HashMap::new(),
-            unsupported_codepoints: HashSet::new(),
-            font_bytes_cache: HashMap::new(),
-            rb_face_cache: HashMap::new(),
+            cache: FxHashMap::default(),
+            retained_bitmap_bytes: 0,
+            advance_cache: FxHashMap::default(),
+            unsupported_codepoints: FxHashSet::default(),
+            font_bytes_cache: FxHashMap::default(),
+            rb_face_cache: FxHashMap::default(),
             shape_buffer: Some(rustybuzz::UnicodeBuffer::new()),
             #[cfg(test)]
             shape_call_count: 0,
@@ -721,11 +724,12 @@ impl GlyphRasterizer {
                         .collect()
                 }),
             enable_fallbacks: snapshot.enable_fallbacks,
-            cache: HashMap::new(),
-            advance_cache: HashMap::new(),
-            unsupported_codepoints: HashSet::new(),
-            font_bytes_cache: HashMap::new(),
-            rb_face_cache: HashMap::new(),
+            cache: FxHashMap::default(),
+            retained_bitmap_bytes: 0,
+            advance_cache: FxHashMap::default(),
+            unsupported_codepoints: FxHashSet::default(),
+            font_bytes_cache: FxHashMap::default(),
+            rb_face_cache: FxHashMap::default(),
             shape_buffer: Some(rustybuzz::UnicodeBuffer::new()),
             #[cfg(test)]
             shape_call_count: 0,
@@ -970,12 +974,13 @@ impl GlyphRasterizer {
     }
 
     pub fn rasterize_key(&mut self, key: GlyphKey, font_size: f32) -> &RasterizedGlyph {
+        let is_cached = self.cache.contains_key(&key);
         // Check if we need to load fallbacks for this glyph.
-        if !self.cache.contains_key(&key) && key.font_id != self.primary.id {
+        if !is_cached && key.font_id != self.primary.id {
             // debug!("----------------------------------------------------------------------------");
             time_cost!("FallbackFont", || self.ensure_fallbacks())
         }
-        if !self.cache.contains_key(&key) {
+        if !is_cached {
             // #[cfg(debug_assertions)]
             // debug!("----------------------------------------------------------------------------");
             let is_color = time_cost!("SelectingFontColor", || self
@@ -1048,10 +1053,9 @@ impl GlyphRasterizer {
                 }
             });
 
-            self.make_bitmap_capacity_for(glyph.bitmap.capacity());
             self.advance_cache
                 .insert(key, glyph.advance_width);
-            self.cache.insert(key, glyph);
+            self.insert_cached_glyph(key, glyph);
         }
 
         self.cache
@@ -1072,32 +1076,56 @@ impl GlyphRasterizer {
 
     pub fn release_bitmap(&mut self, key: GlyphKey) {
         if let Some(glyph) = self.cache.get_mut(&key) {
+            self.retained_bitmap_bytes = self
+                .retained_bitmap_bytes
+                .saturating_sub(glyph.bitmap.capacity());
             glyph.bitmap.clear();
             glyph.bitmap.shrink_to_fit();
         }
     }
 
+    fn insert_cached_glyph(&mut self, key: GlyphKey, glyph: RasterizedGlyph) {
+        if let Some(previous) = self.cache.remove(&key) {
+            self.retained_bitmap_bytes = self
+                .retained_bitmap_bytes
+                .saturating_sub(previous.bitmap.capacity());
+        }
+
+        let incoming_bytes = glyph.bitmap.capacity();
+        self.make_bitmap_capacity_for(incoming_bytes);
+        self.retained_bitmap_bytes = self
+            .retained_bitmap_bytes
+            .saturating_add(incoming_bytes);
+        self.cache.insert(key, glyph);
+    }
+
     fn make_bitmap_capacity_for(&mut self, incoming_bytes: usize) {
-        let mut retained_bytes = self.bitmap_cache_bytes();
-        if retained_bytes.saturating_add(incoming_bytes) <= Self::BITMAP_CACHE_CAPACITY_BYTES {
+        if self
+            .retained_bitmap_bytes
+            .saturating_add(incoming_bytes)
+            <= Self::BITMAP_CACHE_CAPACITY_BYTES
+        {
             return;
         }
 
         for glyph in self.cache.values_mut() {
-            retained_bytes = retained_bytes.saturating_sub(glyph.bitmap.capacity());
+            self.retained_bitmap_bytes = self
+                .retained_bitmap_bytes
+                .saturating_sub(glyph.bitmap.capacity());
             glyph.bitmap.clear();
             glyph.bitmap.shrink_to_fit();
-            if retained_bytes.saturating_add(incoming_bytes) <= Self::BITMAP_CACHE_CAPACITY_BYTES {
+            if self
+                .retained_bitmap_bytes
+                .saturating_add(incoming_bytes)
+                <= Self::BITMAP_CACHE_CAPACITY_BYTES
+            {
                 break;
             }
         }
     }
 
     pub fn bitmap_cache_bytes(&self) -> usize {
-        self.cache
-            .values()
-            .map(|glyph| glyph.bitmap.capacity())
-            .sum()
+        self.retained_bitmap_bytes
     }
 
     pub fn cached_glyph_count(&self) -> usize {
@@ -1111,10 +1139,9 @@ impl GlyphRasterizer {
     }
 
     pub(super) fn commit_prepared_glyph(&mut self, key: GlyphKey, glyph: RasterizedGlyph) {
-        self.make_bitmap_capacity_for(glyph.bitmap.capacity());
         self.advance_cache
             .insert(key, glyph.advance_width);
-        self.cache.insert(key, glyph);
+        self.insert_cached_glyph(key, glyph);
     }
 
     pub(super) fn cached_glyph_descriptor(&self, key: GlyphKey) -> Option<(bool, u32, u32)> {
@@ -1445,11 +1472,53 @@ impl GlyphRasterizer {
 mod tests {
     use std::sync::Arc;
 
+    use fxhash::{FxHashMap, FxHashSet};
+
     use super::*;
     use crate::font::{FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight};
     use crate::text_pipeline::text_layout::{layout_shaped_text, shape_text_styled};
 
     fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn rasterizer_uses_fast_hashers_for_internal_caches() {
+        fn assert_fast_map<K, V>(_: &FxHashMap<K, V>) {}
+        fn assert_fast_set<K>(_: &FxHashSet<K>) {}
+
+        let rasterizer = GlyphRasterizer::primary_only();
+        assert_fast_map(&rasterizer.cache);
+        assert_fast_map(&rasterizer.advance_cache);
+        assert_fast_set(&rasterizer.unsupported_codepoints);
+        assert_fast_map(&rasterizer.font_bytes_cache);
+        assert_fast_map(&rasterizer.rb_face_cache);
+    }
+
+    #[test]
+    fn bitmap_cache_bytes_are_tracked_across_replace_and_release() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let key = GlyphKey::new(rasterizer.primary_font_id(), 1, 16.0);
+        let glyph = |bytes| RasterizedGlyph {
+            bitmap: vec![255; bytes],
+            width: bytes as u32,
+            height: 1,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            advance_width: 12.0,
+            is_color: false,
+        };
+
+        rasterizer.commit_prepared_glyph(key, glyph(1024));
+        assert_eq!(rasterizer.retained_bitmap_bytes, 1024);
+        assert_eq!(rasterizer.bitmap_cache_bytes(), 1024);
+
+        rasterizer.commit_prepared_glyph(key, glyph(256));
+        assert_eq!(rasterizer.retained_bitmap_bytes, 256);
+        assert_eq!(rasterizer.bitmap_cache_bytes(), 256);
+
+        rasterizer.release_bitmap(key);
+        assert_eq!(rasterizer.retained_bitmap_bytes, 0);
+        assert_eq!(rasterizer.bitmap_cache_bytes(), 0);
+    }
 
     #[test]
     fn font_snapshot_is_naturally_send_and_sync() {
@@ -2013,7 +2082,7 @@ mod tests {
     fn bitmap_cache_pruning_keeps_metrics_and_releases_pixel_capacity() {
         let mut rasterizer = GlyphRasterizer::primary_only();
         let key = GlyphKey::new(rasterizer.primary_font_id(), 1, 16.0);
-        rasterizer.cache.insert(
+        rasterizer.commit_prepared_glyph(
             key,
             RasterizedGlyph {
                 bitmap: vec![255; 1024],

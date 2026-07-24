@@ -41,7 +41,7 @@ final class FrameDriver {
         let link = CADisplayLink(target: self, selector: #selector(tick))
         if #available(iOS 15.0, *) {
             // Allow the system to run up to 120 Hz on ProMotion displays.
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 120, maximum: 120, preferred: 120)
         }
         // Start paused; frames are produced on demand.
         link.isPaused = true
