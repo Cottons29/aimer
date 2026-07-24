@@ -40,5 +40,12 @@
     "title": "Migrating Aimer Widgets to Rubick",
     "author": "Cottons29",
     "tags": ["Rubick"]
+  },
+  {
+    "id": "text-rendering-and-modal-widgets",
+    "upload_time": "2026-07-25T02:45:00Z",
+    "title": "Parallel Text Preparation, Smarter Caches, and Framework-Level Modal Widgets",
+    "author": "Cottons29",
+    "tags": ["Text", "Modal"]
   }
 ]
