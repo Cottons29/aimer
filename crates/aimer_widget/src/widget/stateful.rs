@@ -769,16 +769,16 @@ fn find_keyed_stateful<'a>(
     key: &crate::key::Key,
     debug_name: &'static str,
 ) -> Option<&'a StatefulElement> {
-    if !element.is_stateful_element() {
-        return None;
-    }
-
-    let current = element
-        .option_any()
-        .and_then(|value| value.downcast_ref::<StatefulElement>())
-        .filter(|stateful| {
-            stateful.key.as_ref() == Some(key) && stateful.debug_name.get() == debug_name
-        });
+    let current = if element.is_stateful_element() {
+        element
+            .option_any()
+            .and_then(|value| value.downcast_ref::<StatefulElement>())
+            .filter(|stateful| {
+                stateful.key.as_ref() == Some(key) && stateful.debug_name.get() == debug_name
+            })
+    } else {
+        None
+    };
 
     element_children(element)
         .into_iter()
@@ -839,13 +839,10 @@ fn carry_keyed_child_state_in_context(
     new: &dyn Element,
     ctx: &BuildContext,
 ) {
-    if !old_root.is_stateful_element() || !new.is_stateful_element() {
-        return;
-    }
-
-    if let Some(new_stateful) = new
-        .option_any()
-        .and_then(|value| value.downcast_ref::<StatefulElement>())
+    if new.is_stateful_element()
+        && let Some(new_stateful) = new
+            .option_any()
+            .and_then(|value| value.downcast_ref::<StatefulElement>())
         && let Some(key) = new_stateful.key.as_ref()
     {
         if let Some(old_stateful) =
@@ -876,44 +873,31 @@ fn carry_unkeyed_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildCo
 }
 
 fn carry_unkeyed_child_state_in_context(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
-    if !new.is_stateful_element() || !old.is_stateful_element() {
-        return;
+    if old.is_stateful_element() && new.is_stateful_element() {
+        if new
+            .option_any()
+            .and_then(|value| value.downcast_ref::<StatefulElement>())
+            .is_some_and(|stateful| stateful.key.is_some())
+        {
+            return;
+        }
+
+        carry_stateful(old, new, ctx);
     }
 
-    if new
-        .option_any()
-        .and_then(|value| value.downcast_ref::<StatefulElement>())
-        .is_some_and(|stateful| stateful.key.is_some())
-    {
-        return;
-    }
-
-    // Adopt state at this level first.
-    // println!("Before carry_stateful");
-    carry_stateful(old, new, ctx);
-    // println!(" -> carry_stateful : success");
-
-    // Try event_children first (primary traversal for reconciliation).
-    // println!("Step 1");
     let old_children = element_children(old);
-    // println!("Step 4");
     if old_children.is_empty() {
         return;
     }
-    // println!("Step 5");
 
     let new_children = element_children(new);
-    // println!("Step 8");
 
     for (old_child, new_child) in old_children
         .iter()
         .zip(new_children.iter())
     {
-        // println!("Before call carry_child_state");
         carry_unkeyed_child_state(*old_child, *new_child, ctx);
-        // println!("After call carry_child_state");
     }
-    // println!("Step 9");
 }
 
 impl StatefulElement {
