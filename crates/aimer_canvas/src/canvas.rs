@@ -5,6 +5,7 @@ pub use aimer_cupid::canvas::TextMetrics;
 use aimer_cupid::font::{FontFamily, FontStyle};
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 pub use aimer_cupid::text_pipeline::TextOverflowMode;
+pub use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
 use std::sync::Arc;
 mod native_impl;
 
@@ -113,6 +114,35 @@ pub trait CanvasRendering: Clone {
             bounds_width,
             bounds_height,
             overflow,
+            font_weight,
+        );
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_aligned_with_overflow_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+        horizontal_align: TextHorizontalAlign,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        let _ = horizontal_align;
+        self.draw_text_with_overflow_styled(
+            text,
+            pos,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+            font_family,
+            font_style,
             font_weight,
         );
     }
@@ -570,6 +600,38 @@ impl<'a> AimerCanvas<'a> {
             bounds_width,
             bounds_height,
             overflow,
+            font_family,
+            font_style,
+            font_weight,
+        );
+    }
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_aligned_with_overflow_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+        horizontal_align: TextHorizontalAlign,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        CanvasRendering::draw_text_aligned_with_overflow_styled(
+            self.inner,
+            text,
+            pos,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+            horizontal_align,
             font_family,
             font_style,
             font_weight,

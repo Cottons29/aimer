@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 #[allow(unused)]
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -52,13 +53,27 @@ pub struct RasterizedGlyph {
 }
 
 /// Key for caching rasterized-shaped glyphs.
-#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub struct GlyphKey {
     pub font_id: FontId,
     pub glyph_id: u16,
     pub size_tenths: u32,
     pub subpixel_x: u8,
     pub subpixel_y: u8,
+}
+
+impl Hash for GlyphKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let font_and_size = u64::from(self.font_id) | (u64::from(self.size_tenths) << 32);
+        let glyph_and_subpixel = u64::from(self.glyph_id)
+            | (u64::from(self.subpixel_x) << 16)
+            | (u64::from(self.subpixel_y) << 24);
+        let compact = font_and_size
+            ^ glyph_and_subpixel
+                .wrapping_mul(0x9e37_79b1_85eb_ca87)
+                .rotate_left(17);
+        state.write_u64(compact);
+    }
 }
 
 pub struct ShapedRunGlyph {
@@ -1254,6 +1269,7 @@ impl GlyphRasterizer {
 
 #[cfg(test)]
 mod tests {
+    use std::hash::{Hash, Hasher};
     use std::sync::Arc;
 
     use hashbrown::{HashMap, HashSet};
@@ -1263,6 +1279,67 @@ mod tests {
     use crate::text_pipeline::text_layout::{layout_shaped_text, shape_text_styled};
 
     fn assert_send_sync<T: Send + Sync>() {}
+
+    #[derive(Default)]
+    struct HashWriteCounter {
+        writes: usize,
+        value: u64,
+    }
+
+    impl Hasher for HashWriteCounter {
+        fn finish(&self) -> u64 {
+            0
+        }
+
+        fn write(&mut self, _bytes: &[u8]) {
+            self.writes += 1;
+        }
+
+        fn write_u64(&mut self, value: u64) {
+            self.writes += 1;
+            self.value = value;
+        }
+    }
+
+    fn compact_glyph_key_hash(key: GlyphKey) -> u64 {
+        let mut hasher = HashWriteCounter::default();
+        key.hash(&mut hasher);
+        assert_eq!(hasher.writes, 1);
+        hasher.value
+    }
+
+    #[test]
+    fn glyph_key_hashes_as_one_compact_value() {
+        let key = GlyphKey {
+            font_id: 7,
+            glyph_id: 42,
+            size_tenths: 160,
+            subpixel_x: 1,
+            subpixel_y: 2,
+        };
+        let expected = compact_glyph_key_hash(key);
+        for distinct_key in [
+            GlyphKey { font_id: 8, ..key },
+            GlyphKey {
+                glyph_id: 43,
+                ..key
+            },
+            GlyphKey {
+                size_tenths: 170,
+                ..key
+            },
+            GlyphKey {
+                subpixel_x: 2,
+                ..key
+            },
+            GlyphKey {
+                subpixel_y: 3,
+                ..key
+            },
+        ] {
+            assert_ne!(compact_glyph_key_hash(distinct_key), expected);
+        }
+    }
 
     #[test]
     fn rasterizer_uses_fast_hashers_for_internal_caches() {

@@ -19,8 +19,8 @@ use crate::text_pipeline::glyph_atlas::{
 use crate::text_pipeline::glyph_rasterizer::{GlyphKey, GlyphPreparationContext, GlyphRasterizer};
 use crate::text_pipeline::preparation_batch::{BatchExecutor, PreparationBatch};
 use crate::text_pipeline::text_layout::{
-    PositionedGlyph, ShapedText, layout_shaped_text, prepare_positioned_text, prepare_shaped_text,
-    shape_text_styled,
+    PositionedGlyph, ShapedText, TextHorizontalAlign, layout_shaped_text, line_alignment_offsets,
+    positioned_line_widths, prepare_positioned_text, prepare_shaped_text, shape_text_styled,
 };
 
 /// Per-instance data for one glyph quad.
@@ -168,6 +168,7 @@ pub struct TextDrawRequest {
     pub bounds_width: f32,
     pub bounds_height: f32,
     pub overflow: TextOverflowMode,
+    pub horizontal_align: TextHorizontalAlign,
     pub line_height: Option<f32>,
     pub font_family: FontFamily,
     pub font_style: FontStyle,
@@ -1313,6 +1314,11 @@ impl TextPipelineV2 {
                         .layout_cache
                         .get(&cache_key)
                         .expect("collected text layout must be committed before rendering");
+                    let line_offsets = line_alignment_offsets(
+                        &positioned_line_widths(positioned),
+                        req.bounds_width,
+                        req.horizontal_align,
+                    );
 
                     for pg in positioned {
                         let key = pg.glyph_key;
@@ -1379,7 +1385,10 @@ impl TextPipelineV2 {
                         } else {
                             [pg.width as f32, pg.height as f32]
                         };
-                        let position = [pg.x + cursor_x, pg.y + cursor_y];
+                        let position = [
+                            pg.x + cursor_x + line_offsets[pg.line_index],
+                            pg.y + cursor_y,
+                        ];
                         if !glyph_intersects_clip(position, size, req.clip_rect) {
                             continue;
                         }

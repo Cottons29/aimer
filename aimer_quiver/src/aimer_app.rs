@@ -7,6 +7,7 @@ use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_inspector::InspectorAppHandle;
+use aimer_modal::ModalHost;
 use aimer_utils::info;
 use aimer_widget::Widget;
 use aimer_widget::base::{BuildContext, WindowHandle};
@@ -352,7 +353,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 impl<W: Widget + 'static> AimerApp<W> {
     /// Starts a native application with `widget` as its root widget.
     pub fn start(widget: W) {
-        start_event_loop(widget, None);
+        start_event_loop(ModalHost::new().child(widget), None);
     }
 
     /// Starts a native application and runs `setup` once the platform event
@@ -373,15 +374,18 @@ impl<W: Widget + 'static> AimerApp<W> {
         R: 'static,
     {
         let startup_hook = Box::new(move || Box::new(setup()) as Box<dyn std::any::Any>);
-        start_event_loop(widget, Some(startup_hook));
+        start_event_loop(ModalHost::new().child(widget), Some(startup_hook));
     }
 
-    pub fn start_headless(widget: W) -> HeadlessAimerApp<W> {
+    pub fn start_headless(widget: W) -> HeadlessAimerApp<ModalHost<W>> {
         Self::start_headless_with(widget, HeadlessOptions::default())
     }
 
-    pub fn start_headless_with(widget: W, options: HeadlessOptions) -> HeadlessAimerApp<W> {
-        HeadlessAimerApp::new(widget, options)
+    pub fn start_headless_with(
+        widget: W,
+        options: HeadlessOptions,
+    ) -> HeadlessAimerApp<ModalHost<W>> {
+        HeadlessAimerApp::new(ModalHost::new().child(widget), options)
     }
 }
 
@@ -591,6 +595,63 @@ mod tests {
                 height: 800.0
             }
         );
+    }
+
+    #[test]
+    fn headless_start_installs_the_framework_modal_host() {
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: Arc::new(AtomicUsize::new(0)),
+        });
+
+        app.render_frame();
+
+        assert_eq!(
+            app.app
+                .widget_root
+                .as_ref()
+                .map(|root| root.debug_name()),
+            Some("ModalHost")
+        );
+    }
+
+    #[test]
+    fn framework_modal_show_and_dismiss_use_the_headless_root_overlay() {
+        use aimer_modal::{Modal, ModalController};
+
+        let cancels = Arc::new(AtomicUsize::new(0));
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: cancels.clone(),
+        });
+        let handle = Modal::new()
+            .child(RecordingWidget {
+                builds: Arc::new(AtomicUsize::new(0)),
+                cancels: Arc::new(AtomicUsize::new(0)),
+            })
+            .show();
+
+        app.render_frame();
+
+        assert!(ModalController::is_showing());
+        assert_eq!(cancels.load(Ordering::SeqCst), 1);
+
+        assert!(handle.dismiss());
+        app.render_frame();
+
+        assert!(!ModalController::is_showing());
+
+        Modal::new()
+            .child(RecordingWidget {
+                builds: Arc::new(AtomicUsize::new(0)),
+                cancels: Arc::new(AtomicUsize::new(0)),
+            })
+            .show();
+        app.render_frame();
+        assert!(ModalController::is_showing());
+
+        drop(app);
+        assert!(!ModalController::is_showing());
     }
 
     #[test]

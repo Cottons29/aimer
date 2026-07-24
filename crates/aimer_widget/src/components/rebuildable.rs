@@ -13,6 +13,10 @@ pub trait Rebuildable: VisitorElement {
         None
     }
 
+    fn is_stateful_element(&self) -> bool {
+        false
+    }
+
     fn is_carry_state(&self) -> bool {
         false
     }

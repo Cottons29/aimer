@@ -1,0 +1,76 @@
+mod animation;
+pub(crate) mod host;
+mod modal;
+
+pub use animation::ModalAnimation;
+pub use host::{ModalController, ModalHandle, ModalHost, ModalId};
+pub use modal::Modal;
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use aimer_animation::Curve;
+    use aimer_container::{Alignment, ZeroSizedBox};
+    use aimer_widget::base::Color;
+
+    use super::{Modal, ModalAnimation};
+
+    #[test]
+    fn modal_configuration_survives_child_attachment() {
+        let animation = ModalAnimation::new()
+            .enter_duration(Duration::from_millis(240))
+            .exit_duration(Duration::from_millis(120))
+            .enter_curve(Curve::EaseOut)
+            .exit_curve(Curve::EaseIn)
+            .content_scale_from(0.9);
+        let modal = Modal::new()
+            .barrier_color(Color::BLUE.with_opacity(160))
+            .alignment(Alignment::BotRight)
+            .animation(animation)
+            .child(ZeroSizedBox);
+
+        assert_eq!(modal.animation_config(), Some(animation));
+        assert_eq!(
+            std::mem::discriminant(&modal.alignment_value()),
+            std::mem::discriminant(&Alignment::BotRight)
+        );
+        assert_eq!(modal.barrier_color_value(), Color::BLUE.with_opacity(160));
+    }
+
+    #[test]
+    fn animation_normalizes_invalid_content_scale() {
+        assert_eq!(
+            ModalAnimation::new()
+                .content_scale_from(f32::NAN)
+                .content_scale(),
+            1.0
+        );
+        assert_eq!(
+            ModalAnimation::new()
+                .content_scale_from(-1.0)
+                .content_scale(),
+            0.0
+        );
+        assert_eq!(
+            ModalAnimation::new()
+                .content_scale_from(2.0)
+                .content_scale(),
+            1.0
+        );
+    }
+
+    #[test]
+    fn show_and_dismiss_enqueue_framework_commands_immediately() {
+        super::host::reset_registry_for_test();
+
+        let handle = Modal::new()
+            .child(ZeroSizedBox)
+            .show();
+        assert_eq!(super::host::pending_command_count_for_test(), 1);
+
+        assert!(handle.dismiss());
+        assert!(!handle.dismiss());
+        assert_eq!(super::host::pending_command_count_for_test(), 2);
+    }
+}

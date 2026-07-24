@@ -13,6 +13,7 @@ aimer_utils = {workspace = true, features = []}
 aimer_events.workspace = true
 aimer_inspector.workspace = true
 aimer_canvas.workspace = true
+aimer_modal.workspace = true
 wgpu.workspace = true
 #################
 

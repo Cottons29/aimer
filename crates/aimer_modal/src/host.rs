@@ -1,0 +1,541 @@
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
+use std::rc::Rc;
+
+use aimer_animation::AnimInstant;
+use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_events::element::ElementEvent;
+use aimer_events::window::request_animation_frame;
+use aimer_macro::Rebuildable;
+use aimer_widget::base::BuildContext;
+use aimer_widget::{
+    AnyElement, Drawable, Element, EventElement, LayoutElement, RequiredChild, VisitorElement,
+    Widget, broadcast_event, dispatch_event,
+};
+
+use crate::ModalAnimation;
+
+type EntryBuilder =
+    Box<dyn FnOnce(&BuildContext, ModalId, Rc<RefCell<ModalTimeline>>) -> AnyElement>;
+
+thread_local! {
+    static NEXT_ID: Cell<u64> = const { Cell::new(1) };
+    static COMMANDS: RefCell<VecDeque<ModalCommand>> = const { RefCell::new(VecDeque::new()) };
+    static ENTRIES: RefCell<Vec<HostedModal>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Stable identity assigned to a presented modal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ModalId(u64);
+
+/// A handle that can dismiss the modal returned by [`crate::Modal::show`].
+#[derive(Clone)]
+pub struct ModalHandle {
+    id: ModalId,
+    dismissed: Rc<Cell<bool>>,
+}
+
+impl ModalHandle {
+    /// Returns this modal's stable identity.
+    pub fn id(&self) -> ModalId {
+        self.id
+    }
+
+    /// Begins dismissal. Repeated calls are harmless and return `false`.
+    pub fn dismiss(&self) -> bool {
+        if self.dismissed.replace(true) {
+            return false;
+        }
+        enqueue(ModalCommand::Dismiss(self.id));
+        true
+    }
+}
+
+/// Access to the application-wide modal overlay.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ModalController;
+
+impl ModalController {
+    /// Begins dismissal of the topmost modal, if one exists.
+    pub fn dismiss_top() -> bool {
+        let has_modal = ENTRIES.with(|entries| !entries.borrow().is_empty())
+            || COMMANDS.with(|commands| {
+                commands
+                    .borrow()
+                    .iter()
+                    .any(|command| matches!(command, ModalCommand::Show { .. }))
+            });
+        if has_modal {
+            enqueue(ModalCommand::DismissTop);
+        }
+        has_modal
+    }
+
+    /// Returns whether a modal is active or waiting for the first host frame.
+    pub fn is_showing() -> bool {
+        !ENTRIES.with(|entries| entries.borrow().is_empty())
+            || COMMANDS.with(|commands| {
+                commands
+                    .borrow()
+                    .iter()
+                    .any(|command| matches!(command, ModalCommand::Show { .. }))
+            })
+    }
+}
+
+/// Root overlay that paints application modals above its child.
+///
+/// `AimerApp` installs this host automatically. It remains public for embedded
+/// render roots and tests that construct widget trees without `AimerApp`.
+pub struct ModalHost<W = RequiredChild> {
+    child: W,
+}
+
+impl Default for ModalHost {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ModalHost {
+    /// Creates an incomplete host builder.
+    pub fn new() -> Self {
+        Self {
+            child: RequiredChild,
+        }
+    }
+
+    /// Attaches the application root and completes the host.
+    pub fn child<W: Widget>(self, child: W) -> ModalHost<W> {
+        ModalHost { child }
+    }
+}
+
+impl<W: Widget + 'static> Widget for ModalHost<W> {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        RawModalHost {
+            child: self.child.to_element(ctx),
+            overlay: RawModalOverlay,
+        }
+        .boxed()
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "ModalHost"
+    }
+}
+
+#[derive(Rebuildable)]
+struct RawModalHost {
+    child: AnyElement,
+    overlay: RawModalOverlay,
+}
+
+impl Drop for RawModalHost {
+    fn drop(&mut self) {
+        clear_registry();
+    }
+}
+
+impl Drawable for RawModalHost {
+    fn draw(&self, ctx: &BuildContext) {
+        if self.overlay.prepare(ctx) {
+            broadcast_event(self.child.as_ref(), &ElementEvent::Cancel);
+        }
+        self.child.draw(ctx);
+        self.overlay.draw_entries(ctx);
+    }
+}
+
+impl EventElement for RawModalHost {
+    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+        visitor(&self.overlay);
+    }
+}
+
+impl LayoutElement for RawModalHost {
+    fn size(&self) -> Option<Size> {
+        None
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        ctx.parent_size
+    }
+
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        ctx.parent_size
+    }
+}
+
+impl VisitorElement for RawModalHost {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+        visitor(&self.overlay);
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "ModalHost"
+    }
+}
+
+#[derive(Rebuildable)]
+struct RawModalOverlay;
+
+impl RawModalOverlay {
+    fn prepare(&self, ctx: &BuildContext) -> bool {
+        process_commands(ctx)
+    }
+
+    fn draw_entries(&self, ctx: &BuildContext) {
+        let now = AnimInstant::now();
+        ENTRIES.with(|entries| {
+            let mut entries = entries.borrow_mut();
+            for entry in entries.iter() {
+                entry
+                    .timeline
+                    .borrow_mut()
+                    .tick(now, entry.animation);
+                entry.element.draw(ctx);
+            }
+            entries.retain(|entry| {
+                !entry
+                    .timeline
+                    .borrow()
+                    .finished()
+            });
+        });
+    }
+}
+
+impl Drawable for RawModalOverlay {
+    fn draw(&self, ctx: &BuildContext) {
+        self.prepare(ctx);
+        self.draw_entries(ctx);
+    }
+}
+
+impl EventElement for RawModalOverlay {
+    fn on_event(&self, event: &ElementEvent) -> bool {
+        ENTRIES.with(|entries| {
+            let entries = entries.borrow();
+            if matches!(
+                event,
+                ElementEvent::KeyInput {
+                    key: aimer_events::element::NamedKey::Escape,
+                    action: aimer_events::element::KeyAction::Pressed,
+                    ..
+                }
+            ) {
+                return entries
+                    .last()
+                    .is_some_and(|entry| entry.element.on_event(event));
+            }
+            for entry in entries.iter().rev() {
+                let pos = event
+                    .get_pointer_pos()
+                    .unwrap_or_default();
+                if dispatch_event(entry.element.as_ref(), pos, event) {
+                    return true;
+                }
+            }
+            !entries.is_empty()
+        })
+    }
+}
+
+impl LayoutElement for RawModalOverlay {
+    fn size(&self) -> Option<Size> {
+        None
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        ctx.parent_size
+    }
+
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        ctx.parent_size
+    }
+}
+
+impl VisitorElement for RawModalOverlay {
+    fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
+
+    fn debug_name(&self) -> &'static str {
+        "ModalOverlay"
+    }
+}
+
+enum ModalCommand {
+    Show {
+        id: ModalId,
+        animation: Option<ModalAnimation>,
+        build: EntryBuilder,
+    },
+    Dismiss(ModalId),
+    DismissTop,
+}
+
+struct HostedModal {
+    id: ModalId,
+    element: AnyElement,
+    animation: Option<ModalAnimation>,
+    timeline: Rc<RefCell<ModalTimeline>>,
+}
+
+pub(crate) struct ModalTimeline {
+    progress: f32,
+    phase: TimelinePhase,
+}
+
+enum TimelinePhase {
+    Entering {
+        started: Option<AnimInstant>,
+    },
+    Shown,
+    Exiting {
+        started: Option<AnimInstant>,
+        from: f32,
+    },
+    Finished,
+}
+
+impl ModalTimeline {
+    fn new(animated: bool) -> Self {
+        Self {
+            progress: if animated { 0.0 } else { 1.0 },
+            phase: if animated {
+                TimelinePhase::Entering { started: None }
+            } else {
+                TimelinePhase::Shown
+            },
+        }
+    }
+
+    pub(crate) fn new_static() -> Self {
+        Self::new(false)
+    }
+
+    pub(crate) fn progress(&self) -> f32 {
+        self.progress
+    }
+
+    fn begin_exit(&mut self, animated: bool) {
+        if matches!(
+            self.phase,
+            TimelinePhase::Exiting { .. } | TimelinePhase::Finished
+        ) {
+            return;
+        }
+        if animated {
+            self.phase = TimelinePhase::Exiting {
+                started: None,
+                from: self.progress,
+            };
+        } else {
+            self.progress = 0.0;
+            self.phase = TimelinePhase::Finished;
+        }
+        request_animation_frame();
+    }
+
+    fn tick(&mut self, now: AnimInstant, animation: Option<ModalAnimation>) {
+        let Some(animation) = animation else {
+            return;
+        };
+        match &mut self.phase {
+            TimelinePhase::Entering { started } => {
+                let start = *started.get_or_insert(now);
+                let t = duration_progress(now, start, animation.enter_duration);
+                self.progress = animation
+                    .enter_curve
+                    .transform(t);
+                if t >= 1.0 {
+                    self.progress = 1.0;
+                    self.phase = TimelinePhase::Shown;
+                } else {
+                    request_animation_frame();
+                }
+            }
+            TimelinePhase::Exiting { started, from } => {
+                let start = *started.get_or_insert(now);
+                let t = duration_progress(now, start, animation.exit_duration);
+                self.progress = *from
+                    * (1.0
+                        - animation
+                            .exit_curve
+                            .transform(t));
+                if t >= 1.0 {
+                    self.progress = 0.0;
+                    self.phase = TimelinePhase::Finished;
+                } else {
+                    request_animation_frame();
+                }
+            }
+            TimelinePhase::Shown | TimelinePhase::Finished => {}
+        }
+    }
+
+    fn finished(&self) -> bool {
+        matches!(self.phase, TimelinePhase::Finished)
+    }
+}
+
+fn duration_progress(now: AnimInstant, start: AnimInstant, duration: std::time::Duration) -> f32 {
+    if duration.is_zero() {
+        1.0
+    } else {
+        (now.duration_since(start)
+            .as_secs_f32()
+            / duration.as_secs_f32())
+        .clamp(0.0, 1.0)
+    }
+}
+
+fn process_commands(ctx: &BuildContext) -> bool {
+    let commands = COMMANDS.with(|commands| std::mem::take(&mut *commands.borrow_mut()));
+    let mut opened = false;
+    ENTRIES.with(|entries| {
+        let mut entries = entries.borrow_mut();
+        for command in commands {
+            match command {
+                ModalCommand::Show {
+                    id,
+                    animation,
+                    build,
+                } => {
+                    for entry in entries.iter() {
+                        broadcast_event(entry.element.as_ref(), &ElementEvent::Cancel);
+                    }
+                    let timeline = Rc::new(RefCell::new(ModalTimeline::new(animation.is_some())));
+                    let element = build(ctx, id, timeline.clone());
+                    entries.push(HostedModal {
+                        id,
+                        element,
+                        animation,
+                        timeline,
+                    });
+                    opened = true;
+                }
+                ModalCommand::Dismiss(id) => {
+                    if let Some(entry) = entries
+                        .iter()
+                        .find(|entry| entry.id == id)
+                    {
+                        entry
+                            .timeline
+                            .borrow_mut()
+                            .begin_exit(entry.animation.is_some());
+                    }
+                }
+                ModalCommand::DismissTop => {
+                    if let Some(entry) = entries.last() {
+                        entry
+                            .timeline
+                            .borrow_mut()
+                            .begin_exit(entry.animation.is_some());
+                    }
+                }
+            }
+        }
+    });
+    opened
+}
+
+fn enqueue(command: ModalCommand) {
+    COMMANDS.with(|commands| {
+        commands
+            .borrow_mut()
+            .push_back(command)
+    });
+    request_animation_frame();
+}
+
+fn clear_registry() {
+    COMMANDS.with(|commands| commands.borrow_mut().clear());
+    ENTRIES.with(|entries| entries.borrow_mut().clear());
+}
+
+pub(crate) fn show(animation: Option<ModalAnimation>, build: EntryBuilder) -> ModalHandle {
+    let id = NEXT_ID.with(|next_id| {
+        let id = ModalId(next_id.get());
+        next_id.set(
+            next_id
+                .get()
+                .wrapping_add(1)
+                .max(1),
+        );
+        id
+    });
+    let dismissed = Rc::new(Cell::new(false));
+    enqueue(ModalCommand::Show {
+        id,
+        animation,
+        build,
+    });
+    ModalHandle { id, dismissed }
+}
+
+pub(crate) fn dismiss(id: ModalId) {
+    enqueue(ModalCommand::Dismiss(id));
+}
+
+#[cfg(test)]
+pub(crate) fn reset_registry_for_test() {
+    clear_registry();
+    NEXT_ID.with(|next_id| next_id.set(1));
+}
+
+#[cfg(test)]
+pub(crate) fn pending_command_count_for_test() -> usize {
+    COMMANDS.with(|commands| commands.borrow().len())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use aimer_animation::{AnimInstant, Curve};
+
+    use super::ModalTimeline;
+    use crate::ModalAnimation;
+
+    #[test]
+    fn timeline_reverses_from_visible_progress_without_a_jump() {
+        let animation = ModalAnimation::new()
+            .enter_duration(Duration::from_millis(100))
+            .exit_duration(Duration::from_millis(100))
+            .enter_curve(Curve::Linear)
+            .exit_curve(Curve::Linear);
+        let start = AnimInstant::now();
+        let mut timeline = ModalTimeline::new(true);
+
+        timeline.tick(start, Some(animation));
+        timeline.tick(start + Duration::from_millis(50), Some(animation));
+        assert!((timeline.progress() - 0.5).abs() < 0.01);
+
+        timeline.begin_exit(true);
+        timeline.tick(start + Duration::from_millis(50), Some(animation));
+        assert!((timeline.progress() - 0.5).abs() < 0.01);
+
+        timeline.tick(start + Duration::from_millis(100), Some(animation));
+        assert!((timeline.progress() - 0.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn zero_duration_timeline_reaches_both_endpoints() {
+        let animation = ModalAnimation::new()
+            .enter_duration(Duration::ZERO)
+            .exit_duration(Duration::ZERO);
+        let now = AnimInstant::now();
+        let mut timeline = ModalTimeline::new(true);
+
+        timeline.tick(now, Some(animation));
+        assert_eq!(timeline.progress(), 1.0);
+
+        timeline.begin_exit(true);
+        timeline.tick(now, Some(animation));
+        assert_eq!(timeline.progress(), 0.0);
+        assert!(timeline.finished());
+    }
+}

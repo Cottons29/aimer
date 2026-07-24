@@ -4,11 +4,13 @@ use aimer_assets::{AssetImage, NetworkImage};
 use aimer_color::prelude::Color;
 use aimer_container::flex::row_column::{Column, Row};
 use aimer_container::flex::{BoxAlignment, Expanded};
-use aimer_container::{Container, Grid, GridItem, GridTrack, ScrollAxis, Scrollable, SizedBox, ZeroSizedBox};
+use aimer_container::{
+    Container, Grid, GridItem, GridTrack, ScrollAxis, Scrollable, SizedBox, ZeroSizedBox,
+};
 use aimer_input::button::Button;
 use aimer_style::{
-    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontStyle, FontWeight,
-    LayoutSpacing, Spacing, TextAlign, TextDecoration, TextDecorationLine, TextStyle,
+    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontStyle, FontWeight, LayoutSpacing,
+    Spacing, TextAlign, TextDecoration, TextDecorationLine, TextStyle,
 };
 use aimer_svg::{Svg, SvgDocument, SvgStyle};
 use aimer_text::{RichText, SpanStyle, Text, TextSpan};

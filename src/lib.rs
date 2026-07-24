@@ -23,6 +23,7 @@ pub use aimer_markdown::{
     LinkHandler as MarkdownLinkHandler, MarkdownError, MarkdownImage, MarkdownTheme,
     MarkdownViewer,
 };
+pub use aimer_modal::{Modal, ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId};
 #[cfg(feature = "provider")]
 pub use aimer_provider::{
     NotifierProvider, Provider, ProviderContext, ProviderHandle, StoreProvider,

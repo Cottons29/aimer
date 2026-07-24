@@ -5,6 +5,7 @@ mod color_sync;
 mod custom_animated_theme;
 mod custom_font;
 mod markdown_example;
+mod modal;
 mod panic_recovery;
 pub mod routing;
 mod scroll_and_row;
@@ -25,12 +26,27 @@ use crate::animated::start_my_animated_list;
 use crate::custom_animated_theme::start_custom_animated_theme_example;
 use crate::markdown_example::start_markdown_example;
 #[allow(unused_imports)]
+use crate::modal::start_modal_example;
+#[allow(unused_imports)]
 use crate::panic_recovery::start_panic_recovery_example;
 use crate::scroll_and_row::test_scroll_and_row;
 #[allow(unused_imports)]
 use crate::stateful::start_counter;
 use crate::svg_test::start_svg_test;
 use crate::test_animation::TestFadingAnimation;
+
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
+fn main() {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
+    // start_markdown_example();
+    // start_custom_animated_theme_example()
+    my_app()
+}
 
 // this is the entry point of the app
 #[main]
@@ -46,13 +62,15 @@ pub fn my_app() {
     // custom_animated_theme::start_custom_animated_theme_example()
     // test_scrollable()
     // test_scrollable_row()
-    start_markdown_example();
+    // start_modal_example();
+    // start_markdown_example();
     // start_panic_recovery_example();
     // test_scroll_and_row();
     // start_svg_test();
     // panic_recovery::start_panic_recovery_example()
     // start_custom_animated_theme_example()
     // test_text()
+    start_modal_example()
 }
 
 #[allow(unused)]

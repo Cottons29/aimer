@@ -1,11 +1,10 @@
-
 #[cfg(test)]
 mod tests {
+    use crate::{INLINE_ALIGNMENT, INLINE_CAPACITY, Rubick};
     use std::cell::Cell;
     use std::mem::{align_of, size_of};
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::rc::Rc;
-    use crate::{Rubick, INLINE_ALIGNMENT, INLINE_CAPACITY};
 
     trait Value {
         fn value(&self) -> usize;

@@ -8,6 +8,7 @@ use hashbrown::DefaultHashBuilder;
 
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
+use crate::text_pipeline::text_layout::TextHorizontalAlign;
 use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
 
 #[derive(Clone, Debug)]
@@ -64,6 +65,7 @@ pub enum DrawCommand {
         bounds_width: Option<f32>,
         bounds_height: Option<f32>,
         overflow: TextOverflowMode,
+        horizontal_align: TextHorizontalAlign,
         font_family: FontFamily,
         font_style: FontStyle,
         font_weight: u16,
@@ -339,6 +341,36 @@ impl DrawList {
         font_style: FontStyle,
         font_weight: u16,
     ) {
+        self.draw_text_aligned_with_overflow(
+            position,
+            text,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+            TextHorizontalAlign::Left,
+            font_family,
+            font_style,
+            font_weight,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_aligned_with_overflow(
+        &mut self,
+        position: Vec2d,
+        text: Arc<str>,
+        font_size: f32,
+        color: Color,
+        bounds_width: Option<f32>,
+        bounds_height: Option<f32>,
+        overflow: TextOverflowMode,
+        horizontal_align: TextHorizontalAlign,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
         self.commands
             .push(DrawCommand::DrawText {
                 position,
@@ -348,6 +380,7 @@ impl DrawList {
                 bounds_width,
                 bounds_height,
                 overflow,
+                horizontal_align,
                 font_family,
                 font_style,
                 font_weight,

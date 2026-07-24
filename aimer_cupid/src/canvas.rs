@@ -318,9 +318,41 @@ impl CupidCanvas {
         font_style: FontStyle,
         font_weight: u16,
     ) {
+        self.draw_text_aligned_with_overflow_styled(
+            x,
+            y,
+            text,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+            crate::text_pipeline::text_layout::TextHorizontalAlign::Left,
+            font_family,
+            font_style,
+            font_weight,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_aligned_with_overflow_styled(
+        &self,
+        x: f32,
+        y: f32,
+        text: &str,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+        horizontal_align: crate::text_pipeline::text_layout::TextHorizontalAlign,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
         self.draw_list
             .borrow_mut()
-            .draw_text_with_overflow(
+            .draw_text_aligned_with_overflow(
                 Vec2d::new(x, y),
                 Arc::from(text),
                 font_size,
@@ -328,6 +360,7 @@ impl CupidCanvas {
                 Some(bounds_width),
                 Some(bounds_height),
                 overflow,
+                horizontal_align,
                 font_family,
                 font_style,
                 font_weight,

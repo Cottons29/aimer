@@ -367,17 +367,21 @@ thread_local! {
     static KEYED_STATE_SCOPE_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
-struct KeyedStateScope;
+struct KeyedStateScope {
+    owns_registry: bool,
+}
 
 impl KeyedStateScope {
     fn enter() -> Self {
-        KEYED_STATE_SCOPE_DEPTH.with(|depth| {
-            if depth.get() == 0 {
+        let owns_registry = KEYED_STATE_SCOPE_DEPTH.with(|depth| {
+            let owns_registry = depth.get() == 0;
+            if owns_registry {
                 KEYED_STATE_REGISTRY.with(|registry| registry.borrow_mut().clear());
             }
             depth.set(depth.get() + 1);
+            owns_registry
         });
-        Self
+        Self { owns_registry }
     }
 
     fn is_active() -> bool {
@@ -571,12 +575,10 @@ impl StatefulElement {
                         Ok(widget) => widget,
                         Err(diagnostic) => return diagnostic.into_error_element(),
                     };
-                match recover_operation(debug_name, BuildPhase::ToElement, || {
+                recover_operation(debug_name, BuildPhase::ToElement, || {
                     Widget::to_element(&child_widget, ctx)
-                }) {
-                    Ok(element) => element,
-                    Err(diagnostic) => diagnostic.into_error_element(),
-                }
+                })
+                .unwrap_or_else(|diagnostic| diagnostic.into_error_element())
             })
         });
 
@@ -652,10 +654,12 @@ impl StatefulElement {
     /// This avoids destroying and recreating the entire subtree when only a
     /// deeply-nested element's state has changed.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        let _keyed_state_scope = KeyedStateScope::enter();
-        register_keyed_state(self);
-        let existing_child = unsafe { &*self.child.0.get() };
-        register_keyed_subtree(existing_child.as_ref());
+        let keyed_state_scope = KeyedStateScope::enter();
+        if keyed_state_scope.owns_registry {
+            register_keyed_state(self);
+            let existing_child = unsafe { &*self.child.0.get() };
+            register_keyed_subtree(existing_child.as_ref());
+        }
         if !self.dirty.borrow().get() {
             // Self is clean — but a nested StatefulElement might be dirty.
             // Propagate rebuild through the existing child tree.
@@ -737,6 +741,10 @@ impl StatefulElement {
 /// Safe to call on any pair: when both sides aren't matching
 /// `StatefulElement`s, it's a no-op.
 pub(crate) fn carry_stateful(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    if !old.is_stateful_element() && !new.is_stateful_element() {
+        return;
+    }
+
     let Some(old_ele) = old
         .option_any()
         .and_then(|o| o.downcast_ref::<StatefulElement>())
@@ -761,6 +769,10 @@ fn find_keyed_stateful<'a>(
     key: &crate::key::Key,
     debug_name: &'static str,
 ) -> Option<&'a StatefulElement> {
+    if !element.is_stateful_element() {
+        return None;
+    }
+
     let current = element
         .option_any()
         .and_then(|value| value.downcast_ref::<StatefulElement>())
@@ -827,6 +839,10 @@ fn carry_keyed_child_state_in_context(
     new: &dyn Element,
     ctx: &BuildContext,
 ) {
+    if !old_root.is_stateful_element() || !new.is_stateful_element() {
+        return;
+    }
+
     if let Some(new_stateful) = new
         .option_any()
         .and_then(|value| value.downcast_ref::<StatefulElement>())
@@ -860,6 +876,10 @@ fn carry_unkeyed_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildCo
 }
 
 fn carry_unkeyed_child_state_in_context(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    if !new.is_stateful_element() || !old.is_stateful_element() {
+        return;
+    }
+
     if new
         .option_any()
         .and_then(|value| value.downcast_ref::<StatefulElement>())
@@ -1103,14 +1123,22 @@ fn register_keyed_state(element: &StatefulElement) {
 }
 
 fn register_keyed_subtree(element: &dyn Element) {
-    if let Some(stateful) = element
-        .option_any()
-        .and_then(|value| value.downcast_ref::<StatefulElement>())
-    {
-        register_keyed_state(stateful);
-    }
-    for child in element_children(element) {
-        register_keyed_subtree(child);
+    let mut pending = vec![element];
+
+    while let Some(current) = pending.pop() {
+        if current.is_stateful_element()
+            && let Some(stateful) = current
+                .option_any()
+                .and_then(|value| value.downcast_ref::<StatefulElement>())
+        {
+            register_keyed_state(stateful);
+        }
+
+        pending.extend(
+            element_children(current)
+                .into_iter()
+                .rev(),
+        );
     }
 }
 
@@ -1238,6 +1266,10 @@ impl Rebuildable for StatefulElement {
         Some(self)
     }
 
+    fn is_stateful_element(&self) -> bool {
+        true
+    }
+
     fn mark_needs_rebuild(&self) {
         // Safety: single-threaded rendering pipeline.
         let child = unsafe { &*self.child.0.get() };
@@ -1301,6 +1333,59 @@ mod tests {
     impl LayoutElement for TestLeaf {}
     impl EventElement for TestLeaf {}
     impl Rebuildable for TestLeaf {}
+
+    struct TraversalElement {
+        id: usize,
+        children: Vec<AnyElement>,
+        visits: Rc<RefCell<Vec<usize>>>,
+    }
+
+    impl VisitorElement for TraversalElement {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for child in &self.children {
+                visitor(child.as_ref());
+            }
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "TraversalElement"
+        }
+    }
+
+    impl Drawable for TraversalElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl LayoutElement for TraversalElement {}
+    impl EventElement for TraversalElement {}
+
+    impl Rebuildable for TraversalElement {
+        fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+            for child in &self.children {
+                child.rebuild_if_dirty(ctx);
+            }
+        }
+
+        fn is_stateful_element(&self) -> bool {
+            self.visits
+                .borrow_mut()
+                .push(self.id);
+            false
+        }
+    }
+
+    fn traversal_element(
+        id: usize,
+        children: Vec<AnyElement>,
+        visits: &Rc<RefCell<Vec<usize>>>,
+    ) -> AnyElement {
+        TraversalElement {
+            id,
+            children,
+            visits: visits.clone(),
+        }
+        .boxed()
+    }
 
     #[derive(Clone, Copy, Eq, PartialEq)]
     enum PanicPhase {
@@ -1496,6 +1581,62 @@ mod tests {
             Some(key),
         );
         assert_eq!(recovered.debug_name(), "ErrorWidget");
+    }
+
+    #[test]
+    fn keyed_subtree_registration_visits_depth_first_in_child_order() {
+        let visits = Rc::new(RefCell::new(Vec::new()));
+        let first = traversal_element(
+            1,
+            vec![
+                traversal_element(3, vec![], &visits),
+                traversal_element(4, vec![], &visits),
+            ],
+            &visits,
+        );
+        let second = traversal_element(2, vec![traversal_element(5, vec![], &visits)], &visits);
+        let root = traversal_element(0, vec![first, second], &visits);
+
+        register_keyed_subtree(root.as_ref());
+
+        assert_eq!(*visits.borrow(), vec![0, 1, 3, 4, 2, 5]);
+    }
+
+    #[test]
+    fn nested_rebuilds_share_one_keyed_subtree_scan() {
+        let context = dummy_build_context();
+        let visits = Rc::new(RefCell::new(Vec::new()));
+        let nested = StatefulElement::from_widget(
+            &lifecycle_widget(PanicPhase::None),
+            &context,
+            "NestedLifecycleWidget",
+            None,
+        );
+        let nested_stateful = nested
+            .option_any()
+            .and_then(|element| element.downcast_ref::<StatefulElement>())
+            .unwrap();
+        unsafe {
+            *nested_stateful.child.0.get() = traversal_element(2, vec![], &visits);
+        }
+
+        let outer = StatefulElement::from_widget(
+            &lifecycle_widget(PanicPhase::None),
+            &context,
+            "OuterLifecycleWidget",
+            None,
+        );
+        let outer_stateful = outer
+            .option_any()
+            .and_then(|element| element.downcast_ref::<StatefulElement>())
+            .unwrap();
+        unsafe {
+            *outer_stateful.child.0.get() = traversal_element(1, vec![nested], &visits);
+        }
+
+        outer_stateful.rebuild_if_dirty(&context);
+
+        assert_eq!(*visits.borrow(), vec![1, 2]);
     }
 
     #[test]

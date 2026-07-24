@@ -5,6 +5,7 @@ use aimer_cupid::canvas::CupidCanvas;
 use aimer_cupid::font::{FontFamily, FontStyle};
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 use aimer_cupid::text_pipeline::TextOverflowMode;
+use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
 use aimer_cupid::utilities::Color as CupidColor;
 use std::sync::Arc;
 
@@ -241,6 +242,38 @@ impl CanvasRendering for CupidCanvas {
             bounds_width,
             bounds_height,
             overflow,
+            font_family,
+            font_style,
+            font_weight,
+        );
+    }
+
+    #[inline]
+    fn draw_text_aligned_with_overflow_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        bounds_width: f32,
+        bounds_height: f32,
+        overflow: TextOverflowMode,
+        horizontal_align: TextHorizontalAlign,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) {
+        CupidCanvas::draw_text_aligned_with_overflow_styled(
+            self,
+            pos.x,
+            pos.y,
+            text,
+            font_size,
+            CupidColor::from(color),
+            bounds_width,
+            bounds_height,
+            overflow,
+            horizontal_align,
             font_family,
             font_style,
             font_weight,

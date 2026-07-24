@@ -35,12 +35,12 @@ impl WindowEventHandler {
         // debug!("======> Event: {event:?}");
         match event {
             WindowEvent::CloseRequested => {
-                #[cfg(target_os = "macos")]
-                {
-                    use winit::platform::macos::ActiveEventLoopExtMacOS;
-                    event_loop.hide_application();
-                }
-                #[cfg(not(target_os = "macos"))]
+                // #[cfg(target_os = "macos")]
+                // {
+                //     use winit::platform::macos::ActiveEventLoopExtMacOS;
+                //     event_loop.hide_application();
+                // }
+                // #[cfg(not(target_os = "macos"))]
                 event_loop.exit()
             }
 

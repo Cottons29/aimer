@@ -68,7 +68,10 @@ impl Drawable for RawTextWidget {
         let font_size = self.font_size(ctx.scale);
         let width = ctx.parent_size.width;
         let height = ctx.parent_size.height;
-        let max_width = if matches!(self.text_style.text_overflow, TextOverflow::Wrap) {
+        let max_width = if matches!(
+            self.text_style.text_overflow,
+            TextOverflow::Clip | TextOverflow::Wrap
+        ) {
             width
         } else {
             0.0
@@ -85,24 +88,20 @@ impl Drawable for RawTextWidget {
                     .font_weight
                     .numeric(),
             );
-        let text_width = metrics.width;
         let ascent = metrics.ascent;
         let descent = -metrics.descent;
-
-        let x = match self.text_align {
-            TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
+        let x = 0.0;
+        let y = vertical_alignment_baseline(self.text_align, height, metrics.height, ascent);
+        let horizontal_align = match self.text_align {
+            TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => {
+                TextHorizontalAlign::Left
+            }
             TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
-                (width - text_width) / 2.0
+                TextHorizontalAlign::Center
             }
-            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => width - text_width,
-        };
-
-        let y = match self.text_align {
-            TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => ascent,
-            TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
-                height / 2.0 + (ascent - descent) / 2.0
+            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => {
+                TextHorizontalAlign::Right
             }
-            TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => height - descent,
         };
 
         let color = self.text_style.color;
@@ -129,12 +128,15 @@ impl Drawable for RawTextWidget {
                 ctx.canvas
                     .set_clip((0.0, 0.0).into(), ResolvedSize { width, height });
                 ctx.canvas
-                    .draw_text_wrapped_styled(
+                    .draw_text_aligned_with_overflow_styled(
                         &self.text,
                         (x, y).into(),
                         font_size,
                         color,
                         width,
+                        height,
+                        TextOverflowMode::Wrap,
+                        horizontal_align,
                         self.text_style.font_family,
                         self.text_style.font_style,
                         font_weight,
@@ -144,7 +146,7 @@ impl Drawable for RawTextWidget {
             }
             TextOverflow::Ellipsis => {
                 ctx.canvas
-                    .draw_text_with_overflow_styled(
+                    .draw_text_aligned_with_overflow_styled(
                         &self.text,
                         (x, y).into(),
                         font_size,
@@ -152,6 +154,7 @@ impl Drawable for RawTextWidget {
                         width,
                         height,
                         TextOverflowMode::Ellipsis,
+                        horizontal_align,
                         self.text_style.font_family,
                         self.text_style.font_style,
                         font_weight,
@@ -159,27 +162,35 @@ impl Drawable for RawTextWidget {
             }
             TextOverflow::Wrap => {
                 ctx.canvas
-                    .draw_text_wrapped_styled(
+                    .draw_text_aligned_with_overflow_styled(
                         &self.text,
                         (x, y).into(),
                         font_size,
                         color,
                         width,
+                        height,
+                        TextOverflowMode::Wrap,
+                        horizontal_align,
                         self.text_style.font_family,
                         self.text_style.font_style,
                         font_weight,
                     );
             }
             _ => {
-                ctx.canvas.draw_text_styled(
-                    &self.text,
-                    (x, y).into(),
-                    font_size,
-                    color,
-                    self.text_style.font_family,
-                    self.text_style.font_style,
-                    font_weight,
-                );
+                ctx.canvas
+                    .draw_text_aligned_with_overflow_styled(
+                        &self.text,
+                        (x, y).into(),
+                        font_size,
+                        color,
+                        width,
+                        height,
+                        TextOverflowMode::Clip,
+                        horizontal_align,
+                        self.text_style.font_family,
+                        self.text_style.font_style,
+                        font_weight,
+                    );
             }
         }
 
@@ -191,19 +202,16 @@ impl Drawable for RawTextWidget {
             .text_style
             .text_decoration;
         if !decoration.line.is_none() {
-            let line_widths = if matches!(self.text_style.text_overflow, TextOverflow::Wrap) {
-                ctx.canvas
-                    .measure_text_line_widths_styled(
-                        &self.text,
-                        font_size,
-                        max_width,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
-                        font_weight,
-                    )
-            } else {
-                vec![text_width]
-            };
+            let line_widths = ctx
+                .canvas
+                .measure_text_line_widths_styled(
+                    &self.text,
+                    font_size,
+                    max_width,
+                    self.text_style.font_family,
+                    self.text_style.font_style,
+                    font_weight,
+                );
             let scale = ctx.scale;
             // Dedicated decoration color, else inherit the text color.
             let deco_color = decoration
@@ -229,9 +237,10 @@ impl Drawable for RawTextWidget {
 
             let emit = |center_y: f32, line_width: f32| {
                 let band_top = center_y - band_height / 2.0;
+                let line_x = horizontal_alignment_offset(self.text_align, width, line_width);
                 ctx.canvas
                     .draw_text_decoration(
-                        (x, band_top).into(),
+                        (line_x, band_top).into(),
                         ResolvedSize {
                             width: line_width,
                             height: band_height,
@@ -274,6 +283,32 @@ impl Drawable for RawTextWidget {
 impl VisitorElement for RawTextWidget {
     fn debug_name(&self) -> &'static str {
         "RawTextWidget"
+    }
+}
+
+fn horizontal_alignment_offset(alignment: TextAlign, width: f32, text_width: f32) -> f32 {
+    let remaining_width = (width - text_width).max(0.0);
+    match alignment {
+        TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
+        TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => remaining_width / 2.0,
+        TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => remaining_width,
+    }
+}
+
+fn vertical_alignment_baseline(
+    alignment: TextAlign,
+    height: f32,
+    text_height: f32,
+    ascent: f32,
+) -> f32 {
+    match alignment {
+        TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => ascent,
+        TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
+            (height - text_height).max(0.0) / 2.0 + ascent
+        }
+        TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => {
+            (height - text_height).max(0.0) + ascent
+        }
     }
 }
 
@@ -340,5 +375,36 @@ impl LayoutElement for RawTextWidget {
     }
     fn invalidate_layout(&self) {
         self.cache.invalidate();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aimer_style::TextAlign;
+
+    use super::{horizontal_alignment_offset, vertical_alignment_baseline};
+
+    #[test]
+    fn top_center_does_not_place_oversized_text_before_the_left_edge() {
+        assert_eq!(
+            horizontal_alignment_offset(TextAlign::TopCenter, 200.0, 260.0),
+            0.0
+        );
+    }
+
+    #[test]
+    fn mid_center_centers_the_entire_multiline_block() {
+        assert_eq!(
+            vertical_alignment_baseline(TextAlign::MidCenter, 200.0, 60.0, 16.0),
+            86.0
+        );
+    }
+
+    #[test]
+    fn bottom_alignment_places_the_entire_multiline_block_at_the_bottom() {
+        assert_eq!(
+            vertical_alignment_baseline(TextAlign::BotCenter, 200.0, 60.0, 16.0),
+            156.0
+        );
     }
 }

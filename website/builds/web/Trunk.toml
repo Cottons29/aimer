@@ -9,7 +9,7 @@ watch = ["../../src"]
 
 [serve]
 port = 3000
-address = "0.0.0.0"
+addresses = ["0.0.0.0"]
 # Serve over HTTPS. WebGPU (navigator.gpu / GPUCanvasContext) is only exposed in
 # a browser "secure context": https:// pages, or the hard-coded-trusted
 # localhost / 127.0.0.1. Serving over plain http on a LAN IP (e.g.

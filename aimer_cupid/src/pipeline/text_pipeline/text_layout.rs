@@ -117,6 +117,9 @@ pub struct ParagraphLayout {
 pub struct PositionedGlyph {
     pub codepoint: char,
     pub glyph_key: GlyphKey,
+    pub line_index: usize,
+    pub line_x: f32,
+    pub advance: f32,
     /// Screen-space X of the glyph quad's top-left corner.
     pub x: f32,
     /// Screen-space Y of the glyph quad's top-left corner.
@@ -139,6 +142,45 @@ pub struct ShapedText {
     pub font_size: f32,
     pub line_height: f32,
     pub clusters: Vec<ShapedCluster>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextHorizontalAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+pub(crate) fn line_alignment_offsets(
+    line_widths: &[f32],
+    bounds_width: f32,
+    alignment: TextHorizontalAlign,
+) -> Vec<f32> {
+    line_widths
+        .iter()
+        .map(|line_width| {
+            let remaining = (bounds_width - line_width).max(0.0);
+            match alignment {
+                TextHorizontalAlign::Left => 0.0,
+                TextHorizontalAlign::Center => remaining / 2.0,
+                TextHorizontalAlign::Right => remaining,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn positioned_line_widths(glyphs: &[PositionedGlyph]) -> Vec<f32> {
+    let line_count = glyphs
+        .iter()
+        .map(|glyph| glyph.line_index)
+        .max()
+        .map_or(0, |last| last + 1);
+    let mut widths = vec![0.0_f32; line_count];
+    for glyph in glyphs {
+        widths[glyph.line_index] = widths[glyph.line_index].max(glyph.line_x + glyph.advance);
+    }
+    widths
 }
 
 pub fn layout_paragraph_with_shaper(
@@ -863,6 +905,7 @@ pub fn layout_shaped_text(
     let mut glyphs: Vec<PositionedGlyph> = Vec::new();
     let mut pen_x = origin_x;
     let mut pen_y = origin_y;
+    let mut line_index = 0;
 
     // Word-wrap state: track the last space position so we can break the line
     // at word boundaries instead of mid-word.  If a single word is wider than
@@ -875,6 +918,7 @@ pub fn layout_shaped_text(
             if cluster.text == "\n" {
                 pen_x = origin_x;
                 pen_y += line_height;
+                line_index += 1;
                 last_space_glyph_idx = usize::MAX;
                 continue;
             }
@@ -901,12 +945,15 @@ pub fn layout_shaped_text(
                     let moved_width = pen_x - last_space_pen_x;
                     for glyph in &mut glyphs[last_space_glyph_idx..] {
                         glyph.x -= wrap_offset;
+                        glyph.line_x -= wrap_offset;
                         glyph.y += line_height;
+                        glyph.line_index += 1;
                     }
                     // Continue the new line right after the moved glyphs so the
                     // current cluster is appended (not overlapped) below.
                     pen_x = origin_x + moved_width;
                     pen_y += line_height;
+                    line_index += 1;
                     last_space_glyph_idx = usize::MAX;
                     // Fall through to the normal emit path below, which places
                     // the current cluster at the updated pen position.
@@ -915,6 +962,7 @@ pub fn layout_shaped_text(
                     // back to character-level wrapping.
                     pen_x = origin_x;
                     pen_y += line_height;
+                    line_index += 1;
                 }
             }
 
@@ -930,6 +978,9 @@ pub fn layout_shaped_text(
                     glyphs.push(PositionedGlyph {
                         codepoint: cluster.base_codepoint,
                         glyph_key,
+                        line_index,
+                        line_x: pen_x - origin_x,
+                        advance,
                         x: gx,
                         y: gy,
                         width: rg.width,
@@ -970,6 +1021,22 @@ pub fn layout_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn center_alignment_offsets_each_visual_line_independently() {
+        assert_eq!(
+            line_alignment_offsets(&[120.0, 40.0], 200.0, TextHorizontalAlign::Center),
+            vec![40.0, 80.0]
+        );
+    }
+
+    #[test]
+    fn right_alignment_never_moves_an_oversized_line_before_the_origin() {
+        assert_eq!(
+            line_alignment_offsets(&[240.0], 200.0, TextHorizontalAlign::Right),
+            vec![0.0]
+        );
+    }
 
     fn test_layout(text: &str, max_width: f32) -> ParagraphLayout {
         let metrics = FontMetrics::new(8.0, -2.0, 2.0);

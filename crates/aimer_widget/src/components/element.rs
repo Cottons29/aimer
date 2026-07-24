@@ -114,6 +114,11 @@ impl Rebuildable for AnyElement {
         self.as_ref().option_any()
     }
 
+    fn is_stateful_element(&self) -> bool {
+        self.as_ref()
+            .is_stateful_element()
+    }
+
     fn is_carry_state(&self) -> bool {
         self.as_ref().is_carry_state()
     }
@@ -216,6 +221,11 @@ impl Rebuildable for Box<dyn Element> {
 
     fn option_any(&self) -> Option<&dyn std::any::Any> {
         self.as_ref().option_any()
+    }
+
+    fn is_stateful_element(&self) -> bool {
+        self.as_ref()
+            .is_stateful_element()
     }
 
     fn is_carry_state(&self) -> bool {

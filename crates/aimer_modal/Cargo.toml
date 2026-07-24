@@ -1,0 +1,12 @@
+[package]
+name = "aimer_modal"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aimer_animation.workspace = true
+aimer_attribute.workspace = true
+aimer_container.workspace = true
+aimer_events.workspace = true
+aimer_macro.workspace = true
+aimer_widget.workspace = true

@@ -29,6 +29,7 @@ aimer_macro.workspace = true
 aimer_provider.workspace = true
 aimer_svg.workspace = true
 aimer_markdown.workspace = true
+aimer_modal.workspace = true
 
 [features]
 markdown =[]
@@ -60,7 +61,7 @@ members = [
     "crates/aimer_text",
     "crates/aimer_macro",
     "jaime"
-    , "crates/aimer_provider", "crates/aimer_sdk", "website_backend", "crates/aimer_markdown", "crates/aimer_svg", "crates/aimer_native"]
+    , "crates/aimer_provider", "crates/aimer_sdk", "website_backend", "crates/aimer_markdown", "crates/aimer_svg", "crates/aimer_native", "crates/aimer_modal"]
 
 
 [workspace.dependencies]
@@ -85,6 +86,7 @@ aimer_macro = { path = "crates/aimer_macro" }
 aimer_provider = { path = "crates/aimer_provider" }
 aimer_svg = { path = "crates/aimer_svg" }
 aimer_markdown = { path = "crates/aimer_markdown" }
+aimer_modal = { path = "crates/aimer_modal" }
 
 
 #############

@@ -100,7 +100,7 @@ pub mod base {
     pub use crate::components::context::BuildConsumer;
     pub use crate::components::context::{BuildContext, WindowHandle};
 }
-pub use aimer_canvas::TextOverflowMode;
+pub use aimer_canvas::{TextHorizontalAlign, TextOverflowMode};
 pub use aimer_macro::{main, widget};
 
 pub use crate::async_builder::{AsyncBuilder, AsyncSnapshot};
