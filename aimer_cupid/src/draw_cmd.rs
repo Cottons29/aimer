@@ -1,8 +1,10 @@
 use crate::font::{FontFamily, FontStyle};
 use std::any::Any;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::Arc;
+
+use hashbrown::DefaultHashBuilder;
 
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
@@ -450,7 +452,7 @@ impl DrawList {
     pub fn load_image(&mut self, bytes: &[u8], width: u32, height: u32) -> TextureId {
         // Hash only a small sample of the buffer to avoid O(n) cost on large images.
         let texture_id = {
-            let mut hasher = fxhash::FxHasher::default();
+            let mut hasher = DefaultHashBuilder::default().build_hasher();
             width.hash(&mut hasher);
             height.hash(&mut hasher);
             let sample_len = 256.min(bytes.len());

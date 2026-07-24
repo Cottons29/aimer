@@ -660,7 +660,7 @@ impl TextPipelineV2 {
     /// the space, digits, lowercase and uppercase ASCII letters, and the
     /// printable ASCII punctuation. Rasterizing this set fills the glyph atlas
     /// (the heavier of the two per-glyph costs) so even brand-new, never-seen
-    /// strings only pay `rustybuzz` shaping and never glyph rasterization.
+    /// strings only pay HarfRust shaping and never glyph rasterization.
     const COMMON_GLYPH_SET: &'static str = " 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
     /// Insert a single rasterized glyph bitmap into the matching atlas,
@@ -763,7 +763,7 @@ impl TextPipelineV2 {
     /// Level 1 warm-up — pre-shape and lay out a known static string at the
     /// given font size, populating the shaping cache, the layout cache, and the
     /// glyph atlas. After this, the string renders on the ~1 ms cache-hit path
-    /// from the very first frame instead of paying the cold `rustybuzz`
+    /// from the very first frame instead of paying the cold HarfRust
     /// shaping + rasterization cost (the 27–86 ms spikes) on first paint.
     ///
     /// `layout_width` must match the wrapping width the string will be drawn
@@ -903,7 +903,7 @@ impl TextPipelineV2 {
         // number of draw requests changed (e.g. on every screen transition or
         // whenever a different count of text nodes was visible). That threw away
         // all shaping/layout work and forced a full, frame-stalling re-shape
-        // through rustybuzz (the 27–86 ms spikes seen in the render trace).
+        // through HarfRust (the 27–86 ms spikes seen in the render trace).
         //
         // Shaping is width-independent and layout is origin-independent, so once
         // a string has been seen its entry stays valid across screens, scrolling

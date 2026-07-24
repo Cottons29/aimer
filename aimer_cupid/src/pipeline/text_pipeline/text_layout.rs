@@ -148,7 +148,7 @@ pub fn layout_paragraph_with_shaper(
     metrics: FontMetrics,
     options: TextLayoutOptions,
 ) -> ParagraphLayout {
-    let face = rustybuzz::Face::from_slice(font_bytes, 0);
+    let face = harfrust::FontRef::from_index(font_bytes, 0).ok();
 
     if let Some(face) = face {
         layout_paragraph(text, font_id, &metrics, &options, |segment, text_offset| {
@@ -561,16 +561,21 @@ where
 }
 
 fn shape_segment(
-    face: &rustybuzz::Face,
+    face: &harfrust::FontRef<'_>,
     segment: &str,
     text_offset: usize,
     font_id: FontId,
     font_size: f32,
 ) -> Vec<PositionedShapedGlyph> {
-    let mut buffer = rustybuzz::UnicodeBuffer::new();
+    let mut buffer = harfrust::UnicodeBuffer::new();
     buffer.push_str(segment);
-    let output = rustybuzz::shape(face, &[], buffer);
-    let upem = face.units_per_em() as f32;
+    buffer.guess_segment_properties();
+    let shaper_data = harfrust::ShaperData::new(face);
+    let shaper = shaper_data
+        .shaper(face)
+        .build();
+    let output = shaper.shape(buffer, harfrust::ShapeOptions::default());
+    let upem = shaper.units_per_em() as f32;
     let scale = if upem > 0.0 { font_size / upem } else { 1.0 };
 
     output

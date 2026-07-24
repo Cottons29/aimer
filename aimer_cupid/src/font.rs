@@ -192,7 +192,8 @@ impl FontRegistry {
     /// the same normalized family, numeric weight, and style twice is rejected.
     pub fn register(registration: FontRegistration<'_>) -> Result<FontFamily, FontError> {
         let family_name = normalize_family(registration.family)?;
-        if registration.bytes.is_empty() || ttf_parser::Face::parse(registration.bytes, 0).is_err()
+        if registration.bytes.is_empty()
+            || skrifa::FontRef::from_index(registration.bytes, 0).is_err()
         {
             return Err(FontError::InvalidFont);
         }

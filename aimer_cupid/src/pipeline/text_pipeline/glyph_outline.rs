@@ -1,7 +1,10 @@
 use aimer_utils::time_cost;
+use skrifa::instance::{LocationRef, Size};
+use skrifa::outline::{DrawSettings, OutlinePen};
+use skrifa::{GlyphId, MetadataProvider};
 
 use crate::glyph_rasterizer::{RasterizedGlyph, point_inside};
-use crate::text_pipeline::font_resolver::{FontRecord, advance_width_from_face};
+use crate::text_pipeline::font_resolver::{FontRecord, advance_width_from_face, font_ref};
 
 #[derive(Default)]
 struct GlyphOutline {
@@ -39,7 +42,7 @@ impl GlyphOutline {
     }
 }
 
-impl ttf_parser::OutlineBuilder for GlyphOutline {
+impl OutlinePen for GlyphOutline {
     fn move_to(&mut self, x: f32, y: f32) {
         self.finish_contour();
         self.push_point(x, y);
@@ -99,27 +102,35 @@ pub(crate) fn rasterize_outline_glyph(
 ) -> Option<RasterizedGlyph> {
     let data = time_cost!("   |-MapFontData", || record.data())?;
     let data = data.as_ref();
-    let face = time_cost!("   |-ParseFontFace", || ttf_parser::Face::parse(
+    let face = time_cost!("   |-ParseFontFace", || font_ref(
         data,
         record.collection_index
-    )
-    .ok())?;
-    let glyph = time_cost!("   |-SelectGlyph", || ttf_parser::GlyphId(glyph_id));
-    let bbox = time_cost!("   |-ComputeGlyphBoundingBox", || face
-        .glyph_bounding_box(glyph))?;
-    let units_per_em = f32::from(face.units_per_em());
+    ))?;
+    let glyph = time_cost!("   |-SelectGlyph", || GlyphId::new(glyph_id as u32));
+    let metrics = face.glyph_metrics(Size::unscaled(), LocationRef::default());
+    let bbox = time_cost!("   |-ComputeGlyphBoundingBox", || metrics.bounds(glyph))?;
+    let units_per_em = f32::from(
+        face.metrics(Size::unscaled(), LocationRef::default())
+            .units_per_em,
+    );
     let scale = font_size / units_per_em;
-    let offset_x = f32::from(bbox.x_min) * scale;
-    let offset_y = f32::from(bbox.y_min) * scale;
-    let width = (f32::from(bbox.x_max - bbox.x_min) * scale)
+    let offset_x = bbox.x_min * scale;
+    let offset_y = bbox.y_min * scale;
+    let width = ((bbox.x_max - bbox.x_min) * scale)
         .ceil()
         .max(1.0) as u32;
-    let height = (f32::from(bbox.y_max - bbox.y_min) * scale)
+    let height = ((bbox.y_max - bbox.y_min) * scale)
         .ceil()
         .max(1.0) as u32;
 
     let mut outline = GlyphOutline::new(scale, offset_x, offset_y);
-    face.outline_glyph(glyph, &mut outline)?;
+    face.outline_glyphs()
+        .get(glyph)?
+        .draw(
+            DrawSettings::unhinted(Size::unscaled(), LocationRef::default()),
+            &mut outline,
+        )
+        .ok()?;
     outline.finish_contour();
 
     let mut bitmap = vec![0u8; (width * height) as usize];
@@ -151,103 +162,4 @@ pub(crate) fn rasterize_outline_glyph(
         advance_width: advance_width_from_face(data, record.collection_index, glyph_id, font_size)?,
         is_color: false,
     })
-}
-
-/// A minimal outline builder that converts a glyph outline into a list of
-/// closed polygons, which `ColrPainter` can then scan-fill.
-pub struct ColrOutlineBuilder {
-    pub(crate) contours: Vec<Vec<(f32, f32)>>,
-    current: Vec<(f32, f32)>,
-    scale: f32,
-    offset_x: f32,
-    offset_y: f32,
-    height: f32,
-}
-
-impl ColrOutlineBuilder {
-    pub(crate) fn new(scale: f32, offset_x: f32, offset_y: f32, height: f32) -> Self {
-        Self {
-            contours: Vec::new(),
-            current: Vec::new(),
-            scale,
-            offset_x,
-            offset_y,
-            height,
-        }
-    }
-
-    fn push(&mut self, x: f32, y: f32) {
-        // Convert from font coordinates (y-up) to bitmap coordinates (y-down).
-        let bx = x * self.scale - self.offset_x;
-        let by = self.height - (y * self.scale - self.offset_y);
-        self.current.push((bx, by));
-    }
-
-    pub(crate) fn finish(&mut self) {
-        if self.current.len() >= 2 {
-            self.contours
-                .push(std::mem::take(&mut self.current));
-        } else {
-            self.current.clear();
-        }
-    }
-}
-
-impl ttf_parser::OutlineBuilder for ColrOutlineBuilder {
-    fn move_to(&mut self, x: f32, y: f32) {
-        self.finish();
-        self.push(x, y);
-    }
-
-    fn line_to(&mut self, x: f32, y: f32) {
-        self.push(x, y);
-    }
-
-    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        let Some(&(x0, y0)) = self.current.last() else {
-            return;
-        };
-        let x1s = x1 * self.scale - self.offset_x;
-        let y1s = self.height - (y1 * self.scale - self.offset_y);
-        let x2s = x * self.scale - self.offset_x;
-        let y2s = self.height - (y * self.scale - self.offset_y);
-        for step in 1..=12u32 {
-            let t = step as f32 / 12.0;
-            let mt = 1.0 - t;
-            self.current.push((
-                mt * mt * x0 + 2.0 * mt * t * x1s + t * t * x2s,
-                mt * mt * y0 + 2.0 * mt * t * y1s + t * t * y2s,
-            ));
-        }
-    }
-
-    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        let Some(&(x0, y0)) = self.current.last() else {
-            return;
-        };
-        let x1s = x1 * self.scale - self.offset_x;
-        let y1s = self.height - (y1 * self.scale - self.offset_y);
-        let x2s = x2 * self.scale - self.offset_x;
-        let y2s = self.height - (y2 * self.scale - self.offset_y);
-        let x3s = x * self.scale - self.offset_x;
-        let y3s = self.height - (y * self.scale - self.offset_y);
-        for step in 1..=16u32 {
-            let t = step as f32 / 16.0;
-            let mt = 1.0 - t;
-            self.current.push((
-                mt * mt * mt * x0
-                    + 3.0 * mt * mt * t * x1s
-                    + 3.0 * mt * t * t * x2s
-                    + t * t * t * x3s,
-                mt * mt * mt * y0
-                    + 3.0 * mt * mt * t * y1s
-                    + 3.0 * mt * t * t * y2s
-                    + t * t * t * y3s,
-            ));
-        }
-    }
-
-    fn close(&mut self) {
-        self.finish();
-    }
 }
