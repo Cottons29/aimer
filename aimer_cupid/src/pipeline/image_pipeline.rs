@@ -42,10 +42,7 @@ fn resize_rgba8_nearest(
     {
         let source_y = target_y * source_height as usize / target_height as usize;
         let source_row_offset = source_y * source_width as usize * 4;
-        for (pixel, source_x_offset) in row
-            .chunks_exact_mut(4)
-            .zip(&source_offsets)
-        {
+        for (pixel, source_x_offset) in row.chunks_exact_mut(4).zip(&source_offsets) {
             let source_offset = source_row_offset + source_x_offset;
             pixel.copy_from_slice(&data[source_offset..source_offset + 4]);
         }
@@ -143,16 +140,12 @@ impl InstanceBufferPolicy {
     }
 
     pub(crate) fn record_usage(&mut self, used: usize) {
-        let required = self
-            .initial_capacity
-            .max(used.next_power_of_two());
+        let required = self.initial_capacity.max(used.next_power_of_two());
         if required > self.capacity {
             self.capacity = required;
             self.underused_frames = 0;
         } else if required <= self.capacity / 4 {
-            self.underused_frames = self
-                .underused_frames
-                .saturating_add(1);
+            self.underused_frames = self.underused_frames.saturating_add(1);
             if self.underused_frames >= Self::SHRINK_AFTER_FRAMES {
                 self.capacity = required;
                 self.underused_frames = 0;
@@ -254,6 +247,7 @@ impl ImagePipeline {
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         pipeline_cache: Option<&wgpu::PipelineCache>,
+        antialiasing: crate::AntiAlias,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image shader"),
@@ -343,7 +337,7 @@ impl ImagePipeline {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: crate::pipeline::multisample_state(),
+            multisample: crate::pipeline::multisample_state(antialiasing),
             multiview_mask: None,
             cache: pipeline_cache,
         });
@@ -394,8 +388,7 @@ impl ImagePipeline {
     }
 
     pub fn has_texture(&self, id: TextureId) -> bool {
-        self.textures
-            .contains_key(&id)
+        self.textures.contains_key(&id)
     }
 
     /// Upload RGBA8 image data only if the texture ID does not already exist.
@@ -419,9 +412,7 @@ impl ImagePipeline {
                     width,
                     height,
                     data,
-                    device
-                        .limits()
-                        .max_texture_dimension_2d,
+                    device.limits().max_texture_dimension_2d,
                 );
                 // Use create_texture + write_texture instead of create_texture_with_data
                 // so the copy is deferred to the GPU timeline (non-blocking).
@@ -482,22 +473,12 @@ impl ImagePipeline {
         is_srgb: bool,
     ) {
         self.frame_instance_offset = 0;
-        let previous_capacity = self
-            .instance_policy
-            .capacity();
-        self.instance_policy
-            .record_usage(total_instances);
-        if self
-            .instance_policy
-            .capacity()
-            != previous_capacity
-        {
+        let previous_capacity = self.instance_policy.capacity();
+        self.instance_policy.record_usage(total_instances);
+        if self.instance_policy.capacity() != previous_capacity {
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("image instance buffer (resized)"),
-                size: (self
-                    .instance_policy
-                    .capacity()
-                    * size_of::<ImageInstance>()) as u64,
+                size: (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -528,9 +509,7 @@ impl ImagePipeline {
             width,
             height,
             data,
-            device
-                .limits()
-                .max_texture_dimension_2d,
+            device.limits().max_texture_dimension_2d,
         );
         // In-place update if the texture exists and dimensions match.
         if let Some(entry) = self.textures.get(&id) {
@@ -584,9 +563,7 @@ impl ImagePipeline {
     }
 
     pub fn remove_texture(&mut self, id: TextureId) -> bool {
-        self.textures
-            .remove(&id)
-            .is_some()
+        self.textures.remove(&id).is_some()
     }
 
     pub fn texture_count(&self) -> usize {
@@ -594,17 +571,11 @@ impl ImagePipeline {
     }
 
     pub fn texture_bytes(&self) -> u64 {
-        self.textures
-            .values()
-            .map(|entry| entry.bytes)
-            .sum()
+        self.textures.values().map(|entry| entry.bytes).sum()
     }
 
     pub fn instance_buffer_bytes(&self) -> u64 {
-        (self
-            .instance_policy
-            .capacity()
-            * size_of::<ImageInstance>()) as u64
+        (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64
     }
 
     /// Draw a batch of instances with the same texture_id.
@@ -631,23 +602,15 @@ impl ImagePipeline {
         // the queue timeline *before* the pass executes, so writing every batch
         // at offset 0 would make every draw read only the last batch's data.
         let end = self.frame_instance_offset + instances.len();
-        if end
-            > self
-                .instance_policy
-                .capacity()
-        {
+        if end > self.instance_policy.capacity() {
             // Fallback safety net: `begin_frame` should have sized the buffer for
             // the whole frame, but if it was not called, grow without dropping
             // already-written data by copying nothing (prior draws keep the old
             // buffer alive via the encoder) and restarting the offset.
-            self.instance_policy
-                .grow_to_fit(end);
+            self.instance_policy.grow_to_fit(end);
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("image instance buffer (resized)"),
-                size: (self
-                    .instance_policy
-                    .capacity()
-                    * size_of::<ImageInstance>()) as u64,
+                size: (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -667,11 +630,7 @@ impl ImagePipeline {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_bind_group(1, &entry.bind_group, &[]);
-        pass.set_vertex_buffer(
-            0,
-            self.instance_buffer
-                .slice(byte_offset..),
-        );
+        pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
         pass.draw(0..6, 0..instances.len() as u32);
 
         self.frame_instance_offset = end;

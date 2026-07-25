@@ -389,6 +389,7 @@ impl TextPipelineV2 {
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         pipeline_cache: Option<&wgpu::PipelineCache>,
+        antialiasing: crate::AntiAlias,
     ) -> Self {
         let rasterizer = GlyphRasterizer::new();
         let atlas = GlyphAtlas::new(device);
@@ -498,7 +499,7 @@ impl TextPipelineV2 {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: crate::pipeline::multisample_state(),
+            multisample: crate::pipeline::multisample_state(antialiasing),
             multiview_mask: None,
             cache: pipeline_cache,
         });
@@ -527,7 +528,7 @@ impl TextPipelineV2 {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: crate::pipeline::multisample_state(),
+            multisample: crate::pipeline::multisample_state(antialiasing),
             multiview_mask: None,
             cache: pipeline_cache,
         });
@@ -556,7 +557,7 @@ impl TextPipelineV2 {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: crate::pipeline::multisample_state(),
+            multisample: crate::pipeline::multisample_state(antialiasing),
             multiview_mask: None,
             cache: pipeline_cache,
         });
@@ -647,10 +648,7 @@ impl TextPipelineV2 {
         text: &str,
         font_size: f32,
     ) {
-        for (key, glyph) in self
-            .rasterizer
-            .preload_text(text, font_size)
-        {
+        for (key, glyph) in self.rasterizer.preload_text(text, font_size) {
             self.insert_rasterized_glyph(
                 device,
                 queue,
@@ -660,8 +658,7 @@ impl TextPipelineV2 {
                 glyph.height,
                 &glyph.bitmap,
             );
-            self.rasterizer
-                .release_bitmap(key);
+            self.rasterizer.release_bitmap(key);
         }
 
         self.flush_atlas(device, queue);
@@ -691,11 +688,7 @@ impl TextPipelineV2 {
             return;
         }
         if is_color {
-            if self
-                .color_atlas
-                .get(&key)
-                .is_none()
-            {
+            if self.color_atlas.get(&key).is_none() {
                 self.color_atlas
                     .get_or_insert(device, queue, key, width, height, bitmap);
             }
@@ -763,8 +756,7 @@ impl TextPipelineV2 {
                     glyph.height,
                     &glyph.bitmap,
                 );
-                self.rasterizer
-                    .release_bitmap(key);
+                self.rasterizer.release_bitmap(key);
             }
         }
 
@@ -820,31 +812,26 @@ impl TextPipelineV2 {
         let glyphs: Vec<(GlyphKey, f32)> = {
             let shaping_cache = &mut self.shaping_cache;
             let rasterizer = &mut self.rasterizer;
-            let positioned = self
-                .layout_cache
-                .entry(cache_key)
-                .or_insert_with(|| {
-                    let shaped_key = ShapingCacheKey::new(
+            let positioned = self.layout_cache.entry(cache_key).or_insert_with(|| {
+                let shaped_key = ShapingCacheKey::new(
+                    text,
+                    font_size,
+                    FontFamily::SANS_SERIF,
+                    FontStyle::Normal,
+                    FontWeight::Normal.numeric(),
+                );
+                let shaped_text = shaping_cache.entry(shaped_key).or_insert_with(|| {
+                    shape_text_styled(
+                        rasterizer,
                         text,
                         font_size,
                         FontFamily::SANS_SERIF,
+                        FontWeight::Normal,
                         FontStyle::Normal,
-                        FontWeight::Normal.numeric(),
-                    );
-                    let shaped_text = shaping_cache
-                        .entry(shaped_key)
-                        .or_insert_with(|| {
-                            shape_text_styled(
-                                rasterizer,
-                                text,
-                                font_size,
-                                FontFamily::SANS_SERIF,
-                                FontWeight::Normal,
-                                FontStyle::Normal,
-                            )
-                        });
-                    layout_shaped_text(rasterizer, shaped_text, 0.0, 0.0, layout_width)
+                    )
                 });
+                layout_shaped_text(rasterizer, shaped_text, 0.0, 0.0, layout_width)
+            });
             positioned
                 .iter()
                 .map(|pg| (pg.glyph_key, pg.font_size))
@@ -853,36 +840,24 @@ impl TextPipelineV2 {
 
         for (key, glyph_font_size) in glyphs {
             let (is_color, width, height) = {
-                let rg = self
-                    .rasterizer
-                    .rasterize_key(key, glyph_font_size);
+                let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
                 (rg.is_color, rg.width, rg.height)
             };
             if width == 0 || height == 0 {
                 continue;
             }
             if is_color {
-                if self
-                    .color_atlas
-                    .get(&key)
-                    .is_none()
-                {
-                    let rg = self
-                        .rasterizer
-                        .rasterize_bitmap_key(key, glyph_font_size);
+                if self.color_atlas.get(&key).is_none() {
+                    let rg = self.rasterizer.rasterize_bitmap_key(key, glyph_font_size);
                     self.color_atlas
                         .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
-                    self.rasterizer
-                        .release_bitmap(key);
+                    self.rasterizer.release_bitmap(key);
                 }
             } else if self.atlas.get(&key).is_none() {
-                let rg = self
-                    .rasterizer
-                    .rasterize_bitmap_key(key, glyph_font_size);
+                let rg = self.rasterizer.rasterize_bitmap_key(key, glyph_font_size);
                 self.atlas
                     .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
-                self.rasterizer
-                    .release_bitmap(key);
+                self.rasterizer.release_bitmap(key);
             }
         }
     }
@@ -936,9 +911,7 @@ impl TextPipelineV2 {
                 };
 
                 for span in spans {
-                    let font_size = span
-                        .font_size
-                        .unwrap_or(req.font_size);
+                    let font_size = span.font_size.unwrap_or(req.font_size);
                     let font_weight = span
                         .font_weight
                         .or(req.font_weight)
@@ -955,11 +928,7 @@ impl TextPipelineV2 {
                         req.font_style,
                         font_weight,
                     );
-                    if !clear_layout_cache
-                        && self
-                            .layout_cache
-                            .contains_key(&layout_key)
-                    {
+                    if !clear_layout_cache && self.layout_cache.contains_key(&layout_key) {
                         continue;
                     }
 
@@ -970,11 +939,7 @@ impl TextPipelineV2 {
                         req.font_style,
                         font_weight,
                     );
-                    if clear_shaping_cache
-                        || !self
-                            .shaping_cache
-                            .contains_key(&shaping_key)
-                    {
+                    if clear_shaping_cache || !self.shaping_cache.contains_key(&shaping_key) {
                         shaping_batch.push(
                             shaping_key.clone(),
                             ShapingInput {
@@ -997,26 +962,23 @@ impl TextPipelineV2 {
             }
         });
 
-        let font_snapshot = self
-            .rasterizer
-            .font_snapshot();
+        let font_snapshot = self.rasterizer.font_snapshot();
         let shaping_results = time_cost!("TextPipelineV2::prepare - ShapeTextBatch", {
-            self.executor
-                .execute_with_context(
-                    shaping_batch.jobs(),
-                    || GlyphPreparationContext::new(font_snapshot.clone()),
-                    |context, job| {
-                        let input = &job.input;
-                        Some(prepare_shaped_text(
-                            context,
-                            &input.text,
-                            input.font_size,
-                            input.font_family,
-                            FontWeight::Value(u32::from(input.font_weight)),
-                            input.font_style,
-                        ))
-                    },
-                )
+            self.executor.execute_with_context(
+                shaping_batch.jobs(),
+                || GlyphPreparationContext::new(font_snapshot.clone()),
+                |context, job| {
+                    let input = &job.input;
+                    Some(prepare_shaped_text(
+                        context,
+                        &input.text,
+                        input.font_size,
+                        input.font_family,
+                        FontWeight::Value(u32::from(input.font_weight)),
+                        input.font_style,
+                    ))
+                },
+            )
         });
         let Ok(shaping_results) = shaping_results else {
             return;
@@ -1024,30 +986,22 @@ impl TextPipelineV2 {
         let Ok(prepared_shaping) = shaping_batch.merge(shaping_results) else {
             return;
         };
-        let prepared_shaping = prepared_shaping
-            .into_iter()
-            .collect::<HashMap<_, _>>();
+        let prepared_shaping = prepared_shaping.into_iter().collect::<HashMap<_, _>>();
 
         let layout_results = time_cost!("TextPipelineV2::prepare - LayoutTextBatch", {
-            self.executor
-                .execute_with_context(
-                    layout_batch.jobs(),
-                    || GlyphPreparationContext::new(font_snapshot.clone()),
-                    |context, job| {
-                        let input = &job.input;
-                        let shaped = prepared_shaping
-                            .get(&input.shaping_key)
-                            .or_else(|| {
-                                (!clear_shaping_cache)
-                                    .then(|| {
-                                        self.shaping_cache
-                                            .get(&input.shaping_key)
-                                    })
-                                    .flatten()
-                            })?;
-                        Some(prepare_positioned_text(context, shaped, input.layout_width))
-                    },
-                )
+            self.executor.execute_with_context(
+                layout_batch.jobs(),
+                || GlyphPreparationContext::new(font_snapshot.clone()),
+                |context, job| {
+                    let input = &job.input;
+                    let shaped = prepared_shaping.get(&input.shaping_key).or_else(|| {
+                        (!clear_shaping_cache)
+                            .then(|| self.shaping_cache.get(&input.shaping_key))
+                            .flatten()
+                    })?;
+                    Some(prepare_positioned_text(context, shaped, input.layout_width))
+                },
+            )
         });
         let Ok(layout_results) = layout_results else {
             return;
@@ -1055,9 +1009,7 @@ impl TextPipelineV2 {
         let Ok(prepared_layouts) = layout_batch.merge(layout_results) else {
             return;
         };
-        let prepared_layouts = prepared_layouts
-            .into_iter()
-            .collect::<HashMap<_, _>>();
+        let prepared_layouts = prepared_layouts.into_iter().collect::<HashMap<_, _>>();
 
         let mut glyph_batch = PreparationBatch::new();
         time_cost!("TextPipelineV2::prepare - CollectGlyphJobs", {
@@ -1071,9 +1023,7 @@ impl TextPipelineV2 {
                 };
 
                 for span in spans {
-                    let font_size = span
-                        .font_size
-                        .unwrap_or(req.font_size);
+                    let font_size = span.font_size.unwrap_or(req.font_size);
                     let font_weight = span
                         .font_weight
                         .or(req.font_weight)
@@ -1090,31 +1040,19 @@ impl TextPipelineV2 {
                         req.font_style,
                         font_weight,
                     );
-                    let Some(positioned) = prepared_layouts
-                        .get(&layout_key)
-                        .or_else(|| {
-                            (!clear_layout_cache)
-                                .then(|| {
-                                    self.layout_cache
-                                        .get(&layout_key)
-                                })
-                                .flatten()
-                        })
-                    else {
+                    let Some(positioned) = prepared_layouts.get(&layout_key).or_else(|| {
+                        (!clear_layout_cache)
+                            .then(|| self.layout_cache.get(&layout_key))
+                            .flatten()
+                    }) else {
                         return;
                     };
 
                     for glyph in positioned {
                         let key = glyph.glyph_key;
-                        let needs_bitmap = self.atlas.get(&key).is_none()
-                            && self
-                                .color_atlas
-                                .get(&key)
-                                .is_none();
-                        if self
-                            .rasterizer
-                            .needs_prepared_glyph(key, needs_bitmap)
-                        {
+                        let needs_bitmap =
+                            self.atlas.get(&key).is_none() && self.color_atlas.get(&key).is_none();
+                        if self.rasterizer.needs_prepared_glyph(key, needs_bitmap) {
                             glyph_batch.push(
                                 key,
                                 GlyphPreparationInput {
@@ -1128,12 +1066,11 @@ impl TextPipelineV2 {
         });
 
         let glyph_results = time_cost!("TextPipelineV2::prepare - RasterGlyphBatch", {
-            self.executor
-                .execute_with_context(
-                    glyph_batch.jobs(),
-                    || GlyphPreparationContext::new(font_snapshot.clone()),
-                    |context, job| Some(context.prepare_glyph(job.key, job.input.font_size)),
-                )
+            self.executor.execute_with_context(
+                glyph_batch.jobs(),
+                || GlyphPreparationContext::new(font_snapshot.clone()),
+                |context, job| Some(context.prepare_glyph(job.key, job.input.font_size)),
+            )
         });
         let Ok(glyph_results) = glyph_results else {
             return;
@@ -1149,13 +1086,10 @@ impl TextPipelineV2 {
             if clear_layout_cache {
                 self.layout_cache.clear();
             }
-            self.shaping_cache
-                .extend(prepared_shaping);
-            self.layout_cache
-                .extend(prepared_layouts);
+            self.shaping_cache.extend(prepared_shaping);
+            self.layout_cache.extend(prepared_layouts);
             for (key, glyph) in prepared_glyphs {
-                self.rasterizer
-                    .commit_prepared_glyph(key, glyph);
+                self.rasterizer.commit_prepared_glyph(key, glyph);
             }
         });
 
@@ -1172,9 +1106,7 @@ impl TextPipelineV2 {
             };
 
             for span in spans {
-                let font_size = span
-                    .font_size
-                    .unwrap_or(req.font_size);
+                let font_size = span.font_size.unwrap_or(req.font_size);
                 let font_weight = span
                     .font_weight
                     .or(req.font_weight)
@@ -1191,10 +1123,7 @@ impl TextPipelineV2 {
                     req.font_style,
                     font_weight,
                 );
-                let Some(positioned) = self
-                    .layout_cache
-                    .get(&layout_key)
-                else {
+                let Some(positioned) = self.layout_cache.get(&layout_key) else {
                     return;
                 };
                 for glyph in positioned {
@@ -1202,9 +1131,8 @@ impl TextPipelineV2 {
                     if !seen_glyphs.insert(key) {
                         continue;
                     }
-                    let Some((is_color, glyph_width, glyph_height)) = self
-                        .rasterizer
-                        .cached_glyph_descriptor(key)
+                    let Some((is_color, glyph_width, glyph_height)) =
+                        self.rasterizer.cached_glyph_descriptor(key)
                     else {
                         return;
                     };
@@ -1218,33 +1146,24 @@ impl TextPipelineV2 {
             }
         }
 
-        let alpha_plan = self
-            .atlas
-            .plan_batch(&alpha_glyphs);
-        let color_plan = self
-            .color_atlas
-            .plan_batch(&color_glyphs);
+        let alpha_plan = self.atlas.plan_batch(&alpha_glyphs);
+        let color_plan = self.color_atlas.plan_batch(&color_glyphs);
         if alpha_plan == BatchCapacityPlan::Reject || color_plan == BatchCapacityPlan::Reject {
             return;
         }
-        self.atlas
-            .apply_batch_plan(alpha_plan);
-        self.color_atlas
-            .apply_batch_plan(color_plan);
+        self.atlas.apply_batch_plan(alpha_plan);
+        self.color_atlas.apply_batch_plan(color_plan);
 
         self.instances.clear();
         self.color_instances.clear();
-        self.decoration_instances
-            .clear();
-        self.decoration_instances
-            .extend(
-                decorations
-                    .iter()
-                    .map(|decoration| decoration.to_instance()),
-            );
+        self.decoration_instances.clear();
+        self.decoration_instances.extend(
+            decorations
+                .iter()
+                .map(|decoration| decoration.to_instance()),
+        );
         self.request_ranges.clear();
-        self.request_ranges
-            .reserve(requests.len());
+        self.request_ranges.reserve(requests.len());
 
         for req in requests {
             // Record the glyph ranges this request will own. Both instance lists
@@ -1269,12 +1188,8 @@ impl TextPipelineV2 {
 
             time_cost!("RichTextSpanLoops", {
                 for span in spans {
-                    let font_size = span
-                        .font_size
-                        .unwrap_or(req.font_size);
-                    let color = span
-                        .color
-                        .unwrap_or(req.color);
+                    let font_size = span.font_size.unwrap_or(req.font_size);
+                    let color = span.color.unwrap_or(req.color);
                     let font_weight = span
                         .font_weight
                         .or(req.font_weight)
@@ -1285,10 +1200,7 @@ impl TextPipelineV2 {
                     // the glyph shaders (0.25 ≈ 14°). Ceiling: not a real italic
                     // face (no cursive glyph forms, advances unchanged). Upgrade
                     // path: load a real italic/oblique face and key the atlas by it.
-                    let skew = if span
-                        .italic
-                        .unwrap_or(req.italic)
-                    {
+                    let skew = if span.italic.unwrap_or(req.italic) {
                         0.25
                     } else {
                         0.0
@@ -1336,9 +1248,7 @@ impl TextPipelineV2 {
                         // scalar fields here, so the immutable borrow ends quickly.
 
                         let (is_color, rg_width, rg_height) = {
-                            let rg = self
-                                .rasterizer
-                                .rasterize_key(key, pg.font_size);
+                            let rg = self.rasterizer.rasterize_key(key, pg.font_size);
                             (rg.is_color, rg.width, rg.height)
                         };
 
@@ -1353,16 +1263,11 @@ impl TextPipelineV2 {
                                 region
                             } else {
                                 // Cache hit on the rasterizer side — instant.
-                                let rg = self
-                                    .rasterizer
-                                    .rasterize_bitmap_key(key, pg.font_size);
-                                let region = self
-                                    .color_atlas
-                                    .get_or_insert(
-                                        device, queue, key, rg.width, rg.height, &rg.bitmap,
-                                    );
-                                self.rasterizer
-                                    .release_bitmap(key);
+                                let rg = self.rasterizer.rasterize_bitmap_key(key, pg.font_size);
+                                let region = self.color_atlas.get_or_insert(
+                                    device, queue, key, rg.width, rg.height, &rg.bitmap,
+                                );
+                                self.rasterizer.release_bitmap(key);
                                 region
                             };
                             (region, true)
@@ -1370,14 +1275,11 @@ impl TextPipelineV2 {
                             let region = if let Some(region) = self.atlas.get(&key) {
                                 region
                             } else {
-                                let rg = self
-                                    .rasterizer
-                                    .rasterize_bitmap_key(key, pg.font_size);
+                                let rg = self.rasterizer.rasterize_bitmap_key(key, pg.font_size);
                                 let region = self.atlas.get_or_insert(
                                     device, queue, key, rg.width, rg.height, &rg.bitmap,
                                 );
-                                self.rasterizer
-                                    .release_bitmap(key);
+                                self.rasterizer.release_bitmap(key);
                                 region
                             };
                             (region, false)
@@ -1423,8 +1325,7 @@ impl TextPipelineV2 {
                         };
 
                         if target_color_list {
-                            self.color_instances
-                                .push(instance);
+                            self.color_instances.push(instance);
                         } else {
                             self.instances.push(instance);
                             if is_bold {
@@ -1451,13 +1352,12 @@ impl TextPipelineV2 {
                 }
             });
 
-            self.request_ranges
-                .push(TextRequestRange {
-                    alpha_start,
-                    alpha_end: self.instances.len() as u32,
-                    color_start,
-                    color_end: self.color_instances.len() as u32,
-                });
+            self.request_ranges.push(TextRequestRange {
+                alpha_start,
+                alpha_end: self.instances.len() as u32,
+                color_start,
+                color_end: self.color_instances.len() as u32,
+            });
         }
 
         // Now that every glyph has been inserted, the atlases have reached
@@ -1516,67 +1416,37 @@ impl TextPipelineV2 {
             );
         }
 
-        let previous_capacity = self
-            .instance_policy
-            .capacity();
-        self.instance_policy
-            .record_usage(self.instances.len());
-        if self
-            .instance_policy
-            .capacity()
-            != previous_capacity
-        {
+        let previous_capacity = self.instance_policy.capacity();
+        self.instance_policy.record_usage(self.instances.len());
+        if self.instance_policy.capacity() != previous_capacity {
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("text instance buffer"),
-                size: (self
-                    .instance_policy
-                    .capacity()
-                    * size_of::<GlyphInstance>()) as u64,
+                size: (self.instance_policy.capacity() * size_of::<GlyphInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
 
-        let previous_color_capacity = self
-            .color_instance_policy
-            .capacity();
+        let previous_color_capacity = self.color_instance_policy.capacity();
         self.color_instance_policy
             .record_usage(self.color_instances.len());
-        if self
-            .color_instance_policy
-            .capacity()
-            != previous_color_capacity
-        {
+        if self.color_instance_policy.capacity() != previous_color_capacity {
             self.color_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("text color instance buffer"),
-                size: (self
-                    .color_instance_policy
-                    .capacity()
-                    * size_of::<GlyphInstance>()) as u64,
+                size: (self.color_instance_policy.capacity() * size_of::<GlyphInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
 
-        let previous_decoration_capacity = self
-            .decoration_instance_policy
-            .capacity();
+        let previous_decoration_capacity = self.decoration_instance_policy.capacity();
         self.decoration_instance_policy
-            .record_usage(
-                self.decoration_instances
-                    .len(),
-            );
-        if self
-            .decoration_instance_policy
-            .capacity()
-            != previous_decoration_capacity
-        {
+            .record_usage(self.decoration_instances.len());
+        if self.decoration_instance_policy.capacity() != previous_decoration_capacity {
             self.decoration_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("text decoration instance buffer"),
-                size: (self
-                    .decoration_instance_policy
-                    .capacity()
-                    * size_of::<DecorationInstance>()) as u64,
+                size: (self.decoration_instance_policy.capacity() * size_of::<DecorationInstance>())
+                    as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -1590,20 +1460,14 @@ impl TextPipelineV2 {
                 bytemuck::cast_slice(&self.instances),
             );
         }
-        if !self
-            .color_instances
-            .is_empty()
-        {
+        if !self.color_instances.is_empty() {
             queue.write_buffer(
                 &self.color_instance_buffer,
                 0,
                 bytemuck::cast_slice(&self.color_instances),
             );
         }
-        if !self
-            .decoration_instances
-            .is_empty()
-        {
+        if !self.decoration_instances.is_empty() {
             queue.write_buffer(
                 &self.decoration_instance_buffer,
                 0,
@@ -1613,35 +1477,21 @@ impl TextPipelineV2 {
     }
 
     pub fn instance_buffer_bytes(&self) -> u64 {
-        (self
-            .instance_policy
-            .capacity()
-            * size_of::<GlyphInstance>()) as u64
-            + (self
-                .color_instance_policy
-                .capacity()
-                * size_of::<GlyphInstance>()) as u64
-            + (self
-                .decoration_instance_policy
-                .capacity()
-                * size_of::<DecorationInstance>()) as u64
+        (self.instance_policy.capacity() * size_of::<GlyphInstance>()) as u64
+            + (self.color_instance_policy.capacity() * size_of::<GlyphInstance>()) as u64
+            + (self.decoration_instance_policy.capacity() * size_of::<DecorationInstance>()) as u64
     }
 
     pub fn glyph_bitmap_cache_bytes(&self) -> usize {
-        self.rasterizer
-            .bitmap_cache_bytes()
+        self.rasterizer.bitmap_cache_bytes()
     }
 
     pub fn glyph_atlas_bytes(&self) -> u64 {
-        self.atlas.memory_bytes()
-            + self
-                .color_atlas
-                .memory_bytes()
+        self.atlas.memory_bytes() + self.color_atlas.memory_bytes()
     }
 
     pub fn cached_glyph_count(&self) -> usize {
-        self.rasterizer
-            .cached_glyph_count()
+        self.rasterizer.cached_glyph_count()
     }
 
     /// Draw a single text request's glyphs at the current point in the render
@@ -1666,11 +1516,7 @@ impl TextPipelineV2 {
         if range.color_end > range.color_start {
             pass.set_pipeline(&self.color_pipeline);
             pass.set_bind_group(0, &self.color_bind_group, &[]);
-            pass.set_vertex_buffer(
-                0,
-                self.color_instance_buffer
-                    .slice(..),
-            );
+            pass.set_vertex_buffer(0, self.color_instance_buffer.slice(..));
             pass.draw(0..6, range.color_start..range.color_end);
         }
     }
@@ -1680,28 +1526,19 @@ impl TextPipelineV2 {
     /// decoration request maps to exactly one instance. Reuses the alpha
     /// `bind_group` (it only needs the viewport uniform).
     pub fn render_decoration(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
-        if index
-            >= self
-                .decoration_instances
-                .len()
-        {
+        if index >= self.decoration_instances.len() {
             return;
         }
         pass.set_pipeline(&self.decoration_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(
-            0,
-            self.decoration_instance_buffer
-                .slice(..),
-        );
+        pass.set_vertex_buffer(0, self.decoration_instance_buffer.slice(..));
         let start = index as u32;
         pass.draw(0..6, start..start + 1);
     }
 
     /// Measure text width using the rasterizer.
     pub fn measure_text(&mut self, text: &str, font_size: f32) -> f32 {
-        self.rasterizer
-            .measure_text(text, font_size)
+        self.rasterizer.measure_text(text, font_size)
     }
 }
 

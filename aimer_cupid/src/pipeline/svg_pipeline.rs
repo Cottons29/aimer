@@ -100,6 +100,7 @@ impl SvgPipeline {
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         pipeline_cache: Option<&wgpu::PipelineCache>,
+        antialiasing: crate::AntiAlias,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("svg shader"),
@@ -134,7 +135,7 @@ impl SvgPipeline {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: Self::multisample_state(),
+            multisample: Self::multisample_state(antialiasing),
             multiview_mask: None,
             cache: pipeline_cache,
         });
@@ -173,8 +174,8 @@ impl SvgPipeline {
         }
     }
 
-    fn multisample_state() -> wgpu::MultisampleState {
-        crate::pipeline::multisample_state()
+    fn multisample_state(antialiasing: crate::AntiAlias) -> wgpu::MultisampleState {
+        crate::pipeline::multisample_state(antialiasing)
     }
 
     pub fn prepare(
@@ -186,9 +187,7 @@ impl SvgPipeline {
         height: u32,
         is_srgb: bool,
     ) {
-        self.usage_clock = self
-            .usage_clock
-            .wrapping_add(1);
+        self.usage_clock = self.usage_clock.wrapping_add(1);
         self.prepared_draws.clear();
         self.item_ranges.clear();
         self.instances.clear();
@@ -202,21 +201,10 @@ impl SvgPipeline {
                 .push(range_start..self.prepared_draws.len());
         }
 
-        let old_capacity = self
-            .instance_policy
-            .capacity();
-        self.instance_policy
-            .record_usage(self.instances.len());
-        if old_capacity
-            != self
-                .instance_policy
-                .capacity()
-        {
-            self.instance_buffer = create_instance_buffer(
-                device,
-                self.instance_policy
-                    .capacity(),
-            );
+        let old_capacity = self.instance_policy.capacity();
+        self.instance_policy.record_usage(self.instances.len());
+        if old_capacity != self.instance_policy.capacity() {
+            self.instance_buffer = create_instance_buffer(device, self.instance_policy.capacity());
         }
         if !self.instances.is_empty() {
             queue.write_buffer(
@@ -366,35 +354,33 @@ impl SvgPipeline {
         frame_meshes.insert(mesh_key);
         self.ensure_gpu_mesh(device, mesh_key, &mesh);
         let instance_index = self.instances.len() as u32;
-        self.instances
-            .push(SvgInstance {
-                transform_x: [
-                    transform.cols[0][0],
-                    transform.cols[1][0],
-                    transform.cols[2][0],
-                    0.0,
-                ],
-                transform_y: [
-                    transform.cols[0][1],
-                    transform.cols[1][1],
-                    transform.cols[2][1],
-                    0.0,
-                ],
-                color: [color.r, color.g, color.b, color.a * opacity],
-                clip_rect: item.clip_rect,
-                clip_border_radius: item.clip_border_radius,
-                viewport: [
-                    width as f32,
-                    height as f32,
-                    surface_srgb_value(is_srgb),
-                    0.0,
-                ],
-            });
-        self.prepared_draws
-            .push(PreparedDraw {
-                mesh_key,
-                instance_index,
-            });
+        self.instances.push(SvgInstance {
+            transform_x: [
+                transform.cols[0][0],
+                transform.cols[1][0],
+                transform.cols[2][0],
+                0.0,
+            ],
+            transform_y: [
+                transform.cols[0][1],
+                transform.cols[1][1],
+                transform.cols[2][1],
+                0.0,
+            ],
+            color: [color.r, color.g, color.b, color.a * opacity],
+            clip_rect: item.clip_rect,
+            clip_border_radius: item.clip_border_radius,
+            viewport: [
+                width as f32,
+                height as f32,
+                surface_srgb_value(is_srgb),
+                0.0,
+            ],
+        });
+        self.prepared_draws.push(PreparedDraw {
+            mesh_key,
+            instance_index,
+        });
     }
 
     fn ensure_gpu_mesh(&mut self, device: &wgpu::Device, key: usize, mesh: &Arc<SvgMesh>) {
@@ -447,26 +433,18 @@ impl SvgPipeline {
                 break;
             };
             if let Some(mesh) = self.gpu_meshes.remove(&key) {
-                self.gpu_mesh_bytes = self
-                    .gpu_mesh_bytes
-                    .saturating_sub(mesh.bytes);
+                self.gpu_mesh_bytes = self.gpu_mesh_bytes.saturating_sub(mesh.bytes);
             }
         }
     }
 
     pub fn draw_item<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, item_index: usize) {
-        let Some(range) = self
-            .item_ranges
-            .get(item_index)
-        else {
+        let Some(range) = self.item_ranges.get(item_index) else {
             return;
         };
         pass.set_pipeline(&self.pipeline);
         for draw in &self.prepared_draws[range.clone()] {
-            let Some(mesh) = self
-                .gpu_meshes
-                .get(&draw.mesh_key)
-            else {
+            let Some(mesh) = self.gpu_meshes.get(&draw.mesh_key) else {
                 continue;
             };
             pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -481,8 +459,7 @@ impl SvgPipeline {
     }
 
     pub fn cpu_geometry_bytes(&self) -> u64 {
-        self.geometry_cache
-            .memory_bytes() as u64
+        self.geometry_cache.memory_bytes() as u64
     }
 
     pub fn gpu_geometry_bytes(&self) -> u64 {
@@ -490,10 +467,7 @@ impl SvgPipeline {
     }
 
     pub fn instance_buffer_bytes(&self) -> u64 {
-        (self
-            .instance_policy
-            .capacity()
-            * size_of::<SvgInstance>()) as u64
+        (self.instance_policy.capacity() * size_of::<SvgInstance>()) as u64
     }
 
     pub fn clear_resources(&mut self) {
@@ -519,14 +493,8 @@ fn combined_transform(
 ) -> Mat3 {
     let viewport = item.scene.viewport;
     let destination = Mat3::translate(item.destination.x, item.destination.y).mul(&Mat3::scale(
-        item.destination.width
-            / viewport
-                .width
-                .max(f32::EPSILON),
-        item.destination.height
-            / viewport
-                .height
-                .max(f32::EPSILON),
+        item.destination.width / viewport.width.max(f32::EPSILON),
+        item.destination.height / viewport.height.max(f32::EPSILON),
     ));
     let transform = node_override
         .and_then(|value| value.transform)
@@ -538,9 +506,7 @@ fn combined_transform(
             [transform.tx, transform.ty, 1.0],
         ],
     };
-    item.world_transform
-        .mul(&destination)
-        .mul(&node_transform)
+    item.world_transform.mul(&destination).mul(&node_transform)
 }
 
 fn resolved_fill(
@@ -556,10 +522,7 @@ fn resolved_fill(
                 .unwrap_or(crate::svg::SvgFillRule::NonZero),
         )),
         Some(Some(None)) => None,
-        Some(None) | None => node
-            .fill
-            .as_ref()
-            .map(|fill| (fill.color, fill.rule)),
+        Some(None) | None => node.fill.as_ref().map(|fill| (fill.color, fill.rule)),
     }?;
     Some((fill.0, SvgMeshStyle::Fill(fill.1)))
 }
@@ -649,7 +612,14 @@ mod tests {
     }
 
     #[test]
-    fn svg_pipeline_uses_four_sample_antialiasing() {
-        assert_eq!(SvgPipeline::multisample_state().count, 4);
+    fn svg_pipeline_uses_configured_antialiasing() {
+        assert_eq!(
+            SvgPipeline::multisample_state(crate::AntiAlias::Analytic).count,
+            1
+        );
+        assert_eq!(
+            SvgPipeline::multisample_state(crate::AntiAlias::Msaa4x).count,
+            4
+        );
     }
 }

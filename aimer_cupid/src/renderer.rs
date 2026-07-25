@@ -5,7 +5,6 @@ use aimer_utils::{debug, time_cost};
 use crate::custom_pipeline::{CustomPipeline, CustomPipelineSlot, RenderContext};
 use crate::draw_cmd::{DrawCommand, DrawList};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
-use crate::pipeline::RENDER_SAMPLE_COUNT;
 use crate::pipeline_cache;
 use crate::rect_pipeline::{RectInstance, RectPipeline};
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
@@ -142,10 +141,17 @@ struct MultisampleTarget {
     view: wgpu::TextureView,
     width: u32,
     height: u32,
+    sample_count: u32,
 }
 
 impl MultisampleTarget {
-    fn new(device: &wgpu::Device, format: wgpu::TextureFormat, width: u32, height: u32) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        sample_count: u32,
+    ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("cupid multisample color target"),
             size: wgpu::Extent3d {
@@ -154,7 +160,7 @@ impl MultisampleTarget {
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
-            sample_count: RENDER_SAMPLE_COUNT,
+            sample_count,
             dimension: wgpu::TextureDimension::D2,
             format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -166,11 +172,12 @@ impl MultisampleTarget {
             view,
             width,
             height,
+            sample_count,
         }
     }
 
     fn bytes(&self) -> u64 {
-        self.width as u64 * self.height as u64 * RENDER_SAMPLE_COUNT as u64 * 4
+        self.width as u64 * self.height as u64 * self.sample_count as u64 * 4
     }
 }
 
@@ -191,19 +198,30 @@ pub struct Renderer {
     resolved: Vec<ResolvedCmd>,
     textures_to_remove: Vec<u32>,
     multisample_target: Option<MultisampleTarget>,
+    antialiasing: crate::AntiAlias,
 }
 
 impl Renderer {
+    /// Creates a renderer using lightweight analytic antialiasing.
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        Self::with_antialiasing(device, format, crate::AntiAlias::default())
+    }
+
+    /// Creates a renderer with the requested antialiasing strategy.
+    pub fn with_antialiasing(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        antialiasing: crate::AntiAlias,
+    ) -> Self {
         let start = aimer_utils::AnimInstant::now();
 
         let cache = pipeline_cache::create_pipeline_cache(device);
 
         let renderer = Self {
-            rect_pipeline: RectPipeline::new(device, format, cache.as_ref()),
-            text_pipeline: TextPipelineV2::new(device, format, cache.as_ref()),
-            image_pipeline: ImagePipeline::new(device, format, cache.as_ref()),
-            svg_pipeline: SvgPipeline::new(device, format, cache.as_ref()),
+            rect_pipeline: RectPipeline::new(device, format, cache.as_ref(), antialiasing),
+            text_pipeline: TextPipelineV2::new(device, format, cache.as_ref(), antialiasing),
+            image_pipeline: ImagePipeline::new(device, format, cache.as_ref(), antialiasing),
+            svg_pipeline: SvgPipeline::new(device, format, cache.as_ref(), antialiasing),
             pipeline_cache: cache,
             custom_pipelines: Vec::new(),
             surface_format: format,
@@ -215,6 +233,7 @@ impl Renderer {
             resolved: Vec::new(),
             textures_to_remove: Vec::new(),
             multisample_target: None,
+            antialiasing,
         };
 
         debug!(
@@ -792,7 +811,7 @@ impl Renderer {
                 height,
                 is_srgb,
                 format: self.surface_format,
-                sample_count: RENDER_SAMPLE_COUNT,
+                sample_count: self.antialiasing.sample_count(),
             };
             for slot in &mut self.custom_pipelines {
                 if slot.pipeline.has_work() {
@@ -821,22 +840,35 @@ impl Renderer {
             label: Some("cupid render encoder"),
         });
 
-        let target = self.multisample_target.get_or_insert_with(|| {
-            MultisampleTarget::new(device, self.surface_format, width, height)
-        });
-        if target.width != width || target.height != height {
-            *target = MultisampleTarget::new(device, self.surface_format, width, height);
-        }
+        let sample_count = self.antialiasing.sample_count();
+        let (render_view, resolve_target, store) = if self.antialiasing.uses_multisampling() {
+            let target = self.multisample_target.get_or_insert_with(|| {
+                MultisampleTarget::new(device, self.surface_format, width, height, sample_count)
+            });
+            if target.width != width || target.height != height {
+                *target = MultisampleTarget::new(
+                    device,
+                    self.surface_format,
+                    width,
+                    height,
+                    sample_count,
+                );
+            }
+            (&target.view, Some(view), wgpu::StoreOp::Discard)
+        } else {
+            self.multisample_target = None;
+            (view, None, wgpu::StoreOp::Store)
+        };
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("cupid render pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target.view,
-                    resolve_target: Some(view),
+                    view: render_view,
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Discard,
+                        store,
                     },
                     depth_slice: None,
                 })],
