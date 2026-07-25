@@ -1,5 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod render_ctx {
+    use aimer_cupid::AntiAlias;
     use aimer_cupid::canvas::CupidCanvas;
     use aimer_cupid::gpu_context::GpuContext;
     use aimer_cupid::renderer::Renderer;
@@ -11,9 +12,19 @@ pub mod render_ctx {
         gpu: Option<GpuContext<'static>>,
         renderer: Option<Renderer>,
         canvas: Option<CupidCanvas>,
+        antialiasing: AntiAlias,
     }
 
     impl WgpuApi {
+        #[inline]
+        pub fn new(antialiasing: AntiAlias) -> Self {
+            Self {
+                gpu: None,
+                renderer: None,
+                canvas: None,
+                antialiasing,
+            }
+        }
         /// Returns true when the GPU context has been initialized and is
         /// usable.
         pub fn is_ready(&self) -> bool {
@@ -30,7 +41,7 @@ pub mod render_ctx {
             #[cfg(target_os = "macos")]
             crate::ffi_utils::macos_surface::enable_transactional_surface_presentation(window);
             let canvas = CupidCanvas::new();
-            let renderer = Renderer::new(&gpu.device, gpu.format);
+            let renderer = Renderer::with_antialiasing(&gpu.device, gpu.format, self.antialiasing);
 
             self.gpu = Some(gpu);
             self.renderer = Some(renderer);
@@ -59,9 +70,7 @@ pub mod render_ctx {
                 _ => return false,
             };
 
-            let view = frame
-                .texture
-                .create_view(&Default::default());
+            let view = frame.texture.create_view(&Default::default());
 
             let width = gpu.width();
             let height = gpu.height();

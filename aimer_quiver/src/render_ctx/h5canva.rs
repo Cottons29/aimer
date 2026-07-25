@@ -3,6 +3,7 @@ pub mod render_ctx {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    use aimer_cupid::AntiAlias;
     use aimer_cupid::canvas::CupidCanvas;
     use aimer_cupid::gpu_context::GpuContext;
     use aimer_cupid::renderer::Renderer;
@@ -22,17 +23,26 @@ pub mod render_ctx {
 
     pub struct H5CanvasApi {
         state: Rc<RefCell<Option<GpuState>>>,
+        antialiasing: AntiAlias,
     }
 
     impl Default for H5CanvasApi {
         fn default() -> Self {
             Self {
                 state: Rc::new(RefCell::new(None)),
+                antialiasing: AntiAlias::default(),
             }
         }
     }
 
     impl H5CanvasApi {
+        #[inline]
+        pub fn new(antialiasing: AntiAlias) -> Self {
+            Self {
+                state: Rc::new(RefCell::new(None)),
+                antialiasing,
+            }
+        }
         /// Returns true when the async GPU init has completed and the context
         /// is usable.
         pub fn is_ready(&self) -> bool {
@@ -46,11 +56,8 @@ pub mod render_ctx {
                 let document = web_window.document().unwrap();
                 let body = document.body().unwrap();
                 info!("Creating canvas...");
-                body.append_child(&canvas)
-                    .unwrap();
-                canvas
-                    .set_attribute("id", "aimer_app")
-                    .unwrap();
+                body.append_child(&canvas).unwrap();
+                canvas.set_attribute("id", "aimer_app").unwrap();
 
                 // Without `touch-action: none`, mobile browsers treat a touch drag
                 // on the canvas as a page pan/pinch and fire `pointercancel`
@@ -64,19 +71,18 @@ pub mod render_ctx {
                 // does not stop scrolling — only `touch-action` does.
                 // Use `style().set_property` (not `set_attribute("style", ..)`) so we
                 // don't clobber the width/height styles winit sets on resize.
-                let _ = canvas
-                    .style()
-                    .set_property("touch-action", "none");
+                let _ = canvas.style().set_property("touch-action", "none");
                 info!("Canvas created.");
             }
 
             // Spawn async GPU initialization
             let state = self.state.clone();
+            let antialiasing = self.antialiasing;
             wasm_bindgen_futures::spawn_local(async move {
                 info!("Initializing GPU context (wasm)...");
                 let gpu = GpuContext::initialize_async(window, size).await;
                 let canvas = CupidCanvas::new();
-                let renderer = Renderer::new(&gpu.device, gpu.format);
+                let renderer = Renderer::with_antialiasing(&gpu.device, gpu.format, antialiasing);
                 *state.borrow_mut() = Some(GpuState {
                     gpu,
                     renderer,
@@ -89,11 +95,7 @@ pub mod render_ctx {
         }
 
         pub fn resize(&mut self, size: PhysicalSize<u32>) {
-            if let Some(state) = self
-                .state
-                .borrow_mut()
-                .as_mut()
-            {
+            if let Some(state) = self.state.borrow_mut().as_mut() {
                 state.gpu.resize(size);
             }
         }
@@ -113,9 +115,7 @@ pub mod render_ctx {
                 _ => return false,
             };
 
-            let view = frame
-                .texture
-                .create_view(&Default::default());
+            let view = frame.texture.create_view(&Default::default());
 
             let width = state.gpu.width();
             let height = state.gpu.height();

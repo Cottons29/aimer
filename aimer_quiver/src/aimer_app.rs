@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
+use aimer_cupid::AntiAlias;
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_inspector::InspectorAppHandle;
 use aimer_modal::ModalHost;
@@ -19,8 +20,8 @@ use winit::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
-use crate::handler::AimerApplicationHandler;
 use crate::handler::event_handler::{HeadlessEventAction, WindowEventHandler};
+use crate::handler::{AimerApplicationHandler, StartupHook};
 use crate::render_ctx::AimerRenderContext;
 
 #[cfg(target_os = "android")]
@@ -168,10 +169,104 @@ pub extern "system" fn Java_com_aimer_AimerActivity_nativeBackspace<'caller>(
     .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
 }
 
-pub struct AimerApp<T> {
-    _marker: std::marker::PhantomData<T>,
+/// Configures and starts an Aimer application.
+///
+/// Construct an application with [`Self::new`], apply configuration, and call
+/// [`Self::child`] last to produce a runnable application. Existing static
+/// start functions remain available and use the default configuration.
+pub struct AimerApp<W = ()> {
+    child: W,
+    antialiasing: AntiAlias,
+    startup_hooks: Vec<StartupHook>,
 }
 
+#[cfg(target_os = "macos")]
+fn install_macos_menu() -> muda::Menu {
+    use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+
+    let menu = Menu::new();
+
+    let app_menu = Submenu::new("Aimer", true);
+    app_menu
+        .append_items(&[
+            &PredefinedMenuItem::about(None, None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::services(None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::hide(None),
+            &PredefinedMenuItem::hide_others(None),
+            &PredefinedMenuItem::show_all(None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::quit(None),
+        ])
+        .unwrap();
+
+    let file_menu = Submenu::new("File", true);
+    file_menu
+        .append_items(&[
+            &MenuItem::new("New", true, None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::close_window(None),
+        ])
+        .unwrap();
+
+    let edit_menu = Submenu::new("Edit", true);
+    edit_menu
+        .append_items(&[
+            &PredefinedMenuItem::undo(None),
+            &PredefinedMenuItem::redo(None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::cut(None),
+            &PredefinedMenuItem::copy(None),
+            &PredefinedMenuItem::paste(None),
+            &PredefinedMenuItem::select_all(None),
+        ])
+        .unwrap();
+
+    let view_menu = Submenu::new("View", true);
+    view_menu
+        .append_items(&[&PredefinedMenuItem::fullscreen(None)])
+        .unwrap();
+
+    let window_menu = Submenu::new("Window", true);
+    window_menu
+        .append_items(&[
+            &PredefinedMenuItem::minimize(None),
+            &PredefinedMenuItem::maximize(None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::close_window(None),
+        ])
+        .unwrap();
+
+    let help_menu = Submenu::new("Help", true);
+    help_menu
+        .append_items(&[&MenuItem::new("Aimer Help", true, None)])
+        .unwrap();
+
+    menu.append_items(&[
+        &app_menu,
+        &file_menu,
+        &edit_menu,
+        &view_menu,
+        &window_menu,
+        &help_menu,
+    ])
+    .unwrap();
+
+    menu.init_for_nsapp();
+    menu
+}
+
+fn default_startup_hooks() -> Vec<StartupHook> {
+    #[cfg(target_os = "macos")]
+    {
+        vec![Box::new(|| Box::new(install_macos_menu()))]
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Vec::new()
+    }
+}
 /// Mocked display properties used by a headless application.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HeadlessOptions {
@@ -199,12 +294,8 @@ pub struct HeadlessAimerApp<W: Widget + 'static> {
 }
 
 impl<W: Widget + 'static> HeadlessAimerApp<W> {
-    fn new(widget: W, options: HeadlessOptions) -> HeadlessAimerApp<W> {
-        let scale_factor = if options
-            .scale_factor
-            .is_finite()
-            && options.scale_factor > 0.0
-        {
+    fn new(widget: W, options: HeadlessOptions, antialiasing: AntiAlias) -> HeadlessAimerApp<W> {
+        let scale_factor = if options.scale_factor.is_finite() && options.scale_factor > 0.0 {
             options.scale_factor
         } else {
             1.0
@@ -217,7 +308,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         Self {
             app: AimerApplicationHandler {
                 window: None,
-                render_ctx: AimerRenderContext::default(),
+                render_ctx: AimerRenderContext::new(antialiasing),
                 widget_root: None,
                 pending_widget: Some(widget),
                 cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
@@ -226,8 +317,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 window_scale: scale_factor,
                 native_window_size: None,
                 pending_resize: None,
-                startup_hook: None,
-                startup_resource: None,
+                startup_hooks: Vec::new(),
+                startup_resources: Vec::new(),
                 #[cfg(not(target_arch = "wasm32"))]
                 async_runtime,
                 #[cfg(debug_assertions)]
@@ -277,11 +368,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             visible_rect: None,
             window: self.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: self
-                .app
-                .async_runtime
-                .handle()
-                .clone(),
+            async_handle: self.app.async_runtime.handle().clone(),
             inherited_states: Default::default(),
         };
 
@@ -345,15 +432,56 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 
     /// Returns and clears whether application code requested another frame.
     pub fn take_redraw_request(&self) -> bool {
-        self.window
-            .take_redraw_request()
+        self.window.take_redraw_request()
     }
 }
 
-impl<W: Widget + 'static> AimerApp<W> {
+impl AimerApp {
+    /// Creates an application builder using lightweight analytic antialiasing.
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            child: (),
+            antialiasing: AntiAlias::default(),
+            startup_hooks: default_startup_hooks(),
+        }
+    }
+
+    /// Selects the antialiasing strategy used by the Cupid renderer.
+    #[inline]
+    pub fn with_antialiasing(mut self, antialiasing: AntiAlias) -> Self {
+        self.antialiasing = antialiasing;
+        self
+    }
+
+    /// Registers a callback to run when the native event loop first resumes.
+    ///
+    /// Setup callbacks run once, in registration order, before Aimer creates
+    /// its first window. The framework's platform setup runs before callbacks
+    /// registered by the application.
+    ///
+    /// The returned value is retained until the application exits, allowing
+    /// native resources created by the callback to remain alive for the full
+    /// application lifecycle.
+    #[inline]
+    pub fn setup<R: 'static>(mut self, setup: impl FnOnce() -> R + 'static) -> Self {
+        self.startup_hooks.push(Box::new(move || Box::new(setup())));
+        self
+    }
+
+    /// Installs the root widget and completes the application builder.
+    #[inline]
+    pub fn child<W: Widget + 'static>(self, child: W) -> AimerApp<W> {
+        AimerApp {
+            child,
+            antialiasing: self.antialiasing,
+            startup_hooks: self.startup_hooks,
+        }
+    }
+
     /// Starts a native application with `widget` as its root widget.
-    pub fn start(widget: W) {
-        start_event_loop(ModalHost::new().child(widget), None);
+    pub fn start<W: Widget + 'static>(widget: W) {
+        Self::new().child(widget).run();
     }
 
     /// Starts a native application and runs `setup` once the platform event
@@ -369,29 +497,79 @@ impl<W: Widget + 'static> AimerApp<W> {
     /// first resume, before Aimer creates its window. APIs that require an
     /// initialized native application or main-thread access should be called
     /// from this callback rather than before [`Self::start_with_setup`].
-    pub fn start_with_setup<R>(widget: W, setup: impl FnOnce() -> R + 'static)
+    pub fn start_with_setup<W, R>(widget: W, setup: impl FnOnce() -> R + 'static)
     where
+        W: Widget + 'static,
         R: 'static,
     {
-        let startup_hook = Box::new(move || Box::new(setup()) as Box<dyn std::any::Any>);
-        start_event_loop(ModalHost::new().child(widget), Some(startup_hook));
+        Self::new().child(widget).run_with_setup(setup);
     }
 
-    pub fn start_headless(widget: W) -> HeadlessAimerApp<ModalHost<W>> {
-        Self::start_headless_with(widget, HeadlessOptions::default())
+    pub fn start_headless<W: Widget + 'static>(widget: W) -> HeadlessAimerApp<ModalHost<W>> {
+        Self::new().child(widget).run_headless()
     }
 
-    pub fn start_headless_with(
+    pub fn start_headless_with<W: Widget + 'static>(
         widget: W,
         options: HeadlessOptions,
     ) -> HeadlessAimerApp<ModalHost<W>> {
-        HeadlessAimerApp::new(ModalHost::new().child(widget), options)
+        Self::new().child(widget).run_headless_with(options)
+    }
+}
+
+impl Default for AimerApp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<W: Widget + 'static> AimerApp<W> {
+    /// Returns the configured antialiasing strategy.
+    #[inline]
+    pub fn antialiasing(&self) -> AntiAlias {
+        self.antialiasing
+    }
+
+    /// Starts this configured application on the native event loop.
+    pub fn run(self) {
+        start_event_loop(
+            ModalHost::new().child(self.child),
+            self.startup_hooks,
+            self.antialiasing,
+        );
+    }
+
+    /// Starts this configured application and runs `setup` before its window is
+    /// created, retaining the returned resource until shutdown.
+    pub fn run_with_setup<R: 'static>(mut self, setup: impl FnOnce() -> R + 'static) {
+        self.startup_hooks.push(Box::new(move || Box::new(setup())));
+        start_event_loop(
+            ModalHost::new().child(self.child),
+            self.startup_hooks,
+            self.antialiasing,
+        );
+    }
+
+    /// Starts this configured application without creating a native window.
+    pub fn run_headless(self) -> HeadlessAimerApp<ModalHost<W>> {
+        self.run_headless_with(HeadlessOptions::default())
+    }
+
+    /// Starts this configured application headlessly with explicit display
+    /// properties.
+    pub fn run_headless_with(self, options: HeadlessOptions) -> HeadlessAimerApp<ModalHost<W>> {
+        HeadlessAimerApp::new(
+            ModalHost::new().child(self.child),
+            options,
+            self.antialiasing,
+        )
     }
 }
 
 fn start_event_loop(
     widget: impl Widget + 'static,
-    startup_hook: Option<Box<dyn FnOnce() -> Box<dyn std::any::Any>>>,
+    startup_hooks: Vec<StartupHook>,
+    antialiasing: AntiAlias,
 ) {
     if APP_STARTED.swap(true, Ordering::SeqCst) {
         return;
@@ -434,9 +612,7 @@ fn start_event_loop(
             .expect("Failed to create EventLoop")
     };
 
-    EVENT_PROXY
-        .set(event_loop.create_proxy())
-        .ok();
+    EVENT_PROXY.set(event_loop.create_proxy()).ok();
 
     // Route animation redraws requests through the event loop instead of letting
     // animating widgets (e.g. scroll momentum) spawn a sleeping thread per frame.
@@ -464,24 +640,16 @@ fn start_event_loop(
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     let inspector = InspectorAppHandle::connect(
         async_runtime.handle(),
-        DEFAULT_INSPECTOR_ADDRESS
-            .parse::<IpAddr>()
-            .unwrap(),
-        DEFAULT_INSPECTOR_PORT
-            .parse::<u16>()
-            .unwrap(),
+        DEFAULT_INSPECTOR_ADDRESS.parse::<IpAddr>().unwrap(),
+        DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap(),
     );
     #[cfg(all(debug_assertions, target_arch = "wasm32"))]
-    let inspector = aimer_inspector::start(
-        DEFAULT_INSPECTOR_PORT
-            .parse::<u16>()
-            .unwrap(),
-    );
+    let inspector = aimer_inspector::start(DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap());
 
     info!("Creating App instance...");
     let mut app = AimerApplicationHandler {
         window: None,
-        render_ctx: AimerRenderContext::default(),
+        render_ctx: AimerRenderContext::new(antialiasing),
         widget_root: None,
         pending_widget: Some(widget),
         cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
@@ -490,8 +658,8 @@ fn start_event_loop(
         window_scale: 1.0,
         native_window_size: None,
         pending_resize: None,
-        startup_hook,
-        startup_resource: None,
+        startup_hooks,
+        startup_resources: Vec::new(),
         #[cfg(not(target_arch = "wasm32"))]
         async_runtime,
         #[cfg(debug_assertions)]
@@ -515,8 +683,7 @@ fn start_event_loop(
         Err(e) => aimer_utils::error!("EventLoop::run_app failed: {:?}", e),
     }
     #[cfg(not(target_arch = "wasm32"))]
-    app.async_runtime
-        .shutdown_background();
+    app.async_runtime.shutdown_background();
 }
 
 #[cfg(test)]
@@ -536,6 +703,33 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn app_builder_defaults_to_analytic_antialiasing() {
+        let app = AimerApp::new().child(RedrawWidget);
+
+        assert_eq!(app.antialiasing(), AntiAlias::Analytic);
+    }
+
+    #[test]
+    fn app_builder_preserves_the_selected_antialiasing_mode() {
+        let app = AimerApp::new()
+            .with_antialiasing(AntiAlias::Msaa2x)
+            .child(RedrawWidget);
+
+        assert_eq!(app.antialiasing(), AntiAlias::Msaa2x);
+    }
+
+    #[test]
+    fn app_builder_appends_each_setup_hook() {
+        let default_hook_count = usize::from(cfg!(target_os = "macos"));
+        let app = AimerApp::new()
+            .setup(|| "first resource")
+            .setup(|| "second resource")
+            .child(RedrawWidget);
+
+        assert_eq!(app.startup_hooks.len(), default_hook_count + 2);
+    }
+
     struct RecordingWidget {
         builds: Arc<AtomicUsize>,
         cancels: Arc<AtomicUsize>,
@@ -543,8 +737,7 @@ mod tests {
 
     impl Widget for RecordingWidget {
         fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
-            self.builds
-                .fetch_add(1, Ordering::SeqCst);
+            self.builds.fetch_add(1, Ordering::SeqCst);
             RecordingElement {
                 cancels: self.cancels.clone(),
             }
@@ -569,8 +762,7 @@ mod tests {
     impl EventElement for RecordingElement {
         fn on_event(&self, event: &ElementEvent) -> bool {
             if matches!(event, ElementEvent::Cancel) {
-                self.cancels
-                    .fetch_add(1, Ordering::SeqCst);
+                self.cancels.fetch_add(1, Ordering::SeqCst);
             }
             false
         }
@@ -607,10 +799,7 @@ mod tests {
         app.render_frame();
 
         assert_eq!(
-            app.app
-                .widget_root
-                .as_ref()
-                .map(|root| root.debug_name()),
+            app.app.widget_root.as_ref().map(|root| root.debug_name()),
             Some("ModalHost")
         );
     }

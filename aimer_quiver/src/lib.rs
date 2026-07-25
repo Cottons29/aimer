@@ -6,6 +6,7 @@ mod first_frame;
 pub mod aimer_app;
 pub mod handler;
 pub use aimer_app::{AimerApp, HeadlessAimerApp, HeadlessOptions};
+pub use aimer_cupid::AntiAlias;
 pub use first_frame::{FIRST_FRAME_RENDERED_EVENT, set_first_frame_rendered_callback};
 #[cfg(target_os = "ios")]
 mod ios_screen {

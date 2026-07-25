@@ -35,6 +35,9 @@ ndk-glue.workspace = true
 ndk.workspace = true
 rustls-platform-verifier .workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+muda.workspace = true
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true

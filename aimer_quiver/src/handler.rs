@@ -34,6 +34,8 @@ use crate::handler::event_handler::WindowEventHandler;
 use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
 
+pub(crate) type StartupHook = Box<dyn FnOnce() -> Box<dyn Any>>;
+
 /// Walk the snapshot tree and find a node matching the hovered widget by name
 /// and bounds.
 #[cfg(debug_assertions)]
@@ -73,8 +75,8 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub window_scale: f64,
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
-    pub(crate) startup_hook: Option<Box<dyn FnOnce() -> Box<dyn Any>>>,
-    pub(crate) startup_resource: Option<Box<dyn Any>>,
+    pub(crate) startup_hooks: Vec<StartupHook>,
+    pub(crate) startup_resources: Vec<Box<dyn Any>>,
     pub start_up_frames: Cell<u8>,
     pub(crate) first_frame_notifier: FirstFrameNotifier,
     pub active_touch_id: Option<u64>,
@@ -92,20 +94,18 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub inspector_redraw_frames: Cell<u8>,
 }
 
-fn run_startup_hook(
-    startup_hook: &mut Option<Box<dyn FnOnce() -> Box<dyn Any>>>,
-    startup_resource: &mut Option<Box<dyn Any>>,
+fn run_startup_hooks(
+    startup_hooks: &mut Vec<StartupHook>,
+    startup_resources: &mut Vec<Box<dyn Any>>,
 ) {
-    if let Some(hook) = startup_hook.take() {
-        *startup_resource = Some(hook());
-    }
+    startup_resources.extend(startup_hooks.drain(..).map(|hook| hook()));
 }
 
 impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEvent>
     for AimerApplicationHandler<W>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        run_startup_hook(&mut self.startup_hook, &mut self.startup_resource);
+        run_startup_hooks(&mut self.startup_hooks, &mut self.startup_resources);
 
         #[cfg(target_os = "android")]
         {
@@ -147,9 +147,7 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
         };
 
         if self.window.is_none() {
-            let window = event_loop
-                .create_window(window_attributes)
-                .unwrap();
+            let window = event_loop.create_window(window_attributes).unwrap();
             let window: &'static Window = Box::leak(Box::new(window)); // Leak to static ref
             aimer_events::window::set_window(window);
             self.window = Some(window);
@@ -202,8 +200,7 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
         // debug!("Logical Window Size : {:?}", window.outer_size());
         // debug!("Physical Window Size : {size:?}");
 
-        self.render_ctx
-            .initialize(window, size);
+        self.render_ctx.initialize(window, size);
 
         self.window_scale = window.scale_factor();
 
@@ -232,31 +229,22 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
                 return;
             };
             window.request_redraw();
-            self.start_up_frames
-                .set(self.start_up_frames.get() - 1);
+            self.start_up_frames.set(self.start_up_frames.get() - 1);
             // debug!("About to wait, {} frames left",
             // self.start_up_frames.get());
         }
         #[cfg(debug_assertions)]
         {
             let current = self.inspector_enabled();
-            let prev = self
-                .inspector_prev_enabled
-                .get();
+            let prev = self.inspector_prev_enabled.get();
             if current != prev {
-                self.inspector_prev_enabled
-                    .set(current);
-                self.inspector_change
-                    .set(true);
-                self.inspector_redraw_frames
-                    .set(5);
+                self.inspector_prev_enabled.set(current);
+                self.inspector_change.set(true);
+                self.inspector_redraw_frames.set(5);
             }
-            let frames = self
-                .inspector_redraw_frames
-                .get();
+            let frames = self.inspector_redraw_frames.get();
             if frames > 0 {
-                self.inspector_redraw_frames
-                    .set(frames - 1);
+                self.inspector_redraw_frames.set(frames - 1);
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -290,19 +278,16 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             .as_ref()
             .filter(|inspector| inspector.is_enabled())
         {
-            let snapshot = self
-                .widget_root
-                .as_ref()
-                .map(|root| {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        aimer_inspector::InspectorServer::snapshot_tree(root)
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        aimer_inspector::snapshot_tree(root.as_ref())
-                    }
-                });
+            let snapshot = self.widget_root.as_ref().map(|root| {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    aimer_inspector::InspectorServer::snapshot_tree(root)
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    aimer_inspector::snapshot_tree(root.as_ref())
+                }
+            });
 
             let hovered_id =
                 if let Ok(hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.read() {
@@ -337,23 +322,15 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         #[cfg(debug_assertions)]
         {
             let current = self.inspector_enabled();
-            let prev = self
-                .inspector_prev_enabled
-                .get();
+            let prev = self.inspector_prev_enabled.get();
             if current != prev {
-                self.inspector_prev_enabled
-                    .set(current);
-                self.inspector_change
-                    .set(true);
-                self.inspector_redraw_frames
-                    .set(5);
+                self.inspector_prev_enabled.set(current);
+                self.inspector_change.set(true);
+                self.inspector_redraw_frames.set(5);
             }
-            let frames = self
-                .inspector_redraw_frames
-                .get();
+            let frames = self.inspector_redraw_frames.get();
             if frames > 0 {
-                self.inspector_redraw_frames
-                    .set(frames - 1);
+                self.inspector_redraw_frames.set(frames - 1);
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -380,10 +357,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let cursor_pos = self.cursor_pos;
 
         #[cfg(not(target_arch = "wasm32"))]
-        let async_handle = self
-            .async_runtime
-            .handle()
-            .clone();
+        let async_handle = self.async_runtime.handle().clone();
         #[cfg(debug_assertions)]
         let inspector_enabled = self.inspector_enabled();
         let widget_root = &mut self.widget_root;
@@ -439,9 +413,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             }
         };
 
-        let presented = self
-            .render_ctx
-            .render_frame(draw_widgets);
+        let presented = self.render_ctx.render_frame(draw_widgets);
         self.first_frame_notifier
             .notify_after_present(presented, crate::first_frame::dispatch_first_frame_rendered);
         if !presented {
@@ -463,42 +435,48 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 #[cfg(test)]
 mod tests {
     use std::any::Any;
-    use std::cell::Cell;
+    use std::cell::RefCell;
     use std::rc::Rc;
 
-    use super::run_startup_hook;
+    use super::run_startup_hooks;
 
     #[test]
-    fn startup_hook_runs_only_once() {
-        let calls = Rc::new(Cell::new(0));
-        let calls_for_hook = calls.clone();
-        let mut hook: Option<Box<dyn FnOnce() -> Box<dyn Any>>> = Some(Box::new(move || {
-            calls_for_hook.set(calls_for_hook.get() + 1);
-            Box::new("native resource")
-        }));
-        let mut resource = None;
+    fn startup_hooks_run_once_in_registration_order() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let mut hooks: Vec<Box<dyn FnOnce() -> Box<dyn Any>>> = [1_u8, 2, 3]
+            .into_iter()
+            .map(|call| {
+                let calls = calls.clone();
+                Box::new(move || {
+                    calls.borrow_mut().push(call);
+                    Box::new(call) as Box<dyn Any>
+                }) as Box<dyn FnOnce() -> Box<dyn Any>>
+            })
+            .collect();
+        let mut resources = Vec::new();
 
-        run_startup_hook(&mut hook, &mut resource);
-        run_startup_hook(&mut hook, &mut resource);
+        run_startup_hooks(&mut hooks, &mut resources);
+        run_startup_hooks(&mut hooks, &mut resources);
 
-        assert_eq!(calls.get(), 1);
-        assert!(hook.is_none());
+        assert_eq!(*calls.borrow(), vec![1, 2, 3]);
+        assert!(hooks.is_empty());
         assert_eq!(
-            resource
-                .unwrap()
-                .downcast_ref::<&str>(),
-            Some(&"native resource")
+            resources
+                .iter()
+                .map(|resource| *resource.downcast_ref::<u8>().unwrap())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
         );
     }
 
     #[test]
-    fn missing_startup_hook_is_a_no_op() {
-        let mut hook: Option<Box<dyn FnOnce() -> Box<dyn Any>>> = None;
-        let mut resource = None;
+    fn missing_startup_hooks_are_a_no_op() {
+        let mut hooks = Vec::new();
+        let mut resources = Vec::new();
 
-        run_startup_hook(&mut hook, &mut resource);
+        run_startup_hooks(&mut hooks, &mut resources);
 
-        assert!(hook.is_none());
-        assert!(resource.is_none());
+        assert!(hooks.is_empty());
+        assert!(resources.is_empty());
     }
 }
