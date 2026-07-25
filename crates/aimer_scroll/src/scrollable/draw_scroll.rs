@@ -27,58 +27,34 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         let content_size = self.content_size(ctx);
         // Cache content size for the rest of this frame (scrollbar drawing reads
         // it) to avoid recomputing the child layout multiple times per draw.
-        self.ctrl
-            .cached_content_size
-            .set(content_size);
-        let transform = ctx
-            .canvas
-            .get_transform_translation();
+        self.ctrl.cached_content_size.set(content_size);
+        let transform = ctx.canvas.get_transform_translation();
         let max_x = (content_size.width - viewport_w).max(0.0);
         let max_y = (content_size.height - viewport_h).max(0.0);
 
         self.bounds
             .save(ctx.scale, transform.0, transform.1, viewport_w, viewport_h);
-        self.ctrl
-            .cached_viewport
-            .set((viewport_w, viewport_h));
-        self.ctrl
-            .cursor_pos
-            .set(Some(ctx.cursor_pos));
+        self.ctrl.cached_viewport.set((viewport_w, viewport_h));
+        self.ctrl.cursor_pos.set(Some(ctx.cursor_pos));
 
         let mut final_max = Vec2d { x: max_x, y: max_y };
-        let user_max = self
-            .ctrl
-            .scroll_behavior
-            .max_scroll;
+        let user_max = self.ctrl.scroll_behavior.max_scroll;
         if user_max.x != f32::MAX {
-            final_max.x = final_max
-                .x
-                .max(user_max.x * ctx.scale);
+            final_max.x = final_max.x.max(user_max.x * ctx.scale);
         }
         if user_max.y != f32::MAX {
-            final_max.y = final_max
-                .y
-                .max(user_max.y * ctx.scale);
+            final_max.y = final_max.y.max(user_max.y * ctx.scale);
         }
 
-        self.ctrl
-            .cached_max_scroll
-            .set(final_max);
+        self.ctrl.cached_max_scroll.set(final_max);
 
-        let user_min = self
-            .ctrl
-            .scroll_behavior
-            .min_scroll;
-        self.ctrl
-            .cached_min_scroll
-            .set(Vec2d {
-                x: user_min.x * ctx.scale,
-                y: user_min.y * ctx.scale,
-            });
+        let user_min = self.ctrl.scroll_behavior.min_scroll;
+        self.ctrl.cached_min_scroll.set(Vec2d {
+            x: user_min.x * ctx.scale,
+            y: user_min.y * ctx.scale,
+        });
 
-        self.ctrl
-            .last_scale
-            .set(ctx.scale);
+        self.ctrl.last_scale.set(ctx.scale);
 
         let mut offset = self.ctrl.scroll_offset.get();
 
@@ -88,9 +64,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             // if vel_mag > VELOCITY_EPSILON {
             //     info!("[scroll] DRAW momentum vel_mag={:.2} offset=({:.1},{:.1})",
             // vel_mag, offset.x, offset.y); }
-            let (new_offset, needs_redraw) = self
-                .ctrl
-                .update_momentum(offset);
+            let (new_offset, needs_redraw) = self.ctrl.update_momentum(offset);
             offset = new_offset;
 
             if needs_redraw {
@@ -104,9 +78,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             }
         }
 
-        self.ctrl
-            .scroll_offset
-            .set(offset);
+        self.ctrl.scroll_offset.set(offset);
 
         // Level-triggered per-frame notification: fires `on_scroll` only when the
         // logical offset actually moved since the last frame (epsilon-guarded), so
@@ -125,9 +97,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             },
         );
 
-        let offset = self
-            .ctrl
-            .visual_offset(offset);
+        let offset = self.ctrl.visual_offset(offset);
 
         // Clip to viewport
         ctx.canvas.save();
@@ -153,16 +123,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         let mut child_ctx = ctx.clone();
         match self.ctrl.axis {
-            ScrollAxis::Vertical => {
-                child_ctx
-                    .box_constraint
-                    .max_height = f32::MAX
-            }
-            ScrollAxis::Horizontal => {
-                child_ctx
-                    .box_constraint
-                    .max_width = f32::MAX
-            }
+            ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
+            ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
         }
         child_ctx.visible_rect = Some((-offset_x, -offset_y, viewport_w, viewport_h));
 

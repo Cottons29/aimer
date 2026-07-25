@@ -28,7 +28,8 @@ impl Opacity {
     /// Sets the alpha multiplier applied while painting the child.
     ///
     /// The default is `1.0`. Finite values are clamped to the inclusive
-    /// `0.0..=1.0` range, and `NaN` is normalized to `1.0`. Layout is unaffected.
+    /// `0.0..=1.0` range, and `NaN` is normalized to `1.0`. Layout is
+    /// unaffected.
     pub fn opacity(mut self, opacity: f32) -> Self {
         self.opacity = normalized_opacity(opacity);
         self
@@ -87,8 +88,7 @@ struct RawOpacity {
 
 impl Drawable for RawOpacity {
     fn draw(&self, ctx: &BuildContext) {
-        ctx.canvas
-            .set_alpha(self.opacity);
+        ctx.canvas.set_alpha(self.opacity);
         self.child.draw(ctx);
         ctx.canvas.restore_alpha();
     }
@@ -116,8 +116,7 @@ impl LayoutElement for RawOpacity {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
 }
 

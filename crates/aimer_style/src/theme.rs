@@ -112,24 +112,12 @@ impl Animatable for ThemeData {
             return *other;
         }
         Self {
-            primary_color: self
-                .primary_color
-                .lerp(other.primary_color, t),
-            on_primary_color: self
-                .on_primary_color
-                .lerp(other.on_primary_color, t),
-            background_color: self
-                .background_color
-                .lerp(other.background_color, t),
-            on_background_color: self
-                .on_background_color
-                .lerp(other.on_background_color, t),
-            surface_color: self
-                .surface_color
-                .lerp(other.surface_color, t),
-            on_surface_color: self
-                .on_surface_color
-                .lerp(other.on_surface_color, t),
+            primary_color: self.primary_color.lerp(other.primary_color, t),
+            on_primary_color: self.on_primary_color.lerp(other.on_primary_color, t),
+            background_color: self.background_color.lerp(other.background_color, t),
+            on_background_color: self.on_background_color.lerp(other.on_background_color, t),
+            surface_color: self.surface_color.lerp(other.surface_color, t),
+            on_surface_color: self.on_surface_color.lerp(other.on_surface_color, t),
         }
     }
 }
@@ -142,9 +130,9 @@ impl Default for ThemeData {
 
 /// Accesses the nearest theme supplied by an [`crate::AnimatedTheme`] ancestor.
 ///
-/// Use [`Theme::of`] while building themed widgets so they rebuild as the theme animates. Use
-/// [`Theme::read`] when the caller only needs the current value and should not subscribe to future
-/// changes.
+/// Use [`Theme::of`] while building themed widgets so they rebuild as the theme
+/// animates. Use [`Theme::read`] when the caller only needs the current value
+/// and should not subscribe to future changes.
 ///
 /// A derived theme requires every field to implement [`Animatable`]:
 ///
@@ -178,7 +166,8 @@ pub trait Theme: Animatable + Clone + PartialEq + Sized + 'static {
         context.read::<Self>()
     }
 
-    /// Returns a copy of the current theme without subscribing the building widget to changes.
+    /// Returns a copy of the current theme without subscribing the building
+    /// widget to changes.
     ///
     /// # Panics
     ///

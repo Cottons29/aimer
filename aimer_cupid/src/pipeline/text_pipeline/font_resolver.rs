@@ -117,11 +117,7 @@ impl FontRecord {
         let charmap = face.charmap();
         probes
             .iter()
-            .any(|&codepoint| {
-                charmap
-                    .map(codepoint)
-                    .is_some()
-            })
+            .any(|&codepoint| charmap.map(codepoint).is_some())
     }
 
     /// Retain shared in-memory data or memory-map a file-backed font without
@@ -136,11 +132,7 @@ impl FontRecord {
             let file = std::fs::File::open(path.as_ref()).ok()?;
             // SAFETY: the read-only mapping owns its file-backed virtual memory
             // region and remains valid independently of the `File` handle.
-            unsafe {
-                memmap2::Mmap::map(&file)
-                    .ok()
-                    .map(FontData::Mapped)
-            }
+            unsafe { memmap2::Mmap::map(&file).ok().map(FontData::Mapped) }
         }
         #[cfg(target_arch = "wasm32")]
         None
@@ -167,10 +159,7 @@ impl FontRecord {
     pub(crate) fn glyph_index(&self, codepoint: char) -> Option<u16> {
         if let Some(bytes) = self.bytes.as_ref() {
             let face = font_ref(bytes.as_ref(), self.collection_index)?;
-            return face
-                .charmap()
-                .map(codepoint)
-                .map(|id| id.to_u32() as u16);
+            return face.charmap().map(codepoint).map(|id| id.to_u32() as u16);
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -179,9 +168,7 @@ impl FontRecord {
             let file = std::fs::File::open(path.as_ref()).ok()?;
             let map = unsafe { memmap2::Mmap::map(&file).ok()? };
             let face = font_ref(&map, self.collection_index)?;
-            face.charmap()
-                .map(codepoint)
-                .map(|id| id.to_u32() as u16)
+            face.charmap().map(codepoint).map(|id| id.to_u32() as u16)
         }
         #[cfg(target_arch = "wasm32")]
         None
@@ -441,10 +428,7 @@ fn core_text_fallback_path_for_probes(probes: &[char]) -> Option<PathBuf> {
             return None;
         }
 
-        let path_len = path_buf
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(0);
+        let path_len = path_buf.iter().position(|&b| b == 0).unwrap_or(0);
         let path = std::str::from_utf8(&path_buf[..path_len]).ok()?;
         Some(PathBuf::from(path))
     }
@@ -510,10 +494,7 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
     });
     let mut fallbacks: Vec<FontRecord> = Vec::new();
     let mut seen_ids = HashSet::new();
-    let family_names: Vec<String> = collection
-        .family_names()
-        .map(str::to_owned)
-        .collect();
+    let family_names: Vec<String> = collection.family_names().map(str::to_owned).collect();
 
     for group in PROBE_GROUPS {
         'family_loop: for family_name in &family_names {
@@ -570,9 +551,7 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
 
 pub fn shared_fallback_chain() -> Vec<FontRecord> {
     static FALLBACKS: OnceLock<Vec<FontRecord>> = OnceLock::new();
-    FALLBACKS
-        .get_or_init(|| build_fallback_chain(1))
-        .clone()
+    FALLBACKS.get_or_init(|| build_fallback_chain(1)).clone()
 }
 
 /// Pre-build the fallback chain and validate each fallback face with
@@ -621,11 +600,7 @@ mod tests {
             .expect("mapped glyph should have an advance width");
 
         assert!(advance > 0.0);
-        assert!(
-            face.outline_glyphs()
-                .get(glyph_id)
-                .is_some()
-        );
+        assert!(face.outline_glyphs().get(glyph_id).is_some());
         assert!(!FontRecord::face_is_color(&face));
     }
 

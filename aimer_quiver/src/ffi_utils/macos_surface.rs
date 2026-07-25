@@ -38,10 +38,7 @@ pub fn enable_transactional_surface_presentation(window: &Window) -> bool {
     // called on winit's main event-loop thread immediately after wgpu creates
     // its CAMetalLayer. Objective-C nil messaging is safe for absent layers.
     unsafe {
-        let view = appkit
-            .ns_view
-            .as_ptr()
-            .cast::<Object>();
+        let view = appkit.ns_view.as_ptr().cast::<Object>();
         let root_layer: *mut Object = msg_send![view, layer];
         let Some(metal_layer_class) = Class::get("CAMetalLayer") else {
             return false;

@@ -110,11 +110,7 @@ pub(super) enum BatchCapacityPlan {
 fn allocations_fit(mut packer: ShelfPacker, sizes: &[(u32, u32)]) -> bool {
     sizes
         .iter()
-        .all(|&(width, height)| {
-            packer
-                .allocate(width, height)
-                .is_some()
-        })
+        .all(|&(width, height)| packer.allocate(width, height).is_some())
 }
 
 fn plan_batch(
@@ -126,10 +122,7 @@ fn plan_batch(
     let mut trial = packer.clone();
     for &(width, height) in missing_sizes {
         loop {
-            if trial
-                .allocate(width, height)
-                .is_some()
-            {
+            if trial.allocate(width, height).is_some() {
                 break;
             }
             if trial.width >= max_size {
@@ -283,9 +276,7 @@ impl GlyphAtlas {
         }
 
         // Try to allocate.
-        let pos = self
-            .packer
-            .allocate(glyph_w, glyph_h);
+        let pos = self.packer.allocate(glyph_w, glyph_h);
         let (x, y) = match pos {
             Some(p) => p,
             None => {
@@ -299,14 +290,13 @@ impl GlyphAtlas {
 
         // Stage the glyph bitmap for the next `upload`. We keep only this glyph's
         // bytes (dropped after upload) rather than a full-size CPU mirror.
-        self.pending
-            .push(PendingGlyph {
-                x,
-                y,
-                width: glyph_w,
-                height: glyph_h,
-                data: bitmap.to_vec(),
-            });
+        self.pending.push(PendingGlyph {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+            data: bitmap.to_vec(),
+        });
 
         let region = AtlasRegion {
             x,
@@ -421,8 +411,7 @@ impl GlyphAtlas {
         // all cached positions valid while guaranteeing new glyphs land in free
         // space.
         self.packer = ShelfPacker::new(new_w, new_h);
-        self.packer
-            .start_fresh_shelf_at(old_h);
+        self.packer.start_fresh_shelf_at(old_h);
 
         self.width = new_w;
         self.height = new_h;
@@ -547,9 +536,7 @@ impl ColorGlyphAtlas {
             return *region;
         }
 
-        let pos = self
-            .packer
-            .allocate(glyph_w, glyph_h);
+        let pos = self.packer.allocate(glyph_w, glyph_h);
         let (x, y) = match pos {
             Some(p) => p,
             None => {
@@ -561,14 +548,13 @@ impl ColorGlyphAtlas {
         };
 
         // Stage this glyph's RGBA8 bytes for the next `upload`; no full-size mirror.
-        self.pending
-            .push(PendingGlyph {
-                x,
-                y,
-                width: glyph_w,
-                height: glyph_h,
-                data: bitmap.to_vec(),
-            });
+        self.pending.push(PendingGlyph {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+            data: bitmap.to_vec(),
+        });
 
         let region = AtlasRegion {
             x,
@@ -663,8 +649,7 @@ impl ColorGlyphAtlas {
         // could place new glyphs over existing ones (overlapping/garbled text after
         // a resize-triggered reflow). See `GlyphAtlas::grow` for the full rationale.
         self.packer = ShelfPacker::new(new_w, new_h);
-        self.packer
-            .start_fresh_shelf_at(old_h);
+        self.packer.start_fresh_shelf_at(old_h);
 
         self.width = new_w;
         self.height = new_h;
@@ -732,9 +717,7 @@ mod tests {
         for r in &sorted {
             let _ = packer.allocate(r.width, r.height);
         }
-        packer
-            .allocate(next.0, next.1)
-            .unwrap()
+        packer.allocate(next.0, next.1).unwrap()
     }
 
     /// The new `grow()` strategy: keep the packer at the doubled size but
@@ -748,9 +731,7 @@ mod tests {
     ) -> (u32, u32) {
         let mut packer = ShelfPacker::new(new_w, new_h);
         packer.start_fresh_shelf_at(old_h);
-        packer
-            .allocate(next.0, next.1)
-            .unwrap()
+        packer.allocate(next.0, next.1).unwrap()
     }
 
     #[test]
@@ -768,9 +749,7 @@ mod tests {
             width: next.0,
             height: next.1,
         };
-        let overlap = regions
-            .iter()
-            .any(|r| overlaps(r, &new_region));
+        let overlap = regions.iter().any(|r| overlaps(r, &new_region));
         assert!(
             overlap,
             "expected replay-after-grow to overlap existing glyphs; got {:?}",
@@ -812,16 +791,8 @@ mod tests {
     #[test]
     fn max_size_batch_requests_reset_before_any_frame_allocation() {
         let mut packer = ShelfPacker::new(8, 8);
-        assert!(
-            packer
-                .allocate(7, 3)
-                .is_some()
-        );
-        assert!(
-            packer
-                .allocate(7, 3)
-                .is_some()
-        );
+        assert!(packer.allocate(7, 3).is_some());
+        assert!(packer.allocate(7, 3).is_some());
 
         let plan = plan_batch(&packer, 8, &[(2, 2)], &[(2, 2), (2, 2)]);
 

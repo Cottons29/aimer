@@ -21,10 +21,7 @@ impl OverflowEdges {
 
     #[cfg(debug_assertions)]
     fn maximum(self) -> f32 {
-        self.left
-            .max(self.top)
-            .max(self.right)
-            .max(self.bottom)
+        self.left.max(self.top).max(self.right).max(self.bottom)
     }
 }
 
@@ -178,11 +175,7 @@ impl<W: Widget + 'static> Widget for OverflowIndicator<W> {
         let label = self
             .label
             .clone()
-            .unwrap_or_else(|| {
-                self.child
-                    .debug_name()
-                    .to_string()
-            });
+            .unwrap_or_else(|| self.child.debug_name().to_string());
         RawOverflowIndicator {
             child,
             label,
@@ -210,8 +203,7 @@ impl Drawable for RawOverflowIndicator {
 
         ctx.canvas.save();
         if self.clip {
-            ctx.canvas
-                .set_clip(Vec2d::default(), bounds);
+            ctx.canvas.set_clip(Vec2d::default(), bounds);
         }
         self.child.draw(ctx);
         ctx.canvas.restore();
@@ -277,16 +269,12 @@ fn diagnostic_bounds(ctx: &BuildContext) -> ResolvedSize {
     } = ctx.box_constraint;
     ResolvedSize {
         width: if max_width == f32::MAX {
-            ctx.parent_size
-                .width
-                .max(min_width)
+            ctx.parent_size.width.max(min_width)
         } else {
             max_width.max(min_width)
         },
         height: if max_height == f32::MAX {
-            ctx.parent_size
-                .height
-                .max(min_height)
+            ctx.parent_size.height.max(min_height)
         } else {
             max_height.max(min_height)
         },

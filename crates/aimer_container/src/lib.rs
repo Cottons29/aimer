@@ -38,8 +38,7 @@ mod tests {
 
     impl Drawable for MeasuredPositionedChild {
         fn draw(&self, ctx: &BuildContext) {
-            self.observed_parent_size
-                .set(ctx.parent_size);
+            self.observed_parent_size.set(ctx.parent_size);
         }
     }
 
@@ -112,9 +111,7 @@ mod tests {
             // Bare stateful with the default "Unknown" name, exactly like
             // `TextButton::to_element`. The surrounding `NamedWidget` then
             // wraps it in a `StatelessElement("ButtonLike")`.
-            StatefulElement::new(self, ctx)
-                .0
-                .boxed()
+            StatefulElement::new(self, ctx).0.boxed()
         }
     }
 
@@ -132,9 +129,7 @@ mod tests {
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
             self.observers[self.index].set(if self.selected { 1 } else { 0 });
-            Container::new()
-                .height(32)
-                .child(crate::ZeroSizedBox)
+            Container::new().height(32).child(crate::ZeroSizedBox)
         }
     }
 
@@ -308,11 +303,7 @@ mod tests {
             .top(0)
             .left(0)
             .layer(1)
-            .child(
-                Container::new()
-                    .height(48)
-                    .child(ZeroSizedBox),
-            )
+            .child(Container::new().height(48).child(ZeroSizedBox))
             .boxed();
         let content = Positioned::new()
             .top(0)
@@ -322,16 +313,13 @@ mod tests {
                 Scrollable::new()
                     .axis(ScrollAxis::Vertical)
                     .child(Column::new().children(vec![
-                        placeholder_section(100),
-                        placeholder_section(100),
-                        placeholder_section(100),
-                        TabWidget {
-                            observer,
+                placeholder_section(100),
+                placeholder_section(100),
+                placeholder_section(100),
+                TabWidget { observer,
                             live_updater,
-                            button_observers,
-                        }
-                        .boxed(),
-                    ])),
+                            button_observers, }.boxed(),
+            ])),
             )
             .boxed();
 
@@ -354,11 +342,8 @@ mod tests {
         let initial_ctx = dummy_build_context(500.0, 600.0, None);
         let observer = Rc::new(Cell::new(usize::MAX));
         let live_updater = Rc::new(RefCell::new(None));
-        let button_observers: Rc<Vec<Rc<Cell<i32>>>> = Rc::new(
-            (0..4)
-                .map(|_| Rc::new(Cell::new(-1)))
-                .collect(),
-        );
+        let button_observers: Rc<Vec<Rc<Cell<i32>>>> =
+            Rc::new((0..4).map(|_| Rc::new(Cell::new(-1))).collect());
 
         let initial_child = build_home_page(
             &initial_ctx,
@@ -418,10 +403,8 @@ mod tests {
         let observer_after_resize = observer.get();
         let live_index_after_resize = current_live_updater(&live_updater).read(|state| state.index);
         let verdict = Verdict::classify(observer_after_resize, live_index_after_resize);
-        let button_highlight_after_resize: Vec<i32> = button_observers
-            .iter()
-            .map(|o| o.get())
-            .collect();
+        let button_highlight_after_resize: Vec<i32> =
+            button_observers.iter().map(|o| o.get()).collect();
 
         VariantResult {
             label: match (culled, resize_count) {
@@ -557,8 +540,7 @@ mod tests {
     impl EventElement for MainAxisProbe {}
     impl LayoutElement for MainAxisProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-            self.seen
-                .set(ctx.box_constraint.max_width);
+            self.seen.set(ctx.box_constraint.max_width);
             ResolvedSize {
                 width: ctx.box_constraint.max_width,
                 height: 24.0,
@@ -591,8 +573,7 @@ mod tests {
     impl EventElement for IntrinsicProbe {}
     impl LayoutElement for IntrinsicProbe {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-            self.seen
-                .set(ctx.box_constraint.max_width);
+            self.seen.set(ctx.box_constraint.max_width);
             ResolvedSize {
                 width: self.intrinsic_width,
                 height: ctx.box_constraint.max_height,
@@ -621,8 +602,7 @@ mod tests {
     }
     impl Drawable for ConstraintSensitiveProbe {
         fn draw(&self, ctx: &BuildContext) {
-            self.drawn_width
-                .set(ctx.box_constraint.max_width);
+            self.drawn_width.set(ctx.box_constraint.max_width);
         }
     }
     impl EventElement for ConstraintSensitiveProbe {}
@@ -660,8 +640,7 @@ mod tests {
     }
     impl Drawable for ConstraintSensitiveColumnProbe {
         fn draw(&self, ctx: &BuildContext) {
-            self.drawn_height
-                .set(ctx.box_constraint.max_height);
+            self.drawn_height.set(ctx.box_constraint.max_height);
         }
     }
     impl EventElement for ConstraintSensitiveColumnProbe {}

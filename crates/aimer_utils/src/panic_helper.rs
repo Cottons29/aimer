@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 use std::iter;
 use std::panic::Location;
-
 #[cfg(not(target_arch = "wasm32"))]
 use std::{env, fs};
 
@@ -14,8 +13,9 @@ mod embedded_sources {
 pub struct PanicHelper;
 
 impl PanicHelper {
-    /// Formats source coordinates and highlights the source expression when it was embedded at
-    /// compile time or remains available on the native filesystem.
+    /// Formats source coordinates and highlights the source expression when it
+    /// was embedded at compile time or remains available on the native
+    /// filesystem.
     pub fn location(location: &Location<'_>) -> String {
         format_location(location.file(), location.line(), location.column())
     }
@@ -62,15 +62,12 @@ fn read_source(file: &str) -> Option<Cow<'static, str>> {
 #[cfg(debug_assertions)]
 fn read_embedded_source(file: &str) -> Option<&'static str> {
     let file = file.replace('\\', "/");
-    if let Some((_, source)) = embedded_sources::SOURCES
-        .iter()
-        .find(|(path, _)| {
-            file == *path
-                || file
-                    .strip_suffix(path)
-                    .is_some_and(|prefix| prefix.ends_with('/'))
-        })
-    {
+    if let Some((_, source)) = embedded_sources::SOURCES.iter().find(|(path, _)| {
+        file == *path
+            || file
+                .strip_suffix(path)
+                .is_some_and(|prefix| prefix.ends_with('/'))
+    }) {
         return Some(source);
     }
 
@@ -79,10 +76,7 @@ fn read_embedded_source(file: &str) -> Option<&'static str> {
         .iter()
         .filter(|(path, _)| path.ends_with(&suffix));
     let (_, source) = matches.next()?;
-    matches
-        .next()
-        .is_none()
-        .then_some(*source)
+    matches.next().is_none().then_some(*source)
 }
 
 #[cfg(not(debug_assertions))]
@@ -97,14 +91,8 @@ fn highlight_source_line(source_line: &str, column: u32) -> Option<String> {
         .take(start)
         .map(|character| if character == '\t' { '\t' } else { ' ' })
         .collect();
-    let expression = source_line
-        .chars()
-        .skip(start)
-        .collect::<String>();
-    let expression = expression
-        .trim_end()
-        .trim_end_matches(';')
-        .trim_end();
+    let expression = source_line.chars().skip(start).collect::<String>();
+    let expression = expression.trim_end().trim_end_matches(';').trim_end();
     if expression.is_empty() {
         return None;
     }

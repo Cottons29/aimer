@@ -1,10 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use crate::{INLINE_ALIGNMENT, INLINE_CAPACITY, Rubick};
     use std::cell::Cell;
     use std::mem::{align_of, size_of};
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::rc::Rc;
+
+    use crate::{INLINE_ALIGNMENT, INLINE_CAPACITY, Rubick};
 
     trait Value {
         fn value(&self) -> usize;
@@ -239,8 +240,7 @@ mod tests {
 
     impl<const N: usize> Drop for DropValue<N> {
         fn drop(&mut self) {
-            self.drops
-                .set(self.drops.get() + 1);
+            self.drops.set(self.drops.get() + 1);
         }
     }
 

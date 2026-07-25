@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
@@ -6,7 +8,6 @@ use aimer_cupid::font::{FontFamily, FontStyle};
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 pub use aimer_cupid::text_pipeline::TextOverflowMode;
 pub use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
-use std::sync::Arc;
 mod native_impl;
 
 pub trait CanvasRendering: Clone {
@@ -782,7 +783,8 @@ impl<'a> AimerCanvas<'a> {
         )
     }
 
-    /// Measures the rendered width of each line after applying styled text wrapping.
+    /// Measures the rendered width of each line after applying styled text
+    /// wrapping.
     #[inline]
     #[allow(clippy::too_many_arguments)]
     pub fn measure_text_line_widths_styled(

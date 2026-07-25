@@ -16,11 +16,11 @@ use crate::{ImageProvider, ImageResult};
 
 /// Displays an image read from a file-system path.
 ///
-/// The file is loaded and decoded asynchronously and cached by path. While it is
-/// loading, this widget draws no content. If reading or decoding fails, it draws a
-/// magenta-and-black error pattern; unlike [`AssetImage`](crate::AssetImage) and
-/// [`NetworkImage`](crate::NetworkImage), `Image` does not provide custom fallback
-/// builders.
+/// The file is loaded and decoded asynchronously and cached by path. While it
+/// is loading, this widget draws no content. If reading or decoding fails, it
+/// draws a magenta-and-black error pattern; unlike
+/// [`AssetImage`](crate::AssetImage) and [`NetworkImage`](crate::NetworkImage),
+/// `Image` does not provide custom fallback builders.
 ///
 /// # Example
 ///
@@ -28,10 +28,9 @@ use crate::{ImageProvider, ImageResult};
 /// use aimer_assets::Image;
 /// use aimer_style::BoxFit;
 ///
-/// let image = Image::new("images/photo.png")
-///     .width(320.0)
-///     .height(180.0)
-///     .fit(BoxFit::Cover);
+/// let image = Image::new("images/photo.png").width(320.0)
+///                                           .height(180.0)
+///                                           .fit(BoxFit::Cover);
 /// ```
 pub struct Image {
     pub path: PathBuf,
@@ -44,9 +43,9 @@ pub struct Image {
 impl Image {
     /// Creates an image that reads from `path`.
     ///
-    /// Width and height default to [`Dimension::Auto`], [`BoxFit::None`] is used,
-    /// and the drawing scale is `1.0`. The path is interpreted by the host file
-    /// system and is not an `aimer.toml` asset key.
+    /// Width and height default to [`Dimension::Auto`], [`BoxFit::None`] is
+    /// used, and the drawing scale is `1.0`. The path is interpreted by the
+    /// host file system and is not an `aimer.toml` asset key.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
@@ -82,11 +81,12 @@ impl Image {
         self
     }
 
-    /// Multiplies the final painted image size around the center of its layout box.
+    /// Multiplies the final painted image size around the center of its layout
+    /// box.
     ///
-    /// This does not change the widget's layout size. The default is `1.0`; values
-    /// are stored without validation, so callers should provide a finite,
-    /// non-negative value.
+    /// This does not change the widget's layout size. The default is `1.0`;
+    /// values are stored without validation, so callers should provide a
+    /// finite, non-negative value.
     pub fn scale(mut self, scale: impl Into<f32>) -> Self {
         self.scale = scale.into();
         self
@@ -141,16 +141,11 @@ impl<P: ImageProvider> VisitorElement for RawImageWidget<P> {
 impl<P: ImageProvider> LayoutElement for RawImageWidget<P> {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
-        if let Some(cached) = self
-            .cache
-            .get_computed(ctx.box_constraint, scale_bits)
-        {
+        if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
             return cached;
         }
 
-        let result = self
-            .size
-            .resolve(&ctx.parent_size, ctx.scale);
+        let result = self.size.resolve(&ctx.parent_size, ctx.scale);
 
         self.cache
             .set_computed(ctx.box_constraint, scale_bits, result);
@@ -159,8 +154,7 @@ impl<P: ImageProvider> LayoutElement for RawImageWidget<P> {
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.size
-            .resolve(&ctx.parent_size, ctx.scale)
+        self.size.resolve(&ctx.parent_size, ctx.scale)
     }
 
     fn invalidate_layout(&self) {
@@ -173,9 +167,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
         #[cfg(debug_assertions)]
         {
             if aimer_widget::inspector_overlay::is_enabled() {
-                let (start_x, start_y) = ctx
-                    .canvas
-                    .get_transform_translation();
+                let (start_x, start_y) = ctx.canvas.get_transform_translation();
                 let size = self.content_size(ctx);
                 let end_x = start_x + size.width;
                 let end_y = start_y + size.height;
@@ -290,14 +282,11 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
 
                             if use_cover {
                                 // Clip to target box to emulate cover cropping
-                                ctx.canvas
-                                    .set_clip(Vec2d { x: 0.0, y: 0.0 }, size);
-                                ctx.canvas
-                                    .draw_image(id, draw_pos, draw_size);
+                                ctx.canvas.set_clip(Vec2d { x: 0.0, y: 0.0 }, size);
+                                ctx.canvas.draw_image(id, draw_pos, draw_size);
                                 ctx.canvas.clear_clip();
                             } else {
-                                ctx.canvas
-                                    .draw_image(id, draw_pos, draw_size);
+                                ctx.canvas.draw_image(id, draw_pos, draw_size);
                             }
                         } else {
                             // Fallback: invalid intrinsic size
@@ -311,8 +300,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                                 width: final_w,
                                 height: final_h,
                             };
-                            ctx.canvas
-                                .draw_image(id, draw_pos, draw_size)
+                            ctx.canvas.draw_image(id, draw_pos, draw_size)
                         }
                     } else {
                         // Fallback when intrinsic size is unknown
@@ -326,8 +314,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                             width: final_w,
                             height: final_h,
                         };
-                        ctx.canvas
-                            .draw_image(id, draw_pos, draw_size)
+                        ctx.canvas.draw_image(id, draw_pos, draw_size)
                     }
                 } else {
                     // Not preserving aspect ratio: fill allocated box
@@ -341,8 +328,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                         width: final_w,
                         height: final_h,
                     };
-                    ctx.canvas
-                        .draw_image(id, draw_pos, draw_size)
+                    ctx.canvas.draw_image(id, draw_pos, draw_size)
                 }
             }
 
@@ -381,8 +367,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                         };
 
                         if rect_size.width > 0.0 && rect_size.height > 0.0 {
-                            ctx.canvas
-                                .fill_color_rect(pos, rect_size, color, [0.0; 4]);
+                            ctx.canvas.fill_color_rect(pos, rect_size, color, [0.0; 4]);
                         }
                     }
                 }

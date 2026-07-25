@@ -1,4 +1,4 @@
-# Parallel Text Preparation, Smarter Caches, and Framework-Level Modal Widgets
+# Parallel Text Preparation And Framework-Level Modal Widgets
 
 Two parts of Aimer's interface system have received important updates. Cupid can now prepare cold text
 in parallel and reuse persistent caches across frames, while applications can present animated modal
@@ -172,19 +172,3 @@ let animation = ModalAnimation::new()
 ```
 
 Animation is opt-in. Leaving `.animation(...)` out presents and removes the modal without a transition.
-
-## Current Scope and Next Steps
-
-The first framework-level modal API focuses on presentation: viewport-wide composition, ordered modal
-entries, input blocking, barrier and Escape dismissal, stable handles, and reversible enter and exit
-animation. Native and headless application startup both install the host, which keeps testing aligned
-with production behavior.
-
-Typed values returned from dialogs and full focus trapping or restoration are not part of this first
-version. Those features need explicit lifecycle contracts rather than being hidden inside the visual
-widget. The current separation gives them a clean place to grow: `Modal` describes appearance,
-`ModalHost` owns the global overlay, and `ModalHandle` controls the lifetime of one presented entry.
-
-Together, the text and modal updates make common interface code more declarative. Text alignment now
-matches the lines users actually see, and modal content can sit above the whole application without
-forcing each screen to recreate framework-level overlay behavior.

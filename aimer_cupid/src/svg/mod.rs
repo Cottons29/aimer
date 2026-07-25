@@ -1,5 +1,6 @@
-use aimer_color::prelude::Color;
 use std::sync::Arc;
+
+use aimer_color::prelude::Color;
 
 mod tessellation;
 
@@ -218,13 +219,11 @@ pub struct SvgScene {
 
 impl SvgScene {
     pub fn node(&self, node_id: SvgNodeId) -> Option<&SvgNode> {
-        self.nodes
-            .get(node_id.0 as usize)
+        self.nodes.get(node_id.0 as usize)
     }
 
     pub fn geometry(&self, node: &SvgNode) -> Option<&SvgGeometry> {
-        self.geometries
-            .get(node.geometry?)
+        self.geometries.get(node.geometry?)
     }
 }
 
@@ -236,10 +235,7 @@ mod tests {
 
     fn geometry(commands: impl IntoIterator<Item = SvgPathCommand>) -> SvgGeometry {
         SvgGeometry {
-            commands: commands
-                .into_iter()
-                .collect::<Vec<_>>()
-                .into(),
+            commands: commands.into_iter().collect::<Vec<_>>().into(),
         }
     }
 
@@ -308,15 +304,9 @@ mod tests {
             miter_limit: 4.0,
         };
 
-        let first = cache
-            .mesh_for(&line, thin, 1.0)
-            .unwrap();
-        let reused = cache
-            .mesh_for(&line, thin, 1.0)
-            .unwrap();
-        let changed = cache
-            .mesh_for(&line, thick, 1.0)
-            .unwrap();
+        let first = cache.mesh_for(&line, thin, 1.0).unwrap();
+        let reused = cache.mesh_for(&line, thin, 1.0).unwrap();
+        let changed = cache.mesh_for(&line, thick, 1.0).unwrap();
 
         assert!(Arc::ptr_eq(&first, &reused));
         assert!(!Arc::ptr_eq(&first, &changed));
@@ -329,18 +319,14 @@ mod tests {
         let mut cache = SvgGeometryCache::new(1024 * 1024, 16);
         let style = SvgMeshStyle::Fill(SvgFillRule::NonZero);
 
-        let before_dynamic_change = cache
-            .mesh_for(&geometry, style, 1.0)
-            .unwrap();
+        let before_dynamic_change = cache.mesh_for(&geometry, style, 1.0).unwrap();
         let _new_color = SvgColor::rgba8(255, 0, 0, 255);
         let _new_opacity = 0.25;
         let _new_transform = SvgTransform {
             tx: 30.0,
             ..SvgTransform::default()
         };
-        let after_dynamic_change = cache
-            .mesh_for(&geometry, style, 1.0)
-            .unwrap();
+        let after_dynamic_change = cache.mesh_for(&geometry, style, 1.0).unwrap();
 
         assert!(Arc::ptr_eq(&before_dynamic_change, &after_dynamic_change));
         assert_eq!(cache.len(), 1);

@@ -156,29 +156,19 @@ impl MarkdownTheme {
 
 impl Default for MarkdownTheme {
     fn default() -> Self {
-        let body = TextStyle::new()
-            .font_size(16)
-            .color(Color::Hex(0x24292F));
+        let body = TextStyle::new().font_size(16).color(Color::Hex(0x24292F));
         Self {
             body,
             headings: [
-                body.font_size(32)
-                    .font_weight(FontWeight::Bolder),
-                body.font_size(28)
-                    .font_weight(FontWeight::Bolder),
-                body.font_size(24)
-                    .font_weight(FontWeight::Bolder),
-                body.font_size(20)
-                    .font_weight(FontWeight::Bolder),
-                body.font_size(18)
-                    .font_weight(FontWeight::Bolder),
-                body.font_size(16)
-                    .font_weight(FontWeight::Bolder),
+                body.font_size(32).font_weight(FontWeight::Bolder),
+                body.font_size(28).font_weight(FontWeight::Bolder),
+                body.font_size(24).font_weight(FontWeight::Bolder),
+                body.font_size(20).font_weight(FontWeight::Bolder),
+                body.font_size(18).font_weight(FontWeight::Bolder),
+                body.font_size(16).font_weight(FontWeight::Bolder),
             ],
             blockquote: body.color(Color::Hex(0x57606A)),
-            code_block: body
-                .font_family(FontFamily::MONOSPACE)
-                .font_size(14),
+            code_block: body.font_family(FontFamily::MONOSPACE).font_size(14),
             inline_code: SpanStyle::new()
                 .font_family(FontFamily::MONOSPACE)
                 .background_color(Color::Hex(0xEFF1F3)),

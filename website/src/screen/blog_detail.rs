@@ -1,8 +1,3 @@
-use crate::aimer_widget;
-use crate::blog_store::{BlogDetail, BlogStore, LoadState, request_blog_detail};
-use crate::components::BlogBackButton;
-use crate::router::AppRouter;
-use crate::utils::{app_padding, is_mobile};
 use aimer::router::NavigatorController;
 use aimer::style::{FontWeight, LayoutSpacing, TextOverflow, TextStyle, Theme, ThemeData};
 use aimer::{
@@ -10,6 +5,12 @@ use aimer::{
     MarkdownViewer, ProviderContext, ProviderHandle, Row, ScrollAxis, Scrollable, SizedBox,
     StatelessWidget, Text, Widget, ZeroSizedBox, widget,
 };
+
+use crate::aimer_widget;
+use crate::blog_store::{BlogDetail, BlogStore, LoadState, request_blog_detail};
+use crate::components::BlogBackButton;
+use crate::router::AppRouter;
+use crate::utils::{app_padding, is_mobile};
 
 #[derive(Debug, PartialEq, Eq)]
 enum DetailLayout {
@@ -38,30 +39,18 @@ fn metadata_fields(detail: &BlogDetail) -> [(&'static str, String); 3] {
 
 fn metadata_sidebar(detail: &BlogDetail, theme: &ThemeData) -> AnyWidget {
     let mut children = Vec::new();
-    for (index, (label, value)) in metadata_fields(detail)
-        .into_iter()
-        .enumerate()
-    {
+    for (index, (label, value)) in metadata_fields(detail).into_iter().enumerate() {
         children.push(
             Text::new(label)
                 .text_style(
                     TextStyle::new()
                         .font_size(15)
                         .font_weight(FontWeight::Bold)
-                        .color(
-                            theme
-                                .on_background_color
-                                .darken(0.2)
-                                .with_alpha(0.4),
-                        ),
+                        .color(theme.on_background_color.darken(0.2).with_alpha(0.4)),
                 )
                 .boxed(),
         );
-        children.push(
-            SizedBox::new()
-                .height(8)
-                .boxed(),
-        );
+        children.push(SizedBox::new().height(8).boxed());
         children.push(
             Text::new(value)
                 .text_style(
@@ -73,27 +62,15 @@ fn metadata_sidebar(detail: &BlogDetail, theme: &ThemeData) -> AnyWidget {
                 .boxed(),
         );
         if index < 2 {
-            children.push(
-                SizedBox::new()
-                    .height(16)
-                    .boxed(),
-            );
+            children.push(SizedBox::new().height(16).boxed());
             children.push(
                 Container::new()
                     .height(1)
-                    .color(
-                        theme
-                            .on_background_color
-                            .with_alpha(0.35),
-                    )
+                    .color(theme.on_background_color.with_alpha(0.35))
                     .child(ZeroSizedBox)
                     .boxed(),
             );
-            children.push(
-                SizedBox::new()
-                    .height(16)
-                    .boxed(),
-            );
+            children.push(SizedBox::new().height(16).boxed());
         }
     }
     Column::new()
@@ -104,46 +81,23 @@ fn metadata_sidebar(detail: &BlogDetail, theme: &ThemeData) -> AnyWidget {
 
 fn themed_markdown(theme: &ThemeData) -> MarkdownTheme {
     let mut markdown = MarkdownTheme::default();
-    markdown.body = markdown
-        .body
-        .color(theme.on_background_color);
+    markdown.body = markdown.body.color(theme.on_background_color);
     markdown.headings = markdown
         .headings
         .map(|style| style.color(theme.on_background_color));
-    markdown.blockquote = markdown.blockquote.color(
-        theme
-            .on_background_color
-            .with_opacity(180),
-    );
-    markdown.code_block = markdown
-        .code_block
-        .color(theme.on_surface_color);
+    markdown.blockquote = markdown
+        .blockquote
+        .color(theme.on_background_color.with_opacity(180));
+    markdown.code_block = markdown.code_block.color(theme.on_surface_color);
     markdown.inline_code = markdown
         .inline_code
         .color(theme.on_surface_color)
-        .background_color(
-            theme
-                .surface_color
-                .darken(0.1)
-                .with_alpha(0.4),
-        );
-    markdown.link = markdown
-        .link
-        .color(theme.primary_color);
-    markdown.link_hover_color = theme
-        .primary_color
-        .lighten(0.2);
-    markdown.code_background = theme
-        .surface_color
-        .darken(0.1)
-        .with_alpha(0.4);
-    markdown.quote_background = theme
-        .surface_color
-        .darken(0.1)
-        .with_alpha(0.4);
-    markdown.rule_color = theme
-        .on_background_color
-        .with_opacity(72);
+        .background_color(theme.surface_color.darken(0.1).with_alpha(0.4));
+    markdown.link = markdown.link.color(theme.primary_color);
+    markdown.link_hover_color = theme.primary_color.lighten(0.2);
+    markdown.code_background = theme.surface_color.darken(0.1).with_alpha(0.4);
+    markdown.quote_background = theme.surface_color.darken(0.1).with_alpha(0.4);
+    markdown.rule_color = theme.on_background_color.with_opacity(72);
     markdown.table_header_background = theme.surface_color;
     markdown.table_cell_background = theme.background_color;
     markdown
@@ -165,11 +119,7 @@ impl StatelessWidget for BlogDetailPage {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let theme = ThemeData::of(ctx);
         let store = ctx.watch::<BlogStore>();
-        let state = store
-            .details
-            .get(&self.id)
-            .cloned()
-            .unwrap_or_default();
+        let state = store.details.get(&self.id).cloned().unwrap_or_default();
         if matches!(state, LoadState::Idle) {
             request_blog_detail(ctx, ProviderHandle::<BlogStore>::of(ctx), self.id.clone());
         }
@@ -216,11 +166,7 @@ impl StatelessWidget for BlogDetailPage {
             .boxed();
         let mut sidebar_children = vec![back_button];
         if let Some(metadata) = metadata {
-            sidebar_children.push(
-                SizedBox::new()
-                    .height(32)
-                    .boxed(),
-            );
+            sidebar_children.push(SizedBox::new().height(32).boxed());
             sidebar_children.push(metadata);
         }
 
@@ -240,45 +186,24 @@ impl StatelessWidget for BlogDetailPage {
                                 .child(sidebar),
                         )
                         .boxed(),
-                    Expanded::new()
-                        .flex(4.0)
-                        .child(content)
-                        .boxed(),
+                    Expanded::new().flex(4.0).child(content).boxed(),
                 ])
                 .boxed(),
             DetailLayout::Vertical => Column::new()
                 .horizontal_alignment(BoxAlignment::Start)
-                .children([
-                    sidebar.boxed(),
-                    SizedBox::new()
-                        .height(32)
-                        .boxed(),
-                    content,
-                ])
+                .children([sidebar.boxed(), SizedBox::new().height(32).boxed(), content])
                 .boxed(),
         };
 
-        Container::new()
-            .color(theme.background_color)
-            .child(
-                Scrollable::new()
-                    .key(key)
-                    .axis(ScrollAxis::Vertical)
-                    .child(
-                        Container::new()
-                            .padding(app_padding(ctx))
-                            .child(
-                                Column::new()
-                                    .horizontal_alignment(BoxAlignment::Start)
-                                    .children([
-                                        detail,
-                                        SizedBox::new()
-                                            .height(48)
-                                            .boxed(),
-                                    ]),
-                            ),
-                    ),
-            )
+        Container::new().color(theme.background_color).child(
+            Scrollable::new().key(key).axis(ScrollAxis::Vertical).child(
+                Container::new().padding(app_padding(ctx)).child(
+                    Column::new()
+                        .horizontal_alignment(BoxAlignment::Start)
+                        .children([detail, SizedBox::new().height(48).boxed()]),
+                ),
+            ),
+        )
     }
 }
 
@@ -306,10 +231,7 @@ mod tests {
         );
         assert_eq!(
             markdown.code_background,
-            theme
-                .surface_color
-                .darken(0.1)
-                .with_alpha(0.4)
+            theme.surface_color.darken(0.1).with_alpha(0.4)
         );
         assert_eq!(markdown.quote_background, markdown.code_background);
         assert_eq!(markdown.table_cell_background, theme.background_color);

@@ -102,9 +102,7 @@ mod tests {
     #[test]
     fn process_log_plain_text_unchanged() {
         let input = "just a normal message";
-        let result = input
-            .to_string()
-            .process_log();
+        let result = input.to_string().process_log();
         assert_eq!(result, input);
     }
 

@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use aimer_animation::Curve;
 
-/// Paint-only timing used when a modal enters or leaves the application overlay.
+/// Paint-only timing used when a modal enters or leaves the application
+/// overlay.
 ///
 /// Modal animation never changes layout. The barrier fades while the content
 /// fades and scales around its center, keeping hit testing stable for the whole

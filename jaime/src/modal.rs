@@ -5,19 +5,12 @@ use aimer::*;
 
 /// Starts a framework-level animated modal showcase.
 pub fn start_modal_example() {
-    let page = Container::new()
-        .color(Color::Rgb(31, 41, 55))
-        .child(
-            Align::new()
-                .alignment(Alignment::MidCenter)
-                .child(
-                    Text::new("Content behind the modal").text_style(
-                        TextStyle::new()
-                            .font_size(24)
-                            .color(Color::WHITE),
-                    ),
-                ),
-        );
+    let page = Container::new().color(Color::Rgb(31, 41, 55)).child(
+        Align::new().alignment(Alignment::MidCenter).child(
+            Text::new("Content behind the modal")
+                .text_style(TextStyle::new().font_size(24).color(Color::WHITE)),
+        ),
+    );
 
     let dialog = Container::new()
         .width(420)
@@ -31,11 +24,7 @@ pub fn start_modal_example() {
         .child(
             Text::new("Modal\n\nThis content is centered above a full-window barrier.")
                 .text_align(TextAlign::MidCenter)
-                .text_style(
-                    TextStyle::new()
-                        .font_size(20)
-                        .color(Color::BLACK),
-                ),
+                .text_style(TextStyle::new().font_size(20).color(Color::BLACK)),
         );
 
     Modal::new()

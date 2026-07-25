@@ -241,8 +241,7 @@ mod tests {
             // Record the counter value the rebuild closure actually saw. This
             // is the only observable proof of which state cell a `StatefulElement`
             // is reading from after `adopt_state_from` rewires its `rebuild_fn`.
-            self.observer
-                .set(self.counter);
+            self.observer.set(self.counter);
             EmptyWidget
         }
     }
@@ -314,15 +313,11 @@ mod tests {
     impl State<BuildRecordingCounterWidget> for BuildRecordingCounterState {
         fn init_state(&mut self, updater: StateUpdater<Self>) {
             self.updater = updater.clone();
-            *self
-                .published_updater
-                .borrow_mut() = Some(updater);
+            *self.published_updater.borrow_mut() = Some(updater);
         }
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
-            self.builds
-                .borrow_mut()
-                .push(self.counter);
+            self.builds.borrow_mut().push(self.counter);
             EmptyWidget
         }
     }
@@ -413,16 +408,13 @@ mod tests {
         // framework preserves this live state but must refresh the config from
         // the freshly-built widget.
         fn adopt_config_from(&mut self, new: &Self) {
-            self.config_adoptions
-                .set(self.config_adoptions.get() + 1);
+            self.config_adoptions.set(self.config_adoptions.get() + 1);
             self.config_label = new.config_label;
         }
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
-            self.observed_label
-                .set(self.config_label);
-            self.observed_runtime
-                .set(self.runtime);
+            self.observed_label.set(self.config_label);
+            self.observed_runtime.set(self.runtime);
             *self.live_updater.borrow_mut() = Some(self.updater.clone());
             EmptyWidget
         }
@@ -758,10 +750,7 @@ mod tests {
         parent.rebuild_if_dirty(&ctx);
 
         assert!(
-            builds
-                .borrow()
-                .iter()
-                .all(|value| *value == 2),
+            builds.borrow().iter().all(|value| *value == 2),
             "a keyed replacement must adopt live state before its first build: {:?}",
             builds.borrow().as_slice()
         );
@@ -1103,8 +1092,7 @@ mod tests {
         }
         fn adopt_config_from(&mut self, new: &Self) {
             if self.child_key != new.child_key {
-                self.transitions
-                    .set(self.transitions.get() + 1);
+                self.transitions.set(self.transitions.get() + 1);
                 self.child_key = new.child_key;
             }
         }
@@ -1295,10 +1283,9 @@ mod tests {
             self.updater = updater;
         }
         fn build(&self, ctx: &BuildContext) -> impl Widget {
-            ctx.get_state::<ProvidedValue>()
-                .expect(
-                    "No provided value in context. Ancestor provider must build before descendant.",
-                );
+            ctx.get_state::<ProvidedValue>().expect(
+                "No provided value in context. Ancestor provider must build before descendant.",
+            );
             EmptyWidget
         }
     }
@@ -1373,8 +1360,7 @@ mod tests {
             }
 
             fn build(&self, _ctx: &BuildContext) -> impl Widget {
-                self.observer
-                    .set(self.counter);
+                self.observer.set(self.counter);
                 *self.live_updater.borrow_mut() = Some(self.updater.clone());
                 EmptyWidget
             }
@@ -1610,13 +1596,11 @@ mod tests {
 
         impl Rebuildable for FakePositioned {
             fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-                self.child
-                    .rebuild_if_dirty(ctx);
+                self.child.rebuild_if_dirty(ctx);
             }
 
             fn mark_needs_rebuild(&self) {
-                self.child
-                    .mark_needs_rebuild();
+                self.child.mark_needs_rebuild();
             }
         }
 
@@ -1898,8 +1882,7 @@ mod tests {
             fn build(&self, _ctx: &BuildContext) -> impl Widget {
                 // Record what this button believes its selection state is —
                 // this is what drives its visible highlight in the real app.
-                self.observer
-                    .set(if self.selected { 1 } else { 0 });
+                self.observer.set(if self.selected { 1 } else { 0 });
                 EmptyWidget
             }
         }

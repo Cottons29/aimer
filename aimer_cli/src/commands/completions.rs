@@ -52,9 +52,7 @@ pub fn execute(shell: Shell, install: bool) -> anyhow::Result<()> {
     std::fs::create_dir_all(&target.dir)
         .with_context(|| format!("creating completion directory {}", target.dir.display()))?;
 
-    let path = target
-        .dir
-        .join(&target.file_name);
+    let path = target.dir.join(&target.file_name);
     let mut file = std::fs::File::create(&path)
         .with_context(|| format!("writing completion script to {}", path.display()))?;
     completer
@@ -102,9 +100,7 @@ fn data_dir() -> anyhow::Result<PathBuf> {
             return Ok(p);
         }
     }
-    Ok(home_dir()?
-        .join(".local")
-        .join("share"))
+    Ok(home_dir()?.join(".local").join("share"))
 }
 
 /// Compute the install location and activation hint for the given shell.
@@ -114,23 +110,16 @@ fn install_target(shell: Shell, bin: &str) -> anyhow::Result<InstallTarget> {
             dir: {
                 println!(
                     "Fish config dir: {}",
-                    config_dir()?
-                        .join("fish")
-                        .join("completions")
-                        .display()
+                    config_dir()?.join("fish").join("completions").display()
                 );
-                config_dir()?
-                    .join("fish")
-                    .join("completions")
+                config_dir()?.join("fish").join("completions")
             },
             file_name: format!("{bin}.fish"),
             // fish autoloads from this directory; just start a new shell.
             hint: Some("Restart your shell (or run `exec fish`) to load completions.".into()),
         }),
         Shell::Zsh => Ok(InstallTarget {
-            dir: home_dir()?
-                .join(".zsh")
-                .join("completions"),
+            dir: home_dir()?.join(".zsh").join("completions"),
             file_name: format!("_{bin}"),
             hint: Some(
                 "Add this to ~/.zshrc (once), then restart your shell:\n  \
@@ -140,9 +129,7 @@ fn install_target(shell: Shell, bin: &str) -> anyhow::Result<InstallTarget> {
             ),
         }),
         Shell::Bash => Ok(InstallTarget {
-            dir: data_dir()?
-                .join("bash-completion")
-                .join("completions"),
+            dir: data_dir()?.join("bash-completion").join("completions"),
             file_name: bin.to_string(),
             hint: Some(
                 "Requires the `bash-completion` package. Restart your shell to load completions."

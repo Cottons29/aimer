@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
@@ -6,7 +8,6 @@ use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild,
     VisitorElement, Widget,
 };
-use std::cell::Cell;
 
 use crate::control::controller::AnimationController;
 use crate::primitives::time::AnimInstant;
@@ -57,11 +58,9 @@ impl AnimationEffect {
 /// use aimer_widget::ErrorWidget;
 ///
 /// let controller = AnimationController::new(Duration::from_millis(250), Curve::Linear);
-/// let animated = Animated::new(
-///     controller,
-///     AnimationEffect::Opacity { from: 0.0, to: 1.0 },
-///     ErrorWidget::new("Unable to load preview"),
-/// );
+/// let animated = Animated::new(controller,
+///                              AnimationEffect::Opacity { from: 0.0, to: 1.0 },
+///                              ErrorWidget::new("Unable to load preview"));
 /// ```
 pub struct Animated<T = RequiredChild> {
     pub controller: AnimationController,
@@ -136,8 +135,7 @@ impl Drawable for AnimatedElement {
         let now = AnimInstant::now();
         let curved_value = {
             let v = self.controller.tick(now);
-            self.animating
-                .set(self.controller.is_animating());
+            self.animating.set(self.controller.is_animating());
             v
         };
 
@@ -185,11 +183,9 @@ impl AnimatedElement {
                 let scale = AnimationEffect::lerp(from, to, t);
                 let cx = ctx.box_constraint.max_width / 2.0;
                 let cy = ctx.box_constraint.max_height / 2.0;
-                ctx.canvas
-                    .translate((cx, cy).into());
+                ctx.canvas.translate((cx, cy).into());
                 ctx.canvas.scale(scale, scale);
-                ctx.canvas
-                    .translate((-cx, -cy).into());
+                ctx.canvas.translate((-cx, -cy).into());
             }
             AnimationEffect::Translate {
                 from_x,
@@ -199,30 +195,25 @@ impl AnimatedElement {
             } => {
                 let dx = AnimationEffect::lerp(from_x, to_x, t);
                 let dy = AnimationEffect::lerp(from_y, to_y, t);
-                ctx.canvas
-                    .translate((dx, dy).into());
+                ctx.canvas.translate((dx, dy).into());
             }
             AnimationEffect::Rotate { from, to } => {
                 let angle = AnimationEffect::lerp(from, to, t);
                 let cx = ctx.box_constraint.max_width / 2.0;
                 let cy = ctx.box_constraint.max_height / 2.0;
-                ctx.canvas
-                    .translate((cx, cy).into());
+                ctx.canvas.translate((cx, cy).into());
                 ctx.canvas.rotate(angle);
-                ctx.canvas
-                    .translate((-cx, -cy).into());
+                ctx.canvas.translate((-cx, -cy).into());
             }
             AnimationEffect::SlideX { from, to } => {
                 let offset = AnimationEffect::lerp(from, to, t);
                 let dx = ctx.box_constraint.max_width * offset;
-                ctx.canvas
-                    .translate((dx, 0.0).into());
+                ctx.canvas.translate((dx, 0.0).into());
             }
             AnimationEffect::SlideY { from, to } => {
                 let offset = AnimationEffect::lerp(from, to, t);
                 let dy = ctx.box_constraint.max_height * offset;
-                ctx.canvas
-                    .translate((0.0, dy).into());
+                ctx.canvas.translate((0.0, dy).into());
             }
         }
     }
@@ -246,8 +237,7 @@ impl EventElement for AnimatedElement {
 
 impl Rebuildable for AnimatedElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.child
-            .rebuild_if_dirty(ctx);
+        self.child.rebuild_if_dirty(ctx);
     }
 }
 
@@ -269,8 +259,7 @@ impl LayoutElement for AnimatedElement {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
 
     fn invalidate_layout(&self) {

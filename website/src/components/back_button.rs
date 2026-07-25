@@ -55,13 +55,11 @@ impl StatefulWidget for BlogBackButton {
 }
 
 fn back_label_style(is_hover: bool, color: Color) -> TextStyle {
-    TextStyle::new()
-        .color(color)
-        .text_decoration(if is_hover {
-            TextDecoration::Underline
-        } else {
-            TextDecoration::None
-        })
+    TextStyle::new().color(color).text_decoration(if is_hover {
+        TextDecoration::Underline
+    } else {
+        TextDecoration::None
+    })
 }
 
 impl State<BlogBackButton> for BlogBackButtonState {
@@ -88,34 +86,27 @@ impl State<BlogBackButton> for BlogBackButtonState {
             })
             .current_state(self.current_state.clone())
             .child(
-                GestureDetector::new()
-                    .on_tap(self.on_click.clone())
-                    .child(
-                        Row::new().children([
-                            Svg::new(document)
-                                .style(
-                                    "#back_button_body",
-                                    SvgStyle::new().fill(theme.on_background_color),
-                                )
-                                .style(
-                                    "#back_button_head",
-                                    SvgStyle::new().fill(theme.on_background_color),
-                                )
-                                .width(16)
-                                .height(16)
-                                .boxed(),
-                            SizedBox::new()
-                                .width(8)
-                                .boxed(),
-                            Text::new("Back to blogs")
-                                .text_align(TextAlign::MidCenter)
-                                .text_style(back_label_style(
-                                    self.is_hover,
-                                    theme.on_background_color,
-                                ))
-                                .boxed(),
-                        ]),
-                    ),
+                GestureDetector::new().on_tap(self.on_click.clone()).child(
+                    Row::new().children([
+                        Svg::new(document)
+                            .style(
+                                "#back_button_body",
+                                SvgStyle::new().fill(theme.on_background_color),
+                            )
+                            .style(
+                                "#back_button_head",
+                                SvgStyle::new().fill(theme.on_background_color),
+                            )
+                            .width(16)
+                            .height(16)
+                            .boxed(),
+                        SizedBox::new().width(8).boxed(),
+                        Text::new("Back to blogs")
+                            .text_align(TextAlign::MidCenter)
+                            .text_style(back_label_style(self.is_hover, theme.on_background_color))
+                            .boxed(),
+                    ]),
+                ),
             )
     }
 }
@@ -129,9 +120,7 @@ mod tests {
     #[test]
     fn back_label_is_not_underlined_when_not_hovered() {
         assert_eq!(
-            back_label_style(false, Color::BLACK)
-                .text_decoration
-                .line,
+            back_label_style(false, Color::BLACK).text_decoration.line,
             TextDecorationLine::NONE
         );
     }
@@ -139,9 +128,7 @@ mod tests {
     #[test]
     fn back_label_is_underlined_when_hovered() {
         assert_eq!(
-            back_label_style(true, Color::BLACK)
-                .text_decoration
-                .line,
+            back_label_style(true, Color::BLACK).text_decoration.line,
             TextDecorationLine::UNDERLINE
         );
     }

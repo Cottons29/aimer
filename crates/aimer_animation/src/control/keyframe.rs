@@ -94,13 +94,7 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
 
         // After last keyframe
         if t >= self.frames.last().unwrap().0 {
-            return self
-                .frames
-                .last()
-                .unwrap()
-                .1
-                .value
-                .clone();
+            return self.frames.last().unwrap().1.value.clone();
         }
 
         // Find bounding keyframes
@@ -112,19 +106,12 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
                 let range = f1 - f0;
                 let local_t = if range > 0.0 { (t - f0) / range } else { 0.0 };
                 let curved_t = kf1.curve.transform(local_t);
-                return kf0
-                    .value
-                    .lerp(&kf1.value, curved_t);
+                return kf0.value.lerp(&kf1.value, curved_t);
             }
         }
 
         // Fallback (should not reach here)
-        self.frames
-            .last()
-            .unwrap()
-            .1
-            .value
-            .clone()
+        self.frames.last().unwrap().1.value.clone()
     }
 
     /// Returns the number of keyframes.

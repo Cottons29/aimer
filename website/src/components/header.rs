@@ -24,9 +24,7 @@ impl StatelessWidget for HeaderSection {
             .expect("the bundled theme icon should be valid");
 
         let children = vec![
-            SizedBox::new()
-                .width(16)
-                .boxed(),
+            SizedBox::new().width(16).boxed(),
             Text::new("Aimer")
                 .text_style(
                     TextStyle::new()
@@ -36,9 +34,7 @@ impl StatelessWidget for HeaderSection {
                         .color(theme.on_surface_color),
                 )
                 .boxed(),
-            SizedBox::new()
-                .width(16)
-                .boxed(),
+            SizedBox::new().width(16).boxed(),
             Expanded::new()
                 .child(
                     Container::new().child(
@@ -50,48 +46,34 @@ impl StatelessWidget for HeaderSection {
                     ),
                 )
                 .boxed(),
-            SizedBox::new()
-                .width(24)
-                .boxed(),
-            Container::new()
-                .width(36)
-                .height(36)
-                .box_child(
-                    Button::new()
-                        .on_press({
-                            let updater = self.theme_updater.clone();
-                            move || updater.set_state(AppShellState::toggle_theme)
-                        })
-                        .decoration(
-                            BoxDecoration::new()
-                                .border(BoxBorder::all(
-                                    BorderSlice::new()
-                                        .color(
-                                            theme
-                                                .on_background_color
-                                                .with_alpha(0.1),
-                                        )
-                                        .style(BorderStyle::Solid)
-                                        .stroke(2),
-                                ))
-                                .border_radius(8),
-                        )
-                        .child(
-                            Row::new()
-                                .horizontal_alignment(BoxAlignment::Center)
-                                .vertical_alignment(BoxAlignment::Center)
-                                .children([Svg::new(icon)
-                                    .width(24)
-                                    .height(24)
-                                    .style(
-                                        "#fill_theme",
-                                        SvgStyle::new().fill(theme.on_background_color),
-                                    )]),
-                        ),
-                ),
-            SizedBox::new()
-                .width(16)
-                .boxed(),
+            SizedBox::new().width(24).boxed(),
+            Container::new().width(36).height(36).box_child(
+                Button::new()
+                    .on_press({
+                        let updater = self.theme_updater.clone();
+                        move || updater.set_state(AppShellState::toggle_theme)
+                    })
+                    .decoration(
+                        BoxDecoration::new()
+                            .border(BoxBorder::all(
+                                BorderSlice::new()
+                                    .color(theme.on_background_color.with_alpha(0.1))
+                                    .style(BorderStyle::Solid)
+                                    .stroke(2),
+                            ))
+                            .border_radius(8),
+                    )
+                    .child(
+                        Row::new()
+                            .horizontal_alignment(BoxAlignment::Center)
+                            .vertical_alignment(BoxAlignment::Center)
+                            .children([Svg::new(icon).width(24).height(24).style(
+                                "#fill_theme",
+                                SvgStyle::new().fill(theme.on_background_color),
+                            )]),
+                    ),
+            ),
+            SizedBox::new().width(16).boxed(),
         ];
 
         Container::new()
@@ -166,9 +148,7 @@ impl HeaderSection {
                                 .color(if is_selected {
                                     theme.primary_color
                                 } else {
-                                    theme
-                                        .primary_color
-                                        .lighten(0.2)
+                                    theme.primary_color.lighten(0.2)
                                 })
                                 .font_weight(font_weight)
                                 .text_decoration(TextDecoration::Underline),

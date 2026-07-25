@@ -18,11 +18,11 @@ use crate::img_widget::source::ImageSource;
 /// iOS/macOS, the project directory during desktop development, and via `fetch`
 /// from the site root on web.
 ///
-/// Loading and decoding happen asynchronously. Until the image is ready the widget
-/// supplied by [`AssetImage::loading_widget`] is drawn, or nothing is drawn when no
-/// loading widget is set. A load or decode failure similarly draws the
-/// [`AssetImage::error_widget`]; without one, the renderer uses its built-in
-/// magenta-and-black error pattern.
+/// Loading and decoding happen asynchronously. Until the image is ready the
+/// widget supplied by [`AssetImage::loading_widget`] is drawn, or nothing is
+/// drawn when no loading widget is set. A load or decode failure similarly
+/// draws the [`AssetImage::error_widget`]; without one, the renderer uses its
+/// built-in magenta-and-black error pattern.
 pub struct AssetImage {
     pub key: String,
     pub width: Dimension,
@@ -36,8 +36,9 @@ pub struct AssetImage {
 impl AssetImage {
     /// Creates an asset image for the registered asset `key`.
     ///
-    /// Width and height default to [`Dimension::Auto`], [`BoxFit::None`] is used,
-    /// no loading or error widget is installed, and the drawing scale is `1.0`.
+    /// Width and height default to [`Dimension::Auto`], [`BoxFit::None`] is
+    /// used, no loading or error widget is installed, and the drawing scale
+    /// is `1.0`.
     pub fn new(key: impl Into<String>) -> Self {
         Self {
             key: key.into(),
@@ -77,8 +78,9 @@ impl AssetImage {
 
     /// Sets the widget drawn when loading or decoding the asset fails.
     ///
-    /// It replaces the built-in magenta-and-black error pattern. The fallback is
-    /// converted to an element with the same build context as this image.
+    /// It replaces the built-in magenta-and-black error pattern. The fallback
+    /// is converted to an element with the same build context as this
+    /// image.
     pub fn error_widget(mut self, error_widget: impl Widget + 'static) -> Self {
         self.error_widget = Some(error_widget.boxed());
         self
@@ -92,11 +94,12 @@ impl AssetImage {
         self
     }
 
-    /// Multiplies the final painted image size around the center of its layout box.
+    /// Multiplies the final painted image size around the center of its layout
+    /// box.
     ///
-    /// This does not change the widget's layout size. The default is `1.0`; values
-    /// are stored without validation, so callers should provide a finite,
-    /// non-negative value.
+    /// This does not change the widget's layout size. The default is `1.0`;
+    /// values are stored without validation, so callers should provide a
+    /// finite, non-negative value.
     pub fn scale(mut self, scale: impl Into<f32>) -> Self {
         self.scale = scale.into();
         self
@@ -110,14 +113,8 @@ impl Widget for AssetImage {
             size: Size::new(self.width, self.height),
             fit: self.fit,
             keep_aspect_ratio: self.fit != BoxFit::Fill,
-            error_element: self
-                .error_widget
-                .as_ref()
-                .map(|w| w.to_element(ctx)),
-            loading_element: self
-                .loading_widget
-                .as_ref()
-                .map(|w| w.to_element(ctx)),
+            error_element: self.error_widget.as_ref().map(|w| w.to_element(ctx)),
+            loading_element: self.loading_widget.as_ref().map(|w| w.to_element(ctx)),
             cache: LayoutCache::new(),
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),

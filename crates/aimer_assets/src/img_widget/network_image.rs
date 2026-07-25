@@ -28,11 +28,10 @@ use crate::img_widget::source::ImageSource;
 /// let mut headers = HashMap::new();
 /// headers.insert("Accept".to_owned(), "image/webp,image/*".to_owned());
 ///
-/// let image = NetworkImage::new("https://example.com/photo.webp")
-///     .header(headers)
-///     .width(320.0)
-///     .height(180.0)
-///     .fit(BoxFit::Cover);
+/// let image = NetworkImage::new("https://example.com/photo.webp").header(headers)
+///                                                                .width(320.0)
+///                                                                .height(180.0)
+///                                                                .fit(BoxFit::Cover);
 /// ```
 pub struct NetworkImage {
     pub url: String,
@@ -49,9 +48,10 @@ pub struct NetworkImage {
 impl NetworkImage {
     /// Creates a network image for `url`.
     ///
-    /// Width and height default to [`Dimension::Auto`], [`BoxFit::None`] is used,
-    /// no request headers or fallback widgets are set, and the drawing scale is
-    /// `1.0`. The URL is not requested until the widget is drawn.
+    /// Width and height default to [`Dimension::Auto`], [`BoxFit::None`] is
+    /// used, no request headers or fallback widgets are set, and the
+    /// drawing scale is `1.0`. The URL is not requested until the widget is
+    /// drawn.
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -93,8 +93,9 @@ impl NetworkImage {
 
     /// Sets the complete map of HTTP request headers.
     ///
-    /// Calling this builder again replaces the previous map. Invalid header names
-    /// or values cause loading to enter the error state rather than panic.
+    /// Calling this builder again replaces the previous map. Invalid header
+    /// names or values cause loading to enter the error state rather than
+    /// panic.
     pub fn header(mut self, header: HashMap<String, String>) -> Self {
         self.header = Some(header);
         self
@@ -119,17 +120,19 @@ impl NetworkImage {
     /// Stores a requested loading delay in milliseconds.
     ///
     /// The current renderer does not apply this value, so this builder has no
-    /// effect on request timing or fallback display yet. The default is no delay.
+    /// effect on request timing or fallback display yet. The default is no
+    /// delay.
     pub fn delay(mut self, delay: u64) -> Self {
         self.delay = Some(delay);
         self
     }
 
-    /// Multiplies the final painted image size around the center of its layout box.
+    /// Multiplies the final painted image size around the center of its layout
+    /// box.
     ///
-    /// This does not change the widget's layout size. The default is `1.0`; values
-    /// are stored without validation, so callers should provide a finite,
-    /// non-negative value.
+    /// This does not change the widget's layout size. The default is `1.0`;
+    /// values are stored without validation, so callers should provide a
+    /// finite, non-negative value.
     pub fn scale(mut self, scale: impl Into<f32>) -> Self {
         self.scale = scale.into();
         self
@@ -151,14 +154,8 @@ impl Widget for NetworkImage {
             size: Size::new(self.width, self.height),
             fit: self.fit,
             keep_aspect_ratio: self.fit != BoxFit::Fill,
-            error_element: self
-                .error_widget
-                .as_ref()
-                .map(|w| w.to_element(ctx)),
-            loading_element: self
-                .loading_widget
-                .as_ref()
-                .map(|w| w.to_element(ctx)),
+            error_element: self.error_widget.as_ref().map(|w| w.to_element(ctx)),
+            loading_element: self.loading_widget.as_ref().map(|w| w.to_element(ctx)),
             cache: LayoutCache::new(),
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),

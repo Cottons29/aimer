@@ -39,9 +39,7 @@ where
 #[cfg(target_arch = "wasm32")]
 fn browser_push_state(path: &str) {
     if let Some(window) = web_sys::window() {
-        let history = window
-            .history()
-            .expect("no history");
+        let history = window.history().expect("no history");
         let _ = history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(path));
     }
 }
@@ -49,9 +47,7 @@ fn browser_push_state(path: &str) {
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn browser_replace_state(path: &str) {
     if let Some(window) = web_sys::window() {
-        let history = window
-            .history()
-            .expect("no history");
+        let history = window.history().expect("no history");
         let _ = history.replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(path));
     }
 }
@@ -64,9 +60,10 @@ fn browser_current_path() -> Option<String> {
 /// A stateful route stack that renders the widget for its current top route.
 ///
 /// Descendants can retrieve a [`NavigatorController`] from the build context.
-/// Pushing appends a route; popping never removes the initial route. On WebAssembly,
-/// the initial browser path overrides `initial_route` when it parses successfully,
-/// and later stack changes synchronize with browser history.
+/// Pushing appends a route; popping never removes the initial route. On
+/// WebAssembly, the initial browser path overrides `initial_route` when it
+/// parses successfully, and later stack changes synchronize with browser
+/// history.
 pub struct Navigator<R>
 where
     R: Route,
@@ -76,7 +73,8 @@ where
 }
 
 impl<R: Route> Navigator<R> {
-    /// Creates a navigator with one initial route and a route-to-widget builder.
+    /// Creates a navigator with one initial route and a route-to-widget
+    /// builder.
     ///
     /// `routes` is called for the active route after redirect resolution. The
     /// initial route remains the bottom of the in-memory stack.
@@ -108,23 +106,21 @@ impl<R: Route> NavigatorState<R> {
     pub fn push(&self, route: R) {
         #[cfg(target_arch = "wasm32")]
         browser_push_state(&route.format());
-        self.updater
-            .set_state(|state| {
-                state.history.push(route);
-            });
+        self.updater.set_state(|state| {
+            state.history.push(route);
+        });
     }
 
     pub fn pop(&self) {
-        self.updater
-            .set_state(|state| {
-                if state.history.len() > 1 {
-                    state.history.pop();
-                    #[cfg(target_arch = "wasm32")]
-                    if let Some(prev) = state.history.last() {
-                        browser_replace_state(&prev.format());
-                    }
+        self.updater.set_state(|state| {
+            if state.history.len() > 1 {
+                state.history.pop();
+                #[cfg(target_arch = "wasm32")]
+                if let Some(prev) = state.history.last() {
+                    browser_replace_state(&prev.format());
                 }
-            });
+            }
+        });
     }
 }
 
@@ -139,8 +135,10 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
                 if let Some(path) = web_sys::window().and_then(|w| w.location().pathname().ok()) {
                     if let Some(route) = R::parse(&path) {
                         updater_clone.set_state(|state| {
-                            // Replace the history stack with just this route
-                            // (browser already manages the real history)
+                            // Replace the history stack with just
+                            // this route
+                            // (browser already manages the real
+                            // history)
                             *state
                                 .history
                                 .last_mut()
@@ -151,12 +149,8 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
             }) as Box<dyn FnMut(web_sys::PopStateEvent)>);
 
             if let Some(window) = web_sys::window() {
-                let _ = window.add_event_listener_with_callback(
-                    "popstate",
-                    closure
-                        .as_ref()
-                        .unchecked_ref(),
-                );
+                let _ = window
+                    .add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref());
             }
 
             // Leak the closure so it stays alive for the lifetime of the app
@@ -244,8 +238,7 @@ impl<R: 'static> LayoutElement for NavigatorElement<R> {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
 
     fn invalidate_layout(&self) {
@@ -261,10 +254,7 @@ impl<R: 'static> EventElement for NavigatorElement<R> {}
 
 impl<R: 'static> Rebuildable for NavigatorElement<R> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .rebuild_if_dirty(ctx)
-        });
+        self.scoped(ctx, |ctx| self.child.rebuild_if_dirty(ctx));
     }
 
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
@@ -276,8 +266,7 @@ impl<R: 'static> Rebuildable for NavigatorElement<R> {
     }
 
     fn mark_needs_rebuild(&self) {
-        self.child
-            .mark_needs_rebuild();
+        self.child.mark_needs_rebuild();
     }
 }
 

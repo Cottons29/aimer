@@ -78,9 +78,7 @@ impl SvgDocument {
         {
             return Err(SvgError::LimitExceeded {
                 resource: "viewport dimension",
-                actual: viewport
-                    .width
-                    .max(viewport.height) as usize,
+                actual: viewport.width.max(viewport.height) as usize,
                 limit: limits.max_viewport_dimension as usize,
             });
         }
@@ -187,22 +185,17 @@ fn collect_metadata(
     ];
     let mut metadata = Vec::new();
     let mut group_indices = HashMap::new();
-    for node in document
-        .descendants()
-        .filter(|node| {
-            node.is_element()
-                && supported.contains(&node.tag_name().name())
-                && !node
-                    .ancestors()
-                    .any(|ancestor| {
-                        ancestor.is_element()
-                            && matches!(
-                                ancestor.tag_name().name(),
-                                "defs" | "clipPath" | "mask" | "pattern" | "symbol"
-                            )
-                    })
-        })
-    {
+    for node in document.descendants().filter(|node| {
+        node.is_element()
+            && supported.contains(&node.tag_name().name())
+            && !node.ancestors().any(|ancestor| {
+                ancestor.is_element()
+                    && matches!(
+                        ancestor.tag_name().name(),
+                        "defs" | "clipPath" | "mask" | "pattern" | "symbol"
+                    )
+            })
+    }) {
         if node.tag_name().name() == "svg" {
             continue;
         }
@@ -210,11 +203,7 @@ fn collect_metadata(
         let parent_group_index = node
             .ancestors()
             .find(|ancestor| ancestor.is_element() && ancestor.tag_name().name() == "g")
-            .and_then(|ancestor| {
-                group_indices
-                    .get(&ancestor.id())
-                    .copied()
-            });
+            .and_then(|ancestor| group_indices.get(&ancestor.id()).copied());
         let source_index = metadata.len();
         let classes = node
             .attribute("class")
@@ -250,9 +239,7 @@ fn reject_non_finite_literals(document: &usvg::roxmltree::Document<'_>) -> Resul
         .filter(|node| node.is_element())
         .flat_map(|node| node.attributes())
     {
-        let value = attribute
-            .value()
-            .to_ascii_lowercase();
+        let value = attribute.value().to_ascii_lowercase();
         if value
             .split(|character: char| {
                 !(character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.'))
@@ -273,10 +260,7 @@ fn reject_non_finite_literals(document: &usvg::roxmltree::Document<'_>) -> Resul
 fn collect_diagnostics(document: &usvg::roxmltree::Document<'_>) -> Vec<SvgDiagnostic> {
     let mut diagnostics = Vec::new();
     let mut found = HashSet::new();
-    for node in document
-        .descendants()
-        .filter(|node| node.is_element())
-    {
+    for node in document.descendants().filter(|node| node.is_element()) {
         let feature = match node.tag_name().name() {
             "linearGradient" | "radialGradient" => Some("gradient"),
             "pattern" => Some("pattern"),
@@ -300,10 +284,7 @@ fn collect_diagnostics(document: &usvg::roxmltree::Document<'_>) -> Vec<SvgDiagn
 }
 
 fn reject_external_resources(document: &usvg::roxmltree::Document<'_>) -> Result<(), SvgError> {
-    for node in document
-        .descendants()
-        .filter(|node| node.is_element())
-    {
+    for node in document.descendants().filter(|node| node.is_element()) {
         for attribute in node.attributes() {
             if matches!(attribute.name(), "href" | "xlink:href") {
                 let value = attribute.value().trim();
@@ -332,12 +313,7 @@ impl SceneBuilder {
     fn new(viewport: SvgViewport, metadata: Vec<SourceMetadata>, limits: SvgLimits) -> Self {
         let metadata_by_id = metadata
             .iter()
-            .filter_map(|metadata| {
-                metadata
-                    .svg_id
-                    .clone()
-                    .map(|id| (id, metadata.clone()))
-            })
+            .filter_map(|metadata| metadata.svg_id.clone().map(|id| (id, metadata.clone())))
             .collect();
         let unnamed_path_metadata = metadata
             .iter()
@@ -355,11 +331,7 @@ impl SceneBuilder {
             let node_id = SvgNodeId(nodes.len() as u32);
             let parent = group
                 .parent_group_index
-                .and_then(|source_index| {
-                    group_nodes
-                        .get(&source_index)
-                        .copied()
-                });
+                .and_then(|source_index| group_nodes.get(&source_index).copied());
             nodes.push(SvgNode {
                 node_id,
                 svg_id: group.svg_id.clone(),
@@ -420,14 +392,8 @@ impl SceneBuilder {
         let group_opacity = inherited_opacity * group.opacity().get();
         let group_node_id = if group.id().is_empty() {
             parent
-        } else if let Some(metadata) = self
-            .metadata_by_id
-            .get(group.id())
-        {
-            let node_id = self
-                .group_nodes
-                .get(&metadata.source_index)
-                .copied();
+        } else if let Some(metadata) = self.metadata_by_id.get(group.id()) {
+            let node_id = self.group_nodes.get(&metadata.source_index).copied();
             if let Some(node_id) = node_id {
                 let node = &mut self.nodes[node_id.0 as usize];
                 node.transform = convert_transform(group.abs_transform());
@@ -462,18 +428,12 @@ impl SceneBuilder {
             self.path_metadata_index += 1;
             metadata
         } else {
-            self.metadata_by_id
-                .get(path.id())
-                .cloned()
+            self.metadata_by_id.get(path.id()).cloned()
         };
         let source_parent = metadata
             .as_ref()
             .and_then(|metadata| metadata.parent_group_index)
-            .and_then(|source_index| {
-                self.group_nodes
-                    .get(&source_index)
-                    .copied()
-            })
+            .and_then(|source_index| self.group_nodes.get(&source_index).copied())
             .or(parent);
         let commands = convert_path(path.data());
         self.command_count += commands.len();
@@ -487,10 +447,9 @@ impl SceneBuilder {
             return Err(SvgError::NonFinite);
         }
         let geometry = self.geometries.len();
-        self.geometries
-            .push(SvgGeometry {
-                commands: commands.into(),
-            });
+        self.geometries.push(SvgGeometry {
+            commands: commands.into(),
+        });
         let node_id = SvgNodeId(self.nodes.len() as u32);
         self.nodes.push(SvgNode {
             node_id,
@@ -507,12 +466,8 @@ impl SceneBuilder {
             transform,
             opacity,
             geometry: Some(geometry),
-            fill: path
-                .fill()
-                .and_then(convert_fill),
-            stroke: path
-                .stroke()
-                .and_then(convert_stroke),
+            fill: path.fill().and_then(convert_fill),
+            stroke: path.stroke().and_then(convert_stroke),
             paint_order: match path.paint_order() {
                 usvg::PaintOrder::FillAndStroke => SvgPaintOrder::FillAndStroke,
                 usvg::PaintOrder::StrokeAndFill => SvgPaintOrder::StrokeAndFill,
@@ -591,11 +546,7 @@ fn convert_stroke(stroke: &usvg::Stroke) -> Option<SvgStroke> {
             usvg::LineJoin::Bevel => SvgLineJoin::Bevel,
         },
         miter_limit: stroke.miterlimit().get(),
-        dash_array: stroke
-            .dasharray()
-            .unwrap_or_default()
-            .to_vec()
-            .into(),
+        dash_array: stroke.dasharray().unwrap_or_default().to_vec().into(),
         dash_offset: stroke.dashoffset(),
     })
 }

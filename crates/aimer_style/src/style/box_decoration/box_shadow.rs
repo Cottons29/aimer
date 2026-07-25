@@ -99,7 +99,6 @@ impl ShadowSide {
 ///   instances.
 /// * `Constructor` - Simplifies the creation of the struct by providing default
 ///   values for fields.
-///
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoxShadow {
     /// Horizontal offset

@@ -12,7 +12,6 @@ pub mod svg;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_fonts;
 
-pub use pipeline::AntiAlias;
-pub use pipeline::{image_pipeline, rect_pipeline, svg_pipeline, text_pipeline};
+pub use pipeline::{AntiAlias, image_pipeline, rect_pipeline, svg_pipeline, text_pipeline};
 
 pub use crate::text_pipeline::{glyph_atlas, glyph_rasterizer, text_layout};

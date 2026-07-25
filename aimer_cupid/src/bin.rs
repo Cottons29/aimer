@@ -104,9 +104,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                 .with_titlebar_buttons_hidden(false)
                 .with_fullsize_content_view(false)
         };
-        let window = event_loop
-            .create_window(attrs)
-            .unwrap();
+        let window = event_loop.create_window(attrs).unwrap();
         // window.set_min_inner_size(Some(winit::dpi::LogicalSize::new(1500, 700)));
         window.set_title(title);
 
@@ -148,9 +146,13 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
             .unwrap_or_else(|e| panic!("Failed to load {}: {e}", image_path.display()))
             .into_rgba8();
         let (img_w, img_h) = img.dimensions();
-        let tex_id = img_renderer
-            .image_pipeline
-            .upload_image(&gpu.device, &gpu.queue, img_w, img_h, img.as_raw());
+        let tex_id = img_renderer.image_pipeline.upload_image(
+            &gpu.device,
+            &gpu.queue,
+            img_w,
+            img_h,
+            img.as_raw(),
+        );
         debug!("Uploaded image to GPU");
 
         self.texture_id = Some(tex_id);
@@ -170,10 +172,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
     fn user_event(&mut self, _: &ActiveEventLoop, event: MyWindowEvent) {
         match event {
             MyWindowEvent::FirstFrame => {
-                self.window
-                    .as_ref()
-                    .unwrap()
-                    .request_redraw();
+                self.window.as_ref().unwrap().request_redraw();
             }
         }
     }
@@ -299,12 +298,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
                     WELCOME_TEXT,
                     44.0,
                     Color::black(),
-                    self.window
-                        .as_ref()
-                        .unwrap()
-                        .inner_size()
-                        .width as f32
-                        - 60.0,
+                    self.window.as_ref().unwrap().inner_size().width as f32 - 60.0,
                     400,
                 );
 
@@ -357,15 +351,11 @@ fn main() {
         .build()
         .expect("Failed to create event loop");
 
-    MY_EVENT_PROXY
-        .set(event_loop.create_proxy())
-        .ok();
+    MY_EVENT_PROXY.set(event_loop.create_proxy()).ok();
     event_loop.set_control_flow(ControlFlow::Wait);
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut app = App::new();
-        event_loop
-            .run_app(&mut app)
-            .unwrap();
+        event_loop.run_app(&mut app).unwrap();
     }
 }

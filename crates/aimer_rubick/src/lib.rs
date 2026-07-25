@@ -62,9 +62,9 @@ struct Projected<U, P, PM> {
 /// An owning inline-or-heap smart pointer.
 ///
 /// `Rubick<T>` exclusively owns one concrete value. If its concrete storage
-/// type fits [`INLINE_CAPACITY`] and [`INLINE_ALIGNMENT`], the value is embedded
-/// in the owner. Otherwise `Rubick` performs one allocation using the concrete
-/// type's exact layout.
+/// type fits [`INLINE_CAPACITY`] and [`INLINE_ALIGNMENT`], the value is
+/// embedded in the owner. Otherwise `Rubick` performs one allocation using the
+/// concrete type's exact layout.
 ///
 /// `T` may be sized, or it may be an erased target such as `dyn Trait`. Sized
 /// values use [`Rubick::new`]. Erased targets use [`Rubick::new_projected`]
@@ -74,10 +74,12 @@ struct Projected<U, P, PM> {
 /// Moving an unpinned `Rubick` also moves an inline value and changes that
 /// value's address. Heap values retain their allocation address across owner
 /// moves, but this is an implementation detail rather than a stable-address
-/// API guarantee. Standard [`std::pin::Pin`] rules apply once an owner is pinned.
+/// API guarantee. Standard [`std::pin::Pin`] rules apply once an owner is
+/// pinned.
 ///
-/// The owner is conservatively `!Send` and `!Sync`: after concrete type erasure,
-/// its operation table cannot express all auto traits of the hidden value.
+/// The owner is conservatively `!Send` and `!Sync`: after concrete type
+/// erasure, its operation table cannot express all auto traits of the hidden
+/// value.
 pub struct Rubick<T: ?Sized> {
     storage: Storage,
     operations: Operations<T>,
@@ -131,12 +133,20 @@ impl<T: ?Sized + 'static> Rubick<T> {
     /// struct Count(usize);
     ///
     /// impl Counter for Count {
-    ///     fn increment(&mut self) { self.0 += 1; }
-    ///     fn value(&self) -> usize { self.0 }
+    ///     fn increment(&mut self) {
+    ///         self.0 += 1;
+    ///     }
+    ///     fn value(&self) -> usize {
+    ///         self.0
+    ///     }
     /// }
     ///
-    /// fn as_counter(value: &Count) -> &(dyn Counter + 'static) { value }
-    /// fn as_counter_mut(value: &mut Count) -> &mut (dyn Counter + 'static) { value }
+    /// fn as_counter(value: &Count) -> &(dyn Counter + 'static) {
+    ///     value
+    /// }
+    /// fn as_counter_mut(value: &mut Count) -> &mut (dyn Counter + 'static) {
+    ///     value
+    /// }
     ///
     /// let mut count: Rubick<dyn Counter> =
     ///     Rubick::new_projected(Count(2), as_counter, as_counter_mut);
@@ -170,7 +180,8 @@ impl<T: ?Sized + 'static> Rubick<T> {
         matches!(self.storage, Storage::Inline(_))
     }
 
-    /// Returns `true` when the concrete storage uses a separate heap allocation.
+    /// Returns `true` when the concrete storage uses a separate heap
+    /// allocation.
     ///
     /// This is always the inverse of [`Rubick::is_inline`].
     pub fn is_heap(&self) -> bool {

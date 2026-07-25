@@ -430,6 +430,13 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         self.exit_requested
     }
 
+    /// Returns the cursor icon most recently selected by the widget tree.
+    pub fn cursor_icon(&self) -> winit::window::CursorIcon {
+        self.window
+            .headless_cursor()
+            .expect("a headless application always owns a headless window")
+    }
+
     /// Returns and clears whether application code requested another frame.
     pub fn take_redraw_request(&self) -> bool {
         self.window.take_redraw_request()

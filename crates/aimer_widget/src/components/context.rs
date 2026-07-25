@@ -2,8 +2,8 @@ use std::any::{Any, TypeId};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
@@ -20,6 +20,7 @@ pub struct HeadlessWindowState {
     height: AtomicU32,
     scale_factor: AtomicU64,
     redraw_requested: AtomicBool,
+    cursor: Mutex<winit::window::CursorIcon>,
 }
 
 #[derive(Clone, Debug)]
@@ -39,6 +40,7 @@ impl WindowHandle {
             height: AtomicU32::new(size.height),
             scale_factor: AtomicU64::new(scale_factor.to_bits()),
             redraw_requested: AtomicBool::new(false),
+            cursor: Mutex::new(winit::window::CursorIcon::Default),
         }))
     }
 
@@ -46,12 +48,8 @@ impl WindowHandle {
         match self {
             Self::Native(window) => window.inner_size(),
             Self::Headless(state) => winit::dpi::PhysicalSize::new(
-                state
-                    .width
-                    .load(Ordering::Relaxed),
-                state
-                    .height
-                    .load(Ordering::Relaxed),
+                state.width.load(Ordering::Relaxed),
+                state.height.load(Ordering::Relaxed),
             ),
         }
     }
@@ -59,26 +57,39 @@ impl WindowHandle {
     pub fn scale_factor(&self) -> f64 {
         match self {
             Self::Native(window) => window.scale_factor(),
-            Self::Headless(state) => f64::from_bits(
-                state
-                    .scale_factor
-                    .load(Ordering::Relaxed),
-            ),
+            Self::Headless(state) => f64::from_bits(state.scale_factor.load(Ordering::Relaxed)),
         }
     }
 
     pub fn request_redraw(&self) {
         match self {
             Self::Native(window) => window.request_redraw(),
-            Self::Headless(state) => state
-                .redraw_requested
-                .store(true, Ordering::Release),
+            Self::Headless(state) => state.redraw_requested.store(true, Ordering::Release),
         }
     }
 
     pub fn set_cursor(&self, cursor: winit::window::CursorIcon) {
-        if let Self::Native(window) = self {
-            window.set_cursor(cursor);
+        match self {
+            Self::Native(window) => window.set_cursor(cursor),
+            Self::Headless(state) => {
+                *state
+                    .cursor
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = cursor;
+            }
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn headless_cursor(&self) -> Option<winit::window::CursorIcon> {
+        match self {
+            Self::Native(_) => None,
+            Self::Headless(state) => Some(
+                *state
+                    .cursor
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            ),
         }
     }
 
@@ -103,12 +114,8 @@ impl WindowHandle {
 
     pub fn update_headless_metrics(&self, size: winit::dpi::PhysicalSize<u32>, scale_factor: f64) {
         if let Self::Headless(state) = self {
-            state
-                .width
-                .store(size.width, Ordering::Relaxed);
-            state
-                .height
-                .store(size.height, Ordering::Relaxed);
+            state.width.store(size.width, Ordering::Relaxed);
+            state.height.store(size.height, Ordering::Relaxed);
             state
                 .scale_factor
                 .store(scale_factor.to_bits(), Ordering::Relaxed);
@@ -118,9 +125,7 @@ impl WindowHandle {
     pub fn take_redraw_request(&self) -> bool {
         match self {
             Self::Native(_) => false,
-            Self::Headless(state) => state
-                .redraw_requested
-                .swap(false, Ordering::AcqRel),
+            Self::Headless(state) => state.redraw_requested.swap(false, Ordering::AcqRel),
         }
     }
 }
@@ -157,28 +162,18 @@ impl BuildConsumer {
     }
 
     fn begin_build(&self) {
-        self.dependencies
-            .borrow_mut()
-            .clear();
-        for cleanup in self
-            .cleanups
-            .borrow_mut()
-            .drain(..)
-        {
+        self.dependencies.borrow_mut().clear();
+        for cleanup in self.cleanups.borrow_mut().drain(..) {
             cleanup();
         }
     }
 
     pub fn add_cleanup(&self, cleanup: impl FnOnce() + 'static) {
-        self.cleanups
-            .borrow_mut()
-            .push(Box::new(cleanup));
+        self.cleanups.borrow_mut().push(Box::new(cleanup));
     }
 
     pub fn register_dependency(&self, identity: usize) -> bool {
-        self.dependencies
-            .borrow_mut()
-            .insert(identity)
+        self.dependencies.borrow_mut().insert(identity)
     }
 
     pub fn mark_needs_rebuild(&self) {
@@ -188,11 +183,7 @@ impl BuildConsumer {
 
 impl Drop for BuildConsumer {
     fn drop(&mut self) {
-        for cleanup in self
-            .cleanups
-            .get_mut()
-            .drain(..)
-        {
+        for cleanup in self.cleanups.get_mut().drain(..) {
             cleanup();
         }
     }
@@ -265,11 +256,7 @@ impl<'a> BuildContext<'a> {
         self.inherited_states
             .borrow()
             .get(&TypeId::of::<T>())
-            .and_then(|arc| {
-                arc.clone()
-                    .downcast::<T>()
-                    .ok()
-            })
+            .and_then(|arc| arc.clone().downcast::<T>().ok())
     }
 
     pub fn with_state<T: Any, R>(&self, state: T, callback: impl FnOnce(&Self) -> R) -> R {
@@ -348,20 +335,10 @@ mod tests {
         context.insert_state(1_u32);
 
         context.with_state(2_u32, |context| {
-            assert_eq!(
-                *context
-                    .get_state::<u32>()
-                    .unwrap(),
-                2
-            );
+            assert_eq!(*context.get_state::<u32>().unwrap(), 2);
         });
 
-        assert_eq!(
-            *context
-                .get_state::<u32>()
-                .unwrap(),
-            1
-        );
+        assert_eq!(*context.get_state::<u32>().unwrap(), 1);
     }
 
     #[test]
@@ -374,12 +351,7 @@ mod tests {
         }));
 
         assert!(result.is_err());
-        assert_eq!(
-            *context
-                .get_state::<u32>()
-                .unwrap(),
-            1
-        );
+        assert_eq!(*context.get_state::<u32>().unwrap(), 1);
     }
 
     #[test]
@@ -390,9 +362,7 @@ mod tests {
         let cleanup_count = Rc::new(Cell::new(0));
 
         context.with_build_consumer(consumer.clone(), |context| {
-            let current = context
-                .current_build_consumer()
-                .unwrap();
+            let current = context.current_build_consumer().unwrap();
             let cleanup_count = cleanup_count.clone();
             current.add_cleanup(move || cleanup_count.set(cleanup_count.get() + 1));
         });

@@ -127,10 +127,7 @@ impl Document {
 }
 
 fn convert_blocks(nodes: &[Node]) -> Result<Vec<Block>, MarkdownError> {
-    nodes
-        .iter()
-        .map(convert_block)
-        .collect()
+    nodes.iter().map(convert_block).collect()
 }
 
 fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
@@ -192,12 +189,7 @@ fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
                     Ok(TableRow { cells })
                 })
                 .collect::<Result<_, MarkdownError>>()?;
-            let alignments = table
-                .align
-                .iter()
-                .copied()
-                .map(Alignment::from)
-                .collect();
+            let alignments = table.align.iter().copied().map(Alignment::from).collect();
             Ok(Block::Table { alignments, rows })
         }
         Node::FootnoteDefinition(footnote) => Ok(Block::FootnoteDefinition {
@@ -377,10 +369,7 @@ mod tests {
         let document = parse(
             "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n\n*italic* **bold** ***both*** ~~gone~~",
         );
-        for (index, block) in document.blocks[..6]
-            .iter()
-            .enumerate()
-        {
+        for (index, block) in document.blocks[..6].iter().enumerate() {
             assert!(matches!(block, Block::Heading { depth, .. } if *depth == index as u8 + 1));
         }
         let Block::Paragraph(inlines) = &document.blocks[6] else {
@@ -416,10 +405,7 @@ mod tests {
         assert!(!ordered);
         assert_eq!(*start, None);
         assert_eq!(
-            items
-                .iter()
-                .map(|item| item.checked)
-                .collect::<Vec<_>>(),
+            items.iter().map(|item| item.checked).collect::<Vec<_>>(),
             [None, Some(true), Some(false)]
         );
         assert!(matches!(
@@ -514,10 +500,6 @@ mod tests {
     fn rejects_raw_html_without_silently_dropping_it() {
         let error = Document::parse("<script>alert('no')</script>")
             .expect_err("raw HTML is intentionally unsupported");
-        assert!(
-            error
-                .to_string()
-                .contains("HTML")
-        );
+        assert!(error.to_string().contains("HTML"));
     }
 }

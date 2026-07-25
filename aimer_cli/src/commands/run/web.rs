@@ -46,10 +46,7 @@ pub fn find_llvm_ar() -> Option<PathBuf> {
 
     // 3. Fall back to `which`/`where` as a last resort
     let which_cmd = if cfg!(windows) { "where" } else { "which" };
-    if let Ok(output) = Command::new(which_cmd)
-        .arg("llvm-ar")
-        .output()
-    {
+    if let Ok(output) = Command::new(which_cmd).arg("llvm-ar").output() {
         if output.status.success() {
             let found = String::from_utf8_lossy(&output.stdout)
                 .lines()
@@ -118,9 +115,7 @@ pub fn spawn_web_runner(
     let mut trunk = Command::new("trunk");
     #[cfg(target_os = "macos")]
     configure_trunk(&mut trunk, &llvm_ar);
-    trunk
-        .arg("serve")
-        .current_dir("builds/web");
+    trunk.arg("serve").current_dir("builds/web");
 
     if !spawn_streamed(
         trunk,

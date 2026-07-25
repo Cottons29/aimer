@@ -56,17 +56,12 @@ fn fetch_devices() -> Vec<Device> {
 
     // Android Devices
     #[allow(clippy::collapsible_if)]
-    if let Ok(output) = Command::new("adb")
-        .args(["devices", "-l"])
-        .output()
-    {
+    if let Ok(output) = Command::new("adb").args(["devices", "-l"]).output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if line.contains(" device ") || line.contains(" emulator ") {
-                    let parts: Vec<&str> = line
-                        .split_whitespace()
-                        .collect();
+                    let parts: Vec<&str> = line.split_whitespace().collect();
                     if let Some(id) = parts.first() {
                         let connection_type = if id.contains('.') && id.contains(':') {
                             "Wireless"
@@ -90,10 +85,7 @@ fn fetch_devices() -> Vec<Device> {
                         if let Ok(output) = pretty_name_cmd {
                             if output.status.success() {
                                 let output_str = String::from_utf8_lossy(&output.stdout);
-                                if let Some(name) = output_str
-                                    .split_whitespace()
-                                    .next()
-                                {
+                                if let Some(name) = output_str.split_whitespace().next() {
                                     device_name = name.to_string();
                                 }
                             }
@@ -121,9 +113,7 @@ fn fetch_devices() -> Vec<Device> {
             for line in stdout.lines() {
                 if line.contains("(Booted)") {
                     if let Some(start) = line.find('(') {
-                        let name = line[..start]
-                            .trim()
-                            .to_string();
+                        let name = line[..start].trim().to_string();
                         let rest = &line[start..];
                         let mut id = "".to_string();
                         if let Some(udid_start) = rest.find('(') {
@@ -158,27 +148,20 @@ fn fetch_devices() -> Vec<Device> {
                     continue;
                 }
                 if in_devices && !line.is_empty() {
-                    let parts: Vec<&str> = line
-                        .split("   ")
-                        .filter(|s| !s.trim().is_empty())
-                        .collect();
+                    let parts: Vec<&str> =
+                        line.split("   ").filter(|s| !s.trim().is_empty()).collect();
                     if parts.len() >= 4 {
                         let name = parts[0].trim().to_string();
                         let identifier = parts[2].trim().to_string();
                         let state = parts[3].trim();
                         if state.to_lowercase() == "available" {
-                            let connection_type = if parts[1]
-                                .trim()
-                                .ends_with(".coredevice.local")
+                            let connection_type = if parts[1].trim().ends_with(".coredevice.local")
                             {
                                 "Wireless/Wired"
                             } else {
                                 "Wired"
                             };
-                            if devices
-                                .iter()
-                                .any(|d| d.id != identifier)
-                            {
+                            if devices.iter().any(|d| d.id != identifier) {
                                 devices.push(Device {
                                     name: format!("{} ({})", name, connection_type),
                                     target: Targets::Ios,
@@ -213,9 +196,7 @@ fn fetch_devices() -> Vec<Device> {
                 } else if !line.is_empty() && !is_offline && !is_simulator {
                     if let Some(start) = line.rfind('(') {
                         if let Some(end) = line.rfind(')') {
-                            let name = line[..start]
-                                .trim()
-                                .to_string();
+                            let name = line[..start].trim().to_string();
                             let id = line[start + 1..end].to_string();
                             if !id.contains("-") || id.len() == 40 || id.len() == 25 {
                                 devices.push(Device {
@@ -359,9 +340,7 @@ fn pick_device(devices_arc: &Arc<Mutex<Vec<Device>>>) -> anyhow::Result<Option<D
             .map_err(|_| anyhow::anyhow!("device list mutex was poisoned"))?
             .clone();
         if selected_index >= devices.len() {
-            selected_index = devices
-                .len()
-                .saturating_sub(1);
+            selected_index = devices.len().saturating_sub(1);
         }
 
         // Render menu
@@ -409,17 +388,11 @@ fn pick_device(devices_arc: &Arc<Mutex<Vec<Device>>>) -> anyhow::Result<Option<D
                     selected_index = if selected_index > 0 {
                         selected_index - 1
                     } else {
-                        devices
-                            .len()
-                            .saturating_sub(1)
+                        devices.len().saturating_sub(1)
                     };
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    selected_index = if selected_index
-                        < devices
-                            .len()
-                            .saturating_sub(1)
-                    {
+                    selected_index = if selected_index < devices.len().saturating_sub(1) {
                         selected_index + 1
                     } else {
                         0
@@ -435,11 +408,7 @@ fn pick_device(devices_arc: &Arc<Mutex<Vec<Device>>>) -> anyhow::Result<Option<D
                         id: "q".to_string(),
                     };
                 }
-                KeyCode::Char('c')
-                    if key_event
-                        .modifiers
-                        .contains(KeyModifiers::CONTROL) =>
-                {
+                KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                     // Restore the terminal before aborting; `process::exit`
                     // does not run destructors, so drop the guard manually.
                     drop(_guard);
@@ -566,9 +535,7 @@ mod tests {
     #[test]
     fn fetch_devices_quit_is_last() {
         let devices = fetch_devices();
-        let last = devices
-            .last()
-            .expect("devices should not be empty");
+        let last = devices.last().expect("devices should not be empty");
         assert_eq!(last.target, Terminated);
         assert_eq!(last.id, "q");
         assert_eq!(last.name, "Quit");
@@ -586,10 +553,7 @@ mod tests {
     #[test]
     fn fetch_devices_unique_by_id() {
         let devices = fetch_devices();
-        let ids: Vec<_> = devices
-            .iter()
-            .map(|d| &d.id)
-            .collect();
+        let ids: Vec<_> = devices.iter().map(|d| &d.id).collect();
         let unique: std::collections::HashSet<_> = ids.iter().collect();
         assert_eq!(ids.len(), unique.len(), "Device list contains duplicates");
     }
@@ -607,12 +571,7 @@ edition = "2021"
         let pkg_name = cargo_toml
             .lines()
             .find(|l| l.starts_with("name ="))
-            .map(|l| {
-                l.split('"')
-                    .nth(1)
-                    .unwrap_or("")
-                    .to_string()
-            })
+            .map(|l| l.split('"').nth(1).unwrap_or("").to_string())
             .unwrap_or_else(|| "aimer_template".to_string());
 
         assert_eq!(pkg_name, "my_awesome_app");
@@ -627,12 +586,7 @@ version = "0.1.0"
         let pkg_name = cargo_toml
             .lines()
             .find(|l| l.starts_with("name ="))
-            .map(|l| {
-                l.split('"')
-                    .nth(1)
-                    .unwrap_or("")
-                    .to_string()
-            })
+            .map(|l| l.split('"').nth(1).unwrap_or("").to_string())
             .unwrap_or_else(|| "aimer_template".to_string());
 
         assert_eq!(pkg_name, "aimer_template");
@@ -644,12 +598,7 @@ version = "0.1.0"
         let pkg_name = cargo_toml
             .lines()
             .find(|l| l.starts_with("name ="))
-            .map(|l| {
-                l.split('"')
-                    .nth(1)
-                    .unwrap_or("")
-                    .to_string()
-            })
+            .map(|l| l.split('"').nth(1).unwrap_or("").to_string())
             .unwrap_or_else(|| "aimer_template".to_string());
 
         assert_eq!(pkg_name, "hello-world");
@@ -661,12 +610,7 @@ version = "0.1.0"
         let pkg_name = cargo_toml
             .lines()
             .find(|l| l.starts_with("name ="))
-            .map(|l| {
-                l.split('"')
-                    .nth(1)
-                    .unwrap_or("")
-                    .to_string()
-            })
+            .map(|l| l.split('"').nth(1).unwrap_or("").to_string())
             .unwrap_or_else(|| "aimer_template".to_string());
 
         assert_eq!(pkg_name, "aimer_template");

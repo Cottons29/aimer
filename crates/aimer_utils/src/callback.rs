@@ -254,8 +254,7 @@ unsafe impl Sync for VoidCallback {}
 
 impl Debug for VoidCallback {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VoidCallback() -> ()")
-            .finish()
+        f.debug_struct("VoidCallback() -> ()").finish()
     }
 }
 

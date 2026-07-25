@@ -188,52 +188,27 @@ impl ScrollState {
     /// one so the viewport stays where the user left it instead of snapping
     /// to the top.
     pub(crate) fn adopt_scroll_state(&self, prev: &ScrollState) {
-        self.scroll_offset
-            .set(prev.scroll_offset.get());
-        self.pointer_velocity
-            .set(prev.pointer_velocity.get());
-        self.last_pointer_pos
-            .set(prev.last_pointer_pos.get());
-        self.drag_mode
-            .set(prev.drag_mode.get());
-        self.last_event_time
-            .set(prev.last_event_time.get());
-        self.last_frame_time
-            .set(prev.last_frame_time.get());
-        self.cursor_pos
-            .set(prev.cursor_pos.get());
-        *self
-            .velocity_history
-            .borrow_mut() = prev
-            .velocity_history
-            .borrow()
-            .clone();
-        self.fling_start_time
-            .set(prev.fling_start_time.get());
-        self.fling_start_offset
-            .set(prev.fling_start_offset.get());
-        self.fling_target_offset
-            .set(prev.fling_target_offset.get());
-        self.fling_duration
-            .set(prev.fling_duration.get());
-        self.anim_curve
-            .set(prev.anim_curve.get());
-        self.active_touch_id
-            .set(prev.active_touch_id.get());
-        self.spring_velocity
-            .set(prev.spring_velocity.get());
-        self.momentum_start_time
-            .set(prev.momentum_start_time.get());
-        self.vel_accum
-            .set(prev.vel_accum.get());
-        self.vel_sample_time
-            .set(prev.vel_sample_time.get());
-        self.is_scrolling
-            .set(prev.is_scrolling.get());
-        self.last_reported_offset.set(
-            prev.last_reported_offset
-                .get(),
-        );
+        self.scroll_offset.set(prev.scroll_offset.get());
+        self.pointer_velocity.set(prev.pointer_velocity.get());
+        self.last_pointer_pos.set(prev.last_pointer_pos.get());
+        self.drag_mode.set(prev.drag_mode.get());
+        self.last_event_time.set(prev.last_event_time.get());
+        self.last_frame_time.set(prev.last_frame_time.get());
+        self.cursor_pos.set(prev.cursor_pos.get());
+        *self.velocity_history.borrow_mut() = prev.velocity_history.borrow().clone();
+        self.fling_start_time.set(prev.fling_start_time.get());
+        self.fling_start_offset.set(prev.fling_start_offset.get());
+        self.fling_target_offset.set(prev.fling_target_offset.get());
+        self.fling_duration.set(prev.fling_duration.get());
+        self.anim_curve.set(prev.anim_curve.get());
+        self.active_touch_id.set(prev.active_touch_id.get());
+        self.spring_velocity.set(prev.spring_velocity.get());
+        self.momentum_start_time.set(prev.momentum_start_time.get());
+        self.vel_accum.set(prev.vel_accum.get());
+        self.vel_sample_time.set(prev.vel_sample_time.get());
+        self.is_scrolling.set(prev.is_scrolling.get());
+        self.last_reported_offset
+            .set(prev.last_reported_offset.get());
     }
 
     /// Current scroll position in logical (unscaled) pixels, measured from the
@@ -242,10 +217,7 @@ impl ScrollState {
     /// Internally the offset is stored scaled and negated (content moved up),
     /// so this converts back to the user-facing convention.
     fn logical_offset(&self) -> Vec2d {
-        let scale = self
-            .last_scale
-            .get()
-            .max(f32::EPSILON);
+        let scale = self.last_scale.get().max(f32::EPSILON);
         let o = self.scroll_offset.get();
         Vec2d {
             x: -o.x / scale,
@@ -258,16 +230,10 @@ impl ScrollState {
     /// scrolling edge. A no-op if a session is already active,
     /// so it is safe to call on every drag move / wheel tick.
     pub(crate) fn begin_scroll(&self) {
-        if !self
-            .is_scrolling
-            .replace(true)
-        {
+        if !self.is_scrolling.replace(true) {
             // Clone the handle out (cheap `Rc` bump) before invoking so a callback
             // that touches the controller can't re-enter a live `RefCell` borrow.
-            let cb = self
-                .on_scroll_start
-                .borrow()
-                .clone();
+            let cb = self.on_scroll_start.borrow().clone();
             cb.call(self.logical_offset());
         }
     }
@@ -277,14 +243,8 @@ impl ScrollState {
     /// edge. A no-op when already idle, so the draw loop can call it every
     /// settled frame without emitting duplicates.
     pub(crate) fn end_scroll(&self) {
-        if self
-            .is_scrolling
-            .replace(false)
-        {
-            let cb = self
-                .on_scroll_end
-                .borrow()
-                .clone();
+        if self.is_scrolling.replace(false) {
+            let cb = self.on_scroll_end.borrow().clone();
             cb.call(self.logical_offset());
         }
     }
@@ -297,25 +257,18 @@ impl ScrollState {
     /// baseline, so the initial render never emits a spurious update.
     pub(crate) fn notify_scroll(&self) {
         let current = self.logical_offset();
-        let moved = match self
-            .last_reported_offset
-            .get()
-        {
+        let moved = match self.last_reported_offset.get() {
             Some(prev) => {
                 (current.x - prev.x).abs() > SCROLL_NOTIFY_EPSILON
                     || (current.y - prev.y).abs() > SCROLL_NOTIFY_EPSILON
             }
             None => false,
         };
-        self.last_reported_offset
-            .set(Some(current));
+        self.last_reported_offset.set(Some(current));
         if moved {
             // Clone out (cheap `Rc` bump) so a callback that touches the
             // controller can't re-enter a live `RefCell` borrow.
-            let cb = self
-                .on_scroll
-                .borrow()
-                .clone();
+            let cb = self.on_scroll.borrow().clone();
             cb.call(current);
         }
     }
@@ -376,67 +329,35 @@ impl ScrollController {
 
     /// Whether this controller is currently attached to a live `Scrollable`.
     pub fn is_attached(&self) -> bool {
-        self.inner
-            .state
-            .borrow()
-            .is_some()
+        self.inner.state.borrow().is_some()
     }
 
     /// Attach (or re-attach, on rebuild) the live scroll engine. Applies any
     /// position requested before attachment.
     pub(crate) fn attach(&self, state: Rc<ScrollState>) {
-        let previous = self
-            .inner
-            .state
-            .borrow()
-            .clone();
+        let previous = self.inner.state.borrow().clone();
         if let Some(previous) = previous
             && !Rc::ptr_eq(&previous, &state)
         {
             state.adopt_scroll_state(&previous);
         }
         if let Some(pos) = self.inner.pending.take() {
-            let scale = state
-                .last_scale
-                .get()
-                .max(f32::EPSILON);
-            state
-                .scroll_offset
-                .set(Vec2d {
-                    x: -pos.x * scale,
-                    y: -pos.y * scale,
-                });
+            let scale = state.last_scale.get().max(f32::EPSILON);
+            state.scroll_offset.set(Vec2d {
+                x: -pos.x * scale,
+                y: -pos.y * scale,
+            });
         }
         // Re-share the app's scroll-lifecycle callbacks into the freshly built
         // engine so they keep firing across rebuilds.
-        *state
-            .on_scroll_start
-            .borrow_mut() = self
-            .inner
-            .on_scroll_start
-            .borrow()
-            .clone();
-        *state
-            .on_scroll_end
-            .borrow_mut() = self
-            .inner
-            .on_scroll_end
-            .borrow()
-            .clone();
-        *state.on_scroll.borrow_mut() = self
-            .inner
-            .on_scroll
-            .borrow()
-            .clone();
+        *state.on_scroll_start.borrow_mut() = self.inner.on_scroll_start.borrow().clone();
+        *state.on_scroll_end.borrow_mut() = self.inner.on_scroll_end.borrow().clone();
+        *state.on_scroll.borrow_mut() = self.inner.on_scroll.borrow().clone();
         *self.inner.state.borrow_mut() = Some(state);
     }
 
     fn with_state<R>(&self, f: impl FnOnce(&Rc<ScrollState>) -> R) -> Option<R> {
-        self.inner
-            .state
-            .borrow()
-            .as_ref()
-            .map(f)
+        self.inner.state.borrow().as_ref().map(f)
     }
 
     /// The current scroll position in logical (unscaled) pixels, positive
@@ -444,22 +365,14 @@ impl ScrollController {
     /// detached.
     pub fn offset(&self) -> Vec2d {
         self.with_state(|s| s.logical_offset())
-            .unwrap_or_else(|| {
-                self.inner
-                    .pending
-                    .get()
-                    .unwrap_or_default()
-            })
+            .unwrap_or_else(|| self.inner.pending.get().unwrap_or_default())
     }
 
     /// The maximum scrollable extent per axis in logical pixels. Zero while
     /// detached or before the first layout.
     pub fn max_extent(&self) -> Vec2d {
         self.with_state(|s| {
-            let scale = s
-                .last_scale
-                .get()
-                .max(f32::EPSILON);
+            let scale = s.last_scale.get().max(f32::EPSILON);
             let m = s.cached_max_scroll.get();
             Vec2d {
                 x: m.x / scale,
@@ -475,33 +388,25 @@ impl ScrollController {
     /// applied on attachment.
     pub fn jump_to(&self, position: Vec2d) {
         let applied = self.with_state(|s| {
-            let scale = s
-                .last_scale
-                .get()
-                .max(f32::EPSILON);
+            let scale = s.last_scale.get().max(f32::EPSILON);
             let internal = Vec2d {
                 x: -position.x * scale,
                 y: -position.y * scale,
             };
             s.cancel_fling();
-            s.pointer_velocity
-                .set(Vec2d { x: 0.0, y: 0.0 });
-            s.spring_velocity
-                .set(Vec2d { x: 0.0, y: 0.0 });
+            s.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+            s.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
             // An instant jump is a self-contained scroll session: fire the
             // start/end edges around the position change so listeners still see
             // a matched pair even though no frames elapse.
             s.begin_scroll();
-            s.scroll_offset
-                .set(s.clamp_offset(internal));
+            s.scroll_offset.set(s.clamp_offset(internal));
             s.end_scroll();
         });
         if applied.is_some() {
             aimer_events::window::request_animation_frame();
         } else {
-            self.inner
-                .pending
-                .set(Some(position));
+            self.inner.pending.set(Some(position));
         }
     }
 
@@ -511,10 +416,7 @@ impl ScrollController {
     /// position (no animation) and applied on attachment.
     pub fn animate_to(&self, position: Vec2d, duration: Duration, curve: Curve) {
         let applied = self.with_state(|s| {
-            let scale = s
-                .last_scale
-                .get()
-                .max(f32::EPSILON);
+            let scale = s.last_scale.get().max(f32::EPSILON);
             let target = Vec2d {
                 x: -position.x * scale,
                 y: -position.y * scale,
@@ -528,9 +430,7 @@ impl ScrollController {
         if applied.is_some() {
             aimer_events::window::request_animation_frame();
         } else {
-            self.inner
-                .pending
-                .set(Some(position));
+            self.inner.pending.set(Some(position));
         }
     }
 
@@ -548,10 +448,7 @@ impl ScrollController {
     /// closure `|offset: Vec2d| { .. }` or a pre-built `Callback`.
     pub fn on_scroll_start(&self, callback: impl Into<Callback<Vec2d>>) {
         let cb: Callback<Vec2d> = callback.into();
-        *self
-            .inner
-            .on_scroll_start
-            .borrow_mut() = cb.clone();
+        *self.inner.on_scroll_start.borrow_mut() = cb.clone();
         self.with_state(|s| {
             *s.on_scroll_start.borrow_mut() = cb.clone();
         });
@@ -570,10 +467,7 @@ impl ScrollController {
     /// closure `|offset: Vec2d| { .. }` or a pre-built `Callback`.
     pub fn on_scroll_end(&self, callback: impl Into<Callback<Vec2d>>) {
         let cb: Callback<Vec2d> = callback.into();
-        *self
-            .inner
-            .on_scroll_end
-            .borrow_mut() = cb.clone();
+        *self.inner.on_scroll_end.borrow_mut() = cb.clone();
         self.with_state(|s| {
             *s.on_scroll_end.borrow_mut() = cb.clone();
         });
@@ -597,10 +491,7 @@ impl ScrollController {
     /// closure `|offset: Vec2d| { .. }` or a pre-built `Callback`.
     pub fn on_scroll(&self, callback: impl Into<Callback<Vec2d>>) {
         let cb: Callback<Vec2d> = callback.into();
-        *self
-            .inner
-            .on_scroll
-            .borrow_mut() = cb.clone();
+        *self.inner.on_scroll.borrow_mut() = cb.clone();
         self.with_state(|s| {
             *s.on_scroll.borrow_mut() = cb.clone();
         });
@@ -674,14 +565,8 @@ impl ScrollState {
     pub(crate) fn clamp_offset(&self, mut offset: Vec2d) -> Vec2d {
         let min = self.cached_min_scroll.get();
         let max = self.cached_max_scroll.get();
-        offset.x = offset
-            .x
-            .max(-max.x)
-            .min(-min.x);
-        offset.y = offset
-            .y
-            .max(-max.y)
-            .min(-min.y);
+        offset.x = offset.x.max(-max.x).min(-min.x);
+        offset.y = offset.y.max(-max.y).min(-min.y);
         offset
     }
 
@@ -722,12 +607,8 @@ impl ScrollState {
         let max_oy = content.height * MAX_OVERSCROLL_FRACTION;
         let clamped = self.clamp_offset(offset);
         Vec2d {
-            x: offset
-                .x
-                .clamp(clamped.x - max_ox, clamped.x + max_ox),
-            y: offset
-                .y
-                .clamp(clamped.y - max_oy, clamped.y + max_oy),
+            x: offset.x.clamp(clamped.x - max_ox, clamped.x + max_ox),
+            y: offset.y.clamp(clamped.y - max_oy, clamped.y + max_oy),
         }
     }
 
@@ -765,9 +646,7 @@ impl ScrollState {
 
         if self.scroll_behavior.bouncy {
             let (vp_w, vp_h) = self.cached_viewport.get();
-            let resistance = self
-                .scroll_behavior
-                .bouncy_resistance;
+            let resistance = self.scroll_behavior.bouncy_resistance;
             let vx = Self::apply_bouncy(offset.x, max_x, min_x, vp_w.max(MIN_VIEWPORT), resistance);
             let vy = Self::apply_bouncy(offset.y, max_y, min_y, vp_h.max(MIN_VIEWPORT), resistance);
 
@@ -797,25 +676,18 @@ impl ScrollState {
 
     /// Push a velocity sample into the ring buffer for trackpad smoothing.
     pub(crate) fn push_velocity(&self, vx: f32, vy: f32) {
-        self.velocity_history
-            .borrow_mut()
-            .push(vx, vy);
+        self.velocity_history.borrow_mut().push(vx, vy);
     }
 
     /// Return the weighted-average velocity across recent samples.
     pub(crate) fn smoothed_velocity(&self) -> Vec2d {
-        let (sx, sy) = self
-            .velocity_history
-            .borrow()
-            .weighted_average();
+        let (sx, sy) = self.velocity_history.borrow().weighted_average();
         Vec2d { x: sx, y: sy }
     }
 
     /// Clear the velocity history (e.g. on pointer-down).
     pub(crate) fn clear_velocity_history(&self) {
-        self.velocity_history
-            .borrow_mut()
-            .clear();
+        self.velocity_history.borrow_mut().clear();
     }
 
     /// Fold a raw drag delta (already scaled by `speed_multiplier`) into the
@@ -844,17 +716,12 @@ impl ScrollState {
         let sample_dt = self
             .vel_sample_time
             .get()
-            .map(|t| {
-                now.duration_since(t)
-                    .as_secs_f32()
-            })
+            .map(|t| now.duration_since(t).as_secs_f32())
             .unwrap_or(FRAME_REF_120);
 
         if sample_dt >= VELOCITY_SAMPLE_MIN_DT {
-            self.vel_accum
-                .set(Vec2d { x: 0.0, y: 0.0 });
-            self.vel_sample_time
-                .set(Some(now));
+            self.vel_accum.set(Vec2d { x: 0.0, y: 0.0 });
+            self.vel_sample_time.set(Some(now));
             let velocity = Vec2d {
                 x: (accum.x / sample_dt) * FRAME_REF_120,
                 y: (accum.y / sample_dt) * FRAME_REF_120,
@@ -872,8 +739,7 @@ impl ScrollState {
     /// paging) should take over momentum, so the curve-driven glide does not
     /// keep fighting the fresh interaction.
     pub(crate) fn cancel_fling(&self) {
-        self.fling_start_time
-            .set(None);
+        self.fling_start_time.set(None);
         self.anim_curve.set(None);
     }
 
@@ -890,12 +756,9 @@ impl ScrollState {
     /// [`Self::scroll_offset`] (negative = content moved up).
     pub(crate) fn start_animation(&self, target: Vec2d, duration_s: f32, curve: Curve) {
         // Clear any live drag/momentum so the animation fully owns the motion.
-        self.pointer_velocity
-            .set(Vec2d { x: 0.0, y: 0.0 });
-        self.spring_velocity
-            .set(Vec2d { x: 0.0, y: 0.0 });
-        self.momentum_start_time
-            .set(None);
+        self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+        self.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+        self.momentum_start_time.set(None);
 
         let start = self.scroll_offset.get();
         // Non-bouncy scrollables never overshoot; pin the target to the edge.
@@ -911,16 +774,11 @@ impl ScrollState {
             return;
         }
 
-        self.fling_start_offset
-            .set(start);
-        self.fling_target_offset
-            .set(target);
-        self.fling_duration
-            .set(duration_s);
-        self.anim_curve
-            .set(Some(curve));
-        self.fling_start_time
-            .set(Some(AnimInstant::now()));
+        self.fling_start_offset.set(start);
+        self.fling_target_offset.set(target);
+        self.fling_duration.set(duration_s);
+        self.anim_curve.set(Some(curve));
+        self.fling_start_time.set(Some(AnimInstant::now()));
     }
 
     /// Arm a cubic-bézier release fling.
@@ -978,14 +836,10 @@ impl ScrollState {
             return;
         }
 
-        self.fling_start_offset
-            .set(start);
-        self.fling_target_offset
-            .set(target);
-        self.fling_duration
-            .set(duration);
-        self.fling_start_time
-            .set(Some(now));
+        self.fling_start_offset.set(start);
+        self.fling_target_offset.set(target);
+        self.fling_duration.set(duration);
+        self.fling_start_time.set(Some(now));
     }
 
     /// Check if a point is inside the vertical scrollbar *track* but outside
@@ -1049,14 +903,10 @@ impl ScrollState {
         let dt = self
             .last_frame_time
             .get()
-            .map(|t| {
-                now.duration_since(t)
-                    .as_secs_f32()
-            })
+            .map(|t| now.duration_since(t).as_secs_f32())
             .unwrap_or(FRAME_REF_120)
             .min(MAX_FRAME_DT);
-        self.last_frame_time
-            .set(Some(now));
+        self.last_frame_time.set(Some(now));
 
         let frame_ratio = dt / FRAME_REF_120;
 
@@ -1066,9 +916,7 @@ impl ScrollState {
             // per-frame velocity decay while the fling is active so the glide
             // eases to a stop along the requested curve.
             let duration = self.fling_duration.get();
-            let elapsed = now
-                .duration_since(fling_start)
-                .as_secs_f32();
+            let elapsed = now.duration_since(fling_start).as_secs_f32();
             let u = if duration > 0.0 {
                 (elapsed / duration).clamp(0.0, 1.0)
             } else {
@@ -1129,15 +977,13 @@ impl ScrollState {
                     && step.y.abs() < FLING_END_STEP_PX;
                 if u >= 1.0 || tail_done {
                     offset = target;
-                    self.pointer_velocity
-                        .set(Vec2d { x: 0.0, y: 0.0 });
+                    self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
                     self.cancel_fling();
                 }
             }
         } else if velocity.x.abs() > VELOCITY_EPSILON || velocity.y.abs() > VELOCITY_EPSILON {
             // Clear any in-flight spring oscillation when fresh momentum begins.
-            self.spring_velocity
-                .set(Vec2d { x: 0.0, y: 0.0 });
+            self.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
 
             // Hard-cap the momentum glide at MAX_MOMENTUM_DURATION_S.
             // Without this the exponential friction tails off asymptotically,
@@ -1152,20 +998,15 @@ impl ScrollState {
             // elapsed never grew to the cap and a touch fling never stopped at
             // MAX_MOMENTUM_DURATION_S (friction alone tailed off over 15–20 s).
             let momentum_elapsed = match self.momentum_start_time.get() {
-                Some(t) => now_instant
-                    .duration_since(t)
-                    .as_secs_f32(),
+                Some(t) => now_instant.duration_since(t).as_secs_f32(),
                 None => {
-                    self.momentum_start_time
-                        .set(Some(now_instant));
+                    self.momentum_start_time.set(Some(now_instant));
                     0.0
                 }
             };
             if momentum_elapsed >= MAX_MOMENTUM_DURATION_S {
-                self.pointer_velocity
-                    .set(Vec2d { x: 0.0, y: 0.0 });
-                self.momentum_start_time
-                    .set(None);
+                self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+                self.momentum_start_time.set(None);
                 return (offset, false);
             } else {
                 // Fade-out zone: in the last MOMENTUM_FADEOUT_S seconds before
@@ -1192,10 +1033,7 @@ impl ScrollState {
             // frame-rate independent.
             //     60 fps:  v *= 0.999^2.0 ≈ 0.998
             //     120 fps: v *= 0.999^1.0 ≈ 0.999
-            let decay = self
-                .scroll_behavior
-                .friction
-                .powf(frame_ratio);
+            let decay = self.scroll_behavior.friction.powf(frame_ratio);
 
             // Integrate position, then clamp and zero velocity at the edge.
             // On iOS, UIScrollView never lets content fly past the edge during
@@ -1296,14 +1134,11 @@ impl ScrollState {
                 self.spring_velocity.set(sv);
             }
 
-            self.pointer_velocity
-                .set(velocity);
+            self.pointer_velocity.set(velocity);
             needs_redraw = true;
         } else if velocity.x != 0.0 || velocity.y != 0.0 {
-            self.pointer_velocity
-                .set(Vec2d { x: 0.0, y: 0.0 });
-            self.momentum_start_time
-                .set(None);
+            self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+            self.momentum_start_time.set(None);
         }
 
         // Spring back if bouncy is enabled AND momentum has finished.
@@ -1429,10 +1264,8 @@ mod tests {
     #[test]
     fn adopt_scroll_state_preserves_offset() {
         let prev = ctrl_with_offset(Vec2d { x: 3.0, y: 150.0 });
-        prev.pointer_velocity
-            .set(Vec2d { x: 0.0, y: -12.0 });
-        prev.spring_velocity
-            .set(Vec2d { x: 0.0, y: -200.0 });
+        prev.pointer_velocity.set(Vec2d { x: 0.0, y: -12.0 });
+        prev.spring_velocity.set(Vec2d { x: 0.0, y: -200.0 });
 
         let fresh = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
         assert_eq!(
@@ -1454,18 +1287,10 @@ mod tests {
         let ctrl = ScrollController::new();
         let first = Rc::new(ctrl_with_offset(Vec2d { x: 0.0, y: -120.0 }));
         let fling_started = AnimInstant::now();
-        first
-            .pointer_velocity
-            .set(Vec2d { x: 0.0, y: -12.0 });
-        first
-            .fling_start_time
-            .set(Some(fling_started));
-        first
-            .fling_start_offset
-            .set(Vec2d { x: 0.0, y: -120.0 });
-        first
-            .fling_target_offset
-            .set(Vec2d { x: 0.0, y: -360.0 });
+        first.pointer_velocity.set(Vec2d { x: 0.0, y: -12.0 });
+        first.fling_start_time.set(Some(fling_started));
+        first.fling_start_offset.set(Vec2d { x: 0.0, y: -120.0 });
+        first.fling_target_offset.set(Vec2d { x: 0.0, y: -360.0 });
         first.fling_duration.set(1.25);
         first.is_scrolling.set(true);
         ctrl.attach(first);
@@ -1474,33 +1299,10 @@ mod tests {
         ctrl.attach(rebuilt.clone());
 
         assert_eq!(rebuilt.scroll_offset.get().y, -120.0);
-        assert_eq!(
-            rebuilt
-                .pointer_velocity
-                .get()
-                .y,
-            -12.0
-        );
-        assert!(
-            rebuilt
-                .fling_start_time
-                .get()
-                .is_some()
-        );
-        assert_eq!(
-            rebuilt
-                .fling_start_offset
-                .get()
-                .y,
-            -120.0
-        );
-        assert_eq!(
-            rebuilt
-                .fling_target_offset
-                .get()
-                .y,
-            -360.0
-        );
+        assert_eq!(rebuilt.pointer_velocity.get().y, -12.0);
+        assert!(rebuilt.fling_start_time.get().is_some());
+        assert_eq!(rebuilt.fling_start_offset.get().y, -120.0);
+        assert_eq!(rebuilt.fling_target_offset.get().y, -360.0);
         assert_eq!(rebuilt.fling_duration.get(), 1.25);
         assert!(rebuilt.is_scrolling.get());
 
@@ -1515,15 +1317,9 @@ mod tests {
     fn controller_reattach_preserves_active_drag() {
         let ctrl = ScrollController::new();
         let first = Rc::new(ctrl_with_offset(Vec2d { x: 0.0, y: -120.0 }));
-        first
-            .drag_mode
-            .set(DragMode::Content);
-        first
-            .active_touch_id
-            .set(Some(7));
-        first
-            .last_pointer_pos
-            .set(Some(Vec2d { x: 20.0, y: 80.0 }));
+        first.drag_mode.set(DragMode::Content);
+        first.active_touch_id.set(Some(7));
+        first.last_pointer_pos.set(Some(Vec2d { x: 20.0, y: 80.0 }));
         ctrl.attach(first);
 
         let rebuilt = Rc::new(ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 }));
@@ -1640,8 +1436,7 @@ mod tests {
         let mut c = ctrl_with_offset(Vec2d { x: 0.0, y: -100.0 });
         c.scroll_behavior.bouncy = false;
         // Valid vertical range is [-1000, 0]; -100 is strictly inside it.
-        c.cached_max_scroll
-            .set(Vec2d { x: 0.0, y: 1000.0 });
+        c.cached_max_scroll.set(Vec2d { x: 0.0, y: 1000.0 });
 
         // Scroll further down (offset grows more negative).
         let next = c.apply_wheel_delta(Vec2d { x: 0.0, y: -100.0 }, Vec2d { x: 0.0, y: -20.0 });
@@ -1661,8 +1456,7 @@ mod tests {
     fn wheel_delta_clamps_non_bouncy_at_boundary() {
         let mut c = ctrl_with_offset(Vec2d { x: 0.0, y: -990.0 });
         c.scroll_behavior.bouncy = false;
-        c.cached_max_scroll
-            .set(Vec2d { x: 0.0, y: 1000.0 });
+        c.cached_max_scroll.set(Vec2d { x: 0.0, y: 1000.0 });
 
         // Overshoot the bottom edge (-1000): must clamp, not exceed.
         let next = c.apply_wheel_delta(Vec2d { x: 0.0, y: -990.0 }, Vec2d { x: 0.0, y: -50.0 });
@@ -1682,8 +1476,7 @@ mod tests {
     fn wheel_delta_allows_overscroll_when_bouncy() {
         let c = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
         assert!(c.scroll_behavior.bouncy, "default behavior is bouncy");
-        c.cached_max_scroll
-            .set(Vec2d { x: 0.0, y: 1000.0 });
+        c.cached_max_scroll.set(Vec2d { x: 0.0, y: 1000.0 });
 
         // Overscroll past the top edge (0) is preserved, not clamped.
         let next = c.apply_wheel_delta(Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 0.0, y: 30.0 });
@@ -1703,9 +1496,7 @@ mod tests {
     /// of `[0, max_y]` (logical == internal, since `last_scale` is 1.0).
     fn attached(max_y: f32) -> (ScrollController, Rc<ScrollState>) {
         let state = Rc::new(ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 }));
-        state
-            .cached_max_scroll
-            .set(Vec2d { x: 0.0, y: max_y });
+        state.cached_max_scroll.set(Vec2d { x: 0.0, y: max_y });
         let ctrl = ScrollController::new();
         ctrl.attach(state.clone());
         (ctrl, state)
@@ -1789,10 +1580,7 @@ mod tests {
         );
 
         assert!(
-            state
-                .fling_start_time
-                .get()
-                .is_some(),
+            state.fling_start_time.get().is_some(),
             "a timed animation arms the fling"
         );
         assert_eq!(
@@ -1801,10 +1589,7 @@ mod tests {
             "the requested curve drives the fling"
         );
         assert_eq!(
-            state
-                .fling_target_offset
-                .get()
-                .y,
+            state.fling_target_offset.get().y,
             -200.0,
             "target stored in internal convention"
         );
@@ -1822,10 +1607,7 @@ mod tests {
         ctrl.animate_to(Vec2d { x: 0.0, y: 300.0 }, Duration::ZERO, Curve::EaseInOut);
         assert_eq!(ctrl.offset().y, 300.0);
         assert!(
-            state
-                .fling_start_time
-                .get()
-                .is_none(),
+            state.fling_start_time.get().is_none(),
             "no fling is left running"
         );
     }
@@ -1853,17 +1635,11 @@ mod tests {
             offset.y
         );
         assert!(
-            state
-                .fling_start_time
-                .get()
-                .is_none(),
+            state.fling_start_time.get().is_none(),
             "the fling is cleared once complete"
         );
         assert!(
-            state
-                .anim_curve
-                .get()
-                .is_none(),
+            state.anim_curve.get().is_none(),
             "the animation curve is cleared once complete"
         );
     }
@@ -1886,12 +1662,8 @@ mod tests {
         let state = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
         let (start_cb, starts) = recorder();
         let (end_cb, ends) = recorder();
-        *state
-            .on_scroll_start
-            .borrow_mut() = start_cb;
-        *state
-            .on_scroll_end
-            .borrow_mut() = end_cb;
+        *state.on_scroll_start.borrow_mut() = start_cb;
+        *state.on_scroll_end.borrow_mut() = end_cb;
 
         state.begin_scroll();
         state.begin_scroll(); // already scrolling → ignored
@@ -1921,9 +1693,7 @@ mod tests {
     fn scroll_start_reports_logical_offset() {
         let state = ctrl_with_offset(Vec2d { x: 0.0, y: -150.0 });
         let (start_cb, starts) = recorder();
-        *state
-            .on_scroll_start
-            .borrow_mut() = start_cb;
+        *state.on_scroll_start.borrow_mut() = start_cb;
 
         state.begin_scroll();
         assert_eq!(
@@ -2041,9 +1811,7 @@ mod tests {
         );
 
         // Offset moves → fires with the new logical offset.
-        state
-            .scroll_offset
-            .set(Vec2d { x: 0.0, y: -40.0 });
+        state.scroll_offset.set(Vec2d { x: 0.0, y: -40.0 });
         state.notify_scroll();
         assert_eq!(log.borrow().len(), 1, "a genuine move fires the callback");
         assert_eq!(
@@ -2053,9 +1821,7 @@ mod tests {
         );
 
         // Another distinct move fires again (fires per frame, not per session).
-        state
-            .scroll_offset
-            .set(Vec2d { x: 0.0, y: -90.0 });
+        state.scroll_offset.set(Vec2d { x: 0.0, y: -90.0 });
         state.notify_scroll();
         assert_eq!(
             log.borrow().len(),
@@ -2078,12 +1844,10 @@ mod tests {
         assert_eq!(log.borrow().len(), 0, "an unchanged offset does not fire");
 
         // Sub-epsilon jitter is ignored too.
-        state
-            .scroll_offset
-            .set(Vec2d {
-                x: 0.0,
-                y: -40.0 - SCROLL_NOTIFY_EPSILON / 2.0,
-            });
+        state.scroll_offset.set(Vec2d {
+            x: 0.0,
+            y: -40.0 - SCROLL_NOTIFY_EPSILON / 2.0,
+        });
         state.notify_scroll();
         assert_eq!(log.borrow().len(), 0, "sub-epsilon jitter is suppressed");
     }
@@ -2127,9 +1891,7 @@ mod tests {
         ctrl.attach(second.clone());
 
         second.notify_scroll(); // baseline on the fresh engine
-        second
-            .scroll_offset
-            .set(Vec2d { x: 0.0, y: -60.0 });
+        second.scroll_offset.set(Vec2d { x: 0.0, y: -60.0 });
         second.notify_scroll();
         assert_eq!(
             log.borrow().len(),

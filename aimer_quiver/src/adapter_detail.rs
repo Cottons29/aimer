@@ -1,4 +1,5 @@
 use std::sync::OnceLock;
+
 use wgpu::Backend;
 
 pub struct AdapterDetail;

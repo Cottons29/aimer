@@ -3,10 +3,6 @@ name = "website"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "website"
-path = "src/lib.rs"
-
 
 [lib]
 crate-type = ["cdylib", "staticlib"]
@@ -16,7 +12,6 @@ webbrowser = "1.2.1"
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
-dhat = "0.3.3"
 
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -34,7 +29,3 @@ strip = "symbols"   # Strip binary symbols to reduce file size further
 codegen-units = 1   # Optimize for maximum binary size reduction over compile time
 overflow-checks = false
 debug-assertions = false
-
-[features]
-dhat-heap = []    # if you are doing heap profiling
-dhat-ad-hoc = []  # if you are doing ad hoc profiling

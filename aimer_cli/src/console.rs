@@ -235,11 +235,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                 state.status = Status::Compiling(0);
                                 pipeline::spawn_wasm_pack(tx.clone());
                             } else {
-                                if let Some(mut child) = current_child
-                                    .lock()
-                                    .unwrap()
-                                    .take()
-                                {
+                                if let Some(mut child) = current_child.lock().unwrap().take() {
                                     let _ = child.kill();
                                 }
                                 state.clear_build();
@@ -267,11 +263,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
             last_progress = Some(state.status.clone());
         }
 
-        let inspector_state = inspector_handle
-            .state
-            .lock()
-            .unwrap()
-            .clone();
+        let inspector_state = inspector_handle.state.lock().unwrap().clone();
         let inspector_address = inspector_handle.get_address();
         terminal.draw(|f| {
             ui::render(
@@ -307,11 +299,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                         }
                         (KeyCode::Char('Q'), _) | (KeyCode::Char('q'), KeyModifiers::SHIFT) => {
                             // Kill child process if any
-                            if let Some(mut child) = current_child
-                                .lock()
-                                .unwrap()
-                                .take()
-                            {
+                            if let Some(mut child) = current_child.lock().unwrap().take() {
                                 let _ = child.kill();
                             }
                             break;
@@ -323,11 +311,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                 pipeline::spawn_wasm_pack(tx.clone());
                             } else {
                                 // Kill child process if running
-                                if let Some(mut child) = current_child
-                                    .lock()
-                                    .unwrap()
-                                    .take()
-                                {
+                                if let Some(mut child) = current_child.lock().unwrap().take() {
                                     let _ = child.kill();
                                 }
                                 state.clear_build();
@@ -378,15 +362,13 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                             if m.contains(KeyModifiers::CONTROL)
                                 || m.contains(KeyModifiers::SUPER) =>
                         {
-                            let text = state
-                                .selected_text()
-                                .unwrap_or_else(|| {
-                                    if state.pane == ConsoleType::Build {
-                                        state.build_logs.join("\n")
-                                    } else {
-                                        state.app_logs.join("\n")
-                                    }
-                                });
+                            let text = state.selected_text().unwrap_or_else(|| {
+                                if state.pane == ConsoleType::Build {
+                                    state.build_logs.join("\n")
+                                } else {
+                                    state.app_logs.join("\n")
+                                }
+                            });
                             if let Ok(mut clipboard) = Clipboard::new() {
                                 let _ = clipboard.set_text(text);
                             }
@@ -441,46 +423,34 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                             ConsoleType::Build => state.build_pane.scroll_up(1),
                             ConsoleType::App => state.app_pane.scroll_up(1),
                             ConsoleType::Inspector => {
-                                state.inspector_cursor = state
-                                    .inspector_cursor
-                                    .saturating_sub(1);
+                                state.inspector_cursor = state.inspector_cursor.saturating_sub(1);
                                 if (state.inspector_cursor as u16) < state.inspector_pane.scroll {
                                     state.inspector_pane.scroll = state.inspector_cursor as u16;
                                 }
                             }
                         },
                         (KeyCode::Down, _) => match state.pane {
-                            ConsoleType::Build => state
-                                .build_pane
-                                .scroll_down(1),
+                            ConsoleType::Build => state.build_pane.scroll_down(1),
                             ConsoleType::App => state.app_pane.scroll_down(1),
                             ConsoleType::Inspector => {
-                                state.inspector_cursor = state
-                                    .inspector_cursor
-                                    .saturating_add(1);
+                                state.inspector_cursor = state.inspector_cursor.saturating_add(1);
                             }
                         },
                         (KeyCode::PageUp, _) => match state.pane {
                             ConsoleType::Build => state.build_pane.scroll_up(10),
                             ConsoleType::App => state.app_pane.scroll_up(10),
                             ConsoleType::Inspector => {
-                                state.inspector_cursor = state
-                                    .inspector_cursor
-                                    .saturating_sub(10);
+                                state.inspector_cursor = state.inspector_cursor.saturating_sub(10);
                                 if (state.inspector_cursor as u16) < state.inspector_pane.scroll {
                                     state.inspector_pane.scroll = state.inspector_cursor as u16;
                                 }
                             }
                         },
                         (KeyCode::PageDown, _) => match state.pane {
-                            ConsoleType::Build => state
-                                .build_pane
-                                .scroll_down(10),
+                            ConsoleType::Build => state.build_pane.scroll_down(10),
                             ConsoleType::App => state.app_pane.scroll_down(10),
                             ConsoleType::Inspector => {
-                                state.inspector_cursor = state
-                                    .inspector_cursor
-                                    .saturating_add(10);
+                                state.inspector_cursor = state.inspector_cursor.saturating_add(10);
                             }
                         },
                         _ => {}
@@ -492,25 +462,17 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                         MouseEventKind::ScrollUp => match state.pane {
                             ConsoleType::Build => state.build_pane.scroll_up(2),
                             ConsoleType::App => state.app_pane.scroll_up(2),
-                            ConsoleType::Inspector => state
-                                .inspector_pane
-                                .scroll_up(2),
+                            ConsoleType::Inspector => state.inspector_pane.scroll_up(2),
                         },
                         MouseEventKind::ScrollDown => match state.pane {
-                            ConsoleType::Build => state
-                                .build_pane
-                                .scroll_down(2),
+                            ConsoleType::Build => state.build_pane.scroll_down(2),
                             ConsoleType::App => state.app_pane.scroll_down(2),
-                            ConsoleType::Inspector => state
-                                .inspector_pane
-                                .scroll_down(2),
+                            ConsoleType::Inspector => state.inspector_pane.scroll_down(2),
                         },
                         // Begin a selection at the clicked cell.
                         MouseEventKind::Down(MouseButton::Left) if state.selection_mode => {
-                            if let Some(pos) = state
-                                .last_view
-                                .as_ref()
-                                .and_then(|v| hit_test(v, col, row))
+                            if let Some(pos) =
+                                state.last_view.as_ref().and_then(|v| hit_test(v, col, row))
                             {
                                 state.selection = Some(Selection {
                                     anchor: pos,
@@ -524,10 +486,8 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                         MouseEventKind::Drag(MouseButton::Left)
                             if state.selection_mode && state.selecting =>
                         {
-                            if let Some((vy, vh)) = state
-                                .last_view
-                                .as_ref()
-                                .map(|v| (v.y, v.height))
+                            if let Some((vy, vh)) =
+                                state.last_view.as_ref().map(|v| (v.y, v.height))
                             {
                                 if row < vy {
                                     match state.pane {
@@ -537,18 +497,14 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                     }
                                 } else if vh > 0 && row >= vy + vh {
                                     match state.pane {
-                                        ConsoleType::Build => state
-                                            .build_pane
-                                            .scroll_down(1),
+                                        ConsoleType::Build => state.build_pane.scroll_down(1),
                                         ConsoleType::App => state.app_pane.scroll_down(1),
                                         _ => {}
                                     }
                                 }
                             }
-                            if let Some(pos) = state
-                                .last_view
-                                .as_ref()
-                                .and_then(|v| hit_test(v, col, row))
+                            if let Some(pos) =
+                                state.last_view.as_ref().and_then(|v| hit_test(v, col, row))
                                 && let Some(sel) = state.selection.as_mut()
                             {
                                 sel.cursor = pos;
@@ -625,10 +581,10 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
                     use notify::EventKind;
                     match event.kind {
                         EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
-                            let dominated_by_rs = event.paths.iter().any(|p| {
-                                p.extension()
-                                    .is_some_and(|ext| ext == "rs")
-                            });
+                            let dominated_by_rs = event
+                                .paths
+                                .iter()
+                                .any(|p| p.extension().is_some_and(|ext| ext == "rs"));
                             if dominated_by_rs {
                                 let now = AnimInstant::now();
                                 if now.duration_since(debounce_last) > Duration::from_millis(500) {
@@ -675,11 +631,7 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
                 if device.target == Targets::Web {
                     pipeline::spawn_wasm_pack(tx.clone());
                 } else {
-                    if let Some(mut child) = current_child
-                        .lock()
-                        .unwrap()
-                        .take()
-                    {
+                    if let Some(mut child) = current_child.lock().unwrap().take() {
                         let _ = child.kill();
                     }
                     current_child = spawn_runner(

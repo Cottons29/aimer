@@ -47,48 +47,25 @@ mod tests {
         create(&dir, "test-app", "com.example.test");
 
         let web_dir = dir.join("builds/web");
+        assert!(web_dir.join("Trunk.toml").exists(), "missing Trunk.toml");
+        assert!(web_dir.join("index.html").exists(), "missing index.html");
+        assert!(web_dir.join("favicon.ico").exists(), "missing favicon.ico");
         assert!(
-            web_dir
-                .join("Trunk.toml")
-                .exists(),
-            "missing Trunk.toml"
-        );
-        assert!(
-            web_dir
-                .join("index.html")
-                .exists(),
-            "missing index.html"
-        );
-        assert!(
-            web_dir
-                .join("favicon.ico")
-                .exists(),
-            "missing favicon.ico"
-        );
-        assert!(
-            web_dir
-                .join("apple-touch-icon.png")
-                .exists(),
+            web_dir.join("apple-touch-icon.png").exists(),
             "missing apple-touch-icon.png"
         );
 
         // Old Vite/npm files should NOT exist
         assert!(
-            !web_dir
-                .join("package.json")
-                .exists(),
+            !web_dir.join("package.json").exists(),
             "package.json should not exist"
         );
         assert!(
-            !web_dir
-                .join("vite.config.ts")
-                .exists(),
+            !web_dir.join("vite.config.ts").exists(),
             "vite.config.ts should not exist"
         );
         assert!(
-            !web_dir
-                .join("main.ts")
-                .exists(),
+            !web_dir.join("main.ts").exists(),
             "main.ts should not exist"
         );
 

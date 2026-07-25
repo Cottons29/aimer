@@ -107,10 +107,7 @@ pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>) {
             let tx_out = tx.clone();
             thread::spawn(move || {
                 let reader = BufReader::new(stdout);
-                for line in reader
-                    .lines()
-                    .map_while(Result::ok)
-                {
+                for line in reader.lines().map_while(Result::ok) {
                     let _ = tx_out.send(RunnerEvent::BuildLog(line));
                 }
             });
@@ -121,10 +118,7 @@ pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>) {
             thread::spawn(move || {
                 let reader = BufReader::new(stderr);
                 let mut compile_count = 0;
-                for line in reader
-                    .lines()
-                    .map_while(Result::ok)
-                {
+                for line in reader.lines().map_while(Result::ok) {
                     if line.contains("Compiling") {
                         compile_count = (compile_count + 5).min(99);
                         let _ = tx_err

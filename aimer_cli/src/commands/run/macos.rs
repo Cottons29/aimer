@@ -101,9 +101,7 @@ pub fn spawn_macos_runner(
     );
 
     let mut app_run = Command::new(&app_exec_path);
-    app_run
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    app_run.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     if !spawn_streamed(
         app_run,

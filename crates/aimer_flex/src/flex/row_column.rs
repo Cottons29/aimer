@@ -19,10 +19,10 @@ use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 /// use aimer_container::SizedBox;
 /// use aimer_flex::{Column, Row};
 ///
-/// let column = Column::new().children([
-///     Row::new().children([SizedBox::new().width(40), SizedBox::new().width(60)]),
-///     Row::new().children([SizedBox::new().width(100), SizedBox::new().width(20)]),
-/// ]);
+/// let column = Column::new().children([Row::new().children([SizedBox::new().width(40),
+///                                                           SizedBox::new().width(60)]),
+///                                      Row::new().children([SizedBox::new().width(100),
+///                                                           SizedBox::new().width(20)])]);
 /// ```
 pub struct Column<W = RequiredChild> {
     vertical_alignment: BoxAlignment,
@@ -91,8 +91,9 @@ impl Column {
 
     /// Replaces the children and returns an erased vertical layout.
     ///
-    /// This is equivalent to [`Column::children`] followed by [`Widget::boxed`].
-    /// Use it when different branches need to return one [`AnyWidget`] type.
+    /// This is equivalent to [`Column::children`] followed by
+    /// [`Widget::boxed`]. Use it when different branches need to return one
+    /// [`AnyWidget`] type.
     pub fn box_children<W: Widget + 'static>(
         self,
         children: impl IntoIterator<Item = W>,
@@ -109,8 +110,9 @@ impl Column {
 
     /// Replaces the child collection and completes this builder.
     ///
-    /// All iterator items have one concrete widget type. This terminal operation
-    /// returns a valid [`Column`], including for an empty iterator.
+    /// All iterator items have one concrete widget type. This terminal
+    /// operation returns a valid [`Column`], including for an empty
+    /// iterator.
     pub fn children<W: Widget>(self, children: impl IntoIterator<Item = W>) -> Column<W> {
         Column {
             vertical_alignment: self.vertical_alignment,
@@ -124,11 +126,7 @@ impl Column {
 
 impl<W: Widget + 'static> Widget for Column<W> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let children = self
-            .children
-            .iter()
-            .map(|c| c.to_element(ctx))
-            .collect();
+        let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
         RawFlex {
             direction: LayoutDirection::Column,
             vertical_alignment: self.vertical_alignment,
@@ -251,8 +249,7 @@ impl Row {
     /// The child is boxed internally, so successive calls may use different
     /// concrete widget types. Existing children are retained.
     pub fn add_child<W: Widget + 'static>(mut self, child: W) -> Self {
-        self.children
-            .push(child.boxed());
+        self.children.push(child.boxed());
         self
     }
 
@@ -262,8 +259,7 @@ impl Row {
     /// This method panics when `index` is greater than the current length, just
     /// like [`Vec::insert`].
     pub fn insert_child<W: Widget + 'static>(mut self, index: usize, child: W) -> Self {
-        self.children
-            .insert(index, child.boxed());
+        self.children.insert(index, child.boxed());
         self
     }
 }
@@ -278,11 +274,7 @@ impl Row {
 
 impl<W: Widget + 'static> Widget for Row<W> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let children = self
-            .children
-            .iter()
-            .map(|c| c.to_element(ctx))
-            .collect();
+        let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
         RawFlex {
             direction: LayoutDirection::Row,
             vertical_alignment: self.vertical_alignment,

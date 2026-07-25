@@ -24,10 +24,7 @@ impl std::fmt::Debug for SvgLoadState {
         match self {
             Self::Loading => formatter.write_str("Loading"),
             Self::Ready(_) => formatter.write_str("Ready(SvgDocument)"),
-            Self::Error(error) => formatter
-                .debug_tuple("Error")
-                .field(error)
-                .finish(),
+            Self::Error(error) => formatter.debug_tuple("Error").field(error).finish(),
         }
     }
 }
@@ -108,9 +105,7 @@ async fn load_bytes(source: &SvgSource) -> Result<Vec<u8>, String> {
     }
     let url = match source {
         SvgSource::Asset(key) => asset_url(key),
-        SvgSource::File(path) => path
-            .to_string_lossy()
-            .into_owned(),
+        SvgSource::File(path) => path.to_string_lossy().into_owned(),
         SvgSource::Network(url) => url.to_string(),
         SvgSource::Memory(_) => unreachable!(),
     };
@@ -126,13 +121,9 @@ async fn load_bytes(source: &SvgSource) -> Result<Vec<u8>, String> {
             response.status()
         ));
     }
-    let buffer = JsFuture::from(
-        response
-            .array_buffer()
-            .map_err(js_error)?,
-    )
-    .await
-    .map_err(js_error)?;
+    let buffer = JsFuture::from(response.array_buffer().map_err(js_error)?)
+        .await
+        .map_err(js_error)?;
     let bytes = js_sys::Uint8Array::new(&buffer);
     let mut output = vec![0; bytes.length() as usize];
     bytes.copy_to(&mut output);
@@ -188,11 +179,7 @@ fn asset_candidate_paths(key: &str) -> Vec<PathBuf> {
         && let Some(executable_directory) = executable.parent()
     {
         if let Some(contents_directory) = executable_directory.parent() {
-            paths.push(
-                contents_directory
-                    .join("Resources")
-                    .join(key),
-            );
+            paths.push(contents_directory.join("Resources").join(key));
         }
         paths.push(executable_directory.join(key));
     }
@@ -201,9 +188,7 @@ fn asset_candidate_paths(key: &str) -> Vec<PathBuf> {
 
 #[cfg(target_arch = "wasm32")]
 fn js_error(error: wasm_bindgen::JsValue) -> String {
-    error
-        .as_string()
-        .unwrap_or_else(|| format!("{error:?}"))
+    error.as_string().unwrap_or_else(|| format!("{error:?}"))
 }
 
 #[cfg(test)]
@@ -223,13 +208,7 @@ mod tests {
         let SvgLoadState::Ready(document) = state else {
             panic!("memory SVG should load")
         };
-        assert_eq!(
-            document
-                .scene()
-                .viewport
-                .width,
-            2.0
-        );
+        assert_eq!(document.scene().viewport.width, 2.0);
         assert!(matches!(loader.state(), SvgLoadState::Ready(_)));
     }
 
@@ -241,29 +220,19 @@ mod tests {
         use super::*;
 
         let directory = tempfile::tempdir().unwrap();
-        let valid_path = directory
-            .path()
-            .join("valid.svg");
+        let valid_path = directory.path().join("valid.svg");
         std::fs::write(
             &valid_path,
             br#"<svg width="7" height="5" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#,
         )
         .unwrap();
         let valid = SvgLoader::new(SvgSource::Asset(Arc::from(
-            valid_path
-                .to_string_lossy()
-                .as_ref(),
+            valid_path.to_string_lossy().as_ref(),
         )));
         let SvgLoadState::Ready(document) = valid.load().await else {
             panic!("valid SVG asset should load");
         };
-        assert_eq!(
-            document
-                .scene()
-                .viewport
-                .width,
-            7.0
-        );
+        assert_eq!(document.scene().viewport.width, 7.0);
 
         let missing = SvgLoader::new(SvgSource::Asset(Arc::from(
             directory
@@ -274,14 +243,10 @@ mod tests {
         )));
         assert!(matches!(missing.load().await, SvgLoadState::Error(_)));
 
-        let malformed_path = directory
-            .path()
-            .join("malformed.svg");
+        let malformed_path = directory.path().join("malformed.svg");
         std::fs::write(&malformed_path, b"<svg>").unwrap();
         let malformed = SvgLoader::new(SvgSource::Asset(Arc::from(
-            malformed_path
-                .to_string_lossy()
-                .as_ref(),
+            malformed_path.to_string_lossy().as_ref(),
         )));
         assert!(matches!(malformed.load().await, SvgLoadState::Error(_)));
     }

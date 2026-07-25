@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
-use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::{env, fs};
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
@@ -37,9 +36,7 @@ fn main() {
 
     println!(
         "cargo:rerun-if-changed={}",
-        workspace_root
-            .join("Cargo.toml")
-            .display()
+        workspace_root.join("Cargo.toml").display()
     );
     for directory in source_directories {
         println!("cargo:rerun-if-changed={}", directory.display());
@@ -47,14 +44,12 @@ fn main() {
 }
 
 fn workspace_root(manifest_dir: &Path) -> Option<PathBuf> {
-    manifest_dir
-        .ancestors()
-        .find_map(|directory| {
-            let manifest = fs::read_to_string(directory.join("Cargo.toml")).ok()?;
-            manifest
-                .contains("[workspace]")
-                .then(|| directory.to_owned())
-        })
+    manifest_dir.ancestors().find_map(|directory| {
+        let manifest = fs::read_to_string(directory.join("Cargo.toml")).ok()?;
+        manifest
+            .contains("[workspace]")
+            .then(|| directory.to_owned())
+    })
 }
 
 fn collect_source_files(directory: &Path, source_files: &mut Vec<PathBuf>) {
@@ -67,21 +62,17 @@ fn collect_source_files(directory: &Path, source_files: &mut Vec<PathBuf>) {
             if !is_ignored_directory(&path) {
                 collect_source_files(&path, source_files);
             }
-        } else if path
-            .extension()
-            .is_some_and(|extension| extension == "rs")
-        {
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
             source_files.push(path);
         }
     }
 }
 
 fn is_ignored_directory(path: &Path) -> bool {
-    path.file_name()
-        .is_some_and(|name| {
-            matches!(
-                name.to_str(),
-                Some(".git" | ".junie" | "node_modules" | "target")
-            )
-        })
+    path.file_name().is_some_and(|name| {
+        matches!(
+            name.to_str(),
+            Some(".git" | ".junie" | "node_modules" | "target")
+        )
+    })
 }

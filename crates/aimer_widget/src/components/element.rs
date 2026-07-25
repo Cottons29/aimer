@@ -1,13 +1,14 @@
+use aimer_attribute::position::Vec2d;
+use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_events::element::ElementEvent;
+use smallvec::SmallVec;
+
 use crate::base::*;
 use crate::components::event_element::EventElement;
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
 use crate::{AnyElement, Drawable};
-use aimer_attribute::position::Vec2d;
-use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_events::element::ElementEvent;
-use smallvec::SmallVec;
 
 type EventChildren<'a> = SmallVec<[&'a dyn Element; 32]>;
 
@@ -22,9 +23,9 @@ pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable +
     /// heap allocation. The historical method name is retained for source
     /// familiarity and does not imply that allocation occurred.
     ///
-    /// Borrowing the owner provides a `dyn Element` view. Moving an inline owner
-    /// also moves its concrete element, so callers must not rely on a stable
-    /// payload address without pinning.
+    /// Borrowing the owner provides a `dyn Element` view. Moving an inline
+    /// owner also moves its concrete element, so callers must not rely on a
+    /// stable payload address without pinning.
     ///
     /// This method requires a sized, `'static` concrete element because stable
     /// Rust does not support general implicit unsizing for custom smart
@@ -47,8 +48,7 @@ fn project_element_mut<E: Element + 'static>(value: &mut E) -> &mut (dyn Element
 
 impl VisitorElement for AnyElement {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        self.as_ref()
-            .visit_children(visitor)
+        self.as_ref().visit_children(visitor)
     }
 
     fn debug_name(&self) -> &'static str {
@@ -56,8 +56,7 @@ impl VisitorElement for AnyElement {
     }
 
     fn element_type_id(&self) -> std::any::TypeId {
-        self.as_ref()
-            .element_type_id()
+        self.as_ref().element_type_id()
     }
 }
 
@@ -75,13 +74,11 @@ impl LayoutElement for AnyElement {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.as_ref()
-            .computed_size(ctx)
+        self.as_ref().computed_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.as_ref()
-            .content_size(ctx)
+        self.as_ref().content_size(ctx)
     }
 
     fn layer(&self) -> u32 {
@@ -93,13 +90,11 @@ impl LayoutElement for AnyElement {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.as_ref()
-            .get_size_from_child()
+        self.as_ref().get_size_from_child()
     }
 
     fn invalidate_layout(&self) {
-        self.as_ref()
-            .invalidate_layout()
+        self.as_ref().invalidate_layout()
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
@@ -109,8 +104,7 @@ impl LayoutElement for AnyElement {
 
 impl Rebuildable for AnyElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.as_ref()
-            .rebuild_if_dirty(ctx)
+        self.as_ref().rebuild_if_dirty(ctx)
     }
 
     fn option_any(&self) -> Option<&dyn std::any::Any> {
@@ -118,8 +112,7 @@ impl Rebuildable for AnyElement {
     }
 
     fn is_stateful_element(&self) -> bool {
-        self.as_ref()
-            .is_stateful_element()
+        self.as_ref().is_stateful_element()
     }
 
     fn is_carry_state(&self) -> bool {
@@ -127,13 +120,11 @@ impl Rebuildable for AnyElement {
     }
 
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
-        self.as_ref()
-            .with_rebuild_context(ctx, callback)
+        self.as_ref().with_rebuild_context(ctx, callback)
     }
 
     fn mark_needs_rebuild(&self) {
-        self.as_ref()
-            .mark_needs_rebuild()
+        self.as_ref().mark_needs_rebuild()
     }
 }
 
@@ -143,13 +134,11 @@ impl EventElement for AnyElement {
     }
 
     fn captures_pointer(&self, pointer: u64) -> bool {
-        self.as_ref()
-            .captures_pointer(pointer)
+        self.as_ref().captures_pointer(pointer)
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        self.as_ref()
-            .event_children(visitor)
+        self.as_ref().event_children(visitor)
     }
 }
 
@@ -161,15 +150,13 @@ impl Drawable for AnyElement {
 
 impl VisitorElement for Box<dyn Element> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        self.as_ref()
-            .visit_children(visitor)
+        self.as_ref().visit_children(visitor)
     }
     fn debug_name(&self) -> &'static str {
         self.as_ref().debug_name()
     }
     fn element_type_id(&self) -> std::any::TypeId {
-        self.as_ref()
-            .element_type_id()
+        self.as_ref().element_type_id()
     }
 }
 
@@ -186,12 +173,10 @@ impl LayoutElement for Box<dyn Element> {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.as_ref()
-            .computed_size(ctx)
+        self.as_ref().computed_size(ctx)
     }
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.as_ref()
-            .content_size(ctx)
+        self.as_ref().content_size(ctx)
     }
     fn layer(&self) -> u32 {
         self.as_ref().layer()
@@ -202,13 +187,11 @@ impl LayoutElement for Box<dyn Element> {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.as_ref()
-            .get_size_from_child()
+        self.as_ref().get_size_from_child()
     }
 
     fn invalidate_layout(&self) {
-        self.as_ref()
-            .invalidate_layout()
+        self.as_ref().invalidate_layout()
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
@@ -218,8 +201,7 @@ impl LayoutElement for Box<dyn Element> {
 
 impl Rebuildable for Box<dyn Element> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.as_ref()
-            .rebuild_if_dirty(ctx)
+        self.as_ref().rebuild_if_dirty(ctx)
     }
 
     fn option_any(&self) -> Option<&dyn std::any::Any> {
@@ -227,8 +209,7 @@ impl Rebuildable for Box<dyn Element> {
     }
 
     fn is_stateful_element(&self) -> bool {
-        self.as_ref()
-            .is_stateful_element()
+        self.as_ref().is_stateful_element()
     }
 
     fn is_carry_state(&self) -> bool {
@@ -236,13 +217,11 @@ impl Rebuildable for Box<dyn Element> {
     }
 
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
-        self.as_ref()
-            .with_rebuild_context(ctx, callback)
+        self.as_ref().with_rebuild_context(ctx, callback)
     }
 
     fn mark_needs_rebuild(&self) {
-        self.as_ref()
-            .mark_needs_rebuild()
+        self.as_ref().mark_needs_rebuild()
     }
 }
 
@@ -252,13 +231,11 @@ impl EventElement for Box<dyn Element> {
     }
 
     fn captures_pointer(&self, pointer: u64) -> bool {
-        self.as_ref()
-            .captures_pointer(pointer)
+        self.as_ref().captures_pointer(pointer)
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        self.as_ref()
-            .event_children(visitor)
+        self.as_ref().event_children(visitor)
     }
 }
 
@@ -345,12 +322,12 @@ fn dispatch_captured_event_inner<'a>(
     }
     children.truncate(start);
 
-    root.captures_pointer(pointer)
-        .then(|| root.on_event(event))
+    root.captures_pointer(pointer).then(|| root.on_event(event))
 }
 
-/// Cancels the element that captured `pointer`, even when `pos` is outside its bounds.
-/// Falls back to normal hit-tested dispatch when no element owns the pointer.
+/// Cancels the element that captured `pointer`, even when `pos` is outside its
+/// bounds. Falls back to normal hit-tested dispatch when no element owns the
+/// pointer.
 pub fn cancel_pointer(root: &dyn Element, pointer: u64, pos: Vec2d) -> bool {
     let event = ElementEvent::Cancel;
     let mut children = EventChildren::new();
@@ -462,7 +439,7 @@ mod tests {
         assert!(
             owners[1]
                 .option_any()
-                .is_some_and(|value| value.is::<StorageElement<{ INLINE_CAPACITY + 1 }>>())
+                .is_some_and(|value| { value.is::<StorageElement<{ INLINE_CAPACITY + 1 }>>() })
         );
     }
 
@@ -478,8 +455,7 @@ mod tests {
 
     impl EventElement for CapturingElement {
         fn on_event(&self, _event: &ElementEvent) -> bool {
-            self.events
-                .set(self.events.get() + 1);
+            self.events.set(self.events.get() + 1);
             true
         }
 
@@ -514,8 +490,7 @@ mod tests {
 
     impl EventElement for TreeElement {
         fn on_event(&self, _event: &ElementEvent) -> bool {
-            self.events
-                .set(self.events.get() + 1);
+            self.events.set(self.events.get() + 1);
             true
         }
 

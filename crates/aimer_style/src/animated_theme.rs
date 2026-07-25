@@ -18,10 +18,11 @@ fn request_next_frame() {
 
 /// Supplies a [`Theme`] value to descendants and animates changes to it.
 ///
-/// Descendants read the interpolated value with [`Theme::of`]. When `data` changes,
-/// `AnimatedTheme` interpolates the theme without replacing the descendant widget tree. If the
-/// target changes during a transition, the new transition begins at the currently displayed
-/// theme. A zero duration applies the target immediately.
+/// Descendants read the interpolated value with [`Theme::of`]. When `data`
+/// changes, `AnimatedTheme` interpolates the theme without replacing the
+/// descendant widget tree. If the target changes during a transition, the new
+/// transition begins at the currently displayed theme. A zero duration applies
+/// the target immediately.
 ///
 /// The default transition lasts 200 milliseconds and uses [`Curve::Linear`].
 ///
@@ -134,8 +135,7 @@ impl<T: Theme> ThemeTransition<T> {
     }
 
     fn sample(&self, progress: f32) -> T {
-        self.begin
-            .lerp(&self.end, progress)
+        self.begin.lerp(&self.end, progress)
     }
 
     fn retarget(&mut self, target: T, progress: f32) -> bool {
@@ -184,10 +184,8 @@ impl<W: Widget + 'static, T: Theme> State<AnimatedTheme<W, T>> for AnimatedTheme
         self.duration = new.duration;
         self.curve = new.curve;
         self.child = new.child.clone();
-        self.controller
-            .set_duration(new.duration);
-        self.controller
-            .set_curve(new.curve);
+        self.controller.set_duration(new.duration);
+        self.controller.set_curve(new.curve);
 
         if !self
             .transition
@@ -203,12 +201,8 @@ impl<W: Widget + 'static, T: Theme> State<AnimatedTheme<W, T>> for AnimatedTheme
             self.controller.set_value(1.0);
             self.publish(self.target.clone());
         } else {
-            *self.current.borrow_mut() = self
-                .transition
-                .borrow()
-                .sample(0.0);
-            self.controller
-                .forward_from_first_tick();
+            *self.current.borrow_mut() = self.transition.borrow().sample(0.0);
+            self.controller.forward_from_first_tick();
         }
     }
 
@@ -227,8 +221,7 @@ impl<T: Theme> AnimatedThemeState<T> {
     fn publish(&self, value: T) {
         if *self.current.borrow() != value {
             *self.current.borrow_mut() = value.clone();
-            self.handle
-                .update(|theme| *theme = value);
+            self.handle.update(|theme| *theme = value);
         }
     }
 }
@@ -290,21 +283,14 @@ impl<T: Theme> VisitorElement for AnimatedThemeElement<T> {
 
 impl<T: Theme> Drawable for AnimatedThemeElement<T> {
     fn draw(&self, ctx: &BuildContext) {
-        let progress = self
-            .controller
-            .tick(AnimInstant::now());
-        let value = self
-            .transition
-            .borrow()
-            .sample(progress);
+        let progress = self.controller.tick(AnimInstant::now());
+        let value = self.transition.borrow().sample(progress);
         if *self.current.borrow() != value {
             *self.current.borrow_mut() = value.clone();
-            self.handle
-                .update(|theme| *theme = value);
+            self.handle.update(|theme| *theme = value);
         }
 
-        self.child
-            .rebuild_if_dirty(ctx);
+        self.child.rebuild_if_dirty(ctx);
         self.child.draw(ctx);
 
         if self.controller.is_animating() {
@@ -317,8 +303,7 @@ impl<T: Theme> EventElement for AnimatedThemeElement<T> {}
 
 impl<T: Theme> Rebuildable for AnimatedThemeElement<T> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.child
-            .rebuild_if_dirty(ctx);
+        self.child.rebuild_if_dirty(ctx);
     }
 
     fn is_carry_state(&self) -> bool {
@@ -326,8 +311,7 @@ impl<T: Theme> Rebuildable for AnimatedThemeElement<T> {
     }
 
     fn mark_needs_rebuild(&self) {
-        self.child
-            .mark_needs_rebuild();
+        self.child.mark_needs_rebuild();
     }
 }
 
@@ -361,8 +345,7 @@ impl<T: Theme> LayoutElement for AnimatedThemeElement<T> {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
 
     fn invalidate_layout(&self) {
@@ -398,9 +381,7 @@ mod tests {
                 return other.clone();
             }
             Self {
-                value: self
-                    .value
-                    .lerp(&other.value, t),
+                value: self.value.lerp(&other.value, t),
             }
         }
     }
@@ -453,15 +434,11 @@ mod tests {
         assert!(transition.retarget(theme(200), 0.5));
 
         assert_eq!(
-            transition
-                .sample(0.0)
-                .primary_color,
+            transition.sample(0.0).primary_color,
             Color::Rgba(50, 50, 50, 255)
         );
         assert_eq!(
-            transition
-                .sample(1.0)
-                .primary_color,
+            transition.sample(1.0).primary_color,
             Color::Rgba(200, 200, 200, 255)
         );
     }
@@ -488,11 +465,7 @@ mod tests {
 
         assert_eq!(*state.handle.read(), theme(101));
         assert_eq!(*state.current.borrow(), theme(101));
-        assert!(
-            !state
-                .controller
-                .is_animating()
-        );
+        assert!(!state.controller.is_animating());
     }
 
     #[test]
@@ -508,11 +481,7 @@ mod tests {
 
         assert_eq!(*state.handle.read(), CustomTheme { value: 101.0 });
         assert_eq!(*state.current.borrow(), CustomTheme { value: 101.0 });
-        assert!(
-            !state
-                .controller
-                .is_animating()
-        );
+        assert!(!state.controller.is_animating());
     }
 
     #[test]
@@ -525,11 +494,7 @@ mod tests {
         );
 
         assert_eq!(state.controller.duration(), Duration::from_millis(400));
-        assert!(
-            state
-                .controller
-                .is_animating()
-        );
+        assert!(state.controller.is_animating());
         assert_eq!(*state.current.borrow(), theme(0));
     }
 

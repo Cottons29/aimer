@@ -50,12 +50,8 @@ impl Size {
 
     pub fn resolve(&self, parent: &ResolvedSize, scale: f32) -> ResolvedSize {
         ResolvedSize {
-            width: self
-                .width
-                .resolve(parent.width, scale),
-            height: self
-                .height
-                .resolve(parent.height, scale),
+            width: self.width.resolve(parent.width, scale),
+            height: self.height.resolve(parent.height, scale),
         }
     }
 }

@@ -1,8 +1,9 @@
+use std::time::Duration;
+
 use aimer::animation::{AnimatedSwitcher, Curve};
 use aimer::router::{Route, Router, Shell, split_path_query};
 use aimer::style::{TextAlign, TextStyle, Theme, ThemeData};
 use aimer::*;
-use std::time::Duration;
 
 use crate::components::app_shell::AppShell;
 use crate::screen::blog::BlogListPage;
@@ -104,11 +105,7 @@ impl Router for AppRouter {
         // changes as we navigate.
 
         #[cfg(test)]
-        ROUTE_BUILDS.with(|builds| {
-            builds
-                .borrow_mut()
-                .push(self.clone())
-        });
+        ROUTE_BUILDS.with(|builds| builds.borrow_mut().push(self.clone()));
         eprintln!("Current route: {:?}", self);
         let active_tab = self.active_tab();
         let transition_key = self.transition_key();
@@ -145,22 +142,20 @@ impl Router for AppRouter {
 /// A simple "page not found" placeholder rendered inside the shell content
 /// area.
 fn not_found_page(theme: ThemeData) -> impl Widget {
-    Container::new()
-        .color(theme.background_color)
-        .child(
-            Column::new()
-                .horizontal_alignment(BoxAlignment::Center)
-                .vertical_alignment(BoxAlignment::Center)
-                .children(vec![
-                    Text::new("Page not found")
-                        .text_align(TextAlign::MidCenter)
-                        .text_style(
-                            TextStyle::new()
-                                .font_size(44)
-                                .color(theme.on_background_color),
-                        ),
-                ]),
-        )
+    Container::new().color(theme.background_color).child(
+        Column::new()
+            .horizontal_alignment(BoxAlignment::Center)
+            .vertical_alignment(BoxAlignment::Center)
+            .children(vec![
+                Text::new("Page not found")
+                    .text_align(TextAlign::MidCenter)
+                    .text_style(
+                        TextStyle::new()
+                            .font_size(44)
+                            .color(theme.on_background_color),
+                    ),
+            ]),
+    )
 }
 
 #[cfg(test)]

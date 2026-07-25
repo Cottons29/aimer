@@ -49,15 +49,17 @@ struct CallbackRule {
 /// Renders an already parsed [`SvgDocument`].
 ///
 /// With no explicit dimensions, the widget uses the document's intrinsic SVG
-/// viewport. Setting only [`Svg::width`] or [`Svg::height`] preserves the viewport
-/// aspect ratio; setting both uses the requested dimensions. Selector-based style
-/// overrides and pointer interaction are optional and empty by default.
+/// viewport. Setting only [`Svg::width`] or [`Svg::height`] preserves the
+/// viewport aspect ratio; setting both uses the requested dimensions.
+/// Selector-based style overrides and pointer interaction are optional and
+/// empty by default.
 ///
-/// Styles target `#id`, `.class`, or element-name selectors. A [`SvgStyle`] changes
-/// only the properties it contains: fill and stroke colors can be replaced or
-/// removed, opacity is overridden, and a transform replaces the selected node's
-/// rendered transform. The non-`try_` builders silently ignore invalid selectors;
-/// their `try_` counterparts return [`SvgError::InvalidSelector`].
+/// Styles target `#id`, `.class`, or element-name selectors. A [`SvgStyle`]
+/// changes only the properties it contains: fill and stroke colors can be
+/// replaced or removed, opacity is overridden, and a transform replaces the
+/// selected node's rendered transform. The non-`try_` builders silently ignore
+/// invalid selectors; their `try_` counterparts return
+/// [`SvgError::InvalidSelector`].
 ///
 /// # Example
 ///
@@ -68,9 +70,9 @@ struct CallbackRule {
 /// let document = SvgDocument::from_svg(
 ///     br#"<svg viewBox="0 0 24 24"><path id="mark" d="M2 2h20v20z"/></svg>"#,
 /// )?;
-/// let svg = Svg::new(document)
-///     .width(48.0)
-///     .style("#mark", SvgStyle::new().fill(SvgColor::rgba8(0, 128, 255, 255)));
+/// let svg = Svg::new(document).width(48.0)
+///                             .style("#mark",
+///                                    SvgStyle::new().fill(SvgColor::rgba8(0, 128, 255, 255)));
 /// # Ok(())
 /// # }
 /// ```
@@ -87,8 +89,8 @@ pub struct Svg {
 impl Svg {
     /// Creates a widget for a parsed SVG document.
     ///
-    /// The intrinsic viewport determines its size, and no style or callback rules
-    /// are installed.
+    /// The intrinsic viewport determines its size, and no style or callback
+    /// rules are installed.
     pub fn new(document: SvgDocument) -> Self {
         Self {
             document,
@@ -103,8 +105,8 @@ impl Svg {
 
     /// Sets the rendered width.
     ///
-    /// When height is not set, it is derived from the document viewport to preserve
-    /// the intrinsic aspect ratio.
+    /// When height is not set, it is derived from the document viewport to
+    /// preserve the intrinsic aspect ratio.
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = Some(width.into());
         self
@@ -112,8 +114,8 @@ impl Svg {
 
     /// Sets the rendered height.
     ///
-    /// When width is not set, it is derived from the document viewport to preserve
-    /// the intrinsic aspect ratio.
+    /// When width is not set, it is derived from the document viewport to
+    /// preserve the intrinsic aspect ratio.
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = Some(height.into());
         self
@@ -135,7 +137,8 @@ impl Svg {
         self
     }
 
-    /// Adds a persistent style override, returning an error for an invalid selector.
+    /// Adds a persistent style override, returning an error for an invalid
+    /// selector.
     ///
     /// See [`Svg::style`] for matching and override semantics.
     pub fn try_style(
@@ -144,19 +147,17 @@ impl Svg {
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
         let selector = selector.as_ref().parse()?;
-        self.styles
-            .push(StyleRule { selector, style });
+        self.styles.push(StyleRule { selector, style });
         Ok(self)
     }
 
     /// Adds a style applied while a matching painted node is under the pointer.
     ///
-    /// An invalid selector is ignored; use [`Svg::try_hover_style`] to receive an
-    /// error. Only properties present in `style` are overridden.
+    /// An invalid selector is ignored; use [`Svg::try_hover_style`] to receive
+    /// an error. Only properties present in `style` are overridden.
     pub fn hover_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
         if let Ok(selector) = selector.as_ref().parse() {
-            self.hover_styles
-                .push(StyleRule { selector, style });
+            self.hover_styles.push(StyleRule { selector, style });
         }
         self
     }
@@ -170,19 +171,18 @@ impl Svg {
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
         let selector = selector.as_ref().parse()?;
-        self.hover_styles
-            .push(StyleRule { selector, style });
+        self.hover_styles.push(StyleRule { selector, style });
         Ok(self)
     }
 
     /// Adds a style applied while a matching painted node is pressed.
     ///
-    /// An invalid selector is ignored; use [`Svg::try_pressed_style`] to receive an
-    /// error. The pressed state ends when the pointer is released or cancelled.
+    /// An invalid selector is ignored; use [`Svg::try_pressed_style`] to
+    /// receive an error. The pressed state ends when the pointer is
+    /// released or cancelled.
     pub fn pressed_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
         if let Ok(selector) = selector.as_ref().parse() {
-            self.pressed_styles
-                .push(StyleRule { selector, style });
+            self.pressed_styles.push(StyleRule { selector, style });
         }
         self
     }
@@ -196,45 +196,43 @@ impl Svg {
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
         let selector = selector.as_ref().parse()?;
-        self.pressed_styles
-            .push(StyleRule { selector, style });
+        self.pressed_styles.push(StyleRule { selector, style });
         Ok(self)
     }
 
     /// Registers a callback for a press completed on a matching painted node.
     ///
-    /// The callback receives [`SvgHit`] metadata and runs only when pointer down and
-    /// pointer up hit the same node. An invalid selector is ignored; use
-    /// [`Svg::try_on_path_press`] to receive an error.
+    /// The callback receives [`SvgHit`] metadata and runs only when pointer
+    /// down and pointer up hit the same node. An invalid selector is
+    /// ignored; use [`Svg::try_on_path_press`] to receive an error.
     pub fn on_path_press(
         mut self,
         selector: impl AsRef<str>,
         callback: impl Into<SvgCallback>,
     ) -> Self {
         if let Ok(selector) = selector.as_ref().parse() {
-            self.callbacks
-                .push(CallbackRule {
-                    selector,
-                    callback: callback.into(),
-                });
+            self.callbacks.push(CallbackRule {
+                selector,
+                callback: callback.into(),
+            });
         }
         self
     }
 
     /// Registers a press callback, returning an error for an invalid selector.
     ///
-    /// See [`Svg::on_path_press`] for hit-testing and press lifecycle semantics.
+    /// See [`Svg::on_path_press`] for hit-testing and press lifecycle
+    /// semantics.
     pub fn try_on_path_press(
         mut self,
         selector: impl AsRef<str>,
         callback: impl Into<SvgCallback>,
     ) -> Result<Self, SvgError> {
         let selector = selector.as_ref().parse()?;
-        self.callbacks
-            .push(CallbackRule {
-                selector,
-                callback: callback.into(),
-            });
+        self.callbacks.push(CallbackRule {
+            selector,
+            callback: callback.into(),
+        });
         Ok(self)
     }
 }
@@ -261,25 +259,27 @@ impl Widget for Svg {
 /// `aimer.toml`.
 ///
 /// The asset key follows the same platform lookup rules as `AssetImage`:
-/// Android's asset manager, app-bundle resources on Apple platforms, the project
-/// directory during desktop development, and a root-relative request on web.
-/// Loading and parsing run asynchronously. While loading, the configured
+/// Android's asset manager, app-bundle resources on Apple platforms, the
+/// project directory during desktop development, and a root-relative request on
+/// web. Loading and parsing run asynchronously. While loading, the configured
 /// [`SvgAsset::loading_widget`] is active; after an I/O or parse error, the
 /// configured [`SvgAsset::error_widget`] is active. Without the corresponding
 /// fallback, the widget has no active child for that phase.
 ///
-/// Once loaded, sizing, selector styles, transforms, colors, and callbacks have the
-/// same semantics as [`Svg`].
+/// Once loaded, sizing, selector styles, transforms, colors, and callbacks have
+/// the same semantics as [`Svg`].
 ///
 /// # Example
 ///
 /// ```
 /// use aimer_svg::{SvgAsset, SvgColor, SvgStyle};
 ///
-/// let icon = SvgAsset::new("assets/icon.svg")
-///     .width(32.0)
-///     .height(32.0)
-///     .style(".accent", SvgStyle::new().fill(SvgColor::rgba8(0, 128, 255, 255)));
+/// let icon =
+///     SvgAsset::new("assets/icon.svg").width(32.0)
+///                                     .height(32.0)
+///                                     .style(".accent",
+///                                            SvgStyle::new().fill(SvgColor::rgba8(0, 128, 255,
+///                                                                                 255)));
 /// ```
 pub struct SvgAsset {
     key: Arc<str>,
@@ -296,8 +296,8 @@ pub struct SvgAsset {
 impl SvgAsset {
     /// Creates a widget for the registered SVG asset `key`.
     ///
-    /// The intrinsic SVG viewport determines the loaded widget's size. No style,
-    /// callback, loading, or error widgets are set by default.
+    /// The intrinsic SVG viewport determines the loaded widget's size. No
+    /// style, callback, loading, or error widgets are set by default.
     pub fn new(key: impl Into<Arc<str>>) -> Self {
         Self {
             key: key.into(),
@@ -314,8 +314,8 @@ impl SvgAsset {
 
     /// Sets the rendered width after the asset loads.
     ///
-    /// When height is not set, it is derived from the SVG viewport to preserve the
-    /// intrinsic aspect ratio.
+    /// When height is not set, it is derived from the SVG viewport to preserve
+    /// the intrinsic aspect ratio.
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = Some(width.into());
         self
@@ -323,8 +323,8 @@ impl SvgAsset {
 
     /// Sets the rendered height after the asset loads.
     ///
-    /// When width is not set, it is derived from the SVG viewport to preserve the
-    /// intrinsic aspect ratio.
+    /// When width is not set, it is derived from the SVG viewport to preserve
+    /// the intrinsic aspect ratio.
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = Some(height.into());
         self
@@ -333,17 +333,18 @@ impl SvgAsset {
     /// Adds a persistent style override for nodes matching `selector`.
     ///
     /// Supported selectors are `#id`, `.class`, and element names. An invalid
-    /// selector is ignored; use [`SvgAsset::try_style`] to receive an error instead.
-    /// Only properties set in [`SvgStyle`] override the loaded document.
+    /// selector is ignored; use [`SvgAsset::try_style`] to receive an error
+    /// instead. Only properties set in [`SvgStyle`] override the loaded
+    /// document.
     pub fn style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
         if let Ok(selector) = selector.as_ref().parse() {
-            self.styles
-                .push(StyleRule { selector, style });
+            self.styles.push(StyleRule { selector, style });
         }
         self
     }
 
-    /// Adds a persistent style override, returning an error for an invalid selector.
+    /// Adds a persistent style override, returning an error for an invalid
+    /// selector.
     ///
     /// See [`SvgAsset::style`] for matching and override semantics.
     pub fn try_style(
@@ -352,19 +353,17 @@ impl SvgAsset {
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
         let selector = selector.as_ref().parse()?;
-        self.styles
-            .push(StyleRule { selector, style });
+        self.styles.push(StyleRule { selector, style });
         Ok(self)
     }
 
     /// Adds a style applied while a matching painted node is under the pointer.
     ///
-    /// An invalid selector is ignored; use [`SvgAsset::try_hover_style`] to receive
-    /// an error.
+    /// An invalid selector is ignored; use [`SvgAsset::try_hover_style`] to
+    /// receive an error.
     pub fn hover_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
         if let Ok(selector) = selector.as_ref().parse() {
-            self.hover_styles
-                .push(StyleRule { selector, style });
+            self.hover_styles.push(StyleRule { selector, style });
         }
         self
     }
@@ -378,19 +377,18 @@ impl SvgAsset {
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
         let selector = selector.as_ref().parse()?;
-        self.hover_styles
-            .push(StyleRule { selector, style });
+        self.hover_styles.push(StyleRule { selector, style });
         Ok(self)
     }
 
     /// Adds a style applied while a matching painted node is pressed.
     ///
     /// An invalid selector is ignored; use [`SvgAsset::try_pressed_style`] to
-    /// receive an error. The pressed state ends on pointer release or cancellation.
+    /// receive an error. The pressed state ends on pointer release or
+    /// cancellation.
     pub fn pressed_style(mut self, selector: impl AsRef<str>, style: SvgStyle) -> Self {
         if let Ok(selector) = selector.as_ref().parse() {
-            self.pressed_styles
-                .push(StyleRule { selector, style });
+            self.pressed_styles.push(StyleRule { selector, style });
         }
         self
     }
@@ -404,52 +402,50 @@ impl SvgAsset {
         style: SvgStyle,
     ) -> Result<Self, SvgError> {
         let selector = selector.as_ref().parse()?;
-        self.pressed_styles
-            .push(StyleRule { selector, style });
+        self.pressed_styles.push(StyleRule { selector, style });
         Ok(self)
     }
 
     /// Registers a callback for a press completed on a matching painted node.
     ///
-    /// The callback receives [`SvgHit`] metadata and runs only when pointer down and
-    /// pointer up hit the same node. An invalid selector is ignored; use
-    /// [`SvgAsset::try_on_path_press`] to receive an error.
+    /// The callback receives [`SvgHit`] metadata and runs only when pointer
+    /// down and pointer up hit the same node. An invalid selector is
+    /// ignored; use [`SvgAsset::try_on_path_press`] to receive an error.
     pub fn on_path_press(
         mut self,
         selector: impl AsRef<str>,
         callback: impl Into<SvgCallback>,
     ) -> Self {
         if let Ok(selector) = selector.as_ref().parse() {
-            self.callbacks
-                .push(CallbackRule {
-                    selector,
-                    callback: callback.into(),
-                });
+            self.callbacks.push(CallbackRule {
+                selector,
+                callback: callback.into(),
+            });
         }
         self
     }
 
     /// Registers a press callback, returning an error for an invalid selector.
     ///
-    /// See [`SvgAsset::on_path_press`] for hit-testing and press lifecycle semantics.
+    /// See [`SvgAsset::on_path_press`] for hit-testing and press lifecycle
+    /// semantics.
     pub fn try_on_path_press(
         mut self,
         selector: impl AsRef<str>,
         callback: impl Into<SvgCallback>,
     ) -> Result<Self, SvgError> {
         let selector = selector.as_ref().parse()?;
-        self.callbacks
-            .push(CallbackRule {
-                selector,
-                callback: callback.into(),
-            });
+        self.callbacks.push(CallbackRule {
+            selector,
+            callback: callback.into(),
+        });
         Ok(self)
     }
 
     /// Sets the child active while the asset is being read and parsed.
     ///
-    /// Without one, the asset widget has no active child during loading. The child
-    /// is built with the same build context as the asset widget.
+    /// Without one, the asset widget has no active child during loading. The
+    /// child is built with the same build context as the asset widget.
     pub fn loading_widget(mut self, loading_widget: impl Widget + 'static) -> Self {
         self.loading_widget = Some(loading_widget.boxed());
         self
@@ -472,11 +468,10 @@ impl Widget for SvgAsset {
         let window = ctx.window.clone();
 
         #[cfg(not(target_arch = "wasm32"))]
-        ctx.async_handle
-            .spawn(async move {
-                background_loader.load().await;
-                window.request_redraw();
-            });
+        ctx.async_handle.spawn(async move {
+            background_loader.load().await;
+            window.request_redraw();
+        });
 
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move {
@@ -554,20 +549,15 @@ impl RawSvgAsset {
                 unsafe {
                     *self.svg_element.get() = Some(svg.to_element(ctx));
                 }
-                self.phase
-                    .set(SvgAssetPhase::Ready);
+                self.phase.set(SvgAssetPhase::Ready);
             }
-            SvgLoadState::Error(_) => self
-                .phase
-                .set(SvgAssetPhase::Error),
+            SvgLoadState::Error(_) => self.phase.set(SvgAssetPhase::Error),
         }
     }
 
     fn active_element(&self) -> Option<&dyn Element> {
         match self.phase.get() {
-            SvgAssetPhase::Loading => self
-                .loading_element
-                .as_deref(),
+            SvgAssetPhase::Loading => self.loading_element.as_deref(),
             SvgAssetPhase::Ready => {
                 // The element is initialized before the phase changes to Ready and
                 // is thereafter only read on the render thread.
@@ -678,10 +668,7 @@ impl RawSvg {
             .map(|rule| (rule.selector.clone(), rule.style))
             .collect::<Vec<_>>();
         if let Some(hovered) = self.hovered.get()
-            && let Some(node) = self
-                .document
-                .scene()
-                .node(hovered)
+            && let Some(node) = self.document.scene().node(hovered)
         {
             rules.extend(
                 self.hover_styles
@@ -690,14 +677,8 @@ impl RawSvg {
                     .map(|rule| (rule.selector.clone(), rule.style)),
             );
         }
-        if let Some(pressed) = self
-            .interaction
-            .borrow()
-            .pressed
-            && let Some(node) = self
-                .document
-                .scene()
-                .node(pressed)
+        if let Some(pressed) = self.interaction.borrow().pressed
+            && let Some(node) = self.document.scene().node(pressed)
         {
             rules.extend(
                 self.pressed_styles
@@ -730,11 +711,7 @@ impl RawSvg {
     }
 
     fn execute_callbacks(&self, hit: SvgHit) {
-        let Some(node) = self
-            .document
-            .scene()
-            .node(hit.node_id)
-        else {
+        let Some(node) = self.document.scene().node(hit.node_id) else {
             return;
         };
         for rule in self
@@ -775,11 +752,8 @@ impl LayoutElement for RawSvg {
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
         let size = self.resolved_size(ctx);
-        let (x, y) = ctx
-            .canvas
-            .get_transform_translation();
-        self.bounds
-            .save(ctx.scale, x, y, size.width, size.height);
+        let (x, y) = ctx.canvas.get_transform_translation();
+        self.bounds.save(ctx.scale, x, y, size.width, size.height);
         size
     }
 
@@ -791,11 +765,8 @@ impl LayoutElement for RawSvg {
 impl Drawable for RawSvg {
     fn draw(&self, ctx: &BuildContext) {
         let size = self.resolved_size(ctx);
-        let (x, y) = ctx
-            .canvas
-            .get_transform_translation();
-        self.bounds
-            .save(ctx.scale, x, y, size.width, size.height);
+        let (x, y) = ctx.canvas.get_transform_translation();
+        self.bounds.save(ctx.scale, x, y, size.width, size.height);
         let overrides = self.overrides();
         ctx.canvas.draw_svg(
             self.document.scene().clone(),
@@ -810,27 +781,19 @@ impl EventElement for RawSvg {
     fn on_event(&self, event: &ElementEvent) -> bool {
         match event {
             ElementEvent::PointerMove(position, PointerSource::Mouse, _) => {
-                self.set_hovered(
-                    self.hit_at(position.x, position.y)
-                        .map(|hit| hit.node_id),
-                );
+                self.set_hovered(self.hit_at(position.x, position.y).map(|hit| hit.node_id));
                 false
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => {
                 self.set_hovered(None);
-                self.interaction
-                    .borrow_mut()
-                    .cancel();
+                self.interaction.borrow_mut().cancel();
                 false
             }
             ElementEvent::PointerDown(position, _, _) => {
                 let hit = self.hit_at(position.x, position.y);
                 self.interaction
                     .borrow_mut()
-                    .pointer_down(
-                        hit.as_ref()
-                            .map(|hit| hit.node_id),
-                    );
+                    .pointer_down(hit.as_ref().map(|hit| hit.node_id));
                 hit.is_some()
             }
             ElementEvent::PointerUp(position, _, _) => {
@@ -838,10 +801,7 @@ impl EventElement for RawSvg {
                 let pressed = self
                     .interaction
                     .borrow_mut()
-                    .pointer_up(
-                        hit.as_ref()
-                            .map(|hit| hit.node_id),
-                    );
+                    .pointer_up(hit.as_ref().map(|hit| hit.node_id));
                 if pressed.is_some()
                     && let Some(hit) = hit
                 {
@@ -853,9 +813,7 @@ impl EventElement for RawSvg {
                 }
             }
             ElementEvent::Cancel => {
-                self.interaction
-                    .borrow_mut()
-                    .cancel();
+                self.interaction.borrow_mut().cancel();
                 false
             }
             _ => false,
@@ -888,10 +846,7 @@ pub(crate) fn resolved_svg_size(
     width: Option<f32>,
     height: Option<f32>,
 ) -> (f32, f32) {
-    let ratio = viewport.width
-        / viewport
-            .height
-            .max(f32::EPSILON);
+    let ratio = viewport.width / viewport.height.max(f32::EPSILON);
     match (width, height) {
         (Some(width), Some(height)) => (width, height),
         (Some(width), None) => (width, width / ratio.max(f32::EPSILON)),
@@ -916,10 +871,7 @@ pub(crate) fn overrides_for_rules(
                 transform: None,
             };
             let mut matched = false;
-            for (_, style) in rules
-                .iter()
-                .filter(|(selector, _)| selector.matches(node))
-            {
+            for (_, style) in rules.iter().filter(|(selector, _)| selector.matches(node)) {
                 matched = true;
                 if style.fill.is_some() {
                     result.fill = style.fill;
@@ -965,9 +917,7 @@ pub(crate) fn hit_test_scene(
         .rev()
         .filter(|node| node.visible && node.geometry.is_some())
     {
-        let node_override = overrides
-            .iter()
-            .find(|value| value.node_id == node.node_id);
+        let node_override = overrides.iter().find(|value| value.node_id == node.node_id);
         if node_override
             .and_then(|value| value.opacity)
             .unwrap_or(node.opacity)
@@ -1026,15 +976,11 @@ fn hits_geometry(
     };
     if stroke_visible && let Some(stroke) = &node.stroke {
         let threshold = stroke.width * 0.5;
-        return contours
-            .iter()
-            .any(|contour| {
-                contour
-                    .windows(2)
-                    .any(|segment| {
-                        point_segment_distance(point, segment[0], segment[1]) <= threshold
-                    })
-            });
+        return contours.iter().any(|contour| {
+            contour
+                .windows(2)
+                .any(|segment| point_segment_distance(point, segment[0], segment[1]) <= threshold)
+        });
     }
     false
 }
@@ -1043,11 +989,7 @@ fn flatten_geometry(geometry: &SvgGeometry) -> Vec<Vec<(f32, f32)>> {
     let mut contours = Vec::new();
     let mut contour = Vec::new();
     let mut current = (0.0, 0.0);
-    for command in geometry
-        .commands
-        .iter()
-        .copied()
-    {
+    for command in geometry.commands.iter().copied() {
         match command {
             SvgPathCommand::MoveTo { x, y } => {
                 if !contour.is_empty() {

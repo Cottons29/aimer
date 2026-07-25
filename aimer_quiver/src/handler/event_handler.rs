@@ -243,13 +243,13 @@ impl WindowEventHandler {
             return;
         }
         app.cursor_pos = new_pos;
-        if let Some(window) = app.window {
-            window.set_cursor(CursorIcon::Default);
-        }
         if let Some(root) = &app.widget_root {
             let event = ElementEvent::PointerMove(app.cursor_pos, PointerSource::Mouse, 0);
-            let _handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
+            let handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
             if let Some(window) = &app.window {
+                if !handled {
+                    window.set_cursor(CursorIcon::Default);
+                }
                 window.request_redraw();
             }
         }
@@ -411,9 +411,7 @@ impl WindowEventHandler {
 
         if let Some(text) = text_input
             && !text.is_empty()
-            && text
-                .chars()
-                .all(|c| !c.is_control())
+            && text.chars().all(|c| !c.is_control())
         {
             Self::dispatch_text(&text, &action, &modifiers, app);
             return;
@@ -607,9 +605,7 @@ impl WindowEventHandler {
                     if app.window.is_none() {
                         return;
                     }
-                    app.window
-                        .unwrap()
-                        .inner_size()
+                    app.window.unwrap().inner_size()
                 }
             }
         };

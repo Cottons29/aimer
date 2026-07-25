@@ -18,19 +18,13 @@ impl TextHitRegion {
 }
 
 pub(crate) fn text_offset_at(regions: &[TextHitRegion], x: f32, y: f32) -> Option<usize> {
-    let region = regions
-        .iter()
-        .min_by(|left, right| {
-            vertical_distance(left.bounds, y)
-                .total_cmp(&vertical_distance(right.bounds, y))
-                .then_with(|| {
-                    distance_squared(left.bounds, x, y).total_cmp(&distance_squared(
-                        right.bounds,
-                        x,
-                        y,
-                    ))
-                })
-        })?;
+    let region = regions.iter().min_by(|left, right| {
+        vertical_distance(left.bounds, y)
+            .total_cmp(&vertical_distance(right.bounds, y))
+            .then_with(|| {
+                distance_squared(left.bounds, x, y).total_cmp(&distance_squared(right.bounds, x, y))
+            })
+    })?;
     let midpoint = region.bounds.x + region.bounds.width / 2.0;
     Some(if x < midpoint {
         region.source_range.start
@@ -138,10 +132,7 @@ impl SelectionState {
     }
 
     pub fn cancel(&mut self) {
-        if let Some(selection) = self
-            .selection_before_gesture
-            .take()
-        {
+        if let Some(selection) = self.selection_before_gesture.take() {
             self.selection = selection;
         }
         self.active_pointer = None;
@@ -284,12 +275,7 @@ mod tests {
         state.select_all(text.len());
 
         assert_eq!(state.selection(), TextSelection::new(0, text.len()));
-        assert_eq!(
-            state
-                .selection()
-                .selected_text(text),
-            Some(text)
-        );
+        assert_eq!(state.selection().selected_text(text), Some(text));
     }
 
     #[test]

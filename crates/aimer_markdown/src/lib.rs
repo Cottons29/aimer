@@ -19,13 +19,11 @@ use aimer_scroll::{ScrollAxis, Scrollable};
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, AnyWidget, Key, Widget};
-
+use cache::LruCache;
 pub use document::{Alignment, Block, Document, Inline, ListItem, MarkdownError, TableRow};
 pub use markdown_theme::MarkdownTheme;
 pub use renderer::{ImageResolver, LinkHandler, MarkdownImage, default_image_resolver};
 pub use syntax::{CaptureSpan, highlight};
-
-use cache::LruCache;
 
 const DOCUMENT_CACHE_CAPACITY: usize = 16;
 
@@ -51,11 +49,7 @@ impl DocumentCache {
 }
 
 fn parse_document(source: Rc<str>) -> Rc<Result<Document, MarkdownError>> {
-    DOCUMENT_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .parse(source)
-    })
+    DOCUMENT_CACHE.with(|cache| cache.borrow_mut().parse(source))
 }
 
 fn open_web_link_with<E>(
@@ -101,7 +95,8 @@ impl Default for MarkdownViewer {
 impl MarkdownViewer {
     /// Creates an empty viewer with the default theme and image resolver.
     ///
-    /// Activated HTTP and HTTPS links open in the system web browser by default.
+    /// Activated HTTP and HTTPS links open in the system web browser by
+    /// default.
     pub fn new() -> Self {
         Self {
             source: Rc::from(""),
@@ -181,11 +176,7 @@ impl Widget for MarkdownViewer {
             Scrollable::new()
                 .key(self.key.clone())
                 .axis(ScrollAxis::Vertical)
-                .child(
-                    Container::new()
-                        .padding(self.padding)
-                        .child(content),
-                )
+                .child(Container::new().padding(self.padding).child(content))
                 .to_element(ctx)
         } else {
             Container::new()
@@ -261,9 +252,7 @@ mod tests {
         let opened = RefCell::new(Vec::new());
 
         let handled = open_web_link_with("https://aimer.dev/docs", |url| {
-            opened
-                .borrow_mut()
-                .push(url.to_owned());
+            opened.borrow_mut().push(url.to_owned());
             Ok::<(), ()>(())
         });
 
@@ -276,9 +265,7 @@ mod tests {
         let opened = RefCell::new(Vec::new());
 
         let handled = open_web_link_with("#footnote-guide", |url| {
-            opened
-                .borrow_mut()
-                .push(url.to_owned());
+            opened.borrow_mut().push(url.to_owned());
             Ok::<(), ()>(())
         });
 

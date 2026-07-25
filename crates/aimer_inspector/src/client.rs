@@ -44,9 +44,7 @@ impl InspectorClient {
                     s.connected = true;
                 }
 
-                let _ = ws
-                    .get_mut()
-                    .set_nonblocking(true);
+                let _ = ws.get_mut().set_nonblocking(true);
 
                 loop {
                     // Send any pending commands first
@@ -149,11 +147,7 @@ fn render_tree_recursive(
     ids.push(node.id);
 
     let count = node.children.len();
-    for (i, child) in node
-        .children
-        .iter()
-        .enumerate()
-    {
+    for (i, child) in node.children.iter().enumerate() {
         let is_last = i == count - 1;
         let connector = if is_last { "└── " } else { "├── " };
         let continuation = if is_last { "    " } else { "│   " };
@@ -184,11 +178,7 @@ fn render_tree_with_base(
     ids.push(node.id);
 
     let count = node.children.len();
-    for (i, child) in node
-        .children
-        .iter()
-        .enumerate()
-    {
+    for (i, child) in node.children.iter().enumerate() {
         let is_last = i == count - 1;
         let connector = if is_last { "└── " } else { "├── " };
         let continuation = if is_last { "    " } else { "│   " };

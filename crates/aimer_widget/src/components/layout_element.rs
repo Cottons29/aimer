@@ -65,10 +65,7 @@ pub trait LayoutElement: VisitorElement {
         let mut found = false;
 
         self.visit_children(&mut |item| {
-            if let Some(child_size) = item
-                .size()
-                .or_else(|| item.get_size_from_child())
-            {
+            if let Some(child_size) = item.size().or_else(|| item.get_size_from_child()) {
                 // For Px values, take the max; otherwise keep what we have
                 result_w = match (result_w, child_size.width) {
                     (Dimension::Px(a), Dimension::Px(b)) => Dimension::Px(a.max(b)),

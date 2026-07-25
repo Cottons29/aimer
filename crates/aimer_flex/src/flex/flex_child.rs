@@ -27,11 +27,8 @@ use aimer_widget::{
 /// use aimer_container::SizedBox;
 /// use aimer_flex::{Expanded, Row};
 ///
-/// let row = Row::new()
-///     .children(vec![
-///         Expanded::new().child(SizedBox::new()),
-///         Expanded::new().flex(2.0).child(SizedBox::new()),
-///     ]);
+/// let row = Row::new().children(vec![Expanded::new().child(SizedBox::new()),
+///                                    Expanded::new().flex(2.0).child(SizedBox::new()),]);
 /// ```
 pub struct Expanded<W = RequiredChild> {
     /// The flex factor: the child's share of the free main-axis space is
@@ -173,11 +170,7 @@ impl<E: Element> LayoutElement for RawExpanded<E> {
 /// receives `0.0`. When no child is flexible (all weights `<= 0`) the result is
 /// all zeros.
 pub(crate) fn distribute_flex_space(remaining: f32, weights: &[f32]) -> Vec<f32> {
-    let total: f32 = weights
-        .iter()
-        .copied()
-        .filter(|w| *w > 0.0)
-        .sum();
+    let total: f32 = weights.iter().copied().filter(|w| *w > 0.0).sum();
     if total <= 0.0 {
         return vec![0.0; weights.len()];
     }

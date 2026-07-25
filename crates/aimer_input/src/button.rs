@@ -16,12 +16,14 @@ use crate::mouse_region::{MouseRegion, PointerState};
 
 /// A clickable button widget with visual feedback.
 ///
-/// `Button` renders a decorated container (background, border, outline) and provides callbacks for
-/// primary tap, double-tap, long-press, and secondary-button tap. It substitutes a disabled
-/// background and suppresses all pointer callbacks when disabled.
+/// `Button` renders a decorated container (background, border, outline) and
+/// provides callbacks for primary tap, double-tap, long-press, and
+/// secondary-button tap. It substitutes a disabled background and suppresses
+/// all pointer callbacks when disabled.
 ///
-/// The default button is enabled, has an empty [`BoxDecoration`], and has no-op callbacks. Finish
-/// construction with [`Button::child`] or [`Button::box_child`].
+/// The default button is enabled, has an empty [`BoxDecoration`], and has no-op
+/// callbacks. Finish construction with [`Button::child`] or
+/// [`Button::box_child`].
 ///
 /// # Example
 ///
@@ -29,9 +31,8 @@ use crate::mouse_region::{MouseRegion, PointerState};
 /// use aimer_input::button::Button;
 /// use aimer_text::Text;
 ///
-/// let button = Button::new()
-///     .on_press(|| println!("pressed"))
-///     .child(Text::new("Save"));
+/// let button = Button::new().on_press(|| println!("pressed"))
+///                           .child(Text::new("Save"));
 /// ```
 #[allow(dead_code)]
 pub struct Button<W = RequiredChild> {
@@ -108,7 +109,8 @@ impl<W> Button<W> {
         self
     }
 
-    /// Sets the callback invoked once a held pointer is recognized as a long-press.
+    /// Sets the callback invoked once a held pointer is recognized as a
+    /// long-press.
     ///
     /// The callback is not invoked while the button is disabled.
     pub fn on_long_press(mut self, on_long_press: impl Into<VoidCallback>) -> Self {
@@ -118,7 +120,8 @@ impl<W> Button<W> {
 
     /// Registers an asynchronous long-press callback.
     ///
-    /// Like [`Button::on_press_async`], this one-shot closure is taken on its first invocation.
+    /// Like [`Button::on_press_async`], this one-shot closure is taken on its
+    /// first invocation.
     pub fn on_long_press_async<F, Fut>(mut self, on_long_press: F) -> Self
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -128,7 +131,8 @@ impl<W> Button<W> {
         self
     }
 
-    /// Sets the callback invoked when a second primary tap completes within the double-tap timeout.
+    /// Sets the callback invoked when a second primary tap completes within the
+    /// double-tap timeout.
     ///
     /// The callback is not invoked while the button is disabled.
     pub fn on_double_press(mut self, on_double_press: impl Into<VoidCallback>) -> Self {
@@ -138,7 +142,8 @@ impl<W> Button<W> {
 
     /// Registers an asynchronous double-press callback.
     ///
-    /// Like [`Button::on_press_async`], this one-shot closure is taken on its first invocation.
+    /// Like [`Button::on_press_async`], this one-shot closure is taken on its
+    /// first invocation.
     pub fn on_double_press_async<F, Fut>(mut self, on_double_press: F) -> Self
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -158,7 +163,8 @@ impl<W> Button<W> {
 
     /// Registers an asynchronous secondary-button tap callback.
     ///
-    /// Like [`Button::on_press_async`], this one-shot closure is taken on its first invocation.
+    /// Like [`Button::on_press_async`], this one-shot closure is taken on its
+    /// first invocation.
     pub fn on_right_press_async<F, Fut>(mut self, on_right_press: F) -> Self
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -170,8 +176,8 @@ impl<W> Button<W> {
 
     /// Replaces the decoration drawn behind the child.
     ///
-    /// Hovering lightens an existing background color. Disabled buttons replace that background
-    /// with translucent black.
+    /// Hovering lightens an existing background color. Disabled buttons replace
+    /// that background with translucent black.
     pub fn decoration(mut self, decoration: BoxDecoration) -> Self {
         self.decoration = decoration;
         self
@@ -179,7 +185,8 @@ impl<W> Button<W> {
 
     /// Enables or disables primary, double, and long-press interaction.
     ///
-    /// A disabled button omits its hover and gesture wrappers and draws its disabled background.
+    /// A disabled button omits its hover and gesture wrappers and draws its
+    /// disabled background.
     pub fn disabled(mut self, is_disabled: bool) -> Self {
         self.is_disabled = is_disabled;
         self
@@ -193,8 +200,9 @@ impl<W> Button<W> {
 
     /// Supplies the terminal child and returns a statically typed [`Button`].
     ///
-    /// Builder settings made before this call are preserved. A button without a child is only an
-    /// intermediate builder and does not implement [`Widget`].
+    /// Builder settings made before this call are preserved. A button without a
+    /// child is only an intermediate builder and does not implement
+    /// [`Widget`].
     pub fn child<C: Widget>(self, child: C) -> Button<C> {
         Button {
             on_press: self.on_press,
@@ -208,11 +216,13 @@ impl<W> Button<W> {
         }
     }
 
-    /// Supplies the terminal child and erases the completed button's concrete type.
+    /// Supplies the terminal child and erases the completed button's concrete
+    /// type.
     ///
-    /// This is exactly equivalent to `self.child(child).boxed()`, combining [`Button::child`] with
-    /// [`Widget::boxed`]. Use it when branching APIs need to return one [`AnyWidget`] despite using
-    /// different concrete child types.
+    /// This is exactly equivalent to `self.child(child).boxed()`, combining
+    /// [`Button::child`] with [`Widget::boxed`]. Use it when branching APIs
+    /// need to return one [`AnyWidget`] despite using different concrete
+    /// child types.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
         self.child(child).boxed()
     }

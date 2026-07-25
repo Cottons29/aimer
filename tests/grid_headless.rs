@@ -26,8 +26,7 @@ impl Widget for SizeProbe {
 
 impl Drawable for SizeProbeElement {
     fn draw(&self, ctx: &BuildContext) {
-        self.observed
-            .set(ctx.parent_size);
+        self.observed.set(ctx.parent_size);
     }
 }
 

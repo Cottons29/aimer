@@ -68,9 +68,7 @@ pub(crate) fn generate_theme_impl(
     }
 
     let mut theme_generics = animation_generics.clone();
-    let (_, input_ty_generics, _) = input
-        .generics
-        .split_for_impl();
+    let (_, input_ty_generics, _) = input.generics.split_for_impl();
     theme_generics
         .make_where_clause()
         .predicates
@@ -83,10 +81,7 @@ pub(crate) fn generate_theme_impl(
     let (theme_impl_generics, theme_ty_generics, theme_where_clause) =
         theme_generics.split_for_impl();
     let interpolated_fields = fields.iter().map(|field| {
-        let ident = field
-            .ident
-            .as_ref()
-            .expect("named fields have identifiers");
+        let ident = field.ident.as_ref().expect("named fields have identifiers");
         quote! {
             #ident: #style_path::__private::Animatable::lerp(&self.#ident, &other.#ident, t)
         }

@@ -30,11 +30,7 @@ fn execute_in(target: String, dir: &Path) -> anyhow::Result<()> {
     let dir = canonical.as_path();
 
     let name = manifest.package.name.clone();
-    let group = if manifest
-        .package
-        .group
-        .is_empty()
-    {
+    let group = if manifest.package.group.is_empty() {
         "com.example.app".to_string()
     } else {
         manifest.package.group.clone()
@@ -55,9 +51,11 @@ fn execute_in(target: String, dir: &Path) -> anyhow::Result<()> {
             migrate_platform(dir, "windows", &name, &group, &create::window::create)?;
             migrate_platform(dir, "linux", &name, &group, &create::linux::create)?;
         }
-        other => bail!(
-            "unknown target '{other}'. Valid targets: macos, windows, linux, android, ios, web, all"
-        ),
+        other => {
+            bail!(
+                "unknown target '{other}'. Valid targets: macos, windows, linux, android, ios, web, all"
+            )
+        }
     }
 
     println!("Migration complete for '{target}'. Project: {name} (group: {group})");
@@ -100,9 +98,7 @@ fn migrate_platform(
     group: &str,
     create_fn: &dyn Fn(&Path, &str, &str),
 ) -> anyhow::Result<()> {
-    let platform_dir = dir
-        .join("builds")
-        .join(platform);
+    let platform_dir = dir.join("builds").join(platform);
     if platform_dir.exists() {
         fs::remove_dir_all(&platform_dir)
             .with_context(|| format!("removing builds/{platform}/"))?;
@@ -142,9 +138,7 @@ mod tests {
 
         // Build artifacts are preserved.
         assert!(
-            web_dir
-                .join("pkg/artifact.wasm")
-                .exists(),
+            web_dir.join("pkg/artifact.wasm").exists(),
             "pkg/ artifacts should be preserved"
         );
     }
@@ -170,15 +164,11 @@ mod tests {
 
         // Old files are gone, new scaffold is present.
         assert!(
-            !linux_dir
-                .join("old_file.txt")
-                .exists(),
+            !linux_dir.join("old_file.txt").exists(),
             "old files should be removed"
         );
         assert!(
-            linux_dir
-                .join("app.desktop")
-                .exists(),
+            linux_dir.join("app.desktop").exists(),
             "new scaffold should be generated"
         );
     }
@@ -195,12 +185,7 @@ mod tests {
 
         let result = execute_in("playstation".to_string(), dir);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("unknown target")
-        );
+        assert!(result.unwrap_err().to_string().contains("unknown target"));
     }
 
     #[test]
@@ -208,11 +193,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let result = execute_in("web".to_string(), tmp.path());
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("no Aimer.toml")
-        );
+        assert!(result.unwrap_err().to_string().contains("no Aimer.toml"));
     }
 }

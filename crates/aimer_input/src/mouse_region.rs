@@ -32,9 +32,10 @@ pub type SharedPointerState = Rc<Cell<PointerState>>;
 
 /// A transparent widget that tracks mouse hover over its child.
 ///
-/// Touch events do not change hover state. Enter and exit callbacks run only on actual state
-/// transitions; asynchronous callbacks are currently ignored. The default cursor is unchanged and
-/// the initial state is [`PointerState::Outside`].
+/// Touch events do not change hover state. Enter and exit callbacks run only on
+/// actual state transitions; asynchronous callbacks are currently ignored. The
+/// default cursor is unchanged and the initial state is
+/// [`PointerState::Outside`].
 ///
 /// # Example
 ///
@@ -42,10 +43,9 @@ pub type SharedPointerState = Rc<Cell<PointerState>>;
 /// use aimer_input::mouse_region::MouseRegion;
 /// use aimer_text::Text;
 ///
-/// let region = MouseRegion::new()
-///     .cursor(winit::window::CursorIcon::Pointer)
-///     .on_hover_enter(|| println!("entered"))
-///     .child(Text::new("Hover me"));
+/// let region = MouseRegion::new().cursor(winit::window::CursorIcon::Pointer)
+///                                .on_hover_enter(|| println!("entered"))
+///                                .child(Text::new("Hover me"));
 /// ```
 pub struct MouseRegion<W = RequiredChild> {
     pub on_hover_enter: VoidCallback,
@@ -63,7 +63,8 @@ impl Default for MouseRegion {
 }
 
 impl MouseRegion {
-    /// Creates a region with no-op callbacks, no cursor override, and outside pointer state.
+    /// Creates a region with no-op callbacks, no cursor override, and outside
+    /// pointer state.
     pub fn new() -> Self {
         Self {
             on_hover_enter: VoidCallback::default(),
@@ -77,13 +78,15 @@ impl MouseRegion {
 }
 
 impl<W> MouseRegion<W> {
-    /// Sets the callback fired when the mouse transitions from outside to inside the child bounds.
+    /// Sets the callback fired when the mouse transitions from outside to
+    /// inside the child bounds.
     pub fn on_hover_enter(mut self, on_hover_enter: impl Into<VoidCallback>) -> Self {
         self.on_hover_enter = on_hover_enter.into();
         self
     }
 
-    /// Sets the callback fired when the mouse transitions from inside to outside the child bounds.
+    /// Sets the callback fired when the mouse transitions from inside to
+    /// outside the child bounds.
     pub fn on_hover_exit(mut self, on_hover_exit: impl Into<VoidCallback>) -> Self {
         self.on_hover_exit = on_hover_exit.into();
         self
@@ -91,8 +94,8 @@ impl<W> MouseRegion<W> {
 
     /// Sets the cursor shown while the mouse is inside the region.
     ///
-    /// Pass `None` to leave the cursor unchanged. On exit, a configured cursor resets to the
-    /// platform default.
+    /// Pass `None` to leave the cursor unchanged. On exit, a configured cursor
+    /// resets to the platform default.
     pub fn cursor(mut self, cursor: impl Into<Option<winit::window::CursorIcon>>) -> Self {
         self.cursor = cursor.into();
         self
@@ -106,8 +109,9 @@ impl<W> MouseRegion<W> {
 
     /// Supplies the terminal child and returns a statically typed region.
     ///
-    /// Existing callbacks, cursor, and shared state are preserved. A region without a child is only
-    /// an intermediate builder and does not implement [`Widget`].
+    /// Existing callbacks, cursor, and shared state are preserved. A region
+    /// without a child is only an intermediate builder and does not
+    /// implement [`Widget`].
     pub fn child<C: Widget>(self, child: C) -> MouseRegion<C> {
         MouseRegion {
             on_hover_enter: self.on_hover_enter,
@@ -119,11 +123,13 @@ impl<W> MouseRegion<W> {
         }
     }
 
-    /// Supplies the terminal child and erases the completed region's concrete type.
+    /// Supplies the terminal child and erases the completed region's concrete
+    /// type.
     ///
     /// This is exactly equivalent to `self.child(child).boxed()`, combining
-    /// [`MouseRegion::child`] with [`Widget::boxed`]. Use it when branching APIs need one
-    /// [`AnyWidget`] return type despite using different concrete child types.
+    /// [`MouseRegion::child`] with [`Widget::boxed`]. Use it when branching
+    /// APIs need one [`AnyWidget`] return type despite using different
+    /// concrete child types.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
         self.child(child).boxed()
     }
@@ -148,9 +154,10 @@ impl<W: Widget + 'static> Widget for MouseRegion<W> {
 /// ##### A transparent wrapper that tracks the mouse hover state.
 ///
 /// `MouseRegion` only responds to mouse-originated pointer events — touch
-/// input is ignored for hover purposes. It writes to a shared `Rc<Cell<PointerState>>`
-/// so that a child element (e.g. `GestureDetector`) can read the hover state
-/// for decoration switching without knowing about `MouseRegion` at all.
+/// input is ignored for hover purposes. It writes to a shared
+/// `Rc<Cell<PointerState>>` so that a child element (e.g. `GestureDetector`)
+/// can read the hover state for decoration switching without knowing about
+/// `MouseRegion` at all.
 ///
 /// Event dispatch is handled manually: `event_children` returns empty so that
 /// `on_event` is called first, then events are forwarded to the child.
@@ -193,13 +200,11 @@ impl<E: Element> RawMouseRegion<E> {
         if is_inside {
             if matches!(self.current_state.get(), PointerState::Outside) {
                 Self::execute_void_callback(&self.on_hover_enter);
-                self.current_state
-                    .set(PointerState::Inside);
+                self.current_state.set(PointerState::Inside);
             }
         } else if matches!(self.current_state.get(), PointerState::Inside) {
             Self::execute_void_callback(&self.on_hover_exit);
-            self.current_state
-                .set(PointerState::Outside);
+            self.current_state.set(PointerState::Outside);
             request_animation_frame()
         }
     }
@@ -221,8 +226,7 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
 
         if matches!(event, ElementEvent::PointerExited(PointerSource::Mouse, _)) {
             if self.cursor.is_some() {
-                self.window
-                    .set_cursor(winit::window::CursorIcon::Default);
+                self.window.set_cursor(winit::window::CursorIcon::Default);
             }
             self.sync_hover(false);
             return self.child.on_event(event);
@@ -246,9 +250,7 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
 
         // println!("Event received: {:?}", event);
 
-        let is_inside = self
-            .cached_bounds
-            .is_inside(pos.x, pos.y);
+        let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
         // Update the cursor icon on every mouse event while over the region.
         if is_inside {
@@ -256,8 +258,7 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
                 self.window.set_cursor(icon);
             }
         } else if self.cursor.is_some() {
-            self.window
-                .set_cursor(winit::window::CursorIcon::Default);
+            self.window.set_cursor(winit::window::CursorIcon::Default);
         }
 
         // Only fire callbacks on a state change between Enter <-> Exit,
@@ -275,9 +276,7 @@ impl<E: Element> LayoutElement for RawMouseRegion<E> {
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
         let size = self.child.layout(ctx);
         // Cache our own bounds from the canvas transform for hit-testing
-        let (abs_x, abs_y) = ctx
-            .canvas
-            .get_transform_translation();
+        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         self.cached_bounds
             .save(ctx.scale, abs_x, abs_y, size.width, size.height);
         size
@@ -292,9 +291,7 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
     fn draw(&self, ctx: &BuildContext<'_>) {
         // Update cached bounds from the current canvas position
         let child_size = self.child.computed_size(ctx);
-        let (abs_x, abs_y) = ctx
-            .canvas
-            .get_transform_translation();
+        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         self.cached_bounds
             .save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
 
@@ -304,9 +301,7 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
         // follows, so without this the button would lose its hover feedback
         // until the mouse moved again.
         let cursor = ctx.cursor_pos;
-        let is_inside = self
-            .cached_bounds
-            .is_inside(cursor.x, cursor.y);
+        let is_inside = self.cached_bounds.is_inside(cursor.x, cursor.y);
         self.sync_hover(is_inside);
 
         self.child.draw(ctx);

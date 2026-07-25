@@ -30,13 +30,9 @@ pub enum StackDirection {
 /// use aimer_container::SizedBox;
 /// use aimer_space::{Align, Alignment, Stack};
 ///
-/// let stack = Stack::new()
-///     .add_child(SizedBox::new().width(200).height(120))
-///     .add_child(
-///         Align::new()
-///             .alignment(Alignment::MidCenter)
-///             .child(SizedBox::new().width(40).height(40)),
-///     );
+/// let stack = Stack::new().add_child(SizedBox::new().width(200).height(120))
+///                         .add_child(Align::new().alignment(Alignment::MidCenter)
+///                                                .child(SizedBox::new().width(40).height(40)));
 /// ```
 pub struct Stack<W = AnyWidget> {
     pub children: Vec<W>,
@@ -78,8 +74,7 @@ impl Stack {
     /// Existing children are retained, and successive calls may use different
     /// concrete widget types.
     pub fn add_child(mut self, child: impl Widget + 'static) -> Self {
-        self.children
-            .push(child.boxed());
+        self.children.push(child.boxed());
         self
     }
 
@@ -95,11 +90,7 @@ impl Stack {
 
 impl Widget for Stack {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let children = self
-            .children
-            .iter()
-            .map(|c| c.to_element(ctx))
-            .collect();
+        let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
         RawStackElement {
             children,
             direction: self.direction,

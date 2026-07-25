@@ -74,12 +74,7 @@ fn build_code_header(value: &str, language: Option<&str>, theme: &MarkdownTheme)
                 theme
                     .code_block
                     .font_family(aimer_assets::FontFamily::SANS_SERIF)
-                    .color(
-                        theme
-                            .code_block
-                            .color
-                            .with_opacity(160),
-                    ),
+                    .color(theme.code_block.color.with_opacity(160)),
             )
             .boxed(),
         None => ZeroSizedBox.boxed(),
@@ -93,13 +88,7 @@ fn build_code_header(value: &str, language: Option<&str>, theme: &MarkdownTheme)
                 Button::new()
                     .decoration(
                         BoxDecoration::new()
-                            .background_color(
-                                theme
-                                    .body
-                                    .color
-                                    .with_alpha(0.1)
-                                    .darken(0.4),
-                            )
+                            .background_color(theme.body.color.with_alpha(0.1).darken(0.4))
                             .border_radius(4),
                     )
                     .on_press(move || {
@@ -113,30 +102,18 @@ fn build_code_header(value: &str, language: Option<&str>, theme: &MarkdownTheme)
                         Row::new()
                             .vertical_alignment(BoxAlignment::Center)
                             .horizontal_alignment(BoxAlignment::Center)
-                            .children([Svg::new(document)
-                                .width(20.0)
-                                .height(20.0)
-                                .style(
-                                    "path",
-                                    SvgStyle::new().stroke(theme.code_block.color.into()),
-                                )]),
+                            .children([Svg::new(document).width(20.0).height(20.0).style(
+                                "path",
+                                SvgStyle::new().stroke(theme.code_block.color.into()),
+                            )]),
                     ),
             )
             .boxed(),
-        Err(_) => SizedBox::new()
-            .width(28)
-            .height(28)
-            .boxed(),
+        Err(_) => SizedBox::new().width(28).height(28).boxed(),
     };
 
     Container::new()
-        .padding(
-            LayoutSpacing::new()
-                .left(16)
-                .right(12)
-                .top(8)
-                .bottom(8),
-        )
+        .padding(LayoutSpacing::new().left(16).right(12).top(8).bottom(8))
         .child(
             Row::new()
                 .vertical_alignment(BoxAlignment::Center)
@@ -145,33 +122,28 @@ fn build_code_header(value: &str, language: Option<&str>, theme: &MarkdownTheme)
         .boxed()
 }
 
-/// Resolves network URLs with `NetworkImage` and other sources with `AssetImage`.
+/// Resolves network URLs with `NetworkImage` and other sources with
+/// `AssetImage`.
 pub fn default_image_resolver(image: &MarkdownImage) -> AnyWidget {
-    if image
-        .source
-        .starts_with("http://")
-        || image
-            .source
-            .starts_with("https://")
-    {
+    if image.source.starts_with("http://") || image.source.starts_with("https://") {
         // debug!("Loading network image {}", image.source);
-        NetworkImage::new(image.source.clone())
-            .height(500)
+
+        Container::new()
+            .height(400)
+            .child(Row::new().children([NetworkImage::new(image.source.clone()).height(400)]))
             .boxed()
     } else {
         // debug!("Loading asset image {}", image.source);
-        AssetImage::new(image.source.clone())
-            .height(500)
+
+        Container::new()
+            .height(400)
+            .child(Row::new().children([AssetImage::new(image.source.clone()).height(400)]))
             .boxed()
     }
 }
 
 pub(crate) fn inline_spans(inlines: &[Inline], theme: &MarkdownTheme) -> TextSpan {
-    TextSpan::root(
-        inlines
-            .iter()
-            .map(|inline| inline_span(inline, theme)),
-    )
+    TextSpan::root(inlines.iter().map(|inline| inline_span(inline, theme)))
 }
 
 fn inline_span(inline: &Inline, theme: &MarkdownTheme) -> TextSpan {
@@ -181,36 +153,20 @@ fn inline_span(inline: &Inline, theme: &MarkdownTheme) -> TextSpan {
         Inline::HardBreak => TextSpan::new("\n"),
         Inline::Emphasis(children) => TextSpan::new("")
             .style(SpanStyle::new().font_style(FontStyle::Italic))
-            .children(
-                children
-                    .iter()
-                    .map(|inline| inline_span(inline, theme)),
-            ),
+            .children(children.iter().map(|inline| inline_span(inline, theme))),
         Inline::Strong(children) => TextSpan::new("")
             .style(SpanStyle::new().font_weight(FontWeight::Bold))
-            .children(
-                children
-                    .iter()
-                    .map(|inline| inline_span(inline, theme)),
-            ),
+            .children(children.iter().map(|inline| inline_span(inline, theme))),
         Inline::Delete(children) => TextSpan::new("")
             .style(
                 SpanStyle::new()
                     .text_decoration(TextDecoration::new().line(TextDecorationLine::LINE_THROUGH)),
             )
-            .children(
-                children
-                    .iter()
-                    .map(|inline| inline_span(inline, theme)),
-            ),
+            .children(children.iter().map(|inline| inline_span(inline, theme))),
         Inline::InlineCode(code) => TextSpan::new(code.clone()).style(theme.inline_code),
         Inline::Link { url, content, .. } => TextSpan::new("")
             .style(theme.link)
-            .children(
-                content
-                    .iter()
-                    .map(|inline| inline_span(inline, theme)),
-            )
+            .children(content.iter().map(|inline| inline_span(inline, theme)))
             .link(url.clone()),
         Inline::Image { alt, .. } => {
             TextSpan::new(format!("[{alt}]")).style(SpanStyle::new().font_style(FontStyle::Italic))
@@ -290,13 +246,11 @@ fn render_table(
                     .text_style(theme.body)
                     .text_align(table_text_align(alignment))
                     .wrapped()
-                    .link_hover_color(theme.link_hover_color)
-                    .selectable();
+                    .link_hover_color(theme.link_hover_color);
                 let content: AnyWidget = match link_handler {
                     Some(handler) => {
                         let handler = (*handler).clone();
-                        rich.on_link(move |target: Rc<str>| handler(target))
-                            .boxed()
+                        rich.on_link(move |target: Rc<str>| handler(target)).boxed()
                     }
                     None => rich.boxed(),
                 };
@@ -337,9 +291,7 @@ fn render_block(
     match block {
         Block::Heading { depth, content } => rich_text(
             content,
-            theme.headings[usize::from(*depth)
-                .saturating_sub(1)
-                .min(5)],
+            theme.headings[usize::from(*depth).saturating_sub(1).min(5)],
             theme,
             link_handler,
         ),
@@ -394,11 +346,7 @@ fn render_block(
                         .children(vec![
                             match marker {
                                 Some(marker) => Text::new(marker)
-                                    .text_style(
-                                        theme
-                                            .body
-                                            .font_weight(FontWeight::Bold),
-                                    )
+                                    .text_style(theme.body.font_weight(FontWeight::Bold))
                                     .boxed(),
                                 None => build_tick_box(is_complete),
                             },
@@ -434,25 +382,17 @@ fn render_block(
                         .children(vec![
                             build_code_header(value, language.as_deref(), theme),
                             Container::new()
-                                .padding(
-                                    LayoutSpacing::new()
-                                        .left(16)
-                                        .right(16)
-                                        .bottom(16),
-                                )
+                                .padding(LayoutSpacing::new().left(16).right(16).bottom(16))
                                 .child(
                                     Scrollable::new()
                                         .axis(ScrollAxis::Horizontal)
                                         .vertical_scroll_bar(None)
                                         .horizontal_scroll_bar(None)
                                         .child(
-                                            Container::new()
-                                                .width(1000)
-                                                .child(
-                                                    RichText::new(TextSpan::root(spans))
-                                                        .text_style(theme.code_block)
-                                                        .selectable(),
-                                                ),
+                                            Container::new().width(1000).child(
+                                                RichText::new(TextSpan::root(spans))
+                                                    .text_style(theme.code_block), // .selectable(),
+                                            ),
                                         ),
                                 )
                                 .boxed(),
@@ -460,20 +400,13 @@ fn render_block(
                 )
                 .boxed()
         }
-        Block::ThematicBreak => SizedBox::new()
-            .height(1.0)
-            .color(theme.rule_color)
-            .boxed(),
+        Block::ThematicBreak => SizedBox::new().height(1.0).color(theme.rule_color).boxed(),
         Block::Table { alignments, rows } => render_table(alignments, rows, theme, link_handler),
         Block::FootnoteDefinition { identifier, blocks } => Row::new()
             .gaps(LayoutSpacing::all(6_u32.into()))
             .children(vec![
                 Text::new(format!("[{identifier}]"))
-                    .text_style(
-                        theme
-                            .body
-                            .font_weight(FontWeight::Bold),
-                    )
+                    .text_style(theme.body.font_weight(FontWeight::Bold))
                     .boxed(),
                 render_blocks(blocks, theme, link_handler, image_resolver),
             ])
@@ -584,13 +517,11 @@ fn rich_text(
     let rich = RichText::new(inline_spans(inlines, theme))
         .text_style(style)
         .wrapped()
-        .link_hover_color(theme.link_hover_color)
-        .selectable();
+        .link_hover_color(theme.link_hover_color);
     match link_handler {
         Some(handler) => {
             let handler = (*handler).clone();
-            rich.on_link(move |target: Rc<str>| handler(target))
-                .boxed()
+            rich.on_link(move |target: Rc<str>| handler(target)).boxed()
         }
         None => rich.boxed(),
     }
@@ -598,14 +529,16 @@ fn rich_text(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::cell::{Cell, RefCell};
+    use std::sync::OnceLock;
+
     use aimer_attribute::{BoxConstraint, ResolvedSize};
     use aimer_canvas::{Canvas, InnerCanvas};
     use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_style::{FontFamily, TextAlign, TextDecorationLine, TextStyle};
     use aimer_widget::base::{BuildContext, WindowHandle};
-    use std::cell::{Cell, RefCell};
-    use std::sync::OnceLock;
+
+    use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]
     fn dummy_async_handle() -> tokio::runtime::Handle {
@@ -670,9 +603,7 @@ mod tests {
         let widget = render_document(&document, &MarkdownTheme::default(), None, &resolver);
         let ctx = layout_context(320.0, 200.0);
 
-        let size = widget
-            .to_element(&ctx)
-            .computed_size(&ctx);
+        let size = widget.to_element(&ctx).computed_size(&ctx);
 
         assert!(size.width.is_finite());
         assert!(size.height.is_finite());
@@ -752,10 +683,7 @@ mod tests {
     #[test]
     fn default_link_hover_color_is_brighter_than_the_link_color() {
         let theme = MarkdownTheme::default();
-        let link_color = theme
-            .link
-            .color
-            .expect("default links have a color");
+        let link_color = theme.link.color.expect("default links have a color");
 
         assert_eq!(theme.link_hover_color, link_color.lighten(0.48));
         assert_ne!(theme.link_hover_color, link_color);
@@ -836,10 +764,9 @@ mod tests {
             .iter()
             .flat_map(|command| match command {
                 DrawCommand::DrawText { text, .. } => vec![text.as_ref()],
-                DrawCommand::DrawRichText { spans, .. } => spans
-                    .iter()
-                    .map(|span| span.text.as_ref())
-                    .collect(),
+                DrawCommand::DrawRichText { spans, .. } => {
+                    spans.iter().map(|span| span.text.as_ref()).collect()
+                }
                 _ => Vec::new(),
             })
             .collect::<String>();
@@ -860,18 +787,12 @@ mod tests {
         element.layout(&ctx);
         element.draw(&ctx);
 
-        assert!(
-            canvas
-                .draw_list()
-                .commands()
-                .iter()
-                .all(|command| {
-                    !matches!(
-                        command,
-                        DrawCommand::DrawText { text, .. } if text.contains("overflowed by")
-                    )
-                })
-        );
+        assert!(canvas.draw_list().commands().iter().all(|command| {
+            !matches!(
+                command,
+                DrawCommand::DrawText { text, .. } if text.contains("overflowed by")
+            )
+        }));
     }
 
     #[test]

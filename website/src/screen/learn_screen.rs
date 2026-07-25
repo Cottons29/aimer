@@ -85,18 +85,12 @@ fn learn_step(title: &str, body: &str, theme: &ThemeData) -> AnyWidget {
                                 .font_weight(FontWeight::Bold),
                         )
                         .boxed(),
-                    SizedBox::new()
-                        .height(8)
-                        .boxed(),
+                    SizedBox::new().height(8).boxed(),
                     Text::new(body.to_string())
                         .text_style(
                             TextStyle::new()
                                 .font_size(18)
-                                .color(
-                                    theme
-                                        .on_background_color
-                                        .with_opacity(200),
-                                )
+                                .color(theme.on_background_color.with_opacity(200))
                                 .text_overflow(TextOverflow::Wrap),
                         )
                         .boxed(),

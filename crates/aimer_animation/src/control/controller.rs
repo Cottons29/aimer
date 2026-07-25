@@ -1,8 +1,9 @@
+use std::rc::Rc;
+use std::time::Duration;
+
 use crate::local_cell::LocalCell;
 use crate::primitives::curve::Curve;
 use crate::primitives::time::AnimInstant;
-use std::rc::Rc;
-use std::time::Duration;
 
 /// The current status of an animation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,8 +28,8 @@ pub trait StatusListener: Send + Sync {
 /// Controls an animation's timing, progress, and direction.
 ///
 /// The controller produces a `value` in `[0.0, 1.0]` that changes over
-/// `duration` according to the specified `curve`. Call [`Self::tick`] each frame to
-/// advance.
+/// `duration` according to the specified `curve`. Call [`Self::tick`] each
+/// frame to advance.
 ///
 /// # Listeners
 ///
@@ -153,28 +154,23 @@ impl AnimationController {
     }
 
     pub fn duration(&self) -> Duration {
-        self.state
-            .with(|state| state.duration)
+        self.state.with(|state| state.duration)
     }
 
     pub fn set_duration(&self, duration: Duration) {
-        self.state
-            .with_mut(|state| state.duration = duration);
+        self.state.with_mut(|state| state.duration = duration);
     }
 
     pub fn curve(&self) -> Curve {
-        self.state
-            .with(|state| state.curve)
+        self.state.with(|state| state.curve)
     }
 
     pub fn set_curve(&self, curve: Curve) {
-        self.state
-            .with_mut(|state| state.curve = curve);
+        self.state.with_mut(|state| state.curve = curve);
     }
 
     pub fn value(&self) -> f32 {
-        self.state
-            .with(|state| state.value)
+        self.state.with(|state| state.value)
     }
 
     pub fn set_value(&self, value: f32) {
@@ -185,23 +181,19 @@ impl AnimationController {
     }
 
     pub fn status(&self) -> AnimationStatus {
-        self.state
-            .with(|state| state.status)
+        self.state.with(|state| state.status)
     }
 
     pub fn repeat(&self) -> bool {
-        self.state
-            .with(|state| state.repeat)
+        self.state.with(|state| state.repeat)
     }
 
     pub fn set_repeat(&self, repeat: bool) {
-        self.state
-            .with_mut(|state| state.repeat = repeat);
+        self.state.with_mut(|state| state.repeat = repeat);
     }
 
     pub fn auto_reverse(&self) -> bool {
-        self.state
-            .with(|state| state.auto_reverse)
+        self.state.with(|state| state.auto_reverse)
     }
 
     pub fn set_auto_reverse(&self, auto_reverse: bool) {
@@ -220,9 +212,7 @@ impl AnimationController {
 
     fn notify_if_changed(&self, changed: bool, status: AnimationStatus) {
         if changed {
-            let listeners = self
-                .listeners
-                .with(Clone::clone);
+            let listeners = self.listeners.with(Clone::clone);
             for listener in &listeners {
                 listener.on_status_changed(status);
             }
@@ -252,9 +242,7 @@ impl AnimationController {
                 return (state.value, state.curve, None);
             }
 
-            let elapsed = now
-                .duration_since(start)
-                .as_secs_f32();
+            let elapsed = now.duration_since(start).as_secs_f32();
             let linear_delta = if state.duration.is_zero() {
                 1.0
             } else {
@@ -402,8 +390,7 @@ mod tests {
         struct TestListener(AtomicU8);
         impl StatusListener for TestListener {
             fn on_status_changed(&self, _status: AnimationStatus) {
-                self.0
-                    .fetch_add(1, Ordering::Relaxed);
+                self.0.fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -412,24 +399,14 @@ mod tests {
         ctrl.add_status_listener(listener.clone());
 
         ctrl.forward();
-        assert_eq!(
-            listener
-                .0
-                .load(Ordering::Relaxed),
-            1
-        ); // Forward
+        assert_eq!(listener.0.load(Ordering::Relaxed), 1); // Forward
 
         let start = AnimInstant::now();
         let end = start + Duration::from_millis(150);
         ctrl.tick(end);
 
         // Two transitions: Forward → (no change in tick) → Completed
-        assert_eq!(
-            listener
-                .0
-                .load(Ordering::Relaxed),
-            2
-        );
+        assert_eq!(listener.0.load(Ordering::Relaxed), 2);
         assert_eq!(ctrl.status(), AnimationStatus::Completed);
     }
 
@@ -438,8 +415,7 @@ mod tests {
         struct TestListener(AtomicU8);
         impl StatusListener for TestListener {
             fn on_status_changed(&self, _status: AnimationStatus) {
-                self.0
-                    .fetch_add(1, Ordering::Relaxed);
+                self.0.fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -449,12 +425,7 @@ mod tests {
 
         let ctrl2 = ctrl.clone();
         ctrl2.forward();
-        assert_eq!(
-            listener
-                .0
-                .load(Ordering::Relaxed),
-            1
-        );
+        assert_eq!(listener.0.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -463,10 +434,8 @@ mod tests {
         let second = first.clone();
 
         first.forward();
-        let halfway = first
-            .state
-            .with(|state| state.start_time.unwrap())
-            + Duration::from_millis(50);
+        let halfway =
+            first.state.with(|state| state.start_time.unwrap()) + Duration::from_millis(50);
         first.tick(halfway);
 
         assert!((second.value() - 0.5).abs() < 0.01);
@@ -482,10 +451,8 @@ mod tests {
         ctrl.set_value(0.4);
         ctrl.forward();
 
-        let halfway_through_remaining = ctrl
-            .state
-            .with(|state| state.start_time.unwrap())
-            + Duration::from_millis(30);
+        let halfway_through_remaining =
+            ctrl.state.with(|state| state.start_time.unwrap()) + Duration::from_millis(30);
         let value = ctrl.tick(halfway_through_remaining);
 
         assert!((value - 0.7).abs() < 0.01, "expected 0.7, got {value}");
@@ -497,10 +464,8 @@ mod tests {
         ctrl.set_value(0.6);
         ctrl.reverse();
 
-        let halfway_through_remaining = ctrl
-            .state
-            .with(|state| state.start_time.unwrap())
-            + Duration::from_millis(30);
+        let halfway_through_remaining =
+            ctrl.state.with(|state| state.start_time.unwrap()) + Duration::from_millis(30);
         let value = ctrl.tick(halfway_through_remaining);
 
         assert!((value - 0.3).abs() < 0.01, "expected 0.3, got {value}");
@@ -511,10 +476,8 @@ mod tests {
         let ctrl = AnimationController::new(Duration::from_micros(500), Curve::Linear);
         ctrl.forward();
 
-        let quarter = ctrl
-            .state
-            .with(|state| state.start_time.unwrap())
-            + Duration::from_micros(125);
+        let quarter =
+            ctrl.state.with(|state| state.start_time.unwrap()) + Duration::from_micros(125);
         let value = ctrl.tick(quarter);
 
         assert!(value.is_finite());

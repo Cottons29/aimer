@@ -76,11 +76,7 @@ pub fn spawn_streamed(
     stream_out: impl FnOnce(ChildStdout, Sender<RunnerEvent>),
     stream_err: impl FnOnce(ChildStderr, Sender<RunnerEvent>),
 ) -> bool {
-    let mut child = match cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+    let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
         Ok(child) => child,
         Err(e) => {
             build_log(tx, format!("{spawn_fail_msg}: {e}"));

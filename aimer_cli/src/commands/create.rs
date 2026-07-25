@@ -215,10 +215,7 @@ pub fn validate_project_name(name: &str) -> Result<(), AimerError> {
     if name.contains(['/', '\\']) {
         return reject("name must not contain path separators");
     }
-    if name
-        .chars()
-        .any(char::is_whitespace)
-    {
+    if name.chars().any(char::is_whitespace) {
         return reject("name must not contain whitespace");
     }
     if name.contains(RESERVED) {
@@ -292,33 +289,13 @@ mod tests {
         .unwrap();
 
         // Core files and directories are present.
-        assert!(
-            dir.join("src/lib.rs")
-                .exists(),
-            "missing src/lib.rs"
-        );
+        assert!(dir.join("src/lib.rs").exists(), "missing src/lib.rs");
         assert!(dir.join("build.rs").exists(), "missing build.rs");
-        assert!(
-            dir.join("Cargo.toml")
-                .exists(),
-            "missing Cargo.toml"
-        );
-        assert!(
-            dir.join("aimer.toml")
-                .exists(),
-            "missing aimer.toml"
-        );
-        assert!(
-            dir.join(".gitignore")
-                .exists(),
-            "missing .gitignore"
-        );
+        assert!(dir.join("Cargo.toml").exists(), "missing Cargo.toml");
+        assert!(dir.join("aimer.toml").exists(), "missing aimer.toml");
+        assert!(dir.join(".gitignore").exists(), "missing .gitignore");
         assert!(dir.join("README.md").exists(), "missing README.md");
-        assert!(
-            dir.join("builds/web")
-                .is_dir(),
-            "missing builds/web"
-        );
+        assert!(dir.join("builds/web").is_dir(), "missing builds/web");
 
         // Generated Cargo.toml parses and carries the right package name.
         assert_eq!(
@@ -327,9 +304,7 @@ mod tests {
         );
 
         // aimer.toml round-trips with the collected metadata.
-        let manifest = AimerManifest::load_from(&dir)
-            .unwrap()
-            .unwrap();
+        let manifest = AimerManifest::load_from(&dir).unwrap().unwrap();
         assert_eq!(manifest.package.name, "myapp");
         assert_eq!(manifest.package.version, "0.2.0");
         assert_eq!(manifest.package.description, "a test app");

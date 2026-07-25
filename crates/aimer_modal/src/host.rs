@@ -192,18 +192,10 @@ impl RawModalOverlay {
         ENTRIES.with(|entries| {
             let mut entries = entries.borrow_mut();
             for entry in entries.iter() {
-                entry
-                    .timeline
-                    .borrow_mut()
-                    .tick(now, entry.animation);
+                entry.timeline.borrow_mut().tick(now, entry.animation);
                 entry.element.draw(ctx);
             }
-            entries.retain(|entry| {
-                !entry
-                    .timeline
-                    .borrow()
-                    .finished()
-            });
+            entries.retain(|entry| !entry.timeline.borrow().finished());
         });
     }
 }
@@ -232,9 +224,7 @@ impl EventElement for RawModalOverlay {
                     .is_some_and(|entry| entry.element.on_event(event));
             }
             for entry in entries.iter().rev() {
-                let pos = event
-                    .get_pointer_pos()
-                    .unwrap_or_default();
+                let pos = event.get_pointer_pos().unwrap_or_default();
                 if dispatch_event(entry.element.as_ref(), pos, event) {
                     return true;
                 }
@@ -347,9 +337,7 @@ impl ModalTimeline {
             TimelinePhase::Entering { started } => {
                 let start = *started.get_or_insert(now);
                 let t = duration_progress(now, start, animation.enter_duration);
-                self.progress = animation
-                    .enter_curve
-                    .transform(t);
+                self.progress = animation.enter_curve.transform(t);
                 if t >= 1.0 {
                     self.progress = 1.0;
                     self.phase = TimelinePhase::Shown;
@@ -360,11 +348,7 @@ impl ModalTimeline {
             TimelinePhase::Exiting { started, from } => {
                 let start = *started.get_or_insert(now);
                 let t = duration_progress(now, start, animation.exit_duration);
-                self.progress = *from
-                    * (1.0
-                        - animation
-                            .exit_curve
-                            .transform(t));
+                self.progress = *from * (1.0 - animation.exit_curve.transform(t));
                 if t >= 1.0 {
                     self.progress = 0.0;
                     self.phase = TimelinePhase::Finished;
@@ -385,10 +369,7 @@ fn duration_progress(now: AnimInstant, start: AnimInstant, duration: std::time::
     if duration.is_zero() {
         1.0
     } else {
-        (now.duration_since(start)
-            .as_secs_f32()
-            / duration.as_secs_f32())
-        .clamp(0.0, 1.0)
+        (now.duration_since(start).as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0)
     }
 }
 
@@ -418,10 +399,7 @@ fn process_commands(ctx: &BuildContext) -> bool {
                     opened = true;
                 }
                 ModalCommand::Dismiss(id) => {
-                    if let Some(entry) = entries
-                        .iter()
-                        .find(|entry| entry.id == id)
-                    {
+                    if let Some(entry) = entries.iter().find(|entry| entry.id == id) {
                         entry
                             .timeline
                             .borrow_mut()
@@ -443,11 +421,7 @@ fn process_commands(ctx: &BuildContext) -> bool {
 }
 
 fn enqueue(command: ModalCommand) {
-    COMMANDS.with(|commands| {
-        commands
-            .borrow_mut()
-            .push_back(command)
-    });
+    COMMANDS.with(|commands| commands.borrow_mut().push_back(command));
     request_animation_frame();
 }
 
@@ -459,12 +433,7 @@ fn clear_registry() {
 pub(crate) fn show(animation: Option<ModalAnimation>, build: EntryBuilder) -> ModalHandle {
     let id = NEXT_ID.with(|next_id| {
         let id = ModalId(next_id.get());
-        next_id.set(
-            next_id
-                .get()
-                .wrapping_add(1)
-                .max(1),
-        );
+        next_id.set(next_id.get().wrapping_add(1).max(1));
         id
     });
     let dismissed = Rc::new(Cell::new(false));

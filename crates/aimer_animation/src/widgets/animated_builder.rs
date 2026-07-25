@@ -16,11 +16,11 @@ type AnimatedElementBuilder = dyn Fn(f32, &BuildContext) -> AnyElement;
 
 /// A widget that rebuilds its child on every animation tick.
 ///
-/// Unlike [`crate::widgets::Animated`], which applies a fixed visual effect, `AnimatedBuilder`
-/// gives you the current animation value each frame so you can build any widget
-/// based on it. The builder receives the controller's curved value. It runs
-/// once when the element is created and again whenever that value changes;
-/// redraws continue while the controller is animating.
+/// Unlike [`crate::widgets::Animated`], which applies a fixed visual effect,
+/// `AnimatedBuilder` gives you the current animation value each frame so you
+/// can build any widget based on it. The builder receives the controller's
+/// curved value. It runs once when the element is created and again whenever
+/// that value changes; redraws continue while the controller is animating.
 ///
 /// # Example
 /// ```rust
@@ -59,10 +59,7 @@ impl AnimatedBuilder {
 
 impl Widget for AnimatedBuilder {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let curved_value = self
-            .controller
-            .curve()
-            .transform(self.controller.value());
+        let curved_value = self.controller.curve().transform(self.controller.value());
         let child = (self.builder)(curved_value, ctx);
         let window = ctx.window.clone();
 
@@ -97,14 +94,11 @@ unsafe impl Sync for AnimatedBuilderElement {}
 
 impl Drawable for AnimatedBuilderElement {
     fn draw(&self, ctx: &BuildContext) {
-        let curved_value = self
-            .controller
-            .tick(AnimInstant::now());
+        let curved_value = self.controller.tick(AnimInstant::now());
         if curved_value != self.last_value.get() {
             let child = (self.builder)(curved_value, ctx);
             unsafe { *self.child.get() = child };
-            self.last_value
-                .set(curved_value);
+            self.last_value.set(curved_value);
         }
 
         unsafe { &*self.child.get() }.draw(ctx);

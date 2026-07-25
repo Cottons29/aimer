@@ -113,13 +113,11 @@ impl Animatable for Rgba {
 /// use aimer_animation::{Curve, MorphTransition, Rgba};
 /// use aimer_widget::ErrorWidget;
 ///
-/// let transition = MorphTransition::new(
-///     Duration::from_millis(400),
-///     Curve::Linear,
-///     ErrorWidget::new("Profile card"),
-/// )
-/// .background_color(Rgba::WHITE)
-/// .child_key("profile-card");
+/// let transition =
+///     MorphTransition::new(Duration::from_millis(400),
+///                          Curve::Linear,
+///                          ErrorWidget::new("Profile card")).background_color(Rgba::WHITE)
+///                                                           .child_key("profile-card");
 /// ```
 pub struct MorphTransition<T: Widget + 'static> {
     pub child: Arc<T>,
@@ -184,10 +182,7 @@ impl<T: Widget + 'static> StatefulWidget for MorphTransition<T> {
         MorphTransitionState {
             current_child: self.child.clone(),
             old_child: None,
-            child_key: self
-                .transition_key
-                .clone()
-                .or_else(|| self.child.key()),
+            child_key: self.transition_key.clone().or_else(|| self.child.key()),
             duration: self.duration,
             curve: self.curve,
             current_color: self.background_color,
@@ -231,10 +226,8 @@ impl<T: Widget + 'static> State<MorphTransition<T>> for MorphTransitionState<T> 
     fn adopt_config_from(&mut self, new: &Self) {
         self.duration = new.duration;
         self.curve = new.curve;
-        self.controller
-            .set_duration(new.duration);
-        self.controller
-            .set_curve(new.curve);
+        self.controller.set_duration(new.duration);
+        self.controller.set_curve(new.curve);
 
         if self.child_key != new.child_key || self.current_color != new.current_color {
             self.old_child = Some(self.current_child.clone());
@@ -278,14 +271,9 @@ struct MorphTransitionFrame<T: Widget + 'static> {
 
 impl<T: Widget + 'static> Widget for MorphTransitionFrame<T> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let current_child = self
-            .current_child
-            .to_element(ctx);
+        let current_child = self.current_child.to_element(ctx);
         let current_size = current_child.computed_size(ctx);
-        let old_child = self
-            .old_child
-            .as_ref()
-            .map(|child| child.to_element(ctx));
+        let old_child = self.old_child.as_ref().map(|child| child.to_element(ctx));
         let old_size = old_child
             .as_ref()
             .map(|child| child.computed_size(ctx))
@@ -300,16 +288,12 @@ impl<T: Widget + 'static> Widget for MorphTransitionFrame<T> {
             old_snapshot: LocalCell::new(LayoutSnapshot {
                 size: (old_size.width, old_size.height),
                 position: (0.0, 0.0),
-                color: self
-                    .old_color
-                    .unwrap_or(Rgba::TRANSPARENT),
+                color: self.old_color.unwrap_or(Rgba::TRANSPARENT),
             }),
             new_snapshot: LocalCell::new(LayoutSnapshot {
                 size: (current_size.width, current_size.height),
                 position: (0.0, 0.0),
-                color: self
-                    .current_color
-                    .unwrap_or(Rgba::TRANSPARENT),
+                color: self.current_color.unwrap_or(Rgba::TRANSPARENT),
             }),
             has_background_color: self.current_color.is_some() || self.old_color.is_some(),
             morph_state: Cell::new(if morphing {
@@ -353,11 +337,7 @@ impl SyncChild {
     /// # Safety
     /// Must only be called from the single rendering thread.
     unsafe fn get(&self) -> Option<&dyn Element> {
-        unsafe {
-            (*self.0.get())
-                .as_ref()
-                .map(|b| b.as_ref())
-        }
+        unsafe { (*self.0.get()).as_ref().map(|b| b.as_ref()) }
     }
 
     /// Take the element out, leaving `None` in its place.
@@ -391,12 +371,11 @@ impl MorphTransitionElement {
     /// Compute the interpolated layout between old and new snapshots.
     fn interpolated_layout(&self, t: f32) -> LayoutSnapshot {
         self.old_snapshot.with(|old| {
-            self.new_snapshot
-                .with(|new| LayoutSnapshot {
-                    size: Animatable::lerp(&old.size, &new.size, t),
-                    position: Animatable::lerp(&old.position, &new.position, t),
-                    color: Animatable::lerp(&old.color, &new.color, t),
-                })
+            self.new_snapshot.with(|new| LayoutSnapshot {
+                size: Animatable::lerp(&old.size, &new.size, t),
+                position: Animatable::lerp(&old.position, &new.position, t),
+                color: Animatable::lerp(&old.color, &new.color, t),
+            })
         })
     }
 }
@@ -446,9 +425,7 @@ impl Drawable for MorphTransitionElement {
                     unsafe {
                         if let Some(old) = self.old_child.get() {
                             let old_alpha = 1.0 - curved_value * 2.0;
-                            let old_snap = self
-                                .old_snapshot
-                                .with(Clone::clone);
+                            let old_snap = self.old_snapshot.with(Clone::clone);
                             let old_size = old_snap.size;
 
                             ctx.canvas.save();
@@ -471,8 +448,7 @@ impl Drawable for MorphTransitionElement {
                                 }
                             }
 
-                            ctx.canvas
-                                .set_alpha(old_alpha);
+                            ctx.canvas.set_alpha(old_alpha);
                             old.draw(ctx);
                             ctx.canvas.restore();
                         }
@@ -513,14 +489,11 @@ impl Drawable for MorphTransitionElement {
                             }
                         }
 
-                        ctx.canvas
-                            .translate((cx, cy).into());
+                        ctx.canvas.translate((cx, cy).into());
                         ctx.canvas.scale(sx, sy);
-                        ctx.canvas
-                            .translate((-cx, -cy).into());
+                        ctx.canvas.translate((-cx, -cy).into());
 
-                        ctx.canvas
-                            .set_alpha(new_alpha);
+                        ctx.canvas.set_alpha(new_alpha);
                         child.draw(ctx);
                         ctx.canvas.restore();
                     }
@@ -532,8 +505,7 @@ impl Drawable for MorphTransitionElement {
             self.window.request_redraw();
         } else if morph_state == MorphState::MorphingIn {
             let _ = unsafe { self.old_child.take() };
-            self.morph_state
-                .set(MorphState::Idle);
+            self.morph_state.set(MorphState::Idle);
         }
     }
 }
@@ -589,19 +561,11 @@ impl Rebuildable for MorphTransitionElement {
 
 impl LayoutElement for MorphTransitionElement {
     fn pos(&self) -> Option<Vec2d> {
-        unsafe {
-            self.current_child
-                .get()
-                .and_then(|c| c.pos())
-        }
+        unsafe { self.current_child.get().and_then(|c| c.pos()) }
     }
 
     fn size(&self) -> Option<Size> {
-        unsafe {
-            self.current_child
-                .get()
-                .and_then(|c| c.size())
-        }
+        unsafe { self.current_child.get().and_then(|c| c.size()) }
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
@@ -728,11 +692,7 @@ mod tests {
         assert!(current.old_child.is_some());
         assert_eq!(current.child_key, Some(Key::Value("large".to_owned())));
         assert_eq!(current.old_color, Some(Rgba::WHITE));
-        assert!(
-            current
-                .controller
-                .is_animating()
-        );
+        assert!(current.controller.is_animating());
     }
 
     #[test]
@@ -743,11 +703,7 @@ mod tests {
 
         assert!(current.old_child.is_some());
         assert_eq!(current.old_color, Some(Rgba::WHITE));
-        assert!(
-            current
-                .controller
-                .is_animating()
-        );
+        assert!(current.controller.is_animating());
     }
 
     #[test]
@@ -757,10 +713,6 @@ mod tests {
         current.adopt_config_from(&state("card", Rgba::WHITE));
 
         assert!(current.old_child.is_none());
-        assert!(
-            !current
-                .controller
-                .is_animating()
-        );
+        assert!(!current.controller.is_animating());
     }
 }

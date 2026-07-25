@@ -1,8 +1,7 @@
 pub use aimer_assets::img_widget::image_widget::Image;
 pub use aimer_assets::img_widget::source::ImageSource;
-pub use aimer_assets::*;
 pub use aimer_assets::{
-    FontError, FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight,
+    FontError, FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight, *,
 };
 pub use aimer_attribute::dimension::Dimension;
 pub use aimer_attribute::position::Vec2d;

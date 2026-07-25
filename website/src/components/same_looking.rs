@@ -84,35 +84,25 @@ impl State<SameLookingSection> for SameLookingSectionState {
                                 ),
                             )
                             .boxed(),
-                        SizedBox::new()
-                            .height(24)
-                            .boxed(),
+                        SizedBox::new().height(24).boxed(),
                         Container::new()
                             .height(if is_mobile(ctx) { 250 } else { 450 })
                             .child(platform_image_switcher(self.current_index))
                             .boxed(),
-                        SizedBox::new()
-                            .height(40)
-                            .boxed(),
+                        SizedBox::new().height(40).boxed(),
                         AnimatedPlatformButtonList::new()
                             .selected_index(self.current_index)
                             .compact(is_mobile(ctx))
                             .on_selected({
                                 let updater = self.state.clone();
                                 move |index| {
-                                    if updater
-                                        .read_state()
-                                        .current_index
-                                        != index
-                                    {
+                                    if updater.read_state().current_index != index {
                                         updater.set_state(move |state| state.current_index = index);
                                     }
                                 }
                             })
                             .boxed(),
-                        SizedBox::new()
-                            .height(40)
-                            .boxed(),
+                        SizedBox::new().height(40).boxed(),
                     ]),
             )
     }

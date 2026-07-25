@@ -36,12 +36,10 @@ fn request_next_frame() {
 /// use aimer_animation::{AnimatedSwitcher, Curve};
 /// use aimer_widget::ErrorWidget;
 ///
-/// let switcher = AnimatedSwitcher::new(
-///     Duration::from_millis(300),
-///     Curve::Linear,
-///     ErrorWidget::new("Current page"),
-/// )
-/// .child_key("current-page");
+/// let switcher =
+///     AnimatedSwitcher::new(Duration::from_millis(300),
+///                           Curve::Linear,
+///                           ErrorWidget::new("Current page")).child_key("current-page");
 /// ```
 pub struct AnimatedSwitcher<T: Widget + 'static> {
     pub child: Rc<T>,
@@ -105,20 +103,14 @@ impl<T: Widget + 'static> StatefulWidget for AnimatedSwitcher<T> {
         AnimatedSwitcherState {
             current_child: self.child.clone(),
             old_child: None,
-            child_key: self
-                .transition_key
-                .clone()
-                .or_else(|| self.child.key()),
+            child_key: self.transition_key.clone().or_else(|| self.child.key()),
             duration: self.duration,
             curve: self.curve,
-            switch_out_curve: self
-                .switch_out_curve
-                .unwrap_or(self.curve),
+            switch_out_curve: self.switch_out_curve.unwrap_or(self.curve),
             in_controller,
             out_controller: AnimationController::new(
                 self.duration,
-                self.switch_out_curve
-                    .unwrap_or(self.curve),
+                self.switch_out_curve.unwrap_or(self.curve),
             ),
             updater: StateUpdater::empty(),
         }
@@ -159,14 +151,10 @@ impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T
         self.duration = new.duration;
         self.curve = new.curve;
         self.switch_out_curve = new.switch_out_curve;
-        self.in_controller
-            .set_duration(new.duration);
-        self.in_controller
-            .set_curve(new.curve);
-        self.out_controller
-            .set_duration(new.duration);
-        self.out_controller
-            .set_curve(new.switch_out_curve);
+        self.in_controller.set_duration(new.duration);
+        self.in_controller.set_curve(new.curve);
+        self.out_controller.set_duration(new.duration);
+        self.out_controller.set_curve(new.switch_out_curve);
 
         if self.child_key != new.child_key {
             self.old_child = Some(self.current_child.clone());
@@ -174,10 +162,8 @@ impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T
             self.child_key = new.child_key.clone();
             self.in_controller.reset();
             self.out_controller.reset();
-            self.in_controller
-                .forward_from_first_tick();
-            self.out_controller
-                .forward_from_first_tick();
+            self.in_controller.forward_from_first_tick();
+            self.out_controller.forward_from_first_tick();
             request_next_frame();
         } else {
             self.current_child = new.current_child.clone();
@@ -187,10 +173,7 @@ impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         AnimatedSwitcherFrame {
             current_child: self.current_child.clone(),
-            old_child: if self
-                .out_controller
-                .is_animating()
-            {
+            old_child: if self.out_controller.is_animating() {
                 self.old_child.clone()
             } else {
                 None
@@ -211,14 +194,8 @@ struct AnimatedSwitcherFrame<T: Widget + 'static> {
 impl<T: Widget + 'static> Widget for AnimatedSwitcherFrame<T> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         AnimatedSwitcherElement {
-            current_child: self
-                .current_child
-                .to_element(ctx),
-            old_child: UnsafeCell::new(
-                self.old_child
-                    .as_ref()
-                    .map(|child| child.to_element(ctx)),
-            ),
+            current_child: self.current_child.to_element(ctx),
+            old_child: UnsafeCell::new(self.old_child.as_ref().map(|child| child.to_element(ctx))),
             in_controller: self.in_controller.clone(),
             out_controller: self.out_controller.clone(),
         }
@@ -249,8 +226,7 @@ impl Drawable for AnimatedSwitcherElement {
             && out_value < 1.0
         {
             ctx.canvas.save();
-            ctx.canvas
-                .set_alpha(1.0 - out_value);
+            ctx.canvas.set_alpha(1.0 - out_value);
             old.draw(ctx);
             ctx.canvas.restore();
         }
@@ -261,13 +237,7 @@ impl Drawable for AnimatedSwitcherElement {
         self.current_child.draw(ctx);
         ctx.canvas.restore();
 
-        if self
-            .in_controller
-            .is_animating()
-            || self
-                .out_controller
-                .is_animating()
-        {
+        if self.in_controller.is_animating() || self.out_controller.is_animating() {
             request_next_frame();
         } else if out_value >= 1.0 {
             unsafe { *self.old_child.get() = None };
@@ -290,8 +260,7 @@ impl VisitorElement for AnimatedSwitcherElement {
 
 impl EventElement for AnimatedSwitcherElement {
     fn on_event(&self, event: &ElementEvent) -> bool {
-        self.current_child
-            .on_event(event)
+        self.current_child.on_event(event)
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -301,8 +270,7 @@ impl EventElement for AnimatedSwitcherElement {
 
 impl Rebuildable for AnimatedSwitcherElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.current_child
-            .rebuild_if_dirty(ctx);
+        self.current_child.rebuild_if_dirty(ctx);
         if let Some(old) = unsafe { &*self.old_child.get() } {
             old.rebuild_if_dirty(ctx);
         }
@@ -319,23 +287,19 @@ impl LayoutElement for AnimatedSwitcherElement {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.current_child
-            .computed_size(ctx)
+        self.current_child.computed_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.current_child
-            .content_size(ctx)
+        self.current_child.content_size(ctx)
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.current_child
-            .get_size_from_child()
+        self.current_child.get_size_from_child()
     }
 
     fn invalidate_layout(&self) {
-        self.current_child
-            .invalidate_layout();
+        self.current_child.invalidate_layout();
     }
 }
 
@@ -366,11 +330,7 @@ mod tests {
         let current = state("initial");
 
         assert_eq!(current.in_controller.value(), 1.0);
-        assert!(
-            !current
-                .in_controller
-                .is_animating()
-        );
+        assert!(!current.in_controller.is_animating());
         assert!(current.old_child.is_none());
     }
 
@@ -384,16 +344,8 @@ mod tests {
 
         assert!(current.old_child.is_some());
         assert_eq!(current.child_key, Some(Key::Value("second".to_owned())));
-        assert!(
-            current
-                .in_controller
-                .is_animating()
-        );
-        assert!(
-            current
-                .out_controller
-                .is_animating()
-        );
+        assert!(current.in_controller.is_animating());
+        assert!(current.out_controller.is_animating());
         assert_eq!(
             test_frame_requester::count(),
             1,
@@ -401,28 +353,10 @@ mod tests {
         );
         std::thread::sleep(Duration::from_millis(10));
 
-        assert_eq!(
-            current
-                .in_controller
-                .tick(AnimInstant::now()),
-            0.0
-        );
-        assert_eq!(
-            current
-                .out_controller
-                .tick(AnimInstant::now()),
-            0.0
-        );
-        assert!(
-            current
-                .in_controller
-                .is_animating()
-        );
-        assert!(
-            current
-                .out_controller
-                .is_animating()
-        );
+        assert_eq!(current.in_controller.tick(AnimInstant::now()), 0.0);
+        assert_eq!(current.out_controller.tick(AnimInstant::now()), 0.0);
+        assert!(current.in_controller.is_animating());
+        assert!(current.out_controller.is_animating());
     }
 
     #[test]
@@ -432,11 +366,7 @@ mod tests {
         current.adopt_config_from(&state("same"));
 
         assert!(current.old_child.is_none());
-        assert!(
-            !current
-                .out_controller
-                .is_animating()
-        );
+        assert!(!current.out_controller.is_animating());
     }
 
     // ─── End-to-end draw test: a keyed switcher across a "route" change ────
@@ -470,9 +400,7 @@ mod tests {
         }
         impl Drawable for RecordingLeaf {
             fn draw(&self, _ctx: &BuildContext) {
-                self.drawn
-                    .borrow_mut()
-                    .push(self.label);
+                self.drawn.borrow_mut().push(self.label);
             }
         }
         impl EventElement for RecordingLeaf {}

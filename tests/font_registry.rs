@@ -72,20 +72,11 @@ fn public_monospace_and_highlighted_rich_text_contracts_compose() {
             .iter()
             .all(|span| span.style.font_family == family)
     );
+    assert_eq!(flattened[0].style.background_color, None);
     assert_eq!(
-        flattened[0]
-            .style
-            .background_color,
-        None
-    );
-    assert_eq!(
-        flattened[1]
-            .style
-            .background_color,
+        flattened[1].style.background_color,
         Some(Color::Rgba(255, 240, 120, 255))
     );
 
-    let _widget = RichText::new(span)
-        .text_style(base)
-        .wrapped();
+    let _widget = RichText::new(span).text_style(base).wrapped();
 }

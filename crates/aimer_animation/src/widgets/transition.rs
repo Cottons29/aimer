@@ -65,8 +65,7 @@ macro_rules! impl_transition_element {
                 let now = AnimInstant::now();
                 let curved_value = {
                     let v = self.controller.tick(now);
-                    self.animating
-                        .set(self.controller.is_animating());
+                    self.animating.set(self.controller.is_animating());
                     v
                 };
 
@@ -101,8 +100,7 @@ macro_rules! impl_transition_element {
 
         impl Rebuildable for $name {
             fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-                self.child
-                    .rebuild_if_dirty(ctx);
+                self.child.rebuild_if_dirty(ctx);
             }
         }
 
@@ -120,8 +118,7 @@ macro_rules! impl_transition_element {
                 self.child.content_size(ctx)
             }
             fn get_size_from_child(&self) -> Option<Size> {
-                self.child
-                    .get_size_from_child()
+                self.child.get_size_from_child()
             }
             fn invalidate_layout(&self) {
                 self.child.invalidate_layout();
@@ -134,8 +131,7 @@ impl_transition_element!(
     FadeTransitionElement,
     "FadeTransitionElement",
     |ctx: &BuildContext, v: f32| {
-        ctx.canvas
-            .set_alpha(v.clamp(0.0, 1.0));
+        ctx.canvas.set_alpha(v.clamp(0.0, 1.0));
     }
 );
 
@@ -146,8 +142,8 @@ impl_transition_element!(
 /// Animates a slide offset for its child.
 ///
 /// The child is translated by `offset * (1.0 - controller_value)` pixels.
-/// At value `0.0` the child is at the offset position; at `1.0` it is at its natural
-/// position.
+/// At value `0.0` the child is at the offset position; at `1.0` it is at its
+/// natural position.
 pub struct SlideTransition<T: Widget + 'static> {
     pub position: AnimationController,
     /// The offset direction in pixels at value 0.0. At value 1.0 the child is
@@ -202,8 +198,7 @@ impl Drawable for SlideTransitionElement {
         let now = AnimInstant::now();
         let curved_value = {
             let v = self.controller.tick(now);
-            self.animating
-                .set(self.controller.is_animating());
+            self.animating.set(self.controller.is_animating());
             v
         };
 
@@ -214,8 +209,7 @@ impl Drawable for SlideTransitionElement {
         let dy = self.offset.1 * remaining;
 
         ctx.canvas.save();
-        ctx.canvas
-            .translate((dx, dy).into());
+        ctx.canvas.translate((dx, dy).into());
         self.child.draw(ctx);
         ctx.canvas.restore();
 
@@ -245,8 +239,7 @@ impl EventElement for SlideTransitionElement {
 
 impl Rebuildable for SlideTransitionElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.child
-            .rebuild_if_dirty(ctx);
+        self.child.rebuild_if_dirty(ctx);
     }
 }
 
@@ -264,8 +257,7 @@ impl LayoutElement for SlideTransitionElement {
         self.child.content_size(ctx)
     }
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
@@ -324,8 +316,7 @@ impl Drawable for ScaleTransitionElement {
         let now = AnimInstant::now();
         let curved_value = {
             let v = self.controller.tick(now);
-            self.animating
-                .set(self.controller.is_animating());
+            self.animating.set(self.controller.is_animating());
             v
         };
 
@@ -333,12 +324,9 @@ impl Drawable for ScaleTransitionElement {
         let cy = ctx.box_constraint.max_height / 2.0;
 
         ctx.canvas.save();
-        ctx.canvas
-            .translate((cx, cy).into());
-        ctx.canvas
-            .scale(curved_value, curved_value);
-        ctx.canvas
-            .translate((-cx, -cy).into());
+        ctx.canvas.translate((cx, cy).into());
+        ctx.canvas.scale(curved_value, curved_value);
+        ctx.canvas.translate((-cx, -cy).into());
         self.child.draw(ctx);
         ctx.canvas.restore();
 
@@ -368,8 +356,7 @@ impl EventElement for ScaleTransitionElement {
 
 impl Rebuildable for ScaleTransitionElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.child
-            .rebuild_if_dirty(ctx);
+        self.child.rebuild_if_dirty(ctx);
     }
 }
 
@@ -387,8 +374,7 @@ impl LayoutElement for ScaleTransitionElement {
         self.child.content_size(ctx)
     }
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
@@ -448,8 +434,7 @@ impl Drawable for RotationTransitionElement {
         let now = AnimInstant::now();
         let curved_value = {
             let v = self.controller.tick(now);
-            self.animating
-                .set(self.controller.is_animating());
+            self.animating.set(self.controller.is_animating());
             v
         };
 
@@ -459,11 +444,9 @@ impl Drawable for RotationTransitionElement {
         let cy = ctx.box_constraint.max_height / 2.0;
 
         ctx.canvas.save();
-        ctx.canvas
-            .translate((cx, cy).into());
+        ctx.canvas.translate((cx, cy).into());
         ctx.canvas.rotate(angle);
-        ctx.canvas
-            .translate((-cx, -cy).into());
+        ctx.canvas.translate((-cx, -cy).into());
         self.child.draw(ctx);
         ctx.canvas.restore();
 
@@ -493,8 +476,7 @@ impl EventElement for RotationTransitionElement {
 
 impl Rebuildable for RotationTransitionElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.child
-            .rebuild_if_dirty(ctx);
+        self.child.rebuild_if_dirty(ctx);
     }
 }
 
@@ -512,8 +494,7 @@ impl LayoutElement for RotationTransitionElement {
         self.child.content_size(ctx)
     }
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();

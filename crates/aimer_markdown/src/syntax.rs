@@ -5,7 +5,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use arborium::Highlighter;
-
 pub use parser::CaptureSpan;
 
 use crate::cache::LruCache;
@@ -31,13 +30,10 @@ impl HighlightCache {
 
     fn highlight(&mut self, code: &str, language: Option<&str>) -> Rc<[CaptureSpan]> {
         let highlighter = &mut self.highlighter;
-        self.entries
-            .get_or_insert_with(
-                (Rc::from(code), language.map(Rc::from)),
-                |(code, language)| {
-                    Rc::from(parse_highlights(highlighter, code, language.as_deref()))
-                },
-            )
+        self.entries.get_or_insert_with(
+            (Rc::from(code), language.map(Rc::from)),
+            |(code, language)| Rc::from(parse_highlights(highlighter, code, language.as_deref())),
+        )
     }
 }
 
@@ -46,11 +42,7 @@ pub fn highlight(code: &str, language: Option<&str>) -> Vec<CaptureSpan> {
 }
 
 pub(crate) fn highlight_cached(code: &str, language: Option<&str>) -> Rc<[CaptureSpan]> {
-    HIGHLIGHT_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .highlight(code, language)
-    })
+    HIGHLIGHT_CACHE.with(|cache| cache.borrow_mut().highlight(code, language))
 }
 
 fn parse_highlights(
@@ -71,12 +63,7 @@ fn parse_highlights(
 
     highlighter
         .highlight_spans(language, code)
-        .map(|spans| {
-            spans
-                .into_iter()
-                .map(CaptureSpan::from)
-                .collect()
-        })
+        .map(|spans| spans.into_iter().map(CaptureSpan::from).collect())
         .unwrap_or_default()
 }
 

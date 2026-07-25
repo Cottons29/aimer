@@ -185,11 +185,7 @@ impl CaptureSpan {
     pub fn from_raw(span: &Span) -> Self {
         let start = span.start;
         let end = span.end;
-        let base = span
-            .capture
-            .split('.')
-            .next()
-            .unwrap_or(&span.capture);
+        let base = span.capture.split('.').next().unwrap_or(&span.capture);
 
         match base {
             "keyword" | "include" | "conditional" | "repeat" => CaptureSpan::Keyword { start, end },
@@ -292,19 +288,15 @@ impl From<Span> for CaptureSpan {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use arborium::Highlighter;
+
+    use super::*;
 
     #[test]
     fn test_from_raw() {
         let raw = "fn main(){}";
-        let span = Highlighter::new()
-            .highlight_spans("rust", &raw)
-            .unwrap();
-        let capture: Vec<CaptureSpan> = span
-            .into_iter()
-            .map(CaptureSpan::from)
-            .collect();
+        let span = Highlighter::new().highlight_spans("rust", &raw).unwrap();
+        let capture: Vec<CaptureSpan> = span.into_iter().map(CaptureSpan::from).collect();
 
         assert_eq!(
             capture,

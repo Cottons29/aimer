@@ -40,17 +40,12 @@ impl ParallelAnimation {
 
     /// Returns `true` if any controller is still animating.
     pub fn is_animating(&self) -> bool {
-        self.controllers
-            .iter()
-            .any(|c| c.is_animating())
+        self.controllers.iter().any(|c| c.is_animating())
     }
 
     /// Tick all controllers. Returns the curved values of each controller.
     pub fn tick(&mut self, now: AnimInstant) -> Vec<f32> {
-        self.controllers
-            .iter_mut()
-            .map(|c| c.tick(now))
-            .collect()
+        self.controllers.iter_mut().map(|c| c.tick(now)).collect()
     }
 
     /// Returns the aggregate status:
@@ -117,10 +112,7 @@ impl SequentialAnimation {
 
     /// Start the sequence in reverse (starts the last controller in reverse).
     pub fn reverse(&mut self) {
-        self.current_index = self
-            .controllers
-            .len()
-            .saturating_sub(1);
+        self.current_index = self.controllers.len().saturating_sub(1);
         if let Some(ctrl) = self.controllers.last_mut() {
             ctrl.reverse();
         }
@@ -224,14 +216,8 @@ impl StaggeredAnimation {
         if self.start_time.is_none() {
             return false;
         }
-        let all_started = self
-            .started
-            .iter()
-            .all(|&s| s);
-        let any_animating = self
-            .controllers
-            .iter()
-            .any(|c| c.is_animating());
+        let all_started = self.started.iter().all(|&s| s);
+        let any_animating = self.controllers.iter().any(|c| c.is_animating());
         !all_started || any_animating
     }
 
@@ -241,11 +227,7 @@ impl StaggeredAnimation {
         let start = match self.start_time {
             Some(s) => s,
             None => {
-                return self
-                    .controllers
-                    .iter()
-                    .map(|_| 0.0)
-                    .collect();
+                return self.controllers.iter().map(|_| 0.0).collect();
             }
         };
 
@@ -262,10 +244,7 @@ impl StaggeredAnimation {
             }
         }
 
-        self.controllers
-            .iter_mut()
-            .map(|c| c.tick(now))
-            .collect()
+        self.controllers.iter_mut().map(|c| c.tick(now)).collect()
     }
 }
 
@@ -332,10 +311,6 @@ mod tests {
 
         // At t=125ms, all should be started
         anim.tick(start + Duration::from_millis(125));
-        assert!(
-            anim.started
-                .iter()
-                .all(|&s| s)
-        );
+        assert!(anim.started.iter().all(|&s| s));
     }
 }

@@ -10,17 +10,17 @@ highly aligned transparently fall back to one heap allocation.
 
 ### Why We Built Rubick
 
-A declarative UI creates and replaces many short-lived values while rebuilding a widget tree. An
+A declarative UI creates and replaces many **short-lived** values while rebuilding a widget tree. An
 individual allocation may be inexpensive, but allocating every erased leaf, wrapper, and element
 adds allocator traffic to a hot path.
 
 We wanted an owner with these properties:
 
-- one value with normal Rust ownership and exactly-once destruction;
-- dynamic dispatch for erased `Widget` and `Element` values;
-- no additional allocation for common small values;
-- transparent heap fallback for large or over-aligned values;
-- a safe public API on stable Rust
+- One value with normal Rust ownership and exactly-once destruction
+- Dynamic dispatch for erased `Widget` and `Element` values
+- No additional allocation for common small values
+- Transparent heap fallback for large or over-aligned values
+- A safe public API on stable Rust
 
 `Rubick<T>` provides that contract in the standalone `aimer_rubick` crate. On 64-bit targets its
 inline payload capacity is 32 bytes with alignment up to 16 bytes. Both size and alignment must fit;
@@ -86,7 +86,7 @@ Test environment:
 
 For the 16-byte small payload, inline Rubick was about **4.8× faster** in this microbenchmark and
 eliminated all per-owner allocations. For the 64-byte payload, Rubick correctly fell back to the
-heap and remained close to `Box`—about 2.8% slower in this run.
+heap and remained close to `Box` ~ about 2.8% slower in this run.
 
 Run the same benchmark on your machine with:
 
@@ -110,13 +110,3 @@ The expected shape of the optimization is therefore:
 - large values retain predictable heap behavior;
 - all owners pay for the larger inline-capable representation; and
 - real applications should be profiled rather than assuming every workload improves.
-
-### What Comes Next
-
-The migration establishes Rubick as the erased owner beneath `AnyWidget` and `AnyElement` while
-preserving Aimer's lifecycle semantics. The next performance work should measure complete widget-tree
-builds, rebuild-heavy interactions, allocation counts per frame, and cache behavior across realistic
-desktop and web applications.
-
-Rubick is not a claim that heap allocation is always bad. It gives Aimer a measured middle ground:
-keep small values close to their owner, and use the heap when the value's layout actually requires it.

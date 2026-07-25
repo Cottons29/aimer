@@ -166,13 +166,11 @@ fn fits(
 ) -> bool {
     column + column_span <= columns
         && (row..row + row_span).all(|r| {
-            occupied
-                .get(r)
-                .is_none_or(|cells| {
-                    cells[column..column + column_span]
-                        .iter()
-                        .all(Option::is_none)
-                })
+            occupied.get(r).is_none_or(|cells| {
+                cells[column..column + column_span]
+                    .iter()
+                    .all(Option::is_none)
+            })
         })
 }
 
@@ -185,16 +183,8 @@ fn occupy(
     let row = placement.row.unwrap();
     let column = placement.column.unwrap();
     ensure_rows(occupied, row + placement.row_span, columns);
-    for cells in occupied
-        .iter_mut()
-        .skip(row)
-        .take(placement.row_span)
-    {
-        for slot in cells
-            .iter_mut()
-            .skip(column)
-            .take(placement.column_span)
-        {
+    for cells in occupied.iter_mut().skip(row).take(placement.row_span) {
+        for slot in cells.iter_mut().skip(column).take(placement.column_span) {
             *slot = Some(item);
         }
     }
@@ -214,11 +204,7 @@ pub(crate) fn resolve_placements(
     ensure_rows(&mut occupied, explicit_rows, columns);
     let mut resolved = vec![GridPlacement::default(); items.len()];
 
-    for (index, placement) in items
-        .iter()
-        .copied()
-        .enumerate()
-    {
+    for (index, placement) in items.iter().copied().enumerate() {
         if placement.row_span == 0 || placement.column_span == 0 {
             return Err(GridError::ZeroSpan { item: index });
         }
@@ -251,12 +237,7 @@ pub(crate) fn resolve_placements(
                         .iter()
                         .skip(row)
                         .take(placement.row_span)
-                        .flat_map(|cells| {
-                            cells
-                                .iter()
-                                .skip(column)
-                                .take(placement.column_span)
-                        })
+                        .flat_map(|cells| cells.iter().skip(column).take(placement.column_span))
                         .find_map(|slot| *slot)
                         .unwrap();
                     return Err(GridError::OverlappingItems {
@@ -311,11 +292,7 @@ pub(crate) fn resolve_placements(
     }
 
     let mut cursor = 0;
-    for (index, placement) in items
-        .iter()
-        .copied()
-        .enumerate()
-    {
+    for (index, placement) in items.iter().copied().enumerate() {
         if placement.row.is_some() || placement.column.is_some() {
             continue;
         }
@@ -341,9 +318,7 @@ pub(crate) fn resolve_placements(
 
     Ok(ResolvedPlacements {
         items: resolved,
-        row_count: occupied
-            .len()
-            .max(explicit_rows),
+        row_count: occupied.len().max(explicit_rows),
     })
 }
 
@@ -358,11 +333,7 @@ pub(crate) fn resolve_tracks(
     let mut consumed = gap.max(0.0) * tracks.len().saturating_sub(1) as f32;
     let mut fraction_sum = 0.0;
 
-    for (index, track) in tracks
-        .iter()
-        .copied()
-        .enumerate()
-    {
+    for (index, track) in tracks.iter().copied().enumerate() {
         match track {
             GridTrack::Px(value) if !value.is_finite() || value < 0.0 => {
                 return Err(GridError::InvalidPixels { axis, index, value });
@@ -376,11 +347,7 @@ pub(crate) fn resolve_tracks(
             }
             GridTrack::Fr(value) => fraction_sum += value,
             GridTrack::Auto => {
-                let value = auto_minima
-                    .get(index)
-                    .copied()
-                    .unwrap_or(0.0)
-                    .max(0.0);
+                let value = auto_minima.get(index).copied().unwrap_or(0.0).max(0.0);
                 resolved[index] = value;
                 consumed += value;
             }
@@ -469,13 +436,13 @@ pub(crate) struct GridLayout {
 
 impl RawGrid {
     fn layout_grid(&self, ctx: &BuildContext) -> Result<Rc<GridLayout>, GridError> {
-        if let Some((_, _, layout)) = self
-            .layout_cache
-            .borrow()
-            .iter()
-            .find(|(constraint, scale_bits, _)| {
-                *constraint == ctx.box_constraint && *scale_bits == ctx.scale.to_bits()
-            })
+        if let Some((_, _, layout)) =
+            self.layout_cache
+                .borrow()
+                .iter()
+                .find(|(constraint, scale_bits, _)| {
+                    *constraint == ctx.box_constraint && *scale_bits == ctx.scale.to_bits()
+                })
         {
             return Ok(Rc::clone(layout));
         }
@@ -490,15 +457,8 @@ impl RawGrid {
         rows.resize(resolved_placements.row_count, GridTrack::Auto);
 
         let mut column_minima = vec![0.0_f32; self.columns.len()];
-        if self
-            .columns
-            .contains(&GridTrack::Auto)
-        {
-            for (item, placement) in self
-                .children
-                .iter()
-                .zip(&resolved_placements.items)
-            {
+        if self.columns.contains(&GridTrack::Auto) {
+            for (item, placement) in self.children.iter().zip(&resolved_placements.items) {
                 let mut child_ctx = ctx.clone();
                 child_ctx.parent_size = ResolvedSize::default();
                 child_ctx.box_constraint = BoxConstraint {
@@ -507,9 +467,7 @@ impl RawGrid {
                     max_width: f32::MAX,
                     max_height: f32::MAX,
                 };
-                let size = item
-                    .child
-                    .computed_size(&child_ctx);
+                let size = item.child.computed_size(&child_ctx);
                 let start = placement.column.unwrap();
                 apply_auto_minimum(
                     &self.columns,
@@ -530,11 +488,7 @@ impl RawGrid {
         )?;
 
         let mut row_minima = vec![0.0_f32; rows.len()];
-        for (item, placement) in self
-            .children
-            .iter()
-            .zip(&resolved_placements.items)
-        {
+        for (item, placement) in self.children.iter().zip(&resolved_placements.items) {
             let cell_width = span_size(
                 &columns,
                 placement.column.unwrap(),
@@ -552,9 +506,7 @@ impl RawGrid {
                 max_width: cell_width,
                 max_height: f32::MAX,
             };
-            let size = item
-                .child
-                .computed_size(&child_ctx);
+            let size = item.child.computed_size(&child_ctx);
             let start = placement.row.unwrap();
             apply_auto_minimum(
                 &rows,
@@ -583,9 +535,11 @@ impl RawGrid {
             rows,
             size,
         });
-        self.layout_cache
-            .borrow_mut()
-            .push((ctx.box_constraint, ctx.scale.to_bits(), Rc::clone(&layout)));
+        self.layout_cache.borrow_mut().push((
+            ctx.box_constraint,
+            ctx.scale.to_bits(),
+            Rc::clone(&layout),
+        ));
         Ok(layout)
     }
 
@@ -617,9 +571,7 @@ impl RawGrid {
         let horizontal = item
             .horizontal_alignment
             .unwrap_or(self.horizontal_alignment);
-        let vertical = item
-            .vertical_alignment
-            .unwrap_or(self.vertical_alignment);
+        let vertical = item.vertical_alignment.unwrap_or(self.vertical_alignment);
         let mut child_ctx = ctx.clone();
         child_ctx.parent_size = cell_size;
         child_ctx.box_constraint = BoxConstraint {
@@ -640,30 +592,26 @@ impl RawGrid {
             if horizontal == GridAlignment::Stretch && vertical == GridAlignment::Stretch {
                 cell_size
             } else {
-                item.child
-                    .computed_size(&child_ctx)
+                item.child.computed_size(&child_ctx)
             };
         let offset = Vec2d {
             x: alignment_offset(horizontal, cell_size.width, child_size.width),
             y: alignment_offset(vertical, cell_size.height, child_size.height),
         };
-        child_ctx.visible_rect = ctx
-            .visible_rect
-            .map(|(x, y, width, height)| {
-                (
-                    x - cell_pos.x - offset.x,
-                    y - cell_pos.y - offset.y,
-                    width,
-                    height,
-                )
-            });
+        child_ctx.visible_rect = ctx.visible_rect.map(|(x, y, width, height)| {
+            (
+                x - cell_pos.x - offset.x,
+                y - cell_pos.y - offset.y,
+                width,
+                height,
+            )
+        });
         let overflow = detect_overflow(child_size, cell_size, offset);
 
         ctx.canvas.save();
         ctx.canvas.translate(cell_pos);
         if self.overflow == GridOverflow::Clip {
-            ctx.canvas
-                .set_clip(Vec2d::default(), cell_size);
+            ctx.canvas.set_clip(Vec2d::default(), cell_size);
         }
         ctx.canvas.save();
         ctx.canvas.translate(offset);
@@ -681,11 +629,7 @@ impl Drawable for RawGrid {
     fn draw(&self, ctx: &BuildContext) {
         match self.layout_grid(ctx) {
             Ok(layout) => {
-                for (item, placement) in self
-                    .children
-                    .iter()
-                    .zip(&layout.placements)
-                {
+                for (item, placement) in self.children.iter().zip(&layout.placements) {
                     let cell_pos = Vec2d {
                         x: track_offset(
                             &layout.columns,
@@ -754,9 +698,7 @@ impl LayoutElement for RawGrid {
     }
 
     fn invalidate_layout(&self) {
-        self.layout_cache
-            .borrow_mut()
-            .clear();
+        self.layout_cache.borrow_mut().clear();
         for item in &self.children {
             item.child.invalidate_layout();
         }
@@ -782,17 +724,11 @@ fn tracks_size(tracks: &[f32], gap: f32) -> f32 {
 }
 
 fn span_size(tracks: &[f32], start: usize, span: usize, gap: f32) -> f32 {
-    tracks[start..start + span]
-        .iter()
-        .sum::<f32>()
-        + gap * span.saturating_sub(1) as f32
+    tracks[start..start + span].iter().sum::<f32>() + gap * span.saturating_sub(1) as f32
 }
 
 fn track_offset(tracks: &[f32], index: usize, gap: f32) -> f32 {
-    tracks[..index]
-        .iter()
-        .sum::<f32>()
-        + gap * index as f32
+    tracks[..index].iter().sum::<f32>() + gap * index as f32
 }
 
 fn alignment_offset(alignment: GridAlignment, available: f32, child: f32) -> f32 {
@@ -826,13 +762,12 @@ mod tests {
 
     use aimer_attribute::{BoxConstraint, ResolvedSize};
     use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_container::ZeroSizedBox;
     use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_widget::base::{BuildContext, WindowHandle};
     use aimer_widget::{
         Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
     };
-
-    use aimer_container::ZeroSizedBox;
 
     use super::{
         GridAlignment, GridError, GridOverflow, GridPlacement, GridTrack, RawGrid, RawGridItem,
@@ -858,9 +793,7 @@ mod tests {
     impl EventElement for WorkRecorder {}
     impl LayoutElement for WorkRecorder {
         fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
-            *self
-                .computed_count
-                .borrow_mut() += 1;
+            *self.computed_count.borrow_mut() += 1;
             self.size
         }
     }
@@ -1090,9 +1023,7 @@ mod tests {
         let canvas = Box::leak(Box::new(InnerCanvas::new()));
         let ctx = build_context(canvas);
         let mut narrower_ctx = ctx.clone();
-        narrower_ctx
-            .box_constraint
-            .max_width = 160.0;
+        narrower_ctx.box_constraint.max_width = 160.0;
         let computed_count = Rc::new(RefCell::new(0));
         let grid = RawGrid {
             columns: vec![GridTrack::Auto],
@@ -1258,13 +1189,7 @@ mod tests {
             })
         );
 
-        let outside = resolve_placements(
-            &[GridPlacement::default()
-                .at(0, 1)
-                .column_span(2)],
-            2,
-            1,
-        );
+        let outside = resolve_placements(&[GridPlacement::default().at(0, 1).column_span(2)], 2, 1);
         assert_eq!(
             outside,
             Err(GridError::ColumnOutOfRange {

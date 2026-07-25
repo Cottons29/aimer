@@ -153,11 +153,9 @@ fn normalize_family(name: &str) -> Result<String, FontError> {
 fn stable_hash(bytes: &[u8]) -> u64 {
     const OFFSET: u64 = 0xcbf29ce484222325;
     const PRIME: u64 = 0x100000001b3;
-    bytes
-        .iter()
-        .fold(OFFSET, |hash, byte| {
-            (hash ^ u64::from(*byte)).wrapping_mul(PRIME)
-        })
+    bytes.iter().fold(OFFSET, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(PRIME)
+    })
 }
 
 fn family_handle(name: &str) -> FontFamily {
@@ -205,9 +203,7 @@ impl FontRegistry {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        if let Some(existing_name) = state
-            .family_names
-            .get(&family)
+        if let Some(existing_name) = state.family_names.get(&family)
             && existing_name != &family_name
         {
             return Err(FontError::HandleCollision);
@@ -217,15 +213,11 @@ impl FontRegistry {
         {
             return Err(FontError::HandleCollision);
         }
-        if state
-            .faces
-            .get(&family)
-            .is_some_and(|faces| {
-                faces
-                    .iter()
-                    .any(|face| face.weight == weight && face.style == registration.style)
-            })
-        {
+        if state.faces.get(&family).is_some_and(|faces| {
+            faces
+                .iter()
+                .any(|face| face.weight == weight && face.style == registration.style)
+        }) {
             return Err(FontError::DuplicateVariant {
                 family,
                 weight,
@@ -233,12 +225,8 @@ impl FontRegistry {
             });
         }
 
-        state
-            .names
-            .insert(family_name.clone(), family);
-        state
-            .family_names
-            .insert(family, family_name);
+        state.names.insert(family_name.clone(), family);
+        state.family_names.insert(family, family_name);
         state
             .face_owners
             .insert(id, (family, weight, registration.style));
@@ -286,8 +274,7 @@ impl FontRegistry {
             .min_by_key(|face| {
                 (
                     style_distance(style, face.style),
-                    face.weight
-                        .abs_diff(numeric_weight),
+                    face.weight.abs_diff(numeric_weight),
                     face.weight,
                     face.face_id,
                 )

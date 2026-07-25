@@ -80,14 +80,14 @@ impl<W: Widget + 'static> GridItem<W> {
 /// Lays out positioned items in explicit rows and columns.
 ///
 /// Tracks may use fixed logical pixels, fractional shares, or intrinsic
-/// [`GridTrack::Auto`] sizing. Items are placed explicitly or auto-flow into the
-/// first available cell; spans and overlaps are validated when the widget is
-/// built. Fractional tracks require a bounded constraint on their axis. Invalid
-/// layouts render an error widget rather than panicking.
+/// [`GridTrack::Auto`] sizing. Items are placed explicitly or auto-flow into
+/// the first available cell; spans and overlaps are validated when the widget
+/// is built. Fractional tracks require a bounded constraint on their axis.
+/// Invalid layouts render an error widget rather than panicking.
 ///
 /// `Grid::new()` has no tracks or children, zero gaps, stretch alignment, and
-/// [`GridOverflow::Clip`]. Configure at least one column and finish the contents
-/// with [`Grid::children`].
+/// [`GridOverflow::Clip`]. Configure at least one column and finish the
+/// contents with [`Grid::children`].
 ///
 /// # Example
 ///
@@ -95,14 +95,11 @@ impl<W: Widget + 'static> GridItem<W> {
 /// use aimer_container::SizedBox;
 /// use aimer_grid::{Grid, GridItem, GridTrack};
 ///
-/// let grid = Grid::new()
-///     .columns([GridTrack::Px(120.0), GridTrack::Fr(1.0)])
-///     .rows([GridTrack::Auto, GridTrack::Px(40.0)])
-///     .gap(8.0)
-///     .children([
-///         GridItem::new(SizedBox::new()).at(0, 0),
-///         GridItem::new(SizedBox::new()).at(0, 1),
-///     ]);
+/// let grid = Grid::new().columns([GridTrack::Px(120.0), GridTrack::Fr(1.0)])
+///                       .rows([GridTrack::Auto, GridTrack::Px(40.0)])
+///                       .gap(8.0)
+///                       .children([GridItem::new(SizedBox::new()).at(0, 0),
+///                                  GridItem::new(SizedBox::new()).at(0, 1)]);
 /// ```
 pub struct Grid<W: Widget + 'static = AnyWidget> {
     columns: Vec<GridTrack>,

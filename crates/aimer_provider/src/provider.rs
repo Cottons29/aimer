@@ -26,8 +26,9 @@ struct ProviderStore<T> {
 
 /// An immutable, cheaply cloneable version of a provided value.
 ///
-/// A snapshot dereferences to `T`, so fields and methods can be accessed directly. It keeps the
-/// version observed at read time alive even after the provider is updated.
+/// A snapshot dereferences to `T`, so fields and methods can be accessed
+/// directly. It keeps the version observed at read time alive even after the
+/// provider is updated.
 pub struct Snapshot<T>(Rc<T>);
 
 impl<T> Clone for Snapshot<T> {
@@ -46,8 +47,9 @@ impl<T> Deref for Snapshot<T> {
 
 /// A handle for reading and updating one provided value outside a widget build.
 ///
-/// Cloning a handle keeps access to the same provider store. Reading creates a cheap [`Snapshot`],
-/// while updating uses copy-on-write to preserve snapshots that are still alive.
+/// Cloning a handle keeps access to the same provider store. Reading creates a
+/// cheap [`Snapshot`], while updating uses copy-on-write to preserve snapshots
+/// that are still alive.
 pub struct ProviderHandle<T>(Rc<ProviderStore<T>>);
 
 impl<T> Clone for ProviderHandle<T> {
@@ -66,12 +68,14 @@ impl<T: 'static> ProviderHandle<T> {
         }))
     }
 
-    /// Returns an immutable snapshot of the current value without subscribing a widget.
+    /// Returns an immutable snapshot of the current value without subscribing a
+    /// widget.
     pub fn read(&self) -> Snapshot<T> {
         Snapshot(self.0.value.borrow().clone())
     }
 
-    /// Returns the nearest handle for `T`, or `None` when no matching provider is in scope.
+    /// Returns the nearest handle for `T`, or `None` when no matching provider
+    /// is in scope.
     pub fn try_of(context: &BuildContext) -> Option<Self> {
         context
             .get_state::<Provided<T>>()
@@ -97,7 +101,8 @@ impl<T: 'static> ProviderHandle<T> {
 
     /// Mutates the current value and notifies subscribed widgets.
     ///
-    /// The value is cloned only when an existing [`Snapshot`] still shares the previous version.
+    /// The value is cloned only when an existing [`Snapshot`] still shares the
+    /// previous version.
     pub fn update(&self, mutation: impl FnOnce(&mut T))
     where
         T: Clone,
@@ -123,18 +128,15 @@ impl<T: 'static> ProviderHandle<T> {
 
     fn notify(&self) {
         let value = self.0.value.borrow();
-        self.0
-            .subscribers
-            .borrow_mut()
-            .retain(|_, subscriber| {
-                let Some(consumer) = subscriber.consumer.upgrade() else {
-                    return false;
-                };
-                if (subscriber.should_notify)(value.as_ref()) {
-                    consumer.mark_needs_rebuild();
-                }
-                true
-            });
+        self.0.subscribers.borrow_mut().retain(|_, subscriber| {
+            let Some(consumer) = subscriber.consumer.upgrade() else {
+                return false;
+            };
+            if (subscriber.should_notify)(value.as_ref()) {
+                consumer.mark_needs_rebuild();
+            }
+            true
+        });
     }
 
     fn add_subscriber(
@@ -144,34 +146,26 @@ impl<T: 'static> ProviderHandle<T> {
         should_notify: impl FnMut(&T) -> bool + 'static,
     ) {
         let id = self.0.next_subscriber.get();
-        self.0
-            .next_subscriber
-            .set(id.wrapping_add(1));
+        self.0.next_subscriber.set(id.wrapping_add(1));
         let window = window.clone();
         let mut should_notify = should_notify;
-        self.0
-            .subscribers
-            .borrow_mut()
-            .insert(
-                id,
-                Subscriber {
-                    consumer: Rc::downgrade(consumer),
-                    should_notify: Box::new(move |value| {
-                        let notify = should_notify(value);
-                        if notify {
-                            window.request_redraw();
-                        }
-                        notify
-                    }),
-                },
-            );
+        self.0.subscribers.borrow_mut().insert(
+            id,
+            Subscriber {
+                consumer: Rc::downgrade(consumer),
+                should_notify: Box::new(move |value| {
+                    let notify = should_notify(value);
+                    if notify {
+                        window.request_redraw();
+                    }
+                    notify
+                }),
+            },
+        );
         let store = Rc::downgrade(&self.0);
         consumer.add_cleanup(move || {
             if let Some(store) = store.upgrade() {
-                store
-                    .subscribers
-                    .borrow_mut()
-                    .remove(&id);
+                store.subscribers.borrow_mut().remove(&id);
             }
         });
     }
@@ -203,10 +197,7 @@ impl<T: 'static> ProviderHandle<T> {
 
     #[cfg(test)]
     fn subscriber_count(&self) -> usize {
-        self.0
-            .subscribers
-            .borrow()
-            .len()
+        self.0.subscribers.borrow().len()
     }
 }
 
@@ -229,11 +220,13 @@ impl<A> Clone for StoreDispatcher<A> {
 
 /// Accesses providers from a [`BuildContext`].
 ///
-/// [`read`](ProviderContext::read) observes a value without registering a dependency, while
-/// [`watch`](ProviderContext::watch) rebuilds the current widget after any update. Use
-/// [`select`](ProviderContext::select) when only a projection should trigger rebuilding.
+/// [`read`](ProviderContext::read) observes a value without registering a
+/// dependency, while [`watch`](ProviderContext::watch) rebuilds the current
+/// widget after any update. Use [`select`](ProviderContext::select) when only a
+/// projection should trigger rebuilding.
 pub trait ProviderContext {
-    /// Returns a snapshot of the nearest provided `T`, without subscribing, if one exists.
+    /// Returns a snapshot of the nearest provided `T`, without subscribing, if
+    /// one exists.
     fn try_read<T: 'static>(&self) -> Option<Snapshot<T>>;
 
     /// Returns a snapshot of the nearest provided `T` without subscribing.
@@ -256,17 +249,20 @@ pub trait ProviderContext {
     ///
     /// # Panics
     ///
-    /// Panics when called outside a widget build while a matching provider exists.
+    /// Panics when called outside a widget build while a matching provider
+    /// exists.
     fn try_watch<T: 'static>(&self) -> Option<Snapshot<T>>;
 
     /// Returns and subscribes to the nearest provided `T`.
     ///
     /// # Panics
     ///
-    /// Panics when no matching provider exists or when called outside a widget build.
+    /// Panics when no matching provider exists or when called outside a widget
+    /// build.
     fn watch<T: 'static>(&self) -> Snapshot<T>;
 
-    /// Returns a projection and rebuilds the current widget only when that projection changes.
+    /// Returns a projection and rebuilds the current widget only when that
+    /// projection changes.
     fn select<T: 'static, R: PartialEq + 'static>(&self, selector: impl Fn(&T) -> R + 'static)
     -> R;
 
@@ -284,61 +280,51 @@ impl ProviderContext for BuildContext<'_> {
     }
 
     fn read<T: 'static>(&self) -> Snapshot<T> {
-        self.try_read::<T>()
-            .unwrap_or_else(|| {
-                panic!(
-                    "No provider for `{}` found in the current widget scope",
-                    type_name::<T>()
-                )
-            })
+        self.try_read::<T>().unwrap_or_else(|| {
+            panic!(
+                "No provider for `{}` found in the current widget scope",
+                type_name::<T>()
+            )
+        })
     }
 
     fn try_watch<T: 'static>(&self) -> Option<Snapshot<T>> {
         let provided = self.get_state::<Provided<T>>()?;
-        let consumer = self
-            .current_build_consumer()
-            .unwrap_or_else(|| {
-                panic!(
-                    "watch::<{}>() must be called while building a widget",
-                    type_name::<T>()
-                )
-            });
-        provided
-            .0
-            .subscribe_watch(&consumer, &self.window);
+        let consumer = self.current_build_consumer().unwrap_or_else(|| {
+            panic!(
+                "watch::<{}>() must be called while building a widget",
+                type_name::<T>()
+            )
+        });
+        provided.0.subscribe_watch(&consumer, &self.window);
         Some(provided.0.read())
     }
 
     fn watch<T: 'static>(&self) -> Snapshot<T> {
-        self.try_watch::<T>()
-            .unwrap_or_else(|| {
-                panic!(
-                    "No provider for `{}` found in the current widget scope",
-                    type_name::<T>()
-                )
-            })
+        self.try_watch::<T>().unwrap_or_else(|| {
+            panic!(
+                "No provider for `{}` found in the current widget scope",
+                type_name::<T>()
+            )
+        })
     }
 
     fn select<T: 'static, R: PartialEq + 'static>(
         &self,
         selector: impl Fn(&T) -> R + 'static,
     ) -> R {
-        let provided = self
-            .get_state::<Provided<T>>()
-            .unwrap_or_else(|| {
-                panic!(
-                    "No provider for `{}` found in the current widget scope",
-                    type_name::<T>()
-                )
-            });
-        let consumer = self
-            .current_build_consumer()
-            .unwrap_or_else(|| {
-                panic!(
-                    "select::<{}>() must be called while building a widget",
-                    type_name::<T>()
-                )
-            });
+        let provided = self.get_state::<Provided<T>>().unwrap_or_else(|| {
+            panic!(
+                "No provider for `{}` found in the current widget scope",
+                type_name::<T>()
+            )
+        });
+        let consumer = self.current_build_consumer().unwrap_or_else(|| {
+            panic!(
+                "select::<{}>() must be called while building a widget",
+                type_name::<T>()
+            )
+        });
         let selected = selector(&provided.0.read());
         provided
             .0
@@ -347,26 +333,22 @@ impl ProviderContext for BuildContext<'_> {
     }
 
     fn update<T: Clone + 'static>(&self, mutation: impl FnOnce(&mut T)) {
-        let provided = self
-            .get_state::<Provided<T>>()
-            .unwrap_or_else(|| {
-                panic!(
-                    "No provider for `{}` found in the current widget scope",
-                    type_name::<T>()
-                )
-            });
+        let provided = self.get_state::<Provided<T>>().unwrap_or_else(|| {
+            panic!(
+                "No provider for `{}` found in the current widget scope",
+                type_name::<T>()
+            )
+        });
         provided.0.update(mutation);
     }
 
     fn dispatch<A: 'static>(&self, action: A) {
-        let dispatcher = self
-            .get_state::<StoreDispatcher<A>>()
-            .unwrap_or_else(|| {
-                panic!(
-                    "No store accepting `{}` found in the current widget scope",
-                    type_name::<A>()
-                )
-            });
+        let dispatcher = self.get_state::<StoreDispatcher<A>>().unwrap_or_else(|| {
+            panic!(
+                "No store accepting `{}` found in the current widget scope",
+                type_name::<A>()
+            )
+        });
         (dispatcher.0)(action);
     }
 }
@@ -374,8 +356,9 @@ impl ProviderContext for BuildContext<'_> {
 /// Provides one state value to a descendant widget subtree.
 ///
 /// Construct a provider with [`Provider::new`], configure its initializer with
-/// [`Provider::create`], and attach the subtree with [`Provider::child`]. Descendants access the
-/// value through [`ProviderContext`] or [`ProviderHandle`].
+/// [`Provider::create`], and attach the subtree with [`Provider::child`].
+/// Descendants access the value through [`ProviderContext`] or
+/// [`ProviderHandle`].
 pub struct Provider<T, W = RequiredChild> {
     create: Option<Rc<dyn Fn() -> T>>,
     handle: Option<ProviderHandle<T>>,
@@ -424,10 +407,12 @@ impl<T, W> Provider<T, W> {
         }
     }
 
-    /// Attaches the descendant subtree and type-erases the completed provider widget.
+    /// Attaches the descendant subtree and type-erases the completed provider
+    /// widget.
     ///
-    /// This is equivalent to calling [`Provider::child`] followed by [`Widget::boxed`]. Use it
-    /// when different code paths must return one [`AnyWidget`] type.
+    /// This is equivalent to calling [`Provider::child`] followed by
+    /// [`Widget::boxed`]. Use it when different code paths must return one
+    /// [`AnyWidget`] type.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget
     where
         T: 'static,
@@ -446,21 +431,15 @@ impl<T: 'static, W: Widget + 'static> StatefulWidget for Provider<T, W> {
     type State = ProviderState<T, W>;
 
     fn create_state(&self) -> Self::State {
-        let handle = self
-            .handle
-            .clone()
-            .unwrap_or_else(|| {
-                let create = self
-                    .create
-                    .as_ref()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "Provider::<{}>::create or handle must be called before child",
-                            type_name::<T>()
-                        )
-                    });
-                ProviderHandle::new(create())
+        let handle = self.handle.clone().unwrap_or_else(|| {
+            let create = self.create.as_ref().unwrap_or_else(|| {
+                panic!(
+                    "Provider::<{}>::create or handle must be called before child",
+                    type_name::<T>()
+                )
             });
+            ProviderHandle::new(create())
+        });
         ProviderState {
             handle,
             child: self.child.clone(),
@@ -563,8 +542,7 @@ impl<T: 'static> LayoutElement for ProviderElement<T> {
         self.child.flex()
     }
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
@@ -578,10 +556,7 @@ impl<T: 'static> EventElement for ProviderElement<T> {}
 
 impl<T: 'static> Rebuildable for ProviderElement<T> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .rebuild_if_dirty(ctx)
-        });
+        self.scoped(ctx, |ctx| self.child.rebuild_if_dirty(ctx));
     }
 
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
@@ -593,15 +568,14 @@ impl<T: 'static> Rebuildable for ProviderElement<T> {
     }
 
     fn mark_needs_rebuild(&self) {
-        self.child
-            .mark_needs_rebuild();
+        self.child.mark_needs_rebuild();
     }
 }
 
 /// Provides reducer-managed state to a descendant widget subtree.
 ///
-/// Descendants read or watch `T` through [`ProviderContext`] and send `A` values with
-/// [`ProviderContext::dispatch`].
+/// Descendants read or watch `T` through [`ProviderContext`] and send `A`
+/// values with [`ProviderContext::dispatch`].
 pub struct StoreProvider<T, A, W = RequiredChild> {
     create: Option<Rc<dyn Fn() -> T>>,
     reducer: Option<Rc<StoreReducer<T, A>>>,
@@ -645,10 +619,12 @@ impl<T, A, W> StoreProvider<T, A, W> {
         }
     }
 
-    /// Attaches the descendant subtree and type-erases the completed store provider widget.
+    /// Attaches the descendant subtree and type-erases the completed store
+    /// provider widget.
     ///
-    /// This is equivalent to calling [`StoreProvider::child`] followed by [`Widget::boxed`]. Use
-    /// it when different code paths must return one [`AnyWidget`] type.
+    /// This is equivalent to calling [`StoreProvider::child`] followed by
+    /// [`Widget::boxed`]. Use it when different code paths must return one
+    /// [`AnyWidget`] type.
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget
     where
         T: Clone + 'static,
@@ -670,24 +646,18 @@ impl<T: Clone + 'static, A: 'static, W: Widget + 'static> StatefulWidget
 {
     type State = StoreState<T, A, W>;
     fn create_state(&self) -> Self::State {
-        let create = self
-            .create
-            .as_ref()
-            .unwrap_or_else(|| {
-                panic!(
-                    "StoreProvider::<{}>::create must be called before child",
-                    type_name::<T>()
-                )
-            });
-        let reducer = self
-            .reducer
-            .as_ref()
-            .unwrap_or_else(|| {
-                panic!(
-                    "StoreProvider::<{}>::reducer must be called before child",
-                    type_name::<T>()
-                )
-            });
+        let create = self.create.as_ref().unwrap_or_else(|| {
+            panic!(
+                "StoreProvider::<{}>::create must be called before child",
+                type_name::<T>()
+            )
+        });
+        let reducer = self.reducer.as_ref().unwrap_or_else(|| {
+            panic!(
+                "StoreProvider::<{}>::reducer must be called before child",
+                type_name::<T>()
+            )
+        });
         StoreState {
             handle: ProviderHandle::new(create()),
             reducer: reducer.clone(),
@@ -803,8 +773,7 @@ impl<T: 'static, A: 'static> LayoutElement for StoreElement<T, A> {
         self.child.flex()
     }
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
@@ -816,10 +785,7 @@ impl<T: 'static, A: 'static> LayoutElement for StoreElement<T, A> {
 impl<T: 'static, A: 'static> EventElement for StoreElement<T, A> {}
 impl<T: 'static, A: 'static> Rebuildable for StoreElement<T, A> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .rebuild_if_dirty(ctx)
-        });
+        self.scoped(ctx, |ctx| self.child.rebuild_if_dirty(ctx));
     }
 
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
@@ -831,8 +797,7 @@ impl<T: 'static, A: 'static> Rebuildable for StoreElement<T, A> {
     }
 
     fn mark_needs_rebuild(&self) {
-        self.child
-            .mark_needs_rebuild();
+        self.child.mark_needs_rebuild();
     }
 }
 
@@ -931,8 +896,7 @@ mod tests {
         fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
         fn build(&self, context: &BuildContext) -> impl Widget {
-            self.builds
-                .set(self.builds.get() + 1);
+            self.builds.set(self.builds.get() + 1);
             if self.select_count {
                 ProviderContext::select::<Counter, usize>(context, |counter| counter.count);
             } else {
@@ -966,8 +930,7 @@ mod tests {
         fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
         fn build(&self, context: &BuildContext) -> impl Widget {
-            self.builds
-                .set(self.builds.get() + 1);
+            self.builds.set(self.builds.get() + 1);
             ProviderContext::select::<Counter, usize>(context, |counter| counter.count);
             ProviderContext::select::<Counter, &'static str>(context, |counter| counter.label);
             *self.handle.borrow_mut() = Some(ProviderHandle::of(context));
@@ -1360,12 +1323,13 @@ mod tests {
     fn multiple_selectors_from_one_consumer_track_independent_values() {
         let builds = Rc::new(Cell::new(0));
         let handle = Rc::new(RefCell::new(None));
-        let provider = Provider::<Counter>::new()
-            .create(Counter::default)
-            .child(MultiSelectorWidget {
-                builds: builds.clone(),
-                handle: handle.clone(),
-            });
+        let provider =
+            Provider::<Counter>::new()
+                .create(Counter::default)
+                .child(MultiSelectorWidget {
+                    builds: builds.clone(),
+                    handle: handle.clone(),
+                });
         let context = context();
         let element = provider.to_element(&context);
 

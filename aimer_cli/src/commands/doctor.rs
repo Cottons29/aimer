@@ -90,12 +90,7 @@ pub fn execute() -> anyhow::Result<()> {
 
     println!();
     if missing == 0 {
-        println!(
-            "{}",
-            "All tools found. You're good to go!"
-                .green()
-                .bold()
-        );
+        println!("{}", "All tools found. You're good to go!".green().bold());
     } else {
         println!(
             "{}",

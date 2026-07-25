@@ -42,9 +42,10 @@ impl SizedBox {
 
     /// Sets the preferred width.
     ///
-    /// The default is [`Dimension::Auto`], which derives width from the child or
-    /// zero when no child exists. Pixel values are logical pixels, percentages
-    /// resolve against the parent's maximum width, and constraints still apply.
+    /// The default is [`Dimension::Auto`], which derives width from the child
+    /// or zero when no child exists. Pixel values are logical pixels,
+    /// percentages resolve against the parent's maximum width, and
+    /// constraints still apply.
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = width.into();
         self
@@ -52,9 +53,10 @@ impl SizedBox {
 
     /// Sets the preferred height.
     ///
-    /// The default is [`Dimension::Auto`], which derives height from the child or
-    /// zero when no child exists. Pixel values are logical pixels, percentages
-    /// resolve against the parent's maximum height, and constraints still apply.
+    /// The default is [`Dimension::Auto`], which derives height from the child
+    /// or zero when no child exists. Pixel values are logical pixels,
+    /// percentages resolve against the parent's maximum height, and
+    /// constraints still apply.
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = height.into();
         self
@@ -62,8 +64,8 @@ impl SizedBox {
 
     /// Sets the box's fill color.
     ///
-    /// The default is [`Color::Transparent`]. The color fills the box's resolved
-    /// bounds before its child is drawn.
+    /// The default is [`Color::Transparent`]. The color fills the box's
+    /// resolved bounds before its child is drawn.
     pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = color.into();
         self
@@ -136,9 +138,7 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         #[cfg(debug_assertions)]
         {
             if aimer_widget::inspector_overlay::is_enabled() {
-                let (start_x, start_y) = ctx
-                    .canvas
-                    .get_transform_translation();
+                let (start_x, start_y) = ctx.canvas.get_transform_translation();
                 let end_x = start_x + width;
                 let end_y = start_y + height;
 
@@ -151,8 +151,7 @@ impl<E: Element> Drawable for RawSizedBox<E> {
                     x: end_x / scale,
                     y: end_y / scale,
                 };
-                self.bounds
-                    .set(Some((l_start, l_end)));
+                self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
                 if cp.x >= l_start.x
@@ -198,10 +197,7 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
-        if let Some(cached) = self
-            .cache
-            .get_computed(ctx.box_constraint, scale_bits)
-        {
+        if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
             return cached;
         }
 
@@ -221,35 +217,21 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
             inherited_states: ctx.inherited_states.clone(),
         };
 
-        child_ctx
-            .box_constraint
-            .max_width = self
-            .width
-            .resolve(ctx.box_constraint.max_width, scale);
-        child_ctx
-            .box_constraint
-            .max_height = self
-            .height
-            .resolve(ctx.box_constraint.max_height, scale);
+        child_ctx.box_constraint.max_width =
+            self.width.resolve(ctx.box_constraint.max_width, scale);
+        child_ctx.box_constraint.max_height =
+            self.height.resolve(ctx.box_constraint.max_height, scale);
 
         let width = match self.width {
             Dimension::Px(w) => w * scale,
             Dimension::Percent(p) => ctx.box_constraint.max_width * (p / 100.0),
-            Dimension::Auto => {
-                self.child
-                    .computed_size(&child_ctx)
-                    .width
-            }
+            Dimension::Auto => self.child.computed_size(&child_ctx).width,
         };
 
         let height = match self.height {
             Dimension::Px(h) => h * scale,
             Dimension::Percent(p) => ctx.box_constraint.max_height * (p / 100.0),
-            Dimension::Auto => {
-                self.child
-                    .computed_size(&child_ctx)
-                    .height
-            }
+            Dimension::Auto => self.child.computed_size(&child_ctx).height,
         };
 
         let result = ResolvedSize { width, height };
@@ -259,10 +241,7 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        let mut size = self
-            .child
-            .get_size_from_child()
-            .unwrap_or_default();
+        let mut size = self.child.get_size_from_child().unwrap_or_default();
         if let Dimension::Px(_) = self.width {
             size.width = self.width;
         }

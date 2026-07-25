@@ -99,13 +99,9 @@ fn sync_trunk_copy_entries_in(dir: &Path) -> anyhow::Result<()> {
 
     // Strip any previously auto-generated section (marker to EOF).
     let base = if let Some(idx) = existing.find(TRUNK_COPY_MARKER) {
-        existing[..idx]
-            .trim_end()
-            .to_string()
+        existing[..idx].trim_end().to_string()
     } else {
-        existing
-            .trim_end()
-            .to_string()
+        existing.trim_end().to_string()
     };
 
     let mut new_contents = base;
@@ -141,16 +137,12 @@ fn copy_files(
     for rel in files {
         let src = src_root.join(rel);
         if !src.exists() {
-            report
-                .missing
-                .push(rel.clone());
+            report.missing.push(rel.clone());
             continue;
         }
         let dest = dest_root.join(rel);
         if !needs_copy(&src, &dest) {
-            report
-                .skipped
-                .push(rel.clone());
+            report.skipped.push(rel.clone());
             continue;
         }
         if let Some(parent) = dest.parent() {
@@ -160,9 +152,7 @@ fn copy_files(
         std::fs::copy(&src, &dest).with_context(|| {
             format!("copying asset '{}' -> '{}'", src.display(), dest.display())
         })?;
-        report
-            .copied
-            .push(rel.clone());
+        report.copied.push(rel.clone());
     }
     Ok(report)
 }
@@ -176,19 +166,8 @@ mod tests {
         let src_root = tempfile::tempdir().unwrap();
         let dest = tempfile::tempdir().unwrap();
 
-        std::fs::create_dir_all(
-            src_root
-                .path()
-                .join("assets/sub"),
-        )
-        .unwrap();
-        std::fs::write(
-            src_root
-                .path()
-                .join("assets/sub/logo.png"),
-            b"PNG",
-        )
-        .unwrap();
+        std::fs::create_dir_all(src_root.path().join("assets/sub")).unwrap();
+        std::fs::write(src_root.path().join("assets/sub/logo.png"), b"PNG").unwrap();
 
         let files = vec![
             "assets/sub/logo.png".to_string(),
@@ -196,11 +175,7 @@ mod tests {
         ];
         let report = copy_files(&files, src_root.path(), dest.path()).unwrap();
 
-        assert!(
-            dest.path()
-                .join("assets/sub/logo.png")
-                .exists()
-        );
+        assert!(dest.path().join("assets/sub/logo.png").exists());
         assert_eq!(report.copied, ["assets/sub/logo.png".to_string()]);
         assert_eq!(report.missing, ["assets/missing.png".to_string()]);
         assert!(report.skipped.is_empty());
@@ -212,13 +187,7 @@ mod tests {
         let dest = tempfile::tempdir().unwrap();
 
         std::fs::create_dir_all(src_root.path().join("assets")).unwrap();
-        std::fs::write(
-            src_root
-                .path()
-                .join("assets/logo.png"),
-            b"PNG",
-        )
-        .unwrap();
+        std::fs::write(src_root.path().join("assets/logo.png"), b"PNG").unwrap();
         let files = vec!["assets/logo.png".to_string()];
 
         // First copy stages the file...
@@ -237,9 +206,7 @@ mod tests {
         let dest = tempfile::tempdir().unwrap();
 
         std::fs::create_dir_all(src_root.path().join("assets")).unwrap();
-        let src = src_root
-            .path()
-            .join("assets/logo.png");
+        let src = src_root.path().join("assets/logo.png");
         std::fs::write(&src, b"PNG").unwrap();
         let files = vec!["assets/logo.png".to_string()];
 
@@ -251,11 +218,7 @@ mod tests {
         let report = copy_files(&files, src_root.path(), dest.path()).unwrap();
         assert_eq!(report.copied, ["assets/logo.png".to_string()]);
         assert_eq!(
-            std::fs::read(
-                dest.path()
-                    .join("assets/logo.png")
-            )
-            .unwrap(),
+            std::fs::read(dest.path().join("assets/logo.png")).unwrap(),
             b"PNG-CHANGED"
         );
     }
@@ -290,11 +253,7 @@ mod tests {
         );
         sync_trunk_copy_entries_in(dir.path()).unwrap();
 
-        let contents = std::fs::read_to_string(
-            dir.path()
-                .join("builds/web/Trunk.toml"),
-        )
-        .unwrap();
+        let contents = std::fs::read_to_string(dir.path().join("builds/web/Trunk.toml")).unwrap();
         assert!(contents.contains(TRUNK_COPY_MARKER));
         assert!(contents.contains("[[copy]]\nfile = \"../../assets/logo.png\""));
         assert!(contents.contains("[[copy]]\nfile = \"../../assets/sprites/player.png\""));
@@ -310,11 +269,7 @@ mod tests {
         let dir = setup_trunk_sync(Some("assets/new.png"), &existing);
         sync_trunk_copy_entries_in(dir.path()).unwrap();
 
-        let contents = std::fs::read_to_string(
-            dir.path()
-                .join("builds/web/Trunk.toml"),
-        )
-        .unwrap();
+        let contents = std::fs::read_to_string(dir.path().join("builds/web/Trunk.toml")).unwrap();
         assert!(
             !contents.contains("old.png"),
             "stale entry should be removed"
@@ -330,11 +285,7 @@ mod tests {
         let dir = setup_trunk_sync(None, &existing);
         sync_trunk_copy_entries_in(dir.path()).unwrap();
 
-        let contents = std::fs::read_to_string(
-            dir.path()
-                .join("builds/web/Trunk.toml"),
-        )
-        .unwrap();
+        let contents = std::fs::read_to_string(dir.path().join("builds/web/Trunk.toml")).unwrap();
         assert!(!contents.contains(TRUNK_COPY_MARKER));
         assert!(!contents.contains("[[copy]]"));
         assert!(contents.contains("[serve]\nport = 3000"));

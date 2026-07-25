@@ -54,15 +54,11 @@ impl ScrollablePane {
     }
 
     pub fn scroll_up(&mut self, amount: u16) {
-        self.scroll = self
-            .scroll
-            .saturating_add(amount);
+        self.scroll = self.scroll.saturating_add(amount);
     }
 
     pub fn scroll_down(&mut self, amount: u16) {
-        self.scroll = self
-            .scroll
-            .saturating_sub(amount);
+        self.scroll = self.scroll.saturating_sub(amount);
     }
 
     pub fn reset(&mut self) {
@@ -189,8 +185,7 @@ impl AppState {
 
     /// Append a build log line (carriage returns stripped), capping history.
     pub fn push_build_log(&mut self, msg: String) {
-        self.build_logs
-            .push(msg.replace('\r', ""));
+        self.build_logs.push(msg.replace('\r', ""));
         if self.build_logs.len() > MAX_LINES {
             self.build_logs.remove(0);
         }
@@ -199,10 +194,7 @@ impl AppState {
     /// Append an app log line (carriage returns stripped, log styling applied),
     /// capping history.
     pub fn push_app_log(&mut self, msg: String) {
-        self.app_logs.push(
-            msg.replace('\r', "")
-                .process_log(),
-        );
+        self.app_logs.push(msg.replace('\r', "").process_log());
         if self.app_logs.len() > MAX_LINES {
             self.app_logs.remove(0);
         }
@@ -246,10 +238,7 @@ impl AppState {
     /// are inclusive, matching Vim's character-wise visual mode.
     pub fn selected_text(&self) -> Option<String> {
         let sel = self.selection?;
-        let logical = &self
-            .last_view
-            .as_ref()?
-            .logical;
+        let logical = &self.last_view.as_ref()?.logical;
         if logical.is_empty() {
             return None;
         }
@@ -267,11 +256,7 @@ impl AppState {
             }
             let start = ca.min(chars.len() - 1);
             let end = cb.min(chars.len() - 1);
-            Some(
-                chars[start..=end]
-                    .iter()
-                    .collect(),
-            )
+            Some(chars[start..=end].iter().collect())
         } else {
             let mut out = String::new();
             // First line: from `ca` to its end.
@@ -282,11 +267,7 @@ impl AppState {
             }
             out.push('\n');
             // Middle lines: in full.
-            for line in logical
-                .iter()
-                .take(lb)
-                .skip(la + 1)
-            {
+            for line in logical.iter().take(lb).skip(la + 1) {
                 out.push_str(line);
                 out.push('\n');
             }
@@ -522,10 +503,7 @@ mod tests {
         assert_eq!(state.build_logs.len(), MAX_LINES);
         // Oldest lines dropped; last line preserved.
         assert_eq!(
-            state
-                .build_logs
-                .last()
-                .unwrap(),
+            state.build_logs.last().unwrap(),
             &format!("line {}", MAX_LINES + 9)
         );
     }
@@ -558,10 +536,7 @@ mod tests {
             y: 0,
             height: 0,
             visible_rows: Vec::new(),
-            logical: logical
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            logical: logical.iter().map(|s| s.to_string()).collect(),
         });
         state
     }
@@ -596,12 +571,7 @@ mod tests {
             anchor: (0, 0),
             cursor: (0, 4),
         });
-        assert_eq!(
-            state
-                .selected_text()
-                .as_deref(),
-            Some("hello")
-        );
+        assert_eq!(state.selected_text().as_deref(), Some("hello"));
     }
 
     #[test]
@@ -611,12 +581,7 @@ mod tests {
             anchor: (0, 4),
             cursor: (0, 0),
         });
-        assert_eq!(
-            state
-                .selected_text()
-                .as_deref(),
-            Some("hello")
-        );
+        assert_eq!(state.selected_text().as_deref(), Some("hello"));
     }
 
     #[test]
@@ -627,12 +592,7 @@ mod tests {
             anchor: (0, 1),
             cursor: (2, 1),
         });
-        assert_eq!(
-            state
-                .selected_text()
-                .as_deref(),
-            Some("oo\nbar\nba")
-        );
+        assert_eq!(state.selected_text().as_deref(), Some("oo\nbar\nba"));
     }
 
     #[test]
@@ -642,12 +602,7 @@ mod tests {
             anchor: (0, 0),
             cursor: (0, 99),
         });
-        assert_eq!(
-            state
-                .selected_text()
-                .as_deref(),
-            Some("ab")
-        );
+        assert_eq!(state.selected_text().as_deref(), Some("ab"));
     }
 
     #[test]

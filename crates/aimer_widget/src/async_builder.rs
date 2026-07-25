@@ -47,14 +47,16 @@ pub struct SnapshotBuilder<B, T, E> {
 /// use aimer_widget::{AsyncBuilder, AsyncSnapshot, ErrorWidget, Widget};
 ///
 /// let user_id = 7_u64;
-/// let builder = AsyncBuilder::new()
-///     .request_key(user_id)
-///     .future(move || async move { Ok::<_, &'static str>(user_id) })
-///     .child(|snapshot| match snapshot {
-///         AsyncSnapshot::Waiting => ErrorWidget::new("Loading user").boxed(),
-///         AsyncSnapshot::Data(id) => ErrorWidget::new(format!("User {id}" )).boxed(),
-///         AsyncSnapshot::Error(error) => ErrorWidget::new(*error).boxed(),
-///     });
+/// let builder =
+///     AsyncBuilder::new().request_key(user_id)
+///                        .future(move || async move { Ok::<_, &'static str>(user_id) })
+///                        .child(|snapshot| match snapshot {
+///                            AsyncSnapshot::Waiting => ErrorWidget::new("Loading user").boxed(),
+///                            AsyncSnapshot::Data(id) => {
+///                                ErrorWidget::new(format!("User {id}")).boxed()
+///                            }
+///                            AsyncSnapshot::Error(error) => ErrorWidget::new(*error).boxed(),
+///                        });
 /// ```
 pub struct AsyncBuilder<K = (), F = RequiredChild, B = RequiredChild> {
     request_key: K,
@@ -200,9 +202,7 @@ impl<T, E> AsyncRuntime<T, E> {
         if let Some(handle) = inner.abort_handle.take() {
             handle.abort();
         }
-        inner.generation = inner
-            .generation
-            .wrapping_add(1);
+        inner.generation = inner.generation.wrapping_add(1);
         inner.revision = inner.revision.wrapping_add(1);
         inner.snapshot = AsyncSnapshot::Waiting;
         inner.started = false;
@@ -238,12 +238,7 @@ impl<T, E> AsyncRuntime<T, E> {
 
 impl<T, E> Drop for AsyncRuntime<T, E> {
     fn drop(&mut self) {
-        if let Some(handle) = self
-            .inner
-            .get_mut()
-            .abort_handle
-            .take()
-        {
+        if let Some(handle) = self.inner.get_mut().abort_handle.take() {
             handle.abort();
         }
     }
@@ -273,14 +268,8 @@ where
     fn create_state(&self) -> Self::State {
         AsyncBuilderState {
             request_key: self.request_key.clone(),
-            future_factory: self
-                .future_factory
-                .factory
-                .clone(),
-            snapshot_builder: self
-                .snapshot_builder
-                .builder
-                .clone(),
+            future_factory: self.future_factory.factory.clone(),
+            snapshot_builder: self.snapshot_builder.builder.clone(),
             runtime: Rc::new(AsyncRuntime::new()),
         }
     }
@@ -302,14 +291,8 @@ where
     fn create_state(&self) -> Self::State {
         AsyncBuilderState {
             request_key: self.request_key.clone(),
-            future_factory: self
-                .future_factory
-                .factory
-                .clone(),
-            snapshot_builder: self
-                .snapshot_builder
-                .builder
-                .clone(),
+            future_factory: self.future_factory.factory.clone(),
+            snapshot_builder: self.snapshot_builder.builder.clone(),
             runtime: Rc::new(AsyncRuntime::new()),
         }
     }
@@ -539,8 +522,7 @@ where
         };
         carry_child_state(self.current_child(), new_child.as_ref(), ctx);
         self.replace_child(new_child);
-        self.rendered_revision
-            .set(self.runtime.revision());
+        self.rendered_revision.set(self.runtime.revision());
     }
 }
 
@@ -558,13 +540,12 @@ where
             let future = (self.future_factory)();
             let sender = self.runtime.sender.clone();
             let window = ctx.window.clone();
-            ctx.async_handle
-                .spawn(async move {
-                    if let Ok(result) = Abortable::new(future, registration).await {
-                        let _ = sender.send(Completion { generation, result });
-                        window.request_redraw();
-                    }
-                });
+            ctx.async_handle.spawn(async move {
+                if let Ok(result) = Abortable::new(future, registration).await {
+                    let _ = sender.send(Completion { generation, result });
+                    window.request_redraw();
+                }
+            });
         }
         self.runtime.poll_completion();
         self.update_child(ctx);
@@ -620,13 +601,11 @@ where
 {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         self.refresh(ctx);
-        self.current_child()
-            .rebuild_if_dirty(ctx);
+        self.current_child().rebuild_if_dirty(ctx);
     }
 
     fn mark_needs_rebuild(&self) {
-        self.current_child()
-            .mark_needs_rebuild();
+        self.current_child().mark_needs_rebuild();
     }
 }
 
@@ -641,13 +620,11 @@ where
 {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         self.refresh(ctx);
-        self.current_child()
-            .rebuild_if_dirty(ctx);
+        self.current_child().rebuild_if_dirty(ctx);
     }
 
     fn mark_needs_rebuild(&self) {
-        self.current_child()
-            .mark_needs_rebuild();
+        self.current_child().mark_needs_rebuild();
     }
 }
 
@@ -691,18 +668,15 @@ impl<F, Fut, B, T, E> LayoutElement for AsyncFrameElement<F, Fut, B, T, E> {
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.current_child()
-            .layout(ctx)
+        self.current_child().layout(ctx)
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.current_child()
-            .computed_size(ctx)
+        self.current_child().computed_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.current_child()
-            .content_size(ctx)
+        self.current_child().content_size(ctx)
     }
 
     fn layer(&self) -> u32 {
@@ -714,18 +688,15 @@ impl<F, Fut, B, T, E> LayoutElement for AsyncFrameElement<F, Fut, B, T, E> {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.current_child()
-            .get_size_from_child()
+        self.current_child().get_size_from_child()
     }
 
     fn invalidate_layout(&self) {
-        self.current_child()
-            .invalidate_layout();
+        self.current_child().invalidate_layout();
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.current_child()
-            .pos_start_end()
+        self.current_child().pos_start_end()
     }
 }
 
@@ -856,10 +827,7 @@ mod tests {
         assert_eq!(launches.load(Ordering::SeqCst), 1);
 
         tokio::task::yield_now().await;
-        assert!(
-            ctx.window
-                .take_redraw_request()
-        );
+        assert!(ctx.window.take_redraw_request());
         element.rebuild_if_dirty(&ctx);
 
         assert!(contains(element.as_ref(), "Data"));
@@ -935,10 +903,7 @@ mod tests {
     #[test]
     fn stale_completion_cannot_replace_a_newer_generation() {
         let runtime = super::AsyncRuntime::<usize, &'static str>::new();
-        let old_generation = runtime
-            .inner
-            .borrow()
-            .generation;
+        let old_generation = runtime.inner.borrow().generation;
         runtime.reset();
         runtime
             .sender
@@ -951,10 +916,7 @@ mod tests {
         runtime.poll_completion();
 
         assert!(matches!(
-            runtime
-                .inner
-                .borrow()
-                .snapshot,
+            runtime.inner.borrow().snapshot,
             AsyncSnapshot::Waiting
         ));
     }
@@ -964,8 +926,7 @@ mod tests {
         struct DropGuard(Arc<AtomicUsize>);
         impl Drop for DropGuard {
             fn drop(&mut self) {
-                self.0
-                    .fetch_add(1, Ordering::SeqCst);
+                self.0.fetch_add(1, Ordering::SeqCst);
             }
         }
 

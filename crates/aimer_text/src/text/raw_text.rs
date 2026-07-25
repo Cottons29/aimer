@@ -10,8 +10,9 @@ use aimer_widget::{TextOverflowMode, *};
 
 /// Low-level element that lays out and paints one run of text.
 ///
-/// [`crate::Text`] is the usual constructor. Direct construction requires callers to provide a
-/// fresh [`LayoutCache`] and typeface slot in addition to the text, style, and alignment.
+/// [`crate::Text`] is the usual constructor. Direct construction requires
+/// callers to provide a fresh [`LayoutCache`] and typeface slot in addition to
+/// the text, style, and alignment.
 #[derive(Rebuildable, EventElement)]
 pub struct RawTextWidget {
     pub text: Rc<str>,
@@ -38,9 +39,7 @@ impl Drawable for RawTextWidget {
         #[cfg(debug_assertions)]
         {
             if inspector_overlay::is_enabled() {
-                let (start_x, start_y) = ctx
-                    .canvas
-                    .get_transform_translation();
+                let (start_x, start_y) = ctx.canvas.get_transform_translation();
                 let size = self.content_size(ctx);
                 let end_x = start_x + size.width;
                 let end_y = start_y + size.height;
@@ -76,18 +75,14 @@ impl Drawable for RawTextWidget {
         } else {
             0.0
         };
-        let metrics = ctx
-            .canvas
-            .measure_text_metrics_styled(
-                &self.text,
-                font_size,
-                max_width,
-                self.text_style.font_family,
-                self.text_style.font_style,
-                self.text_style
-                    .font_weight
-                    .numeric(),
-            );
+        let metrics = ctx.canvas.measure_text_metrics_styled(
+            &self.text,
+            font_size,
+            max_width,
+            self.text_style.font_family,
+            self.text_style.font_style,
+            self.text_style.font_weight.numeric(),
+        );
         let ascent = metrics.ascent;
         let descent = -metrics.descent;
         let x = 0.0;
@@ -105,10 +100,7 @@ impl Drawable for RawTextWidget {
         };
 
         let color = self.text_style.color;
-        let font_weight = self
-            .text_style
-            .font_weight
-            .numeric();
+        let font_weight = self.text_style.font_weight.numeric();
 
         // Synthetic italic is carried on the decoration line set; enable it on the
         // canvas so the glyphs are sheared, then reset it after the text is drawn.
@@ -127,70 +119,66 @@ impl Drawable for RawTextWidget {
                 let width = ctx.parent_size.width;
                 ctx.canvas
                     .set_clip((0.0, 0.0).into(), ResolvedSize { width, height });
-                ctx.canvas
-                    .draw_text_aligned_with_overflow_styled(
-                        &self.text,
-                        (x, y).into(),
-                        font_size,
-                        color,
-                        width,
-                        height,
-                        TextOverflowMode::Wrap,
-                        horizontal_align,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
-                        font_weight,
-                    );
+                ctx.canvas.draw_text_aligned_with_overflow_styled(
+                    &self.text,
+                    (x, y).into(),
+                    font_size,
+                    color,
+                    width,
+                    height,
+                    TextOverflowMode::Wrap,
+                    horizontal_align,
+                    self.text_style.font_family,
+                    self.text_style.font_style,
+                    font_weight,
+                );
                 ctx.canvas.clear_clip();
                 ctx.canvas.restore();
             }
             TextOverflow::Ellipsis => {
-                ctx.canvas
-                    .draw_text_aligned_with_overflow_styled(
-                        &self.text,
-                        (x, y).into(),
-                        font_size,
-                        color,
-                        width,
-                        height,
-                        TextOverflowMode::Ellipsis,
-                        horizontal_align,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
-                        font_weight,
-                    );
+                ctx.canvas.draw_text_aligned_with_overflow_styled(
+                    &self.text,
+                    (x, y).into(),
+                    font_size,
+                    color,
+                    width,
+                    height,
+                    TextOverflowMode::Ellipsis,
+                    horizontal_align,
+                    self.text_style.font_family,
+                    self.text_style.font_style,
+                    font_weight,
+                );
             }
             TextOverflow::Wrap => {
-                ctx.canvas
-                    .draw_text_aligned_with_overflow_styled(
-                        &self.text,
-                        (x, y).into(),
-                        font_size,
-                        color,
-                        width,
-                        height,
-                        TextOverflowMode::Wrap,
-                        horizontal_align,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
-                        font_weight,
-                    );
+                ctx.canvas.draw_text_aligned_with_overflow_styled(
+                    &self.text,
+                    (x, y).into(),
+                    font_size,
+                    color,
+                    width,
+                    height,
+                    TextOverflowMode::Wrap,
+                    horizontal_align,
+                    self.text_style.font_family,
+                    self.text_style.font_style,
+                    font_weight,
+                );
             }
             _ => {
-                ctx.canvas
-                    .draw_text_aligned_with_overflow_styled(
-                        &self.text,
-                        (x, y).into(),
-                        font_size,
-                        color,
-                        width,
-                        height,
-                        TextOverflowMode::Clip,
-                        horizontal_align,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
-                        font_weight,
-                    );
+                ctx.canvas.draw_text_aligned_with_overflow_styled(
+                    &self.text,
+                    (x, y).into(),
+                    font_size,
+                    color,
+                    width,
+                    height,
+                    TextOverflowMode::Clip,
+                    horizontal_align,
+                    self.text_style.font_family,
+                    self.text_style.font_style,
+                    font_weight,
+                );
             }
         }
 
@@ -198,25 +186,19 @@ impl Drawable for RawTextWidget {
             ctx.canvas.set_italic(false);
         }
 
-        let decoration = self
-            .text_style
-            .text_decoration;
+        let decoration = self.text_style.text_decoration;
         if !decoration.line.is_none() {
-            let line_widths = ctx
-                .canvas
-                .measure_text_line_widths_styled(
-                    &self.text,
-                    font_size,
-                    max_width,
-                    self.text_style.font_family,
-                    self.text_style.font_style,
-                    font_weight,
-                );
+            let line_widths = ctx.canvas.measure_text_line_widths_styled(
+                &self.text,
+                font_size,
+                max_width,
+                self.text_style.font_family,
+                self.text_style.font_style,
+                font_weight,
+            );
             let scale = ctx.scale;
             // Dedicated decoration color, else inherit the text color.
-            let deco_color = decoration
-                .color
-                .unwrap_or(color);
+            let deco_color = decoration.color.unwrap_or(color);
             // User thickness/offset are logical px; scale them like the font.
             let thickness = decoration
                 .thickness
@@ -238,41 +220,28 @@ impl Drawable for RawTextWidget {
             let emit = |center_y: f32, line_width: f32| {
                 let band_top = center_y - band_height / 2.0;
                 let line_x = horizontal_alignment_offset(self.text_align, width, line_width);
-                ctx.canvas
-                    .draw_text_decoration(
-                        (line_x, band_top).into(),
-                        ResolvedSize {
-                            width: line_width,
-                            height: band_height,
-                        },
-                        deco_color,
-                        style_id,
-                        thickness,
-                        period,
-                    );
+                ctx.canvas.draw_text_decoration(
+                    (line_x, band_top).into(),
+                    ResolvedSize {
+                        width: line_width,
+                        height: band_height,
+                    },
+                    deco_color,
+                    style_id,
+                    thickness,
+                    period,
+                );
             };
 
-            for (index, line_width) in line_widths
-                .into_iter()
-                .enumerate()
-            {
+            for (index, line_width) in line_widths.into_iter().enumerate() {
                 let baseline = y + index as f32 * metrics.line_height;
-                if decoration
-                    .line
-                    .contains(TextDecorationLine::UNDERLINE)
-                {
+                if decoration.line.contains(TextDecorationLine::UNDERLINE) {
                     emit(baseline + descent.max(1.0) * 0.5 + offset, line_width);
                 }
-                if decoration
-                    .line
-                    .contains(TextDecorationLine::LINE_THROUGH)
-                {
+                if decoration.line.contains(TextDecorationLine::LINE_THROUGH) {
                     emit(baseline - ascent * 0.35 + offset, line_width);
                 }
-                if decoration
-                    .line
-                    .contains(TextDecorationLine::OVERLINE)
-                {
+                if decoration.line.contains(TextDecorationLine::OVERLINE) {
                     emit(baseline - ascent + offset, line_width);
                 }
             }
@@ -315,10 +284,7 @@ fn vertical_alignment_baseline(
 impl LayoutElement for RawTextWidget {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
-        if let Some(cached) = self
-            .cache
-            .get_computed(ctx.box_constraint, scale_bits)
-        {
+        if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
             return cached;
         }
 
@@ -331,18 +297,14 @@ impl LayoutElement for RawTextWidget {
                 } else {
                     ctx.parent_size.width
                 };
-                let metrics = ctx
-                    .canvas
-                    .measure_text_metrics_styled(
-                        &self.text,
-                        font_size,
-                        width,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
-                        self.text_style
-                            .font_weight
-                            .numeric(),
-                    );
+                let metrics = ctx.canvas.measure_text_metrics_styled(
+                    &self.text,
+                    font_size,
+                    width,
+                    self.text_style.font_family,
+                    self.text_style.font_style,
+                    self.text_style.font_weight.numeric(),
+                );
 
                 ResolvedSize {
                     width,
@@ -350,18 +312,14 @@ impl LayoutElement for RawTextWidget {
                 }
             }
             _ => {
-                let metrics = ctx
-                    .canvas
-                    .measure_text_metrics_styled(
-                        &self.text,
-                        font_size,
-                        0.0,
-                        self.text_style.font_family,
-                        self.text_style.font_style,
-                        self.text_style
-                            .font_weight
-                            .numeric(),
-                    );
+                let metrics = ctx.canvas.measure_text_metrics_styled(
+                    &self.text,
+                    font_size,
+                    0.0,
+                    self.text_style.font_family,
+                    self.text_style.font_style,
+                    self.text_style.font_weight.numeric(),
+                );
                 ResolvedSize {
                     width: metrics.width.ceil(),
                     height: metrics.height.ceil(),

@@ -1,16 +1,16 @@
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
+use aimer_container::ZeroSizedBox;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
     VisitorElement, Widget,
 };
 
-use aimer_container::ZeroSizedBox;
-
 #[allow(dead_code)]
-/// Positions and transforms one child relative to its parent, typically a [`crate::Stack`].
+/// Positions and transforms one child relative to its parent, typically a
+/// [`crate::Stack`].
 ///
 /// Attach a child with [`Positioned::child`] to retain its concrete type, or
 /// with [`Positioned::box_child`] when branches need a shared erased type.
@@ -107,9 +107,10 @@ impl<W: Widget + 'static> Positioned<W> {
 
     /// Replaces the additional paint transform.
     ///
-    /// The default is [`Transform::None`]. Translation values use logical pixels,
-    /// rotation uses radians, and scale values are dimensionless. The transform
-    /// affects painting rather than the child's measured layout size.
+    /// The default is [`Transform::None`]. Translation values use logical
+    /// pixels, rotation uses radians, and scale values are dimensionless.
+    /// The transform affects painting rather than the child's measured
+    /// layout size.
     pub fn transform(mut self, transform: Transform) -> Self {
         self.transform = transform;
         self
@@ -117,7 +118,8 @@ impl<W: Widget + 'static> Positioned<W> {
 
     /// Sets the z-order layer used by layered parents such as [`crate::Stack`].
     ///
-    /// The default is `0`; higher layers paint later in a normal-direction stack.
+    /// The default is `0`; higher layers paint later in a normal-direction
+    /// stack.
     pub fn layer(mut self, layer: u32) -> Self {
         self.layer = layer;
         self
@@ -256,26 +258,18 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
 
         if !is_auto {
             if self.left != Dimension::Auto {
-                offset_x = self
-                    .left
-                    .resolve(ctx.parent_size.width, ctx.scale);
+                offset_x = self.left.resolve(ctx.parent_size.width, ctx.scale);
             } else if self.right != Dimension::Auto {
                 offset_x = ctx.parent_size.width
-                    - self
-                        .right
-                        .resolve(ctx.parent_size.width, ctx.scale)
+                    - self.right.resolve(ctx.parent_size.width, ctx.scale)
                     - child_size.width;
             }
 
             if self.top != Dimension::Auto {
-                offset_y = self
-                    .top
-                    .resolve(ctx.parent_size.height, ctx.scale);
+                offset_y = self.top.resolve(ctx.parent_size.height, ctx.scale);
             } else if self.bottom != Dimension::Auto {
                 offset_y = ctx.parent_size.height
-                    - self
-                        .bottom
-                        .resolve(ctx.parent_size.height, ctx.scale)
+                    - self.bottom.resolve(ctx.parent_size.height, ctx.scale)
                     - child_size.height;
             }
         }
@@ -287,16 +281,13 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
 
         match &self.transform {
             Transform::Translate(tx, ty) => {
-                ctx.canvas
-                    .translate(Vec2d { x: *tx, y: *ty });
+                ctx.canvas.translate(Vec2d { x: *tx, y: *ty });
             }
             Transform::TranslateX(tx) => {
-                ctx.canvas
-                    .translate(Vec2d { x: *tx, y: 0.0 });
+                ctx.canvas.translate(Vec2d { x: *tx, y: 0.0 });
             }
             Transform::TranslateY(ty) => {
-                ctx.canvas
-                    .translate(Vec2d { x: 0.0, y: *ty });
+                ctx.canvas.translate(Vec2d { x: 0.0, y: *ty });
             }
             Transform::Scale(sx, sy) => {
                 ctx.canvas.scale(*sx, *sy);
@@ -411,14 +402,12 @@ impl<E: Element> LayoutElement for RawPositionedElement<E> {
 impl<E: Element + 'static> Rebuildable for RawPositionedElement<E> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         // eprintln!("[diag] Positioned.rebuild_if_dirty -> child");
-        self.child
-            .rebuild_if_dirty(ctx);
+        self.child.rebuild_if_dirty(ctx);
     }
 
     fn mark_needs_rebuild(&self) {
         // eprintln!("[diag] Positioned.mark_needs_rebuild -> child");
-        self.child
-            .mark_needs_rebuild();
+        self.child.mark_needs_rebuild();
     }
 }
 #[cfg(test)]

@@ -23,9 +23,7 @@ impl VersionCommand {
 
         let cargo_version = cargo_handle.join().unwrap();
         let rust_version = rust_handle.join().unwrap();
-        let binary_hash = binary_hash_handle
-            .join()
-            .unwrap();
+        let binary_hash = binary_hash_handle.join().unwrap();
 
         // Rainbow gradient 🌈
         let gradient = [
@@ -55,10 +53,7 @@ impl VersionCommand {
         let formatted_buildtime = format!("Build Time: {}", build_time.green().bold());
         let formatted_version = format!(
             "Current Version is {} ({})",
-            VERSION
-                .to_string()
-                .green()
-                .bold(),
+            VERSION.to_string().green().bold(),
             current_os_name.green()
         );
 
@@ -99,9 +94,7 @@ impl VersionCommand {
             println!(
                 " {}     {}",
                 line.color(gradient[color_index]),
-                messages
-                    .get(i)
-                    .unwrap_or(&"".to_string())
+                messages.get(i).unwrap_or(&"".to_string())
             );
         }
     }
@@ -117,10 +110,7 @@ impl VersionCommand {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let version = stdout
-            .split_whitespace()
-            .nth(1)?
-            .to_string();
+        let version = stdout.split_whitespace().nth(1)?.to_string();
 
         Some(version)
     }
@@ -136,10 +126,7 @@ impl VersionCommand {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let version = stdout
-            .split_whitespace()
-            .nth(1)?
-            .to_string();
+        let version = stdout.split_whitespace().nth(1)?.to_string();
 
         Some(version)
     }
@@ -169,8 +156,7 @@ mod tests {
         assert!(!v.is_empty());
         // Should look like a version number (contains digits)
         assert!(
-            v.chars()
-                .any(|c| c.is_numeric()),
+            v.chars().any(|c| c.is_numeric()),
             "Rust version '{}' should contain digits",
             v
         );
@@ -183,8 +169,7 @@ mod tests {
         let v = version.unwrap();
         assert!(!v.is_empty());
         assert!(
-            v.chars()
-                .any(|c| c.is_numeric()),
+            v.chars().any(|c| c.is_numeric()),
             "Cargo version '{}' should contain digits",
             v
         );

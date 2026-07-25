@@ -1,11 +1,12 @@
 use std::path::Path;
 use std::process::Command;
 
+use anyhow::{Context, bail};
+
 use crate::commands::run::web::{configure_trunk, find_llvm_ar};
 use crate::config::AimerManifest;
 use crate::errors::AimerError;
 use crate::targets::Targets;
-use anyhow::{Context, bail};
 
 /// Non-interactive build entry point used by `aimer build`.
 ///
@@ -43,10 +44,7 @@ fn resolve_target(target: Option<String>) -> anyhow::Result<Targets> {
     let manifest_default = AimerManifest::load_from(Path::new("."))
         .ok()
         .flatten()
-        .and_then(|m| {
-            m.default_target()
-                .map(|s| s.to_string())
-        });
+        .and_then(|m| m.default_target().map(|s| s.to_string()));
     if let Some(default) = manifest_default {
         return Targets::try_from(default.as_str())
             .map_err(|_| AimerError::UnknownTarget(default).into());
@@ -72,8 +70,7 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
 
                 configure_trunk(&mut c, &llvm_ar);
             }
-            c.arg("build")
-                .current_dir("builds/web");
+            c.arg("build").current_dir("builds/web");
             if release {
                 c.arg("--release");
             }

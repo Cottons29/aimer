@@ -1,3 +1,7 @@
+use std::cell::UnsafeCell;
+use std::rc::Rc;
+use std::time::Duration;
+
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
@@ -6,9 +10,6 @@ use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, Key, LayoutElement, Rebuildable, State,
     StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
-use std::cell::UnsafeCell;
-use std::rc::Rc;
-use std::time::Duration;
 
 use crate::control::controller::AnimationController;
 use crate::local_cell::LocalCell;
@@ -143,29 +144,22 @@ where
         self.duration = new.duration;
         self.curve = new.curve;
         self.builder = new.builder.clone();
-        self.controller
-            .set_duration(new.duration);
-        self.controller
-            .set_curve(new.curve);
+        self.controller.set_duration(new.duration);
+        self.controller.set_curve(new.curve);
 
         if self.target != new.target {
             let current = self.tween.with(|tween| {
                 tween
                     .as_ref()
                     .map(|tween| tween.lerp(self.controller.value()))
-                    .unwrap_or_else(|| {
-                        self.current
-                            .with(Clone::clone)
-                    })
+                    .unwrap_or_else(|| self.current.with(Clone::clone))
             });
-            self.current
-                .with_mut(|value| *value = current.clone());
+            self.current.with_mut(|value| *value = current.clone());
             self.tween
                 .with_mut(|tween| *tween = Some(Tween::new(current, new.target.clone())));
             self.target = new.target.clone();
             self.controller.reset();
-            self.controller
-                .forward_from_first_tick();
+            self.controller.forward_from_first_tick();
             request_next_frame();
         }
     }
@@ -191,9 +185,7 @@ struct ImplicitAnimatedFrame<T: Animatable + Clone + 'static> {
 
 impl<T: Animatable + Clone + 'static> Widget for ImplicitAnimatedFrame<T> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let value = self
-            .current
-            .with(Clone::clone);
+        let value = self.current.with(Clone::clone);
         let child = (self.builder)(&value, ctx);
         ImplicitAnimatedElement {
             child: UnsafeCell::new(child),
@@ -221,20 +213,14 @@ unsafe impl<T: Animatable + Clone + 'static> Sync for ImplicitAnimatedElement<T>
 
 impl<T: Animatable + Clone + 'static> Drawable for ImplicitAnimatedElement<T> {
     fn draw(&self, ctx: &BuildContext) {
-        let progress = self
-            .controller
-            .tick(AnimInstant::now());
+        let progress = self.controller.tick(AnimInstant::now());
         let value = self.tween.with(|tween| {
             tween
                 .as_ref()
                 .map(|tween| tween.lerp(progress))
-                .unwrap_or_else(|| {
-                    self.current
-                        .with(Clone::clone)
-                })
+                .unwrap_or_else(|| self.current.with(Clone::clone))
         });
-        self.current
-            .with_mut(|current| *current = value.clone());
+        self.current.with_mut(|current| *current = value.clone());
         unsafe { *self.child.get() = (self.builder)(&value, ctx) };
         unsafe { &*self.child.get() }.draw(ctx);
 
@@ -400,10 +386,7 @@ mod tests {
         element.draw(&ctx);
 
         assert_eq!(test_frame_requester::count(), 1);
-        assert!(
-            !ctx.window
-                .take_redraw_request()
-        );
+        assert!(!ctx.window.take_redraw_request());
     }
 
     #[test]
@@ -418,20 +401,14 @@ mod tests {
             assert_eq!(tween.begin, 2.0);
             assert_eq!(tween.end, 10.0);
         });
-        assert!(
-            state
-                .controller
-                .is_animating()
-        );
+        assert!(state.controller.is_animating());
     }
 
     #[test]
     fn interrupted_animation_retargets_from_sampled_value() {
         let mut state = widget(0.0).create_state();
         state.adopt_config_from(&widget(10.0).create_state());
-        state
-            .controller
-            .set_value(0.5);
+        state.controller.set_value(0.5);
 
         state.adopt_config_from(&widget(20.0).create_state());
 
@@ -448,15 +425,7 @@ mod tests {
 
         state.adopt_config_from(&widget(3.0).create_state());
 
-        assert!(
-            state
-                .tween
-                .with(Option::is_none)
-        );
-        assert!(
-            !state
-                .controller
-                .is_animating()
-        );
+        assert!(state.tween.with(Option::is_none));
+        assert!(!state.controller.is_animating());
     }
 }

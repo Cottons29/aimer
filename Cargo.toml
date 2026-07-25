@@ -154,7 +154,7 @@ lyon = "1.0.19"
 usvg = { version = "0.47.0", default-features = false }
 naga = { version = "30.0.0", features = ["wgsl-in"] }
 arborium = "2.18.0"
-
+muda = "0.19.3"
 
 
 

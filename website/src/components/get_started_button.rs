@@ -47,9 +47,7 @@ impl StatelessWidget for HoverableGetStartedButton {
                                 .width(24)
                                 .height(24)
                                 .boxed(),
-                            SizedBox::new()
-                                .width(20)
-                                .boxed(),
+                            SizedBox::new().width(20).boxed(),
                             Text::new("Get Started!")
                                 .text_align(TextAlign::MidCenter)
                                 .text_style(

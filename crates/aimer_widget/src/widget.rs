@@ -190,8 +190,7 @@ mod tests {
 
     impl<const N: usize> Drop for DroppingWidget<N> {
         fn drop(&mut self) {
-            self.drops
-                .set(self.drops.get() + 1);
+            self.drops.set(self.drops.get() + 1);
         }
     }
 

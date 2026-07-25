@@ -34,8 +34,7 @@ pub mod server {
     impl InspectorHandle {
         /// Returns `true` if the inspector is currently active.
         pub fn is_enabled(&self) -> bool {
-            self.enabled
-                .load(Ordering::Relaxed)
+            self.enabled.load(Ordering::Relaxed)
         }
 
         pub fn get_address(&self) -> String {
@@ -44,8 +43,7 @@ pub mod server {
 
         /// Toggle the inspector on/off and broadcast the new status.
         pub fn set_enabled(&self, enabled: bool) {
-            self.enabled
-                .store(enabled, Ordering::Relaxed);
+            self.enabled.store(enabled, Ordering::Relaxed);
             {
                 let mut s = self.state.lock().unwrap();
                 s.enabled = enabled;
@@ -58,11 +56,8 @@ pub mod server {
 
         /// Send a toggle command through the broadcast channel.
         pub fn send_toggle(&self) {
-            let new_val = !self
-                .enabled
-                .load(Ordering::Relaxed);
-            self.enabled
-                .store(new_val, Ordering::Relaxed);
+            let new_val = !self.enabled.load(Ordering::Relaxed);
+            self.enabled.store(new_val, Ordering::Relaxed);
             {
                 let mut s = self.state.lock().unwrap();
                 s.enabled = new_val;
@@ -276,9 +271,7 @@ pub mod server {
                 });
                 crate::types::WidgetNode {
                     id,
-                    name: element
-                        .debug_name()
-                        .to_string(),
+                    name: element.debug_name().to_string(),
                     element_type: std::any::type_name_of_val(element)
                         .rsplit("::")
                         .next()
@@ -307,8 +300,7 @@ pub mod server {
     impl InspectorAppHandle {
         /// Returns `true` if the inspector is currently active.
         pub fn is_enabled(&self) -> bool {
-            self.enabled
-                .load(Ordering::Relaxed)
+            self.enabled.load(Ordering::Relaxed)
         }
 
         /// Send a widget tree snapshot to the CLI server.
@@ -405,13 +397,11 @@ pub mod server {
 
     impl InspectorHandle {
         pub fn is_enabled(&self) -> bool {
-            self.enabled
-                .load(Ordering::Relaxed)
+            self.enabled.load(Ordering::Relaxed)
         }
 
         pub fn set_enabled(&self, enabled: bool) {
-            self.enabled
-                .store(enabled, Ordering::Relaxed);
+            self.enabled.store(enabled, Ordering::Relaxed);
             inspector_overlay::set_enabled(enabled);
             let msg = InspectorMessage::Status { enabled };
             if let Ok(json) = serde_json::to_string(&msg) {
@@ -483,11 +473,7 @@ pub mod server {
             }
         });
 
-        ws.set_onmessage(Some(
-            onmessage_callback
-                .as_ref()
-                .unchecked_ref(),
-        ));
+        ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
         onmessage_callback.forget();
 
         InspectorHandle {
@@ -517,9 +503,7 @@ pub mod server {
             });
             WidgetNode {
                 id,
-                name: element
-                    .debug_name()
-                    .to_string(),
+                name: element.debug_name().to_string(),
                 element_type: std::any::type_name_of_val(element)
                     .rsplit("::")
                     .next()

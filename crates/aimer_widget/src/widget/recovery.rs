@@ -1,8 +1,7 @@
 use std::backtrace::Backtrace;
-use std::fmt;
-
 #[cfg(panic = "unwind")]
 use std::ffi::OsStr;
+use std::fmt;
 #[cfg(panic = "unwind")]
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -165,11 +164,7 @@ mod tests {
             backtrace: None,
         };
 
-        assert!(
-            !diagnostic
-                .to_string()
-                .contains("Backtrace:")
-        );
+        assert!(!diagnostic.to_string().contains("Backtrace:"));
     }
 
     #[test]
@@ -181,11 +176,7 @@ mod tests {
             backtrace: Some(Backtrace::disabled()),
         };
 
-        assert!(
-            diagnostic
-                .to_string()
-                .contains("Backtrace:")
-        );
+        assert!(diagnostic.to_string().contains("Backtrace:"));
     }
 
     #[test]
@@ -195,11 +186,7 @@ mod tests {
         })
         .expect_err("panic should be recovered");
 
-        assert!(
-            diagnostic
-                .to_string()
-                .contains("owned panic message")
-        );
+        assert!(diagnostic.to_string().contains("owned panic message"));
     }
 
     #[test]
@@ -209,10 +196,6 @@ mod tests {
         })
         .expect_err("panic should be recovered");
 
-        assert!(
-            diagnostic
-                .to_string()
-                .contains("non-string panic payload")
-        );
+        assert!(diagnostic.to_string().contains("non-string panic payload"));
     }
 }

@@ -18,9 +18,7 @@ pub fn auto_impl(trait_name: &str, input: TokenStream) -> TokenStream {
         }
     };
     let name = input.ident;
-    let (impl_generics, ty_generics, where_clause) = input
-        .generics
-        .split_for_impl();
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     quote! {
         impl #impl_generics #trait_path for #name #ty_generics  #where_clause {}

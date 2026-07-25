@@ -20,13 +20,15 @@ use crate::RawTextWidget;
 
 /// A label-sized text control that responds to primary presses.
 ///
-/// The control lays out exactly like its text and has no container or padding. Its normal, hover,
-/// and disabled styles each default to [`TextStyle::default`]; explicit color builders override the
-/// color of the corresponding style. Wrapped labels shrink to their intrinsic width when space is
-/// available and use the available width only when wrapping is necessary. For wrapped labels, each
-/// line is hit-tested only across its rendered width, so blank space after a short line is not
-/// interactive. A press fires on pointer-up only when pointer-down and pointer-up both occur inside
-/// the label. Disabled controls neither hover nor invoke callbacks.
+/// The control lays out exactly like its text and has no container or padding.
+/// Its normal, hover, and disabled styles each default to
+/// [`TextStyle::default`]; explicit color builders override the color of the
+/// corresponding style. Wrapped labels shrink to their intrinsic width when
+/// space is available and use the available width only when wrapping is
+/// necessary. For wrapped labels, each line is hit-tested only across its
+/// rendered width, so blank space after a short line is not interactive. A
+/// press fires on pointer-up only when pointer-down and pointer-up both occur
+/// inside the label. Disabled controls neither hover nor invoke callbacks.
 ///
 /// # Example
 ///
@@ -34,9 +36,8 @@ use crate::RawTextWidget;
 /// use aimer_text::TextButton;
 /// use aimer_widget::base::Color;
 ///
-/// let button = TextButton::new("Learn more")
-///     .color(Color::BLUE)
-///     .on_press(|| println!("open"));
+/// let button = TextButton::new("Learn more").color(Color::BLUE)
+///                                           .on_press(|| println!("open"));
 /// ```
 #[derive(Clone)]
 pub struct TextButton {
@@ -60,9 +61,11 @@ impl TextButton {
     /// Conventional disabled color available to callers.
     pub const DISABLED_COLOR: Color = Color::GRAY;
 
-    /// Creates an enabled text button with `label`, default styles, and no-op callbacks.
+    /// Creates an enabled text button with `label`, default styles, and no-op
+    /// callbacks.
     ///
-    /// The color constants are not applied automatically; configure them with the color builders.
+    /// The color constants are not applied automatically; configure them with
+    /// the color builders.
     pub fn new(label: impl Into<Rc<str>>) -> Self {
         Self {
             disabled: false,
@@ -122,13 +125,15 @@ impl TextButton {
 
     /// Sets the callback invoked for every completed primary press.
     ///
-    /// Both the first and second presses of a double press invoke this callback.
+    /// Both the first and second presses of a double press invoke this
+    /// callback.
     pub fn on_press(mut self, callback: impl Into<VoidCallback>) -> Self {
         self.on_press = callback.into();
         self
     }
 
-    /// Sets the callback additionally invoked when two presses finish within 500 milliseconds.
+    /// Sets the callback additionally invoked when two presses finish within
+    /// 500 milliseconds.
     pub fn on_double_press(mut self, callback: impl Into<VoidCallback>) -> Self {
         self.on_double_press = callback.into();
         self
@@ -205,11 +210,7 @@ impl TextHitBounds {
     ) {
         let mut lines = self.lines.borrow_mut();
         lines.clear();
-        for (index, width) in line_widths
-            .iter()
-            .copied()
-            .enumerate()
-        {
+        for (index, width) in line_widths.iter().copied().enumerate() {
             let offset_y = index as f32 * line_height;
             let height = line_height.min((total_height - offset_y).max(0.0));
             let bounds = CacheBounds::new();
@@ -264,15 +265,8 @@ impl RawTextButton {
         f32,
     ) {
         let mut intrinsic_text = self.text_element();
-        let wraps = matches!(
-            intrinsic_text
-                .text_style
-                .text_overflow,
-            TextOverflow::Wrap
-        );
-        intrinsic_text
-            .text_style
-            .text_overflow = TextOverflow::Clip;
+        let wraps = matches!(intrinsic_text.text_style.text_overflow, TextOverflow::Wrap);
+        intrinsic_text.text_style.text_overflow = TextOverflow::Clip;
         let intrinsic_size = intrinsic_text.computed_size(ctx);
 
         let mut text_ctx = ctx.clone();
@@ -282,12 +276,8 @@ impl RawTextButton {
             } else {
                 ctx.parent_size.width
             };
-            let width = intrinsic_size
-                .width
-                .min(available_width);
-            text_ctx
-                .box_constraint
-                .max_width = width;
+            let width = intrinsic_size.width.min(available_width);
+            text_ctx.box_constraint.max_width = width;
             text_ctx.parent_size.width = width;
         }
 
@@ -299,30 +289,22 @@ impl RawTextButton {
         };
         let (line_widths, line_height) = if wraps {
             let font_size = text.font_size(text_ctx.scale);
-            let metrics = text_ctx
-                .canvas
-                .measure_text_metrics_styled(
-                    &text.text,
-                    font_size,
-                    text_ctx.parent_size.width,
-                    text.text_style.font_family,
-                    text.text_style.font_style,
-                    text.text_style
-                        .font_weight
-                        .numeric(),
-                );
-            let widths = text_ctx
-                .canvas
-                .measure_text_line_widths_styled(
-                    &text.text,
-                    font_size,
-                    text_ctx.parent_size.width,
-                    text.text_style.font_family,
-                    text.text_style.font_style,
-                    text.text_style
-                        .font_weight
-                        .numeric(),
-                );
+            let metrics = text_ctx.canvas.measure_text_metrics_styled(
+                &text.text,
+                font_size,
+                text_ctx.parent_size.width,
+                text.text_style.font_family,
+                text.text_style.font_style,
+                text.text_style.font_weight.numeric(),
+            );
+            let widths = text_ctx.canvas.measure_text_line_widths_styled(
+                &text.text,
+                font_size,
+                text_ctx.parent_size.width,
+                text.text_style.font_family,
+                text.text_style.font_style,
+                text.text_style.font_weight.numeric(),
+            );
             (widths, metrics.line_height)
         } else {
             (vec![size.width], size.height)
@@ -337,9 +319,7 @@ impl RawTextButton {
         line_widths: &[f32],
         line_height: f32,
     ) {
-        let (x, y) = ctx
-            .canvas
-            .get_transform_translation();
+        let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds
             .save(ctx.scale, x, y, line_widths, line_height, size.height);
     }
@@ -393,24 +373,16 @@ impl EventElement for RawTextButton {
     fn on_event(&self, event: &ElementEvent) -> bool {
         match event {
             ElementEvent::PointerMove(pos, PointerSource::Mouse, _) => {
-                self.set_hovered(
-                    self.bounds
-                        .is_inside(pos.x, pos.y)
-                        && !self.widget.disabled,
-                );
+                self.set_hovered(self.bounds.is_inside(pos.x, pos.y) && !self.widget.disabled);
                 false
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => {
                 self.set_hovered(false);
-                self.interaction
-                    .borrow_mut()
-                    .cancel();
+                self.interaction.borrow_mut().cancel();
                 false
             }
             ElementEvent::PointerDown(pos, _, _) => {
-                let inside = self
-                    .bounds
-                    .is_inside(pos.x, pos.y);
+                let inside = self.bounds.is_inside(pos.x, pos.y);
                 self.interaction
                     .borrow_mut()
                     .pointer_down(inside, self.widget.disabled);
@@ -420,11 +392,7 @@ impl EventElement for RawTextButton {
                 let action = self
                     .interaction
                     .borrow_mut()
-                    .pointer_up(
-                        self.bounds
-                            .is_inside(pos.x, pos.y),
-                        self.widget.disabled,
-                    );
+                    .pointer_up(self.bounds.is_inside(pos.x, pos.y), self.widget.disabled);
                 if action == ButtonAction::Press {
                     self.press();
                     true
@@ -433,9 +401,7 @@ impl EventElement for RawTextButton {
                 }
             }
             ElementEvent::Cancel => {
-                self.interaction
-                    .borrow_mut()
-                    .cancel();
+                self.interaction.borrow_mut().cancel();
                 false
             }
             _ => false,
@@ -460,10 +426,7 @@ impl Drawable for RawTextButton {
         let (text, text_ctx, size, line_widths, line_height) = self.text_layout(ctx);
         self.save_bounds(ctx, size, &line_widths, line_height);
         if !self.widget.disabled {
-            self.set_hovered(
-                self.bounds
-                    .is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y),
-            );
+            self.set_hovered(self.bounds.is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y));
         }
         text.draw(&text_ctx);
     }
@@ -501,9 +464,7 @@ mod tests {
             WindowHandle::headless(Default::default(), 1.0),
             tokio::runtime::Handle::current(),
         );
-        ctx.box_constraint = BoxConstraint::new()
-            .max_width(max_width)
-            .max_height(100.0);
+        ctx.box_constraint = BoxConstraint::new().max_width(max_width).max_height(100.0);
         (ctx, canvas)
     }
 
@@ -559,9 +520,7 @@ mod tests {
             TextButton::new("Open").style(TextStyle::default().text_overflow(TextOverflow::Wrap)),
         );
         let mut intrinsic_text = button.text_element();
-        intrinsic_text
-            .text_style
-            .text_overflow = TextOverflow::Clip;
+        intrinsic_text.text_style.text_overflow = TextOverflow::Clip;
         let intrinsic = intrinsic_text.computed_size(&ctx);
 
         let size = button.layout(&ctx);
@@ -570,7 +529,7 @@ mod tests {
         assert!(!button.on_event(&ElementEvent::PointerDown(
             Vec2d {
                 x: intrinsic.width + 1.0,
-                y: intrinsic.height / 2.0,
+                y: intrinsic.height / 2.0
             },
             PointerSource::Mouse,
             0,
@@ -596,7 +555,7 @@ mod tests {
         assert!(!button.on_event(&ElementEvent::PointerDown(
             Vec2d {
                 x: 31.0,
-                y: size.height / 2.0,
+                y: size.height / 2.0
             },
             PointerSource::Mouse,
             0,
@@ -620,7 +579,7 @@ mod tests {
         assert!(button.on_event(&ElementEvent::PointerDown(
             Vec2d {
                 x: 1.0,
-                y: size.height - 1.0,
+                y: size.height - 1.0
             },
             PointerSource::Mouse,
             0,
@@ -628,7 +587,7 @@ mod tests {
         assert!(!button.on_event(&ElementEvent::PointerDown(
             Vec2d {
                 x: size.width - 1.0,
-                y: size.height - 1.0,
+                y: size.height - 1.0
             },
             PointerSource::Mouse,
             0,

@@ -37,10 +37,7 @@ fn init_logging(verbose: bool) {
     let default_level = if verbose { "debug" } else { "warn" };
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
-    let _ = fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .try_init();
+    let _ = fmt().with_env_filter(filter).with_target(false).try_init();
 }
 
 #[derive(Subcommand)]

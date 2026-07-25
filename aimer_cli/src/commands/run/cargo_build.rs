@@ -60,11 +60,7 @@ pub fn spawn_cargo_build(
     cmd.env("DEFAULT_INSPECTOR_PORT", inspector_port.to_string());
     cmd.env("DEFAULT_INSPECTOR_ADDRESS", inspector_address.to_string());
 
-    let mut child = match cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+    let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
         Ok(child) => child,
         Err(e) => {
             let label = match target {
@@ -94,10 +90,7 @@ pub fn spawn_cargo_build(
 pub fn stream_stdout_as_build_log(stdout: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        for l in reader
-            .lines()
-            .map_while(Result::ok)
-        {
+        for l in reader.lines().map_while(Result::ok) {
             let _ = tx.send(RunnerEvent::BuildLog(l));
         }
     });
@@ -114,10 +107,7 @@ pub fn stream_stderr_with_cargo_progress(
         let total_units = cargo_lock_package_count();
         let mut fetch_count = 0;
         let mut compile_count: usize = 0;
-        for l in reader
-            .lines()
-            .map_while(Result::ok)
-        {
+        for l in reader.lines().map_while(Result::ok) {
             if l.contains("Locking") || l.contains("Updating") {
                 let _ = tx.send(RunnerEvent::StatusChange(Status::Locking));
             } else if l.contains("Fetching")
@@ -157,9 +147,7 @@ fn cargo_lock_package_count() -> usize {
         if let Some(n) = count(&d.join("Cargo.lock")) {
             return n;
         }
-        dir = d
-            .parent()
-            .map(|p| p.to_path_buf());
+        dir = d.parent().map(|p| p.to_path_buf());
     }
     0
 }
@@ -178,10 +166,7 @@ fn compile_progress(compiled: usize, total: usize) -> u8 {
 pub fn stream_stderr_as_build_log(stderr: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
-        for l in reader
-            .lines()
-            .map_while(Result::ok)
-        {
+        for l in reader.lines().map_while(Result::ok) {
             let _ = tx.send(RunnerEvent::BuildLog(l));
         }
     });
@@ -190,10 +175,7 @@ pub fn stream_stderr_as_build_log(stderr: impl Read + Send + 'static, tx: Sender
 pub fn stream_stdout_as_app_log(stdout: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        for l in reader
-            .lines()
-            .map_while(Result::ok)
-        {
+        for l in reader.lines().map_while(Result::ok) {
             let _ = tx.send(RunnerEvent::AppLog(l));
         }
     });
@@ -202,10 +184,7 @@ pub fn stream_stdout_as_app_log(stdout: impl Read + Send + 'static, tx: Sender<R
 pub fn stream_stderr_as_app_log(stderr: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
-        for l in reader
-            .lines()
-            .map_while(Result::ok)
-        {
+        for l in reader.lines().map_while(Result::ok) {
             let _ = tx.send(RunnerEvent::AppLog(l));
         }
     });
@@ -214,10 +193,7 @@ pub fn stream_stderr_as_app_log(stderr: impl Read + Send + 'static, tx: Sender<R
 pub fn stream_as_app_log_split_cr(pipe: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
     thread::spawn(move || {
         let reader = BufReader::new(pipe);
-        for l in reader
-            .lines()
-            .map_while(Result::ok)
-        {
+        for l in reader.lines().map_while(Result::ok) {
             for part in l.split('\r') {
                 if !part.is_empty() {
                     let _ = tx.send(RunnerEvent::AppLog(part.to_string()));
@@ -234,10 +210,7 @@ pub fn stream_stdout_with_xcode_progress(
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
         let mut build_count = 0;
-        for l in reader
-            .lines()
-            .map_while(Result::ok)
-        {
+        for l in reader.lines().map_while(Result::ok) {
             if l.contains("Compile") || l.contains("Process") || l.contains("Link") {
                 build_count = (build_count + 2).min(99);
                 let _ = tx.send(RunnerEvent::StatusChange(Status::Building(build_count)));
@@ -256,10 +229,7 @@ pub fn stream_stdout_with_gradle_progress(
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
         let mut build_count = 0;
-        for l in reader
-            .lines()
-            .map_while(Result::ok)
-        {
+        for l in reader.lines().map_while(Result::ok) {
             if l.contains("Task :") {
                 build_count = (build_count + 2).min(99);
                 let _ = tx.send(RunnerEvent::StatusChange(Status::Building(build_count)));

@@ -49,9 +49,7 @@ fn add_grouping(key: &str, val: i64) {
     let key = key.trim().replace("|-", "");
     let group = unsafe { &raw mut EXEC_GROUPING.map };
     let group = unsafe { &mut *group };
-    let times = group
-        .entry(key.to_string())
-        .or_default();
+    let times = group.entry(key.to_string()).or_default();
     times.push(val);
 }
 

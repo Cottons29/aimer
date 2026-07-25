@@ -85,10 +85,7 @@ pub fn render(
 
     let area = chunks[0];
     let height = area.height.saturating_sub(2) as usize;
-    let width = area
-        .width
-        .saturating_sub(2)
-        .max(1) as usize;
+    let width = area.width.saturating_sub(2).max(1) as usize;
 
     // Background painted under selected text in Vim-style selection mode.
     let selection_highlight = Style::default().bg(Color::Blue);
@@ -207,18 +204,13 @@ pub fn render(
             let Some(hid) = inspector_state.hovered_widget_id else {
                 return;
             };
-            if let Some(idx) = tree_ids
-                .iter()
-                .position(|&id| id == hid)
-            {
+            if let Some(idx) = tree_ids.iter().position(|&id| id == hid) {
                 state.inspector_cursor = idx;
             }
         }
         // Clamp cursor to valid range
         if !tree_lines.is_empty() {
-            state.inspector_cursor = state
-                .inspector_cursor
-                .min(tree_lines.len() - 1);
+            state.inspector_cursor = state.inspector_cursor.min(tree_lines.len() - 1);
         } else {
             state.inspector_cursor = 0;
         }
@@ -229,9 +221,7 @@ pub fn render(
             state.inspector_pane.scroll =
                 (state.inspector_cursor as u16).saturating_sub(height as u16 - 1);
         }
-        let highlight_style = Style::default()
-            .bg(Color::DarkGray)
-            .fg(Color::White);
+        let highlight_style = Style::default().bg(Color::DarkGray).fg(Color::White);
         let inspector_text: Vec<Line> = tree_lines
             .iter()
             .enumerate()
@@ -244,10 +234,7 @@ pub fn render(
             })
             .collect();
         let max_scroll = (inspector_text.len() as u16).saturating_sub(height as u16);
-        state.inspector_pane.scroll = state
-            .inspector_pane
-            .scroll
-            .min(max_scroll);
+        state.inspector_pane.scroll = state.inspector_pane.scroll.min(max_scroll);
         let p = Paragraph::new(inspector_text)
             .block(inspector_block)
             .wrap(Wrap { trim: false })
@@ -339,11 +326,13 @@ pub fn render(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("inspector"),
-        // Span::styled("[t] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        // Span::raw(if state.inspector_full_tree { "full tree " } else { "widgets " }),
-        // Span::raw("| "),
-        // Span::styled("●", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-        // Span::raw(" hot-reload "),
+        /* Span::styled("[t] ",
+         * Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+         * Span::raw(if state.inspector_full_tree { "full tree " } else {
+         * "widgets " }), Span::raw("| "),
+         * Span::styled("●",
+         * Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+         * Span::raw(" hot-reload "), */
     ]);
 
     let status_bar = Paragraph::new(status_line).style(Style::default());
@@ -391,11 +380,7 @@ fn build_selection_view(
                 row.push((ch, span.style));
             }
         }
-        logical.push(
-            row.iter()
-                .map(|(c, _)| *c)
-                .collect(),
-        );
+        logical.push(row.iter().map(|(c, _)| *c).collect());
         cells.push(row);
     }
 

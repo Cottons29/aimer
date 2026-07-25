@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
-use crate::api::BackendApi;
 use aimer::console::error;
 use aimer::{BuildContext, ProviderHandle};
 use serde::Deserialize;
+
+use crate::api::BackendApi;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct BlogSummary {
@@ -88,8 +89,7 @@ impl BlogStore {
         if self.details.contains_key(id) {
             return false;
         }
-        self.details
-            .insert(id.to_owned(), LoadState::Loading);
+        self.details.insert(id.to_owned(), LoadState::Loading);
         true
     }
 }
@@ -143,11 +143,7 @@ pub fn request_blog_detail(ctx: &BuildContext, handle: ProviderHandle<BlogStore>
     #[cfg(target_arch = "wasm32")]
     let _ = ctx;
 
-    if handle
-        .read()
-        .details
-        .contains_key(&id)
-    {
+    if handle.read().details.contains_key(&id) {
         return;
     }
     let loading_id = id.clone();
@@ -231,28 +227,17 @@ mod tests {
     use super::*;
 
     async fn serve_once(status: &str, body: &str) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let response = format!(
             "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
         tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .unwrap();
+            let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 1024];
-            stream
-                .read(&mut request)
-                .await
-                .unwrap();
-            stream
-                .write_all(response.as_bytes())
-                .await
-                .unwrap();
+            stream.read(&mut request).await.unwrap();
+            stream.write_all(response.as_bytes()).await.unwrap();
         });
         format!("http://{address}")
     }
@@ -261,24 +246,14 @@ mod tests {
     async fn fetch_text_returns_successful_response_body() {
         let url = serve_once("200 OK", "# Cross-platform blog").await;
 
-        assert_eq!(
-            fetch_text(&url)
-                .await
-                .unwrap(),
-            "# Cross-platform blog"
-        );
+        assert_eq!(fetch_text(&url).await.unwrap(), "# Cross-platform blog");
     }
 
     #[tokio::test]
     async fn fetch_text_rejects_non_success_status() {
         let url = serve_once("503 Service Unavailable", "try later").await;
 
-        assert!(
-            fetch_text(&url)
-                .await
-                .unwrap_err()
-                .contains("503")
-        );
+        assert!(fetch_text(&url).await.unwrap_err().contains("503"));
     }
 
     #[test]
@@ -295,7 +270,7 @@ mod tests {
                 upload_time: "2026-07-18T02:22:00Z".to_owned(),
                 title: "First post".to_owned(),
                 author: "Aimer Team".to_owned(),
-                tags: vec!["Rust".to_owned(), "GUI".to_owned()],
+                tags: vec!["Rust".to_owned(), "GUI".to_owned()]
             }]
         );
     }

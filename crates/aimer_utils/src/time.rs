@@ -22,8 +22,7 @@ impl AnimInstant {
     /// Returns the duration elapsed since `earlier`.
     /// If `earlier` is after `self`, returns zero.
     pub fn duration_since(&self, earlier: AnimInstant) -> Duration {
-        self.inner
-            .duration_since(earlier.inner)
+        self.inner.duration_since(earlier.inner)
     }
 
     /// Returns the duration elapsed since this instant.

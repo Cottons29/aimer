@@ -22,8 +22,8 @@ pub struct Shell {
 }
 
 impl Shell {
-    /// Creates a shell from a `frame` widget (containing an [`crate::Outlet`]) and a
-    /// closure that builds the active child widget.
+    /// Creates a shell from a `frame` widget (containing an [`crate::Outlet`])
+    /// and a closure that builds the active child widget.
     ///
     /// The frame is the shell's child and remains the stable outer subtree;
     /// the closure supplies the content requested by its descendant outlet.
@@ -122,8 +122,7 @@ impl LayoutElement for ShellElement {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
 
     fn invalidate_layout(&self) {
@@ -139,10 +138,7 @@ impl EventElement for ShellElement {}
 
 impl Rebuildable for ShellElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| {
-            self.child
-                .rebuild_if_dirty(ctx)
-        });
+        self.scoped(ctx, |ctx| self.child.rebuild_if_dirty(ctx));
     }
 
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
@@ -150,8 +146,7 @@ impl Rebuildable for ShellElement {
     }
 
     fn mark_needs_rebuild(&self) {
-        self.child
-            .mark_needs_rebuild();
+        self.child.mark_needs_rebuild();
     }
 }
 
@@ -178,17 +173,15 @@ pub fn branch_pop<R>(branches: &mut [Vec<R>], index: usize) {
 
 /// The top (active) route of branch `active`, if any.
 pub fn active_top<R: Clone>(branches: &[Vec<R>], active: usize) -> Option<R> {
-    branches
-        .get(active)
-        .and_then(|b| b.last().cloned())
+    branches.get(active).and_then(|b| b.last().cloned())
 }
 
 /// A tabbed shell that keeps an independent navigation stack per branch, so
 /// switching branches preserves each branch's history (StatefulShellRoute).
 ///
 /// Only the active branch's top route is rendered into the shell's
-/// [`crate::Outlet`]. Each branch starts with exactly one route and guarded pops
-/// never empty a stack. Descendants navigate through
+/// [`crate::Outlet`]. Each branch starts with exactly one route and guarded
+/// pops never empty a stack. Descendants navigate through
 /// [`StatefulShellController`].
 pub struct StatefulShell<R: Route> {
     pub branches: Vec<Vec<R>>,
@@ -200,8 +193,9 @@ pub struct StatefulShell<R: Route> {
 impl<R: Route> StatefulShell<R> {
     /// Creates a stateful shell from one initial route per branch.
     ///
-    /// `frame` builds the persistent layout (which must contain an [`crate::Outlet`])
-    /// and `routes` builds the widget for a given child route.
+    /// `frame` builds the persistent layout (which must contain an
+    /// [`crate::Outlet`]) and `routes` builds the widget for a given child
+    /// route.
     ///
     /// Branch zero is active initially. `initial_routes` must not be empty, and
     /// every branch created by this constructor has a non-empty history stack.
@@ -210,10 +204,7 @@ impl<R: Route> StatefulShell<R> {
         frame: fn(&BuildContext) -> AnyWidget,
         routes: fn(R) -> AnyWidget,
     ) -> Self {
-        let branches = initial_routes
-            .into_iter()
-            .map(|r| vec![r])
-            .collect();
+        let branches = initial_routes.into_iter().map(|r| vec![r]).collect();
         Self {
             branches,
             active: 0,
@@ -263,12 +254,7 @@ impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
             },
             branch_len_fn: {
                 let branches = self.branches.clone();
-                Rc::new(move |index: usize| {
-                    branches
-                        .get(index)
-                        .map(|b| b.len())
-                        .unwrap_or(0)
-                })
+                Rc::new(move |index: usize| branches.get(index).map(|b| b.len()).unwrap_or(0))
             },
         });
 
@@ -478,11 +464,7 @@ mod tests {
             },
         );
 
-        assert!(
-            !shell
-                .to_element(&context())
-                .is_carry_state()
-        );
+        assert!(!shell.to_element(&context()).is_carry_state());
     }
 
     #[test]

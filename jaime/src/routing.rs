@@ -80,9 +80,7 @@ impl Router for TabRoute {
 /// here whose buttons call
 /// `StatefulShellController::<TabRoute>::of(ctx).go_branch(i)`.
 fn tab_frame(_: &BuildContext) -> AnyWidget {
-    Container::new()
-        .child(Outlet)
-        .boxed()
+    Container::new().child(Outlet).boxed()
 }
 
 /// Builds the widget for a given tab route (each `TabRoute` is itself a

@@ -87,16 +87,12 @@ fn platform_button_visual(
         background_color: if is_selected {
             theme.primary_color
         } else {
-            theme
-                .primary_color
-                .lighten(0.38)
+            theme.primary_color.lighten(0.38)
         },
         foreground_color: if is_selected {
             theme.on_primary_color
         } else {
-            theme
-                .primary_color
-                .darken(0.35)
+            theme.primary_color.darken(0.35)
         },
         animation_key: format!("platform-button-{index}"),
     }
@@ -163,11 +159,7 @@ impl AnimatedPlatformButtonListState {
                 let compact = self.compact;
                 let is_selected = index == self.selected_index;
                 let visual = platform_button_visual(index, is_selected, theme);
-                let active_background = Rgba::from_color(
-                    &theme
-                        .background_color
-                        .invert(),
-                );
+                let active_background = Rgba::from_color(&theme.background_color.invert());
                 let inactive_background = Rgba::from_color(&Color::GRAY.with_opacity(70));
                 let active_foreground = Rgba::from_color(&theme.on_primary_color);
                 let inactive_foreground = Rgba::from_color(&Color::GRAY.with_opacity(90));
@@ -204,32 +196,20 @@ impl AnimatedPlatformButtonListState {
                                         .text_style(
                                             TextStyle::new()
                                                 .font_size(if compact { 18 } else { 22 })
-                                                .color(
-                                                    frame
-                                                        .checkmark_color
-                                                        .to_color(),
-                                                )
+                                                .color(frame.checkmark_color.to_color())
                                                 .font_weight(FontWeight::Bolder),
                                         )
                                         .boxed()
                                 } else {
-                                    SizedBox::new()
-                                        .width(0)
-                                        .boxed()
+                                    SizedBox::new().width(0).boxed()
                                 },
-                                SizedBox::new()
-                                    .width(frame.checkmark_gap)
-                                    .boxed(),
+                                SizedBox::new().width(frame.checkmark_gap).boxed(),
                                 Text::new(label)
                                     .text_align(TextAlign::MidCenter)
                                     .text_style(
                                         TextStyle::new()
                                             .font_size(if compact { 15 } else { 20 })
-                                            .color(
-                                                frame
-                                                    .foreground_color
-                                                    .to_color(),
-                                            )
+                                            .color(frame.foreground_color.to_color())
                                             .font_weight(FontWeight::Bolder),
                                     )
                                     .boxed(),
@@ -240,11 +220,7 @@ impl AnimatedPlatformButtonListState {
                             .height(if compact { 38 } else { 44 })
                             .box_decoration(
                                 BoxDecoration::new()
-                                    .background_color(
-                                        frame
-                                            .background_color
-                                            .to_color(),
-                                    )
+                                    .background_color(frame.background_color.to_color())
                                     .border_radius(border_radius),
                             )
                             .child(content)
@@ -299,10 +275,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(keys.len(), PLATFORMS.len());
-        assert!(
-            keys.iter()
-                .all(Option::is_some)
-        );
+        assert!(keys.iter().all(Option::is_some));
         assert_ne!(keys[0], keys[1]);
         assert_ne!(keys[1], keys[2]);
     }
@@ -322,18 +295,8 @@ mod tests {
         let theme = ThemeData::default();
         let visual = platform_button_visual(1, false, &theme);
 
-        assert_eq!(
-            visual.background_color,
-            theme
-                .primary_color
-                .lighten(0.38)
-        );
-        assert_eq!(
-            visual.foreground_color,
-            theme
-                .primary_color
-                .darken(0.35)
-        );
+        assert_eq!(visual.background_color, theme.primary_color.lighten(0.38));
+        assert_eq!(visual.foreground_color, theme.primary_color.darken(0.35));
         assert_eq!(platform_button_animation_target(false), 0.0);
     }
 
@@ -352,11 +315,7 @@ mod tests {
     fn platform_button_has_a_distinct_midpoint_frame() {
         let theme = ThemeData::default();
         let inactive_background = Rgba::from_color(&Color::GRAY.with_opacity(70));
-        let active_background = Rgba::from_color(
-            &theme
-                .background_color
-                .invert(),
-        );
+        let active_background = Rgba::from_color(&theme.background_color.invert());
         let inactive_foreground = Rgba::from_color(&Color::GRAY.with_opacity(90));
         let active_foreground = Rgba::from_color(&theme.on_primary_color);
 

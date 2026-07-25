@@ -222,27 +222,18 @@ fn collect_shaping_runs<'a>(
 ) -> Vec<ShapingRun<'a>> {
     let mut result: Vec<ShapingRun<'a>> = Vec::new();
 
-    for (cluster, cluster_start) in text
-        .grapheme_indices(true)
-        .map(|(i, s)| (s, i))
-    {
+    for (cluster, cluster_start) in text.grapheme_indices(true).map(|(i, s)| (s, i)) {
         // Find the BiDi level for this cluster.
         let level = visual_runs
             .iter()
             .find(|(range, _)| range.start <= cluster_start && cluster_start < range.end)
             .map(|(_, lvl)| *lvl)
-            .or_else(|| {
-                bidi.levels
-                    .get(cluster_start)
-                    .copied()
-            })
+            .or_else(|| bidi.levels.get(cluster_start).copied())
             .unwrap_or_else(unicode_bidi::Level::ltr);
 
-        let merge = result
-            .last()
-            .is_some_and(|last| {
-                last.level == level && cluster != "\n" && !last.text.ends_with('\n')
-            });
+        let merge = result.last().is_some_and(|last| {
+            last.level == level && cluster != "\n" && !last.text.ends_with('\n')
+        });
 
         if merge {
             // Extend the last run to include this cluster.  Because both slices
@@ -280,10 +271,7 @@ where
     let visual_run_ranges: Vec<(std::ops::Range<usize>, unicode_bidi::Level)> = paragraph
         .map(|para| {
             let (levels, ranges) = bidi.visual_runs(para, para.range.clone());
-            ranges
-                .into_iter()
-                .zip(levels)
-                .collect()
+            ranges.into_iter().zip(levels).collect()
         })
         .unwrap_or_default();
 
@@ -314,9 +302,7 @@ where
     // overflow on subsequent lines.  A plain `for` loop would emit the
     // remainder once and `continue`, skipping the overflow check — causing
     // long words to render past the second line's edge.
-    let mut queue: VecDeque<ShapingRun<'_>> = shaping_runs
-        .into_iter()
-        .collect();
+    let mut queue: VecDeque<ShapingRun<'_>> = shaping_runs.into_iter().collect();
 
     while let Some(shaping_run) = queue.pop_front() {
         let run_start = shaping_run.start;
@@ -355,22 +341,14 @@ where
         }
 
         // Determine total advance for this shaped run.
-        let run_width: f32 = shaped
-            .iter()
-            .map(|g| g.advance)
-            .sum();
+        let run_width: f32 = shaped.iter().map(|g| g.advance).sum();
 
         // Check whether a line break is allowed at the run boundary.
-        let break_allowed = break_offsets
-            .binary_search(&run_end)
-            .is_ok();
+        let break_allowed = break_offsets.binary_search(&run_end).is_ok();
 
         if max_width > 0.0
             && line_width + run_width > max_width
-            && (break_allowed
-                || !run_text
-                    .chars()
-                    .all(char::is_whitespace))
+            && (break_allowed || !run_text.chars().all(char::is_whitespace))
         {
             // Try to break the run at grapheme-cluster boundaries to avoid
             // splitting across lines at awkward positions.  We walk clusters
@@ -402,10 +380,7 @@ where
                 // space glyph is included on the current line (its advance is
                 // already part of `sub_x`).  The glyph filter below uses
                 // `<= break_point` to include it.
-                if cluster_str
-                    .chars()
-                    .all(char::is_whitespace)
-                {
+                if cluster_str.chars().all(char::is_whitespace) {
                     last_word_break = Some(cluster_byte_start);
                 }
 
@@ -575,10 +550,7 @@ where
         apply_ellipsis(&mut glyphs, &mut lines, font_id, options, metrics);
     }
 
-    let width = lines
-        .iter()
-        .map(|line| line.width)
-        .fold(0.0, f32::max);
+    let width = lines.iter().map(|line| line.width).fold(0.0, f32::max);
     let line_count = lines.len();
     // line_height includes one line_gap per line, but line_gap only appears
     // *between* lines — subtract the trailing one so the reported height
@@ -613,9 +585,7 @@ fn shape_segment(
     buffer.push_str(segment);
     buffer.guess_segment_properties();
     let shaper_data = harfrust::ShaperData::new(face);
-    let shaper = shaper_data
-        .shaper(face)
-        .build();
+    let shaper = shaper_data.shaper(face).build();
     let output = shaper.shape(buffer, harfrust::ShapeOptions::default());
     let upem = shaper.units_per_em() as f32;
     let scale = if upem > 0.0 { font_size / upem } else { 1.0 };
@@ -657,10 +627,7 @@ fn fallback_shape_segment(
             let cluster_start = text_offset + cluster_byte_offset;
             let cluster_end = cluster_start + cluster_str.len();
             // Use the first (base) codepoint as the representative glyph id.
-            let glyph_char = cluster_str
-                .chars()
-                .next()
-                .unwrap_or('\0');
+            let glyph_char = cluster_str.chars().next().unwrap_or('\0');
             PositionedShapedGlyph {
                 font_id,
                 glyph_id: glyph_char as u32 as u16,
@@ -773,8 +740,7 @@ pub fn shape_text_styled(
     let line_height = ascent - _descent + line_gap;
 
     let graphemes: Vec<(usize, &str)> = time_cost!("text_layout::LayoutText - text.graphemes", {
-        text.grapheme_indices(true)
-            .collect()
+        text.grapheme_indices(true).collect()
     });
 
     let clusters = time_cost!("text_layout::LayoutText - shape runs", {
@@ -834,19 +800,12 @@ pub fn shape_text_styled(
             );
             let cluster_output_start = clusters.len();
 
-            clusters.extend(
-                run_graphemes
-                    .iter()
-                    .map(|(_, cluster)| ShapedCluster {
-                        text: (*cluster).to_string(),
-                        base_codepoint: cluster
-                            .chars()
-                            .next()
-                            .unwrap_or('\0'),
-                        glyphs: Vec::new(),
-                        width: 0.0,
-                    }),
-            );
+            clusters.extend(run_graphemes.iter().map(|(_, cluster)| ShapedCluster {
+                text: (*cluster).to_string(),
+                base_codepoint: cluster.chars().next().unwrap_or('\0'),
+                glyphs: Vec::new(),
+                width: 0.0,
+            }));
 
             for glyph in shaped_glyphs {
                 let source_cluster = run_graphemes
@@ -924,11 +883,7 @@ pub fn layout_shaped_text(
             }
 
             // Track the last space cluster so we know where to break.
-            if cluster
-                .text
-                .chars()
-                .all(char::is_whitespace)
-            {
+            if cluster.text.chars().all(char::is_whitespace) {
                 last_space_glyph_idx = glyphs.len();
                 last_space_pen_x = pen_x + cluster.width;
             }
@@ -1066,18 +1021,8 @@ mod tests {
         let layout = test_layout("Cafe\u{301} noir", 20.0);
 
         assert!(layout.lines.len() > 1);
-        assert!(
-            layout
-                .glyphs
-                .iter()
-                .any(|glyph| glyph.text_range == (3..6))
-        );
-        assert!(
-            !layout
-                .lines
-                .iter()
-                .any(|line| line.text_range.end == 4)
-        );
+        assert!(layout.glyphs.iter().any(|glyph| glyph.text_range == (3..6)));
+        assert!(!layout.lines.iter().any(|line| line.text_range.end == 4));
     }
 
     #[test]
@@ -1096,18 +1041,10 @@ mod tests {
         );
 
         assert_eq!(
-            layout
-                .glyphs
-                .last()
-                .map(|glyph| glyph.source.as_str()),
+            layout.glyphs.last().map(|glyph| glyph.source.as_str()),
             Some("…")
         );
-        assert!(
-            !layout
-                .lines
-                .iter()
-                .any(|line| line.text_range.end == 4)
-        );
+        assert!(!layout.lines.iter().any(|line| line.text_range.end == 4));
         assert!(layout.metrics.width <= options.max_width);
     }
 

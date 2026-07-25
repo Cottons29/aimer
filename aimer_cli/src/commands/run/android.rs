@@ -109,9 +109,7 @@ pub fn spawn_android_runner(
         return;
     }
 
-    let current_dir = current_dir()
-        .unwrap()
-        .join("builds/android");
+    let current_dir = current_dir().unwrap().join("builds/android");
     build_log(
         &tx,
         format!("[Aimer] current_dir: {}", current_dir.display()),
@@ -147,8 +145,7 @@ pub fn spawn_android_runner(
     let gradlew_path = current_dir.join(gradlew);
 
     let mut cmd = Command::new(&gradlew_path);
-    cmd.arg("assembleDebug")
-        .current_dir(&current_dir);
+    cmd.arg("assembleDebug").current_dir(&current_dir);
 
     if let Some(java_home) = resolve_compatible_java_home() {
         build_log(&tx, format!("Using JAVA_HOME: {}", java_home));
@@ -238,9 +235,7 @@ pub fn spawn_android_runner(
             .args(["-s", &device.id, "shell", "pidof", "-s", &app_id])
             .output()
         {
-            let out = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .to_string();
+            let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !out.is_empty() {
                 pid = out;
                 break;
@@ -266,10 +261,7 @@ pub fn spawn_android_runner(
         |stdout, tx| {
             thread::spawn(move || {
                 let reader = BufReader::new(stdout);
-                for line in reader
-                    .lines()
-                    .map_while(Result::ok)
-                {
+                for line in reader.lines().map_while(Result::ok) {
                     let _ = tx.send(RunnerEvent::AppLog(parse_logcat_line(line)));
                 }
             });
@@ -277,10 +269,7 @@ pub fn spawn_android_runner(
         |stderr, tx| {
             thread::spawn(move || {
                 let reader = BufReader::new(stderr);
-                for line in reader
-                    .lines()
-                    .map_while(Result::ok)
-                {
+                for line in reader.lines().map_while(Result::ok) {
                     let _ = tx.send(RunnerEvent::AppLog(parse_logcat_line(line)));
                 }
             });

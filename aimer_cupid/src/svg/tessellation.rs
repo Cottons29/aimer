@@ -53,10 +53,7 @@ impl SvgToleranceBucket {
         } else {
             1.0
         };
-        let exponent = scale
-            .log2()
-            .round()
-            .clamp(-3.0, 4.0) as i32;
+        let exponent = scale.log2().round().clamp(-3.0, 4.0) as i32;
         Self((exponent + 3) as u8)
     }
 
@@ -133,9 +130,7 @@ impl SvgGeometryCache {
         style: SvgMeshStyle,
         physical_scale: f32,
     ) -> Result<Arc<SvgMesh>, SvgTessellationError> {
-        self.usage_clock = self
-            .usage_clock
-            .wrapping_add(1);
+        self.usage_clock = self.usage_clock.wrapping_add(1);
         let tolerance = SvgToleranceBucket::from_scale(physical_scale);
         let key = GeometryKey {
             path: path_key(geometry),
@@ -194,13 +189,8 @@ impl SvgGeometryCache {
             else {
                 break;
             };
-            if let Some(entry) = self
-                .entries
-                .remove(&oldest_key)
-            {
-                self.memory_bytes = self
-                    .memory_bytes
-                    .saturating_sub(entry.mesh.memory_bytes());
+            if let Some(entry) = self.entries.remove(&oldest_key) {
+                self.memory_bytes = self.memory_bytes.saturating_sub(entry.mesh.memory_bytes());
             }
         }
     }
@@ -281,11 +271,7 @@ fn lyon_path(geometry: &SvgGeometry) -> Result<Path, SvgTessellationError> {
     }
     let mut builder = Path::builder();
     let mut contour_open = false;
-    for command in geometry
-        .commands
-        .iter()
-        .copied()
-    {
+    for command in geometry.commands.iter().copied() {
         match command {
             SvgPathCommand::MoveTo { x, y } => {
                 if contour_open {

@@ -79,25 +79,13 @@ impl State<CounterWidget> for CounterState {
                     .horizontal_alignment(BoxAlignment::Center)
                     .children([
                         Text::new("Widget with State")
-                            .text_style(
-                                TextStyle::new()
-                                    .font_size(25)
-                                    .color(Colors::Black),
-                            )
+                            .text_style(TextStyle::new().font_size(25).color(Colors::Black))
                             .boxed(),
-                        SizedBox::new()
-                            .height(50)
-                            .boxed(),
+                        SizedBox::new().height(50).boxed(),
                         Text::new(format!("Clicked: {}", self.count,))
-                            .text_style(
-                                TextStyle::new()
-                                    .font_size(25)
-                                    .color(Colors::Black),
-                            )
+                            .text_style(TextStyle::new().font_size(25).color(Colors::Black))
                             .boxed(),
-                        SizedBox::new()
-                            .height(50)
-                            .boxed(),
+                        SizedBox::new().height(50).boxed(),
                         Container::new()
                             .width(Dimension::Px(200.0))
                             .height(Dimension::Px(50.0))
@@ -130,9 +118,7 @@ impl State<CounterWidget> for CounterState {
                                     .boxed(),
                             )
                             .boxed(),
-                        SizedBox::new()
-                            .height(20)
-                            .boxed(),
+                        SizedBox::new().height(20).boxed(),
                         Container::new()
                             .width(Dimension::Px(200.0))
                             .height(Dimension::Px(50.0))

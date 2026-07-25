@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
@@ -7,7 +9,6 @@ use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 use aimer_cupid::text_pipeline::TextOverflowMode;
 use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
 use aimer_cupid::utilities::Color as CupidColor;
-use std::sync::Arc;
 
 use crate::canvas::CanvasRendering;
 

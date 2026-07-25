@@ -34,8 +34,7 @@ impl GlyphOutline {
 
     fn finish_contour(&mut self) {
         if self.current.len() >= 2 {
-            self.contours
-                .push(std::mem::take(&mut self.current));
+            self.contours.push(std::mem::take(&mut self.current));
         } else {
             self.current.clear();
         }
@@ -116,12 +115,8 @@ pub(crate) fn rasterize_outline_glyph(
     let scale = font_size / units_per_em;
     let offset_x = bbox.x_min * scale;
     let offset_y = bbox.y_min * scale;
-    let width = ((bbox.x_max - bbox.x_min) * scale)
-        .ceil()
-        .max(1.0) as u32;
-    let height = ((bbox.y_max - bbox.y_min) * scale)
-        .ceil()
-        .max(1.0) as u32;
+    let width = ((bbox.x_max - bbox.x_min) * scale).ceil().max(1.0) as u32;
+    let height = ((bbox.y_max - bbox.y_min) * scale).ceil().max(1.0) as u32;
 
     let mut outline = GlyphOutline::new(scale, offset_x, offset_y);
     face.outline_glyphs()

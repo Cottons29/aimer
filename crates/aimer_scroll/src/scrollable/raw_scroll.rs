@@ -39,9 +39,7 @@ impl<E: Element> RawScrollableContainer<E> {
         is_vertical: bool,
     ) {
         let scale = ctx.scale;
-        let offset = self
-            .ctrl
-            .visual_offset(self.ctrl.scroll_offset.get());
+        let offset = self.ctrl.visual_offset(self.ctrl.scroll_offset.get());
 
         let track_width = match scroll_bar.track.width {
             Dimension::Px(v) => v * scale,
@@ -66,13 +64,9 @@ impl<E: Element> RawScrollableContainer<E> {
 
         // Cache track width for hit-testing track clicks.
         if is_vertical {
-            self.ctrl
-                .cached_v_track_width
-                .set(track_width);
+            self.ctrl.cached_v_track_width.set(track_width);
         } else {
-            self.ctrl
-                .cached_h_track_width
-                .set(track_width);
+            self.ctrl.cached_h_track_width.set(track_width);
         }
 
         let thumb_width = match scroll_bar.thumb.width {
@@ -83,10 +77,7 @@ impl<E: Element> RawScrollableContainer<E> {
 
         // Reuse the content size computed once at the start of this frame's draw
         // (see `draw_scroll`) to avoid recomputing the child layout.
-        let content_size = self
-            .ctrl
-            .cached_content_size
-            .get();
+        let content_size = self.ctrl.cached_content_size.get();
         let (track_length, content_extent, scroll_pos) = if is_vertical {
             (viewport_h, content_size.height, -offset.y)
         } else {
@@ -148,13 +139,9 @@ impl<E: Element> RawScrollableContainer<E> {
             0.0
         };
         if is_vertical {
-            self.ctrl
-                .v_scroll_multiplier
-                .set(multiplier);
+            self.ctrl.v_scroll_multiplier.set(multiplier);
         } else {
-            self.ctrl
-                .h_scroll_multiplier
-                .set(multiplier);
+            self.ctrl.h_scroll_multiplier.set(multiplier);
         }
 
         let scroll_ratio = if max_scroll > 0.0 {
@@ -247,50 +234,36 @@ impl<E: Element> RawScrollableContainer<E> {
         } else {
             self.ctrl.drag_mode.get() == DragMode::HorizontalScrollbar
         };
-        let is_hover = self
-            .ctrl
-            .cursor_pos
-            .get()
-            .is_some_and(|c| {
-                if is_vertical {
-                    self.ctrl.hit_test_v_thumb(c)
-                } else {
-                    self.ctrl.hit_test_h_thumb(c)
-                }
-            });
+        let is_hover = self.ctrl.cursor_pos.get().is_some_and(|c| {
+            if is_vertical {
+                self.ctrl.hit_test_v_thumb(c)
+            } else {
+                self.ctrl.hit_test_h_thumb(c)
+            }
+        });
         let thumb_color: Color = if is_active {
-            scroll_bar
-                .thumb
-                .active_color
-                .into()
+            scroll_bar.thumb.active_color.into()
         } else if is_hover {
-            scroll_bar
-                .thumb
-                .hover_color
-                .into()
+            scroll_bar.thumb.hover_color.into()
         } else {
             scroll_bar.thumb.color.into()
         };
         let thumb_x_offset = (track_width - thumb_width) / 2.0;
         let (tx, ty, tw, th) = if is_vertical {
-            self.ctrl
-                .v_thumb_rect
-                .set(Some((
-                    viewport_w - track_width + thumb_x_offset,
-                    thumb_offset,
-                    thumb_width,
-                    thumb_length,
-                )));
+            self.ctrl.v_thumb_rect.set(Some((
+                viewport_w - track_width + thumb_x_offset,
+                thumb_offset,
+                thumb_width,
+                thumb_length,
+            )));
             (thumb_x_offset, thumb_offset, thumb_width, thumb_length)
         } else {
-            self.ctrl
-                .h_thumb_rect
-                .set(Some((
-                    thumb_offset,
-                    viewport_h - track_width + thumb_x_offset,
-                    thumb_length,
-                    thumb_width,
-                )));
+            self.ctrl.h_thumb_rect.set(Some((
+                thumb_offset,
+                viewport_h - track_width + thumb_x_offset,
+                thumb_length,
+                thumb_width,
+            )));
             (thumb_offset, thumb_x_offset, thumb_length, thumb_width)
         };
 

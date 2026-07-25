@@ -20,16 +20,12 @@ impl RouteMatch {
 
     /// Fetch a path parameter by name.
     pub fn path_param(&self, key: &str) -> Option<&str> {
-        self.path_params
-            .get(key)
-            .map(String::as_str)
+        self.path_params.get(key).map(String::as_str)
     }
 
     /// Fetch a query parameter by name.
     pub fn query_param(&self, key: &str) -> Option<&str> {
-        self.query_params
-            .get(key)
-            .map(String::as_str)
+        self.query_params.get(key).map(String::as_str)
     }
 }
 
@@ -109,10 +105,7 @@ pub fn format_query_string(params: &[(String, String)]) -> String {
     if params.is_empty() {
         return String::new();
     }
-    let mut parts: Vec<String> = params
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect();
+    let mut parts: Vec<String> = params.iter().map(|(k, v)| format!("{k}={v}")).collect();
     parts.sort();
     format!("?{}", parts.join("&"))
 }
@@ -164,10 +157,8 @@ mod tests {
     #[test]
     fn route_match_accessors() {
         let mut m = RouteMatch::new();
-        m.path_params
-            .insert("id".to_string(), "42".to_string());
-        m.query_params
-            .insert("q".to_string(), "foo".to_string());
+        m.path_params.insert("id".to_string(), "42".to_string());
+        m.query_params.insert("q".to_string(), "foo".to_string());
         assert_eq!(m.path_param("id"), Some("42"));
         assert_eq!(m.query_param("q"), Some("foo"));
         assert_eq!(m.path_param("missing"), None);

@@ -22,12 +22,13 @@ fn loading_icon_document() -> Result<SvgDocument, SvgError> {
     SvgDocument::from_svg(include_bytes!("../assets/loading-1-svgrepo-com.svg"))
 }
 
-/// Starts a centered loading indicator driven by an infinitely repeating animation.
+/// Starts a centered loading indicator driven by an infinitely repeating
+/// animation.
 ///
-/// [`RotationTransition`] advances the controller on each rendered frame and rotates
-/// the bundled SVG icon around its center. The linear cycle repeats until the
-/// application closes, demonstrating a loading state that needs no timers or manual
-/// redraw requests.
+/// [`RotationTransition`] advances the controller on each rendered frame and
+/// rotates the bundled SVG icon around its center. The linear cycle repeats
+/// until the application closes, demonstrating a loading state that needs no
+/// timers or manual redraw requests.
 pub fn start_loading_animation_example() {
     let controller = loading_controller();
     let icon =
@@ -46,9 +47,7 @@ pub fn start_loading_animation_example() {
                     .vertical_alignment(BoxAlignment::Center)
                     .children(vec![
                         RotationTransition::new(controller, icon).boxed(),
-                        SizedBox::new()
-                            .height(16)
-                            .boxed(),
+                        SizedBox::new().height(16).boxed(),
                         Text::new("Loading...")
                             .text_align(TextAlign::MidCenter)
                             .text_style(

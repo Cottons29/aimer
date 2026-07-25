@@ -45,11 +45,7 @@ impl FromStr for SvgSelector {
 }
 
 fn validate_selector_name(name: &str, original: &str) -> Result<(), SvgError> {
-    if name.is_empty()
-        || name
-            .chars()
-            .any(char::is_whitespace)
-    {
+    if name.is_empty() || name.chars().any(char::is_whitespace) {
         Err(SvgError::InvalidSelector(original.to_owned()))
     } else {
         Ok(())

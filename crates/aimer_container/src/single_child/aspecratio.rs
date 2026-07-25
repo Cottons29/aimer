@@ -13,7 +13,8 @@ pub enum RatioOption {
 }
 
 #[allow(dead_code)]
-/// Sizes its child to a configured width-to-height ratio within its constraints.
+/// Sizes its child to a configured width-to-height ratio within its
+/// constraints.
 ///
 /// Attach a child with [`AspectRatio::child`] to retain its concrete type, or
 /// with [`AspectRatio::box_child`] when branches need a shared erased type.
@@ -40,7 +41,8 @@ impl AspectRatio {
     ///
     /// The default is `1.0`. The value is made positive when the widget is
     /// built; non-finite or zero values resolve as `1.0` during layout. The
-    /// resulting size is clamped to the parent's minimum and maximum constraints.
+    /// resulting size is clamped to the parent's minimum and maximum
+    /// constraints.
     pub fn aspect_ratio(mut self, aspect_ratio: f32) -> Self {
         self.aspect_ratio = aspect_ratio;
         self
@@ -109,14 +111,8 @@ fn resolve_ratio_size_with_option(
     } else {
         1.0
     };
-    let width_bounded = constraints
-        .max_width
-        .is_finite()
-        && constraints.max_width < f32::MAX;
-    let height_bounded = constraints
-        .max_height
-        .is_finite()
-        && constraints.max_height < f32::MAX;
+    let width_bounded = constraints.max_width.is_finite() && constraints.max_width < f32::MAX;
+    let height_bounded = constraints.max_height.is_finite() && constraints.max_height < f32::MAX;
 
     let (mut width, mut height) = if matches!(ratio_option, RatioOption::Width) && width_bounded {
         let width = constraints.max_width;
@@ -198,8 +194,7 @@ impl LayoutElement for RawAspectRatio {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
 }
 

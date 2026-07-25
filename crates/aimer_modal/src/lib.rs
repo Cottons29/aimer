@@ -65,9 +65,7 @@ mod tests {
     fn show_and_dismiss_enqueue_framework_commands_immediately() {
         super::host::reset_registry_for_test();
 
-        let handle = Modal::new()
-            .child(ZeroSizedBox)
-            .show();
+        let handle = Modal::new().child(ZeroSizedBox).show();
         assert_eq!(super::host::pending_command_count_for_test(), 1);
 
         assert!(handle.dismiss());

@@ -88,19 +88,17 @@ fn main() {
     });
     let cold_parallel = benchmark(iterations, || {
         #[cfg(not(target_arch = "wasm32"))]
-        cold_inputs
-            .par_iter()
-            .for_each(|input| {
-                let mut rasterizer = GlyphRasterizer::new();
-                black_box(shape_text_styled(
-                    &mut rasterizer,
-                    black_box(input),
-                    16.0,
-                    FontFamily::SANS_SERIF,
-                    FontWeight::Normal,
-                    FontStyle::Normal,
-                ));
-            });
+        cold_inputs.par_iter().for_each(|input| {
+            let mut rasterizer = GlyphRasterizer::new();
+            black_box(shape_text_styled(
+                &mut rasterizer,
+                black_box(input),
+                16.0,
+                FontFamily::SANS_SERIF,
+                FontWeight::Normal,
+                FontStyle::Normal,
+            ));
+        });
 
         #[cfg(target_arch = "wasm32")]
         for input in &cold_inputs {

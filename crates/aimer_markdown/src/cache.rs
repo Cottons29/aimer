@@ -33,8 +33,7 @@ impl<K: PartialEq, V: Clone> LruCache<K, V> {
         if self.entries.len() == self.capacity {
             self.entries.pop_front();
         }
-        self.entries
-            .push_back((key, value.clone()));
+        self.entries.push_back((key, value.clone()));
         value
     }
 }

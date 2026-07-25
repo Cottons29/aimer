@@ -45,13 +45,10 @@ pub use crate::scrollable::scroll_bar::*;
 /// use aimer_flex::Column;
 /// use aimer_scroll::{ScrollAxis, Scrollable};
 ///
-/// let viewport = Scrollable::new()
-///     .axis(ScrollAxis::Vertical)
-///     .vertical_scroll_bar(None)
-///     .child(Column::new().children([
-///         SizedBox::new().height(200),
-///         SizedBox::new().height(200),
-///     ]));
+/// let viewport = Scrollable::new().axis(ScrollAxis::Vertical)
+///                                 .vertical_scroll_bar(None)
+///                                 .child(Column::new().children([SizedBox::new().height(200),
+///                                                                SizedBox::new().height(200)]));
 /// ```
 pub struct Scrollable<W = RequiredChild> {
     pub child: Rc<W>,
@@ -80,7 +77,8 @@ impl Default for Scrollable {
 }
 
 impl Scrollable {
-    /// Creates a vertical scrollable with default scroll bars and no controller.
+    /// Creates a vertical scrollable with default scroll bars and no
+    /// controller.
     ///
     /// Finish the builder with [`Scrollable::child`] or
     /// [`Scrollable::box_child`].
@@ -128,8 +126,8 @@ impl Scrollable {
 
     /// Sets the single axis along which content may overflow and scroll.
     ///
-    /// The default is [`ScrollAxis::Vertical`]. The child is made unbounded only
-    /// on this axis and remains constrained on the cross axis.
+    /// The default is [`ScrollAxis::Vertical`]. The child is made unbounded
+    /// only on this axis and remains constrained on the cross axis.
     #[inline]
     pub fn axis(mut self, axis: ScrollAxis) -> Self {
         self.axis = axis;
@@ -258,12 +256,11 @@ impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
             (Some(current), Some(new)) => !current.shares_identity_with(new),
             (None, Some(_)) => true,
         };
-        let engine_config_changed = !same_scroll_behavior(
-            self.scroll_behavior,
-            new.scroll_behavior,
-        ) || !same_scroll_axis(self.axis, new.axis)
-            || self.key != new.key
-            || controller_changed;
+        let engine_config_changed =
+            !same_scroll_behavior(self.scroll_behavior, new.scroll_behavior)
+                || !same_scroll_axis(self.axis, new.axis)
+                || self.key != new.key
+                || controller_changed;
 
         self.child = new.child.clone();
         self.scroll_behavior = new.scroll_behavior;
@@ -386,7 +383,8 @@ impl<W: Widget + 'static> ScrollableState<W> {
             vel_accum: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             vel_sample_time: Cell::new(None),
             is_scrolling: Cell::new(false),
-            // Left empty here; `live_scroll_state` re-shares any app-registered
+            // Left empty here; `live_scroll_state` re-shares any
+            // app-registered
             // scroll-lifecycle callbacks when it attaches the controller.
             on_scroll_start: RefCell::new(Callback::default()),
             on_scroll_end: RefCell::new(Callback::default()),

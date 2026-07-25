@@ -31,8 +31,7 @@ thread_local! {
 /// Save a scrollable's live *logical* (unscaled) offset under its storage key.
 pub(crate) fn save_offset(key: &Key, logical_offset: Vec2d) {
     SCROLL_OFFSETS.with(|m| {
-        m.borrow_mut()
-            .insert(key.clone(), logical_offset);
+        m.borrow_mut().insert(key.clone(), logical_offset);
     });
 }
 
@@ -59,12 +58,7 @@ mod tests {
 
         // A later save overwrites (the store always holds the latest position).
         save_offset(&key, Vec2d { x: 0.0, y: 55.0 });
-        assert_eq!(
-            read_offset(&key)
-                .expect("latest offset restores")
-                .y,
-            55.0
-        );
+        assert_eq!(read_offset(&key).expect("latest offset restores").y, 55.0);
 
         // A different key is independent.
         assert!(read_offset(&Key::Value("list-b".into())).is_none());

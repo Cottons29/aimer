@@ -106,10 +106,7 @@ async fn create_gpu<'w>(
     let limit = browser_required_limits(adapter.limits());
 
     let mut features = wgpu::Features::default();
-    if adapter
-        .features()
-        .contains(wgpu::Features::PIPELINE_CACHE)
-    {
+    if adapter.features().contains(wgpu::Features::PIPELINE_CACHE) {
         features |= wgpu::Features::PIPELINE_CACHE;
     }
 
@@ -218,9 +215,7 @@ impl<'w> GpuContext<'w> {
 
         let is_srgb = selected_format.is_srgb();
 
-        let max_dim = device
-            .limits()
-            .max_texture_dimension_2d;
+        let max_dim = device.limits().max_texture_dimension_2d;
 
         let present_mode = wgpu::PresentMode::Fifo;
 
@@ -251,16 +246,12 @@ impl<'w> GpuContext<'w> {
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width > 0 && size.height > 0 {
-            let max_dim = self
-                .device
-                .limits()
-                .max_texture_dimension_2d;
+            let max_dim = self.device.limits().max_texture_dimension_2d;
             let backing_size = render_dimensions(size, max_dim);
             self.config.width = backing_size.width;
             self.config.height = backing_size.height;
             self.viewport_size = size;
-            self.surface
-                .configure(&self.device, &self.config);
+            self.surface.configure(&self.device, &self.config);
         }
     }
 
@@ -273,8 +264,7 @@ impl<'w> GpuContext<'w> {
     }
 
     pub fn begin_frame(&self) -> wgpu::CurrentSurfaceTexture {
-        self.surface
-            .get_current_texture()
+        self.surface.get_current_texture()
     }
 
     pub fn end_frame(&self, frame: SurfaceTexture) {

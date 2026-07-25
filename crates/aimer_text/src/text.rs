@@ -11,9 +11,10 @@ use crate::text::raw_text::RawTextWidget;
 
 /// Displays a single run of styled text.
 ///
-/// Text uses [`TextStyle::default`] and [`TextAlign::default`] unless replaced. Overflow behavior
-/// comes from the active style; use [`Text::wrapped`] or [`Text::ellipsis`] for the common modes.
-/// Unlike [`crate::RichText`], this widget does not provide spans, links, or selection.
+/// Text uses [`TextStyle::default`] and [`TextAlign::default`] unless replaced.
+/// Overflow behavior comes from the active style; use [`Text::wrapped`] or
+/// [`Text::ellipsis`] for the common modes. Unlike [`crate::RichText`], this
+/// widget does not provide spans, links, or selection.
 ///
 /// # Example
 ///
@@ -21,10 +22,9 @@ use crate::text::raw_text::RawTextWidget;
 /// use aimer_style::{TextAlign, TextStyle};
 /// use aimer_text::Text;
 ///
-/// let title = Text::new("Aimer")
-///     .text_align(TextAlign::MidCenter)
-///     .text_style(TextStyle::default())
-///     .wrapped();
+/// let title = Text::new("Aimer").text_align(TextAlign::MidCenter)
+///                               .text_style(TextStyle::default())
+///                               .wrapped();
 /// ```
 #[allow(dead_code)]
 pub struct Text {
@@ -64,8 +64,8 @@ impl Text {
     }
     /// Sets overflow behavior on the current style.
     ///
-    /// Prefer configuring [`TextStyle::text_overflow`] before passing the style to
-    /// [`Text::text_style`].
+    /// Prefer configuring [`TextStyle::text_overflow`] before passing the style
+    /// to [`Text::text_style`].
     #[deprecated(note = "set TextStyle::text_overflow and pass it to Text::text_style")]
     pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
         self.text_style.text_overflow = text_overflow;

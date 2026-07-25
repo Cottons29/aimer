@@ -157,8 +157,7 @@ impl LayoutElement for RawAlign {
     }
 
     fn get_size_from_child(&self) -> Option<Size> {
-        self.child
-            .get_size_from_child()
+        self.child.get_size_from_child()
     }
 }
 
@@ -175,9 +174,8 @@ impl VisitorElement for RawAlign {
 #[cfg(test)]
 mod tests {
     use aimer_attribute::size::ResolvedSize;
-    use aimer_widget::{Element, LayoutElement};
-
     use aimer_container::ZeroSizedBox;
+    use aimer_widget::{Element, LayoutElement};
 
     use super::{Alignment, RawAlign, alignment_offset};
 

@@ -50,8 +50,7 @@ thread_local! {
 pub fn write<T: 'static>(key: impl Into<Key>, value: T) {
     let key = key.into();
     STORE.with(|m| {
-        m.borrow_mut()
-            .insert(key, Box::new(value));
+        m.borrow_mut().insert(key, Box::new(value));
     });
 }
 

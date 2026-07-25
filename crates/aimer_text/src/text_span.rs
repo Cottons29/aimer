@@ -68,28 +68,14 @@ impl SpanStyle {
 
     fn resolve(self, inherited: TextStyle) -> TextStyle {
         TextStyle {
-            font_size: self
-                .font_size
-                .unwrap_or(inherited.font_size),
-            font_family: self
-                .font_family
-                .unwrap_or(inherited.font_family),
-            font_style: self
-                .font_style
-                .unwrap_or(inherited.font_style),
-            font_weight: self
-                .font_weight
-                .unwrap_or(inherited.font_weight),
-            color: self
-                .color
-                .unwrap_or(inherited.color),
-            background_color: self
-                .background_color
-                .or(inherited.background_color),
+            font_size: self.font_size.unwrap_or(inherited.font_size),
+            font_family: self.font_family.unwrap_or(inherited.font_family),
+            font_style: self.font_style.unwrap_or(inherited.font_style),
+            font_weight: self.font_weight.unwrap_or(inherited.font_weight),
+            color: self.color.unwrap_or(inherited.color),
+            background_color: self.background_color.or(inherited.background_color),
             text_overflow: inherited.text_overflow,
-            text_decoration: self
-                .text_decoration
-                .unwrap_or(inherited.text_decoration),
+            text_decoration: self.text_decoration.unwrap_or(inherited.text_decoration),
         }
     }
 }
@@ -157,13 +143,8 @@ impl TextSpan {
         inherited_link: Option<Rc<str>>,
         result: &mut Vec<ResolvedTextSpan>,
     ) {
-        let style = self
-            .style
-            .resolve(inherited_style);
-        let link = self
-            .link
-            .clone()
-            .or(inherited_link);
+        let style = self.style.resolve(inherited_style);
+        let link = self.link.clone().or(inherited_link);
         if !self.text.is_empty() {
             result.push(ResolvedTextSpan {
                 text: self.text.clone(),
@@ -254,8 +235,7 @@ pub(crate) fn layout_resolved_spans(
             if let Some(last) = runs.last_mut()
                 && last.span_index == grapheme.span_index
             {
-                last.text
-                    .push_str(grapheme.text);
+                last.text.push_str(grapheme.text);
                 last.source_range
                     .as_mut()
                     .expect("source text fragments have a range")
@@ -279,9 +259,10 @@ pub(crate) fn layout_resolved_spans(
             })
             .sum::<f32>();
 
-        // Measuring separate words is fast, but shaping the complete painted run can produce a
-        // slightly different width. Verify the complete line only near its edge so wrapping and
-        // painting agree without reshaping the growing line after every word.
+        // Measuring separate words is fast, but shaping the complete painted run can
+        // produce a slightly different width. Verify the complete line only
+        // near its edge so wrapping and painting agree without reshaping the
+        // growing line after every word.
         let mut verified_width = None;
         if max_width > 0.0
             && *x > 0.0
@@ -334,8 +315,9 @@ pub(crate) fn layout_resolved_spans(
             return;
         }
 
-        // A single word can be wider than the line. Grow exact shaped chunks until the next
-        // grapheme would overflow, then continue that word on the following line.
+        // A single word can be wider than the line. Grow exact shaped chunks until the
+        // next grapheme would overflow, then continue that word on the
+        // following line.
         let mut chunk: Option<SpanLayoutFragment> = None;
         for grapheme in unit.drain(..) {
             let same_span = chunk
@@ -343,9 +325,7 @@ pub(crate) fn layout_resolved_spans(
                 .is_some_and(|fragment| fragment.span_index == grapheme.span_index);
             let mut candidate = if same_span {
                 let mut candidate = chunk.take().unwrap();
-                candidate
-                    .text
-                    .push_str(grapheme.text);
+                candidate.text.push_str(grapheme.text);
                 candidate
                     .source_range
                     .as_mut()
@@ -380,9 +360,7 @@ pub(crate) fn layout_resolved_spans(
                 && *x + candidate.width > max_width
             {
                 let split_at = candidate.text.len() - grapheme.text.len();
-                candidate
-                    .text
-                    .truncate(split_at);
+                candidate.text.truncate(split_at);
                 candidate
                     .source_range
                     .as_mut()
@@ -413,10 +391,7 @@ pub(crate) fn layout_resolved_spans(
     };
 
     for (span_index, span) in spans.iter().enumerate() {
-        for (grapheme_start, grapheme) in span
-            .text
-            .grapheme_indices(true)
-        {
+        for (grapheme_start, grapheme) in span.text.grapheme_indices(true) {
             let source_range =
                 span_start + grapheme_start..span_start + grapheme_start + grapheme.len();
             if grapheme == "\n" || grapheme == "\r\n" {
@@ -431,9 +406,7 @@ pub(crate) fn layout_resolved_spans(
                 continue;
             }
 
-            let is_break = break_offsets
-                .binary_search(&source_range.end)
-                .is_ok();
+            let is_break = break_offsets.binary_search(&source_range.end).is_ok();
             unit.push(PendingGrapheme {
                 span_index,
                 text: grapheme,
@@ -453,9 +426,7 @@ pub(crate) fn layout_resolved_spans(
             && previous.span_index == fragment.span_index
             && previous.line == fragment.line
         {
-            previous
-                .text
-                .push_str(&fragment.text);
+            previous.text.push_str(&fragment.text);
             previous
                 .source_range
                 .as_mut()
@@ -498,9 +469,7 @@ pub(crate) fn ellipsize_first_line(
         return;
     }
 
-    layout
-        .fragments
-        .retain(|fragment| fragment.line == 0);
+    layout.fragments.retain(|fragment| fragment.line == 0);
     layout.line_breaks.clear();
     let span_index = layout
         .fragments
@@ -514,10 +483,7 @@ pub(crate) fn ellipsize_first_line(
         .last()
         .is_some_and(|fragment| fragment.x + fragment.width + ellipsis_width > max_width)
     {
-        let last = layout
-            .fragments
-            .last_mut()
-            .expect("a fragment exists");
+        let last = layout.fragments.last_mut().expect("a fragment exists");
         if let Some((start, grapheme)) = last
             .text
             .grapheme_indices(true)
@@ -539,16 +505,14 @@ pub(crate) fn ellipsize_first_line(
         last.text.push('…');
         last.width += ellipsis_width;
     } else {
-        layout
-            .fragments
-            .push(SpanLayoutFragment {
-                span_index,
-                text: "…".to_owned(),
-                source_range: None,
-                line: 0,
-                x: 0.0,
-                width: ellipsis_width,
-            });
+        layout.fragments.push(SpanLayoutFragment {
+            span_index,
+            text: "…".to_owned(),
+            source_range: None,
+            line: 0,
+            x: 0.0,
+            width: ellipsis_width,
+        });
     }
     layout.line_count = 1;
 }
@@ -579,10 +543,7 @@ mod tests {
         assert_eq!(&*flattened[1].text, "inherited");
         assert_eq!(flattened[1].style.font_size, 18);
         assert_eq!(
-            flattened[1]
-                .style
-                .font_weight
-                .numeric(),
+            flattened[1].style.font_weight.numeric(),
             FontWeight::Bold.numeric()
         );
         assert_eq!(flattened[1].style.color, Color::RED);
@@ -615,35 +576,18 @@ mod tests {
             ])
             .flatten(&TextStyle::default());
 
-        assert_eq!(
-            flattened[0]
-                .style
-                .background_color,
-            Some(Color::RED)
-        );
-        assert_eq!(
-            flattened[1]
-                .style
-                .background_color,
-            Some(Color::RED)
-        );
-        assert_eq!(
-            flattened[2]
-                .style
-                .background_color,
-            Some(Color::BLUE)
-        );
+        assert_eq!(flattened[0].style.background_color, Some(Color::RED));
+        assert_eq!(flattened[1].style.background_color, Some(Color::RED));
+        assert_eq!(flattened[2].style.background_color, Some(Color::BLUE));
         assert_eq!(TextStyle::default().background_color, None);
     }
 
     #[test]
     fn link_target_is_inherited_by_nested_text() {
-        let root = TextSpan::root([TextSpan::new("")
-            .link("https://aimer.dev")
-            .children([
-                TextSpan::new("Aimer "),
-                TextSpan::new("docs").style(SpanStyle::new().font_weight(FontWeight::Bold)),
-            ])]);
+        let root = TextSpan::root([TextSpan::new("").link("https://aimer.dev").children([
+            TextSpan::new("Aimer "),
+            TextSpan::new("docs").style(SpanStyle::new().font_weight(FontWeight::Bold)),
+        ])]);
 
         let flattened = root.flatten(&TextStyle::default());
 

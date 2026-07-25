@@ -1,6 +1,3 @@
-use crate::blog_store::{BlogStore, BlogSummary, LoadState, request_blog_list};
-use crate::router::AppRouter;
-use crate::utils::{app_padding, is_mobile};
 use aimer::console::error;
 use aimer::router::NavigatorController;
 use aimer::style::{
@@ -8,6 +5,10 @@ use aimer::style::{
     TextStyle, Theme, ThemeData,
 };
 use aimer::{BuildContext, Widget, widget, *};
+
+use crate::blog_store::{BlogStore, BlogSummary, LoadState, request_blog_list};
+use crate::router::AppRouter;
+use crate::utils::{app_padding, is_mobile};
 
 #[widget(Stateless)]
 #[derive(Clone)]
@@ -29,9 +30,7 @@ impl StatelessWidget for BlogListPage {
         let content = match &store.list {
             LoadState::Idle | LoadState::Loading => status_text(
                 "Loading blogs…",
-                theme
-                    .on_background_color
-                    .with_opacity(150),
+                theme.on_background_color.with_opacity(150),
             ),
             LoadState::Error(error) => {
                 error!("{}", error);
@@ -39,9 +38,7 @@ impl StatelessWidget for BlogListPage {
             }
             LoadState::Ready(blogs) if blogs.is_empty() => status_text(
                 "No blogs have been published yet.",
-                theme
-                    .on_background_color
-                    .with_opacity(150),
+                theme.on_background_color.with_opacity(150),
             ),
             LoadState::Ready(blogs) => {
                 let navigator = NavigatorController::<AppRouter>::of(ctx);
@@ -106,11 +103,7 @@ fn blog_archive(
         let year = archive_year(&blog.upload_time);
         if current_year.as_deref() != Some(year) {
             if current_year.is_some() {
-                children.push(
-                    SizedBox::new()
-                        .height(40)
-                        .boxed(),
-                );
+                children.push(SizedBox::new().height(40).boxed());
             }
             children.push(
                 Text::new(archive_heading(&blog.upload_time))
@@ -121,19 +114,11 @@ fn blog_archive(
                     )
                     .boxed(),
             );
-            children.push(
-                SizedBox::new()
-                    .height(if mobile { 28 } else { 40 })
-                    .boxed(),
-            );
+            children.push(SizedBox::new().height(if mobile { 28 } else { 40 }).boxed());
             current_year = Some(year.to_owned());
         }
         children.push(blog_row(blog, navigator.clone(), mobile, theme));
-        children.push(
-            SizedBox::new()
-                .height(if mobile { 28 } else { 36 })
-                .boxed(),
-        );
+        children.push(SizedBox::new().height(if mobile { 28 } else { 36 }).boxed());
     }
 
     Column::new()
@@ -167,25 +152,14 @@ fn blog_row(
     if mobile {
         Column::new()
             .horizontal_alignment(BoxAlignment::Start)
-            .children(vec![
-                date,
-                SizedBox::new()
-                    .height(8)
-                    .boxed(),
-                link,
-            ])
+            .children(vec![date, SizedBox::new().height(8).boxed(), link])
             .boxed()
     } else {
         Row::new()
             .vertical_alignment(BoxAlignment::Start)
             .children(vec![
-                Container::new()
-                    .width(140)
-                    .child(date)
-                    .boxed(),
-                Expanded::new()
-                    .child(link)
-                    .boxed(),
+                Container::new().width(140).child(date).boxed(),
+                Expanded::new().child(link).boxed(),
             ])
             .boxed()
     }
@@ -194,10 +168,7 @@ fn blog_row(
 fn archive_year(upload_time: &str) -> &str {
     upload_time
         .get(0..4)
-        .filter(|year| {
-            year.bytes()
-                .all(|byte| byte.is_ascii_digit())
-        })
+        .filter(|year| year.bytes().all(|byte| byte.is_ascii_digit()))
         .unwrap_or("")
 }
 
@@ -248,11 +219,7 @@ fn archive_text_styles(theme: &ThemeData) -> (TextStyle, TextStyle) {
     let date_style = TextStyle::new()
         .font_size(24)
         .font_weight(FontWeight::Bold)
-        .color(
-            theme
-                .on_background_color
-                .with_opacity(120),
-        )
+        .color(theme.on_background_color.with_opacity(120))
         .text_overflow(TextOverflow::Wrap);
     (heading_style, date_style)
 }
@@ -263,11 +230,9 @@ fn blog_link_styles(theme: &ThemeData, mobile: bool) -> (TextStyle, TextStyle) {
         .font_weight(FontWeight::Bold)
         .color(theme.on_background_color)
         .text_overflow(TextOverflow::Wrap);
-    let hover_style = style
-        .font_style(FontStyle::Italic)
-        .text_decoration(
-            TextDecoration::new().line(TextDecorationLine::ITALIC | TextDecorationLine::UNDERLINE),
-        );
+    let hover_style = style.font_style(FontStyle::Italic).text_decoration(
+        TextDecoration::new().line(TextDecorationLine::ITALIC | TextDecorationLine::UNDERLINE),
+    );
 
     (style, hover_style)
 }
@@ -321,9 +286,7 @@ mod tests {
         assert_eq!(heading_style.color, theme.on_background_color);
         assert_eq!(
             date_style.color,
-            theme
-                .on_background_color
-                .with_opacity(120)
+            theme.on_background_color.with_opacity(120)
         );
         assert_eq!(link_style.color, theme.on_background_color);
     }

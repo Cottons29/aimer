@@ -1,7 +1,6 @@
-use aimer::BuildContext;
 use aimer::animation::Animatable;
 use aimer::style::{AnimatedTheme, Theme};
-use aimer::{Text, Widget};
+use aimer::{BuildContext, Text, Widget};
 
 #[derive(Clone, Copy, Debug, PartialEq, Theme)]
 struct AppTheme {

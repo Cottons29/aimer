@@ -93,9 +93,11 @@ use crate::input_field::raw_fields::{
 /// * `read_only` - When `true`, text cannot be modified via keyboard input.
 ///   Selection, copy, and cursor movement still work. Defaults to `false`.
 ///
-/// Decorations are selected in disabled, focused, hovered, then normal priority. The field starts
-/// empty and enabled with a white background, four logical pixels of padding, and no line or length
-/// limits. [`TextField::auto_focus`] controls the initial focus state when the element is created.
+/// Decorations are selected in disabled, focused, hovered, then normal
+/// priority. The field starts empty and enabled with a white background, four
+/// logical pixels of padding, and no line or length
+/// limits. [`TextField::auto_focus`] controls the initial focus state when the
+/// element is created.
 ///
 /// # Example
 ///
@@ -103,12 +105,11 @@ use crate::input_field::raw_fields::{
 /// use aimer_input::input::{InputType, TextField, TextFieldController};
 ///
 /// let controller = TextFieldController::with_initial("hello");
-/// let field = TextField::new()
-///     .controller(controller)
-///     .input_type(InputType::Text)
-///     .hint("Message")
-///     .max_length(Some(200))
-///     .on_changed(|text| println!("changed to {text}"));
+/// let field = TextField::new().controller(controller)
+///                             .input_type(InputType::Text)
+///                             .hint("Message")
+///                             .max_length(Some(200))
+///                             .on_changed(|text| println!("changed to {text}"));
 /// ```
 pub struct TextField {
     controller: TextFieldController,
@@ -160,9 +161,7 @@ impl Widget for TextField {
             decoration: self.decoration.clone(),
             hover_decoration: self.hover_decoration.clone(),
             focus_decoration: self.focus_decoration.clone(),
-            disabled_decoration: self
-                .disabled_decoration
-                .clone(),
+            disabled_decoration: self.disabled_decoration.clone(),
             selection_color: self.selection_color,
             focused: Cell::new(self.auto_focus),
             hovered: Cell::new(false),
@@ -190,7 +189,8 @@ impl TextField {
     /// Default padding applied between the decoration and editable content.
     pub const DEFAULT_PADDING: LayoutSpacing = LayoutSpacing::all(Spacing::Px(4));
 
-    /// Creates an empty, enabled, editable field with default styling and no-op callbacks.
+    /// Creates an empty, enabled, editable field with default styling and no-op
+    /// callbacks.
     pub fn new() -> Self {
         Self {
             controller: TextFieldController::default(),
@@ -225,15 +225,18 @@ impl TextField {
         }
     }
 
-    /// Uses `controller` as the field's shared text and selection-history owner.
+    /// Uses `controller` as the field's shared text and selection-history
+    /// owner.
     ///
-    /// Clones of the controller observe the same text, undo stack, and redo stack.
+    /// Clones of the controller observe the same text, undo stack, and redo
+    /// stack.
     pub fn controller(mut self, controller: TextFieldController) -> Self {
         self.controller = controller;
         self
     }
 
-    /// Sets the accepted input mode, including plain text, numeric, and obscured password input.
+    /// Sets the accepted input mode, including plain text, numeric, and
+    /// obscured password input.
     pub fn input_type(mut self, input_type: InputType) -> Self {
         self.input_type = input_type;
         self
@@ -277,8 +280,8 @@ impl TextField {
 
     /// Sets whether a newly created field starts focused.
     ///
-    /// This initializes focus when the widget becomes an element; it is not an imperative request
-    /// to focus an already mounted field.
+    /// This initializes focus when the widget becomes an element; it is not an
+    /// imperative request to focus an already mounted field.
     pub fn auto_focus(mut self, auto_focus: bool) -> Self {
         self.auto_focus = auto_focus;
         self
@@ -286,7 +289,8 @@ impl TextField {
 
     /// Sets the optional maximum number of laid-out input lines.
     ///
-    /// `None` removes the limit. A value of `Some(1)` produces single-line submission behavior.
+    /// `None` removes the limit. A value of `Some(1)` produces single-line
+    /// submission behavior.
     pub fn max_lines(mut self, max_lines: Option<usize>) -> Self {
         self.max_lines = max_lines;
         self
@@ -316,7 +320,8 @@ impl TextField {
         self
     }
 
-    /// Sets the directions in which the field expands to consume available layout space.
+    /// Sets the directions in which the field expands to consume available
+    /// layout space.
     pub fn expand(mut self, expand: ExpandDirection) -> Self {
         self.expand = expand;
         self
@@ -364,8 +369,8 @@ impl TextField {
 
     /// Sets the callback invoked after a user edit changes the text.
     ///
-    /// The callback receives the complete updated string. Programmatic controller mutations do not
-    /// themselves dispatch widget callbacks.
+    /// The callback receives the complete updated string. Programmatic
+    /// controller mutations do not themselves dispatch widget callbacks.
     pub fn on_changed(mut self, on_changed: impl Into<TextFieldCallback>) -> Self {
         self.on_changed = on_changed.into();
         self
@@ -395,7 +400,8 @@ impl TextField {
         self
     }
 
-    /// Sets whether user editing is blocked while focus, selection, copy, and navigation remain.
+    /// Sets whether user editing is blocked while focus, selection, copy, and
+    /// navigation remain.
     pub fn read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
         self

@@ -821,15 +821,17 @@ impl Renderer {
         }
 
         if !self.text_requests.is_empty() || !self.decoration_requests.is_empty() {
-            time_cost!("TextRenderRequest", || self.text_pipeline.prepare(
-                device,
-                queue,
-                width,
-                height,
-                is_srgb,
-                &self.text_requests,
-                &self.decoration_requests
-            ))
+            time_cost!("TextRenderRequest", || {
+                self.text_pipeline.prepare(
+                    device,
+                    queue,
+                    width,
+                    height,
+                    is_srgb,
+                    &self.text_requests,
+                    &self.decoration_requests,
+                )
+            })
         }
 
         self.svg_pipeline

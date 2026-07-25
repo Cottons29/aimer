@@ -65,8 +65,7 @@ fn gradle_task(release: bool) -> &'static str {
 /// Run `cmd` to completion with inherited stdio, bailing with context when it
 /// fails to start or exits with a non-zero status.
 fn run_step(mut cmd: Command, action: &str) -> anyhow::Result<()> {
-    cmd.stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+    cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
     let status = cmd
         .status()
         .with_context(|| format!("failed to start {action}"))?;
@@ -112,9 +111,7 @@ pub(crate) fn copy_assets_into(dest_root: &str) -> anyhow::Result<()> {
     for rel in &report.copied {
         info!(
             "Copied asset {rel} -> {}",
-            Path::new(dest_root)
-                .join(rel)
-                .display()
+            Path::new(dest_root).join(rel).display()
         );
     }
     for rel in &report.missing {
@@ -129,9 +126,7 @@ fn assemble_macos(pkg_name: &str, release: bool) -> anyhow::Result<String> {
     let lib_name = pkg_name.replace('-', "_");
 
     let mut cargo = Command::new("cargo");
-    cargo
-        .arg("build")
-        .args(["--target", rust_target, "--lib"]);
+    cargo.arg("build").args(["--target", rust_target, "--lib"]);
     if release {
         cargo.arg("--release");
     }
@@ -263,9 +258,7 @@ fn assemble_android(pkg_name: &str, release: bool) -> anyhow::Result<String> {
     };
 
     let mut gradle = Command::new(android_dir.join(gradlew));
-    gradle
-        .arg(gradle_task(release))
-        .current_dir(&android_dir);
+    gradle.arg(gradle_task(release)).current_dir(&android_dir);
     if let Some(java_home) = resolve_compatible_java_home() {
         println!("Using JAVA_HOME: {java_home}");
         gradle.env("JAVA_HOME", java_home);
@@ -307,9 +300,7 @@ fn assemble_web(release: bool) -> anyhow::Result<String> {
     let llvm_ar = crate::commands::run::web::find_llvm_ar().context("Failed to find llvm-ar")?;
     let mut trunk = Command::new("trunk");
     crate::commands::run::web::configure_trunk(&mut trunk, &llvm_ar);
-    trunk
-        .arg("build")
-        .current_dir("builds/web");
+    trunk.arg("build").current_dir("builds/web");
     if release {
         trunk.arg("--release");
     }
@@ -322,9 +313,7 @@ fn assemble_web(release: bool) -> anyhow::Result<String> {
 /// exists yet, so this compiles the artifact and reports its directory.
 fn assemble_desktop(target: Targets, release: bool) -> anyhow::Result<String> {
     let mut cargo = Command::new("cargo");
-    cargo
-        .arg("build")
-        .arg("--lib");
+    cargo.arg("build").arg("--lib");
     if release {
         cargo.arg("--release");
     }
@@ -390,18 +379,12 @@ mod tests {
     #[test]
     fn execute_rejects_unknown_platform() {
         let err = execute("playstation".to_string(), false).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("unknown target")
-        );
+        assert!(err.to_string().contains("unknown target"));
     }
 
     #[test]
     fn execute_rejects_terminated_platform() {
         let err = execute("terminated".to_string(), false).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("not an assemblable platform")
-        );
+        assert!(err.to_string().contains("not an assemblable platform"));
     }
 }

@@ -60,16 +60,10 @@ impl BlogStore {
                 return Err(format!("duplicate blog id: {}", blog.id));
             }
             if blog.title.trim().is_empty()
-                || blog
-                    .upload_time
-                    .trim()
-                    .is_empty()
+                || blog.upload_time.trim().is_empty()
                 || blog.author.trim().is_empty()
                 || blog.tags.is_empty()
-                || blog
-                    .tags
-                    .iter()
-                    .any(|tag| tag.trim().is_empty())
+                || blog.tags.iter().any(|tag| tag.trim().is_empty())
             {
                 return Err(format!("blog metadata is incomplete: {}", blog.id));
             }
@@ -138,12 +132,7 @@ async fn get_blog(State(store): State<BlogStore>, AxumPath(id): AxumPath<String>
     let Some(path) = store.0.paths.get(&id) else {
         return error_response(StatusCode::NOT_FOUND, "blog not found");
     };
-    let Some(summary) = store
-        .0
-        .blogs
-        .iter()
-        .find(|blog| blog.id == id)
-    else {
+    let Some(summary) = store.0.blogs.iter().find(|blog| blog.id == id) else {
         return error_response(StatusCode::NOT_FOUND, "blog not found");
     };
 
@@ -198,18 +187,8 @@ mod tests {
             ]"#,
         )
         .unwrap();
-        fs::write(
-            root.path()
-                .join("older-post.md"),
-            "# Older\n",
-        )
-        .unwrap();
-        fs::write(
-            root.path()
-                .join("new-post.md"),
-            "# New\n\nHello, Aimer!\n",
-        )
-        .unwrap();
+        fs::write(root.path().join("older-post.md"), "# Older\n").unwrap();
+        fs::write(root.path().join("new-post.md"), "# New\n\nHello, Aimer!\n").unwrap();
         root
     }
 
@@ -225,12 +204,7 @@ mod tests {
             .expect("Rubick migration blog must be indexed");
 
         assert_eq!(summary.author, "Cottons29");
-        assert!(
-            summary
-                .tags
-                .iter()
-                .any(|tag| tag == "Rubick")
-        );
+        assert!(summary.tags.iter().any(|tag| tag == "Rubick"));
 
         let markdown = fs::read_to_string(root.join("migrating-widgets-to-rubick.md")).unwrap();
         assert!(markdown.contains("# Migrating Aimer Widgets to Rubick"));
@@ -243,18 +217,12 @@ mod tests {
     async fn list_blogs_returns_metadata_newest_first() {
         let root = fixture();
         let response = app(BlogStore::load(root.path()).unwrap(), &[])
-            .oneshot(
-                Request::get("/api/blogs")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/api/blogs").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["blogs"][0]["id"], "new-post");
         assert_eq!(json["blogs"][0]["title"], "New post");
@@ -281,9 +249,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
-        let body = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["id"], "new-post");
         assert_eq!(json["upload_time"], "2026-07-18T02:22:00Z");
@@ -351,12 +317,7 @@ mod tests {
     #[test]
     fn store_rejects_missing_author_and_empty_tags() {
         let root = tempfile::tempdir().unwrap();
-        fs::write(
-            root.path()
-                .join("missing-author.md"),
-            "# Missing author\n",
-        )
-        .unwrap();
+        fs::write(root.path().join("missing-author.md"), "# Missing author\n").unwrap();
         fs::write(
             root.path().join("index.json"),
             r#"[{"id":"missing-author","upload_time":"2026-01-01T00:00:00Z","title":"Missing author","author":"","tags":[]}]"#,

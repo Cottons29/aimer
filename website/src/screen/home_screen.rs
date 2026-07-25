@@ -1,10 +1,5 @@
-use crate::components::get_started_button::HoverableGetStartedButton;
-use crate::components::same_looking::SameLookingSection;
-#[cfg(test)]
-use crate::router::AppRouter;
-use crate::utils::{app_padding, is_mobile, mobile_title, resp_position};
-#[cfg(test)]
-use crate::{CURRENT_INDEX, TEST_STATE_UPDATED};
+use std::sync::atomic::{AtomicBool, Ordering};
+
 #[cfg(test)]
 use aimer::router::NavigatorController;
 use aimer::style::{
@@ -16,7 +11,14 @@ use aimer::{
     BuildContext, Container, Dimension, Positioned, ScrollController, State, StateUpdater,
     StatefulWidget, Text, Widget, widget, *,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+
+use crate::components::get_started_button::HoverableGetStartedButton;
+use crate::components::same_looking::SameLookingSection;
+#[cfg(test)]
+use crate::router::AppRouter;
+use crate::utils::{app_padding, is_mobile, mobile_title, resp_position};
+#[cfg(test)]
+use crate::{CURRENT_INDEX, TEST_STATE_UPDATED};
 
 pub static SHOW_ICON: AtomicBool = AtomicBool::new(true);
 
@@ -80,21 +82,19 @@ impl State<HomePage> for HomePageState {
                 });
             }
         }
-        Container::new()
-            .color(theme.background_color)
-            .child(
-                Scrollable::new()
-                    .key(key!())
-                    .controller(self.controller.clone())
-                    .axis(ScrollAxis::Vertical)
-                    .child(Column::new().children(vec![
-                        hero_section(ctx),
-                        why_aimer_section(ctx),
-                        polished_tooling_section(ctx),
-                        SameLookingSection { key: Some("same-looking-section".into()) }.boxed(),
-                        // SameLookingSection.boxed(),
-                    ])),
-            )
+        Container::new().color(theme.background_color).child(
+            Scrollable::new()
+                .key(key!())
+                .controller(self.controller.clone())
+                .axis(ScrollAxis::Vertical)
+                .child(Column::new().children(vec![
+            hero_section(ctx),
+            why_aimer_section(ctx),
+            polished_tooling_section(ctx),
+            SameLookingSection { key: Some("same-looking-section".into()), }.boxed(),
+            // SameLookingSection.boxed(),
+        ])),
+        )
     }
 }
 
@@ -205,9 +205,7 @@ fn feature_block(
                                         .font_weight(FontWeight::Bold),
                                 )
                                 .boxed(),
-                            SizedBox::new()
-                                .height(10)
-                                .boxed(),
+                            SizedBox::new().height(10).boxed(),
                             body,
                         ]),
                 ),
@@ -234,9 +232,7 @@ fn why_aimer_section(ctx: &BuildContext) -> AnyWidget {
                                 .text_decoration(TextDecoration::Underline),
                         )
                         .boxed(),
-                    SizedBox::new()
-                        .height(48)
-                        .boxed(),
+                    SizedBox::new().height(48).boxed(),
                     Container::new()
                         .height(Dimension::Px(500.0))
                         .child(
@@ -400,9 +396,7 @@ fn tooling_card(title: &str, description: &str, mobile: bool) -> AnyWidget {
                                 .text_decoration(TextDecoration::Underline),
                         )
                         .boxed(),
-                    SizedBox::new()
-                        .height(14)
-                        .boxed(),
+                    SizedBox::new().height(14).boxed(),
                     Text::new(description.to_string())
                         .text_style(
                             TextStyle::new()
@@ -430,9 +424,7 @@ fn polished_tooling_section(ctx: &BuildContext) -> AnyWidget {
                 .horizontal_alignment(BoxAlignment::Start)
                 .vertical_alignment(BoxAlignment::Start)
                 .children(vec![
-                    SizedBox::new()
-                        .height(12)
-                        .boxed(),
+                    SizedBox::new().height(12).boxed(),
                     Container::new()
                         .height(100)
                         .child(
@@ -448,17 +440,11 @@ fn polished_tooling_section(ctx: &BuildContext) -> AnyWidget {
                     Grid::new()
                         .columns(columns)
                         .rows(rows)
-                        .children(
-                            TOOLING_FEATURES
-                                .into_iter()
-                                .map(|(title, description)| {
-                                    GridItem::new(tooling_card(title, description, mobile))
-                                }),
-                        )
+                        .children(TOOLING_FEATURES.into_iter().map(|(title, description)| {
+                            GridItem::new(tooling_card(title, description, mobile))
+                        }))
                         .boxed(),
-                    SizedBox::new()
-                        .height(48)
-                        .boxed(),
+                    SizedBox::new().height(48).boxed(),
                 ]),
         )
         .boxed()

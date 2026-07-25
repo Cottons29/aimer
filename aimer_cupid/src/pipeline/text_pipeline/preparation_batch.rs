@@ -69,12 +69,7 @@ impl BatchExecutor {
     pub(super) fn new() -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         let workers = std::thread::available_parallelism()
-            .map(|parallelism| {
-                parallelism
-                    .get()
-                    .saturating_sub(1)
-                    .max(1)
-            })
+            .map(|parallelism| parallelism.get().saturating_sub(1).max(1))
             .unwrap_or(1)
             .min(Self::MAX_WORKERS);
         #[cfg(target_arch = "wasm32")]
@@ -82,9 +77,7 @@ impl BatchExecutor {
         #[cfg(not(target_arch = "wasm32"))]
         {
             static POOL: OnceLock<Option<Arc<rayon::ThreadPool>>> = OnceLock::new();
-            let pool = POOL
-                .get_or_init(|| Self::build_pool(workers))
-                .clone();
+            let pool = POOL.get_or_init(|| Self::build_pool(workers)).clone();
             Self {
                 workers,
                 serial_threshold: Self::SERIAL_THRESHOLD,
@@ -198,8 +191,7 @@ where
             return;
         }
 
-        self.jobs
-            .push(IndexedJob::new(self.jobs.len(), key, input));
+        self.jobs.push(IndexedJob::new(self.jobs.len(), key, input));
     }
 
     pub(super) fn jobs(&self) -> &[IndexedJob<K, I>] {
@@ -307,21 +299,13 @@ mod tests {
         );
 
         let incomplete = vec![PreparedResult::new(0, "first", 100)];
-        assert!(
-            batch
-                .merge(incomplete)
-                .is_err()
-        );
+        assert!(batch.merge(incomplete).is_err());
 
         let duplicate = vec![
             PreparedResult::new(0, "first", 100),
             PreparedResult::new(0, "first", 101),
         ];
-        assert!(
-            batch
-                .merge(duplicate)
-                .is_err()
-        );
+        assert!(batch.merge(duplicate).is_err());
     }
 
     #[test]

@@ -7,6 +7,8 @@ those values as the tree is rebuilt.
 This post introduces Aimer's built-in light and dark themes, shows how descendants consume semantic colors, and then
 uses the same ideas to animate both an entire theme and an individual widget.
 
+> We have provided examples inside the `jaime` crate in [Github](https://github.com/Cottons29/aimer)
+
 ## Start With Semantic Colors
 
 `ThemeData` is Aimer's default application theme. It describes colors by purpose instead of by a specific shade:
@@ -18,7 +20,7 @@ uses the same ideas to animate both an entire theme and an individual widget.
 The `on_*` colors are intended for content drawn over their matching base colors. This keeps widgets reusable: a label
 does not need to know whether the current background is light or dark; it only needs the correct semantic foreground.
 
-Aimer includes light and dark defaults, and each value can be customized with the builder API:
+**Aimer** includes light and dark defaults, and each value can be customized with the builder API:
 
 ```rust
 use aimer::style::{Color, ThemeData};

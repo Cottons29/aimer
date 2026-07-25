@@ -37,13 +37,7 @@ cors = ["https://docs.example.com", "http://localhost:8080"]
 
     let config = Config::load(&path).unwrap();
 
-    assert_eq!(
-        config
-            .server()
-            .address()
-            .to_string(),
-        "127.0.0.1:4123"
-    );
+    assert_eq!(config.server().address().to_string(), "127.0.0.1:4123");
     assert_eq!(
         config.server().cors_origins(),
         ["https://docs.example.com", "http://localhost:8080"]
@@ -61,9 +55,7 @@ cors = ["https://docs.example.com"]
 "#,
     );
 
-    let error = Config::load(&path)
-        .unwrap_err()
-        .to_string();
+    let error = Config::load(&path).unwrap_err().to_string();
 
     assert!(error.contains("parsing"), "unexpected error: {error}");
 }
@@ -79,9 +71,7 @@ cors = ["bad\norigin"]
 "#,
     );
 
-    let error = Config::load(&path)
-        .unwrap_err()
-        .to_string();
+    let error = Config::load(&path).unwrap_err().to_string();
 
     assert!(error.contains("CORS origin"), "unexpected error: {error}");
 }

@@ -30,10 +30,7 @@ pub fn set_text(text: &str) -> Result<(), ClipboardError> {
 pub fn set_text(text: &str) -> Result<(), ClipboardError> {
     let window = web_sys::window()
         .ok_or_else(|| ClipboardError::Unavailable("browser window is missing".into()))?;
-    let _ = window
-        .navigator()
-        .clipboard()
-        .write_text(text);
+    let _ = window.navigator().clipboard().write_text(text);
     Ok(())
 }
 

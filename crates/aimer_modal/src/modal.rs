@@ -33,14 +33,11 @@ use crate::host::{self, ModalHandle, ModalId, ModalTimeline};
 /// use aimer_container::SizedBox;
 /// use aimer_modal::{Modal, ModalAnimation};
 ///
-/// let handle = Modal::new()
-///     .animation(
-///         ModalAnimation::new()
-///             .enter_duration(Duration::from_millis(200))
-///             .enter_curve(Curve::EaseOut),
-///     )
-///     .child(SizedBox::new().width(320).height(180))
-///     .show();
+/// let handle =
+///     Modal::new().animation(ModalAnimation::new().enter_duration(Duration::from_millis(200))
+///                                                 .enter_curve(Curve::EaseOut))
+///                 .child(SizedBox::new().width(320).height(180))
+///                 .show();
 ///
 /// handle.dismiss();
 /// ```
@@ -123,8 +120,8 @@ impl Modal {
 impl<W: Widget + 'static> Modal<W> {
     /// Presents this modal through the application-wide host immediately.
     ///
-    /// Calls made before the first application frame are queued and presented as
-    /// soon as the root host is built.
+    /// Calls made before the first application frame are queued and presented
+    /// as soon as the root host is built.
     pub fn show(self) -> ModalHandle {
         let animation = self.animation;
         host::show(
@@ -201,10 +198,7 @@ struct RawModal {
 
 impl Drawable for RawModal {
     fn draw(&self, ctx: &BuildContext) {
-        let progress = self
-            .timeline
-            .borrow()
-            .progress();
+        let progress = self.timeline.borrow().progress();
         let scale_from = self
             .animation
             .map(|animation| animation.content_scale_from)
@@ -289,14 +283,12 @@ impl EventElement for RawModal {
 
 impl RawModal {
     fn contains_child(&self, position: Vec2d) -> bool {
-        self.child_bounds
-            .borrow()
-            .is_some_and(|(start, end)| {
-                position.x >= start.x
-                    && position.x <= end.x
-                    && position.y >= start.y
-                    && position.y <= end.y
-            })
+        self.child_bounds.borrow().is_some_and(|(start, end)| {
+            position.x >= start.x
+                && position.x <= end.x
+                && position.y >= start.y
+                && position.y <= end.y
+        })
     }
 }
 

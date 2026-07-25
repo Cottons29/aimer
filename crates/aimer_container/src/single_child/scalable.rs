@@ -7,8 +7,6 @@ pub struct Scalable<W = RequiredChild> {
 }
 
 impl Scalable {
-
-
     #[inline]
     pub fn new() -> Self {
         Self {

@@ -10,10 +10,7 @@ fn cache_path() -> Option<PathBuf> {
     }
     #[cfg(not(target_os = "android"))]
     {
-        dirs::cache_dir().map(|d| {
-            d.join("aimer")
-                .join("pipeline_cache.bin")
-        })
+        dirs::cache_dir().map(|d| d.join("aimer").join("pipeline_cache.bin"))
     }
 }
 
@@ -41,10 +38,7 @@ fn load_cache_data() -> Option<Vec<u8>> {
 /// Returns `None` if the device does not support the `PIPELINE_CACHE` feature
 /// (currently Vulkan only).
 pub fn create_pipeline_cache(device: &wgpu::Device) -> Option<wgpu::PipelineCache> {
-    if !device
-        .features()
-        .contains(wgpu::Features::PIPELINE_CACHE)
-    {
+    if !device.features().contains(wgpu::Features::PIPELINE_CACHE) {
         debug!("Pipeline cache feature not supported on this device, skipping");
         return None;
     }

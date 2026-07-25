@@ -152,7 +152,8 @@ impl StatelessElement {
         }
     }
 
-    /// If dirty, rebuild the child and preserve live state from the old subtree.
+    /// If dirty, rebuild the child and preserve live state from the old
+    /// subtree.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         let Some(rebuild_fn) = self.rebuild_fn.clone() else {
             // Pure wrapper: cannot rebuild itself, only propagate.
@@ -192,9 +193,7 @@ impl Drawable for StatelessElement {
         #[cfg(debug_assertions)]
         {
             if crate::inspector_overlay::is_enabled() {
-                let (start_x, start_y) = ctx
-                    .canvas
-                    .get_transform_translation();
+                let (start_x, start_y) = ctx.canvas.get_transform_translation();
                 let size = self.content_size(ctx);
                 let end_x = start_x + size.width;
                 let end_y = start_y + size.height;
@@ -208,8 +207,7 @@ impl Drawable for StatelessElement {
                     x: end_x / scale,
                     y: end_y / scale,
                 };
-                self.bounds
-                    .set(Some((l_start, l_end)));
+                self.bounds.set(Some((l_start, l_end)));
 
                 let cp = ctx.cursor_pos;
                 if cp.x >= l_start.x
@@ -426,10 +424,7 @@ mod tests {
         let element = StatelessElement::from_builder(
             &context,
             move |context| {
-                if context
-                    .current_build_consumer()
-                    .is_some()
-                {
+                if context.current_build_consumer().is_some() {
                     observer.set(observer.get() + 1);
                 }
                 Leaf.boxed()

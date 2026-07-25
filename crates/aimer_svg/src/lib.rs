@@ -20,17 +20,15 @@ mod tests {
 
     use aimer_attribute::Bounds;
     use aimer_cupid::svg::{SvgElementKind, SvgPathCommand};
-
-    use crate::widget;
     use aimer_widget::Widget;
 
-    use crate::{SvgAsset, SvgDocument, SvgError, SvgLimits, SvgPath, SvgSelector, SvgStyle};
+    use crate::{
+        SvgAsset, SvgDocument, SvgError, SvgLimits, SvgPath, SvgSelector, SvgStyle, widget,
+    };
 
     #[test]
     fn svg_asset_exposes_the_asset_widget_contract() {
-        let widget = SvgAsset::new("assets/icon.svg")
-            .width(24.0)
-            .height(32.0);
+        let widget = SvgAsset::new("assets/icon.svg").width(24.0).height(32.0);
 
         assert_eq!(widget.debug_name(), "SvgAsset");
     }
@@ -48,23 +46,9 @@ mod tests {
         )
         .expect("valid SVG should parse");
 
-        assert_eq!(
-            document
-                .scene()
-                .viewport
-                .width,
-            24.0
-        );
-        assert_eq!(
-            document
-                .scene()
-                .viewport
-                .height,
-            12.0
-        );
-        let mark = document
-            .select("#mark")
-            .expect("selector should parse");
+        assert_eq!(document.scene().viewport.width, 24.0);
+        assert_eq!(document.scene().viewport.height, 12.0);
+        let mark = document.select("#mark").expect("selector should parse");
         assert_eq!(mark.len(), 1);
         let node = document
             .scene()
@@ -72,10 +56,7 @@ mod tests {
             .expect("selected node exists");
         assert_eq!(node.element, SvgElementKind::Path);
         assert_eq!(
-            node.classes
-                .iter()
-                .map(AsRef::as_ref)
-                .collect::<Vec<_>>(),
+            node.classes.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
             ["accent"]
         );
         assert_eq!(node.opacity, 0.5);
@@ -95,33 +76,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            document
-                .select("path")
-                .unwrap()
-                .len(),
-            2
-        );
-        assert_eq!(
-            document
-                .select(".shared")
-                .unwrap()
-                .len(),
-            2
-        );
-        assert_eq!(
-            document
-                .select(".hot")
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            document
-                .select("#missing")
-                .unwrap(),
-            []
-        );
+        assert_eq!(document.select("path").unwrap().len(), 2);
+        assert_eq!(document.select(".shared").unwrap().len(), 2);
+        assert_eq!(document.select(".hot").unwrap().len(), 1);
+        assert_eq!(document.select("#missing").unwrap(), []);
         assert!(matches!(
             "#".parse::<SvgSelector>(),
             Err(SvgError::InvalidSelector(_))
@@ -265,12 +223,7 @@ mod tests {
             &[],
         )
         .unwrap();
-        assert_eq!(
-            back.metadata
-                .svg_id
-                .as_deref(),
-            Some("back")
-        );
+        assert_eq!(back.metadata.svg_id.as_deref(), Some("back"));
     }
 
     #[test]
@@ -329,20 +282,12 @@ mod tests {
         .unwrap();
 
         let groups = document.select("g").unwrap();
-        let clusters = document
-            .select(".cluster")
-            .unwrap();
+        let clusters = document.select(".cluster").unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups, clusters);
-        let child = document
-            .select("#child")
-            .unwrap()[0];
+        let child = document.select("#child").unwrap()[0];
         assert_eq!(
-            document
-                .scene()
-                .node(child)
-                .unwrap()
-                .parent,
+            document.scene().node(child).unwrap().parent,
             Some(groups[0])
         );
     }

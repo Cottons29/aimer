@@ -143,15 +143,9 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     }
 
     let args_str = args.to_string();
-    let is_stateful = args_str
-        .to_lowercase()
-        .contains("stateful");
-    let is_router = args_str
-        .to_lowercase()
-        .contains("router");
-    let is_raw_widget = args_str
-        .to_lowercase()
-        .contains("rawwidget");
+    let is_stateful = args_str.to_lowercase().contains("stateful");
+    let is_router = args_str.to_lowercase().contains("router");
+    let is_raw_widget = args_str.to_lowercase().contains("rawwidget");
 
     // Parse the input item
     let item = parse_macro_input!(input as Item);
@@ -223,14 +217,13 @@ pub fn drawable_element_derive(input: TokenStream) -> TokenStream {
     auto_impl("aimer_widget::Drawable", input)
 }
 
-/// Derives field-by-field interpolation and theme lookup behavior for a named struct.
+/// Derives field-by-field interpolation and theme lookup behavior for a named
+/// struct.
 #[proc_macro_derive(Theme)]
 pub fn theme_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
     let output = style_path().and_then(|style_path| generate_theme_impl(input, style_path));
-    output
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    output.unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
 #[proc_macro]

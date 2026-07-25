@@ -112,9 +112,7 @@ mod tests {
         assert!(
             message
                 .lines()
-                .any(|line| line
-                    .trim_start()
-                    .starts_with("^^^^")),
+                .any(|line| line.trim_start().starts_with("^^^^")),
             "{message}"
         );
     }

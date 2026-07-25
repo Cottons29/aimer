@@ -150,18 +150,14 @@ impl ImageSource {
             let mut cache = FILE_CACHE.lock().unwrap();
             match cache.get_mut(path) {
                 Some(DiskImageState::Loaded(id, width, height)) => {
-                    ctx.canvas
-                        .set_texture_size(*id, *width, *height);
+                    ctx.canvas.set_texture_size(*id, *width, *height);
                     return Success(*id);
                 }
                 Some(DiskImageState::Ready(bytes, upload_width, upload_height, width, height)) => {
                     // Decoded on a background thread; upload to the GPU here (on
                     // the render thread, where the canvas/GPU lives) and cache id.
-                    let id = ctx
-                        .canvas
-                        .load_image(bytes, *upload_width, *upload_height);
-                    ctx.canvas
-                        .set_texture_size(id, *width, *height);
+                    let id = ctx.canvas.load_image(bytes, *upload_width, *upload_height);
+                    ctx.canvas.set_texture_size(id, *width, *height);
                     let (w, h) = (*width, *height);
                     *cache.get_mut(path).unwrap() = DiskImageState::Loaded(id, w, h);
                     return Success(id);
@@ -182,22 +178,18 @@ impl ImageSource {
                 .insert(path.clone(), DiskImageState::Loading);
             let path_buf = path.clone();
             let window = ctx.window.clone();
-            ctx.async_handle
-                .spawn_blocking(move || {
-                    let state = match image::open(&path_buf) {
-                        Ok(image) => {
-                            let rgba = image.to_rgba8();
-                            let (width, height) = (rgba.width(), rgba.height());
-                            DiskImageState::Ready(rgba.into_raw(), width, height, width, height)
-                        }
-                        Err(_) => DiskImageState::Error("Failed to load image".into()),
-                    };
-                    FILE_CACHE
-                        .lock()
-                        .unwrap()
-                        .insert(path_buf, state);
-                    window.request_redraw();
-                });
+            ctx.async_handle.spawn_blocking(move || {
+                let state = match image::open(&path_buf) {
+                    Ok(image) => {
+                        let rgba = image.to_rgba8();
+                        let (width, height) = (rgba.width(), rgba.height());
+                        DiskImageState::Ready(rgba.into_raw(), width, height, width, height)
+                    }
+                    Err(_) => DiskImageState::Error("Failed to load image".into()),
+                };
+                FILE_CACHE.lock().unwrap().insert(path_buf, state);
+                window.request_redraw();
+            });
             ImageResult::Loading
         }
 
@@ -209,9 +201,7 @@ impl ImageSource {
                 .lock()
                 .unwrap()
                 .insert(path.clone(), DiskImageState::Loading);
-            let url = path
-                .to_string_lossy()
-                .to_string();
+            let url = path.to_string_lossy().to_string();
             let path_buf = path.clone();
             let window = ctx.window.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -224,10 +214,7 @@ impl ImageSource {
                     },
                     Err(e) => DiskImageState::Error(e),
                 };
-                FILE_CACHE
-                    .lock()
-                    .unwrap()
-                    .insert(path_buf, state);
+                FILE_CACHE.lock().unwrap().insert(path_buf, state);
                 window.request_redraw();
             });
             ImageResult::Loading
@@ -249,17 +236,13 @@ impl ImageSource {
             let mut cache = ASSET_CACHE.lock().unwrap();
             match cache.get_mut(key) {
                 Some(DiskImageState::Loaded(id, width, height)) => {
-                    ctx.canvas
-                        .set_texture_size(*id, *width, *height);
+                    ctx.canvas.set_texture_size(*id, *width, *height);
                     return Success(*id);
                 }
                 Some(DiskImageState::Ready(bytes, upload_width, upload_height, width, height)) => {
                     // Decoded on a background thread; upload on the render thread.
-                    let id = ctx
-                        .canvas
-                        .load_image(bytes, *upload_width, *upload_height);
-                    ctx.canvas
-                        .set_texture_size(id, *width, *height);
+                    let id = ctx.canvas.load_image(bytes, *upload_width, *upload_height);
+                    ctx.canvas.set_texture_size(id, *width, *height);
                     let (w, h) = (*width, *height);
                     *cache.get_mut(key).unwrap() = DiskImageState::Loaded(id, w, h);
                     return Success(id);
@@ -278,27 +261,23 @@ impl ImageSource {
             .insert(key.to_string(), DiskImageState::Loading);
         let key_owned = key.to_string();
         let window = ctx.window.clone();
-        ctx.async_handle
-            .spawn_blocking(move || {
-                let state = match Self::load_asset_bytes(&key_owned) {
-                    Ok(bytes) => match image::load_from_memory(&bytes) {
-                        Ok(image) => {
-                            let rgba = image.to_rgba8();
-                            let (width, height) = (rgba.width(), rgba.height());
-                            DiskImageState::Ready(rgba.into_raw(), width, height, width, height)
-                        }
-                        Err(_) => DiskImageState::Error(format!(
-                            "Failed to decode asset image '{key_owned}'"
-                        )),
-                    },
-                    Err(err) => DiskImageState::Error(err),
-                };
-                ASSET_CACHE
-                    .lock()
-                    .unwrap()
-                    .insert(key_owned, state);
-                window.request_redraw();
-            });
+        ctx.async_handle.spawn_blocking(move || {
+            let state = match Self::load_asset_bytes(&key_owned) {
+                Ok(bytes) => match image::load_from_memory(&bytes) {
+                    Ok(image) => {
+                        let rgba = image.to_rgba8();
+                        let (width, height) = (rgba.width(), rgba.height());
+                        DiskImageState::Ready(rgba.into_raw(), width, height, width, height)
+                    }
+                    Err(_) => {
+                        DiskImageState::Error(format!("Failed to decode asset image '{key_owned}'"))
+                    }
+                },
+                Err(err) => DiskImageState::Error(err),
+            };
+            ASSET_CACHE.lock().unwrap().insert(key_owned, state);
+            window.request_redraw();
+        });
         ImageResult::Loading
     }
 
@@ -359,11 +338,7 @@ impl ImageSource {
         {
             // macOS: <App>.app/Contents/MacOS/<exe> -> <App>.app/Contents/Resources
             if let Some(contents) = exe_dir.parent() {
-                paths.push(
-                    contents
-                        .join("Resources")
-                        .join(key),
-                );
+                paths.push(contents.join("Resources").join(key));
             }
             // iOS: <App>.app/<exe> -> <App>.app/<key>
             paths.push(exe_dir.join(key));
@@ -379,16 +354,12 @@ impl ImageSource {
         let mut cache = NETWORK_CACHE.lock().unwrap();
         match cache.get_mut(url) {
             Some(NetworkImageState::Loaded(id, width, height)) => {
-                ctx.canvas
-                    .set_texture_size(*id, *width, *height);
+                ctx.canvas.set_texture_size(*id, *width, *height);
                 Success(*id)
             }
             Some(NetworkImageState::Ready(bytes, upload_width, upload_height, width, height)) => {
-                let id = ctx
-                    .canvas
-                    .load_image(bytes, *upload_width, *upload_height);
-                ctx.canvas
-                    .set_texture_size(id, *width, *height);
+                let id = ctx.canvas.load_image(bytes, *upload_width, *upload_height);
+                ctx.canvas.set_texture_size(id, *width, *height);
                 let (w, h) = (*width, *height);
                 *cache.get_mut(url).unwrap() = NetworkImageState::Loaded(id, w, h);
                 Success(id)
@@ -402,21 +373,19 @@ impl ImageSource {
                 let window = ctx.window.clone();
 
                 #[cfg(not(target_arch = "wasm32"))]
-                ctx.async_handle
-                    .spawn(async move {
-                        match Self::fetch_full_image_with_headers(&url, &headers, window.clone())
-                            .await
-                        {
-                            Ok(_) => {}
-                            Err(err) => {
-                                error!("Error to fetch network image : {}", err);
-                                // error!("Image URL: {url}");
-                                let mut cache = NETWORK_CACHE.lock().unwrap();
-                                cache.insert(url, NetworkImageState::Error(err.to_string()));
-                                window.request_redraw();
-                            }
+                ctx.async_handle.spawn(async move {
+                    match Self::fetch_full_image_with_headers(&url, &headers, window.clone()).await
+                    {
+                        Ok(_) => {}
+                        Err(err) => {
+                            error!("Error to fetch network image : {}", err);
+                            // error!("Image URL: {url}");
+                            let mut cache = NETWORK_CACHE.lock().unwrap();
+                            cache.insert(url, NetworkImageState::Error(err.to_string()));
+                            window.request_redraw();
                         }
-                    });
+                    }
+                });
 
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -485,15 +454,12 @@ impl ImageSource {
         let resp_value = wasm_bindgen_futures::JsFuture::from(web_window.fetch_with_str(url))
             .await
             .map_err(|e| format!("{:?}", e))?;
-        let resp: web_sys::Response = resp_value
-            .dyn_into()
-            .map_err(|e| format!("{:?}", e))?;
+        let resp: web_sys::Response = resp_value.dyn_into().map_err(|e| format!("{:?}", e))?;
         if !resp.ok() {
             return Err(format!("HTTP error: {}", resp.status()));
         }
         let buf = wasm_bindgen_futures::JsFuture::from(
-            resp.array_buffer()
-                .map_err(|e| format!("{:?}", e))?,
+            resp.array_buffer().map_err(|e| format!("{:?}", e))?,
         )
         .await
         .map_err(|e| format!("{:?}", e))?;
@@ -526,15 +492,12 @@ impl ImageSource {
         )
         .await
         .map_err(|e| format!("{:?}", e))?;
-        let resp: web_sys::Response = resp_value
-            .dyn_into()
-            .map_err(|e| format!("{:?}", e))?;
+        let resp: web_sys::Response = resp_value.dyn_into().map_err(|e| format!("{:?}", e))?;
         if !resp.ok() {
             return Err(format!("HTTP error: {}", resp.status()));
         }
         let buf = wasm_bindgen_futures::JsFuture::from(
-            resp.array_buffer()
-                .map_err(|e| format!("{:?}", e))?,
+            resp.array_buffer().map_err(|e| format!("{:?}", e))?,
         )
         .await
         .map_err(|e| format!("{:?}", e))?;
@@ -645,13 +608,11 @@ impl ImageSource {
             request_builder = request_builder.header(key, value);
         }
 
-        let response = request_builder
-            .send()
-            .await
-            .map_err(|e| {
-                format!("Network Error: {:?},  Source: {:?}", e, e.source())
-                // format!("Failed to fetch image: {}", e)
-            })?;
+        let response = request_builder.send().await.map_err(|e| {
+            format!("Network Error: {:?},  Source: {:?}", e, e.source())
+            // format!("Failed to fetch image:
+            // {}", e)
+        })?;
 
         if !response.status().is_success() {
             return Err(format!("HTTP error: {}", response.status()));

@@ -155,11 +155,7 @@ impl TextFieldController {
             .nth(start)
             .map(|(i, _)| i)
             .unwrap_or(s.len());
-        let byte_end = s
-            .char_indices()
-            .nth(end)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
+        let byte_end = s.char_indices().nth(end).map(|(i, _)| i).unwrap_or(s.len());
         s.drain(byte_start..byte_end);
         removed
     }
