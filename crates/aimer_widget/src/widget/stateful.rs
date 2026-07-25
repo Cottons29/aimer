@@ -1,6 +1,6 @@
 use std::any::Any;
 use std::cell::{Cell, RefCell, UnsafeCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::panic::Location;
 use std::rc::{Rc, Weak};
 
@@ -9,7 +9,6 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
 use aimer_utils::error;
-use crossbeam_channel::{Receiver, Sender, unbounded};
 
 use crate::base::*;
 use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
@@ -88,15 +87,53 @@ struct SyncAdoptConfigFn(UnsafeCell<Rc<AdoptConfigCallBack>>);
 unsafe impl Send for SyncAdoptConfigFn {}
 unsafe impl Sync for SyncAdoptConfigFn {}
 
-/// Type-erased mutation closure sent through the channel.
+/// Type-erased state mutation applied during the next rebuild.
 type StateMutation<S> = Box<dyn FnOnce(&mut S)>;
+
+struct StateMutationQueue<S> {
+    mutations: RefCell<VecDeque<StateMutation<S>>>,
+}
+
+impl<S> Default for StateMutationQueue<S> {
+    fn default() -> Self {
+        Self {
+            mutations: RefCell::new(VecDeque::new()),
+        }
+    }
+}
+
+impl<S> StateMutationQueue<S> {
+    #[inline]
+    fn push(&self, mutation: StateMutation<S>) {
+        self.mutations
+            .borrow_mut()
+            .push_back(mutation);
+    }
+
+    #[inline]
+    fn pop_front(&self) -> Option<StateMutation<S>> {
+        self.mutations
+            .borrow_mut()
+            .pop_front()
+    }
+
+    fn drain_into(&self, state: &mut S, mut on_applied: impl FnMut()) -> usize {
+        let mut applied = 0;
+        while let Some(mutation) = self.pop_front() {
+            mutation(state);
+            on_applied();
+            applied += 1;
+        }
+        applied
+    }
+}
 
 /// A handle that allows StatefulWidgets to trigger state mutations and
 /// rebuilds. This is the Rust equivalent of Flutter's `setState`.
 ///
-/// Instead of locking a `Mutex`, mutations are sent as closures through a
-/// `crossbeam_channel` and applied on the render thread during the next
-/// rebuild. This eliminates the possibility of deadlocks.
+/// Mutations are queued as closures and applied on the render thread during
+/// the next rebuild. The queue is local to the UI thread, so it needs neither
+/// locking nor cross-thread channel storage.
 ///
 /// `StateUpdater` is intentionally confined to the UI thread:
 ///
@@ -111,8 +148,8 @@ pub struct StateUpdater<S> {
 }
 
 struct StateUpdaterInner<S> {
-    /// Channel sender for queueing state mutations.
-    tx: Sender<StateMutation<S>>,
+    /// Shared UI-thread queue for pending state mutations.
+    tx: Rc<StateMutationQueue<S>>,
     /// Shared state for synchronous reads on the render thread.
     state: Rc<SyncState<S>>,
     dirty: Rc<Cell<bool>>,
@@ -137,7 +174,11 @@ impl<S: 'static> StateUpdater<S> {
     /// Create a new `StateUpdater` from a channel sender, shared state, and a
     /// dirty flag.
     #[inline]
-    fn with(tx: Sender<StateMutation<S>>, state: Rc<SyncState<S>>, dirty: Rc<Cell<bool>>) -> Self {
+    fn with(
+        tx: Rc<StateMutationQueue<S>>,
+        state: Rc<SyncState<S>>,
+        dirty: Rc<Cell<bool>>,
+    ) -> Self {
         Self {
             inner: Some(StateUpdaterInner { tx, state, dirty }),
         }
@@ -233,8 +274,7 @@ impl<S: 'static> StateUpdater<S> {
                 panic!("State is not initialized (see error above)");
             }
         };
-        // Send the mutation through the channel — never blocks, never deadlocks.
-        let _ = inner.tx.send(Box::new(f));
+        inner.tx.push(Box::new(f));
         // Only request a redraw if this is the first set_state since the last rebuild.
         // This coalesces multiple set_state calls into a single redraw request.
         if !inner.dirty.replace(true) {
@@ -530,12 +570,7 @@ impl StatefulElement {
         let dirty = Rc::new(Cell::new(false));
         let build_consumer = BuildConsumer::new(dirty.clone());
 
-        // Create the channel for state mutations.
-        #[allow(clippy::type_complexity)]
-        let (tx, rx): (
-            Sender<StateMutation<W::State>>,
-            Receiver<StateMutation<W::State>>,
-        ) = unbounded();
+        let tx = Rc::new(StateMutationQueue::default());
 
         let state_cell = Rc::new(SyncState(UnsafeCell::new(state)));
         let state_revision = Rc::new(Cell::new(0));
@@ -553,17 +588,16 @@ impl StatefulElement {
 
         let state_for_build = state_cell.clone();
         let revision_for_rebuild = state_revision.clone();
-        let rx_for_rebuild = rx;
+        let mutations_for_rebuild = tx.clone();
         let consumer_for_rebuild = build_consumer.clone();
         let rebuild_fn: Rc<RebuildCallBack> = Rc::new(move |ctx| {
-            // Drain all pending mutations from the channel before rebuilding.
+            // Drain all pending mutations before rebuilding.
             let mutation_result =
                 recover_operation(debug_name, BuildPhase::ApplyStateMutation, || {
                     let s = unsafe { &mut *state_for_build.0.get() };
-                    while let Ok(mutation) = rx_for_rebuild.try_recv() {
-                        mutation(s);
+                    mutations_for_rebuild.drain_into(s, || {
                         revision_for_rebuild.fetch_add(1);
-                    }
+                    });
                 });
             if let Err(diagnostic) = mutation_result {
                 return diagnostic.into_error_element();
@@ -600,7 +634,7 @@ impl StatefulElement {
         // refresh a preserved live state's widget props without
         // `StatefulElement` being generic over `W`.
         let state_any: Rc<dyn Any> = state_cell.clone();
-        let state_sender: Rc<dyn Any> = Rc::new(tx.clone());
+        let state_sender: Rc<dyn Any> = tx.clone();
         let state_for_config = state_cell.clone();
         let adopt_config_fn: Rc<AdoptConfigCallBack> = Rc::new(move |new_any: &dyn Any| {
             if let Some(new_cell) = new_any.downcast_ref::<SyncState<W::State>>() {
@@ -910,10 +944,10 @@ impl StatefulElement {
             .ok()?;
         let sender_any = unsafe { (&*self.state_sender.0.get()).clone() };
         let sender = sender_any
-            .downcast::<Sender<StateMutation<S>>>()
+            .downcast::<StateMutationQueue<S>>()
             .ok()?;
         Some(StateUpdater::with(
-            sender.as_ref().clone(),
+            sender,
             state,
             self.dirty.borrow().clone(),
         ))
@@ -1647,6 +1681,23 @@ mod tests {
         outer_stateful.rebuild_if_dirty(&context);
 
         assert!(visits.borrow().is_empty());
+    }
+
+    #[test]
+    fn local_mutation_queue_preserves_order_and_accepts_reentrant_updates() {
+        let queue: Rc<StateMutationQueue<Vec<i32>>> = Rc::new(StateMutationQueue::default());
+        let nested_queue = queue.clone();
+        let mut state = Vec::new();
+
+        queue.push(Box::new(move |state| {
+            state.push(1);
+            nested_queue.push(Box::new(|state| state.push(3)));
+        }));
+        queue.push(Box::new(|state| state.push(2)));
+
+        assert_eq!(queue.drain_into(&mut state, || {}), 3);
+        assert_eq!(state, vec![1, 2, 3]);
+        assert_eq!(queue.drain_into(&mut state, || {}), 0);
     }
 
     #[test]

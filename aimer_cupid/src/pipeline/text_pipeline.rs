@@ -13,9 +13,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::font::{FontFamily, FontStyle, FontWeight};
 use crate::pipeline::image_pipeline::InstanceBufferPolicy;
-use crate::text_pipeline::glyph_atlas::{
-    AtlasRegion, BatchCapacityPlan, ColorGlyphAtlas, GlyphAtlas,
-};
+use crate::text_pipeline::glyph_atlas::{BatchCapacityPlan, ColorGlyphAtlas, GlyphAtlas};
 use crate::text_pipeline::glyph_rasterizer::{GlyphKey, GlyphPreparationContext, GlyphRasterizer};
 use crate::text_pipeline::preparation_batch::{BatchExecutor, PreparationBatch};
 use crate::text_pipeline::text_layout::{
@@ -58,6 +56,18 @@ fn glyph_intersects_clip(position: [f32; 2], size: [f32; 2], clip: [f32; 4]) -> 
         && position[0] < clip_right
         && glyph_bottom > clip[1]
         && position[1] < clip_bottom
+}
+
+#[inline]
+fn normalize_pixel_uv_rect(pixel_rect: [f32; 4], atlas_width: u32, atlas_height: u32) -> [f32; 4] {
+    let width = atlas_width as f32;
+    let height = atlas_height as f32;
+    [
+        pixel_rect[0] / width,
+        pixel_rect[1] / height,
+        pixel_rect[2] / width,
+        pixel_rect[3] / height,
+    ]
 }
 
 impl GlyphInstance {
@@ -365,7 +375,7 @@ pub struct TextPipelineV2 {
 }
 
 impl TextPipelineV2 {
-    const INITIAL_CAPACITY: usize = 512;
+    const INITIAL_CAPACITY: usize = 64;
     /// Absolute upper bound on the number of cached positioned-glyph layouts.
     /// The caches are kept persistent across frames/screens (see `prepare`) and
     /// only flushed when this hard cap is exceeded, so shaping/layout work is
@@ -887,18 +897,16 @@ impl TextPipelineV2 {
         requests: &[TextDrawRequest],
         decorations: &[TextDecorationDraw],
     ) {
-        // Atlas regions recorded in lock-step with `self.instances` /
-        // `self.color_instances`. UVs depend on the atlas dimensions, which can
+        // Pixel-space atlas regions are staged in each instance's `uv_rect`.
+        // UVs depend on the atlas dimensions, which can
         // change mid-frame if inserting a glyph triggers a `grow()` (the atlas
         // doubles in size). Computing UVs inline would leave glyphs processed
         // *before* the grow with stale UVs that reference the old, smaller
         // dimensions while the bind group now points at the larger texture —
         // producing garbled/overlapping text (notably after resizing the
         // window down and back up, which reflows text and inserts many new
-        // glyphs at once). We therefore record the regions here and resolve
-        // their UVs once, after all insertions, using the final dimensions.
-        let mut alpha_regions: Vec<AtlasRegion> = Vec::new();
-        let mut color_regions: Vec<AtlasRegion> = Vec::new();
+        // glyphs at once). We therefore resolve the staged rectangles once,
+        // after all insertions, using the final dimensions.
 
         // Cache lifetime (perf): previously both caches were wiped whenever the
         // number of draw requests changed (e.g. on every screen transition or
@@ -1395,13 +1403,18 @@ impl TextPipelineV2 {
                         // Improvement B: cached glyphs are positioned at origin (0,0);
                         // apply the actual screen-space cursor offset here.
                         //
-                        // `uv_rect` is left as a placeholder; the final UVs are
+                        // `uv_rect` temporarily stores pixel coordinates; the final UVs are
                         // resolved after the loop once the atlas has reached its
-                        // final size (see `alpha_regions` / `color_regions`).
+                        // final size.
                         let instance = GlyphInstance {
                             position,
                             size,
-                            uv_rect: [0.0, 0.0, 0.0, 0.0],
+                            uv_rect: [
+                                region.x as f32,
+                                region.y as f32,
+                                (region.x + region.width) as f32,
+                                (region.y + region.height) as f32,
+                            ],
                             color,
                             clip_rect: req.clip_rect,
                             clip_border_radius: req.clip_border_radius,
@@ -1412,10 +1425,8 @@ impl TextPipelineV2 {
                         if target_color_list {
                             self.color_instances
                                 .push(instance);
-                            color_regions.push(region);
                         } else {
                             self.instances.push(instance);
-                            alpha_regions.push(region);
                             if is_bold {
                                 // ponytail: synthetic (faux) bold via double-strike —
                                 // re-draw the same alpha glyph offset horizontally to
@@ -1427,7 +1438,6 @@ impl TextPipelineV2 {
                                 let mut bold = instance;
                                 bold.position[0] += (pg.font_size * 0.03).max(0.5);
                                 self.instances.push(bold);
-                                alpha_regions.push(region);
                             }
                         }
                     }
@@ -1455,20 +1465,12 @@ impl TextPipelineV2 {
         // final dimensions so glyphs inserted before a mid-frame `grow()` are
         // not left referencing stale (smaller) atlas sizes.
         let (aw, ah) = (self.atlas.width, self.atlas.height);
-        for (instance, region) in self
-            .instances
-            .iter_mut()
-            .zip(alpha_regions.iter())
-        {
-            instance.uv_rect = region.uvs(aw, ah);
+        for instance in &mut self.instances {
+            instance.uv_rect = normalize_pixel_uv_rect(instance.uv_rect, aw, ah);
         }
         let (cw, ch) = (self.color_atlas.width, self.color_atlas.height);
-        for (instance, region) in self
-            .color_instances
-            .iter_mut()
-            .zip(color_regions.iter())
-        {
-            instance.uv_rect = region.uvs(cw, ch);
+        for instance in &mut self.color_instances {
+            instance.uv_rect = normalize_pixel_uv_rect(instance.uv_rect, cw, ch);
         }
 
         // Upload both atlases if new glyphs were added.
@@ -1705,7 +1707,10 @@ impl TextPipelineV2 {
 
 #[cfg(test)]
 mod tests {
-    use super::{LayoutCacheKey, ShapingCacheKey, TextDecorationDraw, glyph_intersects_clip};
+    use super::{
+        LayoutCacheKey, ShapingCacheKey, TextDecorationDraw, glyph_intersects_clip,
+        normalize_pixel_uv_rect,
+    };
     use crate::font::{FontFamily, FontStyle, FontWeight};
 
     #[test]
@@ -1776,6 +1781,20 @@ mod tests {
             [20.0, 20.0],
             [0.0, 0.0, 100.0, 100.0],
         ));
+    }
+
+    #[test]
+    fn pixel_uv_rect_is_normalized_against_the_final_atlas_size() {
+        let pixel_rect = [64.0, 32.0, 96.0, 64.0];
+
+        assert_eq!(
+            normalize_pixel_uv_rect(pixel_rect, 256, 128),
+            [0.25, 0.25, 0.375, 0.5]
+        );
+        assert_eq!(
+            normalize_pixel_uv_rect(pixel_rect, 512, 256),
+            [0.125, 0.125, 0.1875, 0.25]
+        );
     }
 
     // Guards the CPU->GPU packing of a decoration line: `params` must be

@@ -13,6 +13,20 @@ use aimer::*;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
+
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
+fn main() {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
+    // start_markdown_example();
+    // start_custom_animated_theme_example()
+    my_app()
+}
+
 #[cfg(test)]
 pub static TEST_STATE_UPDATED: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]

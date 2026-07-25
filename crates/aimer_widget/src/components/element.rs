@@ -7,6 +7,9 @@ use crate::{AnyElement, Drawable};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
+use smallvec::SmallVec;
+
+type EventChildren<'a> = SmallVec<[&'a dyn Element; 32]>;
 
 impl<T> Element for T where T: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable
 {}
@@ -268,7 +271,7 @@ impl Drawable for Box<dyn Element> {
 /// Perform a hit-test on the element tree and dispatch the event to the deepest
 /// hit element. Returns `true` if any element consumed the event.
 pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> bool {
-    let mut children = Vec::new();
+    let mut children = EventChildren::new();
     let captured_pointer = match event {
         ElementEvent::PointerMove(_, _, pointer)
         | ElementEvent::PointerUp(_, _, pointer)
@@ -288,14 +291,15 @@ fn dispatch_event_inner<'a>(
     root: &'a dyn Element,
     pos: Vec2d,
     event: &ElementEvent,
-    children: &mut Vec<&'a dyn Element>,
+    children: &mut EventChildren<'a>,
 ) -> bool {
     let start = children.len();
     root.event_children(&mut |child| children.push(child));
-    let end = children.len();
 
-    for index in (start..end).rev() {
-        let child = children[index];
+    while children.len() > start {
+        let child = children
+            .pop()
+            .expect("event child scratch contains an element beyond its entry length");
         if dispatch_event_inner(child, pos, event, children) {
             children.truncate(start);
             return true;
@@ -325,14 +329,15 @@ fn dispatch_captured_event_inner<'a>(
     root: &'a dyn Element,
     pointer: u64,
     event: &ElementEvent,
-    children: &mut Vec<&'a dyn Element>,
+    children: &mut EventChildren<'a>,
 ) -> Option<bool> {
     let start = children.len();
     root.event_children(&mut |child| children.push(child));
-    let end = children.len();
 
-    for index in (start..end).rev() {
-        let child = children[index];
+    while children.len() > start {
+        let child = children
+            .pop()
+            .expect("event child scratch contains an element beyond its entry length");
         if let Some(handled) = dispatch_captured_event_inner(child, pointer, event, children) {
             children.truncate(start);
             return Some(handled);
@@ -348,7 +353,7 @@ fn dispatch_captured_event_inner<'a>(
 /// Falls back to normal hit-tested dispatch when no element owns the pointer.
 pub fn cancel_pointer(root: &dyn Element, pointer: u64, pos: Vec2d) -> bool {
     let event = ElementEvent::Cancel;
-    let mut children = Vec::new();
+    let mut children = EventChildren::new();
     dispatch_captured_event_inner(root, pointer, &event, &mut children)
         .unwrap_or_else(|| dispatch_event_inner(root, pos, &event, &mut children))
 }
@@ -356,22 +361,23 @@ pub fn cancel_pointer(root: &dyn Element, pointer: u64, pos: Vec2d) -> bool {
 /// Broadcast an event to every element in the tree, regardless of hit-testing.
 /// Returns `true` if any element consumed the event.
 pub fn broadcast_event(root: &dyn Element, event: &ElementEvent) -> bool {
-    let mut children = Vec::new();
+    let mut children = EventChildren::new();
     broadcast_event_inner(root, event, &mut children)
 }
 
 fn broadcast_event_inner<'a>(
     root: &'a dyn Element,
     event: &ElementEvent,
-    children: &mut Vec<&'a dyn Element>,
+    children: &mut EventChildren<'a>,
 ) -> bool {
     let mut consumed = false;
     let start = children.len();
     root.event_children(&mut |child| children.push(child));
-    let end = children.len();
 
-    for index in (start..end).rev() {
-        let child = children[index];
+    while children.len() > start {
+        let child = children
+            .pop()
+            .expect("event child scratch contains an element beyond its entry length");
         if broadcast_event_inner(child, event, children) {
             consumed = true;
         }
@@ -576,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn recursive_dispatch_helpers_reuse_and_clear_the_scratch_vector() {
+    fn recursive_dispatch_helpers_reuse_inline_scratch_without_spilling() {
         let element = TreeElement {
             children: vec![TreeElement {
                 children: vec![TreeElement {
@@ -591,15 +597,14 @@ mod tests {
             captures_pointer: false,
         };
         let event = ElementEvent::Cancel;
-        let mut children = Vec::with_capacity(8);
-        let allocation = children.as_ptr();
+        let mut children = EventChildren::new();
 
         assert_eq!(
             dispatch_captured_event_inner(&element, 7, &event, &mut children),
             Some(true)
         );
         assert!(children.is_empty());
-        assert_eq!(children.as_ptr(), allocation);
+        assert!(!children.spilled());
 
         assert!(dispatch_event_inner(
             &element,
@@ -608,10 +613,10 @@ mod tests {
             &mut children
         ));
         assert!(children.is_empty());
-        assert_eq!(children.as_ptr(), allocation);
+        assert!(!children.spilled());
 
         assert!(broadcast_event_inner(&element, &event, &mut children));
         assert!(children.is_empty());
-        assert_eq!(children.as_ptr(), allocation);
+        assert!(!children.spilled());
     }
 }

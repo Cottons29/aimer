@@ -137,9 +137,18 @@ impl TextSpan {
     }
 
     pub fn flatten(&self, base_style: &TextStyle) -> Vec<ResolvedTextSpan> {
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(self.resolved_span_count());
         self.flatten_into(*base_style, None, &mut result);
         result
+    }
+
+    fn resolved_span_count(&self) -> usize {
+        usize::from(!self.text.is_empty())
+            + self
+                .children
+                .iter()
+                .map(Self::resolved_span_count)
+                .sum::<usize>()
     }
 
     fn flatten_into(
@@ -644,6 +653,24 @@ mod tests {
                 .iter()
                 .all(|span| span.link.as_deref() == Some("https://aimer.dev"))
         );
+    }
+
+    #[test]
+    fn flatten_reserves_exactly_the_number_of_resolved_spans() {
+        let root = TextSpan::root([
+            TextSpan::new("").children([
+                TextSpan::new("one"),
+                TextSpan::new("two"),
+                TextSpan::new("three"),
+            ]),
+            TextSpan::new("four"),
+            TextSpan::new("five"),
+        ]);
+
+        let flattened = root.flatten(&TextStyle::default());
+
+        assert_eq!(flattened.len(), 5);
+        assert_eq!(flattened.capacity(), flattened.len());
     }
 
     #[test]

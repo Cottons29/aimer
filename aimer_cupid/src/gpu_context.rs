@@ -63,7 +63,7 @@ async fn create_gpu<'w>(
 
     let adapter = match instance
         .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
+            power_preference: wgpu::PowerPreference::LowPower,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
             apply_limit_buckets: true,
@@ -73,7 +73,7 @@ async fn create_gpu<'w>(
         Ok(adapter) => adapter,
         Err(first_err) => instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
+                power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: true,
                 apply_limit_buckets: true,

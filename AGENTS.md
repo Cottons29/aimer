@@ -77,7 +77,8 @@ This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `e
 - **Follow Test Driven Development.** Write the failing test first, then the code that makes it pass.
 - **The Widget-implemented struct always has new() with no parameter and child always in the last for building valid Widget**
 - **Write Rust's std Standard Document Comment** when implementing new feature should provided detailed documentation like Rust's std does.
-
+- **Add `#[inline]` to the builder pattern methods** it's good to make the compiler inlining the builder-pattern instead of prepare call stack frame.
+- 
 ### Builder Pattern Example 
 
 ```rust
@@ -88,19 +89,21 @@ pub struct MyWidget<W = RequiredChild>{
 
 
 impl MyWidget {
+  #[inline]
   pub fn new() -> Self {
     Self {
       child: RequiredChild,
       size: Default::default()
     }
   }
-  
+  #[inline]
   pub fn size(mut self, size: f32) -> Self {
     self.size = size;
     self
   }
   
   // This will make the instance became a valid widget
+  #[inline]
   pub fn child<W: Widget>(self, child: W) -> MyWidget<W> {
     MyWidget {
       child,
