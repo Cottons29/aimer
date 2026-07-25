@@ -369,6 +369,11 @@ impl ScrollController {
         Self::default()
     }
 
+    #[inline]
+    pub(crate) fn shares_identity_with(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Whether this controller is currently attached to a live `Scrollable`.
     pub fn is_attached(&self) -> bool {
         self.inner

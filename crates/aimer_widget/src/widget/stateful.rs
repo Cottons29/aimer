@@ -654,18 +654,20 @@ impl StatefulElement {
     /// This avoids destroying and recreating the entire subtree when only a
     /// deeply-nested element's state has changed.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        if !self.dirty.borrow().get() {
+            // A clean ancestor does not participate in reconciliation, so avoid
+            // scanning its entire subtree solely to populate the keyed-state
+            // registry. Any dirty descendant enters its own scope when reached.
+            let child = unsafe { &*self.child.0.get() };
+            Self::propagate_rebuild(child.as_ref(), ctx);
+            return;
+        }
+
         let keyed_state_scope = KeyedStateScope::enter();
         if keyed_state_scope.owns_registry {
             register_keyed_state(self);
             let existing_child = unsafe { &*self.child.0.get() };
             register_keyed_subtree(existing_child.as_ref());
-        }
-        if !self.dirty.borrow().get() {
-            // Self is clean — but a nested StatefulElement might be dirty.
-            // Propagate rebuild through the existing child tree.
-            let child = unsafe { &*self.child.0.get() };
-            Self::propagate_rebuild(child.as_ref(), ctx);
-            return;
         }
 
         // Coalesce: only rebuild once per generation bump.
@@ -1617,10 +1619,34 @@ mod tests {
         unsafe {
             *outer_stateful.child.0.get() = traversal_element(1, vec![nested], &visits);
         }
+        outer_stateful.dirty.borrow().set(true);
 
         outer_stateful.rebuild_if_dirty(&context);
 
-        assert_eq!(*visits.borrow(), vec![1, 2]);
+        assert_eq!(*visits.borrow(), vec![1, 2, 1]);
+    }
+
+    #[test]
+    fn clean_stateful_rebuild_skips_keyed_subtree_registration() {
+        let context = dummy_build_context();
+        let visits = Rc::new(RefCell::new(Vec::new()));
+        let outer = StatefulElement::from_widget(
+            &lifecycle_widget(PanicPhase::None),
+            &context,
+            "OuterLifecycleWidget",
+            None,
+        );
+        let outer_stateful = outer
+            .option_any()
+            .and_then(|element| element.downcast_ref::<StatefulElement>())
+            .unwrap();
+        unsafe {
+            *outer_stateful.child.0.get() = traversal_element(1, vec![], &visits);
+        }
+
+        outer_stateful.rebuild_if_dirty(&context);
+
+        assert!(visits.borrow().is_empty());
     }
 
     #[test]
