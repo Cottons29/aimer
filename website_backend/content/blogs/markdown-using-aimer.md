@@ -2,7 +2,7 @@
 
 One of the goals behind Aimer has always been to make building rich, content-heavy UIs as painless as building simple
 ones. A common need across documentation viewers, note-taking apps, and chat interfaces is rendering **Markdown**
-directly into the widget tree — without dropping down to raw HTML or a separate embedded browser view. This post
+directly into the widget tree without dropping down to raw HTML or a separate embedded browser view. This post
 introduces Aimer's built-in Markdown renderer.
 
 ### Why a Native Markdown Renderer?

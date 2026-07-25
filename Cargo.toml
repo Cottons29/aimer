@@ -16,8 +16,12 @@ aimer_rubick.workspace = true
 aimer_widget.workspace = true
 aimer_color.workspace = true
 aimer_container.workspace = true
+aimer_flex.workspace = true
+aimer_grid.workspace = true
 aimer_quiver.workspace = true
 aimer_input.workspace = true
+aimer_scroll.workspace = true
+aimer_space.workspace = true
 wasm-bindgen.workspace = true
 aimer_animation.workspace = true
 aimer_utils.workspace = true
@@ -47,6 +51,10 @@ members = [
     "crates/aimer_widget",
     "crates/aimer_rubick",
     "crates/aimer_container",
+    "crates/aimer_flex",
+    "crates/aimer_grid",
+    "crates/aimer_scroll",
+    "crates/aimer_space",
     "crates/aimer_color",
     "crates/aimer_input",
     "crates/aimer_canvas",
@@ -70,6 +78,10 @@ aimer_rubick = { path = "crates/aimer_rubick" }
 aimer_animation = { path = "crates/aimer_animation" }
 aimer_input = { path = "crates/aimer_input" }
 aimer_container = { path = "crates/aimer_container" }
+aimer_flex = { path = "crates/aimer_flex" }
+aimer_grid = { path = "crates/aimer_grid" }
+aimer_scroll = { path = "crates/aimer_scroll" }
+aimer_space = { path = "crates/aimer_space" }
 aimer_quiver = { path = "aimer_quiver" }
 aimer_widget = { path = "crates/aimer_widget" }
 aimer_color = { path = "crates/aimer_color" }

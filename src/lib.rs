@@ -8,9 +8,9 @@ pub use aimer_attribute::dimension::Dimension;
 pub use aimer_attribute::position::Vec2d;
 pub use aimer_attribute::size::{ResolvedSize, Size};
 pub use aimer_color::prelude::*;
-pub use aimer_container::flex::row_column::*;
-pub use aimer_container::flex::*;
 pub use aimer_container::*;
+pub use aimer_flex::*;
+pub use aimer_grid::*;
 pub use aimer_input::button::Button;
 pub use aimer_input::callback::{AsyncCallback, CallbackInner, RawInnerCallback};
 pub use aimer_input::input::*;
@@ -34,6 +34,8 @@ pub use aimer_quiver::{
     set_first_frame_rendered_callback,
 };
 pub use aimer_rubick::{self, Rubick};
+pub use aimer_scroll::*;
+pub use aimer_space::*;
 #[cfg(feature = "svg")]
 pub use aimer_svg::{
     RawSvg, Svg, SvgCallback, SvgColor, SvgDiagnostic, SvgDocument, SvgError, SvgFillRule, SvgHit,
@@ -63,7 +65,7 @@ pub mod style {
     pub use aimer_animation::primitives::curve::Curve;
     pub use aimer_animation::{AnimationEffect, AnimationStatus};
     pub use aimer_color::prelude::{Color, Colors};
-    pub use aimer_container::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
+    pub use aimer_flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
     pub use aimer_style::*;
 }
 

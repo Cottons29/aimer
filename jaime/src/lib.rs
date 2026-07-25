@@ -4,6 +4,7 @@ mod async_builder;
 mod color_sync;
 mod custom_animated_theme;
 mod custom_font;
+mod loading_animation;
 mod markdown_example;
 mod modal;
 mod panic_recovery;
@@ -24,6 +25,7 @@ use aimer::{AimerApp, *};
 #[allow(unused_imports)]
 use crate::animated::start_my_animated_list;
 use crate::custom_animated_theme::start_custom_animated_theme_example;
+use crate::loading_animation::start_loading_animation_example;
 use crate::markdown_example::start_markdown_example;
 #[allow(unused_imports)]
 use crate::modal::start_modal_example;
@@ -70,7 +72,7 @@ pub fn my_app() {
     // panic_recovery::start_panic_recovery_example()
     // start_custom_animated_theme_example()
     // test_text()
-    start_modal_example()
+    start_loading_animation_example()
 }
 
 #[allow(unused)]
