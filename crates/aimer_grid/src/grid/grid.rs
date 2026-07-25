@@ -92,7 +92,8 @@ impl<W: Widget + 'static> GridItem<W> {
 /// # Example
 ///
 /// ```rust
-/// use aimer_container::{Grid, GridItem, GridTrack, SizedBox};
+/// use aimer_container::SizedBox;
+/// use aimer_grid::{Grid, GridItem, GridTrack};
 ///
 /// let grid = Grid::new()
 ///     .columns([GridTrack::Px(120.0), GridTrack::Fr(1.0)])

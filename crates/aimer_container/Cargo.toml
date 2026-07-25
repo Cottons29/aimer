@@ -10,19 +10,14 @@ aimer_attribute.workspace = true
 aimer_macro.workspace = true
 aimer_events.workspace = true
 aimer_style.workspace = true
-aimer_animation.workspace = true
-#################
-
-aimer_utils.workspace = true
-uuid.workspace = true
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-objc.workspace = true
-tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
 
 [dev-dependencies]
 aimer_canvas.workspace = true
 aimer_cupid.workspace = true
+aimer_flex.workspace = true
+aimer_scroll.workspace = true
+aimer_space.workspace = true
 winit.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

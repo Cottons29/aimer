@@ -7,7 +7,7 @@ use aimer_widget::{
     VisitorElement, Widget,
 };
 
-use crate::ZeroSizedBox;
+use aimer_container::ZeroSizedBox;
 
 #[allow(dead_code)]
 /// Positions and transforms one child relative to its parent, typically a [`crate::Stack`].
@@ -202,6 +202,37 @@ pub struct RawPositionedElement<E: Element> {
     pub(crate) bottom: Dimension,
     pub(crate) transform: Transform,
     pub(crate) layer: u32,
+}
+
+impl<E: Element> RawPositionedElement<E> {
+    /// Creates a low-level positioned element with default positioning values.
+    #[doc(hidden)]
+    pub fn new(child: E) -> Self {
+        Self {
+            child,
+            position: Default::default(),
+            left: Dimension::Auto,
+            top: Dimension::Auto,
+            right: Dimension::Auto,
+            bottom: Dimension::Auto,
+            transform: Default::default(),
+            layer: 0,
+        }
+    }
+
+    /// Sets the left inset for this low-level element.
+    #[doc(hidden)]
+    pub fn left(mut self, left: impl Into<Dimension>) -> Self {
+        self.left = left.into();
+        self
+    }
+
+    /// Sets the top inset for this low-level element.
+    #[doc(hidden)]
+    pub fn top(mut self, top: impl Into<Dimension>) -> Self {
+        self.top = top.into();
+        self
+    }
 }
 
 impl<E: Element> Drawable for RawPositionedElement<E> {
@@ -468,7 +499,7 @@ mod tests {
     /// reconcile tests in `aimer_widget`.
     #[test]
     fn positioned_propagates_dirty_into_child() {
-        use crate::ZeroSizedBox;
+        use aimer_container::ZeroSizedBox;
         let positioned: RawPositionedElement<ZeroSizedBox> = RawPositionedElement {
             child: ZeroSizedBox,
             position: Default::default(),

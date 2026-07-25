@@ -1,5 +1,7 @@
-pub(crate) mod flex_child;
-pub(crate) mod raw_flex;
+#[doc(hidden)]
+pub mod flex_child;
+#[doc(hidden)]
+pub mod raw_flex;
 pub mod row_column;
 
 // pub use raw_flex::RawFlex;

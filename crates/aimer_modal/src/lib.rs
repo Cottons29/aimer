@@ -11,7 +11,8 @@ mod tests {
     use std::time::Duration;
 
     use aimer_animation::Curve;
-    use aimer_container::{Alignment, ZeroSizedBox};
+    use aimer_container::ZeroSizedBox;
+    use aimer_space::Alignment;
     use aimer_widget::base::Color;
 
     use super::{Modal, ModalAnimation};

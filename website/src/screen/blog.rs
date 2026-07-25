@@ -75,10 +75,10 @@ impl StatelessWidget for BlogListPage {
                                         Text::new("“Updates and guides for the Aimer„")
                                             .text_style(TextStyle::new()
                                                 .font_size(if is_mobile(ctx) {18} else {20})
-                                                .color(theme.on_background_color.with_opacity(180))
+                                                .color(theme.on_background_color.with_opacity(120))
                                                 .font_weight(FontWeight::Normal)
                                                 .text_decoration(TextDecoration::new()
-                                                    .line(TextDecorationLine::ITALIC | TextDecorationLine::UNDERLINE)
+                                                    .line(TextDecorationLine::ITALIC)
                                                     .style(TextDecorationStyle::Dashed)))
                                             .boxed(),
 
@@ -149,7 +149,7 @@ fn blog_row(
     theme: &ThemeData,
 ) -> AnyWidget {
     let route_id = blog.id.clone();
-    let (style, hover_style) = blog_link_styles(theme);
+    let (style, hover_style) = blog_link_styles(theme, mobile);
     let (_, date_style) = archive_text_styles(theme);
     let date = Text::new(display_archive_date(&blog.upload_time))
         .text_style(date_style)
@@ -257,9 +257,9 @@ fn archive_text_styles(theme: &ThemeData) -> (TextStyle, TextStyle) {
     (heading_style, date_style)
 }
 
-fn blog_link_styles(theme: &ThemeData) -> (TextStyle, TextStyle) {
+fn blog_link_styles(theme: &ThemeData, mobile: bool) -> (TextStyle, TextStyle) {
     let style = TextStyle::new()
-        .font_size(24)
+        .font_size(if mobile { 20 } else { 24 })
         .font_weight(FontWeight::Bold)
         .color(theme.on_background_color)
         .text_overflow(TextOverflow::Wrap);
@@ -316,16 +316,16 @@ mod tests {
     fn archive_text_uses_muted_theme_color_and_links_use_theme_foreground() {
         let theme = ThemeData::dark();
         let (heading_style, date_style) = archive_text_styles(&theme);
-        let (link_style, _) = blog_link_styles(&theme);
+        let (link_style, _) = blog_link_styles(&theme, true);
 
-        assert!(heading_style.color == theme.on_background_color);
-        assert!(
-            date_style.color
-                == theme
-                    .on_background_color
-                    .with_opacity(120)
+        assert_eq!(heading_style.color, theme.on_background_color);
+        assert_eq!(
+            date_style.color,
+            theme
+                .on_background_color
+                .with_opacity(120)
         );
-        assert!(link_style.color == theme.on_background_color);
+        assert_eq!(link_style.color, theme.on_background_color);
     }
 
     #[test]

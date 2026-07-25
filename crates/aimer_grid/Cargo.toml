@@ -1,0 +1,17 @@
+[package]
+name = "aimer_grid"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aimer_attribute.workspace = true
+aimer_widget.workspace = true
+
+[dev-dependencies]
+aimer_canvas.workspace = true
+aimer_container.workspace = true
+aimer_cupid.workspace = true
+winit.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

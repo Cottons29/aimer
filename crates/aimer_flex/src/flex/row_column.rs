@@ -17,7 +17,7 @@ use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 ///
 /// ```rust
 /// use aimer_container::SizedBox;
-/// use aimer_container::flex::{Column, Row};
+/// use aimer_flex::{Column, Row};
 ///
 /// let column = Column::new().children([
 ///     Row::new().children([SizedBox::new().width(40), SizedBox::new().width(60)]),

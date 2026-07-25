@@ -177,7 +177,7 @@ mod tests {
     use aimer_attribute::size::ResolvedSize;
     use aimer_widget::{Element, LayoutElement};
 
-    use crate::ZeroSizedBox;
+    use aimer_container::ZeroSizedBox;
 
     use super::{Alignment, RawAlign, alignment_offset};
 

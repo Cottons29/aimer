@@ -25,7 +25,7 @@ use aimer_widget::{
 ///
 /// ```rust
 /// use aimer_container::SizedBox;
-/// use aimer_container::flex::{Expanded, Row};
+/// use aimer_flex::{Expanded, Row};
 ///
 /// let row = Row::new()
 ///     .children(vec![
@@ -114,6 +114,18 @@ pub struct RawExpanded<E: Element> {
     pub(crate) child: E,
     pub(crate) flex: f32,
     pub(crate) debug_name: &'static str,
+}
+
+impl<E: Element> RawExpanded<E> {
+    /// Creates the low-level element used by flex layout tests and adapters.
+    #[doc(hidden)]
+    pub fn new(child: E, flex: f32, debug_name: &'static str) -> Self {
+        Self {
+            child,
+            flex: flex.max(0.0),
+            debug_name,
+        }
+    }
 }
 
 impl<E: Element> Drawable for RawExpanded<E> {

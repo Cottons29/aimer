@@ -38,8 +38,9 @@ pub use crate::scrollable::scroll_bar::*;
 /// # Example
 ///
 /// ```rust
-/// use aimer_container::flex::Column;
-/// use aimer_container::{ScrollAxis, Scrollable, SizedBox};
+/// use aimer_container::SizedBox;
+/// use aimer_flex::Column;
+/// use aimer_scroll::{ScrollAxis, Scrollable};
 ///
 /// let viewport = Scrollable::new()
 ///     .axis(ScrollAxis::Vertical)

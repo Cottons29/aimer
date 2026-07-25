@@ -14,7 +14,8 @@ static mut stderr: usize = 0;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aimer_container::{Container, ScrollAxis, Scrollable};
+use aimer_container::Container;
+use aimer_scroll::{ScrollAxis, Scrollable};
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, AnyWidget, Key, Widget};

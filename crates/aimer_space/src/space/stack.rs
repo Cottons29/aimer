@@ -27,7 +27,8 @@ pub enum StackDirection {
 /// # Example
 ///
 /// ```rust
-/// use aimer_container::{Align, Alignment, SizedBox, Stack};
+/// use aimer_container::SizedBox;
+/// use aimer_space::{Align, Alignment, Stack};
 ///
 /// let stack = Stack::new()
 ///     .add_child(SizedBox::new().width(200).height(120))

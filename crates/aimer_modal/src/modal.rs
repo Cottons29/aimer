@@ -4,9 +4,10 @@ use std::rc::Rc;
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_container::{Alignment, Container, ZeroSizedBox};
+use aimer_container::{Container, ZeroSizedBox};
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_macro::Rebuildable;
+use aimer_space::Alignment;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, RequiredChild,

@@ -1,20 +1,10 @@
-pub mod flex;
-pub mod grid;
-pub mod scrollable;
 mod single_child;
-pub mod space;
 
-pub use grid::*;
-pub use scrollable::scroll_behavior::*;
-pub use scrollable::*;
 pub use single_child::aspecratio::{AspectRatio, RatioOption};
 pub use single_child::container::Container;
 pub use single_child::opacity::Opacity;
 pub use single_child::sized_box::SizedBox;
 pub use single_child::zero_size_box::ZeroSizedBox;
-pub use space::align::{Align, Alignment};
-pub use space::positioned::Positioned;
-pub use space::stack::Stack;
 
 #[cfg(test)]
 mod tests {
@@ -22,11 +12,17 @@ mod tests {
     use std::rc::Rc;
     use std::sync::OnceLock;
 
-    use aimer_attribute::dimension::Dimension;
+    use aimer_attribute::BoxConstraint;
     use aimer_attribute::size::{ResolvedSize, Size};
-    use aimer_attribute::{BoxConstraint, CacheBounds};
     use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_flex::flex_child::RawExpanded;
+    use aimer_flex::raw_flex::RawFlex;
+    use aimer_flex::{Column, LayoutDirection, Row};
     use aimer_macro::key;
+    use aimer_scroll::raw_scroll::RawScrollableContainer;
+    use aimer_scroll::{ScrollAxis, Scrollable};
+    use aimer_space::positioned::RawPositionedElement;
+    use aimer_space::{Positioned, Stack};
     use aimer_widget::base::BuildContext;
     use aimer_widget::{
         AnyElement, AnyWidget, Drawable, Element, EventElement, Key, LayoutElement, NamedWidget,
@@ -35,11 +31,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::flex::flex_child::RawExpanded;
-    use crate::flex::raw_flex::RawFlex;
-    use crate::flex::{Column, LayoutDirection, Row};
-    use crate::scrollable::raw_scroll::RawScrollableContainer;
-    use crate::space::positioned::RawPositionedElement;
 
     struct MeasuredPositionedChild {
         observed_parent_size: Rc<Cell<ResolvedSize>>,
@@ -577,12 +568,7 @@ mod tests {
     impl Rebuildable for MainAxisProbe {}
 
     fn expanded_probe(flex: f32, seen: &Rc<Cell<f32>>) -> AnyElement {
-        RawExpanded {
-            child: MainAxisProbe { seen: seen.clone() },
-            flex,
-            debug_name: "Expanded",
-        }
-        .boxed()
+        RawExpanded::new(MainAxisProbe { seen: seen.clone() }, flex, "Expanded").boxed()
     }
 
     // A leaf element with a fixed intrinsic main-axis size that ignores the
@@ -705,25 +691,11 @@ mod tests {
     }
 
     fn row_of(children: Vec<AnyElement>) -> RawFlex {
-        RawFlex {
-            direction: LayoutDirection::Row,
-            vertical_alignment: Default::default(),
-            horizontal_alignment: Default::default(),
-            gaps: Default::default(),
-            children,
-            cache: Default::default(),
-            overflow_behavior: Default::default(),
-            debug_name: "Row",
-            cache_bound: CacheBounds::new(),
-        }
+        RawFlex::new(LayoutDirection::Row, children, "Row")
     }
 
     fn column_of(children: Vec<AnyElement>) -> RawFlex {
-        RawFlex {
-            direction: LayoutDirection::Column,
-            debug_name: "Column",
-            ..row_of(children)
-        }
+        RawFlex::new(LayoutDirection::Column, children, "Column")
     }
 
     /// A single `Expanded` in a `Row` fills the whole parent width.
@@ -916,18 +888,11 @@ mod tests {
     fn positioned_uses_measured_child_size_when_intrinsic_height_is_zero() {
         let ctx = dummy_build_context(1000.0, 500.0, None);
         let observed_parent_size = Rc::new(Cell::new(ResolvedSize::default()));
-        let positioned = RawPositionedElement {
-            child: MeasuredPositionedChild {
-                observed_parent_size: observed_parent_size.clone(),
-            },
-            position: Default::default(),
-            left: 12.into(),
-            top: 16.into(),
-            right: Dimension::Auto,
-            bottom: Dimension::Auto,
-            transform: Default::default(),
-            layer: 0,
-        };
+        let positioned = RawPositionedElement::new(MeasuredPositionedChild {
+            observed_parent_size: observed_parent_size.clone(),
+        })
+        .left(12)
+        .top(16);
 
         positioned.draw(&ctx);
 

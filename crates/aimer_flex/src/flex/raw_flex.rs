@@ -242,6 +242,26 @@ fn compute_wrap_layout(
 }
 
 impl RawFlex {
+    /// Creates a low-level flex element with default alignment, spacing, and clipping.
+    #[doc(hidden)]
+    pub fn new(
+        direction: LayoutDirection,
+        children: Vec<AnyElement>,
+        debug_name: &'static str,
+    ) -> Self {
+        Self {
+            direction,
+            vertical_alignment: Default::default(),
+            horizontal_alignment: Default::default(),
+            gaps: Default::default(),
+            children,
+            cache: Default::default(),
+            overflow_behavior: Default::default(),
+            debug_name,
+            cache_bound: CacheBounds::new(),
+        }
+    }
+
     fn render_child(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
         widget.draw(ctx);
