@@ -161,22 +161,6 @@ cargo test -p aimer_animation
 cargo test -p aimer_animation test_curve_linear
 ```
 
-### CLI (end-user tooling)
-
-The `aimer` binary lives in `dev_tools/aimer_cli`. To run it locally:
-
-```bash
-cargo run -p aimer_cli -- <command>   # e.g. create, run, build, assemble, clean, doctor, migrate
-```
-
-End users install it via:
-
-```bash
-cargo install --git https://github.com/Cottons29/aimer.git aimer_cli --branch nightly-0.0.1
-```
-
----
-
 ## Code Style Guidelines
 
 - Match the surrounding code's patterns and idioms; keep changes consistent with the module.
@@ -184,7 +168,7 @@ cargo install --git https://github.com/Cottons29/aimer.git aimer_cli --branch ni
 - Only add comments where the existing code does; avoid noise.
 - Prefer the workspace dependency table (`[workspace.dependencies]` in the root `Cargo.toml`) — add
   new deps there and reference them with `<dep>.workspace = true`.
-
+- do not run `cargo fmt`
 ---
 
 ## Testing Instructions

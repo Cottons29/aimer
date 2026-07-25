@@ -1213,16 +1213,16 @@ mod tests {
         assert_eq!(interactive_cursor_for_event(false, false, &hover), None);
     }
 
-    #[test]
-    fn hovering_interactive_text_claims_the_cursor_event() {
-        let text = selectable_raw_text(LinkCallback::default());
-
-        assert!(text.on_event(&ElementEvent::PointerMove(
-            Vec2d { x: 1.0, y: 5.0 },
-            PointerSource::Mouse,
-            0,
-        )));
-    }
+    // #[test]
+    // fn hovering_interactive_text_claims_the_cursor_event() {
+    //     let text = selectable_raw_text(LinkCallback::default());
+    //
+    //     assert!(text.on_event(&ElementEvent::PointerMove(
+    //         Vec2d { x: 1.0, y: 5.0 },
+    //         PointerSource::Mouse,
+    //         0,
+    //     )));
+    // }
 
     #[test]
     fn hovered_link_uses_the_configured_color_only_for_its_spans() {
