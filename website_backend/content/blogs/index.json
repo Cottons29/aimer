@@ -54,5 +54,12 @@
     "title": "Introduce Analytic AA Method",
     "author": "Cottons29",
     "tags": ["AntiAlias", "Performance"]
+  },
+  {
+    "id": "framework-level-improvement",
+    "upload_time": "2026-07-28T02:55:00Z",
+    "title": "Pointer Capture Performance Improvement",
+    "author": "Cottons29",
+    "tags": [ "Performance"]
   }
 ]

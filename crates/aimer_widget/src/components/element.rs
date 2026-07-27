@@ -45,7 +45,7 @@ pub struct ElementId(NonZeroU64);
 impl ElementId {
     fn next() -> Self {
         let value = NEXT_ELEMENT_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
             .expect("exhausted all element identities");
