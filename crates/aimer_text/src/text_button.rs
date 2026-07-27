@@ -12,7 +12,7 @@ use aimer_utils::AnimInstant;
 use aimer_utils::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, LayoutCache, LayoutElement, Rebuildable,
+    AnyElement, Drawable, Element, EventElement, EventResult, LayoutCache, LayoutElement, Rebuildable,
     VisitorElement, Widget,
 };
 
@@ -370,7 +370,7 @@ impl VisitorElement for RawTextButton {
 }
 
 impl EventElement for RawTextButton {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         match event {
             ElementEvent::PointerMove(pos, PointerSource::Mouse, _) => {
                 self.set_hovered(self.bounds.is_inside(pos.x, pos.y) && !self.widget.disabled);
@@ -406,6 +406,7 @@ impl EventElement for RawTextButton {
             }
             _ => false,
         }
+        .into()
     }
 }
 
@@ -533,7 +534,7 @@ mod tests {
             },
             PointerSource::Mouse,
             0,
-        )));
+        )).is_consumed());
     }
 
     #[test]
@@ -559,7 +560,7 @@ mod tests {
             },
             PointerSource::Mouse,
             0,
-        )));
+        )).is_consumed());
     }
 
     #[test]
@@ -583,7 +584,7 @@ mod tests {
             },
             PointerSource::Mouse,
             0,
-        )));
+        )).is_consumed());
         assert!(!button.on_event(&ElementEvent::PointerDown(
             Vec2d {
                 x: size.width - 1.0,
@@ -591,7 +592,7 @@ mod tests {
             },
             PointerSource::Mouse,
             0,
-        )));
+        )).is_consumed());
     }
 
     #[test]

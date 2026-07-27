@@ -37,24 +37,12 @@ use crate::stateful::start_counter;
 use crate::svg_test::start_svg_test;
 use crate::test_animation::TestFadingAnimation;
 
-#[cfg(feature = "dhat-heap")]
-#[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
-
-fn main() {
-    #[cfg(feature = "dhat-heap")]
-    let _profiler = dhat::Profiler::new_heap();
-
-    // start_markdown_example();
-    // start_custom_animated_theme_example()
-    my_app()
-}
 
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
     // stateful_2::start_my_list();
-    start_counter();
+    // start_counter();
     // AimerApp::start(Container::new().child(Row::new().children([
     //     Expanded::new().child(TestFadingAnimation),
     //     Expanded::new().child(TestFadingAnimation),
@@ -63,7 +51,7 @@ pub fn my_app() {
     // async_builder::start_async_builder_example()
     // custom_animated_theme::start_custom_animated_theme_example()
     // test_scrollable()
-    // test_scrollable_row()
+    test_scrollable_row()
     // start_modal_example();
     // start_markdown_example();
     // start_panic_recovery_example();
@@ -520,7 +508,7 @@ fn test_scrollable_row() {
                     .padding(LayoutSpacing::all(Spacing::Px(10)))
                     .child(
                         Scrollable::new()
-                            .axis(ScrollAxis::Horizontal)
+                            .axis(ScrollAxis::Vertical)
                             .vertical_scroll_bar(Some(scrollbar))
                             .child(content),
                     )

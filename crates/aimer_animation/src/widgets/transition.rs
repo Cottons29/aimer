@@ -5,7 +5,8 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
+    VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -91,7 +92,7 @@ macro_rules! impl_transition_element {
         }
 
         impl EventElement for $name {
-            fn on_event(&self, event: &ElementEvent) -> bool {
+            fn on_event(&self, event: &ElementEvent) -> EventResult {
                 self.child.on_event(event)
             }
             fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -227,7 +228,7 @@ impl VisitorElement for SlideTransitionElement {
 }
 
 impl EventElement for SlideTransitionElement {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         self.child.on_event(event)
     }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -341,7 +342,7 @@ impl VisitorElement for ScaleTransitionElement {
 }
 
 impl EventElement for ScaleTransitionElement {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         self.child.on_event(event)
     }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -458,7 +459,7 @@ impl VisitorElement for RotationTransitionElement {
 }
 
 impl EventElement for RotationTransitionElement {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         self.child.on_event(event)
     }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {

@@ -12,8 +12,8 @@ use aimer_events::window::request_animation_frame;
 use aimer_utils::callback::{Callback, CallbackExecutor, RawInnerCallback};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
-    VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
+    Rebuildable, VisitorElement, Widget,
 };
 
 use crate::{SvgDocument, SvgError, SvgLoadState, SvgLoader, SvgSelector, SvgSource, SvgStyle};
@@ -619,15 +619,12 @@ impl Drawable for RawSvgAsset {
 }
 
 impl EventElement for RawSvgAsset {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         self.active_element()
-            .is_some_and(|element| element.on_event(event))
+            .map_or_else(EventResult::ignored, |element| element.on_event(event))
     }
 
-    fn captures_pointer(&self, pointer: u64) -> bool {
-        self.active_element()
-            .is_some_and(|element| element.captures_pointer(pointer))
-    }
+    fn event_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
 }
 
 impl Rebuildable for RawSvgAsset {}
@@ -778,23 +775,33 @@ impl Drawable for RawSvg {
 }
 
 impl EventElement for RawSvg {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         match event {
             ElementEvent::PointerMove(position, PointerSource::Mouse, _) => {
                 self.set_hovered(self.hit_at(position.x, position.y).map(|hit| hit.node_id));
-                false
+                EventResult::ignored()
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => {
                 self.set_hovered(None);
                 self.interaction.borrow_mut().cancel();
-                false
+                svg_pointer_capture_effect(EventResult::ignored(), event, false)
+            }
+            ElementEvent::PointerExited(_, _) => {
+                self.interaction.borrow_mut().cancel();
+                svg_pointer_capture_effect(EventResult::ignored(), event, false)
             }
             ElementEvent::PointerDown(position, _, _) => {
                 let hit = self.hit_at(position.x, position.y);
                 self.interaction
                     .borrow_mut()
                     .pointer_down(hit.as_ref().map(|hit| hit.node_id));
-                hit.is_some()
+                let captured = hit.is_some();
+                let result = if captured {
+                    EventResult::consumed()
+                } else {
+                    EventResult::ignored()
+                };
+                svg_pointer_capture_effect(result, event, captured)
             }
             ElementEvent::PointerUp(position, _, _) => {
                 let hit = self.hit_at(position.x, position.y);
@@ -802,22 +809,39 @@ impl EventElement for RawSvg {
                     .interaction
                     .borrow_mut()
                     .pointer_up(hit.as_ref().map(|hit| hit.node_id));
-                if pressed.is_some()
+                let result = if pressed.is_some()
                     && let Some(hit) = hit
                 {
                     self.execute_callbacks(hit);
                     request_animation_frame();
-                    true
+                    EventResult::consumed()
                 } else {
-                    false
-                }
+                    EventResult::ignored()
+                };
+                svg_pointer_capture_effect(result, event, false)
             }
             ElementEvent::Cancel => {
                 self.interaction.borrow_mut().cancel();
-                false
+                EventResult::ignored()
             }
-            _ => false,
+            _ => EventResult::ignored(),
         }
+    }
+}
+
+pub(crate) fn svg_pointer_capture_effect(
+    result: EventResult,
+    event: &ElementEvent,
+    capture_on_down: bool,
+) -> EventResult {
+    match event {
+        ElementEvent::PointerDown(_, source, id) if capture_on_down => {
+            result.with_pointer_capture(PointerKey::new(*source, *id))
+        }
+        ElementEvent::PointerUp(_, source, id) | ElementEvent::PointerExited(source, id) => {
+            result.with_pointer_release(PointerKey::new(*source, *id))
+        }
+        _ => result,
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::Element;
+use crate::{Element, ElementId, Key};
 
 pub trait VisitorElement {
     #[allow(unused_variables)]
@@ -12,4 +12,17 @@ pub trait VisitorElement {
         // Default returns a dummy that never matches any real element type.
         std::any::TypeId::of::<()>()
     }
+
+    /// Returns the key used to preserve logical identity during reconciliation.
+    fn reconciliation_key(&self) -> Option<&Key> {
+        None
+    }
+
+    #[doc(hidden)]
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
+
+    #[doc(hidden)]
+    fn set_element_id(&self, _id: ElementId) {}
 }

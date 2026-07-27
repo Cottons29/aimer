@@ -13,7 +13,8 @@ use aimer_utils::error;
 use crate::base::*;
 use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
 use crate::{
-    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
+    VisitorElement, Widget,
 };
 
 trait FetchAdd {
@@ -726,6 +727,10 @@ impl StatefulElement {
         {
             let old_child = unsafe { &*self.child.0.get() };
             carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
+            crate::components::element::reconcile_generated_tree(
+                old_child.as_ref(),
+                new_child.as_ref(),
+            );
         }
 
         // Install the newly-built child, replacing the old subtree.
@@ -1014,6 +1019,10 @@ impl StatefulElement {
         {
             let old_child = unsafe { &*self.child.0.get() };
             carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
+            crate::components::element::reconcile_generated_tree(
+                old_child.as_ref(),
+                new_child.as_ref(),
+            );
         }
         // Install the newly-built child, replacing the old subtree.
         // Safety: single-threaded reconciliation; old child is not used past this
@@ -1147,26 +1156,15 @@ impl VisitorElement for StatefulElement {
     fn element_type_id(&self) -> std::any::TypeId {
         std::any::TypeId::of::<StatefulElement>()
     }
+
+    fn reconciliation_key(&self) -> Option<&crate::Key> {
+        self.key.as_ref()
+    }
 }
 
 impl EventElement for StatefulElement {
-    fn on_event(&self, event: &ElementEvent) -> bool {
-        let child = unsafe { &*self.child.0.get() };
-        crate::components::element::dispatch_event(
-            child.as_ref(),
-            match event {
-                ElementEvent::PointerDown(p, _, _) => *p,
-                ElementEvent::PointerUp(p, _, _) => *p,
-                ElementEvent::PointerMove(p, _, _) => *p,
-                ElementEvent::PointerExited(_, _) => Vec2d::default(),
-                ElementEvent::Scroll { .. } => Vec2d::default(),
-                ElementEvent::CharInput { .. } => Vec2d::default(),
-                ElementEvent::KeyInput { .. } => Vec2d::default(),
-                ElementEvent::ImePreedit { .. } => Vec2d::default(),
-                ElementEvent::Cancel => Vec2d::default(),
-            },
-            event,
-        )
+    fn on_event(&self, _event: &ElementEvent) -> EventResult {
+        EventResult::ignored()
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -1233,7 +1231,10 @@ impl Rebuildable for StatefulElement {
 mod tests {
     use std::panic::AssertUnwindSafe;
 
+    use aimer_events::pointer::PointerSource;
+
     use super::*;
+    use crate::EventDispatcher;
 
     #[cfg(not(target_arch = "wasm32"))]
     fn dummy_async_handle() -> tokio::runtime::Handle {
@@ -1282,6 +1283,91 @@ mod tests {
     impl LayoutElement for TestLeaf {}
     impl EventElement for TestLeaf {}
     impl Rebuildable for TestLeaf {}
+
+    struct EventProbeWidget {
+        events: Rc<Cell<usize>>,
+    }
+
+    struct EventProbeState {
+        events: Rc<Cell<usize>>,
+    }
+
+    struct EventProbeChild {
+        events: Rc<Cell<usize>>,
+    }
+
+    struct EventProbeElement {
+        events: Rc<Cell<usize>>,
+    }
+
+    impl StatefulWidget for EventProbeWidget {
+        type State = EventProbeState;
+
+        fn create_state(&self) -> Self::State {
+            EventProbeState {
+                events: self.events.clone(),
+            }
+        }
+    }
+
+    impl State<EventProbeWidget> for EventProbeState {
+        fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            EventProbeChild {
+                events: self.events.clone(),
+            }
+        }
+    }
+
+    impl Widget for EventProbeChild {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            EventProbeElement {
+                events: self.events.clone(),
+            }
+            .boxed()
+        }
+    }
+
+    impl VisitorElement for EventProbeElement {
+        fn debug_name(&self) -> &'static str {
+            "EventProbeElement"
+        }
+    }
+
+    impl EventElement for EventProbeElement {
+        fn on_event(&self, _event: &ElementEvent) -> EventResult {
+            self.events.set(self.events.get() + 1);
+            EventResult::ignored()
+        }
+    }
+
+    impl LayoutElement for EventProbeElement {}
+    impl Drawable for EventProbeElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for EventProbeElement {}
+
+    #[test]
+    fn stateful_generated_child_receives_each_routed_event_once() {
+        let events = Rc::new(Cell::new(0));
+        let element = StatefulElement::from_widget(
+            &EventProbeWidget {
+                events: events.clone(),
+            },
+            &dummy_build_context(),
+            "EventProbeWidget",
+            None,
+        );
+
+        let _ = EventDispatcher::new().dispatch(
+            &element,
+            Vec2d::default(),
+            &ElementEvent::PointerMove(Vec2d::default(), PointerSource::Mouse, 0),
+        );
+
+        assert_eq!(events.get(), 1);
+    }
 
     struct TraversalElement {
         id: usize,

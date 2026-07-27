@@ -10,7 +10,8 @@ use aimer_style::{FontStyle, TextAlign, TextDecorationLine, TextOverflow, TextSt
 use aimer_utils::callback::{Callback, CallbackExecutor, RawInnerCallback};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
+    VisitorElement, Widget,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -674,7 +675,7 @@ impl VisitorElement for RawRichText {
 }
 
 impl EventElement for RawRichText {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         let hovered_link = match event {
             ElementEvent::PointerDown(pos, PointerSource::Mouse, _)
             | ElementEvent::PointerUp(pos, PointerSource::Mouse, _)
@@ -703,53 +704,56 @@ impl EventElement for RawRichText {
         let cursor_claimed = false;
 
         match event {
-            ElementEvent::PointerDown(pos, _, pointer) => {
+            ElementEvent::PointerDown(pos, source, pointer) => {
                 let target = self.link_at(pos.x, pos.y);
                 *self.pressed_link.borrow_mut() = target;
                 if self.selectable
                     && let Some(offset) = text_offset_at(&self.text_regions.borrow(), pos.x, pos.y)
                 {
+                    let pointer = PointerKey::new(*source, *pointer);
                     self.selection.claim();
                     self.selection.focused.set(true);
-                    self.selection.borrow_mut().begin(offset, *pointer);
-                    return true;
+                    self.selection.borrow_mut().begin(offset, pointer);
+                    return EventResult::consumed().with_pointer_capture(pointer);
                 }
                 self.pressed_link.borrow().is_some() || cursor_claimed
             }
-            ElementEvent::PointerMove(pos, _, pointer) if self.selectable => {
+            ElementEvent::PointerMove(pos, source, pointer) if self.selectable => {
+                let pointer = PointerKey::new(*source, *pointer);
                 let mut selection = self.selection.borrow_mut();
                 if !selection.is_active() {
-                    return cursor_claimed;
+                    return cursor_claimed.into();
                 }
                 if let Some(offset) = text_offset_at(&self.text_regions.borrow(), pos.x, pos.y) {
-                    selection.update(offset, *pointer);
+                    if !selection.update(offset, pointer) {
+                        return cursor_claimed.into();
+                    }
                     if selection.was_dragged() {
                         self.pressed_link.borrow_mut().take();
                     }
+                } else if selection.active_pointer() != Some(pointer) {
+                    return cursor_claimed.into();
                 }
-                true
+                return EventResult::consumed();
             }
-            ElementEvent::PointerUp(pos, _, pointer) => {
-                let dragged = if self.selectable {
+            ElementEvent::PointerUp(pos, source, pointer) => {
+                let pointer = PointerKey::new(*source, *pointer);
+                let selection_owned = self.selectable
+                    && self.selection.borrow().active_pointer() == Some(pointer);
+                let dragged = if selection_owned {
                     let mut selection = self.selection.borrow_mut();
-                    if selection.is_active() {
-                        if let Some(offset) =
-                            text_offset_at(&self.text_regions.borrow(), pos.x, pos.y)
-                        {
-                            selection.update(offset, *pointer);
-                        }
-                        let dragged = selection.was_dragged();
-                        selection.end(*pointer);
-                        dragged
-                    } else {
-                        false
+                    if let Some(offset) = text_offset_at(&self.text_regions.borrow(), pos.x, pos.y) {
+                        selection.update(offset, pointer);
                     }
+                    let dragged = selection.was_dragged();
+                    selection.end(pointer);
+                    dragged
                 } else {
                     false
                 };
                 if dragged {
                     self.pressed_link.borrow_mut().take();
-                    return true;
+                    return EventResult::consumed().with_pointer_release(pointer);
                 }
                 let pressed = self.pressed_link.borrow_mut().take();
                 let released = self.link_at(pos.x, pos.y);
@@ -757,9 +761,19 @@ impl EventElement for RawRichText {
                     && pressed == released
                 {
                     self.execute_link(released);
-                    return true;
+                    let result = EventResult::consumed();
+                    return if selection_owned {
+                        result.with_pointer_release(pointer)
+                    } else {
+                        result
+                    };
                 }
-                cursor_claimed
+                let result = EventResult::from(cursor_claimed);
+                return if selection_owned {
+                    result.with_pointer_release(pointer)
+                } else {
+                    result
+                };
             }
             ElementEvent::PointerExited(_, _) | ElementEvent::Cancel => {
                 self.pressed_link.borrow_mut().take();
@@ -789,10 +803,10 @@ impl EventElement for RawRichText {
                     "c" => {
                         let selection = self.selection.borrow().selection();
                         let Some(text) = selection.selected_text(&self.plain_text) else {
-                            return false;
+                            return false.into();
                         };
                         if text.is_empty() {
-                            return false;
+                            return false.into();
                         }
                         let _ = aimer_widget::clipboard::set_text(text);
                         true
@@ -802,11 +816,9 @@ impl EventElement for RawRichText {
             }
             _ => cursor_claimed,
         }
+        .into()
     }
 
-    fn captures_pointer(&self, pointer: u64) -> bool {
-        self.selectable && self.selection.borrow().active_pointer() == Some(pointer)
-    }
 }
 
 impl LayoutElement for RawRichText {
@@ -1080,7 +1092,7 @@ mod tests {
     use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
     use aimer_events::pointer::PointerSource;
     use aimer_style::{TextAlign, TextOverflow, TextStyle};
-    use aimer_widget::EventElement;
+    use aimer_widget::{EventElement, PointerKey};
     use aimer_widget::base::{Color, WindowHandle};
 
     use super::{
@@ -1221,7 +1233,7 @@ mod tests {
     //         Vec2d { x: 1.0, y: 5.0 },
     //         PointerSource::Mouse,
     //         0,
-    //     )));
+    //     )).is_consumed());
     // }
 
     #[test]
@@ -1312,7 +1324,7 @@ mod tests {
             },
         });
 
-        assert!(handled);
+        assert!(handled.is_consumed());
         assert_eq!(
             text.selection.borrow().selection(),
             TextSelection::new(0, 6)
@@ -1326,7 +1338,7 @@ mod tests {
             selectable_raw_text_with_coordinator(LinkCallback::default(), coordinator.clone());
         let second = selectable_raw_text_with_coordinator(LinkCallback::default(), coordinator);
 
-        first.on_event(&ElementEvent::PointerDown(
+        let _ = first.on_event(&ElementEvent::PointerDown(
             Vec2d { x: 1.0, y: 5.0 },
             PointerSource::Mouse,
             7,
@@ -1342,7 +1354,7 @@ mod tests {
         );
         let _ = first.window.take_redraw_request();
 
-        second.on_event(&ElementEvent::PointerDown(
+        let second_result = second.on_event(&ElementEvent::PointerDown(
             Vec2d { x: 1.0, y: 5.0 },
             PointerSource::Mouse,
             8,
@@ -1353,10 +1365,15 @@ mod tests {
             TextSelection::default()
         );
         assert!(!first.selection.focused.get());
-        assert!(!first.captures_pointer(7));
+        assert_eq!(first.selection.borrow().active_pointer(), None);
         assert!(first.window.take_redraw_request());
         assert!(second.selection.focused.get());
-        assert!(second.captures_pointer(8));
+        let second_pointer = PointerKey::new(PointerSource::Mouse, 8);
+        assert_eq!(second.selection.borrow().active_pointer(), Some(second_pointer));
+        assert_eq!(
+            second_result.capture_request(),
+            aimer_widget::CaptureRequest::Capture(second_pointer)
+        );
     }
 
     #[test]
@@ -1383,22 +1400,26 @@ mod tests {
             move |_| activations.set(activations.get() + 1)
         }));
 
-        text.on_event(&ElementEvent::PointerDown(
+        let down_result = text.on_event(&ElementEvent::PointerDown(
             Vec2d { x: 1.0, y: 5.0 },
             PointerSource::Mouse,
             0,
         ));
-        assert!(text.captures_pointer(0));
+        let pointer = PointerKey::new(PointerSource::Mouse, 0);
+        assert_eq!(
+            down_result.capture_request(),
+            aimer_widget::CaptureRequest::Capture(pointer)
+        );
         assert_eq!(
             text.selection.borrow().selection(),
             TextSelection::collapsed(0)
         );
-        text.on_event(&ElementEvent::PointerMove(
+        let _ = text.on_event(&ElementEvent::PointerMove(
             Vec2d { x: 19.0, y: 5.0 },
             PointerSource::Mouse,
             0,
         ));
-        text.on_event(&ElementEvent::PointerUp(
+        let up_result = text.on_event(&ElementEvent::PointerUp(
             Vec2d { x: 19.0, y: 5.0 },
             PointerSource::Mouse,
             0,
@@ -1407,6 +1428,10 @@ mod tests {
         assert_eq!(
             text.selection.borrow().selection(),
             TextSelection::new(0, 6)
+        );
+        assert_eq!(
+            up_result.capture_request(),
+            aimer_widget::CaptureRequest::Release(pointer)
         );
         assert_eq!(activations.get(), 0);
     }

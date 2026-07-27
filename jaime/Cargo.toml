@@ -6,18 +6,9 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib", "staticlib"]
 
-[[bin]]
-name = "jaime"
-path = "src/lib.rs"
-
 [dependencies]
 aimer = {path = "..", features = ["markdown", "svg","provider"]}
 uuid = {version = "1.22.0", features = ["js", "v4"]}
-dhat = "0.3.3"
 reqwest.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"
-
-[features]
-dhat-heap = []    # if you are doing heap profiling
-dhat-ad-hoc = []  # if you are doing ad hoc profiling

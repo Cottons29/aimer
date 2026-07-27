@@ -9,8 +9,8 @@ use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerEvent, PointerPosition};
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
-    RequiredChild, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
+    Rebuildable, RequiredChild, VisitorElement, Widget,
 };
 
 use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback, VoidParamedFunction};
@@ -252,7 +252,7 @@ pub(crate) struct GestureState {
     last_tap_position: Option<PointerPosition>,
     is_dragging: bool,
     last_drag_position: Option<PointerPosition>,
-    touches: HashMap<u64, PointerPosition>,
+    touches: HashMap<PointerKey, PointerPosition>,
     initial_pinch_distance: Option<f32>,
     current_scale: f32,
     drag_start_time: Option<AnimInstant>,
@@ -330,7 +330,9 @@ impl<E: Element> RawGestureDetector<E> {
                     state.current_scale = 1.0;
                 }
 
-                state.touches.insert(pos.id, *pos);
+                state
+                    .touches
+                    .insert(PointerKey::new(pos.source, pos.id), *pos);
 
                 if state.touches.len() == 2 {
                     let positions: Vec<PointerPosition> = state.touches.values().copied().collect();
@@ -356,7 +358,9 @@ impl<E: Element> RawGestureDetector<E> {
             }
 
             PointerEvent::Up(pos) => {
-                state.touches.remove(&pos.id);
+                state
+                    .touches
+                    .remove(&PointerKey::new(pos.source, pos.id));
 
                 if state.initial_pinch_distance.is_some() && state.touches.len() < 2 {
                     state.initial_pinch_distance = None;
@@ -487,7 +491,9 @@ impl<E: Element> RawGestureDetector<E> {
             }
 
             PointerEvent::Move(pos) => {
-                state.touches.insert(pos.id, *pos);
+                state
+                    .touches
+                    .insert(PointerKey::new(pos.source, pos.id), *pos);
 
                 if state.touches.len() >= 2
                     && state.initial_pinch_distance.is_some()
@@ -660,8 +666,22 @@ fn should_accept_pointer_event(
     }
 
     match event {
-        ElementEvent::PointerUp(_, _, id) => state.touches.contains_key(id),
+        ElementEvent::PointerUp(_, source, id) => state
+            .touches
+            .contains_key(&PointerKey::new(*source, *id)),
         _ => false,
+    }
+}
+
+fn pointer_capture_effect(result: EventResult, event: &ElementEvent) -> EventResult {
+    match event {
+        ElementEvent::PointerDown(_, source, id) => {
+            result.with_pointer_capture(PointerKey::new(*source, *id))
+        }
+        ElementEvent::PointerUp(_, source, id) => {
+            result.with_pointer_release(PointerKey::new(*source, *id))
+        }
+        _ => result,
     }
 }
 
@@ -678,11 +698,11 @@ impl<E: Element> VisitorElement for RawGestureDetector<E> {
 }
 
 impl<E: Element> EventElement for RawGestureDetector<E> {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         if matches!(event, ElementEvent::Cancel) {
             self.process_pointer_event(&PointerEvent::Cancel);
             self.window.request_redraw();
-            return true;
+            return EventResult::consumed().with_redraw();
         }
 
         let pos = match event {
@@ -701,7 +721,7 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
                 // lower layer — scrolling appeared completely dead. Let the event
                 // fall through when we have nothing to do with it.
                 if !detector_consumes_scroll(&self.on_scroll) {
-                    return false;
+                    return EventResult::ignored();
                 }
                 let pointer_event = PointerEvent::Scroll {
                     delta_x: delta.x,
@@ -709,13 +729,13 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
                 };
                 self.process_pointer_event(&pointer_event);
                 self.window.request_redraw();
-                return true;
+                return EventResult::consumed().with_redraw();
             }
-            _ => return false,
+            _ => return EventResult::ignored(),
         };
 
         if !should_accept_pointer_event(&self.cached_bounds, &self.state.borrow(), event, *pos) {
-            return false;
+            return EventResult::ignored();
         }
 
         let pointer_event = match event {
@@ -737,12 +757,12 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
                 source: *source,
                 id: *id,
             }),
-            _ => return false,
+            _ => return EventResult::ignored(),
         };
 
         self.process_pointer_event(&pointer_event);
         self.window.request_redraw();
-        true
+        pointer_capture_effect(EventResult::consumed().with_redraw(), event)
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -789,6 +809,7 @@ impl<E: Element> Rebuildable for RawGestureDetector<E> {}
 #[cfg(test)]
 mod tests {
     use aimer_events::pointer::{PointerPosition, PointerSource};
+    use aimer_widget::CaptureRequest;
 
     use super::*;
 
@@ -858,11 +879,32 @@ mod tests {
         let bounds = CacheBounds::new();
         bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
         let mut state = GestureState::default();
-        state.touches.insert(7, touch_position(25.0, 35.0, 7));
+        let pointer = PointerKey::new(PointerSource::Touch, 7);
+        state
+            .touches
+            .insert(pointer, touch_position(25.0, 35.0, 7));
         let pos = touch_vec(115.0, 35.0);
         let event = ElementEvent::PointerUp(pos, PointerSource::Touch, 7);
 
         assert!(should_accept_pointer_event(&bounds, &state, &event, pos));
+        let mouse = ElementEvent::PointerUp(pos, PointerSource::Mouse, 7);
+        assert!(!should_accept_pointer_event(&bounds, &state, &mouse, pos));
+    }
+
+    #[test]
+    fn accepted_pointer_sequence_requests_capture_then_release() {
+        let pointer = PointerKey::new(PointerSource::Touch, 7);
+        let down = pointer_capture_effect(
+            EventResult::consumed(),
+            &ElementEvent::PointerDown(Vec2d::default(), pointer.source, pointer.id),
+        );
+        let up = pointer_capture_effect(
+            EventResult::consumed(),
+            &ElementEvent::PointerUp(Vec2d::default(), pointer.source, pointer.id),
+        );
+
+        assert_eq!(down.capture_request(), CaptureRequest::Capture(pointer));
+        assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
     }
 
     // Regression for "the Scroll is not able to scroll with mouse wheel or
@@ -894,14 +936,15 @@ mod tests {
     fn active_touch_state_is_preserved_for_replacement_detector() {
         let mut existing = GestureState::default();
         let down = touch_position(25.0, 35.0, 7);
-        existing.touches.insert(7, down);
+        let pointer = PointerKey::new(PointerSource::Touch, 7);
+        existing.touches.insert(pointer, down);
         existing.down_position = Some(down);
         existing.down_time = Some(AnimInstant::now());
 
         let mut replacement = GestureState::default();
         preserve_gesture_state(&existing, &mut replacement);
 
-        assert_eq!(replacement.touches.get(&7), Some(&down));
+        assert_eq!(replacement.touches.get(&pointer), Some(&down));
         assert_eq!(replacement.down_position, Some(down));
         assert!(replacement.down_time.is_some());
     }

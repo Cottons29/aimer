@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
 use aimer_animation::AnimInstant;
@@ -9,8 +9,8 @@ use aimer_events::window::request_animation_frame;
 use aimer_macro::Rebuildable;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, LayoutElement, RequiredChild, VisitorElement,
-    Widget, broadcast_event, dispatch_event,
+    AnyElement, Drawable, Element, EventDispatcher, EventElement, EventResult, LayoutElement,
+    PointerKey, RequiredChild, VisitorElement, Widget, broadcast_event,
 };
 
 use crate::ModalAnimation;
@@ -115,7 +115,7 @@ impl<W: Widget + 'static> Widget for ModalHost<W> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
         RawModalHost {
             child: self.child.to_element(ctx),
-            overlay: RawModalOverlay,
+            overlay: RawModalOverlay::default(),
         }
         .boxed()
     }
@@ -140,7 +140,7 @@ impl Drop for RawModalHost {
 impl Drawable for RawModalHost {
     fn draw(&self, ctx: &BuildContext) {
         if self.overlay.prepare(ctx) {
-            broadcast_event(self.child.as_ref(), &ElementEvent::Cancel);
+            let _ = broadcast_event(self.child.as_ref(), &ElementEvent::Cancel);
         }
         self.child.draw(ctx);
         self.overlay.draw_entries(ctx);
@@ -148,6 +148,9 @@ impl Drawable for RawModalHost {
 }
 
 impl EventElement for RawModalHost {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
+        self.overlay.on_event(event)
+    }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
         visitor(&self.overlay);
@@ -179,8 +182,10 @@ impl VisitorElement for RawModalHost {
     }
 }
 
-#[derive(Rebuildable)]
-struct RawModalOverlay;
+#[derive(Default, Rebuildable)]
+struct RawModalOverlay {
+    promoted_captures: RefCell<HashSet<PointerKey>>,
+}
 
 impl RawModalOverlay {
     fn prepare(&self, ctx: &BuildContext) -> bool {
@@ -195,7 +200,13 @@ impl RawModalOverlay {
                 entry.timeline.borrow_mut().tick(now, entry.animation);
                 entry.element.draw(ctx);
             }
-            entries.retain(|entry| !entry.timeline.borrow().finished());
+            entries.retain(|entry| {
+                let retain = !entry.timeline.borrow().finished();
+                if !retain {
+                    cancel_hosted_entry(entry);
+                }
+                retain
+            });
         });
     }
 }
@@ -208,7 +219,7 @@ impl Drawable for RawModalOverlay {
 }
 
 impl EventElement for RawModalOverlay {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         ENTRIES.with(|entries| {
             let entries = entries.borrow();
             if matches!(
@@ -221,16 +232,53 @@ impl EventElement for RawModalOverlay {
             ) {
                 return entries
                     .last()
-                    .is_some_and(|entry| entry.element.on_event(event));
+                    .map_or_else(EventResult::ignored, |entry| entry.element.on_event(event));
             }
+            let pointer = event_pointer_key(event);
+            if let Some(pointer) = pointer
+                && let Some(entry) = entries
+                    .iter()
+                    .rev()
+                    .find(|entry| entry.dispatcher.borrow().is_captured(pointer))
+            {
+                let pos = event.get_pointer_pos().unwrap_or_default();
+                let result = dispatch_hosted_event(entry, pos, event);
+                self.track_promoted_capture(result, pointer);
+                return result;
+            }
+            if let Some(pointer) = pointer
+                && self.promoted_captures.borrow_mut().remove(&pointer)
+            {
+                return EventResult::ignored().with_pointer_release(pointer);
+            }
+            let mut result = EventResult::ignored();
             for entry in entries.iter().rev() {
                 let pos = event.get_pointer_pos().unwrap_or_default();
-                if dispatch_event(entry.element.as_ref(), pos, event) {
-                    return true;
+                let entry_result = dispatch_hosted_event(entry, pos, event);
+                if let Some(pointer) = pointer {
+                    self.track_promoted_capture(entry_result, pointer);
+                }
+                result = result.merge(entry_result);
+                if entry_result.is_consumed() {
+                    return result;
                 }
             }
-            !entries.is_empty()
+            result.merge(EventResult::from(!entries.is_empty()))
         })
+    }
+}
+
+impl RawModalOverlay {
+    fn track_promoted_capture(&self, result: EventResult, pointer: PointerKey) {
+        match result.capture_request() {
+            aimer_widget::CaptureRequest::Capture(captured) if captured == pointer => {
+                self.promoted_captures.borrow_mut().insert(pointer);
+            }
+            aimer_widget::CaptureRequest::Release(released) if released == pointer => {
+                self.promoted_captures.borrow_mut().remove(&pointer);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -271,6 +319,41 @@ struct HostedModal {
     element: AnyElement,
     animation: Option<ModalAnimation>,
     timeline: Rc<RefCell<ModalTimeline>>,
+    dispatcher: RefCell<EventDispatcher>,
+}
+
+fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
+    match event {
+        ElementEvent::PointerDown(_, source, id)
+        | ElementEvent::PointerUp(_, source, id)
+        | ElementEvent::PointerMove(_, source, id)
+        | ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
+        _ => None,
+    }
+}
+
+fn dispatch_hosted_event(
+    entry: &HostedModal,
+    pos: aimer_attribute::Vec2d,
+    event: &ElementEvent,
+) -> EventResult {
+    let pointer = event_pointer_key(event);
+    let was_captured = pointer.is_some_and(|pointer| entry.dispatcher.borrow().is_captured(pointer));
+    let result = entry
+        .dispatcher
+        .borrow_mut()
+        .dispatch(entry.element.as_ref(), pos, event);
+    let is_captured = pointer.is_some_and(|pointer| entry.dispatcher.borrow().is_captured(pointer));
+    match (pointer, was_captured, is_captured) {
+        (Some(pointer), false, true) => result.with_pointer_capture(pointer),
+        (Some(pointer), true, false) => result.with_pointer_release(pointer),
+        _ => result,
+    }
+}
+
+fn cancel_hosted_entry(entry: &HostedModal) {
+    let _ = broadcast_event(entry.element.as_ref(), &ElementEvent::Cancel);
+    entry.dispatcher.borrow_mut().clear_captures();
 }
 
 pub(crate) struct ModalTimeline {
@@ -386,7 +469,7 @@ fn process_commands(ctx: &BuildContext) -> bool {
                     build,
                 } => {
                     for entry in entries.iter() {
-                        broadcast_event(entry.element.as_ref(), &ElementEvent::Cancel);
+                        cancel_hosted_entry(entry);
                     }
                     let timeline = Rc::new(RefCell::new(ModalTimeline::new(animation.is_some())));
                     let element = build(ctx, id, timeline.clone());
@@ -395,11 +478,13 @@ fn process_commands(ctx: &BuildContext) -> bool {
                         element,
                         animation,
                         timeline,
+                        dispatcher: RefCell::new(EventDispatcher::new()),
                     });
                     opened = true;
                 }
                 ModalCommand::Dismiss(id) => {
                     if let Some(entry) = entries.iter().find(|entry| entry.id == id) {
+                        cancel_hosted_entry(entry);
                         entry
                             .timeline
                             .borrow_mut()
@@ -408,6 +493,7 @@ fn process_commands(ctx: &BuildContext) -> bool {
                 }
                 ModalCommand::DismissTop => {
                     if let Some(entry) = entries.last() {
+                        cancel_hosted_entry(entry);
                         entry
                             .timeline
                             .borrow_mut()
@@ -462,12 +548,105 @@ pub(crate) fn pending_command_count_for_test() -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
     use std::time::Duration;
 
     use aimer_animation::{AnimInstant, Curve};
+    use aimer_attribute::Vec2d;
+    use aimer_events::element::ElementEvent;
+    use aimer_events::pointer::PointerSource;
+    use aimer_widget::base::BuildContext;
+    use aimer_widget::{
+        CaptureRequest, Drawable, Element, EventDispatcher, EventElement, EventResult,
+        LayoutElement, PointerKey, Rebuildable, VisitorElement,
+    };
 
-    use super::ModalTimeline;
+    use super::{HostedModal, ModalId, ModalTimeline, dispatch_hosted_event};
     use crate::ModalAnimation;
+
+    struct CapturingModalElement {
+        events: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for CapturingModalElement {
+        fn debug_name(&self) -> &'static str {
+            "CapturingModalElement"
+        }
+    }
+
+    impl EventElement for CapturingModalElement {
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            self.events.set(self.events.get() + 1);
+            match event {
+                ElementEvent::PointerDown(_, source, id) => EventResult::consumed()
+                    .with_pointer_capture(PointerKey::new(*source, *id)),
+                ElementEvent::PointerUp(_, source, id) => EventResult::consumed()
+                    .with_pointer_release(PointerKey::new(*source, *id)),
+                _ => EventResult::consumed(),
+            }
+        }
+    }
+
+    impl LayoutElement for CapturingModalElement {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some((Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }))
+        }
+    }
+
+    impl Drawable for CapturingModalElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for CapturingModalElement {}
+
+    #[test]
+    fn hosted_modal_routes_capture_outside_until_up() {
+        let events = Rc::new(Cell::new(0));
+        let entry = HostedModal {
+            id: ModalId(1),
+            element: CapturingModalElement {
+                events: events.clone(),
+            }
+            .boxed(),
+            animation: None,
+            timeline: Rc::new(RefCell::new(ModalTimeline::new(false))),
+            dispatcher: RefCell::new(EventDispatcher::new()),
+        };
+        let pointer = PointerKey::new(PointerSource::Touch, 4);
+        let down = dispatch_hosted_event(
+            &entry,
+            Vec2d { x: 5.0, y: 5.0 },
+            &ElementEvent::PointerDown(
+                Vec2d { x: 5.0, y: 5.0 },
+                pointer.source,
+                pointer.id,
+            ),
+        );
+        assert_eq!(down.capture_request(), CaptureRequest::Capture(pointer));
+
+        let _ = dispatch_hosted_event(
+            &entry,
+            Vec2d { x: 50.0, y: 50.0 },
+            &ElementEvent::PointerMove(
+                Vec2d { x: 50.0, y: 50.0 },
+                pointer.source,
+                pointer.id,
+            ),
+        );
+        let up = dispatch_hosted_event(
+            &entry,
+            Vec2d { x: 50.0, y: 50.0 },
+            &ElementEvent::PointerUp(
+                Vec2d { x: 50.0, y: 50.0 },
+                pointer.source,
+                pointer.id,
+            ),
+        );
+
+        assert_eq!(events.get(), 3);
+        assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
+        assert_eq!(entry.dispatcher.borrow().capture_count(), 0);
+    }
 
     #[test]
     fn timeline_reverses_from_visible_progress_without_a_jump() {

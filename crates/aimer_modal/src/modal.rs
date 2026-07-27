@@ -10,8 +10,8 @@ use aimer_macro::Rebuildable;
 use aimer_space::Alignment;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, RequiredChild,
-    VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement,
+    RequiredChild, VisitorElement, Widget,
 };
 
 use crate::ModalAnimation;
@@ -255,7 +255,7 @@ impl Drawable for RawModal {
 }
 
 impl EventElement for RawModal {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         let dismiss = match event {
             ElementEvent::PointerDown(position, _, _)
                 if self.barrier_dismissible && !self.contains_child(*position) =>
@@ -272,7 +272,7 @@ impl EventElement for RawModal {
         if dismiss && let Some(id) = self.id {
             host::dismiss(id);
         }
-        true
+        EventResult::consumed()
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {

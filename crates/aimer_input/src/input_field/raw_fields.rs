@@ -14,7 +14,9 @@ use aimer_macro::Rebuildable;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use aimer_text::RawTextWidget;
 use aimer_widget::base::{BuildContext, Color, Colors};
-use aimer_widget::{Drawable, EventElement, LayoutCache, LayoutElement, VisitorElement};
+use aimer_widget::{
+    Drawable, EventElement, EventResult, LayoutCache, LayoutElement, PointerKey, VisitorElement,
+};
 
 use crate::input_field::controller::TextFieldController;
 
@@ -402,7 +404,7 @@ pub(crate) struct RawTextField {
     pub on_focus: TextFieldCallback,
     pub on_blur: TextFieldCallback,
     pub read_only: bool,
-    pub mouse_held: Cell<bool>,
+    pub mouse_held: Cell<Option<PointerKey>>,
     pub last_click_time: Cell<AnimInstant>,
     pub click_count: Cell<u8>,
     pub pending_click: Cell<Option<Vec2d>>,
@@ -608,6 +610,20 @@ impl RawTextField {
             .count()
             + 1
     }
+}
+
+fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
+    match event {
+        ElementEvent::PointerDown(_, source, id)
+        | ElementEvent::PointerUp(_, source, id)
+        | ElementEvent::PointerMove(_, source, id)
+        | ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
+        _ => None,
+    }
+}
+
+fn owns_selection_pointer(active: Option<PointerKey>, event: &ElementEvent) -> bool {
+    active.is_some() && active == event_pointer_key(event)
 }
 
 /// On wasm32 / mobile browsers, focusing a hidden `<input>` element inside a
@@ -836,21 +852,24 @@ impl VisitorElement for RawTextField {
 }
 
 impl EventElement for RawTextField {
-    fn on_event(&self, event: &ElementEvent) -> bool {
-        if !self.enable {
-            return false;
-        }
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
+        let active_before = self.mouse_held.get();
+        let consumed = (|| {
+            if !self.enable {
+                return false;
+            }
 
-        // debug!("RawTextField on_event: {:?}", event);
+            // debug!("RawTextField on_event: {:?}", event);
 
-        match event {
-            ElementEvent::PointerDown(pos, _, _) => {
+            match event {
+            ElementEvent::PointerDown(pos, source, id) => {
                 let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
                 if is_inside {
                     let was_focused = self.is_focused();
                     self.set_focused(true);
-                    self.mouse_held.set(true);
+                    self.mouse_held
+                        .set(Some(PointerKey::new(*source, *id)));
                     self.cursor.clear_selection();
 
                     // Double/triple-click detection
@@ -902,8 +921,10 @@ impl EventElement for RawTextField {
                     wasm_request_keyboard(true);
                     true
                 } else {
+                    if self.mouse_held.get().is_some() {
+                        return false;
+                    }
                     self.set_focused(false);
-                    self.mouse_held.set(false);
                     self.on_blur.call(self.controller.text());
                     #[cfg(target_os = "ios")]
                     ios_keyboard::dismiss_keyboard();
@@ -1279,7 +1300,7 @@ impl EventElement for RawTextField {
                 let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
                 let was_hovered = self.is_hovered();
                 if let Some(w) = get_window() {
-                    if is_inside || self.mouse_held.get() {
+                    if is_inside || self.mouse_held.get().is_some() {
                         w.set_cursor(winit::window::CursorIcon::Text);
                     } else {
                         w.set_cursor(winit::window::CursorIcon::Default);
@@ -1288,7 +1309,7 @@ impl EventElement for RawTextField {
                 self.set_hovered(is_inside);
 
                 // Drag-to-select: when mouse is held, defer position resolution to draw()
-                if self.mouse_held.get() {
+                if owns_selection_pointer(self.mouse_held.get(), event) {
                     self.pending_click.set(Some(*pos));
                     return true;
                 }
@@ -1296,8 +1317,12 @@ impl EventElement for RawTextField {
                 was_hovered != is_inside
             }
             ElementEvent::PointerUp(_pos, _, _) => {
-                self.mouse_held.set(false);
-                false
+                if owns_selection_pointer(self.mouse_held.get(), event) {
+                    self.mouse_held.set(None);
+                    true
+                } else {
+                    false
+                }
             }
             ElementEvent::ImePreedit { text, cursor } => {
                 if !self.is_focused() {
@@ -1309,7 +1334,7 @@ impl EventElement for RawTextField {
             }
             ElementEvent::Cancel => {
                 self.set_focused(false);
-                self.mouse_held.set(false);
+                self.mouse_held.set(None);
                 self.on_blur.call(self.controller.text());
                 self.preedit_text.set(String::new());
                 self.preedit_cursor.set(None);
@@ -1319,7 +1344,24 @@ impl EventElement for RawTextField {
                 android_keyboard::dismiss_keyboard();
                 true
             }
-            _ => false,
+                _ => false,
+            }
+        })();
+
+        let result = if consumed {
+            EventResult::consumed().with_redraw()
+        } else {
+            EventResult::ignored()
+        };
+        let active_after = self.mouse_held.get();
+        match (event_pointer_key(event), active_before, active_after) {
+            (Some(pointer), before, Some(after)) if before != Some(after) && pointer == after => {
+                result.with_pointer_capture(pointer)
+            }
+            (Some(pointer), Some(before), None) if pointer == before => {
+                result.with_pointer_release(pointer)
+            }
+            _ => result,
         }
     }
 }
@@ -1460,7 +1502,9 @@ impl Drawable for RawTextField {
                 _ => {
                     // For drag-to-select: set anchor to the click position (not the old cursor)
                     // so the selection extends from the click point to the drag destination.
-                    if self.mouse_held.get() && self.cursor.selection_anchor().is_none() {
+                    if self.mouse_held.get().is_some()
+                        && self.cursor.selection_anchor().is_none()
+                    {
                         self.cursor.set_selection_anchor(Some(click_offset));
                     }
                     self.cursor.set_offset(click_offset);
@@ -1745,5 +1789,26 @@ impl Drawable for RawTextField {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod pointer_capture_tests {
+    use aimer_attribute::Vec2d;
+    use aimer_events::element::ElementEvent;
+    use aimer_events::pointer::PointerSource;
+    use aimer_widget::PointerKey;
+
+    use super::owns_selection_pointer;
+
+    #[test]
+    fn selection_drag_matches_pointer_source_and_id() {
+        let touch = PointerKey::new(PointerSource::Touch, 0);
+        let touch_move = ElementEvent::PointerMove(Vec2d::default(), PointerSource::Touch, 0);
+        let mouse_move = ElementEvent::PointerMove(Vec2d::default(), PointerSource::Mouse, 0);
+
+        assert!(owns_selection_pointer(Some(touch), &touch_move));
+        assert!(!owns_selection_pointer(Some(touch), &mouse_move));
+        assert!(!owns_selection_pointer(None, &touch_move));
     }
 }

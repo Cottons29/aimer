@@ -273,6 +273,29 @@ mod tests {
     }
 
     #[test]
+    fn pressed_svg_requests_capture_and_terminal_release() {
+        use aimer_attribute::Vec2d;
+        use aimer_events::element::ElementEvent;
+        use aimer_events::pointer::PointerSource;
+        use aimer_widget::{CaptureRequest, EventResult, PointerKey};
+
+        let pointer = PointerKey::new(PointerSource::Touch, 3);
+        let down = widget::svg_pointer_capture_effect(
+            EventResult::consumed(),
+            &ElementEvent::PointerDown(Vec2d::default(), pointer.source, pointer.id),
+            true,
+        );
+        let up = widget::svg_pointer_capture_effect(
+            EventResult::ignored(),
+            &ElementEvent::PointerUp(Vec2d::default(), pointer.source, pointer.id),
+            false,
+        );
+
+        assert_eq!(down.capture_request(), CaptureRequest::Capture(pointer));
+        assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
+    }
+
+    #[test]
     fn source_groups_remain_selectable_when_normalizer_flattens_them() {
         let document = SvgDocument::from_svg(
             br#"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg">

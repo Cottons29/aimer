@@ -5,8 +5,8 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, RequiredChild,
-    VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
+    RequiredChild, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -226,7 +226,7 @@ impl VisitorElement for AnimatedElement {
 }
 
 impl EventElement for AnimatedElement {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         self.child.on_event(event)
     }
 

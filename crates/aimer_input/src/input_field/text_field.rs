@@ -171,7 +171,7 @@ impl Widget for TextField {
             on_focus: self.on_focus.clone(),
             on_blur: self.on_blur.clone(),
             read_only: self.read_only,
-            mouse_held: Cell::new(false),
+            mouse_held: Cell::new(None),
             last_click_time: Cell::new(AnimInstant::now()),
             click_count: Cell::new(0),
             pending_click: Cell::new(None),

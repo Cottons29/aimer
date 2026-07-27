@@ -36,8 +36,8 @@ aimer_markdown.workspace = true
 aimer_modal.workspace = true
 
 [features]
-markdown =[]
-provider=[]
+markdown = []
+provider = []
 svg = []
 
 [workspace]
@@ -68,8 +68,15 @@ members = [
     "crates/aimer_style",
     "crates/aimer_text",
     "crates/aimer_macro",
-    "jaime"
-    , "crates/aimer_provider", "crates/aimer_sdk", "website_backend", "crates/aimer_markdown", "crates/aimer_svg", "crates/aimer_native", "crates/aimer_modal"]
+    "jaime",
+    "crates/aimer_provider",
+    "crates/aimer_sdk",
+    "website_backend",
+    "crates/aimer_markdown",
+    "crates/aimer_svg",
+    "crates/aimer_native",
+    "crates/aimer_modal"
+]
 
 
 [workspace.dependencies]
@@ -118,7 +125,7 @@ chrono = "0.4.45"
 web-time = "1.1.0"
 objc = { version = "0.2.7" }
 core-foundation = { version = "0.10.1" }
-hashbrown = "0.16.1"
+hashbrown = "0.17.1"
 crossbeam = "0.8.4"
 colored = "3.1.1"
 tokio = "1.52.3"

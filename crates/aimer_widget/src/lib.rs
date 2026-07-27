@@ -83,8 +83,12 @@ pub use crate::components::diagnostics::{
     paint_overflow_indicator,
 };
 pub use crate::components::drawable::Drawable;
-pub use crate::components::element::Element;
-pub use crate::components::event_element::EventElement;
+pub use crate::components::element::{
+    Element, ElementId, ElementPath, EventDispatcher, element_tree_generation,
+};
+pub use crate::components::event_element::{
+    CaptureRequest, EventElement, EventResult, PointerKey,
+};
 pub use crate::components::layout_element::LayoutElement;
 pub use crate::components::rebuildable::Rebuildable;
 pub use crate::components::visitor_element::VisitorElement;
@@ -103,7 +107,7 @@ pub use aimer_canvas::{TextHorizontalAlign, TextOverflowMode};
 pub use aimer_macro::{main, widget};
 
 pub use crate::async_builder::{AsyncBuilder, AsyncSnapshot};
-pub use crate::components::element::{broadcast_event, cancel_pointer, dispatch_event};
+pub use crate::components::element::{broadcast_event, dispatch_event};
 pub use crate::key::Key;
 pub use crate::layout_cache::LayoutCache;
 pub use crate::widget::Widget;

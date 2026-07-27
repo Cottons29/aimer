@@ -521,6 +521,10 @@ where
             (self.snapshot_builder)(&inner.snapshot).to_element(ctx)
         };
         carry_child_state(self.current_child(), new_child.as_ref(), ctx);
+        crate::components::element::reconcile_generated_tree(
+            self.current_child(),
+            new_child.as_ref(),
+        );
         self.replace_child(new_child);
         self.rendered_revision.set(self.runtime.revision());
     }

@@ -7,8 +7,8 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, Key, LayoutElement, Rebuildable, State,
-    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventResult, Key, LayoutElement, Rebuildable,
+    State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -528,12 +528,12 @@ impl VisitorElement for MorphTransitionElement {
 }
 
 impl EventElement for MorphTransitionElement {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         unsafe {
             self.current_child
                 .get()
                 .map(|c| c.on_event(event))
-                .unwrap_or(false)
+                .unwrap_or_else(EventResult::ignored)
         }
     }
 

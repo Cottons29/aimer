@@ -7,8 +7,8 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, Key, LayoutElement, Rebuildable, State,
-    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventResult, Key, LayoutElement, Rebuildable,
+    State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -244,7 +244,7 @@ impl<T: Animatable + Clone + 'static> VisitorElement for ImplicitAnimatedElement
 }
 
 impl<T: Animatable + Clone + 'static> EventElement for ImplicitAnimatedElement<T> {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         unsafe { &*self.child.get() }.on_event(event)
     }
 

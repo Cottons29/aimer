@@ -178,6 +178,10 @@ impl StatelessElement {
         {
             let old_child = unsafe { &*self.child.0.get() };
             crate::widget::stateful::carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
+            crate::components::element::reconcile_generated_tree(
+                old_child.as_ref(),
+                new_child.as_ref(),
+            );
         }
 
         unsafe {
@@ -263,6 +267,10 @@ impl VisitorElement for StatelessElement {
 
     fn debug_name(&self) -> &'static str {
         self.debug_name
+    }
+
+    fn reconciliation_key(&self) -> Option<&crate::Key> {
+        self.key.as_ref()
     }
 }
 
@@ -365,6 +373,25 @@ mod tests {
 
         assert_eq!(rebuilds.get(), 1);
         assert!(!element.dirty.get());
+    }
+
+    #[test]
+    fn compatible_generated_child_keeps_identity_across_rebuild() {
+        let element = StatelessElement::new(
+            Leaf.boxed(),
+            |_| Leaf.boxed(),
+            None,
+            "Rebuildable",
+        );
+        let original_id = unsafe { &*element.child.0.get() }.id();
+        let generation = crate::element_tree_generation();
+        element.mark_needs_rebuild();
+
+        element.rebuild_if_dirty(&dummy_build_context());
+
+        let rebuilt_id = unsafe { &*element.child.0.get() }.id();
+        assert_eq!(rebuilt_id, original_id);
+        assert!(crate::element_tree_generation() > generation);
     }
 
     #[test]

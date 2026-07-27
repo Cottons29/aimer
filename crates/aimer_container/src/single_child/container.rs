@@ -6,8 +6,8 @@ use aimer_macro::Rebuildable;
 pub use aimer_style::*;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutCache, LayoutElement,
-    RequiredChild, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutCache,
+    LayoutElement, RequiredChild, VisitorElement, Widget,
 };
 
 /// A decorated single-child layout box with optional size, spacing, and color.
@@ -422,7 +422,7 @@ impl<T: Element> VisitorElement for RawContainer<T> {
 }
 
 impl<T: Element> EventElement for RawContainer<T> {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         // An opaque container occludes lower `Stack` layers: a wheel / trackpad
         // `Scroll` that lands on it must not fall through to a `Scrollable`
         // behind it. `dispatch_event` only calls `on_event` once the event
@@ -433,9 +433,9 @@ impl<T: Element> EventElement for RawContainer<T> {
         // the opaque header. Non-scroll events keep falling through so existing
         // click/drag routing is unchanged.
         if matches!(event, ElementEvent::Scroll { .. }) && self.is_opaque() {
-            return true;
+            return EventResult::consumed();
         }
-        false
+        EventResult::ignored()
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {

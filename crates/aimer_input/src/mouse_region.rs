@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use aimer_attribute::CacheBounds;
@@ -8,8 +8,8 @@ use aimer_events::window::request_animation_frame;
 use aimer_macro::Rebuildable;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, RequiredChild,
-    VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventDispatcher, EventElement, EventResult,
+    LayoutElement, PointerKey, RequiredChild, VisitorElement, Widget,
 };
 
 use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
@@ -146,6 +146,7 @@ impl<W: Widget + 'static> Widget for MouseRegion<W> {
             cached_bounds: self.cached_bounds.clone(),
             window: ctx.window.clone(),
             child,
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
         }
         .boxed()
     }
@@ -170,6 +171,7 @@ pub struct RawMouseRegion<E: Element> {
     pub(crate) cached_bounds: CacheBounds,
     pub(crate) child: E,
     pub(crate) window: WindowHandle,
+    pub(crate) event_dispatcher: RefCell<EventDispatcher>,
 }
 
 impl<E: Element> RawMouseRegion<E> {
@@ -223,22 +225,30 @@ impl<E: Element> VisitorElement for RawMouseRegion<E> {
 }
 
 impl<E: Element> EventElement for RawMouseRegion<E> {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
+        let pointer = match event {
+            ElementEvent::PointerDown(_, source, id)
+            | ElementEvent::PointerUp(_, source, id)
+            | ElementEvent::PointerMove(_, source, id)
+            | ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
+            _ => None,
+        };
+        let was_captured = pointer
+            .is_some_and(|pointer| self.event_dispatcher.borrow().is_captured(pointer));
+
         if matches!(event, ElementEvent::PointerExited(PointerSource::Mouse, _)) {
             if self.cursor.is_some() {
                 self.window.set_cursor(winit::window::CursorIcon::Default);
             }
             self.sync_hover(false);
-            return false;
         }
 
         let pos = match event {
-            ElementEvent::PointerDown(p, src, _) if *src == PointerSource::Mouse => *p,
-            ElementEvent::PointerUp(p, src, _) if *src == PointerSource::Mouse => *p,
-            ElementEvent::PointerMove(p, src, _) if *src == PointerSource::Mouse => *p,
-            _ => {
-                return false;
-            }
+            ElementEvent::PointerDown(p, _, _)
+            | ElementEvent::PointerUp(p, _, _)
+            | ElementEvent::PointerMove(p, _, _) => *p,
+            ElementEvent::PointerExited(_, _) | ElementEvent::Cancel => Vec2d::default(),
+            _ => return EventResult::ignored(),
         };
 
         // println!("Event received: {:?}", event);
@@ -246,17 +256,37 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
         let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
         // Update the cursor icon on every mouse event while over the region.
-        if is_inside {
+        let is_mouse = matches!(pointer, Some(PointerKey { source: PointerSource::Mouse, .. }));
+        if is_inside && is_mouse {
             if let Some(icon) = self.cursor {
                 self.window.set_cursor(icon);
             }
-        } else if self.cursor.is_some() {
+        } else if is_mouse && self.cursor.is_some() {
             self.window.set_cursor(winit::window::CursorIcon::Default);
-            return false;
         }
 
-        self.sync_hover(is_inside);
-        self.child.on_event(event)
+        if is_mouse {
+            self.sync_hover(is_inside);
+        }
+        if !is_inside && !was_captured && !matches!(event, ElementEvent::Cancel) {
+            return EventResult::ignored();
+        }
+        let result = self
+            .event_dispatcher
+            .borrow_mut()
+            .dispatch(&self.child, pos, event);
+        let is_captured = pointer
+            .is_some_and(|pointer| self.event_dispatcher.borrow().is_captured(pointer));
+        let result = if result.is_consumed() {
+            result.with_redraw()
+        } else {
+            result
+        };
+        match (pointer, was_captured, is_captured) {
+            (Some(pointer), false, true) => result.with_pointer_capture(pointer),
+            (Some(pointer), true, false) => result.with_pointer_release(pointer),
+            _ => result,
+        }
     }
     fn event_children<'b>(&'b self, _visitor: &mut dyn FnMut(&'b dyn Element)) {}
 }
@@ -295,8 +325,9 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
 #[cfg(test)]
 mod tests {
     use std::any::Any;
+    use std::cell::RefCell;
 
-    use aimer_widget::Rebuildable;
+    use aimer_widget::{CaptureRequest, EventResult, PointerKey, Rebuildable};
     use aimer_widget::base::WindowHandle;
     use winit::dpi::PhysicalSize;
 
@@ -329,6 +360,55 @@ mod tests {
         }
     }
 
+    struct ResultElement;
+
+    impl VisitorElement for ResultElement {
+        fn debug_name(&self) -> &'static str {
+            "ResultElement"
+        }
+    }
+
+    impl EventElement for ResultElement {
+        fn on_event(&self, _event: &ElementEvent) -> EventResult {
+            EventResult::consumed()
+        }
+    }
+
+    impl LayoutElement for ResultElement {}
+    impl Drawable for ResultElement {
+        fn draw(&self, _ctx: &BuildContext<'_>) {}
+    }
+    impl Rebuildable for ResultElement {}
+
+    struct CapturingElement {
+        events: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for CapturingElement {
+        fn debug_name(&self) -> &'static str {
+            "CapturingElement"
+        }
+    }
+
+    impl EventElement for CapturingElement {
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            self.events.set(self.events.get() + 1);
+            match event {
+                ElementEvent::PointerDown(_, source, id) => EventResult::consumed()
+                    .with_pointer_capture(PointerKey::new(*source, *id)),
+                ElementEvent::PointerUp(_, source, id) => EventResult::consumed()
+                    .with_pointer_release(PointerKey::new(*source, *id)),
+                _ => EventResult::consumed(),
+            }
+        }
+    }
+
+    impl LayoutElement for CapturingElement {}
+    impl Drawable for CapturingElement {
+        fn draw(&self, _ctx: &BuildContext<'_>) {}
+    }
+    impl Rebuildable for CapturingElement {}
+
     #[test]
     fn builder_configures_mouse_region_before_child_is_added() {
         let current_state = Rc::new(Cell::new(PointerState::Inside));
@@ -355,10 +435,78 @@ mod tests {
             cached_bounds: CacheBounds::new(),
             child: TestElement,
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
         };
 
-        region.on_event(&ElementEvent::PointerExited(PointerSource::Mouse, 0));
+        let _ = region.on_event(&ElementEvent::PointerExited(PointerSource::Mouse, 0));
 
         assert!(matches!(current_state.get(), PointerState::Outside));
+    }
+
+    #[test]
+    fn forwards_the_child_event_result_without_losing_redraw() {
+        let bounds = CacheBounds::new();
+        bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let region = RawMouseRegion {
+            on_hover_enter: VoidCallback::default(),
+            on_hover_exit: VoidCallback::default(),
+            cursor: None,
+            current_state: Rc::new(Cell::new(PointerState::Outside)),
+            cached_bounds: bounds,
+            child: ResultElement,
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+        };
+
+        let result = region.on_event(&ElementEvent::PointerMove(
+            aimer_attribute::position::Vec2d { x: 10.0, y: 10.0 },
+            PointerSource::Mouse,
+            7,
+        ));
+
+        assert!(result.is_consumed());
+        assert!(result.needs_redraw());
+    }
+
+    #[test]
+    fn captured_child_receives_move_and_up_outside_region() {
+        let bounds = CacheBounds::new();
+        bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let events = Rc::new(Cell::new(0));
+        let region = RawMouseRegion {
+            on_hover_enter: VoidCallback::default(),
+            on_hover_exit: VoidCallback::default(),
+            cursor: None,
+            current_state: Rc::new(Cell::new(PointerState::Outside)),
+            cached_bounds: bounds,
+            child: CapturingElement {
+                events: events.clone(),
+            }
+            .boxed(),
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+        };
+        let pointer = PointerKey::new(PointerSource::Touch, 2);
+
+        let down = region.on_event(&ElementEvent::PointerDown(
+            Vec2d { x: 10.0, y: 10.0 },
+            pointer.source,
+            pointer.id,
+        ));
+        assert_eq!(down.capture_request(), CaptureRequest::Capture(pointer));
+
+        let _ = region.on_event(&ElementEvent::PointerMove(
+            Vec2d { x: 200.0, y: 200.0 },
+            pointer.source,
+            pointer.id,
+        ));
+        let up = region.on_event(&ElementEvent::PointerUp(
+            Vec2d { x: 200.0, y: 200.0 },
+            pointer.source,
+            pointer.id,
+        ));
+
+        assert_eq!(events.get(), 3);
+        assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
     }
 }

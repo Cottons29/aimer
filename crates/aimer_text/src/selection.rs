@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use aimer_attribute::Bounds;
+use aimer_widget::PointerKey;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TextHitRegion {
@@ -101,19 +102,19 @@ impl TextSelection {
 pub(crate) struct SelectionState {
     selection: TextSelection,
     selection_before_gesture: Option<TextSelection>,
-    active_pointer: Option<u64>,
+    active_pointer: Option<PointerKey>,
     dragged: bool,
 }
 
 impl SelectionState {
-    pub fn begin(&mut self, offset: usize, pointer: u64) {
+    pub fn begin(&mut self, offset: usize, pointer: PointerKey) {
         self.selection_before_gesture = Some(self.selection);
         self.selection = TextSelection::collapsed(offset);
         self.active_pointer = Some(pointer);
         self.dragged = false;
     }
 
-    pub fn update(&mut self, offset: usize, pointer: u64) -> bool {
+    pub fn update(&mut self, offset: usize, pointer: PointerKey) -> bool {
         if self.active_pointer != Some(pointer) {
             return false;
         }
@@ -122,7 +123,7 @@ impl SelectionState {
         true
     }
 
-    pub fn end(&mut self, pointer: u64) -> bool {
+    pub fn end(&mut self, pointer: PointerKey) -> bool {
         if self.active_pointer != Some(pointer) {
             return false;
         }
@@ -161,7 +162,7 @@ impl SelectionState {
         self.active_pointer.is_some()
     }
 
-    pub const fn active_pointer(&self) -> Option<u64> {
+    pub const fn active_pointer(&self) -> Option<PointerKey> {
         self.active_pointer
     }
 
@@ -173,8 +174,14 @@ impl SelectionState {
 #[cfg(test)]
 mod tests {
     use aimer_attribute::Bounds;
+    use aimer_events::pointer::PointerSource;
+    use aimer_widget::PointerKey;
 
     use super::{SelectionState, TextHitRegion, TextSelection, text_offset_at};
+
+    fn touch(id: u64) -> PointerKey {
+        PointerKey::new(PointerSource::Touch, id)
+    }
 
     #[test]
     fn reversed_selection_normalizes_without_losing_direction() {
@@ -255,15 +262,19 @@ mod tests {
     #[test]
     fn selection_drag_tracks_only_the_pointer_that_started_it() {
         let mut state = SelectionState::default();
+        let touch = PointerKey::new(PointerSource::Touch, 42);
+        let mouse_with_same_id = PointerKey::new(PointerSource::Mouse, 42);
+        let other_touch = PointerKey::new(PointerSource::Touch, 7);
 
-        state.begin(8, 42);
-        assert!(!state.update(2, 7));
+        state.begin(8, touch);
+        assert!(!state.update(2, other_touch));
+        assert!(!state.update(2, mouse_with_same_id));
         assert_eq!(state.selection(), TextSelection::collapsed(8));
-        assert!(state.update(2, 42));
+        assert!(state.update(2, touch));
         assert_eq!(state.selection(), TextSelection::new(8, 2));
         assert!(state.was_dragged());
-        assert!(!state.end(7));
-        assert!(state.end(42));
+        assert!(!state.end(other_touch));
+        assert!(state.end(touch));
         assert!(!state.is_active());
     }
 
@@ -283,8 +294,8 @@ mod tests {
         let mut state = SelectionState::default();
         state.select_all(12);
 
-        state.begin(3, 7);
-        assert!(state.update(9, 7));
+        state.begin(3, touch(7));
+        assert!(state.update(9, touch(7)));
         state.cancel();
 
         assert_eq!(state.selection(), TextSelection::new(0, 12));
@@ -297,9 +308,9 @@ mod tests {
         let mut state = SelectionState::default();
         state.select_all(12);
 
-        state.begin(3, 7);
-        assert!(state.update(9, 7));
-        assert!(state.end(7));
+        state.begin(3, touch(7));
+        assert!(state.update(9, touch(7)));
+        assert!(state.end(touch(7)));
         state.cancel();
 
         assert_eq!(state.selection(), TextSelection::new(3, 9));
@@ -310,8 +321,8 @@ mod tests {
     fn clear_removes_selection_and_active_pointer() {
         let mut state = SelectionState::default();
         state.select_all(12);
-        state.begin(3, 7);
-        assert!(state.update(9, 7));
+        state.begin(3, touch(7));
+        assert!(state.update(9, touch(7)));
 
         state.clear();
 
