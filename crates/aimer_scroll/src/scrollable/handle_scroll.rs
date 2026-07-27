@@ -1,9 +1,11 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
+use aimer_events::element::{ElementEvent, KeyAction, NamedKey, ScrollDeltaKind};
 use aimer_utils::AnimInstant;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, EventElement, LayoutElement, VisitorElement};
+use aimer_widget::{
+    Element, EventElement, EventResult, LayoutElement, PointerKey, VisitorElement,
+};
 
 use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
@@ -52,32 +54,69 @@ fn pointer_drag_delta(
     }
 }
 
+fn child_dispatch_position(event: &ElementEvent, cursor: Vec2d) -> Vec2d {
+    event.get_pointer_pos().unwrap_or(cursor)
+}
+
+fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
+    match event {
+        ElementEvent::PointerDown(_, source, id)
+        | ElementEvent::PointerUp(_, source, id)
+        | ElementEvent::PointerMove(_, source, id)
+        | ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
+        _ => None,
+    }
+}
+
+fn child_route_allowed(inside: bool, active_drag: bool, child_captured: bool) -> bool {
+    inside || active_drag || child_captured
+}
+
+fn dispatch_child_event<E: Element>(
+    scrollable: &RawScrollableContainer<E>,
+    pos: Vec2d,
+    event: &ElementEvent,
+) -> EventResult {
+    let pointer = event_pointer_key(event);
+    let was_captured = pointer.is_some_and(|pointer| {
+        scrollable.event_dispatcher.borrow().is_captured(pointer)
+    });
+    let result = scrollable
+        .event_dispatcher
+        .borrow_mut()
+        .dispatch(&scrollable.child, pos, event);
+    let is_captured = pointer.is_some_and(|pointer| {
+        scrollable.event_dispatcher.borrow().is_captured(pointer)
+    });
+    match (pointer, was_captured, is_captured) {
+        (Some(pointer), false, true) => result.with_pointer_capture(pointer),
+        (Some(pointer), true, false) => result.with_pointer_release(pointer),
+        _ => result,
+    }
+}
+
 impl<E: Element> EventElement for RawScrollableContainer<E> {
-    fn on_event(&self, event: &ElementEvent) -> bool {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
         if let Some(cursor_pos) = event.get_pointer_pos() {
             self.ctrl.cursor_pos.set(Some(cursor_pos));
         }
 
-        let Some(cursor) = self.ctrl.cursor_pos.get() else {
-            return false;
+        let cursor = match self.ctrl.cursor_pos.get() {
+            Some(cursor) => cursor,
+            None if matches!(event, ElementEvent::Cancel) => Vec2d::default(),
+            None => return EventResult::ignored(),
         };
         let inside = self.bounds.is_inside(cursor.x, cursor.y);
         let active_drag = self.ctrl.drag_mode.get() != DragMode::None;
-        if !inside && !active_drag {
-            return false;
+        let child_captured = event_pointer_key(event)
+            .is_some_and(|pointer| self.event_dispatcher.borrow().is_captured(pointer))
+            || (matches!(event, ElementEvent::Cancel)
+                && self.event_dispatcher.borrow().capture_count() > 0);
+        if !child_route_allowed(inside, active_drag, child_captured) {
+            return EventResult::ignored();
         }
 
-        let pos = match event {
-            ElementEvent::PointerDown(p, _, _)
-            | ElementEvent::PointerUp(p, _, _)
-            | ElementEvent::PointerMove(p, _, _)
-            | ElementEvent::Scroll { delta: p, .. } => *p,
-            ElementEvent::Cancel
-            | ElementEvent::PointerExited(_, _)
-            | ElementEvent::CharInput { .. }
-            | ElementEvent::KeyInput { .. }
-            | ElementEvent::ImePreedit { .. } => Vec2d::default(),
-        };
+        let pos = child_dispatch_position(event, cursor);
 
         let mode_before = self.ctrl.drag_mode.get();
         let pending_content_drag_won = match event {
@@ -100,7 +139,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             }
             _ => false,
         };
-        let mut child_consumed = false;
+        let mut child_result = EventResult::ignored();
 
         if matches!(
             event,
@@ -113,7 +152,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     .get()
                     .is_some_and(|active| active != *pointer)
             {
-                return false;
+                return EventResult::ignored();
             }
             let owned_pointer = match event {
                 ElementEvent::PointerUp(_, _, pointer) => {
@@ -129,18 +168,23 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 DragMode::VerticalScrollbar | DragMode::HorizontalScrollbar
             ) {
                 match event {
-                    ElementEvent::PointerUp(_, _, pointer) => {
-                        let _ = aimer_widget::cancel_pointer(&self.child, *pointer, pos);
+                    ElementEvent::PointerUp(_, source, pointer) => {
+                        child_result = child_result.merge(
+                            self.event_dispatcher.borrow_mut().cancel_pointer(
+                                &self.child,
+                                PointerKey::new(*source, *pointer),
+                            ),
+                        );
                     }
                     ElementEvent::Cancel => {
-                        let _ = aimer_widget::dispatch_event(&self.child, pos, event);
+                        child_result = child_result.merge(dispatch_child_event(self, pos, event));
                     }
                     _ => {}
                 }
             } else if matches!(mode_before, DragMode::None | DragMode::Pending)
                 && matches!(event, ElementEvent::PointerUp(_, _, _))
             {
-                let _ = aimer_widget::dispatch_event(&self.child, pos, event);
+                child_result = child_result.merge(dispatch_child_event(self, pos, event));
             }
 
             let now = AnimInstant::now();
@@ -180,23 +224,36 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 _ => self.ctrl.active_touch_id.set(None),
             }
             aimer_events::window::request_animation_frame();
-            return owned_pointer;
+            let result = child_result.merge(EventResult::from(owned_pointer).with_redraw());
+            return match event {
+                ElementEvent::PointerUp(_, source, pointer) => {
+                    result.with_pointer_release(PointerKey::new(*source, *pointer))
+                }
+                _ => result,
+            };
         }
 
-        if pending_content_drag_won && let ElementEvent::PointerMove(_, _, pointer) = event {
-            let _ = aimer_widget::cancel_pointer(&self.child, *pointer, pos);
+        if pending_content_drag_won
+            && let ElementEvent::PointerMove(_, source, pointer) = event
+        {
+            child_result = child_result.merge(
+                self.event_dispatcher.borrow_mut().cancel_pointer(
+                    &self.child,
+                    PointerKey::new(*source, *pointer),
+                ),
+            );
         }
 
         // ── All other events: normal child-first dispatch ──
         if (mode_before == DragMode::None || mode_before == DragMode::Pending)
             && !pending_content_drag_won
         {
-            child_consumed = aimer_widget::dispatch_event(&self.child, pos, event);
+            child_result = child_result.merge(dispatch_child_event(self, pos, event));
         }
 
         let we_consumed = match event {
-            ElementEvent::Scroll { delta, .. } => {
-                let mut offset = self.ctrl.scroll_offset.get();
+            ElementEvent::Scroll { delta, kind, .. } => {
+                let offset = self.ctrl.scroll_offset.get();
 
                 // println!("offset: {:?}", offset);
                 let clamped = self.ctrl.clamp_offset(offset);
@@ -224,65 +281,13 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     }
                 }
 
-                // Apply the delta and (for non-bouncy scrollables) clamp to the
-                // valid range. The previous version tried to pre-zero the delta
-                // by comparing `offset` against `clamp_offset(offset)`, but an
-                // in-range offset always equals its own clamp, so every wheel /
-                // trackpad delta was discarded and the scrollable could not be
-                // scrolled at all. See `ScrollState::apply_wheel_delta`.
-                offset = self.ctrl.apply_wheel_delta(offset, scroll_delta);
-                self.ctrl.scroll_offset.set(offset);
-
-                let now = AnimInstant::now();
-                let dt = self
-                    .ctrl
-                    .last_event_time
-                    .get()
-                    .map(|t| now.duration_since(t).as_secs_f32())
-                    .unwrap_or(FRAME_REF_120)
-                    .max(MIN_EVENT_DT);
-                self.ctrl.last_event_time.set(Some(now));
-
-                let frame_ref = FRAME_REF_120;
-
-                let mut target_vx = (scroll_delta.x / dt) * frame_ref;
-                let mut target_vy = (scroll_delta.y / dt) * frame_ref;
-
-                if self.ctrl.scroll_behavior.bouncy {
-                    // Maximum damping when velocity pushes further out-of-bounds.
-                    // Applied immediately at the boundary — no gradual ramp.
-                    match self.ctrl.axis {
-                        ScrollAxis::Vertical => {
-                            if (offset.y > clamped.y && scroll_delta.y > 0.0)
-                                || (offset.y < clamped.y && scroll_delta.y < 0.0)
-                            {
-                                target_vy *= OOB_OVERSHOOT_DAMPING;
-                            }
-                        }
-                        ScrollAxis::Horizontal => {
-                            if (offset.x > clamped.x && scroll_delta.x > 0.0)
-                                || (offset.x < clamped.x && scroll_delta.x < 0.0)
-                            {
-                                target_vx *= OOB_OVERSHOOT_DAMPING;
-                            }
-                        }
-                    }
+                if matches!(kind, ScrollDeltaKind::Line) {
+                    self.ctrl.apply_line_wheel_delta(scroll_delta);
+                } else {
+                    self.ctrl.apply_precise_scroll_delta(scroll_delta);
                 }
 
-                let max_scroll_v = MAX_SCROLL_VELOCITY * self.ctrl.last_scale.get();
-                target_vx = target_vx.clamp(-max_scroll_v, max_scroll_v);
-                target_vy = target_vy.clamp(-max_scroll_v, max_scroll_v);
-
-                // Smooth velocity across recent samples (tames trackpad jitter).
-                self.ctrl.push_velocity(target_vx, target_vy);
-                let sv = self.ctrl.smoothed_velocity();
-                self.ctrl.pointer_velocity.set(sv);
-                // A wheel/trackpad scroll takes over from any release fling and
-                // uses the velocity-based momentum, not the bézier curve.
-                self.ctrl.cancel_fling();
-                // Reset spring velocity so new input dominates over any
-                // in-progress spring-back recovery.
-                self.ctrl.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+                self.ctrl.last_event_time.set(Some(AnimInstant::now()));
 
                 // A wheel/trackpad tick starts (or continues) a scroll session;
                 // the draw loop fires the matching `end` once the glide settles.
@@ -305,7 +310,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     } else {
                         // info!("[scroll] DOWN REJECTED — secondary finger prev_id={} new_id={}",
                         // prev_id, id);
-                        return true;
+                        return child_result.merge(EventResult::consumed());
                     }
                 }
                 self.ctrl.active_touch_id.set(Some(*id));
@@ -343,7 +348,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         self.ctrl.last_pointer_pos.set(Some(*p));
                         self.ctrl.begin_scroll();
                         aimer_events::window::request_animation_frame();
-                        return true;
+                        return child_result.merge(EventResult::consumed().with_redraw());
                     }
                     if self.ctrl.hit_test_h_track(*p, vp_w, vp_h, h_tw)
                         && let Some((x, _y, _w, _h)) = self.ctrl.h_thumb_rect.get()
@@ -360,7 +365,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         self.ctrl.last_pointer_pos.set(Some(*p));
                         self.ctrl.begin_scroll();
                         aimer_events::window::request_animation_frame();
-                        return true;
+                        return child_result.merge(EventResult::consumed().with_redraw());
                     }
                 }
 
@@ -385,7 +390,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 {
                     // info!("[scroll] MOVE REJECTED — non-primary finger active={:?} got={}",
                     // self.ctrl.active_touch_id.get(), id);
-                    return false;
+                    return child_result;
                 }
 
                 let mut mode = self.ctrl.drag_mode.get();
@@ -396,7 +401,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             mode = DragMode::Content;
                             self.ctrl.drag_mode.set(DragMode::Content);
                         } else {
-                            return child_consumed;
+                            return child_result;
                         }
                     }
                 }
@@ -508,7 +513,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     }
                     self.ctrl.last_pointer_pos.set(Some(*p));
                     aimer_events::window::request_animation_frame();
-                    return true;
+                    return child_result.merge(EventResult::consumed().with_redraw());
                 }
                 false
             }
@@ -517,8 +522,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 action: KeyAction::Pressed,
                 ..
             } => {
-                if child_consumed {
-                    return true;
+                if child_result.is_consumed() {
+                    return child_result;
                 }
                 let scale = self.ctrl.last_scale.get();
                 let (vp_w, vp_h) = self.ctrl.cached_viewport.get();
@@ -609,10 +614,19 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             ElementEvent::PointerExited(_, _)
             | ElementEvent::CharInput { .. }
             | ElementEvent::KeyInput { .. }
-            | ElementEvent::ImePreedit { .. } => child_consumed,
+            | ElementEvent::ImePreedit { .. } => false,
         };
 
-        child_consumed || we_consumed
+        let result = child_result.merge(EventResult::from(we_consumed));
+        match event {
+            ElementEvent::PointerDown(_, source, pointer) if we_consumed => {
+                result.with_pointer_capture(PointerKey::new(*source, *pointer))
+            }
+            ElementEvent::PointerMove(_, source, pointer) if pending_content_drag_won => {
+                result.with_pointer_capture(PointerKey::new(*source, *pointer))
+            }
+            _ => result,
+        }
     }
 
     fn event_children<'a>(&'a self, _: &mut dyn FnMut(&'a dyn Element)) {}
@@ -660,9 +674,11 @@ impl<E: Element> LayoutElement for RawScrollableContainer<E> {
 #[cfg(test)]
 mod tests {
     use aimer_attribute::Vec2d;
+    use aimer_events::element::{ElementEvent, ScrollDeltaKind, TouchPhase};
 
     use super::{
-        drag_start_threshold, owns_pointer, pending_content_drag_wins, pointer_drag_delta,
+        child_dispatch_position, child_route_allowed, drag_start_threshold, owns_pointer,
+        pending_content_drag_wins, pointer_drag_delta,
     };
     use crate::ScrollAxis;
 
@@ -751,5 +767,30 @@ mod tests {
 
         assert_eq!(delta.x, 0.0);
         assert_eq!(delta.y, 0.0);
+    }
+
+    #[test]
+    fn scroll_child_hit_testing_uses_cached_cursor_instead_of_delta() {
+        let cursor = Vec2d { x: 50.0, y: 60.0 };
+        let event = ElementEvent::Scroll {
+            delta: Vec2d { x: 0.0, y: -120.0 },
+            phase: TouchPhase::Moved,
+            kind: ScrollDeltaKind::Pixel,
+        };
+
+        let position = child_dispatch_position(&event, cursor);
+        assert_eq!(position.x, cursor.x);
+        assert_eq!(position.y, cursor.y);
+    }
+
+    #[test]
+    fn child_outside_viewport_requires_an_active_capture() {
+        assert!(!child_route_allowed(false, false, false));
+        assert!(child_route_allowed(false, false, true));
+    }
+
+    #[test]
+    fn child_inside_viewport_uses_normal_hit_testing() {
+        assert!(child_route_allowed(true, false, false));
     }
 }

@@ -1,5 +1,4 @@
 use std::cell::Cell;
-use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,7 +22,6 @@ use winit::platform::android::activity::AndroidApp;
 
 use crate::handler::event_handler::{HeadlessEventAction, WindowEventHandler};
 use crate::handler::{AimerApplicationHandler, StartupHook};
-use crate::handler::scroll_utils::MomentumScroller;
 use crate::render_ctx::AimerRenderContext;
 
 #[cfg(target_os = "android")]
@@ -334,6 +332,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 window: None,
                 render_ctx: AimerRenderContext::new(antialiasing),
                 widget_root: None,
+                event_dispatcher: aimer_widget::EventDispatcher::new(),
+                scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
                 pending_widget: Some(widget),
                 cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
                 current_modifiers: Default::default(),
@@ -356,7 +356,6 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 start_up_frames: Cell::new(0),
                 first_frame_notifier: Default::default(),
                 active_touch_id: None,
-                scroller: MomentumScroller::new(),
             },
             canvas: aimer_canvas::InnerCanvas::new(),
             window,
@@ -370,6 +369,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         if self.exit_requested {
             return;
         }
+
+        let _ = self.app.dispatch_smoothed_scroll();
 
         let scale_factor = self.app.window_scale;
         let frame_size = ResolvedSize {
@@ -689,6 +690,8 @@ fn start_event_loop(
         window: None,
         render_ctx: AimerRenderContext::new(antialiasing),
         widget_root: None,
+        event_dispatcher: aimer_widget::EventDispatcher::new(),
+        scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
         pending_widget: Some(widget),
         cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
         current_modifiers: Default::default(),
@@ -711,7 +714,7 @@ fn start_event_loop(
         start_up_frames: Cell::new(255),
         first_frame_notifier: Default::default(),
         active_touch_id: None,
-        scroller: MomentumScroller::new(),
+
     };
 
     info!("Started main event loop");
@@ -727,18 +730,18 @@ fn start_event_loop(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use aimer_attribute::position::Vec2d;
     use aimer_attribute::size::ResolvedSize;
-    use aimer_events::element::ElementEvent;
+    use aimer_events::element::{ElementEvent, ScrollDeltaKind};
     use aimer_widget::base::BuildContext;
     use aimer_widget::{
         AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
     };
     use winit::dpi::{PhysicalPosition, PhysicalSize};
-    use winit::event::{DeviceId, WindowEvent};
+    use winit::event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent};
 
     use super::*;
 
@@ -811,11 +814,11 @@ mod tests {
         }
     }
     impl EventElement for RecordingElement {
-        fn on_event(&self, event: &ElementEvent) -> bool {
+        fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
             if matches!(event, ElementEvent::Cancel) {
                 self.cancels.fetch_add(1, Ordering::SeqCst);
             }
-            false
+            aimer_widget::EventResult::ignored()
         }
     }
 
@@ -960,6 +963,166 @@ mod tests {
             ),
         );
         assert!(app.take_redraw_request());
+    }
+
+    struct CapturingWidget {
+        events: Arc<AtomicUsize>,
+    }
+
+    impl Widget for CapturingWidget {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            CapturingElement {
+                events: self.events.clone(),
+            }
+            .boxed()
+        }
+    }
+
+    struct CapturingElement {
+        events: Arc<AtomicUsize>,
+    }
+
+    impl Drawable for CapturingElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl LayoutElement for CapturingElement {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some((Vec2d::default(), Vec2d { x: 100.0, y: 100.0 }))
+        }
+    }
+    impl Rebuildable for CapturingElement {}
+    impl VisitorElement for CapturingElement {
+        fn debug_name(&self) -> &'static str {
+            "CapturingElement"
+        }
+    }
+    impl EventElement for CapturingElement {
+        fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
+            self.events.fetch_add(1, Ordering::SeqCst);
+            match event {
+                ElementEvent::PointerDown(_, source, id) => aimer_widget::EventResult::consumed()
+                    .with_pointer_capture(aimer_widget::PointerKey::new(*source, *id)),
+                ElementEvent::PointerUp(_, source, id) => aimer_widget::EventResult::consumed()
+                    .with_pointer_release(aimer_widget::PointerKey::new(*source, *id)),
+                _ => aimer_widget::EventResult::consumed(),
+            }
+        }
+    }
+
+    #[test]
+    fn headless_pointer_capture_persists_across_frames_and_releases_on_up() {
+        use winit::event::{ElementState, MouseButton};
+
+        let events = Arc::new(AtomicUsize::new(0));
+        let mut app = AimerApp::start_headless(CapturingWidget {
+            events: events.clone(),
+        });
+        app.render_frame();
+        let device_id = DeviceId::dummy();
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id,
+            position: PhysicalPosition::new(20.0, 20.0),
+        });
+        events.store(0, Ordering::SeqCst);
+        app.send_window_event(WindowEvent::MouseInput {
+            device_id,
+            state: ElementState::Pressed,
+            button: MouseButton::Left,
+        });
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id,
+            position: PhysicalPosition::new(200.0, 200.0),
+        });
+        app.render_frame();
+        app.send_window_event(WindowEvent::MouseInput {
+            device_id,
+            state: ElementState::Released,
+            button: MouseButton::Left,
+        });
+        assert_eq!(events.load(Ordering::SeqCst), 3);
+
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id,
+            position: PhysicalPosition::new(300.0, 300.0),
+        });
+        assert_eq!(events.load(Ordering::SeqCst), 3);
+    }
+
+    struct ScrollRecordingWidget {
+        events: Arc<Mutex<Vec<(Vec2d, ScrollDeltaKind)>>>,
+    }
+
+    impl Widget for ScrollRecordingWidget {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            ScrollRecordingElement {
+                events: self.events.clone(),
+            }
+            .boxed()
+        }
+    }
+
+    struct ScrollRecordingElement {
+        events: Arc<Mutex<Vec<(Vec2d, ScrollDeltaKind)>>>,
+    }
+
+    impl Drawable for ScrollRecordingElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl LayoutElement for ScrollRecordingElement {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some((Vec2d::default(), Vec2d { x: 100.0, y: 100.0 }))
+        }
+    }
+    impl Rebuildable for ScrollRecordingElement {}
+    impl VisitorElement for ScrollRecordingElement {
+        fn debug_name(&self) -> &'static str {
+            "ScrollRecordingElement"
+        }
+    }
+    impl EventElement for ScrollRecordingElement {
+        fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
+            if let ElementEvent::Scroll { delta, kind, .. } = event {
+                self.events
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push((*delta, *kind));
+                return aimer_widget::EventResult::consumed();
+            }
+            aimer_widget::EventResult::ignored()
+        }
+    }
+
+    #[test]
+    fn headless_wasm_wheel_delta_is_smoothed_without_changing_distance() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut app = AimerApp::start_headless(ScrollRecordingWidget {
+            events: events.clone(),
+        });
+        app.render_frame();
+        app.app.cursor_pos = Vec2d { x: 20.0, y: 20.0 };
+
+        app.send_window_event(WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -8.00048828125)),
+            phase: TouchPhase::Moved,
+        });
+        assert!(events.lock().unwrap().is_empty());
+
+        let mut frames = 0;
+        while app.app.scroll_smoother.is_active() || frames == 0 {
+            app.render_frame();
+            frames += 1;
+            assert!(frames < 30);
+        }
+
+        let events = events.lock().unwrap();
+        assert!(events.len() > 1);
+        assert!(events
+            .iter()
+            .all(|(_, kind)| *kind == ScrollDeltaKind::Line));
+        assert!(events.iter().all(|(delta, _)| delta.y < 0.0));
+        let total = events.iter().map(|(delta, _)| delta.y).sum::<f32>();
+        assert!((total + 8.000488).abs() < 0.0001);
     }
 
     #[test]

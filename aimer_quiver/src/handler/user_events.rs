@@ -1,5 +1,5 @@
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
-use aimer_widget::{Widget, dispatch_event};
+use aimer_widget::{EventResult, Widget};
 
 use crate::aimer_app::AimerCustomAppEvent;
 use crate::handler::AimerApplicationHandler;
@@ -10,42 +10,43 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
 ) {
     match event {
         AimerCustomAppEvent::ForceBackspace => {
-            if let Some(root) = &app.widget_root {
+            if app.widget_root.is_some() {
                 let ev = ElementEvent::KeyInput {
                     key: NamedKey::Backspace,
                     action: KeyAction::Pressed,
                     modifiers: Default::default(),
                 };
-                let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+                let result = app.dispatch_element_event(app.cursor_pos, &ev);
+                let mut handled = result.is_consumed();
                 #[cfg(debug_assertions)]
                 if app.inspector_enabled() {
                     handled = true;
                 }
                 if let Some(window) = &app.window
-                    && handled
+                    && (handled || result.needs_redraw())
                 {
                     window.request_redraw();
                 }
             }
         }
         AimerCustomAppEvent::InsertText(text) => {
-            if let Some(root) = &app.widget_root {
-                let mut handled_any = false;
+            if app.widget_root.is_some() {
+                let mut result = EventResult::ignored();
                 for ch in text.chars() {
                     let ev = ElementEvent::CharInput {
                         ch,
                         action: KeyAction::Pressed,
                         modifiers: Default::default(),
                     };
-                    let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
-                    #[cfg(debug_assertions)]
-                    if app.inspector_enabled() {
-                        handled = true;
-                    }
-                    handled_any |= handled;
+                    result = result.merge(app.dispatch_element_event(app.cursor_pos, &ev));
+                }
+                let mut handled = result.is_consumed();
+                #[cfg(debug_assertions)]
+                if app.inspector_enabled() {
+                    handled = true;
                 }
                 if let Some(window) = &app.window
-                    && handled_any
+                    && (handled || result.needs_redraw())
                 {
                     window.request_redraw();
                 }

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use aimer_attribute::CacheBounds;
@@ -5,7 +6,7 @@ use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_macro::Rebuildable;
-use aimer_widget::Element;
+use aimer_widget::{Element, EventDispatcher};
 use aimer_widget::base::*;
 
 pub use crate::scrollable::controller::DragMode;
@@ -22,6 +23,7 @@ pub struct RawScrollableContainer<E: Element> {
     pub(crate) vertical_scroll_bar: Option<ScrollBar>,
     pub(crate) horizontal_scroll_bar: Option<ScrollBar>,
     pub(crate) bounds: CacheBounds,
+    pub(crate) event_dispatcher: RefCell<EventDispatcher>,
 }
 
 impl<E: Element> RawScrollableContainer<E> {

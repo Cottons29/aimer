@@ -595,6 +595,37 @@ impl ScrollState {
         next
     }
 
+    /// Apply one discrete mouse-wheel detent without starting inertial motion.
+    ///
+    /// A line wheel has no native gesture velocity to preserve. Each frame step
+    /// therefore updates the offset once and clears any previous glide; bouncy
+    /// edge recovery remains draw-driven.
+    pub(crate) fn apply_line_wheel_delta(&self, scroll_delta: Vec2d) {
+        let offset = self.apply_wheel_delta(self.scroll_offset.get(), scroll_delta);
+        self.scroll_offset.set(offset);
+        self.stop_device_scroll_momentum();
+    }
+
+    /// Apply one pixel-precise device delta without deriving a second glide.
+    ///
+    /// Quiver already frame-synchronizes trackpad input, while operating
+    /// systems and browsers provide the gesture's own deceleration samples.
+    /// Keeping this layer distance-only prevents double integration and leaves
+    /// touch/mouse drag release flings unchanged.
+    pub(crate) fn apply_precise_scroll_delta(&self, scroll_delta: Vec2d) {
+        let offset = self.apply_wheel_delta(self.scroll_offset.get(), scroll_delta);
+        self.scroll_offset.set(offset);
+        self.stop_device_scroll_momentum();
+    }
+
+    fn stop_device_scroll_momentum(&self) {
+        self.pointer_velocity.set(Vec2d::ZERO);
+        self.spring_velocity.set(Vec2d::ZERO);
+        self.momentum_start_time.set(None);
+        self.clear_velocity_history();
+        self.cancel_fling();
+    }
+
     /// Hard-cap overscroll to [`MAX_OVERSCROLL_FRACTION`] of the content size.
     ///
     /// Unlike [`visual_offset`] (which applies a rubber-band *display*
@@ -1642,6 +1673,34 @@ mod tests {
             state.anim_curve.get().is_none(),
             "the animation curve is cleared once complete"
         );
+    }
+
+    #[test]
+    fn line_wheel_delta_applies_immediately_without_momentum() {
+        let (_ctrl, state) = attached(1000.0);
+        state.start_animation(Vec2d { x: 0.0, y: -100.0 }, 1.0, Curve::EaseOut);
+        state.pointer_velocity.set(Vec2d { x: 0.0, y: -8.0 });
+
+        state.apply_line_wheel_delta(Vec2d { x: 0.0, y: -20.0 });
+
+        assert_eq!(state.scroll_offset.get().x, 0.0);
+        assert_eq!(state.scroll_offset.get().y, -20.0);
+        assert_eq!(state.pointer_velocity.get().x, 0.0);
+        assert_eq!(state.pointer_velocity.get().y, 0.0);
+        assert!(state.fling_start_time.get().is_none());
+    }
+
+    #[test]
+    fn precise_device_delta_does_not_add_widget_side_momentum() {
+        let (_ctrl, state) = attached(1000.0);
+        state.pointer_velocity.set(Vec2d { x: 0.0, y: -8.0 });
+
+        state.apply_precise_scroll_delta(Vec2d { x: 0.0, y: -4.0 });
+
+        assert_eq!(state.scroll_offset.get().y, -4.0);
+        assert_eq!(state.pointer_velocity.get().x, 0.0);
+        assert_eq!(state.pointer_velocity.get().y, 0.0);
+        assert!(state.momentum_start_time.get().is_none());
     }
 
     // -- Scroll-lifecycle callbacks (on_scroll_start / on_scroll_end) --------

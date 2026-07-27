@@ -443,6 +443,7 @@ impl<W: Widget + 'static> Widget for ScrollableFrame<W> {
             vertical_scroll_bar: self.vertical_scroll_bar.clone(),
             horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
             bounds: CacheBounds::with_vec2d(child_ctx.parent_pos),
+            event_dispatcher: RefCell::new(aimer_widget::EventDispatcher::new()),
         }
         .boxed()
     }

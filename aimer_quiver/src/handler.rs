@@ -1,4 +1,5 @@
 pub mod event_handler;
+pub mod scroll_classifier;
 pub mod scroll_utils;
 pub(crate) mod user_events;
 
@@ -11,7 +12,7 @@ use crate::first_frame::FirstFrameNotifier;
 #[allow(unused)]
 use crate::handler;
 use crate::handler::event_handler::WindowEventHandler;
-use crate::handler::scroll_utils::MomentumScroller;
+use crate::handler::scroll_classifier::DualScroller;
 use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
 use aimer_attribute::BoxConstraint;
@@ -19,7 +20,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_inspector::InspectorOverlay;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyElement, Element, Widget};
+use aimer_widget::{AnyElement, Element, EventDispatcher, EventResult, Widget};
 use std::any::Any;
 use std::cell::Cell;
 #[cfg(not(target_arch = "wasm32"))]
@@ -27,7 +28,7 @@ use tokio::runtime::Runtime;
 use winit::application::ApplicationHandler;
 #[allow(unused)]
 use winit::dpi::{LogicalSize, PhysicalSize, Position};
-use winit::event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 #[allow(unused)]
 use winit::monitor::MonitorHandle;
@@ -68,6 +69,8 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub window: Option<&'static Window>,
     pub render_ctx: AimerRenderContext,
     pub widget_root: Option<AnyElement>,
+    pub event_dispatcher: EventDispatcher,
+    pub(crate) scroll_smoother: DualScroller,
     pub pending_widget: Option<W>,
     pub cursor_pos: Vec2d,
     pub current_modifiers: aimer_events::element::Modifiers,
@@ -92,7 +95,65 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub inspector_prev_enabled: Cell<bool>,
     #[cfg(debug_assertions)]
     pub inspector_redraw_frames: Cell<u8>,
-    pub scroller: MomentumScroller,
+}
+
+impl<W: Widget + 'static> AimerApplicationHandler<W> {
+    pub(crate) fn dispatch_element_event(
+        &mut self,
+        pos: Vec2d,
+        event: &aimer_events::element::ElementEvent,
+    ) -> EventResult {
+        let Some(root) = &self.widget_root else {
+            return EventResult::ignored();
+        };
+        self.event_dispatcher.dispatch(root.as_ref(), pos, event)
+    }
+
+    pub(crate) fn cancel_element_events(&mut self) -> EventResult {
+        let Some(root) = &self.widget_root else {
+            return EventResult::ignored();
+        };
+        let result = aimer_widget::broadcast_event(
+            root.as_ref(),
+            &aimer_events::element::ElementEvent::Cancel,
+        );
+        self.event_dispatcher.clear_captures();
+        result
+    }
+
+    pub(crate) fn dispatch_smoothed_scroll(&mut self) -> EventResult {
+        let frame = self.scroll_smoother.tick();
+        let mut result = EventResult::ignored();
+
+        if let Some(delta) = frame.trackpad {
+            result = result.merge(self.dispatch_element_event(
+                self.cursor_pos,
+                &aimer_events::element::ElementEvent::Scroll {
+                    delta: Vec2d {
+                        x: delta.x as f32,
+                        y: delta.y as f32,
+                    },
+                    phase: winit::event::TouchPhase::Moved,
+                    kind: aimer_events::element::ScrollDeltaKind::Pixel,
+                },
+            ));
+        }
+        if let Some(delta) = frame.wheel {
+            result = result.merge(self.dispatch_element_event(
+                self.cursor_pos,
+                &aimer_events::element::ElementEvent::Scroll {
+                    delta: Vec2d {
+                        x: delta.x as f32,
+                        y: delta.y as f32,
+                    },
+                    phase: winit::event::TouchPhase::Moved,
+                    kind: aimer_events::element::ScrollDeltaKind::Line,
+                },
+            ));
+        }
+
+        result
+    }
 }
 
 fn run_startup_hooks(
@@ -209,11 +270,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerCustomAppEvent> for AimerAppli
         window.request_redraw();
     }
 
-    fn user_event(
-        &mut self,
-        _event_loop: &ActiveEventLoop,
-        event: AimerCustomAppEvent,
-    ) {
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AimerCustomAppEvent) {
         // debug!("User event {:?}", event);
         handle_user_event(self, event);
     }
@@ -250,17 +307,6 @@ impl<W: Widget + 'static> ApplicationHandler<AimerCustomAppEvent> for AimerAppli
             }
         }
 
-        if let Some(window) = self.window
-            && let Some(px) = self.scroller.tick()
-        {
-            let event = WindowEvent::MouseWheel {
-                device_id: DeviceId::dummy(),
-                delta: MouseScrollDelta::PixelDelta(px),
-
-                phase: TouchPhase::Moved,
-            };
-            self.window_event(_event_loop, window.id(), event);
-        }
     }
 }
 #[allow(dead_code)]
@@ -320,6 +366,10 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
+        let _ = self.dispatch_smoothed_scroll();
+        if self.scroll_smoother.is_active() {
+            aimer_events::window::request_animation_frame();
+        }
         #[cfg(target_os = "android")]
         {
             if let Some(android_app) = crate::aimer_app::ANDROID_APP.get() {
@@ -348,14 +398,6 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             }
         }
 
-        // Presentation is paced by v-sync (`PresentMode::Fifo`): `present()`
-        // blocks until the display's next refresh slot, so the scroll/momentum
-        // animation re-arming `request_redraw()` from inside the draw cycle is
-        // naturally throttled to the panel refresh rate without a software
-        // limiter racing the compositor's v-sync.
-        // Only consume pending_resize if the render context is actually ready.
-        // On web, GPU init is async — consuming the resize before the GPU exists
-        // would silently drop it and leave the surface at the wrong size.
         #[allow(clippy::collapsible_if)]
         if self.render_ctx.is_ready() {
             if let Some(size) = self.pending_resize.take() {

@@ -2,8 +2,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerSource;
 use aimer_utils::{ExecTimes, info};
-use aimer_widget::{Widget, broadcast_event, dispatch_event};
-use std::collections::VecDeque;
+use aimer_widget::{EventResult, PointerKey, Widget, broadcast_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
     ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent,
@@ -27,6 +26,11 @@ pub(crate) enum HeadlessEventAction {
 }
 
 impl WindowEventHandler {
+    #[inline]
+    fn should_redraw(result: EventResult, legacy_handled: bool) -> bool {
+        legacy_handled || result.needs_redraw()
+    }
+
     pub(crate) fn handle_events<W: Widget + 'static>(
         app: &mut AimerApplicationHandler<W>,
         event_loop: &ActiveEventLoop,
@@ -72,12 +76,7 @@ impl WindowEventHandler {
             WindowEvent::Ime(ime) => Self::handle_ime(ime, app),
 
             WindowEvent::MouseWheel { delta, phase, .. } => {
-                if let MouseScrollDelta::LineDelta(x, y) = delta {
-                    app.scroller.on_line_delta((x, y).into());
-                    return;
-                } else {
-                    Self::handle_mouse_wheel(delta, phase, app)
-                }
+                Self::handle_mouse_wheel(delta, phase, app);
             }
 
             WindowEvent::RedrawRequested => {
@@ -101,9 +100,16 @@ impl WindowEventHandler {
             }
 
             WindowEvent::Focused(is_focus) => {
-                let Some(root) = &app.widget_root else { return };
+                if app.widget_root.is_none() {
+                    return;
+                }
                 if is_focus {
-                    broadcast_event(root.as_ref(), &ElementEvent::Cancel);
+                    let result = app.cancel_element_events();
+                    if let Some(window) = &app.window
+                        && result.needs_redraw()
+                    {
+                        window.request_redraw();
+                    }
                 }
             }
 
@@ -156,11 +162,7 @@ impl WindowEventHandler {
                 HeadlessEventAction::None
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {
-                match delta {
-                    MouseScrollDelta::PixelDelta(_) => Self::handle_mouse_wheel(delta, phase, app),
-                    MouseScrollDelta::LineDelta(x, y) => app.scroller.on_line_delta((x, y).into()),
-                }
-
+                Self::handle_mouse_wheel(delta, phase, app);
                 HeadlessEventAction::None
             }
             WindowEvent::RedrawRequested => HeadlessEventAction::Render,
@@ -177,8 +179,11 @@ impl WindowEventHandler {
                 HeadlessEventAction::Render
             }
             WindowEvent::Focused(false) => {
-                if let Some(root) = &app.widget_root {
-                    broadcast_event(root.as_ref(), &ElementEvent::Cancel);
+                if app.widget_root.is_some() {
+                    let result = app.cancel_element_events();
+                    if result.needs_redraw() {
+                        return HeadlessEventAction::Render;
+                    }
                 }
                 HeadlessEventAction::None
             }
@@ -211,27 +216,26 @@ impl WindowEventHandler {
         };
         #[allow(clippy::collapsible_if)]
         {
-            if let Some(root) = &app.widget_root {
-                let mut handled = dispatch_event(root.as_ref(), pos, &event);
+            if app.widget_root.is_some() {
+                let mut result = app.dispatch_element_event(pos, &event);
                 #[cfg(debug_assertions)]
-                if app.inspector_enabled() {
-                    handled = true;
-                }
-                if !handled {
+                let inspector_handled = app.inspector_enabled();
+                #[cfg(not(debug_assertions))]
+                let inspector_handled = false;
+                if !result.is_consumed() && !inspector_handled {
                     // Broadcast PointerUp/Cancel alongside PointerDown so that
                     // elements with an active drag (e.g. scrollable fling) receive
                     // the release event even when the finger lifts outside their
                     // bounds — the common case for a fast flick on touch screens.
-                    if matches!(
-                        &event,
-                        ElementEvent::PointerDown(_, _, _)
-                            | ElementEvent::PointerUp(_, _, _)
-                            | ElementEvent::Cancel
-                    ) {
-                        broadcast_event(root.as_ref(), &event);
+                    if matches!(&event, ElementEvent::PointerDown(_, _, _))
+                        && let Some(root) = &app.widget_root
+                    {
+                        result = result.merge(broadcast_event(root.as_ref(), &event));
                     }
                 }
-                if let Some(window) = &app.window {
+                if let Some(window) = &app.window
+                    && Self::should_redraw(result, true)
+                {
                     window.request_redraw();
                 }
             }
@@ -253,28 +257,33 @@ impl WindowEventHandler {
             return;
         }
         app.cursor_pos = new_pos;
-        if let Some(root) = &app.widget_root {
+        if app.widget_root.is_some() {
             let event = ElementEvent::PointerMove(app.cursor_pos, PointerSource::Mouse, 0);
-            let handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
+            let result = app.dispatch_element_event(app.cursor_pos, &event);
             if let Some(window) = &app.window {
-                if !handled {
+                if !result.is_consumed() {
                     window.set_cursor(CursorIcon::Default);
-                }else {
+                }
+                if Self::should_redraw(result, result.is_consumed()) {
                     window.request_redraw();
                 }
-
             }
         }
     }
 
     fn handle_cursor_left<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) {
         app.cursor_pos = CURSOR_OUTSIDE_POSITION;
-        if let Some(root) = &app.widget_root {
-            broadcast_event(
-                root.as_ref(),
-                &ElementEvent::PointerExited(PointerSource::Mouse, 0),
-            );
-            if let Some(window) = &app.window {
+        if app.widget_root.is_some() {
+            let pointer = PointerKey::new(PointerSource::Mouse, 0);
+            let was_captured = app.event_dispatcher.is_captured(pointer);
+            let event = ElementEvent::PointerExited(pointer.source, pointer.id);
+            let mut result = app.dispatch_element_event(app.cursor_pos, &event);
+            if !was_captured && let Some(root) = &app.widget_root {
+                result = result.merge(broadcast_event(root.as_ref(), &event));
+            }
+            if let Some(window) = &app.window
+                && Self::should_redraw(result, true)
+            {
                 window.request_redraw();
             }
         }
@@ -315,25 +324,22 @@ impl WindowEventHandler {
         };
 
         #[allow(clippy::collapsible_if)]
-        if let Some(root) = &app.widget_root {
-            let mut handled = dispatch_event(root.as_ref(), c, &event);
+        if app.widget_root.is_some() {
+            let mut result = app.dispatch_element_event(c, &event);
             #[cfg(debug_assertions)]
+            let inspector_handled = app.inspector_enabled();
+            #[cfg(not(debug_assertions))]
+            let inspector_handled = false;
+            if !result.is_consumed() && !inspector_handled {
+                if matches!(&event, ElementEvent::PointerDown(_, _, _))
+                    && let Some(root) = &app.widget_root
+                {
+                    result = result.merge(broadcast_event(root.as_ref(), &event));
+                }
+            }
+            if let Some(window) = &app.window
+                && Self::should_redraw(result, true)
             {
-                if app.inspector_enabled() {
-                    handled = true;
-                }
-            }
-            if !handled {
-                if matches!(
-                    &event,
-                    ElementEvent::PointerDown(_, _, _)
-                        | ElementEvent::PointerUp(_, _, _)
-                        | ElementEvent::Cancel
-                ) {
-                    broadcast_event(root.as_ref(), &event);
-                }
-            }
-            if let Some(window) = &app.window {
                 window.request_redraw();
             }
         }
@@ -372,14 +378,15 @@ impl WindowEventHandler {
                     action,
                     modifiers,
                 };
-                if let Some(root) = &app.widget_root {
-                    let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+                if app.widget_root.is_some() {
+                    let result = app.dispatch_element_event(app.cursor_pos, &ev);
+                    let mut handled = result.is_consumed();
                     #[cfg(debug_assertions)]
                     if app.inspector_enabled() {
                         handled = true;
                     }
                     if let Some(window) = &app.window
-                        && handled
+                        && Self::should_redraw(result, handled)
                     {
                         window.request_redraw();
                     }
@@ -444,14 +451,15 @@ impl WindowEventHandler {
                 action,
                 modifiers: modifiers.clone(),
             };
-            if let Some(root) = &app.widget_root {
-                let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+            if app.widget_root.is_some() {
+                let result = app.dispatch_element_event(app.cursor_pos, &ev);
+                let mut handled = result.is_consumed();
                 #[cfg(debug_assertions)]
                 if app.inspector_enabled() {
                     handled = true;
                 }
                 if let Some(window) = &app.window
-                    && handled
+                    && Self::should_redraw(result, handled)
                 {
                     window.request_redraw();
                 }
@@ -469,22 +477,25 @@ impl WindowEventHandler {
         modifiers: &Modifiers,
         app: &mut AimerApplicationHandler<W>,
     ) {
-        let Some(root) = &app.widget_root else { return };
-        let mut handled = false;
+        if app.widget_root.is_none() {
+            return;
+        }
+        let mut result = EventResult::ignored();
         for ch in text.chars() {
             let ev = ElementEvent::CharInput {
                 ch,
                 action: action.clone(),
                 modifiers: modifiers.clone(),
             };
-            handled |= dispatch_event(root.as_ref(), app.cursor_pos, &ev);
+            result = result.merge(app.dispatch_element_event(app.cursor_pos, &ev));
         }
+        let mut handled = result.is_consumed();
         #[cfg(debug_assertions)]
         if app.inspector_enabled() {
             handled = true;
         }
         if let Some(window) = &app.window
-            && handled
+            && Self::should_redraw(result, handled)
         {
             window.request_redraw();
         }
@@ -505,15 +516,17 @@ impl WindowEventHandler {
             Ime::Preedit(text, cursor) => {
                 app.ime_composing = !text.is_empty();
                 // Forward preedit to focused widget for composition rendering
-                if let Some(root) = &app.widget_root {
+                if app.widget_root.is_some() {
                     let event = ElementEvent::ImePreedit {
                         text: text.clone(),
                         cursor,
                     };
-                    dispatch_event(root.as_ref(), app.cursor_pos, &event);
-                }
-                if let Some(window) = &app.window {
-                    window.request_redraw();
+                    let result = app.dispatch_element_event(app.cursor_pos, &event);
+                    if let Some(window) = &app.window
+                        && Self::should_redraw(result, true)
+                    {
+                        window.request_redraw();
+                    }
                 }
             }
             Ime::Commit(text) => {
@@ -527,13 +540,35 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_mouse_wheel<W: Widget + 'static>(
+    pub fn handle_mouse_wheel<W: Widget + 'static>(
         delta: MouseScrollDelta,
-        phase: TouchPhase,
+        _phase: TouchPhase,
         app: &mut AimerApplicationHandler<W>,
     ) {
-        // println!("Mouse wheel delta: {:?} | phase: {phase:?}", delta);
-        let (scroll_delta, kind) = match delta {
+        let (scroll_delta, kind) = Self::normalize_wheel_delta(delta, app.window_scale);
+        if app.widget_root.is_some() {
+            let delta = PhysicalPosition::new(scroll_delta.x as f64, scroll_delta.y as f64);
+            match kind {
+                aimer_events::element::ScrollDeltaKind::Pixel => {
+                    app.scroll_smoother.on_pixel_delta(delta);
+                }
+                aimer_events::element::ScrollDeltaKind::Line => {
+                    app.scroll_smoother.on_wheel_delta(delta);
+                }
+            }
+
+            if let Some(window) = &app.window {
+                window.request_redraw();
+            }
+        }
+    }
+
+    #[inline]
+    fn normalize_wheel_delta(
+        delta: MouseScrollDelta,
+        scale_factor: f64,
+    ) -> (Vec2d, aimer_events::element::ScrollDeltaKind) {
+        match delta {
             MouseScrollDelta::LineDelta(x, y) => (
                 Vec2d {
                     x: x * 20.0,
@@ -541,34 +576,19 @@ impl WindowEventHandler {
                 },
                 aimer_events::element::ScrollDeltaKind::Line,
             ),
-            // Scale trackpad (PixelDelta) down for more resistance / less sensitivity.
-            MouseScrollDelta::PixelDelta(pos) => (
-                Vec2d {
-                    x: pos.x as f32 * 0.85,
-                    y: pos.y as f32 * 0.85,
-                },
-                aimer_events::element::ScrollDeltaKind::Pixel,
-            ),
-        };
-
-        // println!("Scroll Delta: {:?}", scroll_delta);
-
-        let event = ElementEvent::Scroll {
-            delta: scroll_delta,
-            phase,
-            kind,
-        };
-        if let Some(root) = &app.widget_root {
-            let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
-            #[cfg(debug_assertions)]
-            if app.inspector_enabled() {
-                handled = true;
-            }
-
-            if let Some(window) = &app.window
-                && handled
-            {
-                window.request_redraw();
+            MouseScrollDelta::PixelDelta(pos) => {
+                let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+                    scale_factor
+                } else {
+                    1.0
+                };
+                (
+                    Vec2d {
+                        x: (pos.x / scale) as f32,
+                        y: (pos.y / scale) as f32,
+                    },
+                    aimer_events::element::ScrollDeltaKind::Pixel,
+                )
             }
         }
     }
@@ -713,5 +733,58 @@ mod tests {
         WindowEventHandler::update_scale_factor(&mut window_scale, 2.0);
 
         assert_eq!(window_scale, 2.0);
+    }
+
+    #[test]
+    fn event_result_redraws_for_legacy_handling_or_explicit_request() {
+        assert!(WindowEventHandler::should_redraw(
+            aimer_widget::EventResult::ignored(),
+            true,
+        ));
+        assert!(WindowEventHandler::should_redraw(
+            aimer_widget::EventResult::redraw(),
+            false,
+        ));
+        assert!(!WindowEventHandler::should_redraw(
+            aimer_widget::EventResult::ignored(),
+            false,
+        ));
+    }
+
+    #[test]
+    fn precise_wheel_delta_preserves_logical_distance() {
+        let (delta, kind) = WindowEventHandler::normalize_wheel_delta(
+            MouseScrollDelta::PixelDelta(PhysicalPosition::new(24.0, -16.0)),
+            2.0,
+        );
+
+        assert_eq!(delta.x, 12.0);
+        assert_eq!(delta.y, -8.0);
+        assert_eq!(kind, aimer_events::element::ScrollDeltaKind::Pixel);
+    }
+
+    #[test]
+    fn line_wheel_delta_uses_stable_logical_step() {
+        let (delta, kind) = WindowEventHandler::normalize_wheel_delta(
+            MouseScrollDelta::LineDelta(1.0, -2.0),
+            2.0,
+        );
+
+        assert_eq!(delta.x, 20.0);
+        assert_eq!(delta.y, -40.0);
+        assert_eq!(kind, aimer_events::element::ScrollDeltaKind::Line);
+    }
+
+    #[test]
+    fn precise_wheel_delta_uses_safe_scale_fallback() {
+        for scale in [0.0, f64::NAN, f64::INFINITY] {
+            let (delta, _) = WindowEventHandler::normalize_wheel_delta(
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(12.0, -8.0)),
+                scale,
+            );
+
+            assert_eq!(delta.x, 12.0);
+            assert_eq!(delta.y, -8.0);
+        }
     }
 }
