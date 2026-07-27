@@ -3,6 +3,12 @@ use aimer_events::element::ElementEvent;
 use crate::Element;
 use crate::components::element::VisitorElement;
 
+pub enum EventStatus {
+    Consumed,
+    Captured,
+    NeedsRedraw
+}
+
 // Event capabilities
 pub trait EventElement: VisitorElement {
     /// Called when a pointer event hits this element.

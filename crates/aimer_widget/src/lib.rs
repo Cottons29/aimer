@@ -1,5 +1,4 @@
 mod async_builder;
-mod attribute;
 pub mod clipboard;
 pub mod components;
 pub mod key;

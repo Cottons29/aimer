@@ -255,6 +255,8 @@ pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> b
         | ElementEvent::PointerExited(_, pointer) => Some(*pointer),
         _ => None,
     };
+
+
     if let Some(pointer) = captured_pointer
         && let Some(handled) = dispatch_captured_event_inner(root, pointer, event, &mut children)
     {

@@ -35,6 +35,25 @@ pub struct Vec2d {
 }
 
 impl Vec2d {
+    pub const ZERO: Vec2d = Vec2d { x: 0.0, y: 0.0 };
+
+    pub fn magnitude(&self) -> f32 {
+        (self.x * self.x + self.y * self.y).sqrt()
+    }
+
+    pub fn scale(&self, s: f32) -> Vec2d {
+        Vec2d { x: self.x * s, y: self.y * s }
+    }
+
+    pub fn abs(&self) -> Vec2d {
+        Vec2d {
+            x: self.x.abs(),
+            y: self.y.abs()
+        }
+    }
+}
+
+impl Vec2d {
     pub const fn round(self) -> Self {
         Self {
             x: self.x.round(),

@@ -3,6 +3,7 @@ use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerSource;
 use aimer_utils::{ExecTimes, info};
 use aimer_widget::{Widget, broadcast_event, dispatch_event};
+use std::collections::VecDeque;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
     ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent,
@@ -71,7 +72,12 @@ impl WindowEventHandler {
             WindowEvent::Ime(ime) => Self::handle_ime(ime, app),
 
             WindowEvent::MouseWheel { delta, phase, .. } => {
-                Self::handle_mouse_wheel(delta, phase, app)
+                if let MouseScrollDelta::LineDelta(x, y) = delta {
+                    app.scroller.on_line_delta((x, y).into());
+                    return;
+                } else {
+                    Self::handle_mouse_wheel(delta, phase, app)
+                }
             }
 
             WindowEvent::RedrawRequested => {
@@ -150,7 +156,11 @@ impl WindowEventHandler {
                 HeadlessEventAction::None
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {
-                Self::handle_mouse_wheel(delta, phase, app);
+                match delta {
+                    MouseScrollDelta::PixelDelta(_) => Self::handle_mouse_wheel(delta, phase, app),
+                    MouseScrollDelta::LineDelta(x, y) => app.scroller.on_line_delta((x, y).into()),
+                }
+
                 HeadlessEventAction::None
             }
             WindowEvent::RedrawRequested => HeadlessEventAction::Render,
@@ -249,8 +259,10 @@ impl WindowEventHandler {
             if let Some(window) = &app.window {
                 if !handled {
                     window.set_cursor(CursorIcon::Default);
+                }else {
+                    window.request_redraw();
                 }
-                window.request_redraw();
+
             }
         }
     }
@@ -376,28 +388,10 @@ impl WindowEventHandler {
             }
         }
 
-        // While an IME composition is in progress the raw key strokes belong to
-        // the input method (e.g. pinyin/romaji letters building up a candidate).
-        // The composed result is delivered separately via `WindowEvent::Ime`, so
-        // we must not also treat these keys as text or navigation input.
         if app.ime_composing {
             return;
         }
 
-        // Resolve the textual payload of this key, if any.
-        //
-        // `event.text` is the source of truth for committed text on every native
-        // winit backend. Crucially winit leaves it `None` for keystrokes that the
-        // IME consumed — composition letters, candidate-confirm keys, and (on
-        // macOS) even plain characters while IME is enabled, which instead arrive
-        // via `WindowEvent::Ime(Ime::Commit(..))`. Relying solely on `event.text`
-        // therefore guarantees each character is inserted exactly once, with no
-        // double-typing and no stray space after confirming a CJK candidate.
-        //
-        // The web backend has no winit IME events; its synthetic key events carry
-        // the character only in `logical_key`, so fall back to that there.
-        // Multi-codepoint payloads (e.g. a committed CJK phrase) are dispatched
-        // one `char` at a time instead of panicking on `parse::<char>()`.
         let text_input: Option<String> = match &event.text {
             Some(t) => Some(t.to_string()),
             #[cfg(target_arch = "wasm32")]
@@ -538,22 +532,31 @@ impl WindowEventHandler {
         phase: TouchPhase,
         app: &mut AimerApplicationHandler<W>,
     ) {
-        // debug!("Mouse wheel delta: {:?}", delta);
-        let scroll_delta = match delta {
-            MouseScrollDelta::LineDelta(x, y) => Vec2d {
-                x: x * 20.0,
-                y: y * 20.0,
-            },
+        // println!("Mouse wheel delta: {:?} | phase: {phase:?}", delta);
+        let (scroll_delta, kind) = match delta {
+            MouseScrollDelta::LineDelta(x, y) => (
+                Vec2d {
+                    x: x * 20.0,
+                    y: y * 20.0,
+                },
+                aimer_events::element::ScrollDeltaKind::Line,
+            ),
             // Scale trackpad (PixelDelta) down for more resistance / less sensitivity.
-            MouseScrollDelta::PixelDelta(pos) => Vec2d {
-                x: pos.x as f32 * 0.85,
-                y: pos.y as f32 * 0.85,
-            },
+            MouseScrollDelta::PixelDelta(pos) => (
+                Vec2d {
+                    x: pos.x as f32 * 0.85,
+                    y: pos.y as f32 * 0.85,
+                },
+                aimer_events::element::ScrollDeltaKind::Pixel,
+            ),
         };
+
+        // println!("Scroll Delta: {:?}", scroll_delta);
 
         let event = ElementEvent::Scroll {
             delta: scroll_delta,
             phase,
+            kind,
         };
         if let Some(root) = &app.widget_root {
             let mut handled = dispatch_event(root.as_ref(), app.cursor_pos, &event);
@@ -653,6 +656,37 @@ impl WindowEventHandler {
         }
     }
 }
+
+// impl WindowEventHandler {
+//     const PIXELS_PER_LINE: f64 = 100.0; // total pixel distance per 1.0 line unit
+//     const EXPAND_STEPS: usize = 16;     // how many sub-events to emit
+//
+//     /// Expands one LineDelta into a queue of synthetic PixelDelta events,
+//     /// distributed over EXPAND_STEPS along an ease-out curve (fast start,
+//     /// smooth taper to zero) — mimicking natural trackpad momentum.
+//     fn expand_line_delta(x: f32, y: f32) -> VecDeque<PhysicalPosition<f64>> {
+//         let target_x = x as f64 * Self::PIXELS_PER_LINE;
+//         let target_y = y as f64 * Self::PIXELS_PER_LINE;
+//
+//         let mut queue = VecDeque::with_capacity(Self::EXPAND_STEPS);
+//         let (mut prev_x, mut prev_y) = (0.0, 0.0);
+//
+//         for i in 1..=Self::EXPAND_STEPS {
+//             let t = i as f64 / Self::EXPAND_STEPS as f64;
+//             let eased = 1.0 - (1.0 - t).powi(3); // ease-out cubic
+//
+//             let pos_x = target_x * eased;
+//             let pos_y = target_y * eased;
+//
+//             queue.push_back(PhysicalPosition::new(pos_x - prev_x, pos_y - prev_y));
+//
+//             prev_x = pos_x;
+//             prev_y = pos_y;
+//         }
+//
+//         queue
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

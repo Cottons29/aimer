@@ -6,10 +6,11 @@
     <title>Aimer's Website</title>
     <link rel="icon" type="image/x-icon" href="./assets/favicon.ico">
     
+<!--    <link data-trunk rel="copy-file" href="_redirects">-->
     
 <script type="module">
-import init, * as bindings from '/website-f5f18755c35cb47d.js';
-const wasm = await init({ module_or_path: '/website-f5f18755c35cb47d_bg.wasm' });
+import init, * as bindings from '/website-faf4f7ee8de7f2d0.js';
+const wasm = await init({ module_or_path: '/website-faf4f7ee8de7f2d0_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -18,7 +19,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-<link rel="modulepreload" href="/website-f5f18755c35cb47d.js" crossorigin="anonymous" integrity="sha384-RanP7lFnIS6aWWnLacRsk463R8/diPc4H7ZJiQe8O1LN84l0jbKW9KKM72dNbepi"><link rel="preload" href="/website-f5f18755c35cb47d_bg.wasm" crossorigin="anonymous" integrity="sha384-q17lnYrEd8RcFijoWacrkScgVHLW/K0NFwK4vfaQvd8IXaqNufTToHbGEXmpjs3w" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="/website-faf4f7ee8de7f2d0.js" crossorigin="anonymous" integrity="sha384-tWsgf8KNx12df7RPna2D3jEfquEglcTtKHGUv29C7pzr6jZCeqG54m/PAc/F7GKH"><link rel="preload" href="/website-faf4f7ee8de7f2d0_bg.wasm" crossorigin="anonymous" integrity="sha384-goic5UcFsdCXTlvQhcnjCEE2SVlXIB3jsA80pVOVEdIBrNF9tt0UHijacwrgPeZX" as="fetch" type="application/wasm"></head>
 
 <style>
     html, body {

@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,6 +23,7 @@ use winit::platform::android::activity::AndroidApp;
 
 use crate::handler::event_handler::{HeadlessEventAction, WindowEventHandler};
 use crate::handler::{AimerApplicationHandler, StartupHook};
+use crate::handler::scroll_utils::MomentumScroller;
 use crate::render_ctx::AimerRenderContext;
 
 #[cfg(target_os = "android")]
@@ -37,6 +39,28 @@ pub enum AimerCustomAppEvent {
 }
 
 pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerCustomAppEvent>> = OnceLock::new();
+
+/// Whether a `FrameReady` animation event is waiting in the event loop.
+///
+/// Cursor movement can request a direct redraw while an animation event is
+/// already queued. Rendering that redraw schedules another animation frame;
+/// coalescing here prevents those requests from accumulating faster than the
+/// event loop can deliver them.
+static FRAME_READY_PENDING: AtomicBool = AtomicBool::new(false);
+
+fn try_begin_frame_ready_request(pending: &AtomicBool) -> bool {
+    pending
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
+fn complete_frame_ready_request(pending: &AtomicBool) {
+    pending.store(false, Ordering::Release);
+}
+
+pub(crate) fn frame_ready_delivered() {
+    complete_frame_ready_request(&FRAME_READY_PENDING);
+}
 
 #[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
@@ -332,6 +356,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 start_up_frames: Cell::new(0),
                 first_frame_notifier: Default::default(),
                 active_touch_id: None,
+                scroller: MomentumScroller::new(),
             },
             canvas: aimer_canvas::InnerCanvas::new(),
             window,
@@ -627,8 +652,14 @@ fn start_event_loop(
     // schedules the next redraw safely even on platforms (iOS) that coalesce a
     // synchronous `request_redraw()` issued from inside the draw cycle.
     aimer_events::window::set_redraw_requester(|| {
-        if let Some(proxy) = EVENT_PROXY.get() {
-            let _ = proxy.send_event(AimerCustomAppEvent::FrameReady);
+        if !try_begin_frame_ready_request(&FRAME_READY_PENDING) {
+            return;
+        }
+        let sent = EVENT_PROXY
+            .get()
+            .is_some_and(|proxy| proxy.send_event(AimerCustomAppEvent::FrameReady).is_ok());
+        if !sent {
+            complete_frame_ready_request(&FRAME_READY_PENDING);
         }
     });
 
@@ -680,6 +711,7 @@ fn start_event_loop(
         start_up_frames: Cell::new(255),
         first_frame_notifier: Default::default(),
         active_touch_id: None,
+        scroller: MomentumScroller::new(),
     };
 
     info!("Started main event loop");
@@ -696,7 +728,7 @@ fn start_event_loop(
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use aimer_attribute::position::Vec2d;
     use aimer_attribute::size::ResolvedSize;
@@ -709,6 +741,18 @@ mod tests {
     use winit::event::{DeviceId, WindowEvent};
 
     use super::*;
+
+    #[test]
+    fn pending_frame_ready_requests_are_coalesced_until_delivery() {
+        let pending = AtomicBool::new(false);
+
+        assert!(try_begin_frame_ready_request(&pending));
+        assert!(!try_begin_frame_ready_request(&pending));
+
+        complete_frame_ready_request(&pending);
+
+        assert!(try_begin_frame_ready_request(&pending));
+    }
 
     #[test]
     fn app_builder_defaults_to_analytic_antialiasing() {

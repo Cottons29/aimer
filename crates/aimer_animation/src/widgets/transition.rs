@@ -11,6 +11,10 @@ use aimer_widget::{
 use crate::control::controller::AnimationController;
 use crate::primitives::time::AnimInstant;
 
+fn request_next_frame() {
+    aimer_events::window::request_animation_frame();
+}
+
 // ---------------------------------------------------------------------------
 // FadeTransition
 // ---------------------------------------------------------------------------
@@ -37,12 +41,10 @@ impl<T: Widget + 'static> Widget for FadeTransition<T> {
         let child = self.child.to_element(ctx);
         let controller = self.opacity.clone();
         let animating = Cell::new(self.opacity.is_animating());
-        let window = ctx.window.clone();
         FadeTransitionElement {
             child,
             controller,
             animating,
-            window,
         }
         .boxed()
     }
@@ -54,7 +56,6 @@ macro_rules! impl_transition_element {
             child: AnyElement,
             controller: AnimationController,
             animating: Cell<bool>,
-            window: WindowHandle,
         }
 
         unsafe impl Send for $name {}
@@ -75,7 +76,7 @@ macro_rules! impl_transition_element {
                 ctx.canvas.restore();
 
                 if self.animating.get() {
-                    self.window.request_redraw();
+                    request_next_frame();
                 }
             }
         }
@@ -169,13 +170,11 @@ impl<T: Widget + 'static> Widget for SlideTransition<T> {
         let child = self.child.to_element(ctx);
         let controller = self.position.clone();
         let animating = Cell::new(self.position.is_animating());
-        let window = ctx.window.clone();
         let offset = self.offset;
         SlideTransitionElement {
             child,
             controller,
             animating,
-            window,
             offset,
         }
         .boxed()
@@ -186,7 +185,6 @@ struct SlideTransitionElement {
     child: AnyElement,
     controller: AnimationController,
     animating: Cell<bool>,
-    window: WindowHandle,
     offset: (f32, f32),
 }
 
@@ -214,7 +212,7 @@ impl Drawable for SlideTransitionElement {
         ctx.canvas.restore();
 
         if self.animating.get() {
-            self.window.request_redraw();
+            request_next_frame();
         }
     }
 }
@@ -290,12 +288,10 @@ impl<T: Widget + 'static> Widget for ScaleTransition<T> {
         let child = self.child.to_element(ctx);
         let controller = self.scale.clone();
         let animating = Cell::new(self.scale.is_animating());
-        let window = ctx.window.clone();
         ScaleTransitionElement {
             child,
             controller,
             animating,
-            window,
         }
         .boxed()
     }
@@ -305,7 +301,6 @@ struct ScaleTransitionElement {
     child: AnyElement,
     controller: AnimationController,
     animating: Cell<bool>,
-    window: WindowHandle,
 }
 
 unsafe impl Send for ScaleTransitionElement {}
@@ -331,7 +326,7 @@ impl Drawable for ScaleTransitionElement {
         ctx.canvas.restore();
 
         if self.animating.get() {
-            self.window.request_redraw();
+            request_next_frame();
         }
     }
 }
@@ -408,12 +403,10 @@ impl<T: Widget + 'static> Widget for RotationTransition<T> {
         let child = self.child.to_element(ctx);
         let controller = self.turns.clone();
         let animating = Cell::new(self.turns.is_animating());
-        let window = ctx.window.clone();
         RotationTransitionElement {
             child,
             controller,
             animating,
-            window,
         }
         .boxed()
     }
@@ -423,7 +416,6 @@ struct RotationTransitionElement {
     child: AnyElement,
     controller: AnimationController,
     animating: Cell<bool>,
-    window: WindowHandle,
 }
 
 unsafe impl Send for RotationTransitionElement {}
@@ -451,7 +443,7 @@ impl Drawable for RotationTransitionElement {
         ctx.canvas.restore();
 
         if self.animating.get() {
-            self.window.request_redraw();
+            request_next_frame();
         }
     }
 }
@@ -498,5 +490,104 @@ impl LayoutElement for RotationTransitionElement {
     }
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::primitives::curve::Curve;
+    use crate::widgets::test_frame_requester;
+
+    struct TestWidget;
+
+    struct TestElement;
+
+    impl Drawable for TestElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl EventElement for TestElement {}
+
+    impl LayoutElement for TestElement {}
+
+    impl Rebuildable for TestElement {}
+
+    impl VisitorElement for TestElement {
+        fn debug_name(&self) -> &'static str {
+            "TestElement"
+        }
+    }
+
+    impl Widget for TestWidget {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            TestElement.boxed()
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dummy_async_handle() -> tokio::runtime::Handle {
+        static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        });
+        let _guard = runtime.enter();
+        tokio::runtime::Handle::current()
+    }
+
+    fn dummy_build_context() -> BuildContext<'static> {
+        let canvas = {
+            let leaked: &'static aimer_canvas::InnerCanvas =
+                Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(leaked)
+        };
+        BuildContext {
+            parent_size: Default::default(),
+            canvas,
+            scale: 1.0,
+            parent_pos: Default::default(),
+            cursor_pos: Default::default(),
+            box_constraint: Default::default(),
+            visible_rect: None,
+            window: WindowHandle::headless(Default::default(), 1.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            async_handle: dummy_async_handle(),
+            inherited_states: Default::default(),
+        }
+    }
+
+    fn controller() -> AnimationController {
+        let controller = AnimationController::with_millis(100, Curve::Linear);
+        controller.forward_from_first_tick();
+        controller
+    }
+
+    fn assert_defers_next_frame(widget: impl Widget + 'static) {
+        test_frame_requester::reset();
+        let ctx = dummy_build_context();
+        let element = widget.to_element(&ctx);
+
+        element.draw(&ctx);
+
+        assert_eq!(test_frame_requester::count(), 1);
+        assert!(!ctx.window.take_redraw_request());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "ios"))]
+    fn active_explicit_transitions_defer_their_next_frame_request() {
+        test_frame_requester::install();
+
+        assert_defers_next_frame(FadeTransition::new(controller(), TestWidget));
+        assert_defers_next_frame(SlideTransition::new(
+            controller(),
+            (10.0, 10.0),
+            TestWidget,
+        ));
+        assert_defers_next_frame(ScaleTransition::new(controller(), TestWidget));
+        assert_defers_next_frame(RotationTransition::new(controller(), TestWidget));
     }
 }

@@ -173,6 +173,7 @@ pub struct RawMouseRegion<E: Element> {
 }
 
 impl<E: Element> RawMouseRegion<E> {
+    #[inline ]
     fn execute_void_callback(cb: &VoidCallback) {
         if let Some(callback) = (*cb.get()).as_ref() {
             match callback {
@@ -196,6 +197,7 @@ impl<E: Element> RawMouseRegion<E> {
     /// click triggers a parent `set_state`, the region is rebuilt with a
     /// fresh `Outside` state and, without a new pointer event, would
     /// otherwise stay un-hovered until the mouse moved again.
+    #[inline ]
     fn sync_hover(&self, is_inside: bool) {
         if is_inside {
             if matches!(self.current_state.get(), PointerState::Outside) {
@@ -222,29 +224,20 @@ impl<E: Element> VisitorElement for RawMouseRegion<E> {
 
 impl<E: Element> EventElement for RawMouseRegion<E> {
     fn on_event(&self, event: &ElementEvent) -> bool {
-        // println!("Event received: {:?}", event);
-
         if matches!(event, ElementEvent::PointerExited(PointerSource::Mouse, _)) {
             if self.cursor.is_some() {
                 self.window.set_cursor(winit::window::CursorIcon::Default);
             }
             self.sync_hover(false);
-            return self.child.on_event(event);
+            return false;
         }
 
-        // Hover tracking is a mouse-only concept. Touch input must NOT drive
-        // `sync_hover`: firing `on_hover_enter` on a touch `PointerDown` calls
-        // the Button's `set_state`, which marks the subtree dirty and rebuilds
-        // (replacing) the child `GestureDetector` mid-gesture — between the
-        // touch `Down` and `Up`. The replacement loses the recorded
-        // `down_position`, so the tap (`on_tap`/`on_press`) never fires.
-        // For touch we simply forward the event to the child untouched.
         let pos = match event {
             ElementEvent::PointerDown(p, src, _) if *src == PointerSource::Mouse => *p,
             ElementEvent::PointerUp(p, src, _) if *src == PointerSource::Mouse => *p,
             ElementEvent::PointerMove(p, src, _) if *src == PointerSource::Mouse => *p,
             _ => {
-                return self.child.on_event(event);
+                return false;
             }
         };
 
@@ -259,16 +252,12 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
             }
         } else if self.cursor.is_some() {
             self.window.set_cursor(winit::window::CursorIcon::Default);
+            return false;
         }
 
-        // Only fire callbacks on a state change between Enter <-> Exit,
-        // not on every mouse event.
         self.sync_hover(is_inside);
         self.child.on_event(event)
     }
-
-    // Return empty — we manually forward to the child in on_event
-    // so that MouseRegion always sees the event first.
     fn event_children<'b>(&'b self, _visitor: &mut dyn FnMut(&'b dyn Element)) {}
 }
 
@@ -295,11 +284,6 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
         self.cached_bounds
             .save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
 
-        // Re-evaluate hover against the actual (last-known) cursor position so
-        // the hover state survives rebuilds/replacements. After a click the
-        // subtree is rebuilt with a fresh `Outside` state and no pointer event
-        // follows, so without this the button would lose its hover feedback
-        // until the mouse moved again.
         let cursor = ctx.cursor_pos;
         let is_inside = self.cached_bounds.is_inside(cursor.x, cursor.y);
         self.sync_hover(is_inside);

@@ -39,6 +39,16 @@ pub enum NamedKey {
     Other(String),
 }
 
+/// Identifies whether a scroll delta came from a stepped wheel or a
+/// pixel-precise input device such as a trackpad.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollDeltaKind {
+    /// A discrete line-based mouse-wheel delta.
+    Line,
+    /// A pixel-precise trackpad or smooth-wheel delta.
+    Pixel,
+}
+
 /// Pointer and keyboard event types for dispatch.
 #[derive(Clone, Debug)]
 pub enum ElementEvent {
@@ -53,6 +63,7 @@ pub enum ElementEvent {
     Scroll {
         delta: Vec2d,
         phase: TouchPhase,
+        kind: ScrollDeltaKind,
     },
     /// A character was typed (text input).
     CharInput {

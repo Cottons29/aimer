@@ -54,7 +54,7 @@ fn main() {
 #[main]
 pub fn my_app() {
     // stateful_2::start_my_list();
-    // start_counter();
+    start_counter();
     // AimerApp::start(Container::new().child(Row::new().children([
     //     Expanded::new().child(TestFadingAnimation),
     //     Expanded::new().child(TestFadingAnimation),
@@ -72,7 +72,7 @@ pub fn my_app() {
     // panic_recovery::start_panic_recovery_example()
     // start_custom_animated_theme_example()
     // test_text()
-    start_loading_animation_example()
+    // start_loading_animation_example()
 }
 
 #[allow(unused)]

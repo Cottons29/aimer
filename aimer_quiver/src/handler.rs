@@ -1,38 +1,38 @@
 pub mod event_handler;
+pub mod scroll_utils;
 pub(crate) mod user_events;
-
-use std::any::Any;
-use std::cell::Cell;
-
-use aimer_attribute::BoxConstraint;
-use aimer_attribute::position::Vec2d;
-use aimer_attribute::size::ResolvedSize;
-use aimer_inspector::InspectorOverlay;
-use aimer_utils::debug;
-use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyElement, Element, Widget};
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::runtime::Runtime;
-use winit::application::ApplicationHandler;
-#[allow(unused)]
-use winit::dpi::{LogicalSize, PhysicalSize, Position};
-use winit::event::WindowEvent;
-use winit::event_loop::ActiveEventLoop;
-#[allow(unused)]
-use winit::monitor::MonitorHandle;
-#[allow(unused)]
-use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
 
 #[cfg(target_os = "android")]
 use crate::aimer_app::ANDROID_APP;
+use crate::aimer_app::AimerCustomAppEvent;
 #[cfg(target_os = "android")]
 use crate::ffi_utils::android_screen;
 use crate::first_frame::FirstFrameNotifier;
 #[allow(unused)]
 use crate::handler;
 use crate::handler::event_handler::WindowEventHandler;
+use crate::handler::scroll_utils::MomentumScroller;
 use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
+use aimer_attribute::BoxConstraint;
+use aimer_attribute::position::Vec2d;
+use aimer_attribute::size::ResolvedSize;
+use aimer_inspector::InspectorOverlay;
+use aimer_widget::base::BuildContext;
+use aimer_widget::{AnyElement, Element, Widget};
+use std::any::Any;
+use std::cell::Cell;
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::runtime::Runtime;
+use winit::application::ApplicationHandler;
+#[allow(unused)]
+use winit::dpi::{LogicalSize, PhysicalSize, Position};
+use winit::event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent};
+use winit::event_loop::ActiveEventLoop;
+#[allow(unused)]
+use winit::monitor::MonitorHandle;
+#[allow(unused)]
+use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
 
 pub(crate) type StartupHook = Box<dyn FnOnce() -> Box<dyn Any>>;
 
@@ -92,6 +92,7 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub inspector_prev_enabled: Cell<bool>,
     #[cfg(debug_assertions)]
     pub inspector_redraw_frames: Cell<u8>,
+    pub scroller: MomentumScroller,
 }
 
 fn run_startup_hooks(
@@ -101,9 +102,7 @@ fn run_startup_hooks(
     startup_resources.extend(startup_hooks.drain(..).map(|hook| hook()));
 }
 
-impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEvent>
-    for AimerApplicationHandler<W>
-{
+impl<W: Widget + 'static> ApplicationHandler<AimerCustomAppEvent> for AimerApplicationHandler<W> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         run_startup_hooks(&mut self.startup_hooks, &mut self.startup_resources);
 
@@ -213,7 +212,7 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
     fn user_event(
         &mut self,
         _event_loop: &ActiveEventLoop,
-        event: crate::aimer_app::AimerCustomAppEvent,
+        event: AimerCustomAppEvent,
     ) {
         // debug!("User event {:?}", event);
         handle_user_event(self, event);
@@ -249,6 +248,18 @@ impl<W: Widget + 'static> ApplicationHandler<crate::aimer_app::AimerCustomAppEve
                     window.request_redraw();
                 }
             }
+        }
+
+        if let Some(window) = self.window
+            && let Some(px) = self.scroller.tick()
+        {
+            let event = WindowEvent::MouseWheel {
+                device_id: DeviceId::dummy(),
+                delta: MouseScrollDelta::PixelDelta(px),
+
+                phase: TouchPhase::Moved,
+            };
+            self.window_event(_event_loop, window.id(), event);
         }
     }
 }

@@ -7,6 +7,7 @@ use aimer::style::{
 use aimer::{BuildContext, Widget, widget, *};
 
 use crate::blog_store::{BlogStore, BlogSummary, LoadState, request_blog_list};
+use crate::components::loading_indicator::build_loading_indicator;
 use crate::router::AppRouter;
 use crate::utils::{app_padding, is_mobile};
 
@@ -28,14 +29,12 @@ impl StatelessWidget for BlogListPage {
         }
 
         let content = match &store.list {
-            LoadState::Idle | LoadState::Loading => status_text(
-                "Loading blogs…",
-                theme.on_background_color.with_opacity(150),
-            ),
+            LoadState::Idle | LoadState::Loading => build_loading_indicator("Loading Post"),
             LoadState::Error(error) => {
                 error!("{}", error);
                 status_text(error, Color::RED)
             }
+
             LoadState::Ready(blogs) if blogs.is_empty() => status_text(
                 "No blogs have been published yet.",
                 theme.on_background_color.with_opacity(150),
