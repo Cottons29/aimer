@@ -35,7 +35,8 @@ pub struct Text {
 
 impl Text {
     /// Creates text containing `text` with default style and alignment.
-    #[inline] pub fn new(text: impl Into<Rc<str>>) -> Self {
+    #[inline]
+    pub fn new(text: impl Into<Rc<str>>) -> Self {
         Self {
             text: text.into(),
             text_align: TextAlign::default(),
@@ -44,13 +45,15 @@ impl Text {
     }
 
     /// Replaces the displayed string while preserving style and alignment.
-    #[inline] pub fn text(mut self, text: impl Into<Rc<str>>) -> Self {
+    #[inline]
+    pub fn text(mut self, text: impl Into<Rc<str>>) -> Self {
         self.text = text.into();
         self
     }
 
     /// Sets how laid-out text is aligned within its available width.
-    #[inline] pub fn text_align(mut self, text_align: TextAlign) -> Self {
+    #[inline]
+    pub fn text_align(mut self, text_align: TextAlign) -> Self {
         self.text_align = text_align;
         self
     }
@@ -58,7 +61,8 @@ impl Text {
     /// Replaces the complete style used for shaping, layout, and painting.
     ///
     /// This includes font attributes, color, decoration, and overflow behavior.
-    #[inline] pub fn text_style(mut self, text_style: TextStyle) -> Self {
+    #[inline]
+    pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = text_style;
         self
     }
@@ -67,20 +71,23 @@ impl Text {
     /// Prefer configuring [`TextStyle::text_overflow`] before passing the style
     /// to [`Text::text_style`].
     #[deprecated(note = "set TextStyle::text_overflow and pass it to Text::text_style")]
-    #[inline] pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
+    #[inline]
+    pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
         self.text_style.text_overflow = text_overflow;
         self
     }
 
     /// Configures text to wrap onto additional lines when width is constrained.
     #[allow(deprecated)]
-    #[inline] pub fn wrapped(self) -> Self {
+    #[inline]
+    pub fn wrapped(self) -> Self {
         self.text_overflow(TextOverflow::Wrap)
     }
 
     /// Configures overflowing text to be truncated with an ellipsis.
     #[allow(deprecated)]
-    #[inline] pub fn ellipsis(self) -> Self {
+    #[inline]
+    pub fn ellipsis(self) -> Self {
         self.text_overflow(TextOverflow::Ellipsis)
     }
 }

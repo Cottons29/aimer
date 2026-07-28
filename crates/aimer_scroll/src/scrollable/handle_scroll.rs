@@ -3,9 +3,7 @@ use aimer_attribute::size::ResolvedSize;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey, ScrollDeltaKind};
 use aimer_utils::AnimInstant;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{
-    Element, EventElement, EventResult, LayoutElement, PointerKey, VisitorElement,
-};
+use aimer_widget::{Element, EventElement, EventResult, LayoutElement, PointerKey, VisitorElement};
 
 use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
@@ -78,16 +76,14 @@ fn dispatch_child_event<E: Element>(
     event: &ElementEvent,
 ) -> EventResult {
     let pointer = event_pointer_key(event);
-    let was_captured = pointer.is_some_and(|pointer| {
-        scrollable.event_dispatcher.borrow().is_captured(pointer)
-    });
+    let was_captured =
+        pointer.is_some_and(|pointer| scrollable.event_dispatcher.borrow().is_captured(pointer));
     let result = scrollable
         .event_dispatcher
         .borrow_mut()
         .dispatch(&scrollable.child, pos, event);
-    let is_captured = pointer.is_some_and(|pointer| {
-        scrollable.event_dispatcher.borrow().is_captured(pointer)
-    });
+    let is_captured =
+        pointer.is_some_and(|pointer| scrollable.event_dispatcher.borrow().is_captured(pointer));
     match (pointer, was_captured, is_captured) {
         (Some(pointer), false, true) => result.with_pointer_capture(pointer),
         (Some(pointer), true, false) => result.with_pointer_release(pointer),
@@ -170,10 +166,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 match event {
                     ElementEvent::PointerUp(_, source, pointer) => {
                         child_result = child_result.merge(
-                            self.event_dispatcher.borrow_mut().cancel_pointer(
-                                &self.child,
-                                PointerKey::new(*source, *pointer),
-                            ),
+                            self.event_dispatcher
+                                .borrow_mut()
+                                .cancel_pointer(&self.child, PointerKey::new(*source, *pointer)),
                         );
                     }
                     ElementEvent::Cancel => {
@@ -233,14 +228,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             };
         }
 
-        if pending_content_drag_won
-            && let ElementEvent::PointerMove(_, source, pointer) = event
-        {
+        if pending_content_drag_won && let ElementEvent::PointerMove(_, source, pointer) = event {
             child_result = child_result.merge(
-                self.event_dispatcher.borrow_mut().cancel_pointer(
-                    &self.child,
-                    PointerKey::new(*source, *pointer),
-                ),
+                self.event_dispatcher
+                    .borrow_mut()
+                    .cancel_pointer(&self.child, PointerKey::new(*source, *pointer)),
             );
         }
 

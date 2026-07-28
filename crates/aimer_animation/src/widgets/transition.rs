@@ -583,11 +583,7 @@ mod tests {
         test_frame_requester::install();
 
         assert_defers_next_frame(FadeTransition::new(controller(), TestWidget));
-        assert_defers_next_frame(SlideTransition::new(
-            controller(),
-            (10.0, 10.0),
-            TestWidget,
-        ));
+        assert_defers_next_frame(SlideTransition::new(controller(), (10.0, 10.0), TestWidget));
         assert_defers_next_frame(ScaleTransition::new(controller(), TestWidget));
         assert_defers_next_frame(RotationTransition::new(controller(), TestWidget));
     }

@@ -8,10 +8,8 @@ pub struct Bounds {
     pub height: f32,
 }
 
-
 impl Bounds {
     pub fn is_inside(&self, x: f32, y: f32) -> bool {
-
         self.x <= x && x <= self.x + self.width && self.y <= y && y <= self.y + self.height
     }
 }
@@ -55,4 +53,3 @@ impl Default for Bounds {
         Self::new(0.0, 0.0, 0.0, 0.0)
     }
 }
-

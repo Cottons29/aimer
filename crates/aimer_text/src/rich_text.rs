@@ -128,7 +128,8 @@ pub struct RichText {
 impl RichText {
     /// Creates rich text rooted at `span` with default base style and
     /// interaction settings.
-    #[inline] pub fn new(span: TextSpan) -> Self {
+    #[inline]
+    pub fn new(span: TextSpan) -> Self {
         Self {
             span,
             text_style: TextStyle::default(),
@@ -143,19 +144,22 @@ impl RichText {
 
     /// Replaces the base style inherited by spans that do not override
     /// individual attributes.
-    #[inline] pub fn text_style(mut self, text_style: TextStyle) -> Self {
+    #[inline]
+    pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = text_style;
         self
     }
 
     /// Sets the alignment of each laid-out line within the available width.
-    #[inline] pub fn text_align(mut self, text_align: TextAlign) -> Self {
+    #[inline]
+    pub fn text_align(mut self, text_align: TextAlign) -> Self {
         self.text_align = text_align;
         self
     }
 
     /// Overrides overflow behavior independently of the base style.
-    #[inline] pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
+    #[inline]
+    pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
         self.overflow = Some(text_overflow);
         self
     }
@@ -166,13 +170,15 @@ impl RichText {
 
     /// Configures spans to wrap onto additional lines when width is
     /// constrained.
-    #[inline] pub fn wrapped(self) -> Self {
+    #[inline]
+    pub fn wrapped(self) -> Self {
         self.text_overflow(TextOverflow::Wrap)
     }
 
     /// Configures overflowing content to truncate the first line with an
     /// ellipsis.
-    #[inline] pub fn ellipsis(self) -> Self {
+    #[inline]
+    pub fn ellipsis(self) -> Self {
         self.text_overflow(TextOverflow::Ellipsis)
     }
 
@@ -181,7 +187,8 @@ impl RichText {
     ///
     /// The callback receives the link target stored by [`TextSpan::link`].
     /// Dragging to select text suppresses link activation.
-    #[inline] pub fn on_link(mut self, on_link: impl Into<LinkCallback>) -> Self {
+    #[inline]
+    pub fn on_link(mut self, on_link: impl Into<LinkCallback>) -> Self {
         self.on_link = on_link.into();
         self
     }
@@ -738,11 +745,12 @@ impl EventElement for RawRichText {
             }
             ElementEvent::PointerUp(pos, source, pointer) => {
                 let pointer = PointerKey::new(*source, *pointer);
-                let selection_owned = self.selectable
-                    && self.selection.borrow().active_pointer() == Some(pointer);
+                let selection_owned =
+                    self.selectable && self.selection.borrow().active_pointer() == Some(pointer);
                 let dragged = if selection_owned {
                     let mut selection = self.selection.borrow_mut();
-                    if let Some(offset) = text_offset_at(&self.text_regions.borrow(), pos.x, pos.y) {
+                    if let Some(offset) = text_offset_at(&self.text_regions.borrow(), pos.x, pos.y)
+                    {
                         selection.update(offset, pointer);
                     }
                     let dragged = selection.was_dragged();
@@ -818,7 +826,6 @@ impl EventElement for RawRichText {
         }
         .into()
     }
-
 }
 
 impl LayoutElement for RawRichText {
@@ -1092,8 +1099,8 @@ mod tests {
     use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
     use aimer_events::pointer::PointerSource;
     use aimer_style::{TextAlign, TextOverflow, TextStyle};
-    use aimer_widget::{EventElement, PointerKey};
     use aimer_widget::base::{Color, WindowHandle};
+    use aimer_widget::{EventElement, PointerKey};
 
     use super::{
         DEFAULT_SELECTION_COLOR, LinkCallback, LinkRegion, PreparedFragment, PreparedSelection,
@@ -1369,7 +1376,10 @@ mod tests {
         assert!(first.window.take_redraw_request());
         assert!(second.selection.focused.get());
         let second_pointer = PointerKey::new(PointerSource::Mouse, 8);
-        assert_eq!(second.selection.borrow().active_pointer(), Some(second_pointer));
+        assert_eq!(
+            second.selection.borrow().active_pointer(),
+            Some(second_pointer)
+        );
         assert_eq!(
             second_result.capture_request(),
             aimer_widget::CaptureRequest::Capture(second_pointer)

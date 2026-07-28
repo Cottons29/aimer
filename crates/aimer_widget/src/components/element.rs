@@ -10,9 +10,7 @@ use aimer_events::element::ElementEvent;
 use smallvec::SmallVec;
 
 use crate::base::*;
-use crate::components::event_element::{
-    CaptureRequest, EventElement, EventResult, PointerKey,
-};
+use crate::components::event_element::{CaptureRequest, EventElement, EventResult, PointerKey};
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
@@ -215,7 +213,6 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
         self.element.on_event(event)
     }
 
-
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.element.event_children(visitor);
     }
@@ -326,7 +323,6 @@ impl EventElement for AnyElement {
         self.as_ref().on_event(event)
     }
 
-
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().event_children(visitor)
     }
@@ -429,7 +425,6 @@ impl EventElement for Box<dyn Element> {
         self.as_ref().on_event(event)
     }
 
-
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().event_children(visitor)
     }
@@ -506,11 +501,14 @@ pub(crate) fn reconcile_element_identities(old: &dyn Element, new: &dyn Element)
 
     for (new_index, new_child) in new_children.iter().copied().enumerate() {
         let old_index = if let Some(new_key) = new_child.reconciliation_key() {
-            old_children.iter().enumerate().position(|(index, old_child)| {
-                !matched[index]
-                    && old_child.reconciliation_key() == Some(new_key)
-                    && identities_are_compatible(*old_child, new_child)
-            })
+            old_children
+                .iter()
+                .enumerate()
+                .position(|(index, old_child)| {
+                    !matched[index]
+                        && old_child.reconciliation_key() == Some(new_key)
+                        && identities_are_compatible(*old_child, new_child)
+                })
         } else {
             old_children.get(new_index).and_then(|old_child| {
                 (!matched[new_index]
@@ -641,11 +639,7 @@ impl EventDispatcher {
     ///
     /// This is primarily used by nested routing boundaries when an ancestor
     /// wins gesture arbitration after a descendant initially captured.
-    pub fn cancel_pointer(
-        &mut self,
-        root: &dyn Element,
-        pointer: PointerKey,
-    ) -> EventResult {
+    pub fn cancel_pointer(&mut self, root: &dyn Element, pointer: PointerKey) -> EventResult {
         self.synchronize_paths(root);
         let Some(owner) = self.captures.remove(&pointer) else {
             return EventResult::ignored();
@@ -659,7 +653,9 @@ impl EventDispatcher {
         if target.element_id() != Some(owner) {
             return EventResult::ignored();
         }
-        target.on_event(&ElementEvent::Cancel).without_capture_request()
+        target
+            .on_event(&ElementEvent::Cancel)
+            .without_capture_request()
     }
 
     fn synchronize_paths(&mut self, root: &dyn Element) {
@@ -726,11 +722,7 @@ impl EventDispatcher {
         result
     }
 
-    fn apply_capture_request(
-        &mut self,
-        request: CaptureRequest,
-        owner: Option<ElementId>,
-    ) {
+    fn apply_capture_request(&mut self, request: CaptureRequest, owner: Option<ElementId>) {
         match request {
             CaptureRequest::None => {}
             CaptureRequest::Capture(pointer) => {
@@ -775,10 +767,7 @@ fn index_element_paths(
     }
 }
 
-fn resolve_element_path<'a>(
-    root: &'a dyn Element,
-    path: &[usize],
-) -> Option<&'a dyn Element> {
+fn resolve_element_path<'a>(root: &'a dyn Element, path: &[usize]) -> Option<&'a dyn Element> {
     let mut current = root;
     for index in path {
         current = {
@@ -838,8 +827,7 @@ fn dispatch_routed_event_inner<'a>(
     });
     if inside {
         let own_result = root.on_event(event);
-        if capture_owner.is_none()
-            && !matches!(own_result.capture_request(), CaptureRequest::None)
+        if capture_owner.is_none() && !matches!(own_result.capture_request(), CaptureRequest::None)
         {
             capture_owner = root.element_id();
         }
@@ -900,7 +888,6 @@ fn dispatch_event_inner<'a>(
 
     result
 }
-
 
 /// Broadcast an event to every element in the tree, regardless of hit-testing.
 /// Returns the combined effects produced by every element.
@@ -1182,12 +1169,10 @@ mod tests {
             self.events.set(self.events.get() + 1);
             match event {
                 ElementEvent::PointerDown(_, source, pointer) if self.capture_on_down => {
-                    EventResult::consumed()
-                        .with_pointer_capture(PointerKey::new(*source, *pointer))
+                    EventResult::consumed().with_pointer_capture(PointerKey::new(*source, *pointer))
                 }
                 ElementEvent::PointerMove(_, source, pointer) if self.release_on_move => {
-                    EventResult::consumed()
-                        .with_pointer_release(PointerKey::new(*source, *pointer))
+                    EventResult::consumed().with_pointer_release(PointerKey::new(*source, *pointer))
                 }
                 _ => EventResult::consumed(),
             }
@@ -1377,20 +1362,12 @@ mod tests {
         let _ = dispatcher.dispatch(
             target.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(
-                Vec2d { x: 5.0, y: 5.0 },
-                pointer.source,
-                pointer.id,
-            ),
+            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
         );
         let _ = dispatcher.dispatch(
             target.as_ref(),
             Vec2d { x: 50.0, y: 50.0 },
-            &ElementEvent::PointerMove(
-                Vec2d { x: 50.0, y: 50.0 },
-                pointer.source,
-                pointer.id,
-            ),
+            &ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, pointer.source, pointer.id),
         );
 
         assert_eq!(dispatcher.captured_owner(pointer), None);
@@ -1417,11 +1394,7 @@ mod tests {
         let _ = dispatcher.dispatch(
             old.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(
-                Vec2d { x: 5.0, y: 5.0 },
-                pointer.source,
-                pointer.id,
-            ),
+            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
         );
         let owner = dispatcher.captured_owner(pointer);
 
@@ -1444,11 +1417,7 @@ mod tests {
         let _ = dispatcher.dispatch(
             rebuilt.as_ref(),
             Vec2d { x: 50.0, y: 50.0 },
-            &ElementEvent::PointerMove(
-                Vec2d { x: 50.0, y: 50.0 },
-                pointer.source,
-                pointer.id,
-            ),
+            &ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, pointer.source, pointer.id),
         );
 
         assert_eq!(dispatcher.captured_owner(pointer), owner);
@@ -1534,21 +1503,13 @@ mod tests {
             let _ = dispatcher.dispatch(
                 root.as_ref(),
                 Vec2d { x: 5.0, y: 5.0 },
-                &ElementEvent::PointerDown(
-                    Vec2d { x: 5.0, y: 5.0 },
-                    pointer.source,
-                    pointer.id,
-                ),
+                &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
             );
         }
         let _ = dispatcher.dispatch(
             root.as_ref(),
             Vec2d { x: 50.0, y: 50.0 },
-            &ElementEvent::PointerUp(
-                Vec2d { x: 50.0, y: 50.0 },
-                mouse.source,
-                mouse.id,
-            ),
+            &ElementEvent::PointerUp(Vec2d { x: 50.0, y: 50.0 }, mouse.source, mouse.id),
         );
         assert_eq!(dispatcher.captured_owner(mouse), None);
         assert!(dispatcher.captured_owner(touch).is_some());
@@ -1571,11 +1532,7 @@ mod tests {
         let _ = dispatcher.dispatch(
             old.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(
-                Vec2d { x: 5.0, y: 5.0 },
-                pointer.source,
-                pointer.id,
-            ),
+            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
         );
 
         let replacement = ReplacementLeaf.boxed();
@@ -1583,11 +1540,7 @@ mod tests {
         let result = dispatcher.dispatch(
             replacement.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerMove(
-                Vec2d { x: 5.0, y: 5.0 },
-                pointer.source,
-                pointer.id,
-            ),
+            &ElementEvent::PointerMove(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
         );
 
         assert_eq!(dispatcher.captured_owner(pointer), None);
@@ -1608,29 +1561,20 @@ mod tests {
         let _ = dispatcher.dispatch(
             target.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(
-                Vec2d { x: 5.0, y: 5.0 },
-                pointer.source,
-                pointer.id,
-            ),
+            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
         );
         let owner = dispatcher
             .captured_owner(pointer)
             .expect("pointer must be captured after down");
-        dispatcher.paths.insert(
-            owner,
-            ElementPath(vec![usize::MAX].into_boxed_slice()),
-        );
+        dispatcher
+            .paths
+            .insert(owner, ElementPath(vec![usize::MAX].into_boxed_slice()));
         events.set(0);
 
         let result = dispatcher.dispatch(
             target.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerMove(
-                Vec2d { x: 5.0, y: 5.0 },
-                pointer.source,
-                pointer.id,
-            ),
+            &ElementEvent::PointerMove(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
         );
 
         assert_eq!(result, EventResult::ignored());
@@ -1652,8 +1596,9 @@ mod tests {
         fn on_event(&self, event: &ElementEvent) -> EventResult {
             self.events.set(self.events.get() + 1);
             match event {
-                ElementEvent::PointerDown(_, source, 7) => EventResult::consumed()
-                    .with_pointer_capture(PointerKey::new(*source, 7)),
+                ElementEvent::PointerDown(_, source, 7) => {
+                    EventResult::consumed().with_pointer_capture(PointerKey::new(*source, 7))
+                }
                 _ => EventResult::consumed(),
             }
         }
@@ -1687,7 +1632,6 @@ mod tests {
             self.events.set(self.events.get() + 1);
             EventResult::consumed()
         }
-
 
         fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
             for child in &self.children {
@@ -1743,11 +1687,7 @@ mod tests {
             result: EventResult::ignored(),
         };
 
-        let result = dispatch_event(
-            &element,
-            Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::Cancel,
-        );
+        let result = dispatch_event(&element, Vec2d { x: 5.0, y: 5.0 }, &ElementEvent::Cancel);
 
         assert!(!result.is_consumed());
         assert!(result.needs_redraw());
@@ -1770,7 +1710,11 @@ mod tests {
         );
         let event = ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, PointerSource::Touch, 7);
 
-        assert!(dispatcher.dispatch(element.as_ref(), Vec2d { x: 50.0, y: 50.0 }, &event).is_consumed());
+        assert!(
+            dispatcher
+                .dispatch(element.as_ref(), Vec2d { x: 50.0, y: 50.0 }, &event)
+                .is_consumed()
+        );
         let _ = events;
     }
 
@@ -1788,7 +1732,11 @@ mod tests {
             &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
         );
 
-        assert!(dispatcher.cancel_pointer(element.as_ref(), pointer).is_consumed());
+        assert!(
+            dispatcher
+                .cancel_pointer(element.as_ref(), pointer)
+                .is_consumed()
+        );
         assert_eq!(dispatcher.capture_count(), 0);
     }
 
@@ -1801,10 +1749,7 @@ mod tests {
         let mut dispatcher = EventDispatcher::new();
 
         assert_eq!(
-            dispatcher.cancel_pointer(
-                element.as_ref(),
-                PointerKey::new(PointerSource::Touch, 8),
-            ),
+            dispatcher.cancel_pointer(element.as_ref(), PointerKey::new(PointerSource::Touch, 8),),
             EventResult::ignored()
         );
     }
@@ -1823,8 +1768,15 @@ mod tests {
             &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
         );
 
-        assert!(dispatcher.cancel_pointer(element.as_ref(), pointer).is_consumed());
-        assert_eq!(dispatcher.cancel_pointer(element.as_ref(), pointer), EventResult::ignored());
+        assert!(
+            dispatcher
+                .cancel_pointer(element.as_ref(), pointer)
+                .is_consumed()
+        );
+        assert_eq!(
+            dispatcher.cancel_pointer(element.as_ref(), pointer),
+            EventResult::ignored()
+        );
     }
 
     #[test]
@@ -1842,14 +1794,10 @@ mod tests {
         let event = ElementEvent::Cancel;
         let mut children = EventChildren::new();
 
-
-        assert!(dispatch_event_inner(
-            &element,
-            Vec2d { x: 5.0, y: 5.0 },
-            &event,
-            &mut children
-        )
-        .is_consumed());
+        assert!(
+            dispatch_event_inner(&element, Vec2d { x: 5.0, y: 5.0 }, &event, &mut children)
+                .is_consumed()
+        );
         assert!(children.is_empty());
         assert!(!children.spilled());
 

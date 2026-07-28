@@ -160,7 +160,6 @@ pub trait EventElement: VisitorElement {
         EventResult::ignored()
     }
 
-
     /// Visit children for event dispatch. By default delegates to
     /// `visit_children`. Override this when `visit_children` is not
     /// implemented (e.g. because the element handles its own child

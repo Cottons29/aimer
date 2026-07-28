@@ -714,7 +714,6 @@ fn start_event_loop(
         start_up_frames: Cell::new(255),
         first_frame_notifier: Default::default(),
         active_touch_id: None,
-
     };
 
     info!("Started main event loop");
@@ -730,8 +729,8 @@ fn start_event_loop(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use aimer_attribute::position::Vec2d;
     use aimer_attribute::size::ResolvedSize;
@@ -1117,9 +1116,11 @@ mod tests {
 
         let events = events.lock().unwrap();
         assert!(events.len() > 1);
-        assert!(events
-            .iter()
-            .all(|(_, kind)| *kind == ScrollDeltaKind::Line));
+        assert!(
+            events
+                .iter()
+                .all(|(_, kind)| *kind == ScrollDeltaKind::Line)
+        );
         assert!(events.iter().all(|(delta, _)| delta.y < 0.0));
         let total = events.iter().map(|(delta, _)| delta.y).sum::<f32>();
         assert!((total + 8.000488).abs() < 0.0001);

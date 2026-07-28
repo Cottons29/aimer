@@ -30,7 +30,8 @@ impl Align {
     /// Creates a top-centered alignment builder on layer zero.
     ///
     /// Finish the builder with [`Align::child`] or [`Align::box_child`].
-    #[inline] pub fn new() -> Self {
+    #[inline]
+    pub fn new() -> Self {
         Self {
             child: RequiredChild,
             layer: 0,
@@ -42,7 +43,8 @@ impl Align {
     ///
     /// The default is [`Alignment::TopCenter`]. If the child exceeds an axis,
     /// that axis receives no negative offset, so placement starts at zero.
-    #[inline] pub fn alignment(mut self, alignment: Alignment) -> Self {
+    #[inline]
+    pub fn alignment(mut self, alignment: Alignment) -> Self {
         self.alignment = alignment;
         self
     }
@@ -51,7 +53,8 @@ impl Align {
     ///
     /// The default is `0`. Higher layers are painted later by [`crate::Stack`]
     /// in its normal direction; this value does not affect the child's size.
-    #[inline] pub fn layer(mut self, layer: u32) -> Self {
+    #[inline]
+    pub fn layer(mut self, layer: u32) -> Self {
         self.layer = layer;
         self
     }
@@ -61,7 +64,8 @@ impl Align {
     /// The child receives the parent's constraints and is translated according
     /// to the selected alignment. Its concrete type is preserved; use
     /// [`Align::box_child`] for branch type erasure.
-    #[inline] pub fn child<W: Widget>(self, child: W) -> Align<W> {
+    #[inline]
+    pub fn child<W: Widget>(self, child: W) -> Align<W> {
         Align {
             child,
             layer: self.layer,
@@ -74,7 +78,8 @@ impl Align {
     /// This is equivalent to calling [`Align::child`] followed by
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
-    #[inline] pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+    #[inline]
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
         self.child(child).boxed()
     }
 }

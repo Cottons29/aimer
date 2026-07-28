@@ -765,10 +765,8 @@ mod tests {
 
     #[test]
     fn line_wheel_delta_uses_stable_logical_step() {
-        let (delta, kind) = WindowEventHandler::normalize_wheel_delta(
-            MouseScrollDelta::LineDelta(1.0, -2.0),
-            2.0,
-        );
+        let (delta, kind) =
+            WindowEventHandler::normalize_wheel_delta(MouseScrollDelta::LineDelta(1.0, -2.0), 2.0);
 
         assert_eq!(delta.x, 20.0);
         assert_eq!(delta.y, -40.0);

@@ -175,7 +175,7 @@ pub struct RawMouseRegion<E: Element> {
 }
 
 impl<E: Element> RawMouseRegion<E> {
-    #[inline ]
+    #[inline]
     fn execute_void_callback(cb: &VoidCallback) {
         if let Some(callback) = (*cb.get()).as_ref() {
             match callback {
@@ -199,7 +199,7 @@ impl<E: Element> RawMouseRegion<E> {
     /// click triggers a parent `set_state`, the region is rebuilt with a
     /// fresh `Outside` state and, without a new pointer event, would
     /// otherwise stay un-hovered until the mouse moved again.
-    #[inline ]
+    #[inline]
     fn sync_hover(&self, is_inside: bool) {
         if is_inside {
             if matches!(self.current_state.get(), PointerState::Outside) {
@@ -233,8 +233,8 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
             | ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
             _ => None,
         };
-        let was_captured = pointer
-            .is_some_and(|pointer| self.event_dispatcher.borrow().is_captured(pointer));
+        let was_captured =
+            pointer.is_some_and(|pointer| self.event_dispatcher.borrow().is_captured(pointer));
 
         if matches!(event, ElementEvent::PointerExited(PointerSource::Mouse, _)) {
             if self.cursor.is_some() {
@@ -256,7 +256,13 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
         let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
         // Update the cursor icon on every mouse event while over the region.
-        let is_mouse = matches!(pointer, Some(PointerKey { source: PointerSource::Mouse, .. }));
+        let is_mouse = matches!(
+            pointer,
+            Some(PointerKey {
+                source: PointerSource::Mouse,
+                ..
+            })
+        );
         if is_inside && is_mouse {
             if let Some(icon) = self.cursor {
                 self.window.set_cursor(icon);
@@ -275,8 +281,8 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
             .event_dispatcher
             .borrow_mut()
             .dispatch(&self.child, pos, event);
-        let is_captured = pointer
-            .is_some_and(|pointer| self.event_dispatcher.borrow().is_captured(pointer));
+        let is_captured =
+            pointer.is_some_and(|pointer| self.event_dispatcher.borrow().is_captured(pointer));
         let result = if result.is_consumed() {
             result.with_redraw()
         } else {
@@ -327,8 +333,8 @@ mod tests {
     use std::any::Any;
     use std::cell::RefCell;
 
-    use aimer_widget::{CaptureRequest, EventResult, PointerKey, Rebuildable};
     use aimer_widget::base::WindowHandle;
+    use aimer_widget::{CaptureRequest, EventResult, PointerKey, Rebuildable};
     use winit::dpi::PhysicalSize;
 
     use super::*;
@@ -394,10 +400,12 @@ mod tests {
         fn on_event(&self, event: &ElementEvent) -> EventResult {
             self.events.set(self.events.get() + 1);
             match event {
-                ElementEvent::PointerDown(_, source, id) => EventResult::consumed()
-                    .with_pointer_capture(PointerKey::new(*source, *id)),
-                ElementEvent::PointerUp(_, source, id) => EventResult::consumed()
-                    .with_pointer_release(PointerKey::new(*source, *id)),
+                ElementEvent::PointerDown(_, source, id) => {
+                    EventResult::consumed().with_pointer_capture(PointerKey::new(*source, *id))
+                }
+                ElementEvent::PointerUp(_, source, id) => {
+                    EventResult::consumed().with_pointer_release(PointerKey::new(*source, *id))
+                }
                 _ => EventResult::consumed(),
             }
         }

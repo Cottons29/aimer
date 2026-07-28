@@ -358,9 +358,7 @@ impl<E: Element> RawGestureDetector<E> {
             }
 
             PointerEvent::Up(pos) => {
-                state
-                    .touches
-                    .remove(&PointerKey::new(pos.source, pos.id));
+                state.touches.remove(&PointerKey::new(pos.source, pos.id));
 
                 if state.initial_pinch_distance.is_some() && state.touches.len() < 2 {
                     state.initial_pinch_distance = None;
@@ -666,9 +664,9 @@ fn should_accept_pointer_event(
     }
 
     match event {
-        ElementEvent::PointerUp(_, source, id) => state
-            .touches
-            .contains_key(&PointerKey::new(*source, *id)),
+        ElementEvent::PointerUp(_, source, id) => {
+            state.touches.contains_key(&PointerKey::new(*source, *id))
+        }
         _ => false,
     }
 }
@@ -880,9 +878,7 @@ mod tests {
         bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
         let mut state = GestureState::default();
         let pointer = PointerKey::new(PointerSource::Touch, 7);
-        state
-            .touches
-            .insert(pointer, touch_position(25.0, 35.0, 7));
+        state.touches.insert(pointer, touch_position(25.0, 35.0, 7));
         let pos = touch_vec(115.0, 35.0);
         let event = ElementEvent::PointerUp(pos, PointerSource::Touch, 7);
 

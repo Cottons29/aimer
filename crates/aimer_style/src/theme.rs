@@ -67,37 +67,43 @@ impl ThemeData {
     }
 
     /// Sets the primary accent color.
-    #[inline] pub fn primary_color(mut self, color: Color) -> Self {
+    #[inline]
+    pub fn primary_color(mut self, color: Color) -> Self {
         self.primary_color = color;
         self
     }
 
     /// Sets the preferred content color on the primary color.
-    #[inline] pub fn on_primary_color(mut self, color: Color) -> Self {
+    #[inline]
+    pub fn on_primary_color(mut self, color: Color) -> Self {
         self.on_primary_color = color;
         self
     }
 
     /// Sets the main application background color.
-    #[inline] pub fn background_color(mut self, color: Color) -> Self {
+    #[inline]
+    pub fn background_color(mut self, color: Color) -> Self {
         self.background_color = color;
         self
     }
 
     /// Sets the preferred content color on the background color.
-    #[inline] pub fn on_background_color(mut self, color: Color) -> Self {
+    #[inline]
+    pub fn on_background_color(mut self, color: Color) -> Self {
         self.on_background_color = color;
         self
     }
 
     /// Sets the color of elevated or grouped surfaces.
-    #[inline] pub fn surface_color(mut self, color: Color) -> Self {
+    #[inline]
+    pub fn surface_color(mut self, color: Color) -> Self {
         self.surface_color = color;
         self
     }
 
     /// Sets the preferred content color on the surface color.
-    #[inline] pub fn on_surface_color(mut self, color: Color) -> Self {
+    #[inline]
+    pub fn on_surface_color(mut self, color: Color) -> Self {
         self.on_surface_color = color;
         self
     }

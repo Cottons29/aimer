@@ -37,7 +37,6 @@ use crate::stateful::start_counter;
 use crate::svg_test::start_svg_test;
 use crate::test_animation::TestFadingAnimation;
 
-
 // this is the entry point of the app
 #[main]
 pub fn my_app() {

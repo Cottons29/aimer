@@ -18,7 +18,8 @@ impl Opacity {
     /// Creates a fully opaque builder.
     ///
     /// Finish the builder with [`Opacity::child`] or [`Opacity::box_child`].
-    #[inline] pub fn new() -> Self {
+    #[inline]
+    pub fn new() -> Self {
         Self {
             child: RequiredChild,
             opacity: 1.0,
@@ -30,7 +31,8 @@ impl Opacity {
     /// The default is `1.0`. Finite values are clamped to the inclusive
     /// `0.0..=1.0` range, and `NaN` is normalized to `1.0`. Layout is
     /// unaffected.
-    #[inline] pub fn opacity(mut self, opacity: f32) -> Self {
+    #[inline]
+    pub fn opacity(mut self, opacity: f32) -> Self {
         self.opacity = normalized_opacity(opacity);
         self
     }
@@ -39,7 +41,8 @@ impl Opacity {
     ///
     /// The concrete child type is preserved and all opacity configuration is
     /// retained. Use [`Opacity::box_child`] for branch type erasure.
-    #[inline] pub fn child<W: Widget>(self, child: W) -> Opacity<W> {
+    #[inline]
+    pub fn child<W: Widget>(self, child: W) -> Opacity<W> {
         Opacity {
             child,
             opacity: self.opacity,
@@ -51,7 +54,8 @@ impl Opacity {
     /// This is equivalent to calling [`Opacity::child`] followed by
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
-    #[inline] pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+    #[inline]
+    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
         self.child(child).boxed()
     }
 }

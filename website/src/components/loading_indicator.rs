@@ -1,12 +1,12 @@
 use std::time::Duration;
 
 use aimer::animation::{AnimatedBuilder, AnimationController, Curve, RotationTransition};
+use aimer::console::info;
 use aimer::style::{FontWeight, TextAlign, TextStyle};
 use aimer::{
     AimerApp, AnyWidget, BoxAlignment, Color, Column, Container, Dimension, Opacity, SizedBox, Svg,
     SvgDocument, SvgError, Text, Widget,
 };
-use aimer::console::info;
 
 const LOADING_CYCLE: Duration = Duration::from_millis(800);
 const LOADING_ICON_SIZE: f32 = 32.0;
@@ -46,22 +46,17 @@ pub fn build_loading_indicator(text: &'static str) -> AnyWidget {
     loop_controller.set_auto_reverse(true);
     loop_controller.forward_from_first_tick();
 
-    let loading = AnimatedBuilder::new(
-        loop_controller,
-        move |item| {
-            // info!("Item: {item}");
-            Opacity::new()
-                .opacity(item)
-                .child(
-                Text::new(text).text_align(TextAlign::MidCenter).text_style(
-                    TextStyle::new()
-                        .font_size(13)
-                        .font_weight(FontWeight::Bold)
-                        .color(Color::BLACK),
-                ),
-            )
-        },
-    );
+    let loading = AnimatedBuilder::new(loop_controller, move |item| {
+        // info!("Item: {item}");
+        Opacity::new().opacity(item).child(
+            Text::new(text).text_align(TextAlign::MidCenter).text_style(
+                TextStyle::new()
+                    .font_size(13)
+                    .font_weight(FontWeight::Bold)
+                    .color(Color::BLACK),
+            ),
+        )
+    });
 
     Container::new()
         .height(LOADING_ICON_SIZE * 2f32)

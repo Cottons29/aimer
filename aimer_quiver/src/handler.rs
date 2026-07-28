@@ -306,7 +306,6 @@ impl<W: Widget + 'static> ApplicationHandler<AimerCustomAppEvent> for AimerAppli
                 }
             }
         }
-
     }
 }
 #[allow(dead_code)]

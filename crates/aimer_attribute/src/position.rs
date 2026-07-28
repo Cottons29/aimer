@@ -42,13 +42,16 @@ impl Vec2d {
     }
 
     pub fn scale(&self, s: f32) -> Vec2d {
-        Vec2d { x: self.x * s, y: self.y * s }
+        Vec2d {
+            x: self.x * s,
+            y: self.y * s,
+        }
     }
 
     pub fn abs(&self) -> Vec2d {
         Vec2d {
             x: self.x.abs(),
-            y: self.y.abs()
+            y: self.y.abs(),
         }
     }
 }

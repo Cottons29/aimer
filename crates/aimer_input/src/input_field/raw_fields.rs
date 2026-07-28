@@ -862,488 +862,491 @@ impl EventElement for RawTextField {
             // debug!("RawTextField on_event: {:?}", event);
 
             match event {
-            ElementEvent::PointerDown(pos, source, id) => {
-                let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
+                ElementEvent::PointerDown(pos, source, id) => {
+                    let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
-                if is_inside {
-                    let was_focused = self.is_focused();
-                    self.set_focused(true);
-                    self.mouse_held
-                        .set(Some(PointerKey::new(*source, *id)));
-                    self.cursor.clear_selection();
+                    if is_inside {
+                        let was_focused = self.is_focused();
+                        self.set_focused(true);
+                        self.mouse_held.set(Some(PointerKey::new(*source, *id)));
+                        self.cursor.clear_selection();
 
-                    // Double/triple-click detection
-                    let now = AnimInstant::now();
-                    let elapsed = now.duration_since(self.last_click_time.get());
-                    let prev_count = self.click_count.get();
-                    let new_count = if elapsed.as_millis() < 500 {
-                        prev_count + 1
-                    } else {
-                        1
-                    };
-                    self.click_count.set(new_count);
-                    self.last_click_time.set(now);
+                        // Double/triple-click detection
+                        let now = AnimInstant::now();
+                        let elapsed = now.duration_since(self.last_click_time.get());
+                        let prev_count = self.click_count.get();
+                        let new_count = if elapsed.as_millis() < 500 {
+                            prev_count + 1
+                        } else {
+                            1
+                        };
+                        self.click_count.set(new_count);
+                        self.last_click_time.set(now);
 
-                    // Defer cursor placement to draw() where canvas is available
-                    self.pending_click.set(Some(*pos));
-                    self.cursor.reset_blink();
-
-                    if !was_focused {
-                        self.on_focus.call(self.controller.text());
-                    }
-
-                    // Clear IME preedit on new click
-                    self.preedit_text.set(String::new());
-                    self.preedit_cursor.set(None);
-
-                    #[cfg(target_os = "ios")]
-                    ios_keyboard::show_keyboard();
-                    #[cfg(target_os = "android")]
-                    android_keyboard::show_keyboard();
-                    #[cfg(not(any(
-                        target_os = "ios",
-                        target_os = "android",
-                        target_arch = "wasm32"
-                    )))]
-                    if let Some(w) = get_window() {
-                        w.set_ime_allowed(true);
-                        if let Some((start, end)) = self.cached_bounds.pos_start_end() {
-                            use winit::dpi::{LogicalPosition, LogicalSize};
-                            let pos = LogicalPosition::new(start.x as f64, start.y as f64);
-                            let size = LogicalSize::new(
-                                (end.x - start.x).max(1.0) as f64,
-                                (end.y - start.y).max(1.0) as f64,
-                            );
-                            w.set_ime_cursor_area(pos, size);
-                        }
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    wasm_request_keyboard(true);
-                    true
-                } else {
-                    if self.mouse_held.get().is_some() {
-                        return false;
-                    }
-                    self.set_focused(false);
-                    self.on_blur.call(self.controller.text());
-                    #[cfg(target_os = "ios")]
-                    ios_keyboard::dismiss_keyboard();
-                    #[cfg(target_os = "android")]
-                    android_keyboard::dismiss_keyboard();
-                    if let Some(w) = get_window() {
-                        w.set_ime_allowed(false);
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    wasm_request_keyboard(false);
-                    false
-                }
-            }
-            ElementEvent::CharInput { ch, action, .. } => {
-                if !self.is_focused() || self.read_only {
-                    return false;
-                }
-                if *action == KeyAction::Released {
-                    return false;
-                }
-
-                // Enforce max_length: reject if at or over the limit
-                if let Some(max) = self.max_length {
-                    // If there's a selection, the deleted chars free up space
-                    let selected_len = self
-                        .cursor
-                        .selection_range()
-                        .map(|(s, e)| e - s)
-                        .unwrap_or(0);
-                    if self.controller.char_count().saturating_sub(selected_len) >= max {
-                        return false;
-                    }
-                }
-
-                // If there is a selection, delete it first
-                if let Some((start, end)) = self.cursor.selection_range() {
-                    self.controller.delete_range(start, end);
-                    self.cursor.set_offset(start);
-                    self.cursor.clear_selection();
-                }
-
-                let offset = self.cursor.offset();
-                unsafe {
-                    self.controller.insert_char(*ch, offset);
-                }
-                self.cursor.set_offset(offset + 1);
-                self.cursor.reset_blink();
-                self.on_changed.call(self.controller.text());
-                true
-            }
-            ElementEvent::KeyInput {
-                key,
-                action,
-                modifiers,
-            } => {
-                if !self.is_focused() {
-                    return false;
-                }
-                if *action == KeyAction::Released {
-                    return false;
-                }
-
-                let is_shortcut = modifiers.ctrl || modifiers.meta;
-
-                // Handle Ctrl/Cmd shortcuts
-                if is_shortcut {
-                    let result = match key {
-                        NamedKey::Other(k) if k == "a" => {
-                            // Select all
-                            self.cursor.set_selection_anchor(Some(0));
-                            self.cursor.set_offset(self.controller.char_count());
-                            true
-                        }
-                        NamedKey::Other(k) if k == "c" => {
-                            // Copy
-                            if let Some((start, end)) = self.cursor.selection_range() {
-                                let selected = self.controller.get_range(start, end);
-                                clipboard_write(&selected);
-                            }
-                            true
-                        }
-                        NamedKey::Other(k) if k == "x" && !self.read_only => {
-                            // Cut
-                            if let Some((start, end)) = self.cursor.selection_range() {
-                                let selected = self.controller.delete_range(start, end);
-                                clipboard_write(&selected);
-                                self.cursor.set_offset(start);
-                                self.cursor.clear_selection();
-                                self.on_changed.call(self.controller.text());
-                            }
-                            true
-                        }
-                        NamedKey::Other(k) if k == "v" && !self.read_only => {
-                            // Paste
-                            if let Some(text) = clipboard_read() {
-                                // Delete selection first if any
-                                if let Some((start, end)) = self.cursor.selection_range() {
-                                    self.controller.delete_range(start, end);
-                                    self.cursor.set_offset(start);
-                                    self.cursor.clear_selection();
-                                }
-                                let offset = self.cursor.offset();
-                                let char_count = text.chars().count();
-                                self.controller.insert_str(&text, offset);
-                                self.cursor.set_offset(offset + char_count);
-                                self.on_changed.call(self.controller.text());
-                            }
-                            true
-                        }
-                        NamedKey::Other(k) if k == "z" && !modifiers.shift && !self.read_only => {
-                            // Undo
-                            if self.controller.undo() {
-                                let len = self.controller.char_count();
-                                let off = self.cursor.offset();
-                                if off > len {
-                                    self.cursor.set_offset(len);
-                                }
-                                self.on_changed.call(self.controller.text());
-                            }
-                            true
-                        }
-                        NamedKey::Other(k) if k == "z" && modifiers.shift && !self.read_only => {
-                            // Redo (Ctrl+Shift+Z)
-                            if self.controller.redo() {
-                                let len = self.controller.char_count();
-                                let off = self.cursor.offset();
-                                if off > len {
-                                    self.cursor.set_offset(len);
-                                }
-                                self.on_changed.call(self.controller.text());
-                            }
-                            true
-                        }
-                        NamedKey::Other(k) if k == "y" && !self.read_only => {
-                            // Redo (Ctrl+Y — Windows convention)
-                            if self.controller.redo() {
-                                let len = self.controller.char_count();
-                                let off = self.cursor.offset();
-                                if off > len {
-                                    self.cursor.set_offset(len);
-                                }
-                                self.on_changed.call(self.controller.text());
-                            }
-                            true
-                        }
-                        NamedKey::Enter => {
-                            // Ctrl+Enter / Cmd+Enter: submit even in multi-line mode
-                            self.cursor.clear_selection();
-                            self.on_submitted.call(self.controller.text());
-                            true
-                        }
-                        _ => false,
-                    };
-                    if result {
+                        // Defer cursor placement to draw() where canvas is available
+                        self.pending_click.set(Some(*pos));
                         self.cursor.reset_blink();
-                        return true;
-                    }
-                }
 
-                let result = match key {
-                    NamedKey::Backspace if !self.read_only => {
-                        if let Some((start, end)) = self.cursor.selection_range() {
-                            self.controller.delete_range(start, end);
-                            self.cursor.set_offset(start);
-                            self.cursor.clear_selection();
-                            self.on_changed.call(self.controller.text());
-                        } else {
-                            let offset = self.cursor.offset();
-                            if offset > 0 {
-                                self.controller.delete_char(offset - 1);
-                                self.cursor.set_offset(offset - 1);
-                                self.on_changed.call(self.controller.text());
+                        if !was_focused {
+                            self.on_focus.call(self.controller.text());
+                        }
+
+                        // Clear IME preedit on new click
+                        self.preedit_text.set(String::new());
+                        self.preedit_cursor.set(None);
+
+                        #[cfg(target_os = "ios")]
+                        ios_keyboard::show_keyboard();
+                        #[cfg(target_os = "android")]
+                        android_keyboard::show_keyboard();
+                        #[cfg(not(any(
+                            target_os = "ios",
+                            target_os = "android",
+                            target_arch = "wasm32"
+                        )))]
+                        if let Some(w) = get_window() {
+                            w.set_ime_allowed(true);
+                            if let Some((start, end)) = self.cached_bounds.pos_start_end() {
+                                use winit::dpi::{LogicalPosition, LogicalSize};
+                                let pos = LogicalPosition::new(start.x as f64, start.y as f64);
+                                let size = LogicalSize::new(
+                                    (end.x - start.x).max(1.0) as f64,
+                                    (end.y - start.y).max(1.0) as f64,
+                                );
+                                w.set_ime_cursor_area(pos, size);
                             }
                         }
+                        #[cfg(target_arch = "wasm32")]
+                        wasm_request_keyboard(true);
                         true
-                    }
-                    NamedKey::Delete if !self.read_only => {
-                        if let Some((start, end)) = self.cursor.selection_range() {
-                            self.controller.delete_range(start, end);
-                            self.cursor.set_offset(start);
-                            self.cursor.clear_selection();
-                            self.on_changed.call(self.controller.text());
-                        } else {
-                            let offset = self.cursor.offset();
-                            if offset < self.controller.char_count() {
-                                self.controller.delete_char(offset);
-                                self.on_changed.call(self.controller.text());
-                            }
+                    } else {
+                        if self.mouse_held.get().is_some() {
+                            return false;
                         }
-                        true
-                    }
-                    NamedKey::Enter
-                        if !self.read_only && self.max_lines.is_some_and(|max| max > 1) =>
-                    {
-                        // Multi-line mode: Enter inserts newline
-                        if let Some(max) = self.max_lines
-                            && self.line_count() >= max
-                        {
-                            return true;
-                        }
-                        // Delete selection first
-                        if let Some((start, end)) = self.cursor.selection_range() {
-                            self.controller.delete_range(start, end);
-                            self.cursor.set_offset(start);
-                            self.cursor.clear_selection();
-                        }
-                        let offset = self.cursor.offset();
-                        unsafe {
-                            self.controller.insert_char('\n', offset);
-                        }
-                        self.cursor.set_offset(offset + 1);
-                        self.on_changed.call(self.controller.text());
-                        true
-                    }
-                    NamedKey::Enter => {
-                        // Single-line mode (or Ctrl+Enter in multi-line): submit
-                        self.cursor.clear_selection();
-                        self.on_submitted.call(self.controller.text());
-                        true
-                    }
-                    NamedKey::ArrowLeft => {
-                        let offset = self.cursor.offset();
-                        if modifiers.shift {
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
-                            }
-                            if offset > 0 {
-                                self.cursor.set_offset(offset - 1);
-                            }
-                        } else {
-                            if let Some((start, _end)) = self.cursor.selection_range() {
-                                self.cursor.set_offset(start);
-                            } else if offset > 0 {
-                                self.cursor.set_offset(offset - 1);
-                            }
-                            self.cursor.clear_selection();
-                        }
-                        true
-                    }
-                    NamedKey::ArrowRight => {
-                        let offset = self.cursor.offset();
-                        let len = self.controller.char_count();
-                        if modifiers.shift {
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
-                            }
-                            if offset < len {
-                                self.cursor.set_offset(offset + 1);
-                            }
-                        } else {
-                            if let Some((_start, end)) = self.cursor.selection_range() {
-                                self.cursor.set_offset(end);
-                            } else if offset < len {
-                                self.cursor.set_offset(offset + 1);
-                            }
-                            self.cursor.clear_selection();
-                        }
-                        true
-                    }
-                    NamedKey::ArrowUp => {
-                        let text = self.controller.text();
-                        let offset = self.cursor.offset();
-                        let chars: Vec<char> = text.chars().collect();
-                        // Find start of current line
-                        let line_start = chars[..offset]
-                            .iter()
-                            .rposition(|&c| c == '\n')
-                            .map(|p| p + 1)
-                            .unwrap_or(0);
-                        if line_start == 0 {
-                            return true;
-                        } // already at first line
-                        let col = offset - line_start;
-                        // Find start of previous line
-                        let prev_line_end = line_start - 1;
-                        let prev_line_start = chars[..prev_line_end]
-                            .iter()
-                            .rposition(|&c| c == '\n')
-                            .map(|p| p + 1)
-                            .unwrap_or(0);
-                        let prev_line_len = prev_line_end - prev_line_start;
-                        let new_offset = prev_line_start + col.min(prev_line_len);
-                        if modifiers.shift {
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
-                            }
-                        } else {
-                            self.cursor.clear_selection();
-                        }
-                        self.cursor.set_offset(new_offset);
-                        true
-                    }
-                    NamedKey::ArrowDown => {
-                        let text = self.controller.text();
-                        let offset = self.cursor.offset();
-                        let chars: Vec<char> = text.chars().collect();
-                        // Find end of current line
-                        let line_end = chars[offset..]
-                            .iter()
-                            .position(|&c| c == '\n')
-                            .map(|p| offset + p)
-                            .unwrap_or(chars.len());
-                        if line_end >= chars.len() {
-                            return true;
-                        } // already at last line
-                        let line_start = chars[..offset]
-                            .iter()
-                            .rposition(|&c| c == '\n')
-                            .map(|p| p + 1)
-                            .unwrap_or(0);
-                        let col = offset - line_start;
-                        // Find next line
-                        let next_line_start = line_end + 1;
-                        let next_line_end = chars[next_line_start..]
-                            .iter()
-                            .position(|&c| c == '\n')
-                            .map(|p| next_line_start + p)
-                            .unwrap_or(chars.len());
-                        let next_line_len = next_line_end - next_line_start;
-                        let new_offset = next_line_start + col.min(next_line_len);
-                        if modifiers.shift {
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
-                            }
-                        } else {
-                            self.cursor.clear_selection();
-                        }
-                        self.cursor.set_offset(new_offset);
-                        true
-                    }
-                    NamedKey::Home => {
-                        if modifiers.shift {
-                            let offset = self.cursor.offset();
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
-                            }
-                        } else {
-                            self.cursor.clear_selection();
-                        }
-                        self.cursor.set_offset(0);
-                        true
-                    }
-                    NamedKey::End => {
-                        if modifiers.shift {
-                            let offset = self.cursor.offset();
-                            if self.cursor.selection_anchor().is_none() {
-                                self.cursor.set_selection_anchor(Some(offset));
-                            }
-                        } else {
-                            self.cursor.clear_selection();
-                        }
-                        self.cursor.set_offset(self.controller.char_count());
-                        true
-                    }
-                    NamedKey::Escape => {
-                        self.cursor.clear_selection();
                         self.set_focused(false);
                         self.on_blur.call(self.controller.text());
                         #[cfg(target_os = "ios")]
                         ios_keyboard::dismiss_keyboard();
                         #[cfg(target_os = "android")]
                         android_keyboard::dismiss_keyboard();
-                        true
+                        if let Some(w) = get_window() {
+                            w.set_ime_allowed(false);
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        wasm_request_keyboard(false);
+                        false
                     }
-                    _ => false,
-                };
-                if result {
+                }
+                ElementEvent::CharInput { ch, action, .. } => {
+                    if !self.is_focused() || self.read_only {
+                        return false;
+                    }
+                    if *action == KeyAction::Released {
+                        return false;
+                    }
+
+                    // Enforce max_length: reject if at or over the limit
+                    if let Some(max) = self.max_length {
+                        // If there's a selection, the deleted chars free up space
+                        let selected_len = self
+                            .cursor
+                            .selection_range()
+                            .map(|(s, e)| e - s)
+                            .unwrap_or(0);
+                        if self.controller.char_count().saturating_sub(selected_len) >= max {
+                            return false;
+                        }
+                    }
+
+                    // If there is a selection, delete it first
+                    if let Some((start, end)) = self.cursor.selection_range() {
+                        self.controller.delete_range(start, end);
+                        self.cursor.set_offset(start);
+                        self.cursor.clear_selection();
+                    }
+
+                    let offset = self.cursor.offset();
+                    unsafe {
+                        self.controller.insert_char(*ch, offset);
+                    }
+                    self.cursor.set_offset(offset + 1);
                     self.cursor.reset_blink();
+                    self.on_changed.call(self.controller.text());
+                    true
                 }
-                result
-            }
-            ElementEvent::PointerMove(pos, _, _) => {
-                let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
-                let was_hovered = self.is_hovered();
-                if let Some(w) = get_window() {
-                    if is_inside || self.mouse_held.get().is_some() {
-                        w.set_cursor(winit::window::CursorIcon::Text);
+                ElementEvent::KeyInput {
+                    key,
+                    action,
+                    modifiers,
+                } => {
+                    if !self.is_focused() {
+                        return false;
+                    }
+                    if *action == KeyAction::Released {
+                        return false;
+                    }
+
+                    let is_shortcut = modifiers.ctrl || modifiers.meta;
+
+                    // Handle Ctrl/Cmd shortcuts
+                    if is_shortcut {
+                        let result = match key {
+                            NamedKey::Other(k) if k == "a" => {
+                                // Select all
+                                self.cursor.set_selection_anchor(Some(0));
+                                self.cursor.set_offset(self.controller.char_count());
+                                true
+                            }
+                            NamedKey::Other(k) if k == "c" => {
+                                // Copy
+                                if let Some((start, end)) = self.cursor.selection_range() {
+                                    let selected = self.controller.get_range(start, end);
+                                    clipboard_write(&selected);
+                                }
+                                true
+                            }
+                            NamedKey::Other(k) if k == "x" && !self.read_only => {
+                                // Cut
+                                if let Some((start, end)) = self.cursor.selection_range() {
+                                    let selected = self.controller.delete_range(start, end);
+                                    clipboard_write(&selected);
+                                    self.cursor.set_offset(start);
+                                    self.cursor.clear_selection();
+                                    self.on_changed.call(self.controller.text());
+                                }
+                                true
+                            }
+                            NamedKey::Other(k) if k == "v" && !self.read_only => {
+                                // Paste
+                                if let Some(text) = clipboard_read() {
+                                    // Delete selection first if any
+                                    if let Some((start, end)) = self.cursor.selection_range() {
+                                        self.controller.delete_range(start, end);
+                                        self.cursor.set_offset(start);
+                                        self.cursor.clear_selection();
+                                    }
+                                    let offset = self.cursor.offset();
+                                    let char_count = text.chars().count();
+                                    self.controller.insert_str(&text, offset);
+                                    self.cursor.set_offset(offset + char_count);
+                                    self.on_changed.call(self.controller.text());
+                                }
+                                true
+                            }
+                            NamedKey::Other(k)
+                                if k == "z" && !modifiers.shift && !self.read_only =>
+                            {
+                                // Undo
+                                if self.controller.undo() {
+                                    let len = self.controller.char_count();
+                                    let off = self.cursor.offset();
+                                    if off > len {
+                                        self.cursor.set_offset(len);
+                                    }
+                                    self.on_changed.call(self.controller.text());
+                                }
+                                true
+                            }
+                            NamedKey::Other(k)
+                                if k == "z" && modifiers.shift && !self.read_only =>
+                            {
+                                // Redo (Ctrl+Shift+Z)
+                                if self.controller.redo() {
+                                    let len = self.controller.char_count();
+                                    let off = self.cursor.offset();
+                                    if off > len {
+                                        self.cursor.set_offset(len);
+                                    }
+                                    self.on_changed.call(self.controller.text());
+                                }
+                                true
+                            }
+                            NamedKey::Other(k) if k == "y" && !self.read_only => {
+                                // Redo (Ctrl+Y — Windows convention)
+                                if self.controller.redo() {
+                                    let len = self.controller.char_count();
+                                    let off = self.cursor.offset();
+                                    if off > len {
+                                        self.cursor.set_offset(len);
+                                    }
+                                    self.on_changed.call(self.controller.text());
+                                }
+                                true
+                            }
+                            NamedKey::Enter => {
+                                // Ctrl+Enter / Cmd+Enter: submit even in multi-line mode
+                                self.cursor.clear_selection();
+                                self.on_submitted.call(self.controller.text());
+                                true
+                            }
+                            _ => false,
+                        };
+                        if result {
+                            self.cursor.reset_blink();
+                            return true;
+                        }
+                    }
+
+                    let result = match key {
+                        NamedKey::Backspace if !self.read_only => {
+                            if let Some((start, end)) = self.cursor.selection_range() {
+                                self.controller.delete_range(start, end);
+                                self.cursor.set_offset(start);
+                                self.cursor.clear_selection();
+                                self.on_changed.call(self.controller.text());
+                            } else {
+                                let offset = self.cursor.offset();
+                                if offset > 0 {
+                                    self.controller.delete_char(offset - 1);
+                                    self.cursor.set_offset(offset - 1);
+                                    self.on_changed.call(self.controller.text());
+                                }
+                            }
+                            true
+                        }
+                        NamedKey::Delete if !self.read_only => {
+                            if let Some((start, end)) = self.cursor.selection_range() {
+                                self.controller.delete_range(start, end);
+                                self.cursor.set_offset(start);
+                                self.cursor.clear_selection();
+                                self.on_changed.call(self.controller.text());
+                            } else {
+                                let offset = self.cursor.offset();
+                                if offset < self.controller.char_count() {
+                                    self.controller.delete_char(offset);
+                                    self.on_changed.call(self.controller.text());
+                                }
+                            }
+                            true
+                        }
+                        NamedKey::Enter
+                            if !self.read_only && self.max_lines.is_some_and(|max| max > 1) =>
+                        {
+                            // Multi-line mode: Enter inserts newline
+                            if let Some(max) = self.max_lines
+                                && self.line_count() >= max
+                            {
+                                return true;
+                            }
+                            // Delete selection first
+                            if let Some((start, end)) = self.cursor.selection_range() {
+                                self.controller.delete_range(start, end);
+                                self.cursor.set_offset(start);
+                                self.cursor.clear_selection();
+                            }
+                            let offset = self.cursor.offset();
+                            unsafe {
+                                self.controller.insert_char('\n', offset);
+                            }
+                            self.cursor.set_offset(offset + 1);
+                            self.on_changed.call(self.controller.text());
+                            true
+                        }
+                        NamedKey::Enter => {
+                            // Single-line mode (or Ctrl+Enter in multi-line): submit
+                            self.cursor.clear_selection();
+                            self.on_submitted.call(self.controller.text());
+                            true
+                        }
+                        NamedKey::ArrowLeft => {
+                            let offset = self.cursor.offset();
+                            if modifiers.shift {
+                                if self.cursor.selection_anchor().is_none() {
+                                    self.cursor.set_selection_anchor(Some(offset));
+                                }
+                                if offset > 0 {
+                                    self.cursor.set_offset(offset - 1);
+                                }
+                            } else {
+                                if let Some((start, _end)) = self.cursor.selection_range() {
+                                    self.cursor.set_offset(start);
+                                } else if offset > 0 {
+                                    self.cursor.set_offset(offset - 1);
+                                }
+                                self.cursor.clear_selection();
+                            }
+                            true
+                        }
+                        NamedKey::ArrowRight => {
+                            let offset = self.cursor.offset();
+                            let len = self.controller.char_count();
+                            if modifiers.shift {
+                                if self.cursor.selection_anchor().is_none() {
+                                    self.cursor.set_selection_anchor(Some(offset));
+                                }
+                                if offset < len {
+                                    self.cursor.set_offset(offset + 1);
+                                }
+                            } else {
+                                if let Some((_start, end)) = self.cursor.selection_range() {
+                                    self.cursor.set_offset(end);
+                                } else if offset < len {
+                                    self.cursor.set_offset(offset + 1);
+                                }
+                                self.cursor.clear_selection();
+                            }
+                            true
+                        }
+                        NamedKey::ArrowUp => {
+                            let text = self.controller.text();
+                            let offset = self.cursor.offset();
+                            let chars: Vec<char> = text.chars().collect();
+                            // Find start of current line
+                            let line_start = chars[..offset]
+                                .iter()
+                                .rposition(|&c| c == '\n')
+                                .map(|p| p + 1)
+                                .unwrap_or(0);
+                            if line_start == 0 {
+                                return true;
+                            } // already at first line
+                            let col = offset - line_start;
+                            // Find start of previous line
+                            let prev_line_end = line_start - 1;
+                            let prev_line_start = chars[..prev_line_end]
+                                .iter()
+                                .rposition(|&c| c == '\n')
+                                .map(|p| p + 1)
+                                .unwrap_or(0);
+                            let prev_line_len = prev_line_end - prev_line_start;
+                            let new_offset = prev_line_start + col.min(prev_line_len);
+                            if modifiers.shift {
+                                if self.cursor.selection_anchor().is_none() {
+                                    self.cursor.set_selection_anchor(Some(offset));
+                                }
+                            } else {
+                                self.cursor.clear_selection();
+                            }
+                            self.cursor.set_offset(new_offset);
+                            true
+                        }
+                        NamedKey::ArrowDown => {
+                            let text = self.controller.text();
+                            let offset = self.cursor.offset();
+                            let chars: Vec<char> = text.chars().collect();
+                            // Find end of current line
+                            let line_end = chars[offset..]
+                                .iter()
+                                .position(|&c| c == '\n')
+                                .map(|p| offset + p)
+                                .unwrap_or(chars.len());
+                            if line_end >= chars.len() {
+                                return true;
+                            } // already at last line
+                            let line_start = chars[..offset]
+                                .iter()
+                                .rposition(|&c| c == '\n')
+                                .map(|p| p + 1)
+                                .unwrap_or(0);
+                            let col = offset - line_start;
+                            // Find next line
+                            let next_line_start = line_end + 1;
+                            let next_line_end = chars[next_line_start..]
+                                .iter()
+                                .position(|&c| c == '\n')
+                                .map(|p| next_line_start + p)
+                                .unwrap_or(chars.len());
+                            let next_line_len = next_line_end - next_line_start;
+                            let new_offset = next_line_start + col.min(next_line_len);
+                            if modifiers.shift {
+                                if self.cursor.selection_anchor().is_none() {
+                                    self.cursor.set_selection_anchor(Some(offset));
+                                }
+                            } else {
+                                self.cursor.clear_selection();
+                            }
+                            self.cursor.set_offset(new_offset);
+                            true
+                        }
+                        NamedKey::Home => {
+                            if modifiers.shift {
+                                let offset = self.cursor.offset();
+                                if self.cursor.selection_anchor().is_none() {
+                                    self.cursor.set_selection_anchor(Some(offset));
+                                }
+                            } else {
+                                self.cursor.clear_selection();
+                            }
+                            self.cursor.set_offset(0);
+                            true
+                        }
+                        NamedKey::End => {
+                            if modifiers.shift {
+                                let offset = self.cursor.offset();
+                                if self.cursor.selection_anchor().is_none() {
+                                    self.cursor.set_selection_anchor(Some(offset));
+                                }
+                            } else {
+                                self.cursor.clear_selection();
+                            }
+                            self.cursor.set_offset(self.controller.char_count());
+                            true
+                        }
+                        NamedKey::Escape => {
+                            self.cursor.clear_selection();
+                            self.set_focused(false);
+                            self.on_blur.call(self.controller.text());
+                            #[cfg(target_os = "ios")]
+                            ios_keyboard::dismiss_keyboard();
+                            #[cfg(target_os = "android")]
+                            android_keyboard::dismiss_keyboard();
+                            true
+                        }
+                        _ => false,
+                    };
+                    if result {
+                        self.cursor.reset_blink();
+                    }
+                    result
+                }
+                ElementEvent::PointerMove(pos, _, _) => {
+                    let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
+                    let was_hovered = self.is_hovered();
+                    if let Some(w) = get_window() {
+                        if is_inside || self.mouse_held.get().is_some() {
+                            w.set_cursor(winit::window::CursorIcon::Text);
+                        } else {
+                            w.set_cursor(winit::window::CursorIcon::Default);
+                        }
+                    }
+                    self.set_hovered(is_inside);
+
+                    // Drag-to-select: when mouse is held, defer position resolution to draw()
+                    if owns_selection_pointer(self.mouse_held.get(), event) {
+                        self.pending_click.set(Some(*pos));
+                        return true;
+                    }
+
+                    was_hovered != is_inside
+                }
+                ElementEvent::PointerUp(_pos, _, _) => {
+                    if owns_selection_pointer(self.mouse_held.get(), event) {
+                        self.mouse_held.set(None);
+                        true
                     } else {
-                        w.set_cursor(winit::window::CursorIcon::Default);
+                        false
                     }
                 }
-                self.set_hovered(is_inside);
-
-                // Drag-to-select: when mouse is held, defer position resolution to draw()
-                if owns_selection_pointer(self.mouse_held.get(), event) {
-                    self.pending_click.set(Some(*pos));
-                    return true;
-                }
-
-                was_hovered != is_inside
-            }
-            ElementEvent::PointerUp(_pos, _, _) => {
-                if owns_selection_pointer(self.mouse_held.get(), event) {
-                    self.mouse_held.set(None);
+                ElementEvent::ImePreedit { text, cursor } => {
+                    if !self.is_focused() {
+                        return false;
+                    }
+                    self.preedit_text.set(text.clone());
+                    self.preedit_cursor.set(*cursor);
                     true
-                } else {
-                    false
                 }
-            }
-            ElementEvent::ImePreedit { text, cursor } => {
-                if !self.is_focused() {
-                    return false;
+                ElementEvent::Cancel => {
+                    self.set_focused(false);
+                    self.mouse_held.set(None);
+                    self.on_blur.call(self.controller.text());
+                    self.preedit_text.set(String::new());
+                    self.preedit_cursor.set(None);
+                    #[cfg(target_os = "ios")]
+                    ios_keyboard::dismiss_keyboard();
+                    #[cfg(target_os = "android")]
+                    android_keyboard::dismiss_keyboard();
+                    true
                 }
-                self.preedit_text.set(text.clone());
-                self.preedit_cursor.set(*cursor);
-                true
-            }
-            ElementEvent::Cancel => {
-                self.set_focused(false);
-                self.mouse_held.set(None);
-                self.on_blur.call(self.controller.text());
-                self.preedit_text.set(String::new());
-                self.preedit_cursor.set(None);
-                #[cfg(target_os = "ios")]
-                ios_keyboard::dismiss_keyboard();
-                #[cfg(target_os = "android")]
-                android_keyboard::dismiss_keyboard();
-                true
-            }
                 _ => false,
             }
         })();
@@ -1502,9 +1505,7 @@ impl Drawable for RawTextField {
                 _ => {
                     // For drag-to-select: set anchor to the click position (not the old cursor)
                     // so the selection extends from the click point to the drag destination.
-                    if self.mouse_held.get().is_some()
-                        && self.cursor.selection_anchor().is_none()
-                    {
+                    if self.mouse_held.get().is_some() && self.cursor.selection_anchor().is_none() {
                         self.cursor.set_selection_anchor(Some(click_offset));
                     }
                     self.cursor.set_offset(click_offset);

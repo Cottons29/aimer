@@ -377,12 +377,7 @@ mod tests {
 
     #[test]
     fn compatible_generated_child_keeps_identity_across_rebuild() {
-        let element = StatelessElement::new(
-            Leaf.boxed(),
-            |_| Leaf.boxed(),
-            None,
-            "Rebuildable",
-        );
+        let element = StatelessElement::new(Leaf.boxed(), |_| Leaf.boxed(), None, "Rebuildable");
         let original_id = unsafe { &*element.child.0.get() }.id();
         let generation = crate::element_tree_generation();
         element.mark_needs_rebuild();

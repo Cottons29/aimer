@@ -12,8 +12,8 @@ use aimer_utils::AnimInstant;
 use aimer_utils::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, LayoutCache, LayoutElement, Rebuildable,
-    VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventResult, LayoutCache, LayoutElement,
+    Rebuildable, VisitorElement, Widget,
 };
 
 use crate::RawTextWidget;
@@ -66,7 +66,8 @@ impl TextButton {
     ///
     /// The color constants are not applied automatically; configure them with
     /// the color builders.
-    #[inline] pub fn new(label: impl Into<Rc<str>>) -> Self {
+    #[inline]
+    pub fn new(label: impl Into<Rc<str>>) -> Self {
         Self {
             disabled: false,
             label: label.into(),
@@ -82,43 +83,50 @@ impl TextButton {
     }
 
     /// Sets whether pointer interaction and hover styling are disabled.
-    #[inline] pub fn disabled(mut self, disabled: bool) -> Self {
+    #[inline]
+    pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
     /// Overrides the normal style's text color.
-    #[inline] pub fn color(mut self, color: impl Into<Color>) -> Self {
+    #[inline]
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = Some(color.into());
         self
     }
 
     /// Overrides the hover style's text color.
-    #[inline] pub fn hover_color(mut self, color: impl Into<Color>) -> Self {
+    #[inline]
+    pub fn hover_color(mut self, color: impl Into<Color>) -> Self {
         self.hover_color = Some(color.into());
         self
     }
 
     /// Overrides the disabled style's text color.
-    #[inline] pub fn disabled_color(mut self, color: impl Into<Color>) -> Self {
+    #[inline]
+    pub fn disabled_color(mut self, color: impl Into<Color>) -> Self {
         self.disabled_color = Some(color.into());
         self
     }
 
     /// Replaces the style used while enabled and not hovered.
-    #[inline] pub fn style(mut self, style: TextStyle) -> Self {
+    #[inline]
+    pub fn style(mut self, style: TextStyle) -> Self {
         self.style = style;
         self
     }
 
     /// Replaces the style used while the mouse is over an enabled button.
-    #[inline] pub fn hover_style(mut self, style: TextStyle) -> Self {
+    #[inline]
+    pub fn hover_style(mut self, style: TextStyle) -> Self {
         self.hover_style = style;
         self
     }
 
     /// Replaces the style used while disabled.
-    #[inline] pub fn disabled_style(mut self, style: TextStyle) -> Self {
+    #[inline]
+    pub fn disabled_style(mut self, style: TextStyle) -> Self {
         self.disabled_style = style;
         self
     }
@@ -127,14 +135,16 @@ impl TextButton {
     ///
     /// Both the first and second presses of a double press invoke this
     /// callback.
-    #[inline] pub fn on_press(mut self, callback: impl Into<VoidCallback>) -> Self {
+    #[inline]
+    pub fn on_press(mut self, callback: impl Into<VoidCallback>) -> Self {
         self.on_press = callback.into();
         self
     }
 
     /// Sets the callback additionally invoked when two presses finish within
     /// 500 milliseconds.
-    #[inline] pub fn on_double_press(mut self, callback: impl Into<VoidCallback>) -> Self {
+    #[inline]
+    pub fn on_double_press(mut self, callback: impl Into<VoidCallback>) -> Self {
         self.on_double_press = callback.into();
         self
     }
@@ -527,14 +537,18 @@ mod tests {
         let size = button.layout(&ctx);
 
         assert_eq!(size, intrinsic);
-        assert!(!button.on_event(&ElementEvent::PointerDown(
-            Vec2d {
-                x: intrinsic.width + 1.0,
-                y: intrinsic.height / 2.0
-            },
-            PointerSource::Mouse,
-            0,
-        )).is_consumed());
+        assert!(
+            !button
+                .on_event(&ElementEvent::PointerDown(
+                    Vec2d {
+                        x: intrinsic.width + 1.0,
+                        y: intrinsic.height / 2.0
+                    },
+                    PointerSource::Mouse,
+                    0,
+                ))
+                .is_consumed()
+        );
     }
 
     #[test]
@@ -553,14 +567,18 @@ mod tests {
 
         assert_eq!(size.width, 30.0);
         assert!(size.height > 17.0);
-        assert!(!button.on_event(&ElementEvent::PointerDown(
-            Vec2d {
-                x: 31.0,
-                y: size.height / 2.0
-            },
-            PointerSource::Mouse,
-            0,
-        )).is_consumed());
+        assert!(
+            !button
+                .on_event(&ElementEvent::PointerDown(
+                    Vec2d {
+                        x: 31.0,
+                        y: size.height / 2.0
+                    },
+                    PointerSource::Mouse,
+                    0,
+                ))
+                .is_consumed()
+        );
     }
 
     #[test]
@@ -577,22 +595,30 @@ mod tests {
         let size = button.layout(&ctx);
 
         assert!(size.height > 17.0);
-        assert!(button.on_event(&ElementEvent::PointerDown(
-            Vec2d {
-                x: 1.0,
-                y: size.height - 1.0
-            },
-            PointerSource::Mouse,
-            0,
-        )).is_consumed());
-        assert!(!button.on_event(&ElementEvent::PointerDown(
-            Vec2d {
-                x: size.width - 1.0,
-                y: size.height - 1.0
-            },
-            PointerSource::Mouse,
-            0,
-        )).is_consumed());
+        assert!(
+            button
+                .on_event(&ElementEvent::PointerDown(
+                    Vec2d {
+                        x: 1.0,
+                        y: size.height - 1.0
+                    },
+                    PointerSource::Mouse,
+                    0,
+                ))
+                .is_consumed()
+        );
+        assert!(
+            !button
+                .on_event(&ElementEvent::PointerDown(
+                    Vec2d {
+                        x: size.width - 1.0,
+                        y: size.height - 1.0
+                    },
+                    PointerSource::Mouse,
+                    0,
+                ))
+                .is_consumed()
+        );
     }
 
     #[test]

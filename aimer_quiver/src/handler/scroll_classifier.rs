@@ -89,10 +89,7 @@ impl ScrollClassifier {
     /// Touchpads are identified by fast cadence or two-axis variation, while a
     /// wheel is identified by sparse, repeated pulses. Ambiguous histories
     /// remain unknown rather than forcing a potentially jarring device switch.
-    fn classify_samples(
-        samples: &[PhysicalPosition<f64>],
-        avg_gap_ms: f64,
-    ) -> ScrollSource {
+    fn classify_samples(samples: &[PhysicalPosition<f64>], avg_gap_ms: f64) -> ScrollSource {
         if samples.len() < 2 {
             return ScrollSource::Unknown;
         }

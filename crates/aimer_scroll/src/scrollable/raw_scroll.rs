@@ -6,8 +6,8 @@ use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_macro::Rebuildable;
-use aimer_widget::{Element, EventDispatcher};
 use aimer_widget::base::*;
+use aimer_widget::{Element, EventDispatcher};
 
 pub use crate::scrollable::controller::DragMode;
 use crate::scrollable::controller::ScrollState;

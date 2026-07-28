@@ -86,9 +86,7 @@ pub use crate::components::drawable::Drawable;
 pub use crate::components::element::{
     Element, ElementId, ElementPath, EventDispatcher, element_tree_generation,
 };
-pub use crate::components::event_element::{
-    CaptureRequest, EventElement, EventResult, PointerKey,
-};
+pub use crate::components::event_element::{CaptureRequest, EventElement, EventResult, PointerKey};
 pub use crate::components::layout_element::LayoutElement;
 pub use crate::components::rebuildable::Rebuildable;
 pub use crate::components::visitor_element::VisitorElement;

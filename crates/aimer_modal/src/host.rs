@@ -338,7 +338,8 @@ fn dispatch_hosted_event(
     event: &ElementEvent,
 ) -> EventResult {
     let pointer = event_pointer_key(event);
-    let was_captured = pointer.is_some_and(|pointer| entry.dispatcher.borrow().is_captured(pointer));
+    let was_captured =
+        pointer.is_some_and(|pointer| entry.dispatcher.borrow().is_captured(pointer));
     let result = entry
         .dispatcher
         .borrow_mut()
@@ -579,10 +580,12 @@ mod tests {
         fn on_event(&self, event: &ElementEvent) -> EventResult {
             self.events.set(self.events.get() + 1);
             match event {
-                ElementEvent::PointerDown(_, source, id) => EventResult::consumed()
-                    .with_pointer_capture(PointerKey::new(*source, *id)),
-                ElementEvent::PointerUp(_, source, id) => EventResult::consumed()
-                    .with_pointer_release(PointerKey::new(*source, *id)),
+                ElementEvent::PointerDown(_, source, id) => {
+                    EventResult::consumed().with_pointer_capture(PointerKey::new(*source, *id))
+                }
+                ElementEvent::PointerUp(_, source, id) => {
+                    EventResult::consumed().with_pointer_release(PointerKey::new(*source, *id))
+                }
                 _ => EventResult::consumed(),
             }
         }
@@ -616,31 +619,19 @@ mod tests {
         let down = dispatch_hosted_event(
             &entry,
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(
-                Vec2d { x: 5.0, y: 5.0 },
-                pointer.source,
-                pointer.id,
-            ),
+            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
         );
         assert_eq!(down.capture_request(), CaptureRequest::Capture(pointer));
 
         let _ = dispatch_hosted_event(
             &entry,
             Vec2d { x: 50.0, y: 50.0 },
-            &ElementEvent::PointerMove(
-                Vec2d { x: 50.0, y: 50.0 },
-                pointer.source,
-                pointer.id,
-            ),
+            &ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, pointer.source, pointer.id),
         );
         let up = dispatch_hosted_event(
             &entry,
             Vec2d { x: 50.0, y: 50.0 },
-            &ElementEvent::PointerUp(
-                Vec2d { x: 50.0, y: 50.0 },
-                pointer.source,
-                pointer.id,
-            ),
+            &ElementEvent::PointerUp(Vec2d { x: 50.0, y: 50.0 }, pointer.source, pointer.id),
         );
 
         assert_eq!(events.get(), 3);
