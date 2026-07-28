@@ -45,9 +45,9 @@ pub(crate) enum DiskImageState {
     Loaded(u32, u32, u32),
     Error(String),
 }
-
+#[allow(dead_code)]
 const BROWSER_IMAGE_MAX_DIMENSION: u32 = 2048;
-
+#[allow(dead_code)]
 fn constrained_browser_image_size(width: u32, height: u32) -> (u32, u32) {
     if width <= BROWSER_IMAGE_MAX_DIMENSION && height <= BROWSER_IMAGE_MAX_DIMENSION {
         return (width, height);
@@ -65,7 +65,7 @@ fn constrained_browser_image_size(width: u32, height: u32) -> (u32, u32) {
         )
     }
 }
-
+#[allow(dead_code)]
 fn image_mime_type(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         "image/png"

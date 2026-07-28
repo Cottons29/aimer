@@ -21,11 +21,3 @@ wasm-bindgen-futures.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
-
-[profile.release]
-opt-level = 'z'       # Default: maximum optimizations for speed
-lto = true          # Enable Link-Time Optimization for smaller, faster binaries
-strip = "symbols"   # Strip binary symbols to reduce file size further
-codegen-units = 1   # Optimize for maximum binary size reduction over compile time
-overflow-checks = false
-debug-assertions = false

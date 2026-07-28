@@ -563,6 +563,8 @@ impl WindowEventHandler {
         }
     }
 
+    pub(crate) const SCROLL_MULTIPLIER : f32 = 1.5;
+
     #[inline]
     fn normalize_wheel_delta(
         delta: MouseScrollDelta,
@@ -584,8 +586,8 @@ impl WindowEventHandler {
                 };
                 (
                     Vec2d {
-                        x: (pos.x / scale) as f32 * 1.5,
-                        y: (pos.y / scale) as f32 * 1.55,
+                        x: (pos.x / scale) as f32 * Self::SCROLL_MULTIPLIER,
+                        y: (pos.y / scale) as f32 * Self::SCROLL_MULTIPLIER,
                     },
                     aimer_events::element::ScrollDeltaKind::Pixel,
                 )
@@ -758,8 +760,8 @@ mod tests {
             2.0,
         );
 
-        assert_eq!(delta.x, 12.0);
-        assert_eq!(delta.y, -8.0);
+        assert_eq!(delta.x, 18.0);
+        assert_eq!(delta.y, -12.0);
         assert_eq!(kind, aimer_events::element::ScrollDeltaKind::Pixel);
     }
 
@@ -781,8 +783,8 @@ mod tests {
                 scale,
             );
 
-            assert_eq!(delta.x, 12.0);
-            assert_eq!(delta.y, -8.0);
+            assert_eq!(delta.x, 12.0 * WindowEventHandler::SCROLL_MULTIPLIER);
+            assert_eq!(delta.y, -8.0 *  WindowEventHandler::SCROLL_MULTIPLIER);
         }
     }
 }

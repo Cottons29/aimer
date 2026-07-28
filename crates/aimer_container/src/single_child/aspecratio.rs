@@ -102,6 +102,7 @@ impl<W: Widget> Widget for AspectRatio<W> {
     }
 }
 
+#[allow(dead_code)]
 fn resolve_ratio_size(constraints: BoxConstraint, aspect_ratio: f32) -> (f32, f32) {
     resolve_ratio_size_with_option(constraints, aspect_ratio, RatioOption::Width)
 }

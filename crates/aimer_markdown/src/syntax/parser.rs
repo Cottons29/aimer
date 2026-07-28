@@ -1,10 +1,6 @@
 use aimer_color::prelude::Color;
 use arborium::advanced::Span;
 
-pub trait CaptureColor {
-    fn color(input: CaptureSpan) -> Color;
-}
-
 /// A highlight capture category, paired with its byte span.
 ///
 /// This mirrors `arborium_highlight::Span`, but replaces the raw

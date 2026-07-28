@@ -2,7 +2,6 @@ use crate::bounds::Bounds;
 use crate::position::Vec2d;
 use crate::size::ResolvedSize;
 use std::cell::Cell;
-use std::ops::{Div, Mul};
 
 ///
 /// Represents a dimension type that can be used to define sizes in different

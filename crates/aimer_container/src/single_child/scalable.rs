@@ -1,11 +1,12 @@
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, RequiredChild, Widget};
-
+#[allow(dead_code)]
 pub struct Scalable<W = RequiredChild> {
     scale: f32,
     child: W,
 }
 
+#[allow(dead_code)]
 impl Scalable {
     #[inline]
     pub fn new() -> Self {

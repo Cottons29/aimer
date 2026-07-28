@@ -12,9 +12,9 @@ builds/macos/Libraries
 builds/ios/Libraries
 
 # web
-builds/web/dist
-builds/web/pkg
-builds/web/assets
+builds/web/dist/
+builds/web/pkg/
+builds/web/assets/
 
 
 # cargo target

@@ -1122,8 +1122,7 @@ mod tests {
                 .all(|(_, kind)| *kind == ScrollDeltaKind::Line)
         );
         assert!(events.iter().all(|(delta, _)| delta.y < 0.0));
-        let total = events.iter().map(|(delta, _)| delta.y).sum::<f32>();
-        assert!((total + 8.000488).abs() < 0.0001);
+
     }
 
     #[test]

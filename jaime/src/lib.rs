@@ -50,8 +50,8 @@ pub fn my_app() {
     // async_builder::start_async_builder_example()
     // custom_animated_theme::start_custom_animated_theme_example()
     // test_scrollable()
-    test_scrollable_row()
-    // start_modal_example();
+    // test_scrollable_row()
+    start_modal_example();
     // start_markdown_example();
     // start_panic_recovery_example();
     // test_scroll_and_row();
@@ -473,7 +473,8 @@ fn test_scrollable_row() {
         })
         .collect();
     let content = Row::new()
-        .vertical_alignment(BoxAlignment::Center)
+        .vertical_alignment(BoxAlignment::Start)
+        .horizontal_alignment(BoxAlignment::Start)
         .children(items);
     let scrollbar = ScrollBar {
         track: ScrollTrack {
@@ -507,7 +508,7 @@ fn test_scrollable_row() {
                     .padding(LayoutSpacing::all(Spacing::Px(10)))
                     .child(
                         Scrollable::new()
-                            .axis(ScrollAxis::Vertical)
+                            .axis(ScrollAxis::Horizontal)
                             .vertical_scroll_bar(Some(scrollbar))
                             .child(content),
                     )
@@ -556,4 +557,4 @@ fn test_image() {
                     ),
             ),
     )
-}
+}  

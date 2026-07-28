@@ -43,6 +43,66 @@ When you run your app with `aimer run`, the CLI opens an interactive TUI (termin
 | **Build Logs** | Compilation and build output.                  |
 | **Inspector**  | Live widget tree view (when enabled).          |
 
+### The Run Pipeline
+
+Whatever the target, `aimer run` walks the same three stages, and the status bar
+follows them:
+
+| Stage | What happens |
+|-------|--------------|
+| **Build** | Compile the Rust library for the target (`cargo build`, `cargo ndk build`). |
+| **Assemble** | Stage the native library and the registered `[assets]`, then run the platform packager (`xcodebuild`, Gradle). |
+| **Run** | Install the bundle where a platform requires it and launch the app, streaming its output into the App Logs pane. |
+
+Only the contents of a stage are platform specific: the ordering, the
+`Running` / `Idling` transitions and waiting for the app to exit are shared, and
+a stage that fails stops the pipeline with the error it reported. A target can
+also leave a stage empty — the web target has no build stage of its own, since
+`trunk serve` compiles the wasm bundle as it starts serving it.
+
+### Build Logs and Compile Errors
+
+For every cargo-driven target, `aimer run` asks cargo for its machine-readable
+output (`--message-format=json-diagnostic-rendered-ansi`) and reformats it
+itself. Cargo renders each diagnostic for a terminal on its own, so the pane
+looks exactly like a plain `cargo build` — same colors, carets and `-->` source
+lines — while the CLI gets structured access to every error.
+
+That is what makes the errors of a failed build easy to find: instead of leaving
+them buried somewhere in the scrollback, the CLI collects them while they stream
+past and repeats them as one group at the very end of the build.
+
+Each error sits on its own light-red panel — cargo's rendering unchanged, just
+lifted out of the surrounding output — and consecutive panels are separated by a
+darker wave rule. Nothing is written above a panel, since cargo's own first line
+already names the level, the code and the source location.
+
+The whole block spans the full width of the Build Logs pane, so the panels and
+rules stretch with the terminal; on a very narrow terminal it stops shrinking at
+58 columns, and a diagnostic whose rendering is wider than the pane keeps its own
+width rather than being cut off.
+
+```
+===================== Compile Error ======================
+
+error[E0308]: mismatched types
+ --> src/main.rs:2:18
+  ...
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+error[E0425]: cannot find function `render` in this scope
+ --> src/main.rs:3:5
+  ...
+
+======================== 2 errors ========================
+```
+
+Warnings are streamed like cargo prints them but are left out of the group, and
+anything a build script writes on stdout is forwarded verbatim. The web target
+builds through `wasm-pack`, which does not forward the message format, so its
+output stays plain text.
+
 ### Console Controls
 
 | Key | Action |
@@ -51,6 +111,7 @@ When you run your app with `aimer run`, the CLI opens an interactive TUI (termin
 | `F12` | Toggle inspector on/off |
 | `r` | Hot reload / rebuild |
 | `c` | Copy current pane logs to clipboard |
+| `e` | Show/hide the source location (`file:line`) of app log lines |
 | `↑` / `↓` | Scroll up/down |
 | `PageUp` / `PageDown` | Scroll by 10 lines |
 | `Shift+Q` | Exit |

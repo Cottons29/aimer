@@ -409,14 +409,14 @@ pub struct RawRichText {
     hovered_link: RefCell<Option<Rc<str>>>,
     layout_cache: RefCell<Option<(PreparedLayoutKey, Rc<PreparedLayout>)>>,
 }
-
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum SelectableCursor {
     Pointer,
     Text,
     Default,
 }
-
+#[allow(dead_code)]
 fn interactive_cursor_for_event(
     selectable: bool,
     over_link: bool,

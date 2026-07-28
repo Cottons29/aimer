@@ -1,4 +1,3 @@
-mod highlighter;
 mod parser;
 
 use std::cell::RefCell;

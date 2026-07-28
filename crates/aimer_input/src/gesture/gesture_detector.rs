@@ -682,7 +682,7 @@ fn pointer_capture_effect(result: EventResult, event: &ElementEvent) -> EventRes
         _ => result,
     }
 }
-
+#[allow(dead_code)]
 fn preserve_gesture_state(existing: &GestureState, replacement: &mut GestureState) {
     *replacement = existing.clone();
 }
