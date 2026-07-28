@@ -1,4 +1,3 @@
-use std::env::current_dir;
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::Command;
@@ -6,8 +5,6 @@ use std::process::Command;
 use colored::Colorize;
 use crossterm::style::Stylize;
 use serde::Deserialize;
-
-use crate::commands::run::cargo_build::CargoBuildTarget;
 
 pub trait LogStyling {
     fn process_log(self) -> StyledLog;
@@ -219,27 +216,6 @@ pub fn get_project_root(allow_workspace: bool) -> Result<PathBuf, Box<dyn Error>
     Ok(root)
 }
 
-/// Absolute path of the native library cargo produced for `rust_target`.
-///
-/// Apple targets link a static archive (`.a`), everything else a shared object
-/// (`.so`) — the iOS simulator included, which is why it sits in the same arm as
-/// the device.
-pub fn resolve_lib_path(lib_name: &str, rust_target: &str, target: CargoBuildTarget) -> String {
-    let extension = match target {
-        CargoBuildTarget::Darwin | CargoBuildTarget::Ios { .. } | CargoBuildTarget::IosSim { .. } => {
-            ".a"
-        }
-        _ => ".so",
-    };
-    let project_root = get_project_root(true).unwrap_or_else(|_| current_dir().unwrap());
-
-    format!(
-        "{}/target/{}/debug/lib{}{extension}",
-        project_root.display(),
-        rust_target,
-        lib_name
-    )
-}
 
 impl LogStyling for String {
     /// Style one line of application output.
@@ -276,39 +252,6 @@ mod tests {
         line.to_string().process_log().render(true)
     }
 
-    #[test]
-    fn resolve_lib_path_uses_a_static_archive_for_apple_targets() {
-        for target in [
-            CargoBuildTarget::Darwin,
-            CargoBuildTarget::Ios {
-                rust_target: "aarch64-apple-ios".to_string(),
-            },
-            CargoBuildTarget::IosSim {
-                rust_target: "aarch64-apple-ios-sim".to_string(),
-            },
-        ] {
-            let path = resolve_lib_path("my_app", "aarch64-apple-ios-sim", target);
-            assert!(
-                path.ends_with("/target/aarch64-apple-ios-sim/debug/libmy_app.a"),
-                "{path}"
-            );
-        }
-    }
-
-    #[test]
-    fn resolve_lib_path_uses_a_shared_object_for_android() {
-        let path = resolve_lib_path(
-            "my_app",
-            "aarch64-linux-android",
-            CargoBuildTarget::Android {
-                rust_target: "aarch64-linux-android".to_string(),
-            },
-        );
-        assert!(
-            path.ends_with("/target/aarch64-linux-android/debug/libmy_app.so"),
-            "{path}"
-        );
-    }
 
     #[test]
     fn process_log_error_contains_original_text() {

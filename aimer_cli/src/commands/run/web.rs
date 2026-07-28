@@ -2,10 +2,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::commands::assemble::copy_assets_into;
+use crate::commands::assemble::Reporter;
 use crate::commands::run::cargo_build::{stream_stderr_as_app_log, stream_stdout_as_app_log};
 use crate::commands::run::console::Status;
-use crate::commands::run::helpers::{build_log, fail, set_status, spawn_streamed};
+use crate::commands::run::helpers::{ConsoleReporter, build_log, fail, set_status, spawn_streamed};
 use crate::commands::run::pipeline::{Flow, RunContext, Runner};
 
 pub fn find_llvm_ar() -> Option<PathBuf> {
@@ -100,9 +100,11 @@ impl Runner for WebRunner {
     fn assemble(&mut self, ctx: &RunContext) -> Flow {
         set_status(&ctx.tx, Status::Building(0));
 
+        // Trunk cleans dist/ before building, so the assets are staged next to
+        // the sources it copies from — exactly what `aimer assemble web` does.
         let artifact = "builds/web";
-        if copy_assets_into(artifact).is_err() {
-            fail(&ctx.tx, format!("Failed to copy assets into {artifact}"));
+        if let Err(e) = ConsoleReporter::of(ctx).stage_assets(artifact) {
+            fail(&ctx.tx, format!("Failed to copy assets into {artifact}: {e:#}"));
             return Flow::Abort;
         }
 
@@ -123,6 +125,9 @@ impl Runner for WebRunner {
         #[cfg(target_os = "macos")]
         configure_trunk(&mut trunk, &llvm_ar);
         trunk.arg("serve").current_dir("builds/web");
+        if ctx.release {
+            trunk.arg("--release");
+        }
 
         if !spawn_streamed(
             trunk,

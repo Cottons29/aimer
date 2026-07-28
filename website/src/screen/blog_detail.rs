@@ -137,12 +137,14 @@ impl StatelessWidget for BlogDetailPage {
             ),
             LoadState::Ready(detail) => {
                 // info!("Markdown: {}", detail.markdown);
+                let is_mobile = is_mobile(ctx);
                 let metadata = metadata_sidebar(&detail, &theme);
                 let markdown_theme = themed_markdown(&theme);
                 let content = MarkdownViewer::new()
                     .markdown(detail.markdown)
                     .theme(markdown_theme)
-                    .scrollable(false)
+                    .scrollable(!is_mobile)
+                    .padding(LayoutSpacing::vertical(20).right(if !is_mobile { 20 } else { 0 }))
                     .boxed();
                 (content, Some(metadata), Some(detail.id.clone()))
             }
@@ -164,7 +166,7 @@ impl StatelessWidget for BlogDetailPage {
                 }
             }))
             .boxed();
-        let mut sidebar_children = vec![back_button];
+        let mut sidebar_children = vec![SizedBox::new().height(28).boxed(), back_button];
         if let Some(metadata) = metadata {
             sidebar_children.push(SizedBox::new().height(32).boxed());
             sidebar_children.push(metadata);
@@ -174,36 +176,45 @@ impl StatelessWidget for BlogDetailPage {
             .horizontal_alignment(BoxAlignment::Start)
             .children(sidebar_children);
 
-        let detail = match detail_layout(is_mobile(ctx)) {
-            DetailLayout::Horizontal => Row::new()
-                .vertical_alignment(BoxAlignment::Start)
-                .children([
-                    Expanded::new()
-                        .flex(1.2)
-                        .child(
-                            Container::new()
-                                .padding(LayoutSpacing::new().right(16))
-                                .child(sidebar),
-                        )
-                        .boxed(),
-                    Expanded::new().flex(4.0).child(content).boxed(),
-                ])
-                .boxed(),
-            DetailLayout::Vertical => Column::new()
-                .horizontal_alignment(BoxAlignment::Start)
-                .children([sidebar.boxed(), SizedBox::new().height(32).boxed(), content])
-                .boxed(),
-        };
-
-        Container::new().color(theme.background_color).child(
-            Scrollable::new().key(key).axis(ScrollAxis::Vertical).child(
-                Container::new().padding(app_padding(ctx)).child(
-                    Column::new()
-                        .horizontal_alignment(BoxAlignment::Start)
-                        .children([detail, SizedBox::new().height(48).boxed()]),
+        match detail_layout(is_mobile(ctx)) {
+            DetailLayout::Horizontal => Container::new()
+                .padding(app_padding(ctx).top(0).right(0).bottom(0))
+                .color(theme.background_color)
+                .box_child(
+                    Row::new()
+                        .vertical_alignment(BoxAlignment::Start)
+                        .children([
+                            Expanded::new()
+                                .flex(1.2)
+                                .child(
+                                    Container::new()
+                                        .padding(LayoutSpacing::new().right(16))
+                                        .child(sidebar),
+                                )
+                                .boxed(),
+                            Expanded::new().flex(4.0).child(content).boxed(),
+                        ]),
+                ),
+            DetailLayout::Vertical => Container::new().color(theme.background_color).box_child(
+                Scrollable::new().key(key).axis(ScrollAxis::Vertical).child(
+                    Container::new().padding(app_padding(ctx)).child(
+                        Column::new()
+                            .horizontal_alignment(BoxAlignment::Start)
+                            .children([
+                                Column::new()
+                                    .horizontal_alignment(BoxAlignment::Start)
+                                    .children([
+                                        sidebar.boxed(),
+                                        SizedBox::new().height(32).boxed(),
+                                        content,
+                                    ])
+                                    .boxed(),
+                                SizedBox::new().height(48).boxed(),
+                            ]),
+                    ),
                 ),
             ),
-        )
+        }
     }
 }
 

@@ -35,6 +35,7 @@ fn spawn_runner(
     tx: Sender<RunnerEvent>,
     inspector_address: IpAddr,
     inspector_port: u16,
+    release: bool,
 ) -> Arc<Mutex<Option<Child>>> {
     let current_child = Arc::new(Mutex::new(None));
     let current_child_clone = Arc::clone(&current_child);
@@ -49,6 +50,7 @@ fn spawn_runner(
                 current_child: current_child_clone,
                 inspector_address,
                 inspector_port,
+                release,
             };
             thread::spawn(move || pipeline::drive(runner, ctx));
         }
@@ -130,7 +132,7 @@ fn hit_test(view: &PaneView, col: u16, row: u16) -> Option<(usize, usize)> {
     Some((vr.line, vr.start + within))
 }
 
-pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
+pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<()> {
     let _guard = RawModeGuard::with_alternate_screen()?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -167,6 +169,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
         tx.clone(),
         inspector_handle.address,
         inspector_handle.port,
+        release,
     );
 
     // Hot-reload file watcher
@@ -224,7 +227,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                             if device.target == Targets::Web {
                                 state.clear_build();
                                 state.status = Status::Compiling(0);
-                                pipeline::spawn_wasm_pack(tx.clone());
+                                pipeline::spawn_wasm_pack(tx.clone(), release);
                             } else {
                                 if let Some(mut child) = current_child.lock().unwrap().take() {
                                     let _ = child.kill();
@@ -238,6 +241,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                     tx.clone(),
                                     inspector_handle.address,
                                     inspector_handle.port,
+                                    release,
                                 );
                             }
                         }
@@ -281,7 +285,10 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
 
         let lib_path = proj_root.join("src/lib.rs");
         if !lib_path.exists() {
-            return Err(anyhow::anyhow!("src/lib.rs is not found! :  {}", lib_path.display()));
+            return Err(anyhow::anyhow!(
+                "src/lib.rs is not found! :  {}",
+                lib_path.display()
+            ));
         }
 
         let mut file_writer = File::options()
@@ -292,7 +299,6 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
 
         if event::poll(timeout)? {
             match event::read()? {
-
                 Event::Key(key) => {
                     match (key.code, key.modifiers) {
                         (KeyCode::Char('1'), _) => {
@@ -331,6 +337,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                     tx.clone(),
                                     inspector_handle.address,
                                     inspector_handle.port,
+                                    release,
                                 );
                             }
                         }
@@ -345,7 +352,8 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                             }
                         }
                         #[cfg(target_os = "macos")]
-                        (KeyCode::Char('c'), KeyModifiers::META) => {
+                        (KeyCode::Char('c'), KeyModifiers::META)
+                        | (KeyCode::Char('C'), KeyModifiers::META) => {
                             if let Some(text) = state.selected_text() {
                                 if let Ok(mut clipboard) = Clipboard::new() {
                                     let _ = clipboard.set_text(text);
@@ -553,7 +561,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
 /// Prints build and app logs directly to stdout/stderr without creating an
 /// alternate screen or using ratatui. Designed for IDE and CI integrations
 /// where no terminal device is available.
-pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
+pub fn start_no_tui(device: Device, pkg_name: String, release: bool) -> anyhow::Result<()> {
     let (tx, rx) = crossbeam::channel::unbounded();
 
     // Starting inspector server
@@ -582,6 +590,7 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
         tx.clone(),
         inspector_handle.address,
         inspector_handle.port,
+        release,
     );
 
     // Hot-reload file watcher
@@ -642,7 +651,7 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
             RunnerEvent::HotReload => {
                 eprintln!("[hot-reload] File change detected, rebuilding...");
                 if device.target == Targets::Web {
-                    pipeline::spawn_wasm_pack(tx.clone());
+                    pipeline::spawn_wasm_pack(tx.clone(), release);
                 } else {
                     if let Some(mut child) = current_child.lock().unwrap().take() {
                         let _ = child.kill();
@@ -653,6 +662,7 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
                         tx.clone(),
                         inspector_handle.address,
                         inspector_handle.port,
+                        release,
                     );
                 }
             }

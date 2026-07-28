@@ -1,10 +1,16 @@
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use anyhow::bail;
 use crossbeam::channel::Sender;
 
-use crate::commands::run::cargo_build::wait_for_child;
+use crate::commands::assemble::{Reporter, Step, StepKind};
+use crate::commands::run::cargo_build::{
+    stream_stderr_as_build_log, stream_stdout_as_build_log, stream_stdout_with_gradle_progress,
+    stream_stdout_with_xcode_progress, wait_for_child,
+};
 use crate::commands::run::console::{RunnerEvent, Status};
+use crate::commands::run::pipeline::RunContext;
 
 /// Emit a build-log line. Thin wrapper over the `tx.send(BuildLog(..))` pattern
 /// that every runner repeats constantly.
@@ -24,30 +30,68 @@ pub fn fail(tx: &Sender<RunnerEvent>, msg: impl Into<String>) {
     set_status(tx, Status::Error);
 }
 
-/// Stage the registered `[assets]` into `dest_root` for a live `run`,
-/// reporting the outcome through the TUI console.
+/// [`Reporter`] that runs the shared assemble steps inside a live `aimer run`.
 ///
-/// Copying is incremental — only new or changed files are written — so hot
-/// reloads don't re-copy unchanged assets. Failures and missing files are
-/// logged as build-log warnings rather than aborting the run, mirroring how
-/// `assemble` treats them.
-pub fn stage_assets(tx: &Sender<RunnerEvent>, dest_root: &str) {
-    match crate::commands::assets::copy_assets_into(dest_root) {
-        Ok(report) => {
-            for rel in &report.copied {
-                build_log(tx, format!("Staged asset {rel} -> {dest_root}/{rel}"));
+/// Every step is spawned with piped stdio, registered as the current child so it
+/// can be killed when the run is cancelled, and streamed into the Build Logs
+/// pane with the progress parsing matching its [`StepKind`]. That is the only
+/// difference from `aimer assemble`'s
+/// [`StdioReporter`](crate::commands::assemble::StdioReporter) — the packaging
+/// itself is the same code.
+pub struct ConsoleReporter<'a> {
+    tx: &'a Sender<RunnerEvent>,
+    current_child: &'a Arc<Mutex<Option<Child>>>,
+}
+
+impl<'a> ConsoleReporter<'a> {
+    /// A reporter streaming into `tx` and registering each step in
+    /// `current_child`.
+    #[inline]
+    pub fn new(tx: &'a Sender<RunnerEvent>, current_child: &'a Arc<Mutex<Option<Child>>>) -> Self {
+        Self { tx, current_child }
+    }
+
+    /// A reporter for the console a running pipeline streams to.
+    #[inline]
+    pub fn of(ctx: &'a RunContext) -> Self {
+        Self::new(&ctx.tx, &ctx.current_child)
+    }
+}
+
+impl Reporter for ConsoleReporter<'_> {
+    fn note(&self, message: String) {
+        build_log(self.tx, message);
+    }
+
+    fn run(&self, mut cmd: Command, step: Step) -> anyhow::Result<()> {
+        let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+            Ok(child) => child,
+            Err(e) => bail!("failed to start {}: {e}", step.action),
+        };
+
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+
+        *self.current_child.lock().unwrap() = Some(child);
+
+        match step.kind {
+            StepKind::Xcode => {
+                stream_stdout_with_xcode_progress(stdout, self.tx.clone());
             }
-            for rel in &report.missing {
-                build_log(
-                    tx,
-                    format!("Warning: registered asset '{rel}' not found; skipping"),
-                );
+            StepKind::Gradle => {
+                stream_stdout_with_gradle_progress(stdout, self.tx.clone());
+            }
+            StepKind::Cargo | StepKind::Other => {
+                stream_stdout_as_build_log(stdout, self.tx.clone());
             }
         }
-        Err(e) => build_log(
-            tx,
-            format!("Warning: failed to stage assets into {dest_root}: {e}"),
-        ),
+        stream_stderr_as_build_log(stderr, self.tx.clone());
+
+        match wait_for_child(self.current_child) {
+            Some(status) if status.success() => Ok(()),
+            Some(_) => bail!("{} failed", step.action),
+            None => bail!("{} was cancelled", step.action),
+        }
     }
 }
 
@@ -95,40 +139,6 @@ pub fn spawn_streamed(
     true
 }
 
-/// Run a streamed build step end to end: spawn it (see [`spawn_streamed`]),
-/// wait for completion, and verify success. Reports `spawn_fail_msg` if it
-/// cannot be launched and `build_fail_msg` if it exits with a non-zero status.
-/// Returns `true` only when the step finished successfully.
-pub fn build_streamed(
-    cmd: Command,
-    tx: &Sender<RunnerEvent>,
-    current_child: &Arc<Mutex<Option<Child>>>,
-    spawn_fail_msg: &str,
-    build_fail_msg: &str,
-    stream_out: impl FnOnce(ChildStdout, Sender<RunnerEvent>),
-    stream_err: impl FnOnce(ChildStderr, Sender<RunnerEvent>),
-) -> bool {
-    if !spawn_streamed(
-        cmd,
-        tx,
-        current_child,
-        spawn_fail_msg,
-        Status::Error,
-        stream_out,
-        stream_err,
-    ) {
-        return false;
-    }
-
-    match wait_for_child(current_child) {
-        Some(status) if status.success() => true,
-        Some(_) => {
-            fail(tx, build_fail_msg);
-            false
-        }
-        None => false,
-    }
-}
 
 /// Run `cmd` to completion (inheriting whatever stdio the caller configured),
 /// reporting `spawn_fail_msg` if it cannot be launched and `fail_msg` if it
@@ -149,5 +159,80 @@ pub fn run_to_completion(
             fail(tx, format!("{spawn_fail_msg}: {e}"));
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crossbeam::channel::{Receiver, unbounded};
+
+    use super::*;
+
+    /// A fresh console channel and child slot for a [`ConsoleReporter`].
+    fn console() -> (
+        Sender<RunnerEvent>,
+        Receiver<RunnerEvent>,
+        Arc<Mutex<Option<Child>>>,
+    ) {
+        let (tx, rx) = unbounded();
+        (tx, rx, Arc::new(Mutex::new(None)))
+    }
+
+    /// Every build log line the reporter emitted.
+    fn build_logs(rx: &Receiver<RunnerEvent>) -> Vec<String> {
+        rx.try_iter()
+            .filter_map(|event| match event {
+                RunnerEvent::BuildLog(line) => Some(line),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_note_becomes_a_build_log_line() {
+        let (tx, rx, child) = console();
+
+        ConsoleReporter::new(&tx, &child).note("staging".to_string());
+
+        assert_eq!(build_logs(&rx), vec!["staging".to_string()]);
+    }
+
+    #[test]
+    fn a_successful_step_streams_its_output_into_the_build_pane() {
+        let (tx, rx, child) = console();
+
+        let mut cmd = Command::new("echo");
+        cmd.arg("building");
+
+        ConsoleReporter::new(&tx, &child)
+            .run(cmd, Step::new(StepKind::Other, "echo"))
+            .unwrap();
+
+        assert!(build_logs(&rx).contains(&"building".to_string()));
+    }
+
+    #[test]
+    fn a_failing_step_names_the_action() {
+        let (tx, _rx, child) = console();
+
+        let err = ConsoleReporter::new(&tx, &child)
+            .run(Command::new("false"), Step::new(StepKind::Cargo, "the step"))
+            .unwrap_err();
+
+        assert_eq!(err.to_string(), "the step failed");
+    }
+
+    #[test]
+    fn a_step_that_cannot_start_is_reported_as_such() {
+        let (tx, _rx, child) = console();
+
+        let err = ConsoleReporter::new(&tx, &child)
+            .run(
+                Command::new("aimer-no-such-binary"),
+                Step::new(StepKind::Gradle, "the step"),
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().starts_with("failed to start the step"));
     }
 }

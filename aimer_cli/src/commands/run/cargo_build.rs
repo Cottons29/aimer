@@ -30,23 +30,22 @@ impl CargoBuildTarget {
     }
 }
 
-pub fn spawn_cargo_build(
-    target: &CargoBuildTarget,
-    tx: &Sender<RunnerEvent>,
-    current_child: &Arc<Mutex<Option<Child>>>,
-    inspector_address: IpAddr,
-    inspector_port: u16,
-) -> Option<ExitStatus> {
+/// The compiler invocation for `target`, in debug or release mode.
+///
+/// The profile flag is the only difference between an `aimer run` and an
+/// `aimer run --release` build; the resulting artifact then lives under the
+/// matching `target/<triple>/<profile>` directory the assemble steps read from.
+pub fn cargo_command(target: &CargoBuildTarget, release: bool) -> Command {
     let mut cmd = match target {
         CargoBuildTarget::Web => {
             let mut c = Command::new("wasm-pack");
             c.arg("build")
-                .arg("--debug")
+                .arg(if release { "--release" } else { "--debug" })
                 .arg("--target")
                 .arg("web")
                 .arg("--out-dir")
                 .arg("builds/web/pkg");
-            c
+            return c;
         }
         CargoBuildTarget::Android { rust_target } => {
             let mut c = Command::new("cargo");
@@ -71,6 +70,22 @@ pub fn spawn_cargo_build(
             c
         }
     };
+
+    if release {
+        cmd.arg("--release");
+    }
+    cmd
+}
+
+pub fn spawn_cargo_build(
+    target: &CargoBuildTarget,
+    tx: &Sender<RunnerEvent>,
+    current_child: &Arc<Mutex<Option<Child>>>,
+    inspector_address: IpAddr,
+    inspector_port: u16,
+    release: bool,
+) -> Option<ExitStatus> {
+    let mut cmd = cargo_command(target, release);
 
     cmd.env("DEFAULT_INSPECTOR_PORT", inspector_port.to_string());
     cmd.env("DEFAULT_INSPECTOR_ADDRESS", inspector_address.to_string());
@@ -352,6 +367,80 @@ mod tests {
     use super::*;
     use crate::commands::run::utilities::StyledLog;
     use crate::console::state::strip_ansi;
+
+    /// The arguments `cargo_command` passes for `target` in `release` mode.
+    fn cargo_args(target: &CargoBuildTarget, release: bool) -> Vec<String> {
+        cargo_command(target, release)
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_debug_build_carries_no_profile_flag() {
+        for target in [
+            CargoBuildTarget::Darwin,
+            CargoBuildTarget::Ios {
+                rust_target: "aarch64-apple-ios".to_string(),
+            },
+            CargoBuildTarget::IosSim {
+                rust_target: "aarch64-apple-ios-sim".to_string(),
+            },
+            CargoBuildTarget::Android {
+                rust_target: "aarch64-linux-android".to_string(),
+            },
+        ] {
+            let args = cargo_args(&target, false);
+            assert!(!args.contains(&"--release".to_string()), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn a_release_build_asks_cargo_for_the_release_profile() {
+        for target in [
+            CargoBuildTarget::Darwin,
+            CargoBuildTarget::Ios {
+                rust_target: "aarch64-apple-ios".to_string(),
+            },
+            CargoBuildTarget::Android {
+                rust_target: "aarch64-linux-android".to_string(),
+            },
+        ] {
+            let args = cargo_args(&target, true);
+            assert!(args.contains(&"--release".to_string()), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn the_web_build_swaps_the_wasm_pack_profile_flag() {
+        assert_eq!(
+            cargo_args(&CargoBuildTarget::Web, false),
+            vec!["build", "--debug", "--target", "web", "--out-dir", "builds/web/pkg"]
+        );
+        assert_eq!(
+            cargo_args(&CargoBuildTarget::Web, true),
+            vec!["build", "--release", "--target", "web", "--out-dir", "builds/web/pkg"]
+        );
+    }
+
+    #[test]
+    fn every_cargo_driven_build_still_asks_for_json_messages() {
+        for target in [
+            CargoBuildTarget::Darwin,
+            CargoBuildTarget::Ios {
+                rust_target: "aarch64-apple-ios".to_string(),
+            },
+            CargoBuildTarget::Android {
+                rust_target: "aarch64-linux-android".to_string(),
+            },
+        ] {
+            let args = cargo_args(&target, true);
+            assert!(
+                args.contains(&cargo_message::MESSAGE_FORMAT.to_string()),
+                "{args:?}"
+            );
+        }
+    }
 
     /// Collect every app log the reader thread produces for `input`, as the
     /// console draws them with source locations shown.

@@ -60,6 +60,29 @@ a stage that fails stops the pipeline with the error it reported. A target can
 also leave a stage empty — the web target has no build stage of its own, since
 `trunk serve` compiles the wasm bundle as it starts serving it.
 
+The **Assemble** stage is not a second implementation of the packaging: it runs
+the very same code as `aimer assemble <platform>`. Only the reporting differs —
+`aimer assemble` runs each step with inherited stdio for CI logs, while
+`aimer run` streams it into the Build Logs pane with the progress parsing of the
+tool being run. A bundle produced by a run is therefore identical to an assembled
+one, assets included.
+
+### Debug and Release Runs
+
+`aimer run` builds in debug mode by default and takes `--release` (`-r`) to run
+the release build instead:
+
+```bash
+aimer run --release
+```
+
+The flag reaches every stage at once: cargo (or `cargo ndk` / `wasm-pack`)
+compiles with the release profile, `xcodebuild` uses the `Release`
+configuration, Gradle runs `assembleRelease`, `trunk serve` serves a release
+build, and each stage reads and writes the matching
+`target/<triple>/release` and `builds/<platform>/…/Release` paths. A rebuild
+triggered with `r` keeps the profile the run was started with.
+
 ### Build Logs and Compile Errors
 
 For every cargo-driven target, `aimer run` asks cargo for its machine-readable

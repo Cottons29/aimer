@@ -37,7 +37,9 @@ impl LayoutSpacing {
     }
 
     /// For Top and Bottom
-    pub const fn vertical(space: Spacing) -> Self {
+    #[inline]
+    pub fn vertical(space: impl Into<Spacing>) -> Self {
+        let space = space.into();
         Self {
             top: space,
             bottom: space,
@@ -47,6 +49,7 @@ impl LayoutSpacing {
     }
 
     /// For Left and right
+    #[inline]
     pub const fn horizontal(space: Spacing) -> Self {
         Self {
             left: space,
@@ -56,6 +59,7 @@ impl LayoutSpacing {
         }
     }
 
+    #[inline]
     pub const fn all(space: Spacing) -> Self {
         Self {
             left: space,

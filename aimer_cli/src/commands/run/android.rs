@@ -1,47 +1,22 @@
-use std::env::current_dir;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
+use crate::commands::assemble::{self, AndroidPlan};
 use crate::commands::run::cargo_build::{
-    self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_build_log,
-    stream_stdout_with_gradle_progress, wait_for_child,
+    self, CargoBuildTarget, stream_as_app_log_split_cr, wait_for_child,
 };
 use crate::commands::run::console::{RunnerEvent, Status};
 use crate::commands::run::helpers::{
-    build_log, build_streamed, fail, run_to_completion, set_status, spawn_streamed, stage_assets,
+    ConsoleReporter, build_log, fail, run_to_completion, set_status, spawn_streamed,
 };
 use crate::commands::run::pipeline::{Flow, RunContext, Runner};
-use crate::commands::run::utilities::{LogStyling, StyledLog, resolve_lib_path};
-
-/// The APK Gradle's `assembleDebug` produces.
-const APK_PATH: &str = "builds/android/app/build/outputs/apk/debug/app-debug.apk";
+use crate::commands::run::utilities::{LogStyling, StyledLog};
 
 /// Application id used when `build.gradle.kts.template` cannot be read.
 const FALLBACK_APP_ID: &str = "com.example.app";
-
-fn resolve_compatible_java_home() -> Option<String> {
-    if cfg!(target_os = "macos") {
-        for version in ["17", "21", "23", "11"] {
-            let Ok(output) = std::process::Command::new("/usr/libexec/java_home")
-                .arg("-v")
-                .arg(version)
-                .output()
-            else {
-                continue;
-            };
-            if !output.status.success() {
-                continue;
-            }
-            if let Ok(path) = String::from_utf8(output.stdout) {
-                return Some(path.trim().to_string());
-            }
-        }
-    }
-    None
-}
 
 /// Parse a single `adb logcat` line into the styled text shown in the app log
 /// pane.
@@ -67,54 +42,31 @@ fn strip_logcat_framing(l: String) -> String {
     }
 }
 
-/// The Rust target and JNI directory matching the connected device's ABI.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct AndroidPlan {
-    rust_target: &'static str,
-    jni_dir: &'static str,
-}
-
-impl AndroidPlan {
-    /// Map the `ro.product.cpu.abi` property of the device to a build plan,
-    /// defaulting to 64-bit ARM for an unknown ABI.
-    fn for_abi(abi: &str) -> Self {
-        let (rust_target, jni_dir) = match abi {
-            "x86_64" => ("x86_64-linux-android", "x86_64"),
-            "armeabi-v7a" => ("armv7-linux-androideabi", "armeabi-v7a"),
-            "x86" => ("i686-linux-android", "x86"),
-            _ => ("aarch64-linux-android", "arm64-v8a"),
-        };
-        Self {
-            rust_target,
-            jni_dir,
-        }
-    }
-
-    /// The cargo build target this plan compiles with.
-    fn build_target(&self) -> CargoBuildTarget {
-        CargoBuildTarget::Android {
-            rust_target: self.rust_target.to_string(),
-        }
-    }
-
-    /// Where Gradle expects the shared library for this ABI.
-    fn jni_libs_dir(&self) -> String {
-        format!("builds/android/app/src/main/jniLibs/{}", self.jni_dir)
+/// The cargo build target an [`AndroidPlan`] compiles with.
+fn build_target(plan: &AndroidPlan) -> CargoBuildTarget {
+    CargoBuildTarget::Android {
+        rust_target: plan.rust_target.to_string(),
     }
 }
 
-/// The Android leg of the unified pipeline: `cargo ndk build` → Gradle
-/// `assembleDebug` → `adb install` and `am start`, then tail `logcat`.
+/// The Android leg of the unified pipeline: `cargo ndk build` → the shared
+/// [`package_android`](assemble::package_android) step → `adb install` and
+/// `am start`, then tail `logcat`.
 pub struct AndroidRunner {
     /// Resolved in [`build`](Runner::build) from the device ABI, then reused by
     /// the later stages.
     plan: Option<AndroidPlan>,
+    /// The APK the assemble stage produced, reused by the launch stage.
+    apk_path: Option<String>,
 }
 
 impl AndroidRunner {
     #[inline]
     pub fn new() -> Self {
-        Self { plan: None }
+        Self {
+            plan: None,
+            apk_path: None,
+        }
     }
 
     /// The plan resolved by the build stage, or `None` (after reporting it) when
@@ -141,11 +93,6 @@ impl AndroidRunner {
         };
 
         Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    }
-
-    /// Absolute path of the generated Android project.
-    fn project_dir() -> PathBuf {
-        current_dir().unwrap_or_default().join("builds/android")
     }
 
     /// The application id declared in the Android project template.
@@ -206,11 +153,12 @@ impl Runner for AndroidRunner {
         );
 
         let Some(status) = cargo_build::spawn_cargo_build(
-            &plan.build_target(),
+            &build_target(&plan),
             &ctx.tx,
             &ctx.current_child,
             ctx.inspector_address,
             ctx.inspector_port,
+            ctx.release,
         ) else {
             return Flow::Abort;
         };
@@ -225,59 +173,21 @@ impl Runner for AndroidRunner {
     }
 
     fn assemble(&mut self, ctx: &RunContext) -> Flow {
-        let Some(plan) = self.plan(ctx) else {
+        let Some(plan) = self.plan(ctx).cloned() else {
             return Flow::Abort;
         };
 
-        let project_dir = Self::project_dir();
-        build_log(
-            &ctx.tx,
-            format!("[Aimer] current_dir: {}", project_dir.display()),
-        );
-
-        let lib_name = ctx.pkg_name.replace("-", "_");
-        let src_lib = resolve_lib_path(&lib_name, plan.rust_target, plan.build_target());
-        let dest_dir = plan.jni_libs_dir();
-        let dest_lib = format!("{}/lib{}.so", dest_dir, lib_name);
-
-        std::fs::create_dir_all(&dest_dir).unwrap_or_default();
-        if std::fs::copy(&src_lib, &dest_lib).is_ok() {
-            build_log(&ctx.tx, format!("Copied library to {}", dest_lib));
+        let reporter = ConsoleReporter::of(ctx);
+        match assemble::package_android(&ctx.pkg_name, &plan, ctx.release, &reporter) {
+            Ok(apk_path) => {
+                self.apk_path = Some(apk_path);
+                Flow::Continue
+            }
+            Err(e) => {
+                fail(&ctx.tx, format!("{e:#}"));
+                Flow::Abort
+            }
         }
-
-        // Stage registered assets into the APK's `assets/` source set (incrementally)
-        // before Gradle packs it, so they are readable at runtime via AssetManager.
-        stage_assets(&ctx.tx, "builds/android/app/src/main/assets");
-
-        build_log(&ctx.tx, "Building Android project via Gradle...");
-
-        let gradlew = if cfg!(windows) {
-            "gradlew.bat"
-        } else {
-            "gradlew"
-        };
-
-        let mut cmd = Command::new(project_dir.join(gradlew));
-        cmd.arg("assembleDebug").current_dir(&project_dir);
-
-        if let Some(java_home) = resolve_compatible_java_home() {
-            build_log(&ctx.tx, format!("Using JAVA_HOME: {}", java_home));
-            cmd.env("JAVA_HOME", java_home);
-        }
-
-        if !build_streamed(
-            cmd,
-            &ctx.tx,
-            &ctx.current_child,
-            "Failed to run gradle",
-            "Gradle build failed.",
-            stream_stdout_with_gradle_progress,
-            stream_stderr_as_build_log,
-        ) {
-            return Flow::Abort;
-        }
-
-        Flow::Continue
     }
 
     fn launch(&mut self, ctx: &RunContext) -> Flow {
@@ -286,9 +196,14 @@ impl Runner for AndroidRunner {
         let device_name = &ctx.device.name;
         build_log(&ctx.tx, format!("Installing app on {} ...", device_name));
 
+        let apk_path = self
+            .apk_path
+            .clone()
+            .unwrap_or_else(|| assemble::apk_path(ctx.release));
+
         let mut install = Command::new("adb");
         install
-            .args(["-s", &ctx.device.id, "install", "-r", APK_PATH])
+            .args(["-s", &ctx.device.id, "install", "-r", &apk_path])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -303,7 +218,7 @@ impl Runner for AndroidRunner {
 
         build_log(&ctx.tx, "Launching app on Android device...");
 
-        let app_id = Self::app_id(&Self::project_dir());
+        let app_id = Self::app_id(&assemble::android_project_dir());
 
         let mut app_run = Command::new("adb");
         app_run.args([
@@ -374,33 +289,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plan_maps_every_known_abi() {
-        for (abi, rust_target, jni_dir) in [
-            ("x86_64", "x86_64-linux-android", "x86_64"),
-            ("armeabi-v7a", "armv7-linux-androideabi", "armeabi-v7a"),
-            ("x86", "i686-linux-android", "x86"),
-            ("arm64-v8a", "aarch64-linux-android", "arm64-v8a"),
-        ] {
-            let plan = AndroidPlan::for_abi(abi);
-            assert_eq!(plan.rust_target, rust_target, "{abi}");
-            assert_eq!(plan.jni_dir, jni_dir, "{abi}");
-        }
-    }
-
-    #[test]
-    fn plan_falls_back_to_arm64_for_an_unknown_abi() {
-        assert_eq!(
-            AndroidPlan::for_abi("mips"),
-            AndroidPlan::for_abi("arm64-v8a")
-        );
-    }
-
-    #[test]
-    fn jni_libs_dir_follows_the_abi() {
-        assert_eq!(
-            AndroidPlan::for_abi("x86_64").jni_libs_dir(),
-            "builds/android/app/src/main/jniLibs/x86_64"
-        );
+    fn build_target_follows_the_plan() {
+        let CargoBuildTarget::Android { rust_target } =
+            build_target(&AndroidPlan::for_abi("x86_64"))
+        else {
+            panic!("expected an Android build target");
+        };
+        assert_eq!(rust_target, "x86_64-linux-android");
     }
 
     #[test]

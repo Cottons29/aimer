@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader};
 use std::net::IpAddr;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -8,7 +8,7 @@ use crossbeam::channel::Sender;
 
 use crate::commands::run::Device;
 use crate::commands::run::android::AndroidRunner;
-use crate::commands::run::cargo_build::wait_for_child;
+use crate::commands::run::cargo_build::{CargoBuildTarget, cargo_command, wait_for_child};
 use crate::commands::run::console::{RunnerEvent, Status};
 use crate::commands::run::helpers::set_status;
 use crate::commands::run::ios::IosRunner;
@@ -24,6 +24,11 @@ pub struct RunContext {
     pub current_child: Arc<Mutex<Option<Child>>>,
     pub inspector_address: IpAddr,
     pub inspector_port: u16,
+    /// Compile and package with the release profile instead of debug, as asked
+    /// for by `aimer run --release`. Every stage derives its profile from this
+    /// flag: the cargo profile, the Xcode configuration, the Gradle task and
+    /// therefore the artifact paths.
+    pub release: bool,
 }
 
 /// One step of the unified run pipeline, in the order [`drive`] executes them.
@@ -140,21 +145,16 @@ pub fn runner_for(target: Targets) -> Option<Box<dyn Runner>> {
 ///
 /// Spawns the build on a background thread and streams its stdout/stderr back
 /// as [`RunnerEvent`]s, de-duplicating what used to be two copies of this
-/// logic inside `console.rs`.
-pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>) {
+/// logic inside `console.rs`. `release` selects the cargo profile wasm-pack
+/// compiles with, mirroring `aimer run --release`.
+pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>, release: bool) {
     thread::spawn(move || {
         let _ = tx.send(RunnerEvent::StatusChange(Status::Compiling(0)));
         let _ = tx.send(RunnerEvent::BuildLog(
             "Running wasm-pack build...".to_string(),
         ));
 
-        let mut wasm_build = match Command::new("wasm-pack")
-            .arg("build")
-            .arg("--debug")
-            .arg("--target")
-            .arg("web")
-            .arg("--out-dir")
-            .arg("builds/web/pkg")
+        let mut wasm_build = match cargo_command(&CargoBuildTarget::Web, release)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -285,6 +285,7 @@ mod tests {
             current_child: Arc::new(Mutex::new(None)),
             inspector_address: "127.0.0.1".parse().unwrap(),
             inspector_port: 0,
+            release: false,
         };
         (ctx, rx)
     }

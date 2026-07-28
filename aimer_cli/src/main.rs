@@ -62,6 +62,9 @@ enum Commands {
         /// available.
         #[arg(long)]
         no_tui: bool,
+        /// Build, package and launch with the release profile
+        #[arg(short, long)]
+        release: bool,
     },
 
     /// Build the project for a target without launching it
@@ -145,8 +148,14 @@ fn main() -> anyhow::Result<()> {
             target,
             device,
             no_tui,
+            release,
         }) => {
-            commands::run::execute(target.map(|t| t.to_string()), device.clone(), *no_tui)?;
+            commands::run::execute(
+                target.map(|t| t.to_string()),
+                device.clone(),
+                *no_tui,
+                *release,
+            )?;
         }
         Some(Commands::Build { target, release }) => {
             commands::build::execute(target.map(|t| t.to_string()), *release)?;

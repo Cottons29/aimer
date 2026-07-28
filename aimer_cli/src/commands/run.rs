@@ -230,7 +230,12 @@ fn fetch_devices() -> Vec<Device> {
     unique_devices
 }
 
-pub fn execute(target: Option<String>, device: Option<String>, no_tui: bool) -> anyhow::Result<()> {
+pub fn execute(
+    target: Option<String>,
+    device: Option<String>,
+    no_tui: bool,
+    release: bool,
+) -> anyhow::Result<()> {
     match get_project_root(false) {
         Ok(item) => {
             let mut config_path = item;
@@ -275,9 +280,10 @@ pub fn execute(target: Option<String>, device: Option<String>, no_tui: bool) -> 
     let pkg_name = crate::config::resolve_package_name(std::path::Path::new("."));
 
     if no_tui {
-        console::start_no_tui(selected_device, pkg_name).context("console exited with an error")?;
+        console::start_no_tui(selected_device, pkg_name, release)
+            .context("console exited with an error")?;
     } else {
-        console::start(selected_device, pkg_name)
+        console::start(selected_device, pkg_name, release)
             .context("interactive console exited with an error")?;
     }
     Ok(())
