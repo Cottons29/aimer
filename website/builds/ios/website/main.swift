@@ -41,7 +41,7 @@ final class FrameDriver {
         let link = CADisplayLink(target: self, selector: #selector(tick))
         if #available(iOS 15.0, *) {
             // Allow the system to run up to 120 Hz on ProMotion displays.
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 120, maximum: 120, preferred: 120)
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
         }
         // Start paused; frames are produced on demand.
         link.isPaused = true
@@ -116,28 +116,33 @@ final class KeyboardForwardingTextView: UITextView, UITextViewDelegate {
         }
     }
 
-    // `shouldChangeTextIn` is intentionally NOT called by UIKit while a multistage
-    // input method is composing "marked text" (Chinese Pinyin, Japanese Kana,
-    // Korean Hangul, ...); it fires only once the text is finalized/committed.
-    // That makes it the reliable hook for capturing composed CJK input, which the
-    // previous `insertText` override missed because committed marked text does not
-    // always route through `insertText(_:)`.
-    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-        if text.isEmpty {
-            // A deletion (backspace).
-            trigger_rust_backspace()
-        } else {
-            forward(text)
-        }
-        return true
-    }
-
+    // IMPORTANT: do NOT forward text from `shouldChangeTextIn` / `insertText`.
+    // While a multistage input method is composing "marked text" (Chinese Pinyin,
+    // Japanese Kana, Korean Hangul, ...) UIKit reports every provisional keystroke
+    // through those hooks too, so forwarding there leaks the raw Latin pinyin (e.g.
+    // "nihao") into the field alongside the committed characters ("你好").
+    //
+    // Instead we forward only from `textViewDidChange`, and only once the IME has
+    // finished composing (`markedTextRange == nil`). At that point the buffer holds
+    // the sentinel placeholder followed by the freshly committed text (a finalized
+    // IME candidate, or a plainly typed character).
     func textViewDidChange(_ textView: UITextView) {
-        // Never reset while an IME composition is still in progress, otherwise the
-        // candidate window is dismissed mid-composition.
+        // Still composing marked text: the content is provisional, never forward it.
         if textView.markedTextRange != nil { return }
+
+        let full = textView.text ?? ""
+        if full.isEmpty {
+            // The sentinel placeholder itself was deleted -> backspace.
+            trigger_rust_backspace()
+        } else if full.hasPrefix(placeholder) && full.count > placeholder.count {
+            // Everything past the sentinel is freshly committed text.
+            let committed = String(full.dropFirst(placeholder.count))
+            forward(committed)
+        }
+
         // Collapse the hidden buffer back to the placeholder so it never grows and
-        // the backspace key always has something to delete.
+        // the backspace key always has something to delete. Setting `text`
+        // programmatically does not re-trigger `textViewDidChange`.
         textView.text = placeholder
         textView.selectedRange = NSRange(location: placeholder.utf16.count, length: 0)
     }

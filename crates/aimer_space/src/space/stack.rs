@@ -49,6 +49,7 @@ impl Stack {
     /// Creates an empty stack in [`StackDirection::Normal`] painting order.
     ///
     /// The empty stack is already a valid [`Widget`].
+    #[inline]
     pub fn new() -> Self {
         Self {
             children: Vec::new(),
@@ -62,6 +63,7 @@ impl Stack {
     /// iterator's item type; callers that need it to satisfy the current
     /// concrete [`Widget`] implementation should supply erased [`AnyWidget`]
     /// values, or use [`Stack::add_child`] instead.
+    #[inline]
     pub fn children<W: Widget>(self, children: impl IntoIterator<Item = W>) -> Stack<W> {
         Stack {
             children: children.into_iter().collect(),
@@ -73,6 +75,7 @@ impl Stack {
     ///
     /// Existing children are retained, and successive calls may use different
     /// concrete widget types.
+    #[inline]
     pub fn add_child(mut self, child: impl Widget + 'static) -> Self {
         self.children.push(child.boxed());
         self
@@ -82,6 +85,7 @@ impl Stack {
     ///
     /// The default is [`StackDirection::Normal`]. Reverse order affects
     /// painting only; it does not change layout constraints or child storage.
+    #[inline]
     pub fn direction(mut self, direction: StackDirection) -> Self {
         self.direction = direction;
         self

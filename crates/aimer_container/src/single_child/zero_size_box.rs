@@ -11,7 +11,8 @@ use aimer_widget::{
 pub struct ZeroSizedBox;
 
 impl ZeroSizedBox {
-    pub fn boxed() -> Box<Self> {
+
+    #[inline] pub fn boxed() -> Box<Self> {
         Box::new(Self)
     }
 }

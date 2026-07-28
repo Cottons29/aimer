@@ -128,7 +128,7 @@ pub struct RichText {
 impl RichText {
     /// Creates rich text rooted at `span` with default base style and
     /// interaction settings.
-    pub fn new(span: TextSpan) -> Self {
+    #[inline] pub fn new(span: TextSpan) -> Self {
         Self {
             span,
             text_style: TextStyle::default(),
@@ -143,19 +143,19 @@ impl RichText {
 
     /// Replaces the base style inherited by spans that do not override
     /// individual attributes.
-    pub fn text_style(mut self, text_style: TextStyle) -> Self {
+    #[inline] pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = text_style;
         self
     }
 
     /// Sets the alignment of each laid-out line within the available width.
-    pub fn text_align(mut self, text_align: TextAlign) -> Self {
+    #[inline] pub fn text_align(mut self, text_align: TextAlign) -> Self {
         self.text_align = text_align;
         self
     }
 
     /// Overrides overflow behavior independently of the base style.
-    pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
+    #[inline] pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
         self.overflow = Some(text_overflow);
         self
     }
@@ -166,13 +166,13 @@ impl RichText {
 
     /// Configures spans to wrap onto additional lines when width is
     /// constrained.
-    pub fn wrapped(self) -> Self {
+    #[inline] pub fn wrapped(self) -> Self {
         self.text_overflow(TextOverflow::Wrap)
     }
 
     /// Configures overflowing content to truncate the first line with an
     /// ellipsis.
-    pub fn ellipsis(self) -> Self {
+    #[inline] pub fn ellipsis(self) -> Self {
         self.text_overflow(TextOverflow::Ellipsis)
     }
 
@@ -181,7 +181,7 @@ impl RichText {
     ///
     /// The callback receives the link target stored by [`TextSpan::link`].
     /// Dragging to select text suppresses link activation.
-    pub fn on_link(mut self, on_link: impl Into<LinkCallback>) -> Self {
+    #[inline] pub fn on_link(mut self, on_link: impl Into<LinkCallback>) -> Self {
         self.on_link = on_link.into();
         self
     }

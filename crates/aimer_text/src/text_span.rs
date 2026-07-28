@@ -89,7 +89,7 @@ pub struct TextSpan {
 }
 
 impl TextSpan {
-    pub fn new(text: impl Into<Rc<str>>) -> Self {
+    #[inline] pub fn new(text: impl Into<Rc<str>>) -> Self {
         Self {
             text: text.into(),
             style: SpanStyle::new(),
@@ -98,31 +98,31 @@ impl TextSpan {
         }
     }
 
-    pub fn root(children: impl IntoIterator<Item = TextSpan>) -> Self {
+    #[inline] pub fn root(children: impl IntoIterator<Item = TextSpan>) -> Self {
         Self::new("").children(children)
     }
 
-    pub fn style(mut self, style: SpanStyle) -> Self {
+    #[inline] pub fn style(mut self, style: SpanStyle) -> Self {
         self.style = style;
         self
     }
 
-    pub fn children(mut self, children: impl IntoIterator<Item = TextSpan>) -> Self {
+    #[inline] pub fn children(mut self, children: impl IntoIterator<Item = TextSpan>) -> Self {
         self.children = children.into_iter().collect();
         self
     }
 
-    pub fn child(mut self, child: TextSpan) -> Self {
+    #[inline] pub fn child(mut self, child: TextSpan) -> Self {
         self.children.push(child);
         self
     }
 
-    pub fn link(mut self, target: impl Into<Rc<str>>) -> Self {
+    #[inline] pub fn link(mut self, target: impl Into<Rc<str>>) -> Self {
         self.link = Some(target.into());
         self
     }
 
-    pub fn flatten(&self, base_style: &TextStyle) -> Vec<ResolvedTextSpan> {
+    #[inline] pub fn flatten(&self, base_style: &TextStyle) -> Vec<ResolvedTextSpan> {
         let mut result = Vec::with_capacity(self.resolved_span_count());
         self.flatten_into(*base_style, None, &mut result);
         result
@@ -166,7 +166,7 @@ pub struct ResolvedTextSpan {
 }
 
 impl ResolvedTextSpan {
-    pub fn plain(text: Rc<str>, style: TextStyle) -> Self {
+    #[inline] pub fn plain(text: Rc<str>, style: TextStyle) -> Self {
         Self {
             text,
             style,

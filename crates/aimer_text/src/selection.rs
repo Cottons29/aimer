@@ -85,7 +85,7 @@ impl TextSelection {
         self.focus
     }
 
-    pub fn range(self) -> Range<usize> {
+    #[inline] pub fn range(self) -> Range<usize> {
         self.anchor.min(self.focus)..self.anchor.max(self.focus)
     }
 
@@ -93,7 +93,7 @@ impl TextSelection {
         self.anchor == self.focus
     }
 
-    pub fn selected_text(self, text: &str) -> Option<&str> {
+    #[inline] pub fn selected_text(self, text: &str) -> Option<&str> {
         text.get(self.range())
     }
 }

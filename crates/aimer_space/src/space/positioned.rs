@@ -36,6 +36,7 @@ impl Positioned {
     ///
     /// The placeholder is already a valid widget; use [`Positioned::child`] or
     /// [`Positioned::box_child`] to attach content.
+    #[inline]
     pub fn new() -> Self {
         Self {
             child: ZeroSizedBox,
@@ -51,7 +52,7 @@ impl Positioned {
 }
 
 impl<W: Widget + 'static> Positioned<W> {
-    // pub fn box() -> Box<Self> {
+    // #[inline] pub fn box() -> Box<Self> {
     //     Box::new(Self::new())
     // }
 
@@ -60,6 +61,7 @@ impl<W: Widget + 'static> Positioned<W> {
     /// The default is [`Position::Relative`]. The current renderer stores this
     /// value for inspection but resolves edge offsets identically for every
     /// [`Position`] variant.
+    #[inline]
     pub fn position(mut self, position: Position) -> Self {
         self.position = position;
         self
@@ -70,6 +72,7 @@ impl<W: Widget + 'static> Positioned<W> {
     /// The default is [`Dimension::Auto`]. Pixel values are logical pixels and
     /// percentage values resolve against the parent's width. If both left and
     /// right are specified, left takes precedence for painting.
+    #[inline]
     pub fn left(mut self, left: impl Into<Dimension>) -> Self {
         self.left = left.into();
         self
@@ -80,6 +83,7 @@ impl<W: Widget + 'static> Positioned<W> {
     /// The default is [`Dimension::Auto`]. Pixel values are logical pixels and
     /// percentage values resolve against the parent's height. If both top and
     /// bottom are specified, top takes precedence for painting.
+    #[inline]
     pub fn top(mut self, top: impl Into<Dimension>) -> Self {
         self.top = top.into();
         self
@@ -90,6 +94,7 @@ impl<W: Widget + 'static> Positioned<W> {
     /// The default is [`Dimension::Auto`]. Pixel values are logical pixels and
     /// percentage values resolve against the parent's width. A right-only inset
     /// positions the child from the parent's right edge.
+    #[inline]
     pub fn right(mut self, right: impl Into<Dimension>) -> Self {
         self.right = right.into();
         self
@@ -100,6 +105,7 @@ impl<W: Widget + 'static> Positioned<W> {
     /// The default is [`Dimension::Auto`]. Pixel values are logical pixels and
     /// percentage values resolve against the parent's height. A bottom-only
     /// inset positions the child from the parent's bottom edge.
+    #[inline]
     pub fn bottom(mut self, bottom: impl Into<Dimension>) -> Self {
         self.bottom = bottom.into();
         self
@@ -111,6 +117,7 @@ impl<W: Widget + 'static> Positioned<W> {
     /// pixels, rotation uses radians, and scale values are dimensionless.
     /// The transform affects painting rather than the child's measured
     /// layout size.
+    #[inline]
     pub fn transform(mut self, transform: Transform) -> Self {
         self.transform = transform;
         self
@@ -120,6 +127,7 @@ impl<W: Widget + 'static> Positioned<W> {
     ///
     /// The default is `0`; higher layers paint later in a normal-direction
     /// stack.
+    #[inline]
     pub fn layer(mut self, layer: u32) -> Self {
         self.layer = layer;
         self
@@ -130,6 +138,7 @@ impl<W: Widget + 'static> Positioned<W> {
     /// `Positioned::new()` is already valid with a zero-sized placeholder. This
     /// operation preserves the new child's concrete type; use
     /// [`Positioned::box_child`] for branch type erasure.
+    #[inline]
     pub fn child<C: Widget>(self, child: C) -> Positioned<C> {
         Positioned {
             child,
@@ -148,6 +157,7 @@ impl<W: Widget + 'static> Positioned<W> {
     /// This is equivalent to calling [`Positioned::child`] followed by
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
+    #[inline]
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
         self.child(child).boxed()
     }
@@ -209,6 +219,7 @@ pub struct RawPositionedElement<E: Element> {
 impl<E: Element> RawPositionedElement<E> {
     /// Creates a low-level positioned element with default positioning values.
     #[doc(hidden)]
+    #[inline]
     pub fn new(child: E) -> Self {
         Self {
             child,
@@ -224,6 +235,7 @@ impl<E: Element> RawPositionedElement<E> {
 
     /// Sets the left inset for this low-level element.
     #[doc(hidden)]
+    #[inline]
     pub fn left(mut self, left: impl Into<Dimension>) -> Self {
         self.left = left.into();
         self
@@ -231,6 +243,7 @@ impl<E: Element> RawPositionedElement<E> {
 
     /// Sets the top inset for this low-level element.
     #[doc(hidden)]
+    #[inline]
     pub fn top(mut self, top: impl Into<Dimension>) -> Self {
         self.top = top.into();
         self

@@ -156,6 +156,7 @@
 				DEVELOPMENT_TEAM = YCLCW25V8V;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = website/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Website;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				OTHER_LDFLAGS = (
 					"-L$(SRCROOT)/Libraries",
@@ -180,7 +181,7 @@
 					"-framework",
 					CoreFoundation,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.cottons.website;
+				PRODUCT_BUNDLE_IDENTIFIER = aimer.cottons.website;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -308,6 +309,7 @@
 				DEVELOPMENT_TEAM = YCLCW25V8V;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = website/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Website;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				OTHER_LDFLAGS = (
 					"-L$(SRCROOT)/Libraries",
@@ -332,7 +334,7 @@
 					"-framework",
 					CoreFoundation,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.cottons.website;
+				PRODUCT_BUNDLE_IDENTIFIER = aimer.cottons.website;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;

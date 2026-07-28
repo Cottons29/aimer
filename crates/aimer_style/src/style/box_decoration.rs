@@ -28,41 +28,41 @@ impl From<BoxShadow> for Vec<BoxShadow> {
 }
 
 impl BoxDecoration {
-    pub fn new() -> Self {
+    #[inline] pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn border(mut self, border: BoxBorder) -> Self {
+    #[inline] pub fn border(mut self, border: BoxBorder) -> Self {
         self.border = border;
         self
     }
 
-    pub fn outline(mut self, outline: BoxOutline) -> Self {
+    #[inline] pub fn outline(mut self, outline: BoxOutline) -> Self {
         self.outline = outline;
         self
     }
 
-    pub fn border_radius(mut self, border_radius: impl Into<BorderRadius>) -> Self {
+    #[inline] pub fn border_radius(mut self, border_radius: impl Into<BorderRadius>) -> Self {
         self.border_radius = border_radius.into();
         self
     }
 
-    pub fn box_shadow(mut self, box_shadow: Vec<BoxShadow>) -> Self {
+    #[inline] pub fn box_shadow(mut self, box_shadow: Vec<BoxShadow>) -> Self {
         self.box_shadow = box_shadow;
         self
     }
 
-    pub fn add_shadow(mut self, shadow: BoxShadow) -> Self {
+    #[inline] pub fn add_shadow(mut self, shadow: BoxShadow) -> Self {
         self.box_shadow.push(shadow);
         self
     }
 
-    pub fn background_color(mut self, background_color: impl Into<Color>) -> Self {
+    #[inline] pub fn background_color(mut self, background_color: impl Into<Color>) -> Self {
         self.background_color = Some(background_color.into());
         self
     }
 
-    pub fn update_color(&self, new_color: impl Into<Color>) {
+    #[inline] pub fn update_color(&self, new_color: impl Into<Color>) {
         #[allow(unused_mut)]
         let mut bg_ptr = &self.background_color as *const Option<Color> as *mut Option<Color>;
         unsafe {

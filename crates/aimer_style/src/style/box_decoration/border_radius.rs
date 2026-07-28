@@ -11,30 +11,36 @@ pub struct BorderRadius {
 }
 
 impl BorderRadius {
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[inline]
     pub fn top_left(mut self, top_left: impl Into<Dimension>) -> Self {
         self.top_left = top_left.into();
         self
     }
 
+    #[inline]
     pub fn top_right(mut self, top_right: impl Into<Dimension>) -> Self {
         self.top_right = top_right.into();
         self
     }
 
+    #[inline]
     pub fn bottom_right(mut self, bottom_right: impl Into<Dimension>) -> Self {
         self.bottom_right = bottom_right.into();
         self
     }
 
+    #[inline]
     pub fn bottom_left(mut self, bottom_left: impl Into<Dimension>) -> Self {
         self.bottom_left = bottom_left.into();
         self
     }
 
+    #[inline]
     pub fn resolve(&self, box_width: f32, box_height: f32, scale: f32) -> [f32; 4] {
         [
             resolve_dim(self.top_left, box_width, scale),

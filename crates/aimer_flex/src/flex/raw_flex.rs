@@ -47,6 +47,7 @@ impl Flex {
     /// Both alignments default to [`BoxAlignment::Start`], gaps to zero, and
     /// overflow to [`OverflowBehavior::Hidden`]. An empty flex is already a
     /// valid [`Widget`].
+    #[inline]
     pub fn new() -> Self {
         Self {
             direction: LayoutDirection::default(),
@@ -65,6 +66,7 @@ impl<W: Widget + 'static> Flex<W> {
     /// The default is [`LayoutDirection::Inherit`]. Use
     /// [`LayoutDirection::Row`] for left-to-right placement or
     /// [`LayoutDirection::Column`] for top-to-bottom placement.
+    #[inline]
     pub fn direction(mut self, direction: LayoutDirection) -> Self {
         self.direction = direction;
         self
@@ -73,6 +75,7 @@ impl<W: Widget + 'static> Flex<W> {
     /// Sets alignment on the physical vertical axis.
     ///
     /// The default is [`BoxAlignment::Start`].
+    #[inline]
     pub fn vertical_alignment(mut self, alignment: BoxAlignment) -> Self {
         self.vertical_alignment = alignment;
         self
@@ -81,6 +84,7 @@ impl<W: Widget + 'static> Flex<W> {
     /// Sets alignment on the physical horizontal axis.
     ///
     /// The default is [`BoxAlignment::Start`].
+    #[inline]
     pub fn horizontal_alignment(mut self, alignment: BoxAlignment) -> Self {
         self.horizontal_alignment = alignment;
         self
@@ -91,6 +95,7 @@ impl<W: Widget + 'static> Flex<W> {
     /// Values are logical pixels represented by [`LayoutSpacing`]; the default
     /// is zero spacing. Horizontal sides contribute to row gaps and vertical
     /// sides contribute to column gaps.
+    #[inline]
     pub fn gaps(mut self, gaps: impl Into<LayoutSpacing>) -> Self {
         self.gaps = gaps.into();
         self
@@ -101,6 +106,7 @@ impl<W: Widget + 'static> Flex<W> {
     /// [`OverflowBehavior::Hidden`] is the default and clips to the flex
     /// bounds. [`OverflowBehavior::Visible`] paints outside them, while
     /// [`OverflowBehavior::Wrap`] creates additional rows or columns.
+    #[inline]
     pub fn overflow(mut self, overflow: OverflowBehavior) -> Self {
         self.overflow = overflow;
         self
@@ -111,6 +117,7 @@ impl<W: Widget + 'static> Flex<W> {
     /// This is not an append operation. The returned [`Flex`] adopts the item
     /// type of the iterator and is immediately a valid [`Widget`], including
     /// when the iterator is empty.
+    #[inline]
     pub fn children<C: Widget>(self, children: impl IntoIterator<Item = C>) -> Flex<C> {
         Flex {
             direction: self.direction,
@@ -127,6 +134,7 @@ impl<W: Widget + 'static> Flex<W> {
     /// The child must have the same type as the collection's existing items.
     /// Use [`Flex::children`] to replace the collection or establish a new item
     /// type.
+    #[inline]
     pub fn add_child(mut self, child: W) -> Self {
         self.children.push(child);
         self
@@ -243,6 +251,7 @@ impl RawFlex {
     /// Creates a low-level flex element with default alignment, spacing, and
     /// clipping.
     #[doc(hidden)]
+    #[inline]
     pub fn new(
         direction: LayoutDirection,
         children: Vec<AnyElement>,

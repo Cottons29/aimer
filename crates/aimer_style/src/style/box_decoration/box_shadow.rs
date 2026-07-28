@@ -47,7 +47,7 @@ impl ShadowSide {
     ///   9.0 = TopRight, 10.0 = BottomRight, 11.0 = BottomLeft
     /// - Side_param: unused for most variants; for Range, encodes start angle
     /// - Side_param2: unused for most variants; for Range, encodes end angle
-    pub fn to_shader_params(self) -> (f32, f32, f32) {
+    #[inline] pub fn to_shader_params(self) -> (f32, f32, f32) {
         match self {
             ShadowSide::All => (0.0, 0.0, 0.0),
             ShadowSide::Top => (1.0, 0.0, 0.0),
@@ -133,7 +133,7 @@ impl BoxShadow {
     /// closer to typical CSS usage than fully opaque black.
     pub const DEFAULT_COLOR: Color = Color::Rgba(0, 0, 0, 128);
 
-    pub fn new() -> Self {
+    #[inline] pub fn new() -> Self {
         Self {
             offset_x: 0.0,
             offset_y: 0.0,
@@ -145,37 +145,37 @@ impl BoxShadow {
         }
     }
 
-    pub fn offset_x(mut self, offset_x: f32) -> Self {
+    #[inline] pub fn offset_x(mut self, offset_x: f32) -> Self {
         self.offset_x = offset_x;
         self
     }
 
-    pub fn offset_y(mut self, offset_y: f32) -> Self {
+    #[inline] pub fn offset_y(mut self, offset_y: f32) -> Self {
         self.offset_y = offset_y;
         self
     }
 
-    pub fn blur(mut self, blur: f32) -> Self {
+    #[inline] pub fn blur(mut self, blur: f32) -> Self {
         self.blur = blur;
         self
     }
 
-    pub fn spread(mut self, spread: f32) -> Self {
+    #[inline] pub fn spread(mut self, spread: f32) -> Self {
         self.spread = spread;
         self
     }
 
-    pub fn color(mut self, color: impl Into<Color>) -> Self {
+    #[inline] pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = color.into();
         self
     }
 
-    pub fn inset(mut self, inset: bool) -> Self {
+    #[inline] pub fn inset(mut self, inset: bool) -> Self {
         self.inset = inset;
         self
     }
 
-    pub fn side(mut self, side: ShadowSide) -> Self {
+    #[inline] pub fn side(mut self, side: ShadowSide) -> Self {
         self.side = side;
         self
     }

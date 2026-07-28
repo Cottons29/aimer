@@ -211,12 +211,7 @@ cargo test -p aimer_animation test_curve_linear
 
 - Write focused, imperative commit messages (e.g. `Fix glyph atlas overflow on resize`). Group
   related changes; avoid mixing unrelated concerns in one commit.
-- Do **not** commit on your own initiative — only when explicitly asked. When you do commit, add
-  Junie as co-author:
 
-  ```bash
-  git commit --trailer "Co-authored-by: Junie <junie@jetbrains.com>"
-  ```
 
 - Before opening a PR: `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`, and
   `cargo test` must all pass.

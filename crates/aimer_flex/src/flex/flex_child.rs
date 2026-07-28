@@ -48,6 +48,7 @@ impl Expanded {
     /// Creates an expanding child with a flex factor of `1.0`.
     ///
     /// Finish the builder with [`Expanded::child`] or [`Expanded::box_child`].
+    #[inline]
     pub fn new() -> Self {
         Self {
             flex: 1.0,
@@ -60,6 +61,7 @@ impl Expanded {
     /// The default is `1.0`. At element construction, negative values are
     /// clamped to `0.0`; a zero-weight child receives no share of the remaining
     /// main-axis space.
+    #[inline]
     pub fn flex(mut self, flex: f32) -> Self {
         self.flex = flex;
         self
@@ -68,6 +70,7 @@ impl Expanded {
     ///
     /// This terminal operation preserves the child's concrete type. Use
     /// [`Expanded::box_child`] instead when branch type erasure is needed.
+    #[inline]
     pub fn child<W: Widget + 'static>(self, child: W) -> Expanded<W> {
         Expanded {
             child,
@@ -80,6 +83,7 @@ impl Expanded {
     /// This is equivalent to calling [`Expanded::child`] followed by
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
+    #[inline]
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
         self.child(child).boxed()
     }
@@ -116,6 +120,7 @@ pub struct RawExpanded<E: Element> {
 impl<E: Element> RawExpanded<E> {
     /// Creates the low-level element used by flex layout tests and adapters.
     #[doc(hidden)]
+    #[inline]
     pub fn new(child: E, flex: f32, debug_name: &'static str) -> Self {
         Self {
             child,

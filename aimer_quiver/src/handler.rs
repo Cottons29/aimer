@@ -251,7 +251,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerCustomAppEvent> for AimerAppli
                             .map(|(w, h)| PhysicalSize::new(w as u32, h as u32))
                     });
                 if let Some(fallback) = fallback {
-                    debug!("iOS zero window size, using native screen resolution: {fallback:?}");
+                    println!("iOS zero window size, using native screen resolution: {fallback:?}");
                     size = fallback;
                 }
             }

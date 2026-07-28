@@ -584,8 +584,8 @@ impl WindowEventHandler {
                 };
                 (
                     Vec2d {
-                        x: (pos.x / scale) as f32,
-                        y: (pos.y / scale) as f32,
+                        x: (pos.x / scale) as f32 * 1.5,
+                        y: (pos.y / scale) as f32 * 1.55,
                     },
                     aimer_events::element::ScrollDeltaKind::Pixel,
                 )

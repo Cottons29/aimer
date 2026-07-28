@@ -103,31 +103,31 @@ pub struct TextDecoration {
 #[allow(dead_code)]
 #[allow(non_upper_case_globals)]
 impl TextDecoration {
-    pub fn new() -> Self {
+    #[inline] pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn line(mut self, line: TextDecorationLine) -> Self {
+    #[inline] pub fn line(mut self, line: TextDecorationLine) -> Self {
         self.line = line;
         self
     }
 
-    pub fn style(mut self, style: TextDecorationStyle) -> Self {
+    #[inline] pub fn style(mut self, style: TextDecorationStyle) -> Self {
         self.style = style;
         self
     }
 
-    pub fn color(mut self, color: impl Into<Color>) -> Self {
+    #[inline] pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = Some(color.into());
         self
     }
 
-    pub fn thickness(mut self, thickness: f32) -> Self {
+    #[inline] pub fn thickness(mut self, thickness: f32) -> Self {
         self.thickness = Some(thickness);
         self
     }
 
-    pub fn offset(mut self, offset: f32) -> Self {
+    #[inline] pub fn offset(mut self, offset: f32) -> Self {
         self.offset = offset;
         self
     }
@@ -217,11 +217,11 @@ pub struct TextStyle {
 impl TextStyle {
     pub const DEFAULT_TEXT_COLOR: Color = Color::Basic(Colors::Black);
 
-    pub fn new() -> Self {
+    #[inline] pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn font_size(mut self, font_size: u32) -> Self {
+    #[inline] pub fn font_size(mut self, font_size: u32) -> Self {
         self.font_size = font_size;
         self
     }
@@ -231,17 +231,17 @@ impl TextStyle {
         self
     }
 
-    pub fn font_style(mut self, font_style: FontStyle) -> Self {
+    #[inline] pub fn font_style(mut self, font_style: FontStyle) -> Self {
         self.font_style = font_style;
         self
     }
 
-    pub fn font_weight(mut self, font_weight: FontWeight) -> Self {
+    #[inline] pub fn font_weight(mut self, font_weight: FontWeight) -> Self {
         self.font_weight = font_weight;
         self
     }
 
-    pub fn color(mut self, color: impl Into<Color>) -> Self {
+    #[inline] pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = color.into();
         self
     }
@@ -253,12 +253,12 @@ impl TextStyle {
         self
     }
 
-    pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
+    #[inline] pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
         self.text_overflow = text_overflow;
         self
     }
 
-    pub fn text_decoration(mut self, text_decoration: TextDecoration) -> Self {
+    #[inline] pub fn text_decoration(mut self, text_decoration: TextDecoration) -> Self {
         self.text_decoration = text_decoration;
         self
     }

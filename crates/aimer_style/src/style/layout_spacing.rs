@@ -7,26 +7,26 @@ pub struct LayoutSpacing {
 }
 
 impl LayoutSpacing {
-    pub fn new() -> Self {
+    #[inline] pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn top(mut self, top: impl Into<Spacing>) -> Self {
+    #[inline] pub fn top(mut self, top: impl Into<Spacing>) -> Self {
         self.top = top.into();
         self
     }
 
-    pub fn bottom(mut self, bottom: impl Into<Spacing>) -> Self {
+    #[inline] pub fn bottom(mut self, bottom: impl Into<Spacing>) -> Self {
         self.bottom = bottom.into();
         self
     }
 
-    pub fn left(mut self, left: impl Into<Spacing>) -> Self {
+    #[inline] pub fn left(mut self, left: impl Into<Spacing>) -> Self {
         self.left = left.into();
         self
     }
 
-    pub fn right(mut self, right: impl Into<Spacing>) -> Self {
+    #[inline] pub fn right(mut self, right: impl Into<Spacing>) -> Self {
         self.right = right.into();
         self
     }
@@ -84,7 +84,7 @@ impl From<u32> for Spacing {
 impl Spacing {
     pub const DEFAULT_VALUE: Spacing = Spacing::None;
 
-    pub fn value(&self, total: f32, scale: f32) -> f32 {
+    #[inline] pub fn value(&self, total: f32, scale: f32) -> f32 {
         match self {
             Spacing::Px(px) => *px as f32 * scale,
             Spacing::Percent(p) => total * (*p as f32 / 100.0),

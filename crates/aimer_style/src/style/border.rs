@@ -33,27 +33,27 @@ pub struct BorderSlice {
 }
 
 impl BorderSlice {
-    pub fn new() -> Self {
+    #[inline] pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn style(mut self, style: BorderStyle) -> Self {
+    #[inline] pub fn style(mut self, style: BorderStyle) -> Self {
         self.style = style;
         self
     }
 
-    pub fn stroke(mut self, stroke: impl Into<Stroke>) -> Self {
+    #[inline] pub fn stroke(mut self, stroke: impl Into<Stroke>) -> Self {
         self.stroke = stroke.into();
         self
     }
 
-    pub fn color(mut self, color: impl Into<Color>) -> Self {
+    #[inline] pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = color.into();
         self
     }
 }
 
-pub fn resolve_dim(dim: Dimension, parent_val: f32, scale: f32) -> f32 {
+#[inline] pub fn resolve_dim(dim: Dimension, parent_val: f32, scale: f32) -> f32 {
     match dim {
         Dimension::Px(w) => w * scale,
         Dimension::Percent(p) => parent_val * (p / 100.0),
@@ -109,31 +109,31 @@ impl RawBoxBorder {
 }
 
 impl BoxBorder {
-    pub fn new() -> Self {
+    #[inline] pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn left(mut self, left: BorderSlice) -> Self {
+    #[inline] pub fn left(mut self, left: BorderSlice) -> Self {
         self.left = left;
         self
     }
 
-    pub fn right(mut self, right: BorderSlice) -> Self {
+    #[inline] pub fn right(mut self, right: BorderSlice) -> Self {
         self.right = right;
         self
     }
 
-    pub fn top(mut self, top: BorderSlice) -> Self {
+    #[inline] pub fn top(mut self, top: BorderSlice) -> Self {
         self.top = top;
         self
     }
 
-    pub fn bottom(mut self, bottom: BorderSlice) -> Self {
+    #[inline] pub fn bottom(mut self, bottom: BorderSlice) -> Self {
         self.bottom = bottom;
         self
     }
 
-    pub fn all(border: BorderSlice) -> Self {
+    #[inline] pub fn all(border: BorderSlice) -> Self {
         Self {
             left: border,
             right: border,
@@ -144,7 +144,7 @@ impl BoxBorder {
 
     /// Returns the resolved border stroke for each side: (left, top, right,
     /// bottom).
-    pub fn strokes(&self, box_width: f32, box_height: f32, scale: f32) -> (f32, f32, f32, f32) {
+    #[inline] pub fn strokes(&self, box_width: f32, box_height: f32, scale: f32) -> (f32, f32, f32, f32) {
         (
             resolve_dim(self.left.stroke, box_width, scale),
             resolve_dim(self.top.stroke, box_height, scale),
@@ -154,7 +154,7 @@ impl BoxBorder {
     }
 
     /// Returns true if any side has a non-None style and non-zero stroke.
-    pub fn has_visible_border(&self, box_width: f32, box_height: f32, scale: f32) -> bool {
+    #[inline] pub fn has_visible_border(&self, box_width: f32, box_height: f32, scale: f32) -> bool {
         let (l, t, r, b) = self.strokes(box_width, box_height, scale);
         (l > 0.0 && self.left.style != BorderStyle::None)
             || (t > 0.0 && self.top.style != BorderStyle::None)
@@ -171,7 +171,7 @@ impl BoxBorder {
     /// `Color::Transparent` and the border renders invisibly. Instead, return
     /// the color of the first side that is actually visible (non-`None` style
     /// and non-zero stroke), falling back to `left.color`.
-    pub fn effective_color(&self, box_width: f32, box_height: f32, scale: f32) -> Color {
+    #[inline] pub fn effective_color(&self, box_width: f32, box_height: f32, scale: f32) -> Color {
         let (l, t, r, b) = self.strokes(box_width, box_height, scale);
         if l > 0.0 && self.left.style != BorderStyle::None {
             self.left.color
@@ -186,7 +186,7 @@ impl BoxBorder {
         }
     }
 
-    pub fn horizontal(border: BorderSlice) -> Self {
+    #[inline] pub fn horizontal(border: BorderSlice) -> Self {
         Self {
             top: border,
             bottom: border,
@@ -194,7 +194,7 @@ impl BoxBorder {
         }
     }
 
-    pub fn vertical(border: BorderSlice) -> Self {
+    #[inline] pub fn vertical(border: BorderSlice) -> Self {
         Self {
             left: border,
             right: border,
@@ -204,31 +204,31 @@ impl BoxBorder {
 }
 
 impl BoxOutline {
-    pub fn new() -> Self {
+    #[inline] pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn left(mut self, left: BorderSlice) -> Self {
+    #[inline] pub fn left(mut self, left: BorderSlice) -> Self {
         self.left = left;
         self
     }
 
-    pub fn right(mut self, right: BorderSlice) -> Self {
+    #[inline] pub fn right(mut self, right: BorderSlice) -> Self {
         self.right = right;
         self
     }
 
-    pub fn top(mut self, top: BorderSlice) -> Self {
+    #[inline] pub fn top(mut self, top: BorderSlice) -> Self {
         self.top = top;
         self
     }
 
-    pub fn bottom(mut self, bottom: BorderSlice) -> Self {
+    #[inline] pub fn bottom(mut self, bottom: BorderSlice) -> Self {
         self.bottom = bottom;
         self
     }
 
-    pub fn all(border: BorderSlice) -> Self {
+    #[inline] pub fn all(border: BorderSlice) -> Self {
         Self {
             left: border,
             right: border,
@@ -238,7 +238,7 @@ impl BoxOutline {
     }
 
     /// Returns true if any side has a non-None style and non-zero stroke.
-    pub fn has_visible_outline(&self, box_width: f32, box_height: f32, scale: f32) -> bool {
+    #[inline] pub fn has_visible_outline(&self, box_width: f32, box_height: f32, scale: f32) -> bool {
         let (l, t, r, b) = self.strokes(box_width, box_height, scale);
         (l > 0.0 && self.left.style != BorderStyle::None)
             || (t > 0.0 && self.top.style != BorderStyle::None)

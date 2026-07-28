@@ -1,9 +1,9 @@
 pub struct BackendApi;
 
-#[cfg(not(debug_assertions))]
+// #[cfg(not(debug_assertions))]
 const BASE_API: &str = "https://aimer-api.cottonsofficial.com";
-#[cfg(debug_assertions)]
-const BASE_API: &str = "http://localhost:3200";
+// #[cfg(debug_assertions)]
+// const BASE_API: &str = "http://localhost:3200";
 
 impl BackendApi {
     pub fn blogs() -> String {

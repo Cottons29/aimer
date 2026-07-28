@@ -31,6 +31,7 @@ impl SizedBox {
     ///
     /// The box is already a valid widget; use [`SizedBox::child`] or
     /// [`SizedBox::box_child`] to attach content.
+    #[inline]
     pub fn new() -> Self {
         Self {
             width: Dimension::Px(0.0),
@@ -46,6 +47,7 @@ impl SizedBox {
     /// or zero when no child exists. Pixel values are logical pixels,
     /// percentages resolve against the parent's maximum width, and
     /// constraints still apply.
+    #[inline]
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = width.into();
         self
@@ -57,6 +59,7 @@ impl SizedBox {
     /// or zero when no child exists. Pixel values are logical pixels,
     /// percentages resolve against the parent's maximum height, and
     /// constraints still apply.
+    #[inline]
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = height.into();
         self
@@ -66,6 +69,7 @@ impl SizedBox {
     ///
     /// The default is [`Color::Transparent`]. The color fills the box's
     /// resolved bounds before its child is drawn.
+    #[inline]
     pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = color.into();
         self
@@ -76,6 +80,7 @@ impl SizedBox {
     /// `SizedBox::new()` is already valid without content. This operation
     /// preserves the concrete child type; use [`SizedBox::box_child`] when
     /// branches need an erased type.
+    #[inline]
     pub fn child<W: Widget>(self, child: W) -> SizedBox<W> {
         SizedBox {
             width: self.width,
@@ -90,6 +95,7 @@ impl SizedBox {
     /// This is equivalent to calling [`SizedBox::child`] followed by
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
+    #[inline]
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
         self.child(child).boxed()
     }

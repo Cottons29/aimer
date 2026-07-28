@@ -54,7 +54,7 @@ impl AnimatedTheme {
     /// settings.
     ///
     /// Attach the descendant subtree last with [`AnimatedTheme::child`].
-    pub fn new() -> Self {
+    #[inline] pub fn new() -> Self {
         Self {
             data: ThemeData::default(),
             duration: Duration::from_millis(200),
@@ -72,7 +72,7 @@ impl Default for AnimatedTheme {
 
 impl<W, T> AnimatedTheme<W, T> {
     /// Sets the target theme supplied to descendants.
-    pub fn data<U: Theme>(self, data: U) -> AnimatedTheme<W, U> {
+    #[inline] pub fn data<U: Theme>(self, data: U) -> AnimatedTheme<W, U> {
         AnimatedTheme {
             data,
             duration: self.duration,
@@ -85,19 +85,19 @@ impl<W, T> AnimatedTheme<W, T> {
     ///
     /// A zero duration disables interpolation and publishes the target theme
     /// immediately.
-    pub fn duration(mut self, duration: Duration) -> Self {
+    #[inline] pub fn duration(mut self, duration: Duration) -> Self {
         self.duration = duration;
         self
     }
 
     /// Sets the curve used to transform the transition's linear progress.
-    pub fn curve(mut self, curve: Curve) -> Self {
+    #[inline] pub fn curve(mut self, curve: Curve) -> Self {
         self.curve = curve;
         self
     }
 
     /// Attaches the descendant widget subtree and produces a valid widget.
-    pub fn child<C: Widget>(self, child: C) -> AnimatedTheme<C, T> {
+    #[inline] pub fn child<C: Widget>(self, child: C) -> AnimatedTheme<C, T> {
         AnimatedTheme {
             data: self.data,
             duration: self.duration,
@@ -112,7 +112,7 @@ impl<W, T> AnimatedTheme<W, T> {
     /// This is equivalent to calling [`AnimatedTheme::child`] followed by
     /// [`Widget::boxed`]. Use it when different code paths must return one
     /// [`AnyWidget`] type.
-    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget
+    #[inline] pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget
     where
         T: Theme,
     {

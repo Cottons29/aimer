@@ -29,6 +29,7 @@ impl AspectRatio {
     ///
     /// Finish the builder with [`AspectRatio::child`] or
     /// [`AspectRatio::box_child`].
+    #[inline]
     pub fn new() -> Self {
         Self {
             aspect_ratio: 1.0,
@@ -43,6 +44,7 @@ impl AspectRatio {
     /// built; non-finite or zero values resolve as `1.0` during layout. The
     /// resulting size is clamped to the parent's minimum and maximum
     /// constraints.
+    #[inline]
     pub fn aspect_ratio(mut self, aspect_ratio: f32) -> Self {
         self.aspect_ratio = aspect_ratio;
         self
@@ -53,6 +55,7 @@ impl AspectRatio {
     /// [`RatioOption::Width`] is the default. If the preferred axis is
     /// unbounded, layout falls back to the bounded axis and still honors all
     /// parent constraints.
+    #[inline]
     pub fn ratio_option(mut self, ratio_option: RatioOption) -> Self {
         self.ratio_option = ratio_option;
         self
@@ -62,6 +65,7 @@ impl AspectRatio {
     ///
     /// The child receives the ratio-constrained size, and its concrete type is
     /// preserved. Use [`AspectRatio::box_child`] for branch type erasure.
+    #[inline]
     pub fn child<C: Widget>(self, child: C) -> AspectRatio<C> {
         AspectRatio {
             aspect_ratio: self.aspect_ratio,
@@ -75,6 +79,7 @@ impl AspectRatio {
     /// This is equivalent to calling [`AspectRatio::child`] followed by
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
+    #[inline]
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
         self.child(child).boxed()
     }
@@ -100,7 +105,7 @@ impl<W: Widget> Widget for AspectRatio<W> {
 fn resolve_ratio_size(constraints: BoxConstraint, aspect_ratio: f32) -> (f32, f32) {
     resolve_ratio_size_with_option(constraints, aspect_ratio, RatioOption::Width)
 }
-
+#[inline]
 fn resolve_ratio_size_with_option(
     constraints: BoxConstraint,
     aspect_ratio: f32,

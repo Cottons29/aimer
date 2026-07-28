@@ -40,6 +40,7 @@ impl Container {
     ///
     /// Finish the builder with [`Container::child`] or
     /// [`Container::box_child`].
+    #[inline]
     pub fn new() -> Self {
         Self {
             width: Dimension::Auto,
@@ -57,6 +58,7 @@ impl Container {
     /// The default is [`Dimension::Auto`]. Pixel dimensions use logical pixels,
     /// percentages resolve against the parent's maximum width, and the final
     /// value is clamped to the available constraints.
+    #[inline]
     pub fn width(mut self, width: impl Into<Dimension>) -> Self {
         self.width = width.into();
         self
@@ -67,6 +69,7 @@ impl Container {
     /// The default is [`Dimension::Auto`]. Pixel dimensions use logical pixels,
     /// percentages resolve against the parent's maximum height, and the final
     /// value is clamped to the available constraints.
+    #[inline]
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = height.into();
         self
@@ -76,6 +79,7 @@ impl Container {
     ///
     /// Padding is measured in logical pixels and defaults to zero on every
     /// side. It reduces the constraints available to the child.
+    #[inline]
     pub fn padding(mut self, padding: LayoutSpacing) -> Self {
         self.padding = padding;
         self
@@ -85,6 +89,7 @@ impl Container {
     ///
     /// Margin is measured in logical pixels and defaults to zero on every side.
     /// It contributes to the container's layout footprint but is not painted.
+    #[inline]
     pub fn margin(mut self, margin: LayoutSpacing) -> Self {
         self.margin = margin;
         self
@@ -94,6 +99,7 @@ impl Container {
     ///
     /// The default decoration is empty. Its border width is included when
     /// deriving the child's inset and clipping radius.
+    #[inline]
     pub fn box_decoration(mut self, box_decoration: BoxDecoration) -> Self {
         self.box_decoration = box_decoration;
         self
@@ -103,6 +109,7 @@ impl Container {
     ///
     /// By default no separate color is painted. Setting a color also makes the
     /// container opaque to scroll-event fall-through within its bounds.
+    #[inline]
     pub fn color(mut self, color: Color) -> Self {
         self.color = Some(color);
         self
@@ -113,6 +120,7 @@ impl Container {
     /// The child is laid out inside padding and decoration borders, and its
     /// concrete type is preserved. Use [`Container::box_child`] when different
     /// branches need one erased return type.
+    #[inline]
     pub fn child<W: Widget>(self, child: W) -> Container<W> {
         Container {
             width: self.width,
@@ -130,6 +138,7 @@ impl Container {
     /// This is equivalent to calling [`Container::child`] followed by
     /// [`Widget::boxed`]. Use it when different branches must return one
     /// [`AnyWidget`] type.
+    #[inline]
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
         self.child(child).boxed()
     }

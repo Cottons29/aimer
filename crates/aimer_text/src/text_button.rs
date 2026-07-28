@@ -66,7 +66,7 @@ impl TextButton {
     ///
     /// The color constants are not applied automatically; configure them with
     /// the color builders.
-    pub fn new(label: impl Into<Rc<str>>) -> Self {
+    #[inline] pub fn new(label: impl Into<Rc<str>>) -> Self {
         Self {
             disabled: false,
             label: label.into(),
@@ -82,43 +82,43 @@ impl TextButton {
     }
 
     /// Sets whether pointer interaction and hover styling are disabled.
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    #[inline] pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
     /// Overrides the normal style's text color.
-    pub fn color(mut self, color: impl Into<Color>) -> Self {
+    #[inline] pub fn color(mut self, color: impl Into<Color>) -> Self {
         self.color = Some(color.into());
         self
     }
 
     /// Overrides the hover style's text color.
-    pub fn hover_color(mut self, color: impl Into<Color>) -> Self {
+    #[inline] pub fn hover_color(mut self, color: impl Into<Color>) -> Self {
         self.hover_color = Some(color.into());
         self
     }
 
     /// Overrides the disabled style's text color.
-    pub fn disabled_color(mut self, color: impl Into<Color>) -> Self {
+    #[inline] pub fn disabled_color(mut self, color: impl Into<Color>) -> Self {
         self.disabled_color = Some(color.into());
         self
     }
 
     /// Replaces the style used while enabled and not hovered.
-    pub fn style(mut self, style: TextStyle) -> Self {
+    #[inline] pub fn style(mut self, style: TextStyle) -> Self {
         self.style = style;
         self
     }
 
     /// Replaces the style used while the mouse is over an enabled button.
-    pub fn hover_style(mut self, style: TextStyle) -> Self {
+    #[inline] pub fn hover_style(mut self, style: TextStyle) -> Self {
         self.hover_style = style;
         self
     }
 
     /// Replaces the style used while disabled.
-    pub fn disabled_style(mut self, style: TextStyle) -> Self {
+    #[inline] pub fn disabled_style(mut self, style: TextStyle) -> Self {
         self.disabled_style = style;
         self
     }
@@ -127,14 +127,14 @@ impl TextButton {
     ///
     /// Both the first and second presses of a double press invoke this
     /// callback.
-    pub fn on_press(mut self, callback: impl Into<VoidCallback>) -> Self {
+    #[inline] pub fn on_press(mut self, callback: impl Into<VoidCallback>) -> Self {
         self.on_press = callback.into();
         self
     }
 
     /// Sets the callback additionally invoked when two presses finish within
     /// 500 milliseconds.
-    pub fn on_double_press(mut self, callback: impl Into<VoidCallback>) -> Self {
+    #[inline] pub fn on_double_press(mut self, callback: impl Into<VoidCallback>) -> Self {
         self.on_double_press = callback.into();
         self
     }
