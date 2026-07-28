@@ -35,8 +35,10 @@ pub fn render(
                 .unwrap_or_else(|_| vec![Line::from(strip_ansi(l))])
         })
         .collect::<Vec<_>>();
-    let app_text = state
-        .app_logs
+    // Rendered here rather than stored, so toggling the source location with
+    // `e` takes effect on the whole history at once.
+    let app_lines = state.app_log_lines();
+    let app_text = app_lines
         .iter()
         .flat_map(|l| {
             l.into_text()
@@ -318,14 +320,25 @@ pub fn render(
                 .fg(Color::LightGreen)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("switch pane | "),
-        Span::styled(
-            "[F12] ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("inspector"),
+        Span::raw("switch pane"),
+        // Span::styled(
+        //     "[e] ",
+        //     Style::default()
+        //         .fg(Color::LightGreen)
+        //         .add_modifier(Modifier::BOLD),
+        // ),
+        // Span::raw(if state.show_log_source {
+        //     "hide source"
+        // } else {
+        //     "show source"
+        // }),
+        // Span::styled(
+        //     "[F12] ",
+        //     Style::default()
+        //         .fg(Color::Cyan)
+        //         .add_modifier(Modifier::BOLD),
+        // ),
+        // Span::raw("inspector"),
         /* Span::styled("[t] ",
          * Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
          * Span::raw(if state.inspector_full_tree { "full tree " } else {

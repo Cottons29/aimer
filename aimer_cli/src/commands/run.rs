@@ -1,8 +1,8 @@
 pub mod android;
 pub(crate) mod cargo_build;
+pub(crate) mod cargo_message;
 pub(crate) mod helpers;
 pub mod ios;
-pub mod ios_sim;
 pub mod macos;
 pub mod pipeline;
 pub mod utilities;
@@ -255,7 +255,7 @@ pub fn execute(target: Option<String>, device: Option<String>, no_tui: bool) -> 
 
         thread::spawn(move || {
             loop {
-                thread::sleep(Duration::from_secs(1));
+                thread::sleep(Duration::from_millis(200));
                 let new_devices = fetch_devices();
                 if let Ok(mut devs) = devices_arc_clone.lock() {
                     *devs = new_devices;

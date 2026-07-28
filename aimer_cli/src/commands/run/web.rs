@@ -1,18 +1,12 @@
 use std::env;
-use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
-use std::sync::{Arc, Mutex};
-
-use crossbeam::channel::Sender;
+use std::process::Command;
 
 use crate::commands::assemble::copy_assets_into;
-use crate::commands::run::Device;
-use crate::commands::run::cargo_build::{
-    stream_stderr_as_app_log, stream_stdout_as_app_log, wait_for_child,
-};
-use crate::commands::run::console::{RunnerEvent, Status};
+use crate::commands::run::cargo_build::{stream_stderr_as_app_log, stream_stdout_as_app_log};
+use crate::commands::run::console::Status;
 use crate::commands::run::helpers::{build_log, fail, set_status, spawn_streamed};
+use crate::commands::run::pipeline::{Flow, RunContext, Runner};
 
 pub fn find_llvm_ar() -> Option<PathBuf> {
     // 1. Explicit override via environment variable
@@ -81,59 +75,69 @@ pub fn configure_trunk(command: &mut Command, llvm_ar: &Path) {
         .env("NO_COLOR", "true");
 }
 
-pub fn spawn_web_runner(
-    _: Device,
-    _: String,
-    tx: Sender<RunnerEvent>,
-    current_child_clone: Arc<Mutex<Option<Child>>>,
-    _: IpAddr,
-    _: u16,
-) {
-    // Write [[copy]] entries into Trunk.toml so that trunk itself copies
-    // registered assets into dist/ during its build. Trunk cleans dist/
-    // before building, so manual pre-staging would be wiped.
-    set_status(&tx, Status::Building(0));
-    // if let Err(e) = crate::commands::assets::sync_trunk_copy_entries() {
-    //     fail(&tx, format!("Warning: failed to sync trunk asset entries: {e}"));
-    //     return;
-    // }
+/// The web leg of the unified pipeline.
+///
+/// There is no separate build stage: `trunk serve` compiles the wasm bundle
+/// itself and then keeps serving it, so the pipeline only stages the assets and
+/// launches the dev server.
+pub struct WebRunner;
 
-    let artifact = "builds/web";
-    let Ok(_) = copy_assets_into(artifact) else {
-        println!("Failed to copy assets into {artifact}");
-        return;
-    };
-    #[cfg(target_os = "macos")]
-    let Some(llvm_ar) = find_llvm_ar() else {
-        fail(&tx, "Failed to find llvm-ar".to_string());
-        return;
-    };
+impl WebRunner {
+    #[inline]
+    pub fn new() -> Self {
+        Self
+    }
+}
 
-    set_status(&tx, Status::Launching);
-    build_log(&tx, "Starting trunk server...");
+impl Default for WebRunner {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-    let mut trunk = Command::new("trunk");
-    #[cfg(target_os = "macos")]
-    configure_trunk(&mut trunk, &llvm_ar);
-    trunk.arg("serve").current_dir("builds/web");
+impl Runner for WebRunner {
+    fn assemble(&mut self, ctx: &RunContext) -> Flow {
+        set_status(&ctx.tx, Status::Building(0));
 
-    if !spawn_streamed(
-        trunk,
-        &tx,
-        &current_child_clone,
-        "Failed to run trunk serve",
-        Status::Error,
-        stream_stdout_as_app_log,
-        stream_stderr_as_app_log,
-    ) {
-        return;
+        let artifact = "builds/web";
+        if copy_assets_into(artifact).is_err() {
+            fail(&ctx.tx, format!("Failed to copy assets into {artifact}"));
+            return Flow::Abort;
+        }
+
+        Flow::Continue
     }
 
-    set_status(&tx, Status::Running);
+    fn launch(&mut self, ctx: &RunContext) -> Flow {
+        #[cfg(target_os = "macos")]
+        let Some(llvm_ar) = find_llvm_ar() else {
+            fail(&ctx.tx, "Failed to find llvm-ar".to_string());
+            return Flow::Abort;
+        };
 
-    wait_for_child(&current_child_clone);
+        set_status(&ctx.tx, Status::Launching);
+        build_log(&ctx.tx, "Starting trunk server...");
 
-    set_status(&tx, Status::Idling);
+        let mut trunk = Command::new("trunk");
+        #[cfg(target_os = "macos")]
+        configure_trunk(&mut trunk, &llvm_ar);
+        trunk.arg("serve").current_dir("builds/web");
+
+        if !spawn_streamed(
+            trunk,
+            &ctx.tx,
+            &ctx.current_child,
+            "Failed to run trunk serve",
+            Status::Error,
+            stream_stdout_as_app_log,
+            stream_stderr_as_app_log,
+        ) {
+            return Flow::Abort;
+        }
+
+        Flow::Continue
+    }
 }
 
 #[cfg(test)]

@@ -1,210 +1,249 @@
 use std::fs;
-use std::net::IpAddr;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use aimer_utils::log::{JSON_OUTPUT_ENV, JSON_OUTPUT_FLAG};
 use crossbeam::channel::Sender;
 
 use crate::commands::run::Device;
 use crate::commands::run::cargo_build::{
     self, CargoBuildTarget, stream_as_app_log_split_cr, stream_stderr_as_app_log,
     stream_stderr_as_build_log, stream_stdout_as_app_log, stream_stdout_with_xcode_progress,
-    wait_for_child,
 };
 use crate::commands::run::console::{RunnerEvent, Status};
 use crate::commands::run::helpers::{
     build_log, build_streamed, fail, host_arch, run_to_completion, set_status, spawn_streamed,
+    stage_assets,
 };
+use crate::commands::run::pipeline::{Flow, RunContext, Runner};
 use crate::commands::run::utilities::resolve_lib_path;
 
-/// The two flavours of the otherwise-identical iOS build/launch flow.
-#[derive(Clone, Copy)]
+/// The two flavours of the otherwise-identical iOS pipeline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IosVariant {
     Device,
     Simulator,
 }
 
-pub fn spawn_ios_runner(
-    device: Device,
-    pkg_name: String,
-    tx: Sender<RunnerEvent>,
-    current_child_clone: Arc<Mutex<Option<Child>>>,
-    inspector_address: IpAddr,
-    inspector_port: u16,
-) {
-    run_ios(
-        IosVariant::Device,
-        device,
-        pkg_name,
-        tx,
-        current_child_clone,
-        inspector_address,
-        inspector_port,
-    );
+/// Everything that differs between an iOS device build and a simulator build,
+/// resolved once from the variant and the host architecture.
+struct IosPlan {
+    /// Rust target triple the static library is compiled for.
+    rust_target: &'static str,
+    /// `xcodebuild -sdk` value.
+    sdk: &'static str,
+    /// `xcodebuild -arch` value.
+    arch: &'static str,
+    /// Subdirectory of `builds/ios/build` the `.app` lands in.
+    build_subdir: &'static str,
 }
 
-/// Shared iOS build → package → launch pipeline used by both the physical
-/// device and the simulator runners. Everything that differs between the two is
-/// selected from `variant`.
-pub(crate) fn run_ios(
+impl IosPlan {
+    /// Resolve the plan for `variant` on this host.
+    fn resolve(variant: IosVariant) -> Self {
+        let arch = host_arch();
+        match variant {
+            IosVariant::Device => Self {
+                rust_target: "aarch64-apple-ios",
+                sdk: "iphoneos",
+                arch,
+                build_subdir: "Debug-iphoneos",
+            },
+            IosVariant::Simulator => Self {
+                rust_target: if arch == "x86_64" {
+                    "x86_64-apple-ios"
+                } else {
+                    "aarch64-apple-ios-sim"
+                },
+                sdk: "iphonesimulator",
+                arch,
+                build_subdir: "Debug-iphonesimulator",
+            },
+        }
+    }
+
+    /// The cargo build target this plan compiles with.
+    fn build_target(&self, variant: IosVariant) -> CargoBuildTarget {
+        let rust_target = self.rust_target.to_string();
+        match variant {
+            IosVariant::Device => CargoBuildTarget::Ios { rust_target },
+            IosVariant::Simulator => CargoBuildTarget::IosSim { rust_target },
+        }
+    }
+
+    /// The `.app` bundle `xcodebuild` produces for `pkg_name`.
+    fn app_path(&self, pkg_name: &str) -> String {
+        format!("builds/ios/build/{}/{}.app", self.build_subdir, pkg_name)
+    }
+}
+
+/// The iOS leg of the unified pipeline, shared by the physical device and the
+/// simulator: `cargo build` → `xcodebuild` the `.app` → install it and launch
+/// it by bundle id.
+pub struct IosRunner {
     variant: IosVariant,
-    device: Device,
-    pkg_name: String,
-    tx: Sender<RunnerEvent>,
-    current_child_clone: Arc<Mutex<Option<Child>>>,
-    inspector_address: IpAddr,
-    inspector_port: u16,
-) {
-    let xcode_arch = host_arch();
-    let (rust_target, sdk, build_target, debug_subdir) = match variant {
-        IosVariant::Device => {
-            let rust_target = "aarch64-apple-ios";
-            (
-                rust_target,
-                "iphoneos",
-                CargoBuildTarget::Ios {
-                    rust_target: rust_target.to_string(),
-                },
-                "Debug-iphoneos",
-            )
-        }
-        IosVariant::Simulator => {
-            let rust_target = if xcode_arch == "x86_64" {
-                "x86_64-apple-ios"
-            } else {
-                "aarch64-apple-ios-sim"
-            };
-            (
-                rust_target,
-                "iphonesimulator",
-                CargoBuildTarget::IosSim {
-                    rust_target: rust_target.to_string(),
-                },
-                "Debug-iphonesimulator",
-            )
-        }
-    };
+    plan: IosPlan,
+}
 
-    let app_path = format!("builds/ios/build/{}/{}.app", debug_subdir, pkg_name);
+impl IosRunner {
+    /// A runner for a physical iOS device.
+    #[inline]
+    pub fn device() -> Self {
+        Self::new(IosVariant::Device)
+    }
 
-    {
+    /// A runner for the iOS Simulator.
+    #[inline]
+    pub fn simulator() -> Self {
+        Self::new(IosVariant::Simulator)
+    }
+
+    #[inline]
+    fn new(variant: IosVariant) -> Self {
+        Self {
+            variant,
+            plan: IosPlan::resolve(variant),
+        }
+    }
+
+    /// Read `CFBundleIdentifier` out of the built bundle's `Info.plist`.
+    fn bundle_id(app_path: &str, tx: &Sender<RunnerEvent>) -> Option<String> {
+        let plist_path = format!("{}/Info.plist", app_path);
+        let output = match Command::new("plutil")
+            .arg("-extract")
+            .arg("CFBundleIdentifier")
+            .arg("raw")
+            .arg(&plist_path)
+            .output()
+        {
+            Ok(output) => output,
+            Err(e) => {
+                fail(tx, format!("Failed to get bundle id: {}", e));
+                return None;
+            }
+        };
+
+        Some(
+            String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .to_string(),
+        )
+    }
+}
+
+impl Runner for IosRunner {
+    fn build(&mut self, ctx: &RunContext) -> Flow {
+        set_status(&ctx.tx, Status::Compiling(0));
+        build_log(
+            &ctx.tx,
+            format!("Compiling static library for {}...", self.plan.rust_target),
+        );
+
+        let Some(status) = cargo_build::spawn_cargo_build(
+            &self.plan.build_target(self.variant),
+            &ctx.tx,
+            &ctx.current_child,
+            ctx.inspector_address,
+            ctx.inspector_port,
+        ) else {
+            return Flow::Abort;
+        };
+
+        if !status.success() {
+            fail(&ctx.tx, "Cargo build failed.");
+            return Flow::Abort;
+        }
+
+        Flow::Continue
+    }
+
+    fn assemble(&mut self, ctx: &RunContext) -> Flow {
+        let app_path = self.plan.app_path(&ctx.pkg_name);
+
+        // Start from a clean bundle so a stale executable or asset can never be
+        // launched when xcodebuild decides it has nothing to do.
         let app = Path::new(&app_path);
-        if app.exists() {
-            fs::remove_dir_all(app).unwrap();
+        if app.exists() && let Err(e) = fs::remove_dir_all(app) {
+            fail(&ctx.tx, format!("Failed to clean {}: {}", app_path, e));
+            return Flow::Abort;
         }
-    }
 
-    set_status(&tx, Status::Compiling(0));
-    build_log(
-        &tx,
-        format!("Compiling static library for {}...", rust_target),
-    );
+        let lib_name = ctx.pkg_name.replace("-", "_");
+        let src_lib = resolve_lib_path(
+            &lib_name,
+            self.plan.rust_target,
+            self.plan.build_target(self.variant),
+        );
+        let dest_dir = "builds/ios/Libraries";
+        let dest_lib = format!("{}/lib{}.a", dest_dir, lib_name);
 
-    let status = match cargo_build::spawn_cargo_build(
-        &build_target,
-        &tx,
-        &current_child_clone,
-        inspector_address,
-        inspector_port,
-    ) {
-        Some(s) => s,
-        None => return,
-    };
-
-    if !status.success() {
-        fail(&tx, "Cargo build failed.");
-        return;
-    }
-
-    let lib_name = pkg_name.replace("-", "_");
-    // let src_lib = format!("target/{}/debug/lib{}.a", rust_target, lib_name);
-    let src_lib = resolve_lib_path(
-        &lib_name,
-        rust_target,
-        CargoBuildTarget::Ios {
-            rust_target: rust_target.to_string(),
-        },
-    );
-    let dest_dir = "builds/ios/Libraries";
-    let dest_lib = format!("{}/lib{}.a", dest_dir, lib_name);
-
-    fs::create_dir_all(dest_dir).unwrap();
-    if let Err(e) = fs::copy(&src_lib, &dest_lib) {
-        fail(&tx, format!("Failed to copy static library: {}", e));
-        return;
-    } else {
-        build_log(&tx, format!("Copied static library to {}", dest_lib));
-    }
-
-    build_log(&tx, "Building Xcode project for iOS...");
-
-    let mut xcode_build = Command::new("xcodebuild");
-    xcode_build
-        .arg("-project")
-        .arg(format!("{}.xcodeproj", pkg_name))
-        .arg("-target")
-        .arg(&pkg_name)
-        .arg("-configuration")
-        .arg("Debug")
-        .arg("-sdk")
-        .arg(sdk)
-        .arg("SYMROOT=build")
-        .arg("-arch")
-        .arg(xcode_arch)
-        .current_dir("builds/ios");
-
-    if !build_streamed(
-        xcode_build,
-        &tx,
-        &current_child_clone,
-        "Failed to build Xcode project",
-        "Xcodebuild failed.",
-        stream_stdout_with_xcode_progress,
-        stream_stderr_as_build_log,
-    ) {
-        return;
-    }
-
-    set_status(&tx, Status::Launching);
-
-    if crate::commands::assets::copy_assets_into(&app_path).is_err() {
-        fail(&tx, format!("Failed to copy assets into {}", app_path));
-        return;
-    };
-
-    if !install_app(variant, &device, &app_path, &tx) {
-        return;
-    }
-
-    let plist_path = format!("{}/Info.plist", app_path);
-    let bundle_id_output = match Command::new("plutil")
-        .arg("-extract")
-        .arg("CFBundleIdentifier")
-        .arg("raw")
-        .arg(&plist_path)
-        .output()
-    {
-        Ok(output) => output,
-        Err(e) => {
-            fail(&tx, format!("Failed to get bundle id: {}", e));
-            return;
+        fs::create_dir_all(dest_dir).unwrap();
+        if let Err(e) = fs::copy(&src_lib, &dest_lib) {
+            fail(&ctx.tx, format!("Failed to copy static library: {}", e));
+            return Flow::Abort;
         }
-    };
+        build_log(&ctx.tx, format!("Copied static library to {}", dest_lib));
 
-    let bundle_id = String::from_utf8_lossy(&bundle_id_output.stdout)
-        .trim()
-        .to_string();
+        build_log(&ctx.tx, "Building Xcode project for iOS...");
 
-    if !launch_app(variant, &device, &bundle_id, &tx, &current_child_clone) {
-        return;
+        let mut xcode_build = Command::new("xcodebuild");
+        xcode_build
+            .arg("-project")
+            .arg(format!("{}.xcodeproj", ctx.pkg_name))
+            .arg("-target")
+            .arg(&ctx.pkg_name)
+            .arg("-configuration")
+            .arg("Debug")
+            .arg("-sdk")
+            .arg(self.plan.sdk)
+            .arg("SYMROOT=build")
+            .arg("-arch")
+            .arg(self.plan.arch)
+            .current_dir("builds/ios");
+
+        if !build_streamed(
+            xcode_build,
+            &ctx.tx,
+            &ctx.current_child,
+            "Failed to build Xcode project",
+            "Xcodebuild failed.",
+            stream_stdout_with_xcode_progress,
+            stream_stderr_as_build_log,
+        ) {
+            return Flow::Abort;
+        }
+
+        stage_assets(&ctx.tx, &app_path);
+
+        Flow::Continue
     }
 
-    set_status(&tx, Status::Running);
+    fn launch(&mut self, ctx: &RunContext) -> Flow {
+        set_status(&ctx.tx, Status::Launching);
 
-    wait_for_child(&current_child_clone);
+        let app_path = self.plan.app_path(&ctx.pkg_name);
 
-    set_status(&tx, Status::Idling);
+        if !install_app(self.variant, &ctx.device, &app_path, &ctx.tx) {
+            return Flow::Abort;
+        }
+
+        let Some(bundle_id) = Self::bundle_id(&app_path, &ctx.tx) else {
+            return Flow::Abort;
+        };
+
+        if !launch_app(
+            self.variant,
+            &ctx.device,
+            &bundle_id,
+            &ctx.tx,
+            &ctx.current_child,
+        ) {
+            return Flow::Abort;
+        }
+
+        Flow::Continue
+    }
 }
 
 /// Install the freshly built `.app` onto the device or simulator.
@@ -281,8 +320,12 @@ fn launch_app(
                     "--device",
                     &device.id,
                     bundle_id,
+                    // Arguments after the bundle id are forwarded to the app, so
+                    // it logs JSON records the console can parse and colorize.
+                    JSON_OUTPUT_FLAG,
                 ])
-                .env("TERM", "dumb");
+                .env("TERM", "dumb")
+                .env(JSON_OUTPUT_ENV, "1");
 
             spawn_streamed(
                 launch,
@@ -298,7 +341,14 @@ fn launch_app(
             build_log(tx, "Launching app on iOS Simulator...");
 
             let mut launch = Command::new("xcrun");
-            launch.args(["simctl", "launch", "--console-pty", &device.id, bundle_id]);
+            launch.args([
+                "simctl",
+                "launch",
+                "--console-pty",
+                &device.id,
+                bundle_id,
+                JSON_OUTPUT_FLAG,
+            ]);
 
             spawn_streamed(
                 launch,
@@ -310,5 +360,58 @@ fn launch_app(
                 stream_stderr_as_app_log,
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_plan_targets_the_iphoneos_sdk() {
+        let plan = IosPlan::resolve(IosVariant::Device);
+        assert_eq!(plan.rust_target, "aarch64-apple-ios");
+        assert_eq!(plan.sdk, "iphoneos");
+        assert_eq!(plan.build_subdir, "Debug-iphoneos");
+    }
+
+    #[test]
+    fn simulator_plan_follows_the_host_architecture() {
+        let plan = IosPlan::resolve(IosVariant::Simulator);
+        assert_eq!(plan.sdk, "iphonesimulator");
+        assert_eq!(plan.build_subdir, "Debug-iphonesimulator");
+        let expected = if plan.arch == "x86_64" {
+            "x86_64-apple-ios"
+        } else {
+            "aarch64-apple-ios-sim"
+        };
+        assert_eq!(plan.rust_target, expected);
+    }
+
+    #[test]
+    fn build_target_distinguishes_the_simulator_from_the_device() {
+        let device = IosRunner::device();
+        assert!(matches!(
+            device.plan.build_target(device.variant),
+            CargoBuildTarget::Ios { .. }
+        ));
+
+        let simulator = IosRunner::simulator();
+        assert!(matches!(
+            simulator.plan.build_target(simulator.variant),
+            CargoBuildTarget::IosSim { .. }
+        ));
+    }
+
+    #[test]
+    fn app_path_lives_under_the_variant_build_subdir() {
+        assert_eq!(
+            IosPlan::resolve(IosVariant::Device).app_path("my_app"),
+            "builds/ios/build/Debug-iphoneos/my_app.app"
+        );
+        assert_eq!(
+            IosPlan::resolve(IosVariant::Simulator).app_path("my_app"),
+            "builds/ios/build/Debug-iphonesimulator/my_app.app"
+        );
     }
 }

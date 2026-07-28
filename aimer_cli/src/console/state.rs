@@ -1,4 +1,4 @@
-use crate::commands::run::utilities::LogStyling;
+use crate::commands::run::utilities::StyledLog;
 
 /// Maximum number of log lines retained per pane before old lines are dropped.
 pub const MAX_LINES: usize = 32768;
@@ -19,7 +19,7 @@ pub enum Status {
 /// Events sent from runner/build threads to the console event loop.
 pub enum RunnerEvent {
     BuildLog(String),
-    AppLog(String),
+    AppLog(StyledLog),
     StatusChange(Status),
     HotReload,
 }
@@ -142,7 +142,12 @@ pub struct PaneView {
 /// `mod.rs` owns one of these and the renderer in `ui.rs` reads from it.
 pub struct AppState {
     pub build_logs: Vec<String>,
-    pub app_logs: Vec<String>,
+    pub app_logs: Vec<StyledLog>,
+    /// Whether app log lines show the source location of the log call, i.e. the
+    /// `(file:line)` suffix of a structured record. Hidden by default to keep
+    /// the pane narrow, and toggled with `e`; lines without a location — plain
+    /// `println!` output — are unaffected.
+    pub show_log_source: bool,
     pub status: Status,
     pub pane: ConsoleType,
     pub build_pane: ScrollablePane,
@@ -167,8 +172,9 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
-            build_logs: Vec::with_capacity(MAX_LINES),
-            app_logs: Vec::with_capacity(MAX_LINES),
+            build_logs: Vec::with_capacity(128),
+            app_logs: Vec::with_capacity(128),
+            show_log_source: false,
             status: Status::Compiling(0),
             pane: ConsoleType::App,
             build_pane: ScrollablePane::new(),
@@ -191,13 +197,38 @@ impl AppState {
         }
     }
 
-    /// Append an app log line (carriage returns stripped, log styling applied),
-    /// capping history.
-    pub fn push_app_log(&mut self, msg: String) {
-        self.app_logs.push(msg.replace('\r', "").process_log());
+    /// Append an app log line (carriage returns stripped), capping history.
+    ///
+    /// The line arrives already styled: the reader threads in
+    /// [`cargo_build`](crate::commands::run::cargo_build) parse the JSON log
+    /// records and colorize them, so the event loop does no formatting work.
+    /// Its source location is kept apart from the message so [`show_log_source`]
+    /// can hide it later.
+    ///
+    /// [`show_log_source`]: AppState::show_log_source
+    pub fn push_app_log(&mut self, msg: StyledLog) {
+        self.app_logs.push(msg.without_carriage_returns());
         if self.app_logs.len() > MAX_LINES {
             self.app_logs.remove(0);
         }
+    }
+
+    /// Show or hide the source location of every app log line at once.
+    pub fn toggle_log_source(&mut self) {
+        self.show_log_source = !self.show_log_source;
+    }
+
+    /// The app log lines as they must currently appear on screen.
+    pub fn app_log_lines(&self) -> Vec<String> {
+        self.app_logs
+            .iter()
+            .map(|line| line.render(self.show_log_source))
+            .collect()
+    }
+
+    /// The whole app log pane as plain text, used when copying it.
+    pub fn app_log_text(&self) -> String {
+        self.app_log_lines().join("\n")
     }
 
     /// Apply a status change, focusing the most relevant pane.
@@ -495,6 +526,96 @@ mod tests {
     }
 
     #[test]
+    fn app_state_push_app_log_keeps_the_line_verbatim() {
+        // Styling happens in the reader threads, so the event loop must not
+        // touch the line it is given.
+        let mut state = AppState::new();
+        state.push_app_log(StyledLog::plain("[INFO] already styled"));
+        assert_eq!(state.app_log_lines(), vec!["[INFO] already styled"]);
+    }
+
+    #[test]
+    fn app_state_push_app_log_strips_cr() {
+        let mut state = AppState::new();
+        state.push_app_log(StyledLog::plain("hello\rworld"));
+        assert_eq!(state.app_log_lines(), vec!["helloworld"]);
+    }
+
+    // ── Source location toggle ───────────────────────────────────────
+
+    #[test]
+    fn app_state_hides_the_log_source_by_default() {
+        assert!(!AppState::new().show_log_source);
+    }
+
+    #[test]
+    fn app_state_toggle_log_source_flips_the_flag() {
+        let mut state = AppState::new();
+        state.toggle_log_source();
+        assert!(state.show_log_source);
+        state.toggle_log_source();
+        assert!(!state.show_log_source);
+    }
+
+    #[test]
+    fn app_state_toggle_log_source_hides_and_restores_the_location() {
+        let mut state = AppState::new();
+        state.push_app_log(StyledLog::with_location(
+            "[INFO] ready",
+            " (src/main.rs:12)",
+        ));
+
+        assert_eq!(state.app_log_lines(), vec!["[INFO] ready"]);
+        state.toggle_log_source();
+        assert_eq!(state.app_log_lines(), vec!["[INFO] ready (src/main.rs:12)"]);
+        state.toggle_log_source();
+        assert_eq!(state.app_log_lines(), vec!["[INFO] ready"]);
+    }
+
+    #[test]
+    fn app_state_toggle_log_source_leaves_plain_output_alone() {
+        let mut state = AppState::new();
+        state.push_app_log(StyledLog::plain("raw println output"));
+
+        let shown = state.app_log_lines();
+        state.toggle_log_source();
+        assert_eq!(state.app_log_lines(), shown);
+    }
+
+    #[test]
+    fn app_state_toggle_log_source_applies_to_every_line() {
+        let mut state = AppState::new();
+        for i in 0..3 {
+            state.push_app_log(StyledLog::with_location(
+                format!("[INFO] {i}"),
+                format!(" (src/main.rs:{i})"),
+            ));
+        }
+
+        assert_eq!(state.app_log_lines(), vec!["[INFO] 0", "[INFO] 1", "[INFO] 2"]);
+        state.toggle_log_source();
+        assert_eq!(
+            state.app_log_lines(),
+            vec![
+                "[INFO] 0 (src/main.rs:0)",
+                "[INFO] 1 (src/main.rs:1)",
+                "[INFO] 2 (src/main.rs:2)"
+            ]
+        );
+    }
+
+    #[test]
+    fn app_state_app_log_text_follows_the_toggle() {
+        let mut state = AppState::new();
+        state.push_app_log(StyledLog::with_location("[INFO] a", " (f:1)"));
+        state.push_app_log(StyledLog::plain("b"));
+
+        assert_eq!(state.app_log_text(), "[INFO] a\nb");
+        state.toggle_log_source();
+        assert_eq!(state.app_log_text(), "[INFO] a (f:1)\nb");
+    }
+
+    #[test]
     fn app_state_push_logs_cap_at_max() {
         let mut state = AppState::new();
         for i in 0..(MAX_LINES + 10) {
@@ -512,7 +633,7 @@ mod tests {
     fn app_state_clear_build_and_app() {
         let mut state = AppState::new();
         state.push_build_log("b".to_string());
-        state.push_app_log("a".to_string());
+        state.push_app_log(StyledLog::plain("a"));
         state.build_pane.scroll_up(5);
         state.app_pane.scroll_up(5);
 

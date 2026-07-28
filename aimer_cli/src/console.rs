@@ -1,6 +1,7 @@
 pub mod state;
 pub mod ui;
 
+use std::fs::File;
 use std::io::{Write, stdout};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
@@ -9,6 +10,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use crate::commands::run::Device;
+use crate::commands::run::pipeline::{self, RunContext};
+use crate::commands::run::utilities::{LogStyling, get_project_root};
+use crate::targets::Targets;
+use crate::tui::RawModeGuard;
 use aimer_inspector::InspectorServer;
 use aimer_utils::AnimInstant;
 use anyhow::Context;
@@ -20,11 +26,6 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 pub use state::{AppState, ConsoleType, PaneView, RunnerEvent, Selection, Status};
 use tokio::runtime::Runtime;
-
-use crate::commands::run::Device;
-use crate::commands::run::pipeline::{self, RunContext};
-use crate::targets::Targets;
-use crate::tui::RawModeGuard;
 
 /// Spawn the per-target runner on a background thread, dispatching via the
 /// pipeline [`Runner`](crate::commands::run::pipeline::Runner) trait.
@@ -49,7 +50,7 @@ fn spawn_runner(
                 inspector_address,
                 inspector_port,
             };
-            thread::spawn(move || runner.run(ctx));
+            thread::spawn(move || pipeline::drive(runner, ctx));
         }
         None => {
             let _ = tx.send(RunnerEvent::BuildLog(format!(
@@ -130,45 +131,33 @@ fn hit_test(view: &PaneView, col: u16, row: u16) -> Option<(usize, usize)> {
 }
 
 pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
-    // The guard restores the terminal on drop (even on panic / early return).
-    // Declared before `terminal` so it is dropped *after* it.
     let _guard = RawModeGuard::with_alternate_screen()?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
-
     let (tx, rx) = crossbeam::channel::unbounded();
-
     let mut state = AppState::new();
-
     // Starting inspector server
     let inspector_runtime =
         Runtime::new().context("failed to start inspector server tokio runtime")?;
-
     let inspector_server_address = match device.target {
         Targets::Ios | Targets::Android => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
         _ => IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
     };
-
     let inspector_handle =
         match InspectorServer::start(inspector_server_address, 9229, inspector_runtime.handle()) {
             Ok(handle) => handle,
             Err(e) => {
-                let _ = tx.send(RunnerEvent::AppLog(format!(
-                    "Failed to start inspector server: {}",
-                    e
-                )));
+                let _ = tx.send(RunnerEvent::AppLog(
+                    format!("Failed to start inspector server: {}", e).into(),
+                ));
                 return Err(anyhow::anyhow!("failed to start inspector server: {e}"));
             }
         };
-
     let frames = ["⠋", "⠙", "⠚", "⠞", "⠖", "⠦", "⠴", "⠲", "⠳", "⠓"];
     let running_frame = ["▣", "▤", "▥", "▦", "▧", "▨", "▣", "▤", "▥", "▦"];
     let mut frame_index = 0;
     let tick_rate = Duration::from_millis(100);
     let mut last_tick = AnimInstant::now();
-
-    // Drives the ConEmu `OSC 9;4` progress bar (e.g. the blue line at the top of
-    // Ghostty). Computed once; the escape is only emitted when the status changes.
     let progress_supported = terminal_supports_progress();
     let mut last_progress: Option<Status> = None;
 
@@ -228,7 +217,9 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                     match state.status {
                         Status::Running | Status::Idling | Status::Error => {
                             let _ = tx.send(RunnerEvent::AppLog(
-                                "[hot-reload] File change detected, rebuilding...".to_string(),
+                                "[hot-reload] File change detected, rebuilding..."
+                                    .to_string()
+                                    .process_log(),
                             ));
                             if device.target == Targets::Web {
                                 state.clear_build();
@@ -281,8 +272,27 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
             .checked_sub(last_tick.elapsed())
             .unwrap_or_else(|| Duration::from_secs(0));
 
+        let Ok(proj_root) = get_project_root(false) else {
+            if let Some(mut child) = current_child.lock().unwrap().take() {
+                let _ = child.kill();
+            }
+            break;
+        };
+
+        let lib_path = proj_root.join("src/lib.rs");
+        if !lib_path.exists() {
+            return Err(anyhow::anyhow!("src/lib.rs is not found! :  {}", lib_path.display()));
+        }
+
+        let mut file_writer = File::options()
+            .append(true)
+            .read(true)
+            .create(false)
+            .open(lib_path)?;
+
         if event::poll(timeout)? {
             match event::read()? {
+
                 Event::Key(key) => {
                     match (key.code, key.modifiers) {
                         (KeyCode::Char('1'), _) => {
@@ -306,9 +316,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                         }
                         (KeyCode::Char('r'), _) => {
                             if device.target == Targets::Web {
-                                state.clear_build();
-                                state.status = Status::Compiling(0);
-                                pipeline::spawn_wasm_pack(tx.clone());
+                                file_writer.write_all(b" ")?;
                             } else {
                                 // Kill child process if running
                                 if let Some(mut child) = current_child.lock().unwrap().take() {
@@ -366,7 +374,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                 if state.pane == ConsoleType::Build {
                                     state.build_logs.join("\n")
                                 } else {
-                                    state.app_logs.join("\n")
+                                    state.app_log_text()
                                 }
                             });
                             if let Ok(mut clipboard) = Clipboard::new() {
@@ -380,7 +388,7 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                 let logs = if state.pane == ConsoleType::Build {
                                     state.build_logs.join("\n")
                                 } else {
-                                    state.app_logs.join("\n")
+                                    state.app_log_text()
                                 };
                                 let _ = clipboard.set_text(logs);
                             }
@@ -394,6 +402,12 @@ pub fn start(device: Device, pkg_name: String) -> anyhow::Result<()> {
                                 }
                                 state.clear_selection();
                             }
+                        }
+
+                        (KeyCode::Char('e'), _) | (KeyCode::Char('E'), _) => {
+                            // Show or hide the `(file:line)` source location of
+                            // the app log lines that carry one.
+                            state.toggle_log_source();
                         }
 
                         (KeyCode::Char('s'), _) | (KeyCode::Char('S'), _) => {
@@ -555,10 +569,9 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
         match InspectorServer::start(inspector_server_address, 9229, inspector_runtime.handle()) {
             Ok(handle) => handle,
             Err(e) => {
-                let _ = tx.send(RunnerEvent::AppLog(format!(
-                    "Failed to start inspector server: {}",
-                    e
-                )));
+                let _ = tx.send(RunnerEvent::AppLog(
+                    format!("Failed to start inspector server: {}", e).into(),
+                ));
                 return Err(anyhow::anyhow!("failed to start inspector server: {e}"));
             }
         };
@@ -614,7 +627,7 @@ pub fn start_no_tui(device: Device, pkg_name: String) -> anyhow::Result<()> {
                 eprintln!("[build] {}", msg);
             }
             RunnerEvent::AppLog(msg) => {
-                println!("{}", msg);
+                println!("{}", msg.render(true));
             }
             RunnerEvent::StatusChange(status) => match &status {
                 Status::Compiling(pct) => eprintln!("[status] Compiling {}%", pct),
