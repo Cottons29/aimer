@@ -66,9 +66,6 @@ pub(crate) fn paint_overlay_content(
 /// Returns whether `position` falls inside the last painted content rectangle.
 pub(crate) fn contains(child_bounds: &RefCell<Option<(Vec2d, Vec2d)>>, position: Vec2d) -> bool {
     child_bounds.borrow().is_some_and(|(start, end)| {
-        position.x >= start.x
-            && position.x <= end.x
-            && position.y >= start.y
-            && position.y <= end.y
+        position.x >= start.x && position.x <= end.x && position.y >= start.y && position.y <= end.y
     })
 }

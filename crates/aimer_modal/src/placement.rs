@@ -419,12 +419,10 @@ mod tests {
 
     #[test]
     fn gap_and_offset_reject_non_finite_values() {
-        let spec = PlacementSpec::new()
-            .gap(f32::NAN)
-            .offset(Vec2d {
-                x: f32::INFINITY,
-                y: 5.0,
-            });
+        let spec = PlacementSpec::new().gap(f32::NAN).offset(Vec2d {
+            x: f32::INFINITY,
+            y: 5.0,
+        });
 
         assert_eq!(spec.gap_value(), 0.0);
         assert_eq!(spec.offset_value().x, 0.0);

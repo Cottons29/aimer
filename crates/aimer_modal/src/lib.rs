@@ -12,7 +12,8 @@ pub use floating::Floating;
 pub use host::{ModalController, ModalHandle, ModalHost, ModalId};
 pub use modal::Modal;
 pub use placement::{
-    FloatingAlign, FloatingPlacement, FloatingSide, OverflowPolicy, PlacementSpec, resolve_placement,
+    FloatingAlign, FloatingPlacement, FloatingSide, OverflowPolicy, PlacementSpec,
+    resolve_placement,
 };
 
 #[cfg(test)]

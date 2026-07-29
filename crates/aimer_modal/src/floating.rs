@@ -432,10 +432,10 @@ mod tests {
             FloatingAlign::Center
         );
         assert_eq!(floating.placement_value().gap_value(), 6.0);
-        assert_eq!(floating.placement_value().offset_value(), Vec2d {
-            x: 2.0,
-            y: -3.0
-        });
+        assert_eq!(
+            floating.placement_value().offset_value(),
+            Vec2d { x: 2.0, y: -3.0 }
+        );
         assert_eq!(
             floating.placement_value().overflow_value(),
             OverflowPolicy::Shift
