@@ -24,8 +24,8 @@ pub use aimer_markdown::{
 };
 pub use aimer_modal::{
     Anchor, AnchorHandle, Floating, FloatingAlign, FloatingPlacement, FloatingSide, Modal,
-    ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId, OverflowPolicy, PlacementSpec,
-    resolve_placement,
+    ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId, OverflowPolicy,
+    PlacementSpec, resolve_placement,
 };
 #[cfg(feature = "provider")]
 pub use aimer_provider::{
@@ -48,6 +48,9 @@ pub use aimer_svg::{
 pub use aimer_text::{RichText, SpanStyle, Text, TextButton, TextSpan};
 pub use aimer_widget::base::BuildContext;
 pub use aimer_widget::{self, Key, State, StatefulWidget, StatelessWidget, Widget, *};
+
+
+pub use aimer_native as native;
 
 pub mod widget {
     pub use aimer_widget::base::BuildContext;

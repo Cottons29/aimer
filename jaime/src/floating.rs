@@ -69,8 +69,7 @@ impl State<FloatingShowcase> for FloatingShowcaseState {
         Container::new()
             .color(Color::Rgb(17, 24, 39))
             .padding(LayoutSpacing::all(Spacing::Px(32)))
-            .child(
-                Column::new().children(vec![
+            .child(Column::new().children(vec![
                     Container::new()
                         .height(Dimension::Px(34.0))
                         .child(
@@ -115,8 +114,7 @@ impl State<FloatingShowcase> for FloatingShowcaseState {
                                 .child(self.corner_trigger()),
                         )
                         .boxed(),
-                ]),
-            )
+                ]))
     }
 }
 
@@ -200,7 +198,7 @@ fn trigger(label: &str, handle: AnchorHandle, on_press: impl Into<VoidCallback>)
 /// Builds the dropdown content: one row per [`MENU_ITEMS`] entry.
 fn menu_panel(updater: StateUpdater<FloatingShowcaseState>) -> AnyWidget {
     Container::new()
-        .width(Dimension::Px(220.0))
+        .width(Dimension::Px(200.0))
         .height(Dimension::Px(
             MENU_ITEMS.len() as f32 * MENU_ITEM_HEIGHT + MENU_PADDING as f32 * 2.0,
         ))
@@ -248,11 +246,7 @@ fn menu_item(item: &'static str, updater: StateUpdater<FloatingShowcaseState>) -
                 .child(
                     Text::new(item)
                         .text_align(TextAlign::MidLeft)
-                        .text_style(
-                            TextStyle::new()
-                                .font_size(16)
-                                .color(Color::Rgb(31, 41, 55)),
-                        ),
+                        .text_style(TextStyle::new().font_size(16).color(Color::Rgb(31, 41, 55))),
                 ),
         )
         .boxed()

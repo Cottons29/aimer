@@ -1122,7 +1122,6 @@ mod tests {
                 .all(|(_, kind)| *kind == ScrollDeltaKind::Line)
         );
         assert!(events.iter().all(|(delta, _)| delta.y < 0.0));
-
     }
 
     #[test]

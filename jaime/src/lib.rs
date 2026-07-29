@@ -53,9 +53,9 @@ pub fn my_app() {
     // async_builder::start_async_builder_example()
     // custom_animated_theme::start_custom_animated_theme_example()
     // test_scrollable()
-    // test_scrollable_row()
+    test_scrollable_row()
     // start_modal_example();
-    start_floating_example();
+    //    start_floating_example();
     // start_markdown_example();
     // start_panic_recovery_example();
     // test_scroll_and_row();
@@ -64,6 +64,7 @@ pub fn my_app() {
     // start_custom_animated_theme_example()
     // test_text()
     // start_loading_animation_example()
+    // floating::start_floating_example();
 }
 
 #[allow(unused)]
@@ -301,57 +302,10 @@ pub fn test_scrollable() {
         })
         .collect();
 
-    let items_2: Vec<AnyWidget> = (0..1200)
-        .map(|i| {
-            let color = if i % 2 == 0 {
-                Color::Rgb(100, 149, 237)
-            } else {
-                Color::Rgb(255, 160, 122)
-            };
-            if i == 5 {
-                Container::new()
-                    .padding(LayoutSpacing::all(Spacing::Px(10)))
-                    .height(Dimension::Px(200.0))
-                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
-                    .child(
-                        Text::new(format!("Item {}", i))
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
-                    )
-                    .boxed()
-            } else {
-                Container::new()
-                    .margin(LayoutSpacing {
-                        top: Spacing::Px(30),
-                        ..Default::default()
-                    })
-                    .box_decoration(
-                        BoxDecoration::new()
-                            .border(BoxBorder::all(
-                                BorderSlice::new()
-                                    .style(BorderStyle::Solid)
-                                    .stroke(Stroke::Px(1.0))
-                                    .color(Colors::Black),
-                            ))
-                            .background_color(color),
-                    )
-                    .height(Dimension::Px(80.0))
-                    .child(
-                        Text::new(format!("Item {}", i))
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
-                    )
-                    .boxed()
-            }
-        })
-        .collect();
     let content = Column::new()
-        .horizontal_alignment(BoxAlignment::Center)
+        .horizontal_alignment(BoxAlignment::Start)
         .children(items);
 
-    let content_2 = Column::new()
-        .horizontal_alignment(BoxAlignment::Center)
-        .children(items_2);
     let scrollbar = ScrollBar {
         track: ScrollTrack {
             width: Dimension::Px(2.0),
@@ -368,52 +322,9 @@ pub fn test_scrollable() {
         up_button: None,
         down_button: None,
     };
-    let app = Container::new().color(Color::WHITE).child(
-        Column::new()
-            .children(vec![
-                Container::new()
-                    .height(Dimension::Px(80.0))
-                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
-                    .child(
-                        Text::new("This is header")
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
-                    )
-                    .boxed(),
-                Row::new()
-                    .children(vec![
-                        Container::new()
-                            .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
-                            .child(
-                                Scrollable::new()
-                                    .axis(ScrollAxis::Vertical)
-                                    .vertical_scroll_bar(Some(scrollbar))
-                                    .child(content),
-                            )
-                            .boxed(),
-                        Container::new()
-                            .padding(LayoutSpacing::horizontal(Spacing::Px(10)))
-                            .child(
-                                Scrollable::new()
-                                    .axis(ScrollAxis::Vertical)
-                                    .vertical_scroll_bar(Some(scrollbar))
-                                    .child(content_2),
-                            )
-                            .boxed(),
-                    ])
-                    .boxed(),
-                Container::new()
-                    .height(Dimension::Px(80.0))
-                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
-                    .child(
-                        Text::new("This is footer")
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
-                    )
-                    .boxed(),
-            ])
-            .boxed(),
-    );
+    let app = Container::new()
+        .color(Color::WHITE)
+        .child(Scrollable::new().axis(ScrollAxis::Vertical).child(content));
 
     AimerApp::start(app);
 }
@@ -497,37 +408,10 @@ fn test_scrollable_row() {
         down_button: None,
     };
     let app = Container::new().child(
-        Row::new()
-            .children(vec![
-                Container::new()
-                    .width(Dimension::Px(80.0))
-                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
-                    .child(
-                        Text::new("This is header")
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
-                    )
-                    .boxed(),
-                Container::new()
-                    .padding(LayoutSpacing::all(Spacing::Px(10)))
-                    .child(
-                        Scrollable::new()
-                            .axis(ScrollAxis::Horizontal)
-                            .vertical_scroll_bar(Some(scrollbar))
-                            .child(content),
-                    )
-                    .boxed(),
-                Container::new()
-                    .width(Dimension::Px(80.0))
-                    .box_decoration(BoxDecoration::new().background_color(Colors::Green))
-                    .child(
-                        Text::new("This is footer")
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
-                    )
-                    .boxed(),
-            ])
-            .boxed(),
+        Scrollable::new()
+            .axis(ScrollAxis::Horizontal)
+            .vertical_scroll_bar(Some(scrollbar))
+            .child(content),
     );
     AimerApp::start(app);
 }
@@ -561,4 +445,4 @@ fn test_image() {
                     ),
             ),
     )
-}  
+}

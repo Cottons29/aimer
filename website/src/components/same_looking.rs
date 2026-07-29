@@ -3,7 +3,7 @@ use std::time::Duration;
 use aimer::animation::{AnimatedSwitcher, Curve};
 use aimer::style::{FontWeight, TextDecoration, TextStyle, Theme, ThemeData};
 use aimer::*;
-
+use aimer::native::haptic::{HapticPattern, Haptics, ImpactStyle};
 use crate::components::animation_button::{AnimatedPlatformButtonList, PLATFORMS};
 use crate::utils::{app_padding, is_mobile, mobile_title};
 
@@ -71,7 +71,7 @@ impl State<SameLookingSection> for SameLookingSectionState {
             .child(
                 Column::new()
                     .horizontal_alignment(BoxAlignment::Center)
-                    .children(vec![
+                    .children([
                         Container::new()
                             .height(100)
                             .child(
@@ -96,6 +96,13 @@ impl State<SameLookingSection> for SameLookingSectionState {
                             .on_selected({
                                 let updater = self.state.clone();
                                 move |index| {
+                                    let pattern = HapticPattern::new()
+                                        .transient(0.0, 1.0, 1.0)          // sharp tap at t=0
+                                        .transient(0.2, 1.0, 1.0)
+                                        .transient(0.4, 1.0, 1.0);
+                                    // .continuous(0.1, 0.4, 0.6, 0.2);   // soft buzz starting at t=0.1s for 0.4s
+                                    Haptics::play_pattern(&pattern);
+                                    // Haptics::impact(ImpactStyle::Rigid);
                                     if updater.read_state().current_index != index {
                                         updater.set_state(move |state| state.current_index = index);
                                     }

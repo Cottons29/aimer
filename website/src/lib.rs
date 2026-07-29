@@ -111,4 +111,4 @@ mod test {
         app.render_frame();
         assert_eq!(take_route_builds(), vec![AppRouter::Blog]);
     }
-}
+}                                      

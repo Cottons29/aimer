@@ -563,7 +563,7 @@ impl WindowEventHandler {
         }
     }
 
-    pub(crate) const SCROLL_MULTIPLIER : f32 = 1.5;
+    pub(crate) const SCROLL_MULTIPLIER: f32 = 1.5;
 
     #[inline]
     fn normalize_wheel_delta(
@@ -784,7 +784,7 @@ mod tests {
             );
 
             assert_eq!(delta.x, 12.0 * WindowEventHandler::SCROLL_MULTIPLIER);
-            assert_eq!(delta.y, -8.0 *  WindowEventHandler::SCROLL_MULTIPLIER);
+            assert_eq!(delta.y, -8.0 * WindowEventHandler::SCROLL_MULTIPLIER);
         }
     }
 }

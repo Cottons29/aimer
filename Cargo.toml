@@ -34,6 +34,7 @@ aimer_provider.workspace = true
 aimer_svg.workspace = true
 aimer_markdown.workspace = true
 aimer_modal.workspace = true
+aimer_native.workspace = true
 
 [features]
 markdown = []
@@ -106,7 +107,7 @@ aimer_provider = { path = "crates/aimer_provider" }
 aimer_svg = { path = "crates/aimer_svg" }
 aimer_markdown = { path = "crates/aimer_markdown" }
 aimer_modal = { path = "crates/aimer_modal" }
-
+aimer_native = {path = "crates/aimer_native"}
 
 #############
 
@@ -162,6 +163,8 @@ usvg = { version = "0.47.0", default-features = false }
 naga = { version = "30.0.0", features = ["wgsl-in"] }
 arborium = "2.18.0"
 muda = "0.19.3"
+objc2-ui-kit = "0.3.2"
+objc2 = "0.6.4"
 
 
 # Aimer cli dependencies

@@ -1,6 +1,5 @@
 use std::any::TypeId;
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -8,6 +7,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use smallvec::SmallVec;
+use hashbrown::{HashMap, HashSet};
 
 use crate::base::*;
 use crate::components::event_element::{CaptureRequest, EventElement, EventResult, PointerKey};

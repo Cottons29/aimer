@@ -20,6 +20,7 @@ once_cell.workspace = true
 smallvec.workspace = true
 crossbeam-channel.workspace = true
 futures-util.workspace = true
+hashbrown.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 objc.workspace = true

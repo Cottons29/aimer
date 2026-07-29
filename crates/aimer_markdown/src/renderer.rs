@@ -8,7 +8,8 @@ use aimer_grid::{Grid, GridItem, GridTrack};
 use aimer_input::button::Button;
 use aimer_scroll::{ScrollAxis, Scrollable};
 use aimer_style::{
-    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontStyle, FontWeight, LayoutSpacing, TextAlign, TextDecoration, TextDecorationLine, TextStyle,
+    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontStyle, FontWeight, LayoutSpacing,
+    TextAlign, TextDecoration, TextDecorationLine, TextStyle,
 };
 use aimer_svg::{Svg, SvgDocument, SvgStyle};
 use aimer_text::{RichText, SpanStyle, Text, TextSpan};
