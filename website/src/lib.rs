@@ -5,10 +5,11 @@ mod router;
 mod screen;
 mod utils;
 
+use std::env::args;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
-use aimer::console::debug;
+use aimer::console::{debug, info};
 use aimer::router::Navigator;
 use aimer::*;
 
@@ -111,4 +112,3 @@ mod test {
         assert_eq!(take_route_builds(), vec![AppRouter::Blog]);
     }
 }
- 

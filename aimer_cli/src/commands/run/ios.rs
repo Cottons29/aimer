@@ -245,8 +245,7 @@ fn launch_app(
                 "--device",
                 &device.id,
                 bundle_id,
-                // Arguments after the bundle id are forwarded to the app, so
-                // it logs JSON records the console can parse and colorize.
+                "--",
                 JSON_OUTPUT_FLAG,
             ])
             .env("TERM", "dumb")
