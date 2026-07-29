@@ -216,7 +216,6 @@ pub fn get_project_root(allow_workspace: bool) -> Result<PathBuf, Box<dyn Error>
     Ok(root)
 }
 
-
 impl LogStyling for String {
     /// Style one line of application output.
     ///
@@ -251,7 +250,6 @@ mod tests {
     fn styled(line: &str) -> String {
         line.to_string().process_log().render(true)
     }
-
 
     #[test]
     fn process_log_error_contains_original_text() {
@@ -345,10 +343,9 @@ mod tests {
 
     #[test]
     fn process_log_keeps_the_json_location_toggleable() {
-        let styled = String::from(
-            r#"{"level":"info","message":"ready","file":"src/main.rs","line":12}"#,
-        )
-        .process_log();
+        let styled =
+            String::from(r#"{"level":"info","message":"ready","file":"src/main.rs","line":12}"#)
+                .process_log();
 
         assert!(styled.has_location());
         assert!(styled.render(true).contains("(src/main.rs:12)"));

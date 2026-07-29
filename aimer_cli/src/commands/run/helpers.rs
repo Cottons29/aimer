@@ -139,7 +139,6 @@ pub fn spawn_streamed(
     true
 }
 
-
 /// Run `cmd` to completion (inheriting whatever stdio the caller configured),
 /// reporting `spawn_fail_msg` if it cannot be launched and `fail_msg` if it
 /// exits with a non-zero status. Returns `true` only on success.
@@ -216,7 +215,10 @@ mod tests {
         let (tx, _rx, child) = console();
 
         let err = ConsoleReporter::new(&tx, &child)
-            .run(Command::new("false"), Step::new(StepKind::Cargo, "the step"))
+            .run(
+                Command::new("false"),
+                Step::new(StepKind::Cargo, "the step"),
+            )
             .unwrap_err();
 
         assert_eq!(err.to_string(), "the step failed");

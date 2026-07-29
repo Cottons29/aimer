@@ -297,15 +297,10 @@ fn header(title: &str, width: usize) -> String {
     let text = format!(" {} ", title);
     let fill = width.saturating_sub(text.chars().count());
     let left = fill / 2;
-    format!(
-        "{}{}{}",
-        "=".repeat(left),
-        text,
-        "=".repeat(fill - left)
-    )
-    .red()
-    .bold()
-    .to_string()
+    format!("{}{}{}", "=".repeat(left), text, "=".repeat(fill - left))
+        .red()
+        .bold()
+        .to_string()
 }
 
 /// The wave rule between two error panels of a report, `width` cells wide.
@@ -402,7 +397,10 @@ struct RawSpan {
 
 impl RawSpan {
     fn location(&self) -> String {
-        format!("{}:{}:{}", self.file_name, self.line_start, self.column_start)
+        format!(
+            "{}:{}:{}",
+            self.file_name, self.line_start, self.column_start
+        )
     }
 }
 
@@ -531,10 +529,7 @@ mod tests {
     fn parse_prefers_the_primary_span_for_the_location() {
         let line = r#"{"reason":"compiler-message","message":{"level":"error","message":"m","spans":[{"file_name":"src/a.rs","line_start":1,"column_start":1,"is_primary":false},{"file_name":"src/b.rs","line_start":7,"column_start":3,"is_primary":true}],"rendered":"r"}}"#;
 
-        assert_eq!(
-            diagnostic(line).location.as_deref(),
-            Some("src/b.rs:7:3")
-        );
+        assert_eq!(diagnostic(line).location.as_deref(), Some("src/b.rs:7:3"));
     }
 
     #[test]
@@ -646,9 +641,11 @@ mod tests {
         assert!(lines[1].contains("Compile Error"));
         assert!(lines[1].starts_with('='));
         // The rendering cargo produced is replayed as is, padded to the panel.
-        assert!(lines
-            .iter()
-            .any(|l| l.trim_end() == "error[E0308]: mismatched types"));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.trim_end() == "error[E0308]: mismatched types")
+        );
         assert!(lines.last().unwrap().contains("1 error"));
         // A single error needs no rule.
         assert!(!lines.iter().any(|l| l.starts_with('~')));
@@ -753,7 +750,10 @@ mod tests {
         report.record(&error_with("b", "E0002"));
 
         let width = 120;
-        for line in report_lines_at(&report, width).iter().filter(|l| !l.is_empty()) {
+        for line in report_lines_at(&report, width)
+            .iter()
+            .filter(|l| !l.is_empty())
+        {
             assert_eq!(line.chars().count(), width, "{line:?}");
         }
     }

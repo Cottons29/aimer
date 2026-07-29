@@ -212,9 +212,10 @@ impl AppState {
     /// [`show_log_source`]: AppState::show_log_source
     pub fn push_app_log(&mut self, msg: StyledLog) {
         let show_source = self.show_log_source;
-        self.app_logs.push(msg.without_carriage_returns(), move |line| {
-            Cow::Owned(line.render(show_source))
-        });
+        self.app_logs
+            .push(msg.without_carriage_returns(), move |line| {
+                Cow::Owned(line.render(show_source))
+            });
     }
 
     /// Show or hide the source location of every app log line at once.
@@ -608,7 +609,10 @@ mod tests {
             ));
         }
 
-        assert_eq!(state.app_log_lines(), vec!["[INFO] 0", "[INFO] 1", "[INFO] 2"]);
+        assert_eq!(
+            state.app_log_lines(),
+            vec!["[INFO] 0", "[INFO] 1", "[INFO] 2"]
+        );
         state.toggle_log_source();
         assert_eq!(
             state.app_log_lines(),

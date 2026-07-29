@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use crossbeam::channel::Sender;
 
+use crate::commands::assemble::link_flags;
 use crate::commands::run::cargo_message::{self, CargoMessage, ErrorReport};
 use crate::commands::run::console::{RunnerEvent, Status};
 use crate::commands::run::utilities::LogStyling;
@@ -66,13 +67,22 @@ pub fn cargo_command(target: &CargoBuildTarget, release: bool) -> Command {
         }
         CargoBuildTarget::Ios { rust_target } | CargoBuildTarget::IosSim { rust_target } => {
             let mut c = Command::new("cargo");
-            c.arg("build").arg("--lib").arg("--target").arg(rust_target).arg(cargo_message::MESSAGE_FORMAT).env("RUSTFLAGS","-C link-arg=-Wl,-U,_aimer_ios_request_frame -C link-arg=-Wl,-U,_aimer_ios_pause_frames");
+            c.arg("rustc").arg("--lib").arg("--target").arg(rust_target).arg(cargo_message::MESSAGE_FORMAT).env("RUSTFLAGS","-C link-arg=-Wl,-U,_aimer_ios_request_frame -C link-arg=-Wl,-U,_aimer_ios_pause_frames");
             c
         }
     };
 
     if release {
         cmd.arg("--release");
+    }
+    // `cargo rustc` takes the compiler arguments last, after the profile flag.
+    if let CargoBuildTarget::Ios { rust_target } | CargoBuildTarget::IosSim { rust_target } = target
+        && let Ok(print) = link_flags::print_arg(rust_target, release)
+    {
+        // Record which system frameworks the crate graph links against, so
+        // `package_ios` can hand the same list to Xcode. A failure here only
+        // means the app keeps the link flags of the previous build.
+        cmd.arg("--").arg("--print").arg(print);
     }
     cmd
 }
@@ -415,11 +425,25 @@ mod tests {
     fn the_web_build_swaps_the_wasm_pack_profile_flag() {
         assert_eq!(
             cargo_args(&CargoBuildTarget::Web, false),
-            vec!["build", "--debug", "--target", "web", "--out-dir", "builds/web/pkg"]
+            vec![
+                "build",
+                "--debug",
+                "--target",
+                "web",
+                "--out-dir",
+                "builds/web/pkg"
+            ]
         );
         assert_eq!(
             cargo_args(&CargoBuildTarget::Web, true),
-            vec!["build", "--release", "--target", "web", "--out-dir", "builds/web/pkg"]
+            vec![
+                "build",
+                "--release",
+                "--target",
+                "web",
+                "--out-dir",
+                "builds/web/pkg"
+            ]
         );
     }
 
@@ -505,9 +529,7 @@ mod tests {
 
     #[test]
     fn reader_thread_preserves_line_order() {
-        let logs = app_logs(
-            "first\n{\"level\":\"info\",\"message\":\"second\"}\nthird\n",
-        );
+        let logs = app_logs("first\n{\"level\":\"info\",\"message\":\"second\"}\nthird\n");
 
         assert_eq!(logs.len(), 3);
         assert_eq!(logs[0], "first");

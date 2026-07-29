@@ -165,7 +165,10 @@ mod tests {
         plain(&mut history, "first");
         plain(&mut history, "second");
 
-        assert_eq!(history.entries(), ["first".to_string(), "second".to_string()]);
+        assert_eq!(
+            history.entries(),
+            ["first".to_string(), "second".to_string()]
+        );
         assert_eq!(row_texts(&history), vec!["first", "second"]);
     }
 

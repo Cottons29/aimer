@@ -104,7 +104,10 @@ impl Runner for WebRunner {
         // the sources it copies from — exactly what `aimer assemble web` does.
         let artifact = "builds/web";
         if let Err(e) = ConsoleReporter::of(ctx).stage_assets(artifact) {
-            fail(&ctx.tx, format!("Failed to copy assets into {artifact}: {e:#}"));
+            fail(
+                &ctx.tx,
+                format!("Failed to copy assets into {artifact}: {e:#}"),
+            );
             return Flow::Abort;
         }
 

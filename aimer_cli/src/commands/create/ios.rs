@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use crate::commands::assemble::link_flags;
+
 pub fn create(dir: &Path, name: &str, group: &str) {
     let project_name = name;
     let project_name_lib = project_name.replace("-", "_");
@@ -17,6 +19,11 @@ pub fn create(dir: &Path, name: &str, group: &str) {
         xcode_proj_template,
     )
     .unwrap();
+
+    // The project links whatever `RustLinkFlags.xcconfig` says; until the
+    // first `aimer` build derives the real list from the crate graph, the
+    // defaults keep an Xcode-only build working.
+    link_flags::scaffold(&ios_dir).unwrap();
 
     let app_dir = ios_dir.join(project_name);
     fs::create_dir_all(&app_dir).unwrap();
@@ -62,4 +69,46 @@ pub fn create(dir: &Path, name: &str, group: &str) {
 "#,
     )
     .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::assemble::link_flags::{LDFLAGS_SETTING, XCCONFIG_FILE};
+
+    #[test]
+    fn the_scaffold_ships_the_generated_link_configuration() {
+        let dir = scaffolded("my_app");
+
+        let xcconfig = fs::read_to_string(dir.join("builds/ios").join(XCCONFIG_FILE)).unwrap();
+        assert!(xcconfig.contains(&format!("{LDFLAGS_SETTING} = ")), "{xcconfig}");
+        assert!(xcconfig.contains("-framework CoreHaptics"), "{xcconfig}");
+    }
+
+    #[test]
+    fn the_project_links_what_the_configuration_says() {
+        let dir = scaffolded("my_app");
+
+        let pbxproj =
+            fs::read_to_string(dir.join("builds/ios/my_app.xcodeproj/project.pbxproj")).unwrap();
+        // The frameworks are never spelled out in the project: they come from
+        // the generated xcconfig, so a new Apple binding on the Rust side
+        // needs no Xcode change.
+        assert!(pbxproj.contains(&format!("$({LDFLAGS_SETTING})")), "{pbxproj}");
+        assert!(pbxproj.contains("baseConfigurationReference"), "{pbxproj}");
+        assert!(!pbxproj.contains("\"-framework\","), "{pbxproj}");
+    }
+
+    /// A scratch project directory with the iOS scaffold in it.
+    fn scaffolded(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "aimer-create-ios-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        create(&dir, name, "com.example.app");
+        dir
+    }
 }

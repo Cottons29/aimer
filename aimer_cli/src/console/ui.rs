@@ -25,7 +25,6 @@ pub fn render(
         .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
         .split(f.area());
 
-
     let inspector_status = if !inspector_state.connected {
         " [disconnected]"
     } else if inspector_state.enabled {

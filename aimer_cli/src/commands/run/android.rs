@@ -81,7 +81,13 @@ impl AndroidRunner {
     /// The ABI the connected device reports.
     fn device_abi(&self, ctx: &RunContext) -> Option<String> {
         let output = match Command::new("adb")
-            .args(["-s", &ctx.device.id, "shell", "getprop", "ro.product.cpu.abi"])
+            .args([
+                "-s",
+                &ctx.device.id,
+                "shell",
+                "getprop",
+                "ro.product.cpu.abi",
+            ])
             .output()
         {
             Ok(output) => output,
@@ -300,11 +306,9 @@ mod tests {
 
     #[test]
     fn application_id_is_read_from_the_gradle_template() {
-        let gradle = "android {\n    defaultConfig {\n        applicationId = \"com.acme.demo\"\n    }\n}";
-        assert_eq!(
-            application_id_of(gradle).as_deref(),
-            Some("com.acme.demo")
-        );
+        let gradle =
+            "android {\n    defaultConfig {\n        applicationId = \"com.acme.demo\"\n    }\n}";
+        assert_eq!(application_id_of(gradle).as_deref(), Some("com.acme.demo"));
     }
 
     #[test]

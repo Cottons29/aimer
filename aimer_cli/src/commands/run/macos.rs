@@ -7,9 +7,7 @@ use crate::commands::run::cargo_build::{
     self, CargoBuildTarget, stream_stderr_as_app_log, stream_stdout_as_app_log,
 };
 use crate::commands::run::console::Status;
-use crate::commands::run::helpers::{
-    ConsoleReporter, build_log, fail, set_status, spawn_streamed,
-};
+use crate::commands::run::helpers::{ConsoleReporter, build_log, fail, set_status, spawn_streamed};
 use crate::commands::run::pipeline::{Flow, RunContext, Runner};
 
 /// The macOS leg of the unified pipeline: `cargo build` → the shared

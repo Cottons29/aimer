@@ -1,3 +1,5 @@
+pub(crate) mod link_flags;
+
 use std::env::current_dir;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -15,6 +17,9 @@ pub(crate) const MACOS_RUST_TARGET: &str = "aarch64-apple-darwin";
 
 /// ABI assumed when no device is involved, i.e. for `aimer assemble android`.
 pub(crate) const ANDROID_DEFAULT_ABI: &str = "arm64-v8a";
+
+/// The generated Xcode project of the iOS app, relative to the project root.
+pub(crate) const IOS_PROJECT_DIR: &str = "builds/ios";
 
 /// Non-interactive bundling entry point used by `aimer assemble <platform>`.
 ///
@@ -363,16 +368,25 @@ impl IosPlan {
 }
 
 /// Compile the Rust library for iOS.
+///
+/// This goes through `cargo rustc` rather than `cargo build` for one reason:
+/// the trailing `--print native-static-libs` makes the compiler write down
+/// which system frameworks the crate graph links against, which
+/// [`package_ios`] then feeds to Xcode. See [`link_flags`].
 fn build_ios(plan: &IosPlan, release: bool, reporter: &dyn Reporter) -> anyhow::Result<()> {
     let mut cargo = Command::new("cargo");
     cargo
-        .arg("build")
+        .arg("rustc")
         .arg("--lib")
         .arg("--target")
         .arg(plan.rust_target);
     if release {
         cargo.arg("--release");
     }
+    cargo
+        .arg("--")
+        .arg("--print")
+        .arg(link_flags::print_arg(plan.rust_target, release)?);
     reporter.run(cargo, Step::new(StepKind::Cargo, "cargo build for iOS"))
 }
 
@@ -398,16 +412,23 @@ pub(crate) fn package_ios(
         reporter,
     )?;
 
+    // The archive alone does not tell Xcode which frameworks to link, so the
+    // list the compiler just wrote is turned into the project's xcconfig.
+    link_flags::refresh(
+        Path::new(IOS_PROJECT_DIR),
+        &link_flags::raw_path(plan.rust_target, release),
+    )?;
+
     reporter.note("Building Xcode project for iOS...".to_string());
     reporter.run(
         xcode_command(
-            "builds/ios",
+            IOS_PROJECT_DIR,
             pkg_name,
             xcode_configuration(release),
             Some(plan.sdk),
             plan.arch,
         ),
-        Step::new(StepKind::Xcode, "xcodebuild for iOS"),
+        Step::new(StepKind::Xcode, ("xcodebuild for iOS")),
     )?;
 
     reporter.stage_assets(&artifact)?;

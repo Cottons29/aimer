@@ -74,11 +74,7 @@ impl IosRunner {
             }
         };
 
-        Some(
-            String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .to_string(),
-        )
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 }
 
@@ -154,12 +150,7 @@ impl Runner for IosRunner {
 }
 
 /// Install the freshly built `.app` onto the device or simulator.
-fn install_app(
-    simulator: bool,
-    device: &Device,
-    app_path: &str,
-    tx: &Sender<RunnerEvent>,
-) -> bool {
+fn install_app(simulator: bool, device: &Device, app_path: &str, tx: &Sender<RunnerEvent>) -> bool {
     if simulator {
         build_log(tx, "Installing app on iOS Simulator...");
 

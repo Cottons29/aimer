@@ -113,7 +113,11 @@ mod tests {
     /// Feed `queued` to [`collect_events`] and report what it kept, together
     /// with the timeouts it polled with.
     fn drain(queued: Vec<Event>) -> (Vec<Event>, Vec<Duration>) {
-        let pending = RefCell::new(queued.into_iter().collect::<std::collections::VecDeque<_>>());
+        let pending = RefCell::new(
+            queued
+                .into_iter()
+                .collect::<std::collections::VecDeque<_>>(),
+        );
         let waits = RefCell::new(Vec::new());
         let collected = collect_events(
             |timeout| {
