@@ -1,12 +1,11 @@
 use aimer_inspector::{InspectorState, render_tree_lines_with_ids};
-use ansi_to_tui::IntoText;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-use crate::console::state::{VisualRow, strip_ansi};
+use crate::console::state::VisualRow;
 use crate::console::{AppState, ConsoleType, PaneView, Selection, Status};
 
 /// Render the full console UI as a function of the current [`AppState`] and the
@@ -26,26 +25,6 @@ pub fn render(
         .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
         .split(f.area());
 
-    let build_text = state
-        .build_logs
-        .iter()
-        .flat_map(|l| {
-            l.into_text()
-                .map(|t| t.lines)
-                .unwrap_or_else(|_| vec![Line::from(strip_ansi(l))])
-        })
-        .collect::<Vec<_>>();
-    // Rendered here rather than stored, so toggling the source location with
-    // `e` takes effect on the whole history at once.
-    let app_lines = state.app_log_lines();
-    let app_text = app_lines
-        .iter()
-        .flat_map(|l| {
-            l.into_text()
-                .map(|t| t.lines)
-                .unwrap_or_else(|_| vec![Line::from(strip_ansi(l))])
-        })
-        .collect::<Vec<_>>();
 
     let inspector_status = if !inspector_state.connected {
         " [disconnected]"
@@ -135,7 +114,7 @@ pub fn render(
     if state.pane == ConsoleType::Build {
         if state.selection_mode {
             let (rendered, view, new_scroll) = build_selection_view(
-                &build_text,
+                state.build_logs.rows(),
                 area.x + 1,
                 area.y + 1,
                 area.width.saturating_sub(2),
@@ -148,10 +127,14 @@ pub fn render(
             state.last_view = Some(view);
             f.render_widget(Paragraph::new(rendered).block(build_block), area);
         } else {
-            let (start, skip_top, new_scroll) =
-                calc_scroll(&build_text, height, width, state.build_pane.scroll as usize);
+            let (start, skip_top, new_scroll) = calc_scroll(
+                state.build_logs.rows(),
+                height,
+                width,
+                state.build_pane.scroll as usize,
+            );
             state.build_pane.scroll = new_scroll;
-            let p = Paragraph::new(build_text[start..].to_vec())
+            let p = Paragraph::new(state.build_logs.rows()[start..].to_vec())
                 .block(build_block)
                 .wrap(Wrap { trim: false })
                 .scroll((skip_top, 0));
@@ -160,7 +143,7 @@ pub fn render(
     } else if state.pane == ConsoleType::App {
         if state.selection_mode {
             let (rendered, view, new_scroll) = build_selection_view(
-                &app_text,
+                state.app_logs.rows(),
                 area.x + 1,
                 area.y + 1,
                 area.width.saturating_sub(2),
@@ -173,10 +156,14 @@ pub fn render(
             state.last_view = Some(view);
             f.render_widget(Paragraph::new(rendered).block(app_block), area);
         } else {
-            let (start, skip_top, new_scroll) =
-                calc_scroll(&app_text, height, width, state.app_pane.scroll as usize);
+            let (start, skip_top, new_scroll) = calc_scroll(
+                state.app_logs.rows(),
+                height,
+                width,
+                state.app_pane.scroll as usize,
+            );
             state.app_pane.scroll = new_scroll;
-            let p = Paragraph::new(app_text[start..].to_vec())
+            let p = Paragraph::new(state.app_logs.rows()[start..].to_vec())
                 .block(app_block)
                 .wrap(Wrap { trim: false })
                 .scroll((skip_top, 0));

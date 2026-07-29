@@ -22,7 +22,11 @@ pub use aimer_markdown::{
     LinkHandler as MarkdownLinkHandler, MarkdownError, MarkdownImage, MarkdownTheme,
     MarkdownViewer,
 };
-pub use aimer_modal::{Modal, ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId};
+pub use aimer_modal::{
+    Anchor, AnchorHandle, Floating, FloatingAlign, FloatingPlacement, FloatingSide, Modal,
+    ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId, OverflowPolicy, PlacementSpec,
+    resolve_placement,
+};
 #[cfg(feature = "provider")]
 pub use aimer_provider::{
     NotifierProvider, Provider, ProviderContext, ProviderHandle, StoreProvider,

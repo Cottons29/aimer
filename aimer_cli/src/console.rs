@@ -1,3 +1,5 @@
+pub mod input;
+pub mod log_history;
 pub mod state;
 pub mod ui;
 
@@ -20,7 +22,7 @@ use aimer_utils::AnimInstant;
 use anyhow::Context;
 use arboard::Clipboard;
 use crossbeam::channel::Sender;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use notify::{Event as NotifyEvent, RecursiveMode, Watcher};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -187,18 +189,18 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
     //                         .any(|p| p.extension().is_some_and(|ext| ext ==
     // "rs"));                     if dominated_by_rs {
     //                         let now = AnimInstant::now();
-    //                         if now.duration_since(debounce_last) >
-    // Duration::from_millis(500) {                             debounce_last =
-    // now;                             let _ =
-    // tx_watch.send(RunnerEvent::HotReload);                         }
+    //                             if now.duration_since(debounce_last) >
+    //     Duration::from_millis(500) {                             debounce_last =
+    //     now;                             let _ =
+    //     tx_watch.send(RunnerEvent::HotReload);                         }
+    //                         }
     //                     }
+    //                     _ => {}
     //                 }
-    //                 _ => {}
     //             }
-    //         }
-    //     })
-    //     .ok();
-    //     if let Some(ref mut w) = watcher {
+    //         })
+    //         .ok();
+    //         if let Some(ref mut w) = watcher {
     //         let _ = w.watch(Path::new("src"), RecursiveMode::Recursive);
     //         // Also watch crates/ if it exists
     //         if Path::new("crates").exists() {
@@ -207,6 +209,27 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
     //     }
     //     watcher
     // };
+
+    let Ok(proj_root) = get_project_root(false) else {
+        if let Some(mut child) = current_child.lock().unwrap().take() {
+            let _ = child.kill();
+        }
+        return Err(anyhow::anyhow!("Failed to get project root"));
+    };
+
+    let lib_path = proj_root.join("src/lib.rs");
+    if !lib_path.exists() {
+        return Err(anyhow::anyhow!(
+            "src/lib.rs is not found! :  {}",
+            lib_path.display()
+        ));
+    }
+
+    let mut file_writer = File::options()
+        .append(true)
+        .read(true)
+        .create(false)
+        .open(lib_path)?;
 
     loop {
         // Process all pending events
@@ -276,29 +299,12 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
             .checked_sub(last_tick.elapsed())
             .unwrap_or_else(|| Duration::from_secs(0));
 
-        let Ok(proj_root) = get_project_root(false) else {
-            if let Some(mut child) = current_child.lock().unwrap().take() {
-                let _ = child.kill();
-            }
-            break;
-        };
-
-        let lib_path = proj_root.join("src/lib.rs");
-        if !lib_path.exists() {
-            return Err(anyhow::anyhow!(
-                "src/lib.rs is not found! :  {}",
-                lib_path.display()
-            ));
-        }
-
-        let mut file_writer = File::options()
-            .append(true)
-            .read(true)
-            .create(false)
-            .open(lib_path)?;
-
-        if event::poll(timeout)? {
-            match event::read()? {
+        // Handle everything the terminal has queued, then redraw once. Reading
+        // a single event per frame lets the input backlog outgrow the tick on a
+        // busy log stream, which is why hotkeys used to need several presses.
+        let mut quit = false;
+        for event in input::drain_terminal(timeout)? {
+            match event {
                 Event::Key(key) => {
                     match (key.code, key.modifiers) {
                         (KeyCode::Char('1'), _) => {
@@ -318,7 +324,7 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                             if let Some(mut child) = current_child.lock().unwrap().take() {
                                 let _ = child.kill();
                             }
-                            break;
+                            quit = true;
                         }
                         (KeyCode::Char('r'), _) => {
                             if device.target == Targets::Web {
@@ -380,7 +386,7 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                         {
                             let text = state.selected_text().unwrap_or_else(|| {
                                 if state.pane == ConsoleType::Build {
-                                    state.build_logs.join("\n")
+                                    state.build_log_text()
                                 } else {
                                     state.app_log_text()
                                 }
@@ -394,7 +400,7 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                         (KeyCode::Char('c'), _) | (KeyCode::Char('C'), _) => {
                             if let Ok(mut clipboard) = Clipboard::new() {
                                 let logs = if state.pane == ConsoleType::Build {
-                                    state.build_logs.join("\n")
+                                    state.build_log_text()
                                 } else {
                                     state.app_log_text()
                                 };
@@ -538,6 +544,10 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                 }
                 _ => {}
             }
+        }
+
+        if quit {
+            break;
         }
 
         if last_tick.elapsed() >= tick_rate {

@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_container::{Container, ZeroSizedBox};
@@ -17,6 +16,7 @@ use aimer_widget::{
 use crate::ModalAnimation;
 use crate::animation::visual_values;
 use crate::host::{self, ModalHandle, ModalId, ModalTimeline};
+use crate::paint::{contains, paint_overlay_content};
 
 /// Displays content above the entire application render tree.
 ///
@@ -211,46 +211,17 @@ impl Drawable for RawModal {
 
         let child_size = self.child.computed_size(ctx);
         let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);
-        let origin = Vec2d {
-            x: ctx.parent_pos.x + offset_x,
-            y: ctx.parent_pos.y + offset_y,
-        };
-        *self.child_bounds.borrow_mut() = Some((
-            origin,
+        paint_overlay_content(
+            ctx,
+            &self.child,
+            child_size,
             Vec2d {
-                x: origin.x + child_size.width,
-                y: origin.y + child_size.height,
+                x: offset_x,
+                y: offset_y,
             },
-        ));
-
-        let mut child_ctx = ctx.clone();
-        child_ctx.parent_size = child_size;
-        child_ctx.parent_pos = origin;
-        child_ctx.box_constraint = BoxConstraint {
-            min_width: 0.0,
-            min_height: 0.0,
-            max_width: child_size.width,
-            max_height: child_size.height,
-        };
-        child_ctx.visible_rect = ctx
-            .visible_rect
-            .map(|(x, y, width, height)| (x - offset_x, y - offset_y, width, height));
-
-        let center = Vec2d {
-            x: offset_x + child_size.width / 2.0,
-            y: offset_y + child_size.height / 2.0,
-        };
-        ctx.canvas.save();
-        ctx.canvas.translate(center);
-        ctx.canvas.scale(scale, scale);
-        ctx.canvas.translate(Vec2d {
-            x: -child_size.width / 2.0,
-            y: -child_size.height / 2.0,
-        });
-        ctx.canvas.set_alpha(opacity);
-        self.child.draw(&child_ctx);
-        ctx.canvas.restore_alpha();
-        ctx.canvas.restore();
+            (opacity, scale),
+            &self.child_bounds,
+        );
     }
 }
 
@@ -283,12 +254,7 @@ impl EventElement for RawModal {
 
 impl RawModal {
     fn contains_child(&self, position: Vec2d) -> bool {
-        self.child_bounds.borrow().is_some_and(|(start, end)| {
-            position.x >= start.x
-                && position.x <= end.x
-                && position.y >= start.y
-                && position.y <= end.y
-        })
+        contains(&self.child_bounds, position)
     }
 }
 

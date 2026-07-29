@@ -1,0 +1,9 @@
+{
+    "configurations": [
+        {
+            "type": "cargo",
+            "name": "Check",
+            "cargoArgs": ["check", "--workspace"]
+        }
+    ]
+}

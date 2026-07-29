@@ -28,7 +28,7 @@ macro_rules! impl_from_tuple {
     };
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Vec2d {
     pub x: f32,
     pub y: f32,

@@ -4,6 +4,7 @@ mod async_builder;
 mod color_sync;
 mod custom_animated_theme;
 mod custom_font;
+mod floating;
 mod loading_animation;
 mod markdown_example;
 mod modal;
@@ -25,6 +26,8 @@ use aimer::{AimerApp, *};
 #[allow(unused_imports)]
 use crate::animated::start_my_animated_list;
 use crate::custom_animated_theme::start_custom_animated_theme_example;
+#[allow(unused_imports)]
+use crate::floating::start_floating_example;
 use crate::loading_animation::start_loading_animation_example;
 use crate::markdown_example::start_markdown_example;
 #[allow(unused_imports)]
@@ -51,7 +54,8 @@ pub fn my_app() {
     // custom_animated_theme::start_custom_animated_theme_example()
     // test_scrollable()
     // test_scrollable_row()
-    start_modal_example();
+    // start_modal_example();
+    start_floating_example();
     // start_markdown_example();
     // start_panic_recovery_example();
     // test_scroll_and_row();

@@ -1,10 +1,19 @@
+mod anchor;
 mod animation;
+mod floating;
 pub(crate) mod host;
 mod modal;
+mod paint;
+mod placement;
 
+pub use anchor::{Anchor, AnchorHandle};
 pub use animation::ModalAnimation;
+pub use floating::Floating;
 pub use host::{ModalController, ModalHandle, ModalHost, ModalId};
 pub use modal::Modal;
+pub use placement::{
+    FloatingAlign, FloatingPlacement, FloatingSide, OverflowPolicy, PlacementSpec, resolve_placement,
+};
 
 #[cfg(test)]
 mod tests {

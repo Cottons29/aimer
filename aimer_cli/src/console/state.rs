@@ -1,4 +1,7 @@
+use std::borrow::Cow;
+
 use crate::commands::run::utilities::StyledLog;
+use crate::console::log_history::LogHistory;
 
 /// Maximum number of log lines retained per pane before old lines are dropped.
 pub const MAX_LINES: usize = 32768;
@@ -141,8 +144,8 @@ pub struct PaneView {
 /// Pure, testable view/event state for the console TUI. The I/O event loop in
 /// `mod.rs` owns one of these and the renderer in `ui.rs` reads from it.
 pub struct AppState {
-    pub build_logs: Vec<String>,
-    pub app_logs: Vec<StyledLog>,
+    pub build_logs: LogHistory<String>,
+    pub app_logs: LogHistory<StyledLog>,
     /// Whether app log lines show the source location of the log call, i.e. the
     /// `(file:line)` suffix of a structured record. Hidden by default to keep
     /// the pane narrow, and toggled with `e`; lines without a location — plain
@@ -172,8 +175,8 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
-            build_logs: Vec::with_capacity(128),
-            app_logs: Vec::with_capacity(128),
+            build_logs: LogHistory::new(MAX_LINES),
+            app_logs: LogHistory::new(MAX_LINES),
             show_log_source: false,
             status: Status::Compiling(0),
             pane: ConsoleType::App,
@@ -190,11 +193,12 @@ impl AppState {
     }
 
     /// Append a build log line (carriage returns stripped), capping history.
+    ///
+    /// The line is parsed into its rendered rows here rather than at draw time,
+    /// so a frame costs the same whatever the backlog holds.
     pub fn push_build_log(&mut self, msg: String) {
-        self.build_logs.push(msg.replace('\r', ""));
-        if self.build_logs.len() > MAX_LINES {
-            self.build_logs.remove(0);
-        }
+        self.build_logs
+            .push(msg.replace('\r', ""), |line| Cow::Borrowed(line.as_str()));
     }
 
     /// Append an app log line (carriage returns stripped), capping history.
@@ -207,23 +211,35 @@ impl AppState {
     ///
     /// [`show_log_source`]: AppState::show_log_source
     pub fn push_app_log(&mut self, msg: StyledLog) {
-        self.app_logs.push(msg.without_carriage_returns());
-        if self.app_logs.len() > MAX_LINES {
-            self.app_logs.remove(0);
-        }
+        let show_source = self.show_log_source;
+        self.app_logs.push(msg.without_carriage_returns(), move |line| {
+            Cow::Owned(line.render(show_source))
+        });
     }
 
     /// Show or hide the source location of every app log line at once.
+    ///
+    /// The whole pane is re-rendered, which is why this is a user action rather
+    /// than something the draw path decides.
     pub fn toggle_log_source(&mut self) {
         self.show_log_source = !self.show_log_source;
+        let show_source = self.show_log_source;
+        self.app_logs
+            .rebuild(move |line| Cow::Owned(line.render(show_source)));
     }
 
     /// The app log lines as they must currently appear on screen.
     pub fn app_log_lines(&self) -> Vec<String> {
         self.app_logs
+            .entries()
             .iter()
             .map(|line| line.render(self.show_log_source))
             .collect()
+    }
+
+    /// The whole build log pane as plain text, used when copying it.
+    pub fn build_log_text(&self) -> String {
+        self.build_logs.entries().join("\n")
     }
 
     /// The whole app log pane as plain text, used when copying it.
@@ -522,7 +538,7 @@ mod tests {
     fn app_state_push_build_log_strips_cr() {
         let mut state = AppState::new();
         state.push_build_log("hello\rworld".to_string());
-        assert_eq!(state.build_logs, vec!["helloworld".to_string()]);
+        assert_eq!(state.build_logs.entries(), ["helloworld".to_string()]);
     }
 
     #[test]
@@ -615,16 +631,68 @@ mod tests {
         assert_eq!(state.app_log_text(), "[INFO] a (f:1)\nb");
     }
 
+    /// Plain text of the rows a pane hands the renderer.
+    fn row_texts(rows: &[ratatui::text::Line<'static>]) -> Vec<String> {
+        rows.iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn app_state_caches_the_rendered_rows_of_each_pushed_line() {
+        let mut state = AppState::new();
+        state.push_build_log("\x1b[31mred\x1b[0m".to_string());
+        state.push_app_log(StyledLog::plain("hello"));
+
+        assert_eq!(row_texts(state.build_logs.rows()), vec!["red"]);
+        assert_eq!(row_texts(state.app_logs.rows()), vec!["hello"]);
+    }
+
+    #[test]
+    fn app_state_toggle_log_source_updates_the_cached_rows() {
+        let mut state = AppState::new();
+        state.push_app_log(StyledLog::with_location("[INFO] a", " (f:1)"));
+
+        assert_eq!(row_texts(state.app_logs.rows()), vec!["[INFO] a"]);
+        state.toggle_log_source();
+        assert_eq!(row_texts(state.app_logs.rows()), vec!["[INFO] a (f:1)"]);
+        state.toggle_log_source();
+        assert_eq!(row_texts(state.app_logs.rows()), vec!["[INFO] a"]);
+    }
+
+    #[test]
+    fn app_state_pushes_after_a_toggle_honour_it() {
+        let mut state = AppState::new();
+        state.toggle_log_source();
+        state.push_app_log(StyledLog::with_location("[INFO] a", " (f:1)"));
+
+        assert_eq!(row_texts(state.app_logs.rows()), vec!["[INFO] a (f:1)"]);
+    }
+
+    #[test]
+    fn app_state_build_log_text_joins_every_line() {
+        let mut state = AppState::new();
+        state.push_build_log("a".to_string());
+        state.push_build_log("b".to_string());
+
+        assert_eq!(state.build_log_text(), "a\nb");
+    }
+
     #[test]
     fn app_state_push_logs_cap_at_max() {
         let mut state = AppState::new();
         for i in 0..(MAX_LINES + 10) {
             state.push_build_log(format!("line {i}"));
         }
-        assert_eq!(state.build_logs.len(), MAX_LINES);
+        assert!(state.build_logs.len() <= MAX_LINES);
         // Oldest lines dropped; last line preserved.
         assert_eq!(
-            state.build_logs.last().unwrap(),
+            state.build_logs.entries().last().unwrap(),
             &format!("line {}", MAX_LINES + 9)
         );
     }
