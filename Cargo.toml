@@ -77,7 +77,7 @@ members = [
     "crates/aimer_svg",
     "crates/aimer_native",
     "crates/aimer_modal"
-]
+, "crates/rust-mcp-server"]
 
 
 [workspace.dependencies]

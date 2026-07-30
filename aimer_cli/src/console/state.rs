@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use crate::commands::run::cargo_message::ErrorReport;
 use crate::commands::run::utilities::StyledLog;
 use crate::console::log_history::LogHistory;
 
@@ -22,6 +23,10 @@ pub enum Status {
 /// Events sent from runner/build threads to the console event loop.
 pub enum RunnerEvent {
     BuildLog(String),
+    /// The errors of a failed build, to be shown as one block at the end of the
+    /// build output. Sent as a report rather than as ready-made lines so the
+    /// pane can lay it out for its own width.
+    BuildReport(ErrorReport),
     AppLog(StyledLog),
     StatusChange(Status),
     HotReload,
@@ -94,6 +99,32 @@ pub fn strip_ansi(s: &str) -> String {
     result
 }
 
+/// One entry of the Build Logs pane.
+///
+/// Most of the pane is build output kept verbatim. The `Compile Error` block of
+/// a failed build is the exception: it is a framed, width-filling block, and a
+/// block formatted for a width other than the pane's would be wrapped by the
+/// renderer, which leaves its panel backgrounds torn across two rows. Keeping
+/// the report itself means the pane can lay it out again whenever it is resized.
+#[derive(Clone, Debug)]
+pub enum BuildEntry {
+    /// A line of build output, as the build wrote it.
+    Line(String),
+    /// The errors of a failed build, laid out on demand.
+    Report(ErrorReport),
+}
+
+impl BuildEntry {
+    /// The text of this entry in a pane `width` cells wide. Lines ignore the
+    /// width; a report is laid out for it.
+    pub fn render(&self, width: usize) -> Cow<'_, str> {
+        match self {
+            Self::Line(line) => Cow::Borrowed(line.as_str()),
+            Self::Report(report) => Cow::Owned(report.lines_with_width(width).join("\n")),
+        }
+    }
+}
+
 /// A single on-screen (already wrapped) row of a log pane, mapped back to the
 /// source logical line it came from. Produced by the renderer so the mouse
 /// handler can translate screen cells into text positions.
@@ -144,8 +175,12 @@ pub struct PaneView {
 /// Pure, testable view/event state for the console TUI. The I/O event loop in
 /// `mod.rs` owns one of these and the renderer in `ui.rs` reads from it.
 pub struct AppState {
-    pub build_logs: LogHistory<String>,
+    pub build_logs: LogHistory<BuildEntry>,
     pub app_logs: LogHistory<StyledLog>,
+    /// Inner width of the Build Logs pane, in cells, as of the last frame. The
+    /// `Compile Error` block is laid out for it; zero until the pane has been
+    /// drawn once.
+    build_width: usize,
     /// Whether app log lines show the source location of the log call, i.e. the
     /// `(file:line)` suffix of a structured record. Hidden by default to keep
     /// the pane narrow, and toggled with `e`; lines without a location — plain
@@ -177,6 +212,7 @@ impl AppState {
         Self {
             build_logs: LogHistory::new(MAX_LINES),
             app_logs: LogHistory::new(MAX_LINES),
+            build_width: 0,
             show_log_source: false,
             status: Status::Compiling(0),
             pane: ConsoleType::App,
@@ -197,8 +233,40 @@ impl AppState {
     /// The line is parsed into its rendered rows here rather than at draw time,
     /// so a frame costs the same whatever the backlog holds.
     pub fn push_build_log(&mut self, msg: String) {
+        let width = self.build_width;
         self.build_logs
-            .push(msg.replace('\r', ""), |line| Cow::Borrowed(line.as_str()));
+            .push(BuildEntry::Line(msg.replace('\r', "")), move |entry| {
+                entry.render(width)
+            });
+    }
+
+    /// Append the `Compile Error` block of a failed build, laid out for the
+    /// current pane width.
+    pub fn push_build_report(&mut self, report: ErrorReport) {
+        let width = self.build_width;
+        self.build_logs
+            .push(BuildEntry::Report(report), move |entry| entry.render(width));
+    }
+
+    /// Tell the pane how wide it is, re-laying its width-dependent entries out
+    /// when that changed.
+    ///
+    /// Called by the renderer on every frame; the rebuild is skipped unless the
+    /// width actually changed and the pane holds a block that depends on it, so
+    /// an unresized console pays nothing for it.
+    pub fn set_build_width(&mut self, width: usize) {
+        if self.build_width == width {
+            return;
+        }
+        self.build_width = width;
+        let has_report = self
+            .build_logs
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry, BuildEntry::Report(_)));
+        if has_report {
+            self.build_logs.rebuild(move |entry| entry.render(width));
+        }
     }
 
     /// Append an app log line (carriage returns stripped), capping history.
@@ -240,7 +308,12 @@ impl AppState {
 
     /// The whole build log pane as plain text, used when copying it.
     pub fn build_log_text(&self) -> String {
-        self.build_logs.entries().join("\n")
+        self.build_logs
+            .entries()
+            .iter()
+            .map(|entry| entry.render(self.build_width))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// The whole app log pane as plain text, used when copying it.
@@ -339,6 +412,7 @@ impl Default for AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::run::cargo_message::CargoMessage;
 
     // ── strip_ansi ───────────────────────────────────────────────────
 
@@ -539,7 +613,7 @@ mod tests {
     fn app_state_push_build_log_strips_cr() {
         let mut state = AppState::new();
         state.push_build_log("hello\rworld".to_string());
-        assert_eq!(state.build_logs.entries(), ["helloworld".to_string()]);
+        assert_eq!(state.build_log_text(), "helloworld");
     }
 
     #[test]
@@ -678,6 +752,76 @@ mod tests {
         assert_eq!(row_texts(state.app_logs.rows()), vec!["[INFO] a (f:1)"]);
     }
 
+    // ── The compile error report ─────────────────────────────────────
+
+    /// A report holding the one error `rendered` describes.
+    fn report_of(rendered: &str) -> ErrorReport {
+        let line = format!(
+            r#"{{"reason":"compiler-message","message":{{"level":"error","message":"m","spans":[],"rendered":"{rendered}"}}}}"#
+        );
+        let mut report = ErrorReport::new();
+        match CargoMessage::parse(&line) {
+            Some(CargoMessage::Diagnostic(diagnostic)) => report.record(&diagnostic),
+            other => panic!("expected a diagnostic, got {other:?}"),
+        }
+        report
+    }
+
+    /// The width of the widest row a pane hands the renderer.
+    fn widest_row(rows: &[ratatui::text::Line<'static>]) -> usize {
+        row_texts(rows)
+            .iter()
+            .map(|row| row.chars().count())
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn app_state_lays_the_build_report_out_for_the_pane_width() {
+        // A block wider than the pane is wrapped by the renderer, which tears
+        // its panels apart, so it is laid out for the pane it lands in.
+        let mut state = AppState::new();
+        state.set_build_width(80);
+        state.push_build_report(report_of("error: mismatched types"));
+
+        let rows = row_texts(state.build_logs.rows());
+        assert!(rows.iter().any(|row| row.contains("Compile Error")));
+        assert_eq!(widest_row(state.build_logs.rows()), 80);
+    }
+
+    #[test]
+    fn app_state_lays_the_build_report_out_again_when_the_pane_is_resized() {
+        let mut state = AppState::new();
+        state.set_build_width(80);
+        state.push_build_report(report_of("error: mismatched types"));
+
+        state.set_build_width(120);
+        assert_eq!(widest_row(state.build_logs.rows()), 120);
+
+        state.set_build_width(64);
+        assert_eq!(widest_row(state.build_logs.rows()), 64);
+    }
+
+    #[test]
+    fn app_state_leaves_plain_build_lines_alone_when_the_pane_is_resized() {
+        let mut state = AppState::new();
+        state.push_build_log("a".to_string());
+        state.push_build_report(report_of("error: boom"));
+        state.set_build_width(90);
+
+        assert_eq!(row_texts(state.build_logs.rows())[0], "a");
+    }
+
+    #[test]
+    fn app_state_build_log_text_includes_the_report() {
+        let mut state = AppState::new();
+        state.push_build_log("a".to_string());
+        state.push_build_report(report_of("error: boom"));
+
+        assert!(state.build_log_text().starts_with("a\n"));
+        assert!(strip_ansi(&state.build_log_text()).contains("error: boom"));
+    }
+
     #[test]
     fn app_state_build_log_text_joins_every_line() {
         let mut state = AppState::new();
@@ -696,8 +840,8 @@ mod tests {
         assert!(state.build_logs.len() <= MAX_LINES);
         // Oldest lines dropped; last line preserved.
         assert_eq!(
-            state.build_logs.entries().last().unwrap(),
-            &format!("line {}", MAX_LINES + 9)
+            state.build_logs.entries().last().unwrap().render(0),
+            format!("line {}", MAX_LINES + 9)
         );
     }
 

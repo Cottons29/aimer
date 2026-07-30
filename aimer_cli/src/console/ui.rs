@@ -67,6 +67,10 @@ pub fn render(
     let height = area.height.saturating_sub(2) as usize;
     let width = area.width.saturating_sub(2).max(1) as usize;
 
+    // The compile error block fills the pane, so it has to be laid out for the
+    // width the pane has now rather than the one it had when the build failed.
+    state.set_build_width(width);
+
     // Background painted under selected text in Vim-style selection mode.
     let selection_highlight = Style::default().bg(Color::Blue);
     // Reset the hit-test snapshot every frame; only the focused log pane in
@@ -471,4 +475,60 @@ fn build_selection_view(
     };
 
     (rendered, view, scroll as u16)
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+    use crate::commands::run::cargo_message::{CargoMessage, ErrorReport};
+    use crate::console::AppState;
+
+    /// A report holding the one error `rendered` describes.
+    fn report_of(rendered: &str) -> ErrorReport {
+        let line = format!(
+            r#"{{"reason":"compiler-message","message":{{"level":"error","message":"m","spans":[],"rendered":"{rendered}"}}}}"#
+        );
+        let mut report = ErrorReport::new();
+        match CargoMessage::parse(&line) {
+            Some(CargoMessage::Diagnostic(diagnostic)) => report.record(&diagnostic),
+            other => panic!("expected a diagnostic, got {other:?}"),
+        }
+        report
+    }
+
+    #[test]
+    fn the_compile_error_block_paints_whole_rows() {
+        // The bug this guards against: a block laid out wider than the pane is
+        // wrapped by the paragraph, so a row's background stops mid-screen and
+        // the remainder is painted on the row below it.
+        const WIDTH: u16 = 60;
+        let long =
+            "help: consider downloading the target with `rustup target add aarch64-apple-ios`";
+        let mut state = AppState::new();
+        state.set_build_width(WIDTH as usize);
+        state.push_build_report(report_of(&format!("error: boom\\n{long}")));
+
+        let mut terminal = Terminal::new(TestBackend::new(WIDTH, 40)).unwrap();
+        terminal
+            .draw(|f| {
+                let rows = state.build_logs.rows().to_vec();
+                let paragraph = Paragraph::new(rows).wrap(Wrap { trim: false });
+                f.render_widget(paragraph, f.area());
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        for y in 0..buffer.area.height {
+            let painted = (0..WIDTH)
+                .filter(|x| buffer[(*x, y)].bg != Color::Reset)
+                .count();
+            assert!(
+                painted == 0 || painted == WIDTH as usize,
+                "row {y} is painted over {painted} of {WIDTH} cells"
+            );
+        }
+    }
 }

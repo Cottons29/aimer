@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use aimer::animation::{AnimatedSwitcher, Curve};
-use aimer::style::{FontWeight, TextDecoration, TextStyle, Theme, ThemeData};
-use aimer::*;
-use aimer::native::haptic::{HapticPattern, Haptics, ImpactStyle};
 use crate::components::animation_button::{AnimatedPlatformButtonList, PLATFORMS};
 use crate::utils::{app_padding, is_mobile, mobile_title};
+use aimer::animation::{AnimatedSwitcher, Curve};
+use aimer::native::haptic::{HapticPattern, Haptics, ImpactStyle};
+use aimer::style::{FontWeight, TextDecoration, TextStyle, Theme, ThemeData};
+use aimer::*;
 
 #[widget(Stateful)]
 pub struct SameLookingSection {
@@ -97,10 +97,9 @@ impl State<SameLookingSection> for SameLookingSectionState {
                                 let updater = self.state.clone();
                                 move |index| {
                                     let pattern = HapticPattern::new()
-                                        .transient(0.0, 1.0, 1.0)          // sharp tap at t=0
-                                        .transient(0.2, 1.0, 1.0)
-                                        .transient(0.4, 1.0, 1.0);
-                                    // .continuous(0.1, 0.4, 0.6, 0.2);   // soft buzz starting at t=0.1s for 0.4s
+                                        .transient(0.0, 1.0, 1.0) // sharp tap at t=0
+                                        .continuous(0.1, 0.2, 0.3, 0.2)
+                                        .transient(0.25, 1.0, 1.0); // soft buzz starting at t=0.1s for 0.4s
                                     Haptics::play_pattern(&pattern);
                                     // Haptics::impact(ImpactStyle::Rigid);
                                     if updater.read_state().current_index != index {

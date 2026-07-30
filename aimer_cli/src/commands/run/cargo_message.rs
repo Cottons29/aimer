@@ -30,8 +30,9 @@ use crate::console::state::strip_ansi;
 /// output would be plain grey text.
 pub const MESSAGE_FORMAT: &str = "--message-format=json-diagnostic-rendered-ansi";
 
-/// Narrowest the [`ErrorReport`] block ever gets: the width used when the
-/// terminal size is unknown, and the floor [`report_width`] never goes below.
+/// Width the [`ErrorReport`] block falls back to when the terminal size is
+/// unknown — output redirected to a file or a pipe has no width to lay a block
+/// out for.
 const MIN_WIDTH: usize = 58;
 
 /// Columns the Build Logs pane spends on its own border, and which therefore
@@ -247,10 +248,11 @@ impl ErrorReport {
     /// nothing is written above a panel — the panel itself is what tells the
     /// errors apart.
     ///
-    /// A panel wider than `width` is never truncated: an error whose rendering
-    /// doesn't fit keeps its own width, since cutting cargo's carets off would
-    /// make the diagnostic unreadable. A `width` narrower than [`MIN_WIDTH`] is
-    /// raised to it, so a tiny terminal still gets a readable block.
+    /// A rendering wider than `width` is wrapped rather than truncated: cutting
+    /// cargo's carets off would make the diagnostic unreadable, and letting the
+    /// row overflow would leave the console to wrap it and tear the panel apart.
+    /// A `width` of zero means the width isn't known and [`MIN_WIDTH`] is used
+    /// instead; every other width is honoured, however narrow the pane is.
     ///
     /// Empty when no error was recorded, so a successful build appends nothing.
     pub fn lines_with_width(&self, width: usize) -> Vec<String> {
@@ -258,7 +260,7 @@ impl ErrorReport {
             return Vec::new();
         }
 
-        let width = width.max(MIN_WIDTH);
+        let width = if width == 0 { MIN_WIDTH } else { width };
         let mut lines = vec![String::new(), header("Compile Error", width), String::new()];
 
         for (index, error) in self.errors.iter().enumerate() {
@@ -313,22 +315,78 @@ fn divider(width: usize) -> String {
     format!("\x1b[38;2;{r};{g};{b}m{}\x1b[0m", "~".repeat(width))
 }
 
-/// Lay `rendered` out as one error panel: every line padded to `width` cells and
-/// painted on [`PANEL_BACKGROUND`], with a blank row above and below so the text
-/// doesn't touch the edges.
+/// Lay `rendered` out as one error panel: every line wrapped and padded to
+/// `width` cells and painted on [`PANEL_BACKGROUND`], with a blank row above and
+/// below so the text doesn't touch the edges.
 fn panel(rendered: &[String], width: usize) -> Vec<String> {
-    let width = rendered
-        .iter()
-        .map(|line| visible_width(line))
-        .max()
-        .unwrap_or(0)
-        .max(width);
-
     let mut lines = Vec::with_capacity(rendered.len() + 2);
     lines.push(panel_line("", width));
-    lines.extend(rendered.iter().map(|line| panel_line(line, width)));
+    for line in rendered {
+        lines.extend(wrap_ansi(line, width).iter().map(|row| panel_line(row, width)));
+    }
     lines.push(panel_line("", width));
     lines
+}
+
+/// Split `line` into rows of at most `width` visible cells.
+///
+/// Cargo renders its diagnostics for a terminal that wraps them for it, so a
+/// rendered line can be wider than the pane the panel lands in. Leaving that to
+/// the console breaks the panel: it wraps the padded row at a column the panel
+/// knows nothing about, so the padding — and with it the background — ends up in
+/// the middle of the row and the remainder is left unpainted. Wrapping here
+/// instead keeps every row exactly one panel row wide.
+///
+/// Escape sequences occupy no cell and never count towards `width`. Those still
+/// in effect at a break are repeated at the start of the next row, so a color
+/// cargo opened before the break survives it.
+fn wrap_ansi(line: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    if visible_width(line) <= width {
+        return vec![line.to_string()];
+    }
+
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    // The sequences that are still in effect, re-armed after every break.
+    let mut active = String::new();
+    let mut escape = String::new();
+    let mut in_escape = false;
+    let mut cells = 0;
+
+    for c in line.chars() {
+        if in_escape {
+            escape.push(c);
+            if c.is_ascii_alphabetic() || c == '@' || c == '~' {
+                in_escape = false;
+                if escape == "\x1b[0m" || escape == "\x1b[m" {
+                    active.clear();
+                } else {
+                    active.push_str(&escape);
+                }
+                row.push_str(&escape);
+                escape.clear();
+            }
+            continue;
+        }
+        if c == '\x1b' {
+            in_escape = true;
+            escape.push(c);
+            continue;
+        }
+        if cells == width {
+            rows.push(std::mem::take(&mut row));
+            row.push_str(&active);
+            cells = 0;
+        }
+        row.push(c);
+        cells += 1;
+    }
+
+    // An unterminated sequence is kept verbatim rather than swallowed.
+    row.push_str(&escape);
+    rows.push(row);
+    rows
 }
 
 /// One row of a [`panel`], padded to `width` cells.
@@ -759,7 +817,7 @@ mod tests {
     }
 
     #[test]
-    fn error_report_never_goes_below_the_minimum_width() {
+    fn error_report_falls_back_to_the_minimum_width_when_none_is_known() {
         let mut report = ErrorReport::new();
         report.record(&error_with("m", "E0001"));
 
@@ -769,15 +827,74 @@ mod tests {
     }
 
     #[test]
-    fn error_report_keeps_a_rendering_wider_than_the_panel() {
-        // Truncating cargo's carets would make the diagnostic unreadable.
+    fn error_report_fits_a_pane_narrower_than_the_minimum_width() {
+        // A block wider than the pane wraps and tears, which is worse than a
+        // narrow one, so a narrow pane is honoured as given.
+        let mut report = ErrorReport::new();
+        report.record(&error_with("mismatched types", "E0308"));
+
+        for line in report_lines_at(&report, 30).iter().filter(|l| !l.is_empty()) {
+            assert_eq!(line.chars().count(), 30, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn error_report_wraps_a_rendering_wider_than_the_panel() {
+        // A row wider than the pane would be wrapped by the console, which
+        // tears the panel background apart; the report wraps it itself instead.
         let long = "x".repeat(MIN_WIDTH + 20);
         let mut error = error_with("m", "E0001");
         error.rendered = Some(long.clone());
         let mut report = ErrorReport::new();
         report.record(&error);
 
-        assert!(report_lines(&report).iter().any(|l| l.trim_end() == long));
+        let lines = report_lines(&report);
+        assert!(lines.iter().any(|l| l == &"x".repeat(MIN_WIDTH)));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with(&"x".repeat(20)) && l.trim_end() == "x".repeat(20))
+        );
+    }
+
+    #[test]
+    fn error_report_never_exceeds_the_width_it_is_given() {
+        // Nothing may be wider than the pane, or the console wraps it and the
+        // panel loses its shape — see the `x` rendering below.
+        let mut error = error_with("m", "E0001");
+        error.rendered = Some(format!("{}\nshort", "x".repeat(200)));
+        let mut report = ErrorReport::new();
+        report.record(&error);
+
+        for width in [MIN_WIDTH, 80, 120] {
+            for line in report_lines_at(&report, width) {
+                assert!(line.chars().count() <= width, "{width}: {line:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn error_report_keeps_the_panel_and_the_colors_across_a_wrap() {
+        // Both halves of a wrapped row must stay on the panel, and the color
+        // cargo opened before the break must be re-armed after it.
+        let mut error = error_with("m", "E0001");
+        error.rendered = Some(format!("\x1b[31m{}\x1b[0m", "x".repeat(MIN_WIDTH + 10)));
+        let mut report = ErrorReport::new();
+        report.record(&error);
+
+        let (r, g, b) = PANEL_BACKGROUND;
+        let background = format!("\x1b[48;2;{r};{g};{b}m");
+        let wrapped: Vec<String> = report
+            .lines_with_width(MIN_WIDTH)
+            .into_iter()
+            .filter(|l| strip_ansi(l).trim_end().starts_with('x'))
+            .collect();
+
+        assert_eq!(wrapped.len(), 2, "{wrapped:?}");
+        for line in &wrapped {
+            assert!(line.contains(&background), "{line:?}");
+            assert!(line.contains("\x1b[31m"), "{line:?}");
+        }
     }
 
     #[test]

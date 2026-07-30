@@ -179,6 +179,8 @@ impl Widget for TextField {
             preedit_text: Cell::new(String::new()),
             preedit_cursor: Cell::new(None),
             blink_scheduled: Cell::new(false),
+            ime_enabled: Cell::new(false),
+            ime_cursor_area: Cell::new(None),
             padding: self.padding,
         }
         .boxed()

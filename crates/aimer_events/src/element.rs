@@ -73,6 +73,18 @@ pub enum ElementEvent {
         modifiers: Modifiers,
     },
 
+    /// A multi-character text payload was produced by the platform, such as an
+    /// IME commit of a composed phrase or a dead-key sequence.
+    ///
+    /// The whole payload travels in one event so a receiver inserts it as a
+    /// single edit: one undo entry, one change notification, and one cursor
+    /// advance. Single typed characters keep arriving as [`Self::CharInput`].
+    TextInput {
+        text: String,
+        action: KeyAction,
+        modifiers: Modifiers,
+    },
+
     /// A named key was pressed or released.
     KeyInput {
         key: NamedKey,
@@ -99,6 +111,44 @@ impl ElementEvent {
             | ElementEvent::PointerMove(p, _, _) => Some(*p),
             _ => None,
         }
+    }
+
+    /// Returns whether the event belongs to the focused element instead of the
+    /// element under the pointer.
+    ///
+    /// Text and composition events are produced by the keyboard and the input
+    /// method, which know nothing about the pointer, so they must reach the
+    /// focused element even while the pointer rests over another widget or has
+    /// left the window. Named keys stay positional: scrollables scroll the
+    /// hovered viewport and text spans resolve shortcuts against the hovered
+    /// span.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
+    ///
+    /// let commit = ElementEvent::TextInput {
+    ///     text: "你好".into(),
+    ///     action: KeyAction::Pressed,
+    ///     modifiers: Modifiers::default(),
+    /// };
+    /// let arrow = ElementEvent::KeyInput {
+    ///     key: NamedKey::ArrowDown,
+    ///     action: KeyAction::Pressed,
+    ///     modifiers: Modifiers::default(),
+    /// };
+    ///
+    /// assert!(commit.is_focus_directed());
+    /// assert!(!arrow.is_focus_directed());
+    /// ```
+    pub fn is_focus_directed(&self) -> bool {
+        matches!(
+            self,
+            ElementEvent::CharInput { .. }
+                | ElementEvent::TextInput { .. }
+                | ElementEvent::ImePreedit { .. }
+        )
     }
 }
 

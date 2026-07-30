@@ -1,7 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerSource;
-use aimer_utils::{ExecTimes, info};
+use aimer_utils::ExecTimes;
 use aimer_widget::{EventResult, PointerKey, Widget, broadcast_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
@@ -479,11 +479,15 @@ impl WindowEventHandler {
         }
     }
 
-    /// Dispatches a (possibly multi-character) text payload to the widget tree
-    /// as a sequence of `CharInput` events — one per `char`. This is the single
-    /// path used for plain typed characters, web text input, and committed IME
-    /// text, so CJK phrases and emoji are inserted correctly.
-    fn dispatch_text<W: Widget + 'static>(
+    /// Dispatches a text payload to the widget tree. This is the single path
+    /// used for plain typed characters, web text input, and committed IME text,
+    /// so CJK phrases and emoji are inserted correctly.
+    ///
+    /// A single character travels as `CharInput`, while a longer payload — an
+    /// IME commit such as `"你好世界"` — travels as one `TextInput` event. Batching
+    /// keeps a committed phrase a single edit: one tree traversal, one undo
+    /// entry, and one change notification instead of one per `char`.
+    pub(crate) fn dispatch_text<W: Widget + 'static>(
         text: &str,
         action: &KeyAction,
         modifiers: &Modifiers,
@@ -492,15 +496,21 @@ impl WindowEventHandler {
         if app.widget_root.is_none() {
             return;
         }
-        let mut result = EventResult::ignored();
-        for ch in text.chars() {
-            let ev = ElementEvent::CharInput {
+        let mut chars = text.chars();
+        let event = match (chars.next(), chars.next()) {
+            (None, _) => return,
+            (Some(ch), None) => ElementEvent::CharInput {
                 ch,
                 action: action.clone(),
                 modifiers: modifiers.clone(),
-            };
-            result = result.merge(app.dispatch_element_event(app.cursor_pos, &ev));
-        }
+            },
+            (Some(_), Some(_)) => ElementEvent::TextInput {
+                text: text.to_owned(),
+                action: action.clone(),
+                modifiers: modifiers.clone(),
+            },
+        };
+        let result = app.dispatch_element_event(app.cursor_pos, &event);
         let mut handled = result.is_consumed();
         #[cfg(debug_assertions)]
         if app.inspector_enabled() {
@@ -520,26 +530,20 @@ impl WindowEventHandler {
     /// suppressed in `handle_keyboard_input`; the finished text arrives through
     /// `Ime::Commit` and is inserted via the normal text path.
     fn handle_ime<W: Widget + 'static>(ime: Ime, app: &mut AimerApplicationHandler<W>) {
-        info!("IME : {ime:?}");
+        // Composition reports one event per keystroke, so this must not format
+        // a string in a release build.
+        #[cfg(debug_assertions)]
+        aimer_utils::debug!("IME : {ime:?}");
         match ime {
             Ime::Enabled => {
                 app.ime_composing = false;
+                // A freshly enabled input method owns no composition yet, so
+                // drop whatever the previous one left painted.
+                Self::dispatch_ime_preedit(String::new(), None, app);
             }
             Ime::Preedit(text, cursor) => {
                 app.ime_composing = !text.is_empty();
-                // Forward preedit to focused widget for composition rendering
-                if app.widget_root.is_some() {
-                    let event = ElementEvent::ImePreedit {
-                        text: text.clone(),
-                        cursor,
-                    };
-                    let result = app.dispatch_element_event(app.cursor_pos, &event);
-                    if let Some(window) = &app.window
-                        && Self::should_redraw(result, true)
-                    {
-                        window.request_redraw();
-                    }
-                }
+                Self::dispatch_ime_preedit(text, cursor, app);
             }
             Ime::Commit(text) => {
                 app.ime_composing = false;
@@ -548,7 +552,33 @@ impl WindowEventHandler {
             }
             Ime::Disabled => {
                 app.ime_composing = false;
+                // Dismissing the input method abandons the composition; without
+                // this the field keeps painting ghost preedit text until the
+                // next click or blur.
+                Self::dispatch_ime_preedit(String::new(), None, app);
             }
+        }
+    }
+
+    /// Forwards composition state to the focused widget for rendering.
+    ///
+    /// An empty `text` ends the composition. The redraw is driven by the
+    /// dispatch result, so a preedit no field consumed does not repaint.
+    fn dispatch_ime_preedit<W: Widget + 'static>(
+        text: String,
+        cursor: Option<(usize, usize)>,
+        app: &mut AimerApplicationHandler<W>,
+    ) {
+        if app.widget_root.is_none() {
+            return;
+        }
+        let event = ElementEvent::ImePreedit { text, cursor };
+        let result = app.dispatch_element_event(app.cursor_pos, &event);
+        let handled = result.is_consumed();
+        if let Some(window) = &app.window
+            && Self::should_redraw(result, handled)
+        {
+            window.request_redraw();
         }
     }
 

@@ -1,6 +1,8 @@
 use std::cell::UnsafeCell;
 use std::sync::Arc;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 /// A controller for managing and interacting with a text field's content.
 ///
 /// `TextFieldController` provides a mechanism to safely share
@@ -9,6 +11,24 @@ use std::sync::Arc;
 /// when the `TextFieldController` instance is immutable.
 ///
 /// Includes an undo/redo stack so every mutation can be reversed.
+///
+/// # Offsets
+///
+/// Every offset in this API counts **grapheme clusters** — what a reader calls
+/// a character — not `char`s and not bytes. A cluster can span several code
+/// points: `"👨‍👩‍👧"` is five `char`s joined by zero-width joiners and `"é"` may be
+/// `e` plus a combining accent, yet each is a single offset step. This is the
+/// same unit the field uses to measure and draw text, so the caret always
+/// lands where the edit does.
+///
+/// ```rust
+/// use aimer_input::input::TextFieldController;
+///
+/// let controller = TextFieldController::with_initial("👨‍👩‍👧b");
+/// assert_eq!(controller.grapheme_count(), 2);
+/// controller.insert_str("a", 1);
+/// assert_eq!(controller.text(), "👨‍👩‍👧ab");
+/// ```
 ///
 /// # Example
 /// ```rust
@@ -97,29 +117,46 @@ impl TextFieldController {
         }
     }
 
-    /// Inserts a single character at a specified character offset within the
-    /// text.
+    /// Resolves a grapheme offset into a byte offset inside `text`.
+    ///
+    /// Offsets past the last cluster clamp to the end of the text, so "one past
+    /// the last grapheme" names the insertion point at the end. The result is
+    /// always a `char` boundary, which is what makes the slicing below sound.
+    fn byte_offset(text: &str, grapheme_offset: usize) -> usize {
+        text.grapheme_indices(true)
+            .nth(grapheme_offset)
+            .map(|(byte, _)| byte)
+            .unwrap_or(text.len())
+    }
+
+    /// Inserts a single character at the given grapheme offset.
     ///
     /// # Safety
     /// Be careful about the index out of bounds or invalid utf-8 char.
     pub unsafe fn insert_char(&self, ch: impl Into<char>, offset: usize) {
         self.save_undo();
         let s = unsafe { self.text_mut() };
-        let byte_offset = s
-            .char_indices()
-            .nth(offset)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
+        let byte_offset = Self::byte_offset(s, offset);
         s.insert(byte_offset, ch.into());
     }
 
-    /// Deletes a character from the text at the specified character offset.
-    pub fn delete_char(&self, offset: usize) {
-        self.save_undo();
-        let s = unsafe { self.text_mut() };
-        if let Some((byte_offset, _ch)) = s.char_indices().nth(offset) {
-            s.remove(byte_offset);
-        }
+    /// Deletes the grapheme cluster at `offset` and returns the removed text.
+    ///
+    /// A whole cluster goes at once, so one backspace removes an entire family
+    /// emoji or an accented letter together with its combining mark instead of
+    /// leaving a mangled remainder behind. An offset past the end removes
+    /// nothing and returns an empty string.
+    ///
+    /// # Example
+    /// ```rust
+    /// use aimer_input::input::TextFieldController;
+    ///
+    /// let controller = TextFieldController::with_initial("a👨‍👩‍👧b");
+    /// assert_eq!(controller.delete_grapheme(1), "👨‍👩‍👧");
+    /// assert_eq!(controller.text(), "ab");
+    /// ```
+    pub fn delete_grapheme(&self, offset: usize) -> String {
+        self.delete_range(offset, offset + 1)
     }
 
     /// Clears the internal text buffer.
@@ -130,45 +167,39 @@ impl TextFieldController {
         }
     }
 
-    /// Returns the number of characters in the text.
-    pub fn char_count(&self) -> usize {
-        self.text().chars().count()
+    /// Returns the number of grapheme clusters in the text.
+    ///
+    /// This is the length of the text in the same unit its offsets use, so it
+    /// doubles as the last valid cursor position.
+    pub fn grapheme_count(&self) -> usize {
+        self.text().graphemes(true).count()
     }
 
-    /// Returns the substring between two character offsets.
+    /// Returns the substring between two grapheme offsets.
+    ///
+    /// An inverted range yields an empty string rather than panicking.
     pub fn get_range(&self, start: usize, end: usize) -> String {
-        self.text()
-            .chars()
-            .skip(start)
-            .take(end.saturating_sub(start))
-            .collect()
+        let text = self.text();
+        let byte_start = Self::byte_offset(text, start);
+        let byte_end = Self::byte_offset(text, start.max(end));
+        text[byte_start..byte_end].to_owned()
     }
 
-    /// Deletes characters in the range `[start, end)` and returns the removed
-    /// text.
+    /// Deletes the grapheme clusters in the range `[start, end)` and returns
+    /// the removed text.
     pub fn delete_range(&self, start: usize, end: usize) -> String {
         self.save_undo();
-        let removed = self.get_range(start, end);
         let s = unsafe { self.text_mut() };
-        let byte_start = s
-            .char_indices()
-            .nth(start)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
-        let byte_end = s.char_indices().nth(end).map(|(i, _)| i).unwrap_or(s.len());
-        s.drain(byte_start..byte_end);
-        removed
+        let byte_start = Self::byte_offset(s, start);
+        let byte_end = Self::byte_offset(s, start.max(end));
+        s.drain(byte_start..byte_end).collect()
     }
 
-    /// Inserts a string at the given character offset.
+    /// Inserts a string at the given grapheme offset.
     pub fn insert_str(&self, text: &str, offset: usize) {
         self.save_undo();
         let s = unsafe { self.text_mut() };
-        let byte_offset = s
-            .char_indices()
-            .nth(offset)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
+        let byte_offset = Self::byte_offset(s, offset);
         s.insert_str(byte_offset, text);
     }
 
@@ -233,14 +264,14 @@ mod tests {
     fn test_new_is_empty() {
         let c = TextFieldController::new();
         assert_eq!(c.text(), "");
-        assert_eq!(c.char_count(), 0);
+        assert_eq!(c.grapheme_count(), 0);
     }
 
     #[test]
     fn test_with_initial() {
         let c = TextFieldController::with_initial("hello");
         assert_eq!(c.text(), "hello");
-        assert_eq!(c.char_count(), 5);
+        assert_eq!(c.grapheme_count(), 5);
     }
 
     #[test]
@@ -278,23 +309,16 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_char() {
+    fn test_delete_grapheme() {
         let c = TextFieldController::with_initial("hello");
-        c.delete_char(1); // remove 'e'
+        c.delete_grapheme(1); // remove 'e'
         assert_eq!(c.text(), "hllo");
     }
 
     #[test]
-    fn test_delete_char_out_of_bounds() {
-        let c = TextFieldController::with_initial("hi");
-        c.delete_char(99); // no-op
-        assert_eq!(c.text(), "hi");
-    }
-
-    #[test]
-    fn test_char_count_unicode() {
+    fn test_grapheme_count_unicode() {
         let c = TextFieldController::with_initial("he🌟lo");
-        assert_eq!(c.char_count(), 5);
+        assert_eq!(c.grapheme_count(), 5);
     }
 
     #[test]
@@ -411,6 +435,110 @@ mod tests {
         c.set_text("d".to_string()); // new edit — redo stack should clear
         assert!(!c.redo()); // nothing to redo
         assert_eq!(c.text(), "d");
+    }
+
+    // ── Grapheme offsets ────────────────────────────────────────────
+
+    /// A single family emoji: three code points joined by zero-width joiners,
+    /// five `char`s and eighteen bytes, but one grapheme cluster.
+    const FAMILY: &str = "👨‍👩‍👧";
+
+    /// `e` followed by a combining acute accent — two code points, one
+    /// grapheme cluster.
+    const COMBINING_E: &str = "e\u{301}";
+
+    #[test]
+    fn test_grapheme_count_counts_clusters_not_chars() {
+        assert_eq!(TextFieldController::with_initial(FAMILY).grapheme_count(), 1);
+        assert_eq!(
+            TextFieldController::with_initial(COMBINING_E).grapheme_count(),
+            1
+        );
+        // Six code points, three extended clusters: the virama binds "स्ते"
+        // together.
+        assert_eq!(
+            TextFieldController::with_initial("नमस्ते").grapheme_count(),
+            3
+        );
+        assert_eq!(
+            TextFieldController::with_initial(format!("{FAMILY}a")).grapheme_count(),
+            2
+        );
+    }
+
+    #[test]
+    fn test_insert_str_at_grapheme_offset() {
+        let c = TextFieldController::with_initial(format!("{FAMILY}b"));
+        c.insert_str("a", 1);
+        assert_eq!(c.text(), format!("{FAMILY}ab"));
+    }
+
+    #[test]
+    fn test_insert_str_past_the_end_appends() {
+        let c = TextFieldController::with_initial(FAMILY);
+        c.insert_str("!", 99);
+        assert_eq!(c.text(), format!("{FAMILY}!"));
+    }
+
+    #[test]
+    fn test_insert_char_at_grapheme_offset() {
+        let c = TextFieldController::with_initial(FAMILY);
+        unsafe {
+            c.insert_char('\n', 1);
+        }
+        assert_eq!(c.text(), format!("{FAMILY}\n"));
+    }
+
+    #[test]
+    fn test_delete_grapheme_removes_whole_cluster() {
+        let c = TextFieldController::with_initial(format!("a{FAMILY}b"));
+        let removed = c.delete_grapheme(1);
+        assert_eq!(removed, FAMILY);
+        assert_eq!(c.text(), "ab");
+    }
+
+    #[test]
+    fn test_delete_grapheme_removes_combining_mark_with_its_base() {
+        let c = TextFieldController::with_initial(format!("{COMBINING_E}x"));
+        c.delete_grapheme(0);
+        assert_eq!(c.text(), "x");
+    }
+
+    #[test]
+    fn test_delete_grapheme_out_of_bounds() {
+        let c = TextFieldController::with_initial("hi");
+        assert_eq!(c.delete_grapheme(99), "");
+        assert_eq!(c.text(), "hi");
+    }
+
+    #[test]
+    fn test_delete_range_uses_grapheme_offsets() {
+        let c = TextFieldController::with_initial(format!("a{FAMILY}b"));
+        let removed = c.delete_range(1, 2);
+        assert_eq!(removed, FAMILY);
+        assert_eq!(c.text(), "ab");
+    }
+
+    #[test]
+    fn test_get_range_uses_grapheme_offsets() {
+        let c = TextFieldController::with_initial(format!("{COMBINING_E}x"));
+        assert_eq!(c.get_range(0, 1), COMBINING_E);
+        assert_eq!(c.get_range(1, 2), "x");
+    }
+
+    #[test]
+    fn test_get_range_clamps_an_inverted_range() {
+        let c = TextFieldController::with_initial("hello");
+        assert_eq!(c.get_range(4, 1), "");
+    }
+
+    #[test]
+    fn test_undo_delete_grapheme() {
+        let c = TextFieldController::with_initial(format!("a{FAMILY}"));
+        c.delete_grapheme(1);
+        assert_eq!(c.text(), "a");
+        assert!(c.undo());
+        assert_eq!(c.text(), format!("a{FAMILY}"));
     }
 
     #[test]

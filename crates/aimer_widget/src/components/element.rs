@@ -575,6 +575,11 @@ impl EventDispatcher {
     /// resolves only the saved root-to-owner path. Pointer-up releases its
     /// capture after delivery, and cancellation is delivered once to every
     /// distinct captured owner before all captures are cleared.
+    ///
+    /// Focus-directed events — see [`ElementEvent::is_focus_directed`] — skip
+    /// hit testing entirely and are offered to the whole tree until an element
+    /// that owns keyboard focus consumes them, so text and composition reach the
+    /// focused field no matter where the pointer is.
     pub fn dispatch(
         &mut self,
         root: &dyn Element,
@@ -595,6 +600,10 @@ impl EventDispatcher {
 
         if matches!(event, ElementEvent::Cancel) {
             return self.cancel_captures(root, event).without_capture_request();
+        }
+
+        if event.is_focus_directed() {
+            return dispatch_focused_event(root, event).without_capture_request();
         }
 
         if routes_to_capture && let Some(pointer) = pointer {
@@ -916,12 +925,49 @@ fn broadcast_event_inner<'a>(
     result.merge(root.on_event(event))
 }
 
+/// Deliver a focus-directed event to the element that owns keyboard focus.
+///
+/// Keyboard text and input-method composition carry no meaningful position, so
+/// the tree is walked depth-first and every element is offered the event until
+/// one consumes it; elements without focus ignore it. Unlike
+/// [`broadcast_event`], delivery stops at the first consumer, so a focused field
+/// nested inside another field never sees the same text twice.
+pub fn dispatch_focused_event(root: &dyn Element, event: &ElementEvent) -> EventResult {
+    let mut children = EventChildren::new();
+    dispatch_focused_event_inner(root, event, &mut children)
+}
+
+fn dispatch_focused_event_inner<'a>(
+    root: &'a dyn Element,
+    event: &ElementEvent,
+    children: &mut EventChildren<'a>,
+) -> EventResult {
+    let mut result = EventResult::ignored();
+    let start = children.len();
+    root.event_children(&mut |child| children.push(child));
+
+    while children.len() > start {
+        let child = children
+            .pop()
+            .expect("event child scratch contains an element beyond its entry length");
+        result = result.merge(dispatch_focused_event_inner(child, event, children));
+        if result.is_consumed() {
+            children.truncate(start);
+            return result;
+        }
+    }
+    children.truncate(start);
+
+    result.merge(root.on_event(event))
+}
+
 #[cfg(test)]
 mod tests {
     use std::any::Any;
     use std::cell::Cell;
     use std::rc::Rc;
 
+    use aimer_events::element::{KeyAction, Modifiers, NamedKey};
     use aimer_events::pointer::PointerSource;
     use aimer_rubick::INLINE_CAPACITY;
 
@@ -1241,6 +1287,112 @@ mod tests {
         );
 
         ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| assert_eq!(count.get(), 1));
+    }
+
+    #[test]
+    fn focus_directed_text_reaches_elements_the_pointer_is_not_over() {
+        let events = Rc::new(Cell::new(0));
+        let leaf = routed_leaf(
+            (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
+            events.clone(),
+            false,
+            false,
+        );
+        let root = RoutedElement {
+            children: vec![leaf],
+            bounds: Some((Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 })),
+            events: Rc::new(Cell::new(0)),
+            capture_on_down: false,
+            release_on_move: false,
+        }
+        .boxed();
+        let outside = Vec2d {
+            x: f32::MIN,
+            y: f32::MIN,
+        };
+
+        let result = EventDispatcher::new().dispatch(
+            root.as_ref(),
+            outside,
+            &ElementEvent::TextInput {
+                text: "你好".into(),
+                action: KeyAction::Pressed,
+                modifiers: Modifiers::default(),
+            },
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(events.get(), 1);
+    }
+
+    #[test]
+    fn named_keys_stay_positional() {
+        let events = Rc::new(Cell::new(0));
+        let leaf = routed_leaf(
+            (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
+            events.clone(),
+            false,
+            false,
+        );
+        let root = RoutedElement {
+            children: vec![leaf],
+            bounds: Some((Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 })),
+            events: Rc::new(Cell::new(0)),
+            capture_on_down: false,
+            release_on_move: false,
+        }
+        .boxed();
+
+        let result = EventDispatcher::new().dispatch(
+            root.as_ref(),
+            Vec2d { x: 50.0, y: 50.0 },
+            &ElementEvent::KeyInput {
+                key: NamedKey::ArrowDown,
+                action: KeyAction::Pressed,
+                modifiers: Modifiers::default(),
+            },
+        );
+
+        assert!(!result.is_consumed());
+        assert_eq!(events.get(), 0);
+    }
+
+    #[test]
+    fn focus_directed_delivery_stops_at_the_first_consumer() {
+        let first_events = Rc::new(Cell::new(0));
+        let second_events = Rc::new(Cell::new(0));
+        let root = RoutedElement {
+            children: vec![
+                routed_leaf(
+                    (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
+                    first_events.clone(),
+                    false,
+                    false,
+                ),
+                routed_leaf(
+                    (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
+                    second_events.clone(),
+                    false,
+                    false,
+                ),
+            ],
+            bounds: None,
+            events: Rc::new(Cell::new(0)),
+            capture_on_down: false,
+            release_on_move: false,
+        }
+        .boxed();
+
+        let _ = EventDispatcher::new().dispatch(
+            root.as_ref(),
+            Vec2d { x: 5.0, y: 5.0 },
+            &ElementEvent::ImePreedit {
+                text: "ni".into(),
+                cursor: None,
+            },
+        );
+
+        assert_eq!(first_events.get() + second_events.get(), 1);
     }
 
     #[test]

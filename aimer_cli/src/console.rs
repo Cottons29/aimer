@@ -236,6 +236,7 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
         while let Ok(event) = rx.try_recv() {
             match event {
                 RunnerEvent::BuildLog(msg) => state.push_build_log(msg),
+                RunnerEvent::BuildReport(report) => state.push_build_report(report),
                 RunnerEvent::AppLog(msg) => state.push_app_log(msg),
                 RunnerEvent::StatusChange(s) => state.apply_status(s),
                 RunnerEvent::HotReload => {
@@ -644,6 +645,13 @@ pub fn start_no_tui(device: Device, pkg_name: String, release: bool) -> anyhow::
         match event {
             RunnerEvent::BuildLog(msg) => {
                 eprintln!("[build] {}", msg);
+            }
+            // The block is framed to the terminal width, so it is printed
+            // without the `[build]` prefix that would push it out of shape.
+            RunnerEvent::BuildReport(report) => {
+                for line in report.lines() {
+                    eprintln!("{}", line);
+                }
             }
             RunnerEvent::AppLog(msg) => {
                 println!("{}", msg.render(true));

@@ -141,9 +141,9 @@ pub fn spawn_cargo_build(
     if let Some(report) = json_reader.and_then(|reader| reader.join().ok())
         && !report.is_empty()
     {
-        for line in report.lines() {
-            let _ = tx.send(RunnerEvent::BuildLog(line));
-        }
+        // Sent whole rather than line by line: the block fills the pane it lands
+        // in, so only the console knows how wide to lay it out.
+        let _ = tx.send(RunnerEvent::BuildReport(report));
     }
     status
 }

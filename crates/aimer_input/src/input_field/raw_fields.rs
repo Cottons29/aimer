@@ -412,10 +412,33 @@ pub(crate) struct RawTextField {
     pub preedit_text: Cell<String>,
     pub preedit_cursor: Cell<Option<(usize, usize)>>,
     pub blink_scheduled: Cell<bool>,
+    pub ime_enabled: Cell<bool>,
+    pub ime_cursor_area: Cell<Option<ImeCaretArea>>,
     pub padding: LayoutSpacing,
 }
 
+/// Caret rectangle reported to the platform input method, in logical window
+/// coordinates.
+///
+/// The input method places its candidate window relative to this rectangle, so
+/// it has to follow the caret as text is typed or scrolled.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ImeCaretArea {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
 impl RawTextField {
+    /// Smallest caret movement, in logical pixels, that is worth reporting to
+    /// the platform input method.
+    const IME_AREA_EPSILON: f32 = 0.1;
+
+    /// Logical width of the caret rectangle reported to the platform input
+    /// method.
+    const IME_CARET_WIDTH: f32 = 1.0;
+
     fn scaled_font_size(&self, style: &TextStyle, scale: f32) -> f32 {
         let fs = if style.font_size == 0 {
             14.0
@@ -429,11 +452,203 @@ impl RawTextField {
         self.focused.get()
     }
 
+    /// Focuses or blurs the field and brings platform text input in sync.
+    ///
+    /// Gaining focus is what enables the input method — not the click that
+    /// usually causes it — so a field focused by [`auto_focus`] or by code can
+    /// compose immediately. Losing focus abandons any composition.
+    ///
+    /// [`auto_focus`]: crate::input_field::text_field::TextField::auto_focus
     fn set_focused(&self, focused: bool) {
-        self.focused.set(focused);
-        if !focused {
-            self.blink_scheduled.set(false);
+        let was_focused = self.focused.replace(focused);
+        if focused {
+            self.enable_platform_ime();
+            return;
         }
+        self.blink_scheduled.set(false);
+        if was_focused {
+            self.clear_preedit();
+        }
+        self.disable_platform_ime();
+    }
+
+    /// Turns platform text input on for this field.
+    ///
+    /// Idempotent: the platform is only told on the transition into the enabled
+    /// state, because raising the keyboard and allowing IME are window-server
+    /// round trips.
+    fn enable_platform_ime(&self) {
+        if self.ime_enabled.replace(true) {
+            return;
+        }
+        #[cfg(target_os = "ios")]
+        ios_keyboard::show_keyboard();
+        #[cfg(target_os = "android")]
+        android_keyboard::show_keyboard();
+        #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
+        if let Some(w) = get_window() {
+            w.set_ime_allowed(true);
+        }
+        #[cfg(target_arch = "wasm32")]
+        wasm_request_keyboard(true);
+    }
+
+    /// Turns platform text input off and forgets the reported caret area.
+    fn disable_platform_ime(&self) {
+        self.ime_cursor_area.set(None);
+        if !self.ime_enabled.replace(false) {
+            return;
+        }
+        #[cfg(target_os = "ios")]
+        ios_keyboard::dismiss_keyboard();
+        #[cfg(target_os = "android")]
+        android_keyboard::dismiss_keyboard();
+        #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
+        if let Some(w) = get_window() {
+            w.set_ime_allowed(false);
+        }
+        #[cfg(target_arch = "wasm32")]
+        wasm_request_keyboard(false);
+    }
+
+    /// Reports `caret` to the platform so the candidate window follows the
+    /// insertion point.
+    ///
+    /// The rectangle is submitted only once it has moved by at least
+    /// [`Self::IME_AREA_EPSILON`] logical pixels: the field draws every blink
+    /// frame, and telling the window server about an unchanged area on each of
+    /// them is pure overhead.
+    fn update_ime_cursor_area(&self, caret: ImeCaretArea) {
+        if !self.ime_cursor_area_moved(caret) {
+            return;
+        }
+        self.ime_cursor_area.set(Some(caret));
+        #[cfg(not(any(target_os = "ios", target_os = "android", target_arch = "wasm32")))]
+        if let Some(w) = get_window() {
+            use winit::dpi::{LogicalPosition, LogicalSize};
+            w.set_ime_cursor_area(
+                LogicalPosition::new(caret.x as f64, caret.y as f64),
+                LogicalSize::new(caret.width.max(1.0) as f64, caret.height.max(1.0) as f64),
+            );
+        }
+    }
+
+    /// Returns whether `caret` differs from the last reported caret area.
+    fn ime_cursor_area_moved(&self, caret: ImeCaretArea) -> bool {
+        match self.ime_cursor_area.get() {
+            Some(previous) => {
+                (previous.x - caret.x).abs() > Self::IME_AREA_EPSILON
+                    || (previous.y - caret.y).abs() > Self::IME_AREA_EPSILON
+                    || (previous.width - caret.width).abs() > Self::IME_AREA_EPSILON
+                    || (previous.height - caret.height).abs() > Self::IME_AREA_EPSILON
+            }
+            None => true,
+        }
+    }
+
+    /// Converts a caret drawn at content-local canvas coordinates into the
+    /// logical window rectangle the platform expects and reports it.
+    fn publish_ime_caret(
+        &self,
+        local_x: f32,
+        local_y: f32,
+        height: f32,
+        content_origin: (f32, f32),
+        scale: f32,
+    ) {
+        if !self.is_focused() {
+            return;
+        }
+        let scale = if scale > 0.0 { scale } else { 1.0 };
+        self.update_ime_cursor_area(ImeCaretArea {
+            x: (content_origin.0 + local_x) / scale,
+            y: (content_origin.1 + local_y) / scale,
+            width: Self::IME_CARET_WIDTH,
+            height: height / scale,
+        });
+    }
+
+    /// Borrows the composition string without cloning it.
+    ///
+    /// The value is moved out of its cell for the duration of `f` and put back
+    /// afterwards, so reading it every frame costs no allocation.
+    fn with_preedit<R>(&self, f: impl FnOnce(&str) -> R) -> R {
+        let preedit = self.preedit_text.take();
+        let value = f(&preedit);
+        self.preedit_text.set(preedit);
+        value
+    }
+
+    /// Returns whether an input-method composition is currently in progress.
+    fn is_composing(&self) -> bool {
+        self.with_preedit(|preedit| !preedit.is_empty())
+    }
+
+    /// Replaces the composition, returning whether anything changed.
+    ///
+    /// Input methods resend an identical preedit while candidates are browsed;
+    /// reporting no change lets the caller skip a repaint.
+    fn set_preedit(&self, text: &str, cursor: Option<(usize, usize)>) -> bool {
+        let cursor_changed = self.preedit_cursor.replace(cursor) != cursor;
+        let text_changed = self.with_preedit(|preedit| preedit != text);
+        if text_changed {
+            self.preedit_text.set(text.to_owned());
+        }
+        text_changed || cursor_changed
+    }
+
+    /// Abandons any composition in progress.
+    fn clear_preedit(&self) {
+        self.preedit_cursor.set(None);
+        if self.is_composing() {
+            self.preedit_text.set(String::new());
+        }
+    }
+
+    /// Inserts `text` at the cursor as a single edit.
+    ///
+    /// The current selection, if any, is replaced first. A `max_length` limit
+    /// truncates the payload instead of rejecting it, so a committed phrase
+    /// still inserts as much as fits. The whole payload produces one undo
+    /// entry, one cursor advance, and one `on_changed` call, which keeps undo
+    /// granularity at the phrase the user actually typed.
+    ///
+    /// Returns whether the text changed.
+    fn insert_text(&self, text: &str) -> bool {
+        if text.is_empty() {
+            return false;
+        }
+
+        if let Some((start, end)) = self.cursor.selection_range() {
+            if start != end {
+                self.controller.delete_range(start, end);
+            }
+            self.cursor.set_offset(start);
+            self.cursor.clear_selection();
+        }
+
+        let text = match self.max_length {
+            Some(max) => {
+                let room = max.saturating_sub(self.controller.grapheme_count());
+                if room == 0 {
+                    return false;
+                }
+                truncate_graphemes(text, room)
+            }
+            None => text,
+        };
+        if text.is_empty() {
+            return false;
+        }
+
+        let offset = self.cursor.offset();
+        let inserted = grapheme_count(text);
+        self.controller.insert_str(text, offset);
+        self.cursor.set_offset(offset + inserted);
+        self.cursor.reset_blink();
+        self.clear_preedit();
+        self.on_changed.call(self.controller.text());
+        true
     }
 
     fn is_hovered(&self) -> bool {
@@ -539,23 +754,22 @@ impl RawTextField {
             return;
         }
 
-        // Convert grapheme offset to byte offset
-        let byte_offset: usize = text
-            .chars()
-            .take(grapheme_offset)
-            .map(|c| c.len_utf8())
-            .sum();
+        // Word boundaries are reported in bytes, so the click offset is
+        // converted into byte space once and the matching bounds are converted
+        // back into grapheme offsets. Counting `char`s here would land inside a
+        // cluster and select the wrong word.
+        let byte_offset = text
+            .grapheme_indices(true)
+            .nth(grapheme_offset)
+            .map(|(byte, _)| byte)
+            .unwrap_or(text.len());
 
-        // Find word boundaries
-        let word_bounds: Vec<(usize, &str)> = text.split_word_bound_indices().collect();
-
-        for &(start, segment) in &word_bounds {
+        for (start, segment) in text.split_word_bound_indices() {
             let end = start + segment.len();
             if byte_offset >= start && byte_offset < end {
-                let grapheme_start = text[..start].chars().count();
-                let grapheme_end = text[..end].chars().count();
-                self.cursor.set_selection_anchor(Some(grapheme_start));
-                self.cursor.set_offset(grapheme_end);
+                self.cursor
+                    .set_selection_anchor(Some(text[..start].graphemes(true).count()));
+                self.cursor.set_offset(text[..end].graphemes(true).count());
                 return;
             }
         }
@@ -569,14 +783,14 @@ impl RawTextField {
             return;
         }
 
-        let chars: Vec<char> = text.chars().collect();
-        let mut line_start = grapheme_offset;
-        let mut line_end = grapheme_offset;
+        let graphemes = grapheme_slices(text);
+        let mut line_start = grapheme_offset.min(graphemes.len());
+        let mut line_end = line_start;
 
-        while line_start > 0 && chars[line_start - 1] != '\n' {
+        while line_start > 0 && graphemes[line_start - 1] != "\n" {
             line_start -= 1;
         }
-        while line_end < chars.len() && chars[line_end] != '\n' {
+        while line_end < graphemes.len() && graphemes[line_end] != "\n" {
             line_end += 1;
         }
 
@@ -585,6 +799,10 @@ impl RawTextField {
     }
 
     /// Adjust `scroll_x` so the cursor is visible within `content_width`.
+    ///
+    /// While an input method is composing, the end of the composition is the
+    /// point the user is looking at, so the composition width is included;
+    /// otherwise a long phrase would grow out of the clipped viewport.
     fn ensure_cursor_visible(
         &self,
         content_width: f32,
@@ -592,12 +810,106 @@ impl RawTextField {
         font_size: f32,
     ) {
         let cursor_x = self.cursor_x_offset_canvas(canvas, font_size);
+        let composition_end = cursor_x
+            + self.with_preedit(|preedit| {
+                if preedit.is_empty() {
+                    0.0
+                } else {
+                    canvas.measure_text(preedit, font_size)
+                }
+            });
         let scroll = self.scroll_x.get();
 
         if cursor_x < scroll {
             self.scroll_x.set(cursor_x.max(0.0));
-        } else if cursor_x > scroll + content_width {
-            self.scroll_x.set((cursor_x - content_width).max(0.0));
+        } else if composition_end > scroll + content_width {
+            self.scroll_x.set((composition_end - content_width).max(0.0));
+        }
+    }
+
+    /// Draws the input-method composition, its underlines, and its caret.
+    ///
+    /// `origin_x` and `top` are the content-local canvas coordinates of the
+    /// insertion point, and `height` is the line height the composition shares
+    /// with the surrounding text. `cursor` is the byte range the input method
+    /// reports inside `preedit`: an empty range is the composition caret, while
+    /// a non-empty one marks the clause being edited and is underlined twice as
+    /// thick so long Japanese or Korean compositions show which part is active.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_preedit(
+        &self,
+        preedit: &str,
+        cursor: Option<(usize, usize)>,
+        origin_x: f32,
+        top: f32,
+        height: f32,
+        content_ctx: &BuildContext,
+        font_size: f32,
+        scale: f32,
+    ) {
+        let canvas = &content_ctx.canvas;
+        let width = canvas.measure_text(preedit, font_size);
+
+        canvas.save();
+        canvas.translate((origin_x, top).into());
+        let mut preedit_ctx = content_ctx.clone();
+        preedit_ctx.parent_size = ResolvedSize { width, height };
+        let preedit_widget = self.build_text_widget(preedit, &self.text_style, self.text_align);
+        preedit_widget.draw(&preedit_ctx);
+        canvas.restore();
+
+        let color: Color = self.cursor.color.into();
+        let underline_y = top + height * 0.85;
+        canvas.fill_color_rect(
+            (origin_x, underline_y).into(),
+            ResolvedSize {
+                width,
+                height: scale,
+            },
+            color,
+            [0.0; 4],
+        );
+
+        let Some((start, end)) = cursor else {
+            return;
+        };
+        let start = floor_char_boundary(preedit, start);
+        let end = floor_char_boundary(preedit, end.max(start));
+        let start_x = origin_x + canvas.measure_text(&preedit[..start], font_size);
+
+        if end > start {
+            let end_x = origin_x + canvas.measure_text(&preedit[..end], font_size);
+            canvas.fill_color_rect(
+                (start_x, underline_y - scale).into(),
+                ResolvedSize {
+                    width: end_x - start_x,
+                    height: 2.0 * scale,
+                },
+                color,
+                [0.0; 4],
+            );
+        } else {
+            canvas.fill_color_rect(
+                (start_x, top + height * 0.15).into(),
+                ResolvedSize {
+                    width: 1.5 * scale,
+                    height: height * 0.7,
+                },
+                color,
+                [0.0; 4],
+            );
+        }
+    }
+
+    /// The text as it is drawn.
+    ///
+    /// An obscured field shows one bullet per grapheme cluster, so a family
+    /// emoji hides behind a single dot and the bullets stay in step with the
+    /// cursor offsets used for hit testing and caret placement.
+    fn display_text(&self) -> String {
+        match self.input_type {
+            InputType::Obscure => "\u{2022}".repeat(self.controller.grapheme_count()),
+            _ => self.controller.text().to_owned(),
         }
     }
 
@@ -610,6 +922,42 @@ impl RawTextField {
             .count()
             + 1
     }
+}
+
+/// Returns the longest prefix of `text` holding at most `max_graphemes`
+/// grapheme clusters.
+///
+/// Cutting on a cluster boundary is what keeps a length limit from splitting a
+/// family emoji into stray code points or stranding a combining accent without
+/// its base letter.
+fn truncate_graphemes(text: &str, max_graphemes: usize) -> &str {
+    use unicode_segmentation::UnicodeSegmentation;
+    match text.grapheme_indices(true).nth(max_graphemes) {
+        Some((byte, _)) => &text[..byte],
+        None => text,
+    }
+}
+
+/// Splits `text` into grapheme clusters, the unit every cursor offset counts.
+fn grapheme_slices(text: &str) -> Vec<&str> {
+    unicode_segmentation::UnicodeSegmentation::graphemes(text, true).collect()
+}
+
+/// Counts the grapheme clusters in `text` without allocating.
+fn grapheme_count(text: &str) -> usize {
+    unicode_segmentation::UnicodeSegmentation::graphemes(text, true).count()
+}
+
+/// Clamps `byte` down to the nearest character boundary of `text`.
+///
+/// Input methods report composition ranges in bytes; a range that lands inside
+/// a multi-byte character must not be used to slice the string.
+fn floor_char_boundary(text: &str, byte: usize) -> usize {
+    let mut byte = byte.min(text.len());
+    while byte > 0 && !text.is_char_boundary(byte) {
+        byte -= 1;
+    }
+    byte
 }
 
 fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
@@ -892,32 +1240,7 @@ impl EventElement for RawTextField {
                         }
 
                         // Clear IME preedit on new click
-                        self.preedit_text.set(String::new());
-                        self.preedit_cursor.set(None);
-
-                        #[cfg(target_os = "ios")]
-                        ios_keyboard::show_keyboard();
-                        #[cfg(target_os = "android")]
-                        android_keyboard::show_keyboard();
-                        #[cfg(not(any(
-                            target_os = "ios",
-                            target_os = "android",
-                            target_arch = "wasm32"
-                        )))]
-                        if let Some(w) = get_window() {
-                            w.set_ime_allowed(true);
-                            if let Some((start, end)) = self.cached_bounds.pos_start_end() {
-                                use winit::dpi::{LogicalPosition, LogicalSize};
-                                let pos = LogicalPosition::new(start.x as f64, start.y as f64);
-                                let size = LogicalSize::new(
-                                    (end.x - start.x).max(1.0) as f64,
-                                    (end.y - start.y).max(1.0) as f64,
-                                );
-                                w.set_ime_cursor_area(pos, size);
-                            }
-                        }
-                        #[cfg(target_arch = "wasm32")]
-                        wasm_request_keyboard(true);
+                        self.clear_preedit();
                         true
                     } else {
                         if self.mouse_held.get().is_some() {
@@ -925,15 +1248,6 @@ impl EventElement for RawTextField {
                         }
                         self.set_focused(false);
                         self.on_blur.call(self.controller.text());
-                        #[cfg(target_os = "ios")]
-                        ios_keyboard::dismiss_keyboard();
-                        #[cfg(target_os = "android")]
-                        android_keyboard::dismiss_keyboard();
-                        if let Some(w) = get_window() {
-                            w.set_ime_allowed(false);
-                        }
-                        #[cfg(target_arch = "wasm32")]
-                        wasm_request_keyboard(false);
                         false
                     }
                 }
@@ -945,34 +1259,18 @@ impl EventElement for RawTextField {
                         return false;
                     }
 
-                    // Enforce max_length: reject if at or over the limit
-                    if let Some(max) = self.max_length {
-                        // If there's a selection, the deleted chars free up space
-                        let selected_len = self
-                            .cursor
-                            .selection_range()
-                            .map(|(s, e)| e - s)
-                            .unwrap_or(0);
-                        if self.controller.char_count().saturating_sub(selected_len) >= max {
-                            return false;
-                        }
+                    let mut encoded = [0u8; 4];
+                    self.insert_text(ch.encode_utf8(&mut encoded))
+                }
+                ElementEvent::TextInput { text, action, .. } => {
+                    if !self.is_focused() || self.read_only {
+                        return false;
+                    }
+                    if *action == KeyAction::Released {
+                        return false;
                     }
 
-                    // If there is a selection, delete it first
-                    if let Some((start, end)) = self.cursor.selection_range() {
-                        self.controller.delete_range(start, end);
-                        self.cursor.set_offset(start);
-                        self.cursor.clear_selection();
-                    }
-
-                    let offset = self.cursor.offset();
-                    unsafe {
-                        self.controller.insert_char(*ch, offset);
-                    }
-                    self.cursor.set_offset(offset + 1);
-                    self.cursor.reset_blink();
-                    self.on_changed.call(self.controller.text());
-                    true
+                    self.insert_text(text)
                 }
                 ElementEvent::KeyInput {
                     key,
@@ -994,7 +1292,7 @@ impl EventElement for RawTextField {
                             NamedKey::Other(k) if k == "a" => {
                                 // Select all
                                 self.cursor.set_selection_anchor(Some(0));
-                                self.cursor.set_offset(self.controller.char_count());
+                                self.cursor.set_offset(self.controller.grapheme_count());
                                 true
                             }
                             NamedKey::Other(k) if k == "c" => {
@@ -1017,19 +1315,12 @@ impl EventElement for RawTextField {
                                 true
                             }
                             NamedKey::Other(k) if k == "v" && !self.read_only => {
-                                // Paste
+                                // Paste. Routing through `insert_text` replaces
+                                // the selection, advances the cursor by whole
+                                // grapheme clusters, honours `max_length`, and
+                                // records the paste as a single undo entry.
                                 if let Some(text) = clipboard_read() {
-                                    // Delete selection first if any
-                                    if let Some((start, end)) = self.cursor.selection_range() {
-                                        self.controller.delete_range(start, end);
-                                        self.cursor.set_offset(start);
-                                        self.cursor.clear_selection();
-                                    }
-                                    let offset = self.cursor.offset();
-                                    let char_count = text.chars().count();
-                                    self.controller.insert_str(&text, offset);
-                                    self.cursor.set_offset(offset + char_count);
-                                    self.on_changed.call(self.controller.text());
+                                    self.insert_text(&text);
                                 }
                                 true
                             }
@@ -1038,7 +1329,7 @@ impl EventElement for RawTextField {
                             {
                                 // Undo
                                 if self.controller.undo() {
-                                    let len = self.controller.char_count();
+                                    let len = self.controller.grapheme_count();
                                     let off = self.cursor.offset();
                                     if off > len {
                                         self.cursor.set_offset(len);
@@ -1052,7 +1343,7 @@ impl EventElement for RawTextField {
                             {
                                 // Redo (Ctrl+Shift+Z)
                                 if self.controller.redo() {
-                                    let len = self.controller.char_count();
+                                    let len = self.controller.grapheme_count();
                                     let off = self.cursor.offset();
                                     if off > len {
                                         self.cursor.set_offset(len);
@@ -1064,7 +1355,7 @@ impl EventElement for RawTextField {
                             NamedKey::Other(k) if k == "y" && !self.read_only => {
                                 // Redo (Ctrl+Y — Windows convention)
                                 if self.controller.redo() {
-                                    let len = self.controller.char_count();
+                                    let len = self.controller.grapheme_count();
                                     let off = self.cursor.offset();
                                     if off > len {
                                         self.cursor.set_offset(len);
@@ -1097,7 +1388,7 @@ impl EventElement for RawTextField {
                             } else {
                                 let offset = self.cursor.offset();
                                 if offset > 0 {
-                                    self.controller.delete_char(offset - 1);
+                                    self.controller.delete_grapheme(offset - 1);
                                     self.cursor.set_offset(offset - 1);
                                     self.on_changed.call(self.controller.text());
                                 }
@@ -1112,8 +1403,8 @@ impl EventElement for RawTextField {
                                 self.on_changed.call(self.controller.text());
                             } else {
                                 let offset = self.cursor.offset();
-                                if offset < self.controller.char_count() {
-                                    self.controller.delete_char(offset);
+                                if offset < self.controller.grapheme_count() {
+                                    self.controller.delete_grapheme(offset);
                                     self.on_changed.call(self.controller.text());
                                 }
                             }
@@ -1169,7 +1460,7 @@ impl EventElement for RawTextField {
                         }
                         NamedKey::ArrowRight => {
                             let offset = self.cursor.offset();
-                            let len = self.controller.char_count();
+                            let len = self.controller.grapheme_count();
                             if modifiers.shift {
                                 if self.cursor.selection_anchor().is_none() {
                                     self.cursor.set_selection_anchor(Some(offset));
@@ -1189,12 +1480,12 @@ impl EventElement for RawTextField {
                         }
                         NamedKey::ArrowUp => {
                             let text = self.controller.text();
-                            let offset = self.cursor.offset();
-                            let chars: Vec<char> = text.chars().collect();
+                            let graphemes = grapheme_slices(text);
+                            let offset = self.cursor.offset().min(graphemes.len());
                             // Find start of current line
-                            let line_start = chars[..offset]
+                            let line_start = graphemes[..offset]
                                 .iter()
-                                .rposition(|&c| c == '\n')
+                                .rposition(|&g| g == "\n")
                                 .map(|p| p + 1)
                                 .unwrap_or(0);
                             if line_start == 0 {
@@ -1203,9 +1494,9 @@ impl EventElement for RawTextField {
                             let col = offset - line_start;
                             // Find start of previous line
                             let prev_line_end = line_start - 1;
-                            let prev_line_start = chars[..prev_line_end]
+                            let prev_line_start = graphemes[..prev_line_end]
                                 .iter()
-                                .rposition(|&c| c == '\n')
+                                .rposition(|&g| g == "\n")
                                 .map(|p| p + 1)
                                 .unwrap_or(0);
                             let prev_line_len = prev_line_end - prev_line_start;
@@ -1222,30 +1513,30 @@ impl EventElement for RawTextField {
                         }
                         NamedKey::ArrowDown => {
                             let text = self.controller.text();
-                            let offset = self.cursor.offset();
-                            let chars: Vec<char> = text.chars().collect();
+                            let graphemes = grapheme_slices(text);
+                            let offset = self.cursor.offset().min(graphemes.len());
                             // Find end of current line
-                            let line_end = chars[offset..]
+                            let line_end = graphemes[offset..]
                                 .iter()
-                                .position(|&c| c == '\n')
+                                .position(|&g| g == "\n")
                                 .map(|p| offset + p)
-                                .unwrap_or(chars.len());
-                            if line_end >= chars.len() {
+                                .unwrap_or(graphemes.len());
+                            if line_end >= graphemes.len() {
                                 return true;
                             } // already at last line
-                            let line_start = chars[..offset]
+                            let line_start = graphemes[..offset]
                                 .iter()
-                                .rposition(|&c| c == '\n')
+                                .rposition(|&g| g == "\n")
                                 .map(|p| p + 1)
                                 .unwrap_or(0);
                             let col = offset - line_start;
                             // Find next line
                             let next_line_start = line_end + 1;
-                            let next_line_end = chars[next_line_start..]
+                            let next_line_end = graphemes[next_line_start..]
                                 .iter()
-                                .position(|&c| c == '\n')
+                                .position(|&g| g == "\n")
                                 .map(|p| next_line_start + p)
-                                .unwrap_or(chars.len());
+                                .unwrap_or(graphemes.len());
                             let next_line_len = next_line_end - next_line_start;
                             let new_offset = next_line_start + col.min(next_line_len);
                             if modifiers.shift {
@@ -1279,17 +1570,13 @@ impl EventElement for RawTextField {
                             } else {
                                 self.cursor.clear_selection();
                             }
-                            self.cursor.set_offset(self.controller.char_count());
+                            self.cursor.set_offset(self.controller.grapheme_count());
                             true
                         }
                         NamedKey::Escape => {
                             self.cursor.clear_selection();
                             self.set_focused(false);
                             self.on_blur.call(self.controller.text());
-                            #[cfg(target_os = "ios")]
-                            ios_keyboard::dismiss_keyboard();
-                            #[cfg(target_os = "android")]
-                            android_keyboard::dismiss_keyboard();
                             true
                         }
                         _ => false,
@@ -1331,20 +1618,15 @@ impl EventElement for RawTextField {
                     if !self.is_focused() {
                         return false;
                     }
-                    self.preedit_text.set(text.clone());
-                    self.preedit_cursor.set(*cursor);
-                    true
+                    // Input methods resend an identical composition while the
+                    // user browses candidates; reporting no change keeps those
+                    // keystrokes from repainting the window.
+                    self.set_preedit(text, *cursor)
                 }
                 ElementEvent::Cancel => {
                     self.set_focused(false);
                     self.mouse_held.set(None);
                     self.on_blur.call(self.controller.text());
-                    self.preedit_text.set(String::new());
-                    self.preedit_cursor.set(None);
-                    #[cfg(target_os = "ios")]
-                    ios_keyboard::dismiss_keyboard();
-                    #[cfg(target_os = "android")]
-                    android_keyboard::dismiss_keyboard();
                     true
                 }
                 _ => false,
@@ -1400,6 +1682,14 @@ impl Drawable for RawTextField {
 
         self.cached_bounds
             .save(scale, abs_x, abs_y, box_width, box_height);
+
+        // A field focused at construction time — `auto_focus`, or a rebuild that
+        // preserved focus — never passed through `set_focused`, so make sure
+        // platform text input is on before the first composition arrives. The
+        // call is idempotent, so repeating it every frame is free.
+        if self.enable && self.is_focused() {
+            self.enable_platform_ime();
+        }
 
         // --- Resolve active decoration ---
         let decoration = self.active_decoration();
@@ -1459,14 +1749,7 @@ impl Drawable for RawTextField {
 
         // --- Process pending click (deferred from on_event for canvas access) ---
         if let Some(click_pos) = self.pending_click.take() {
-            let display_for_measure = if is_empty {
-                String::new()
-            } else {
-                match self.input_type {
-                    InputType::Obscure => "\u{2022}".repeat(self.controller.char_count()),
-                    _ => text.to_string(),
-                }
-            };
+            let display_for_measure = self.display_text();
             let text_width = ctx.canvas.measure_text(&display_for_measure, font_size);
             let text_x = self.align_x(text_width, content_width);
 
@@ -1521,6 +1804,10 @@ impl Drawable for RawTextField {
             height: content_height,
         };
 
+        // Absolute canvas origin of the content area, used to translate caret
+        // positions into the logical window coordinates the IME expects.
+        let content_origin = (abs_x + pad_left, abs_y + pad_top);
+
         if is_empty {
             // --- Draw prompt (visible when field is empty) ---
             if !self.prompt.is_empty() {
@@ -1533,31 +1820,52 @@ impl Drawable for RawTextField {
                 hint_widget.draw(&content_ctx);
             }
 
-            // --- Draw cursor when field is empty but focused ---
-            if self.is_focused() && self.cursor.is_visible() {
+            // --- Draw cursor / composition when field is empty but focused ---
+            if self.is_focused() {
                 let cursor_x = self.align_x(0.0, content_width);
                 let cursor_top = content_height * 0.15;
                 let cursor_bottom = content_height * 0.85;
                 let cursor_height = cursor_bottom - cursor_top;
-                let cursor_color: Color = self.cursor.color.into();
-                let stroke_w = 1.5 * scale;
 
-                ctx.canvas.fill_color_rect(
-                    (cursor_x, cursor_top).into(),
-                    ResolvedSize {
-                        width: stroke_w,
-                        height: cursor_height,
-                    },
-                    cursor_color,
-                    [0.0; 4],
+                self.publish_ime_caret(
+                    cursor_x,
+                    cursor_top,
+                    cursor_height,
+                    content_origin,
+                    scale,
                 );
+
+                if self.is_composing() {
+                    self.with_preedit(|preedit| {
+                        self.draw_preedit(
+                            preedit,
+                            self.preedit_cursor.get(),
+                            cursor_x,
+                            0.0,
+                            content_height,
+                            &content_ctx,
+                            font_size,
+                            scale,
+                        );
+                    });
+                } else if self.cursor.is_visible() {
+                    let cursor_color: Color = self.cursor.color.into();
+                    let stroke_w = 1.5 * scale;
+
+                    ctx.canvas.fill_color_rect(
+                        (cursor_x, cursor_top).into(),
+                        ResolvedSize {
+                            width: stroke_w,
+                            height: cursor_height,
+                        },
+                        cursor_color,
+                        [0.0; 4],
+                    );
+                }
             }
         } else {
             // --- Draw text ---
-            let display = match self.input_type {
-                InputType::Obscure => "\u{2022}".repeat(self.controller.char_count()),
-                _ => text.to_string(),
-            };
+            let display = self.display_text();
 
             let is_multiline = display.contains('\n');
 
@@ -1585,7 +1893,10 @@ impl Drawable for RawTextField {
 
                 for (line_idx, line) in lines.iter().enumerate() {
                     let line_y = base_y + line_idx as f32 * line_height;
-                    let line_graphemes: usize = line.chars().count();
+                    // Offsets across lines are counted in the same clusters the
+                    // caret and selection use, so `char`s must not be counted
+                    // here.
+                    let line_graphemes = grapheme_count(line);
 
                     let line_width = ctx.canvas.measure_text(line, font_size);
                     let line_x = self.align_x(line_width, content_width);
@@ -1638,8 +1949,8 @@ impl Drawable for RawTextField {
                     line_widget.draw(&line_ctx);
                     ctx.canvas.restore();
 
-                    // Draw cursor if on this line
-                    if self.is_focused() && self.cursor.is_visible() {
+                    // Draw cursor / composition if on this line
+                    if self.is_focused() {
                         let cursor_off = self.cursor.offset();
                         if cursor_off >= grapheme_offset
                             && cursor_off <= grapheme_offset + line_graphemes
@@ -1654,18 +1965,45 @@ impl Drawable for RawTextField {
                                 );
                             let cursor_top = line_y + line_height * 0.15;
                             let cursor_bottom = line_y + line_height * 0.85;
-                            let cursor_color: Color = self.cursor.color.into();
-                            let stroke_w = 1.5 * scale;
 
-                            ctx.canvas.fill_color_rect(
-                                (cursor_x, cursor_top).into(),
-                                ResolvedSize {
-                                    width: stroke_w,
-                                    height: cursor_bottom - cursor_top,
-                                },
-                                cursor_color,
-                                [0.0; 4],
+                            self.publish_ime_caret(
+                                cursor_x,
+                                cursor_top,
+                                cursor_bottom - cursor_top,
+                                content_origin,
+                                scale,
                             );
+
+                            // The composition replaces the caret: drawing both
+                            // would blink an insertion bar over the first
+                            // composing glyph.
+                            if self.is_composing() {
+                                self.with_preedit(|preedit| {
+                                    self.draw_preedit(
+                                        preedit,
+                                        self.preedit_cursor.get(),
+                                        cursor_x,
+                                        line_y,
+                                        line_height,
+                                        &content_ctx,
+                                        font_size,
+                                        scale,
+                                    );
+                                });
+                            } else if self.cursor.is_visible() {
+                                let cursor_color: Color = self.cursor.color.into();
+                                let stroke_w = 1.5 * scale;
+
+                                ctx.canvas.fill_color_rect(
+                                    (cursor_x, cursor_top).into(),
+                                    ResolvedSize {
+                                        width: stroke_w,
+                                        height: cursor_bottom - cursor_top,
+                                    },
+                                    cursor_color,
+                                    [0.0; 4],
+                                );
+                            }
                         }
                     }
 
@@ -1714,60 +2052,51 @@ impl Drawable for RawTextField {
                     );
                 }
 
-                // --- Draw cursor ---
-                if self.is_focused() && self.cursor.is_visible() {
+                // --- Draw cursor / IME composition ---
+                if self.is_focused() {
                     let cursor_x =
                         text_x - scroll + self.cursor_x_offset_canvas(&ctx.canvas, font_size);
                     let cursor_top = content_height * 0.15;
                     let cursor_bottom = content_height * 0.85;
                     let cursor_height = cursor_bottom - cursor_top;
-                    let cursor_color: Color = self.cursor.color.into();
-                    let stroke_w = 1.5 * scale;
 
-                    ctx.canvas.fill_color_rect(
-                        (cursor_x, cursor_top).into(),
-                        ResolvedSize {
-                            width: stroke_w,
-                            height: cursor_height,
-                        },
-                        cursor_color,
-                        [0.0; 4],
+                    self.publish_ime_caret(
+                        cursor_x,
+                        cursor_top,
+                        cursor_height,
+                        content_origin,
+                        scale,
                     );
-                }
 
-                // --- Draw IME preedit text ---
-                let preedit = self.preedit_text.take();
-                if !preedit.is_empty() && self.is_focused() {
-                    self.preedit_text.set(preedit.clone());
-                    let cursor_x =
-                        text_x - scroll + self.cursor_x_offset_canvas(&ctx.canvas, font_size);
-                    let preedit_width = ctx.canvas.measure_text(&preedit, font_size);
+                    // The composition replaces the caret: drawing both would
+                    // blink an insertion bar over the first composing glyph.
+                    if self.is_composing() {
+                        self.with_preedit(|preedit| {
+                            self.draw_preedit(
+                                preedit,
+                                self.preedit_cursor.get(),
+                                cursor_x,
+                                0.0,
+                                content_height,
+                                &content_ctx,
+                                font_size,
+                                scale,
+                            );
+                        });
+                    } else if self.cursor.is_visible() {
+                        let cursor_color: Color = self.cursor.color.into();
+                        let stroke_w = 1.5 * scale;
 
-                    // Draw preedit text at cursor position
-                    ctx.canvas.save();
-                    ctx.canvas.translate((cursor_x, 0.0).into());
-                    let mut preedit_ctx = content_ctx.clone();
-                    preedit_ctx.parent_size = ResolvedSize {
-                        width: preedit_width,
-                        height: content_height,
-                    };
-                    let preedit_widget =
-                        self.build_text_widget(&preedit, &self.text_style, self.text_align);
-                    preedit_widget.draw(&preedit_ctx);
-                    ctx.canvas.restore();
-
-                    // Draw underline under preedit text
-                    let underline_y = content_height * 0.85;
-                    let cursor_color: Color = self.cursor.color.into();
-                    ctx.canvas.fill_color_rect(
-                        (cursor_x, underline_y).into(),
-                        ResolvedSize {
-                            width: preedit_width,
-                            height: 1.0 * scale,
-                        },
-                        cursor_color,
-                        [0.0; 4],
-                    );
+                        ctx.canvas.fill_color_rect(
+                            (cursor_x, cursor_top).into(),
+                            ResolvedSize {
+                                width: stroke_w,
+                                height: cursor_height,
+                            },
+                            cursor_color,
+                            [0.0; 4],
+                        );
+                    }
                 }
             }
         }
@@ -1790,6 +2119,442 @@ impl Drawable for RawTextField {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test_support {
+    use std::cell::Cell;
+    use std::sync::Arc;
+
+    use aimer_animation::AnimInstant;
+    use aimer_attribute::CacheBounds;
+    use aimer_events::element::{ElementEvent, KeyAction, Modifiers};
+    use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
+    use aimer_widget::base::{Color, Colors};
+
+    use super::{Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback};
+    use crate::input_field::controller::TextFieldController;
+
+    /// Builds a focused, editable single-line field around `controller`.
+    pub(super) fn focused_field(controller: TextFieldController) -> RawTextField {
+        RawTextField {
+            input_type: InputType::Text,
+            controller,
+            prompt: Arc::from(""),
+            hint: Arc::from(""),
+            hint_style: TextStyle::default(),
+            text_style: TextStyle::default(),
+            prompt_style: TextStyle::default(),
+            text_align: TextAlign::default(),
+            auto_focus: true,
+            max_lines: None,
+            min_lines: None,
+            max_length: None,
+            enable: true,
+            expand: ExpandDirection::default(),
+            cursor: Cursor::new(Colors::default()),
+            decoration: BoxDecoration::default(),
+            hover_decoration: None,
+            focus_decoration: None,
+            disabled_decoration: None,
+            selection_color: Color::Rgba(66, 133, 244, 100),
+            focused: Cell::new(true),
+            hovered: Cell::new(false),
+            cached_bounds: CacheBounds::new(),
+            on_changed: TextFieldCallback::default(),
+            on_submitted: TextFieldCallback::default(),
+            on_focus: TextFieldCallback::default(),
+            on_blur: TextFieldCallback::default(),
+            read_only: false,
+            mouse_held: Cell::new(None),
+            last_click_time: Cell::new(AnimInstant::now()),
+            click_count: Cell::new(0),
+            pending_click: Cell::new(None),
+            scroll_x: Cell::new(0.0),
+            preedit_text: Cell::new(String::new()),
+            preedit_cursor: Cell::new(None),
+            blink_scheduled: Cell::new(false),
+            ime_enabled: Cell::new(false),
+            ime_cursor_area: Cell::new(None),
+            padding: LayoutSpacing::all(Spacing::Px(4)),
+        }
+    }
+
+    /// A text payload delivered as one batched edit, like an IME commit.
+    pub(super) fn commit(text: &str) -> ElementEvent {
+        ElementEvent::TextInput {
+            text: text.to_owned(),
+            action: KeyAction::Pressed,
+            modifiers: Modifiers::default(),
+        }
+    }
+
+    /// A key press with no modifiers held.
+    pub(super) fn key(key: aimer_events::element::NamedKey) -> ElementEvent {
+        ElementEvent::KeyInput {
+            key,
+            action: KeyAction::Pressed,
+            modifiers: Modifiers::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod ime_tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use aimer_events::element::ElementEvent;
+    use aimer_widget::EventElement;
+
+    use super::ImeCaretArea;
+    use super::test_support::{commit, focused_field};
+    use crate::input_field::controller::TextFieldController;
+    use crate::input_field::raw_fields::TextFieldCallback;
+
+    fn preedit(text: &str, cursor: Option<(usize, usize)>) -> ElementEvent {
+        ElementEvent::ImePreedit {
+            text: text.to_owned(),
+            cursor,
+        }
+    }
+
+    fn caret() -> ImeCaretArea {
+        ImeCaretArea {
+            x: 10.0,
+            y: 20.0,
+            width: 1.0,
+            height: 16.0,
+        }
+    }
+
+    #[test]
+    fn committed_phrase_is_one_edit_with_one_change_notification() {
+        let controller = TextFieldController::new();
+        let changes = Rc::new(Cell::new(0));
+        let mut field = focused_field(controller.clone());
+        let counter = changes.clone();
+        field.on_changed = TextFieldCallback::from(move |_: String| {
+            counter.set(counter.get() + 1);
+        });
+
+        assert!(field.on_event(&commit("你好世界")).is_consumed());
+
+        assert_eq!(controller.text(), "你好世界");
+        assert_eq!(field.cursor.offset(), 4);
+        assert_eq!(changes.get(), 1);
+        assert!(controller.undo());
+        assert_eq!(controller.text(), "");
+        assert!(!controller.undo());
+    }
+
+    #[test]
+    fn committed_phrase_is_inserted_at_the_cursor() {
+        let controller = TextFieldController::with_initial("ab");
+        let field = focused_field(controller.clone());
+        field.cursor.set_offset(1);
+
+        let _ = field.on_event(&commit("你好"));
+
+        assert_eq!(controller.text(), "a你好b");
+        assert_eq!(field.cursor.offset(), 3);
+    }
+
+    #[test]
+    fn committed_phrase_replaces_the_selection() {
+        let controller = TextFieldController::with_initial("abc");
+        let field = focused_field(controller.clone());
+        field.cursor.set_selection_anchor(Some(0));
+        field.cursor.set_offset(3);
+
+        let _ = field.on_event(&commit("你好"));
+
+        assert_eq!(controller.text(), "你好");
+        assert_eq!(field.cursor.offset(), 2);
+        assert_eq!(field.cursor.selection_anchor(), None);
+    }
+
+    #[test]
+    fn max_length_truncates_the_commit_instead_of_rejecting_it() {
+        let controller = TextFieldController::with_initial("a");
+        let mut field = focused_field(controller.clone());
+        field.max_length = Some(3);
+        field.cursor.set_offset(1);
+
+        assert!(field.on_event(&commit("你好世界")).is_consumed());
+
+        assert_eq!(controller.text(), "a你好");
+        assert_eq!(field.cursor.offset(), 3);
+    }
+
+    #[test]
+    fn a_full_field_ignores_a_commit() {
+        let controller = TextFieldController::with_initial("ab");
+        let mut field = focused_field(controller.clone());
+        field.max_length = Some(2);
+        field.cursor.set_offset(2);
+
+        assert!(!field.on_event(&commit("你好")).is_consumed());
+
+        assert_eq!(controller.text(), "ab");
+    }
+
+    #[test]
+    fn read_only_and_unfocused_fields_ignore_a_commit() {
+        let controller = TextFieldController::new();
+        let mut read_only = focused_field(controller.clone());
+        read_only.read_only = true;
+        let unfocused = focused_field(controller.clone());
+        unfocused.focused.set(false);
+
+        assert!(!read_only.on_event(&commit("你好")).is_consumed());
+        assert!(!unfocused.on_event(&commit("你好")).is_consumed());
+        assert_eq!(controller.text(), "");
+    }
+
+    #[test]
+    fn a_commit_ends_the_composition() {
+        let controller = TextFieldController::new();
+        let field = focused_field(controller.clone());
+        let _ = field.on_event(&preedit("ni", Some((2, 2))));
+
+        let _ = field.on_event(&commit("你"));
+
+        assert!(!field.is_composing());
+        assert_eq!(field.preedit_cursor.get(), None);
+    }
+
+    #[test]
+    fn an_unchanged_preedit_is_not_consumed() {
+        let field = focused_field(TextFieldController::new());
+
+        assert!(field.on_event(&preedit("nihao", Some((5, 5)))).is_consumed());
+        assert!(!field.on_event(&preedit("nihao", Some((5, 5)))).is_consumed());
+        assert!(field.on_event(&preedit("nihao", Some((3, 5)))).is_consumed());
+        assert!(field.is_composing());
+    }
+
+    #[test]
+    fn an_empty_preedit_clears_the_composition() {
+        let field = focused_field(TextFieldController::new());
+        let _ = field.on_event(&preedit("ni", Some((2, 2))));
+
+        assert!(field.on_event(&preedit("", None)).is_consumed());
+
+        assert!(!field.is_composing());
+        assert_eq!(field.preedit_cursor.get(), None);
+        assert!(!field.on_event(&preedit("", None)).is_consumed());
+    }
+
+    #[test]
+    fn blurring_abandons_the_composition_and_platform_input() {
+        let field = focused_field(TextFieldController::new());
+        let _ = field.on_event(&preedit("ni", Some((2, 2))));
+        field.enable_platform_ime();
+        field.update_ime_cursor_area(caret());
+
+        let _ = field.on_event(&ElementEvent::Cancel);
+
+        assert!(!field.is_focused());
+        assert!(!field.is_composing());
+        assert!(!field.ime_enabled.get());
+        assert_eq!(field.ime_cursor_area.get(), None);
+    }
+
+    #[test]
+    fn focusing_enables_platform_input_once() {
+        let field = focused_field(TextFieldController::new());
+        field.focused.set(false);
+
+        field.set_focused(true);
+        assert!(field.ime_enabled.get());
+
+        // Re-focusing an already focused field must not re-issue the platform
+        // call, which is why the flag is checked rather than the focus state.
+        field.set_focused(true);
+        assert!(field.ime_enabled.get());
+    }
+
+    #[test]
+    fn the_caret_area_is_only_resubmitted_once_it_moves() {
+        let field = focused_field(TextFieldController::new());
+
+        assert!(field.ime_cursor_area_moved(caret()));
+        field.update_ime_cursor_area(caret());
+        assert!(!field.ime_cursor_area_moved(caret()));
+
+        let moved = ImeCaretArea {
+            x: caret().x + 4.0,
+            ..caret()
+        };
+        assert!(field.ime_cursor_area_moved(moved));
+    }
+
+    #[test]
+    fn composition_ranges_are_clamped_to_character_boundaries() {
+        assert_eq!(super::floor_char_boundary("你好", 1), 0);
+        assert_eq!(super::floor_char_boundary("你好", 3), 3);
+        assert_eq!(super::floor_char_boundary("你好", 99), 6);
+    }
+}
+
+/// Every offset the field exposes — cursor, selection, hit testing — counts
+/// grapheme clusters, so editing and drawing agree on multi-code-point text.
+/// These are the scripts an input method exists for, which is why they get
+/// their own suite.
+#[cfg(test)]
+mod grapheme_tests {
+    use aimer_events::element::{KeyAction, Modifiers, NamedKey};
+    use aimer_widget::EventElement;
+
+    use super::test_support::{commit, focused_field, key};
+    use super::{ElementEvent, InputType};
+    use crate::input_field::controller::TextFieldController;
+
+    /// A single family emoji: five `char`s joined by zero-width joiners, one
+    /// grapheme cluster.
+    const FAMILY: &str = "👨‍👩‍👧";
+
+    /// A shortcut press with the control modifier held.
+    fn shortcut(letter: &str) -> ElementEvent {
+        ElementEvent::KeyInput {
+            key: NamedKey::Other(letter.to_owned()),
+            action: KeyAction::Pressed,
+            modifiers: Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn backspace_removes_a_whole_grapheme_cluster() {
+        let controller = TextFieldController::with_initial(format!("a{FAMILY}"));
+        let field = focused_field(controller.clone());
+        field.cursor.set_offset(2);
+
+        assert!(field.on_event(&key(NamedKey::Backspace)).is_consumed());
+
+        assert_eq!(controller.text(), "a");
+        assert_eq!(field.cursor.offset(), 1);
+    }
+
+    #[test]
+    fn delete_removes_a_whole_grapheme_cluster() {
+        let controller = TextFieldController::with_initial(format!("{FAMILY}a"));
+        let field = focused_field(controller.clone());
+        field.cursor.set_offset(0);
+
+        assert!(field.on_event(&key(NamedKey::Delete)).is_consumed());
+
+        assert_eq!(controller.text(), "a");
+        assert_eq!(field.cursor.offset(), 0);
+    }
+
+    #[test]
+    fn horizontal_movement_steps_over_whole_clusters() {
+        let field = focused_field(TextFieldController::with_initial(format!("{FAMILY}a")));
+        field.cursor.set_offset(0);
+
+        let _ = field.on_event(&key(NamedKey::ArrowRight));
+        assert_eq!(field.cursor.offset(), 1);
+        let _ = field.on_event(&key(NamedKey::ArrowRight));
+        assert_eq!(field.cursor.offset(), 2);
+        // Already at the end: the offset must not run past the cluster count.
+        let _ = field.on_event(&key(NamedKey::ArrowRight));
+        assert_eq!(field.cursor.offset(), 2);
+
+        let _ = field.on_event(&key(NamedKey::ArrowLeft));
+        assert_eq!(field.cursor.offset(), 1);
+    }
+
+    #[test]
+    fn end_and_select_all_reach_the_last_cluster() {
+        let field = focused_field(TextFieldController::with_initial(format!("{FAMILY}a")));
+        field.cursor.set_offset(0);
+
+        let _ = field.on_event(&key(NamedKey::End));
+        assert_eq!(field.cursor.offset(), 2);
+
+        let _ = field.on_event(&shortcut("a"));
+        assert_eq!(field.cursor.selection_anchor(), Some(0));
+        assert_eq!(field.cursor.offset(), 2);
+    }
+
+    #[test]
+    fn word_selection_uses_grapheme_offsets() {
+        let field = focused_field(TextFieldController::with_initial(format!("{FAMILY} word")));
+
+        // Clusters: family(0) space(1) w(2) o(3) r(4) d(5).
+        field.select_word_at(2);
+
+        assert_eq!(field.cursor.selection_anchor(), Some(2));
+        assert_eq!(field.cursor.offset(), 6);
+    }
+
+    #[test]
+    fn line_selection_uses_grapheme_offsets() {
+        let field = focused_field(TextFieldController::with_initial(format!("{FAMILY}a\nbc")));
+
+        // Clusters: family(0) a(1) newline(2) b(3) c(4).
+        field.select_line_at(4);
+
+        assert_eq!(field.cursor.selection_anchor(), Some(3));
+        assert_eq!(field.cursor.offset(), 5);
+    }
+
+    #[test]
+    fn vertical_movement_walks_lines_in_graphemes() {
+        // Clusters: family(0) newline(1) a(2) b(3) c(4) d(5). The first line is
+        // a single cluster made of five `char`s, so counting `char`s misplaces
+        // both the current column and the target line.
+        let controller = TextFieldController::with_initial(format!("{FAMILY}\nabcd"));
+        let mut field = focused_field(controller);
+        field.max_lines = Some(2);
+        field.cursor.set_offset(6);
+
+        // Column 4 of the second line clamps to the end of the one-cluster
+        // first line.
+        let _ = field.on_event(&key(NamedKey::ArrowUp));
+        assert_eq!(field.cursor.offset(), 1);
+
+        // Back down into the second line, keeping the clamped column.
+        let _ = field.on_event(&key(NamedKey::ArrowDown));
+        assert_eq!(field.cursor.offset(), 3);
+    }
+
+    #[test]
+    fn max_length_counts_clusters_not_chars() {
+        let controller = TextFieldController::with_initial("a");
+        let mut field = focused_field(controller.clone());
+        field.max_length = Some(2);
+        field.cursor.set_offset(1);
+
+        assert!(field.on_event(&commit(&format!("{FAMILY}{FAMILY}"))).is_consumed());
+
+        assert_eq!(controller.text(), format!("a{FAMILY}"));
+        assert_eq!(field.cursor.offset(), 2);
+    }
+
+    #[test]
+    fn obscured_text_shows_one_bullet_per_cluster() {
+        let mut field = focused_field(TextFieldController::with_initial(format!("{FAMILY}a")));
+        field.input_type = InputType::Obscure;
+
+        assert_eq!(field.display_text(), "••");
+    }
+
+    #[test]
+    fn truncation_counts_clusters_not_chars() {
+        assert_eq!(super::truncate_graphemes("你好世界", 2), "你好");
+        assert_eq!(super::truncate_graphemes("你好", 9), "你好");
+        assert_eq!(super::truncate_graphemes("你好", 0), "");
+        // Never splits a cluster: one unit of room takes the whole family.
+        assert_eq!(
+            super::truncate_graphemes(&format!("{FAMILY}{FAMILY}"), 1),
+            FAMILY
+        );
     }
 }
 
