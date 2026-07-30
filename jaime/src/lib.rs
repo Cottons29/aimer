@@ -43,7 +43,7 @@ use crate::test_animation::TestFadingAnimation;
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
-    // stateful_2::start_my_list();
+    stateful_2::start_my_list();
     // start_counter();
     // AimerApp::start(Container::new().child(Row::new().children([
     //     Expanded::new().child(TestFadingAnimation),
@@ -53,7 +53,7 @@ pub fn my_app() {
     // async_builder::start_async_builder_example()
     // custom_animated_theme::start_custom_animated_theme_example()
     // test_scrollable()
-    test_scrollable_row()
+    // test_scrollable_row()
     // start_modal_example();
     //    start_floating_example();
     // start_markdown_example();

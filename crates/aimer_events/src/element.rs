@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use aimer_attribute::position::Vec2d;
 pub use winit::event::TouchPhase;
 
@@ -84,6 +85,9 @@ pub enum ElementEvent {
         text: String,
         cursor: Option<(usize, usize)>,
     },
+    HoveredFile{path: PathBuf},
+    DroppedFile{path: PathBuf},
+    HoveredFileCancelled,
     Cancel,
 }
 

@@ -607,6 +607,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             | ElementEvent::CharInput { .. }
             | ElementEvent::KeyInput { .. }
             | ElementEvent::ImePreedit { .. } => false,
+
+            _ => false,
         };
 
         let result = child_result.merge(EventResult::from(we_consumed));

@@ -16,8 +16,8 @@
 		0B72399071DA7A9D3A3629F8 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		992093C02504A3F306172469 /* Jaime.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Jaime.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B3F2A1C0E4B72C6A0D5E4F81 /* main.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
-		D4E5F6071829A1B2C3D4E5F6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C0FFEE1234567890ABCDEF01 /* RustLinkFlags.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = RustLinkFlags.xcconfig; sourceTree = "<group>"; };
+		D4E5F6071829A1B2C3D4E5F6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */

@@ -113,6 +113,18 @@ impl WindowEventHandler {
                 }
             }
 
+            WindowEvent::HoveredFile(pat) => {
+                Self::handle_generic_event(app, &ElementEvent::HoveredFile { path: pat });
+            }
+
+            WindowEvent::HoveredFileCancelled => {
+                Self::handle_generic_event(app, &ElementEvent::HoveredFileCancelled);
+            }
+
+            WindowEvent::DroppedFile(file_path) => {
+                Self::handle_generic_event(app, &ElementEvent::DroppedFile { path: file_path });
+            }
+
             _ => (),
         }
     }
@@ -675,6 +687,18 @@ impl WindowEventHandler {
         if let Some(root) = &app.widget_root {
             root.invalidate_layout();
             aimer_widget::Rebuildable::mark_needs_rebuild(root.as_ref());
+        }
+    }
+
+    fn handle_generic_event<W: Widget + 'static>(
+        app: &mut AimerApplicationHandler<W>,
+        event: &ElementEvent,
+    ) {
+        let result = app.dispatch_element_event(app.cursor_pos, event);
+        if result.needs_redraw() {
+            if let Some(window) = &app.window {
+                window.request_redraw();
+            }
         }
     }
 }
