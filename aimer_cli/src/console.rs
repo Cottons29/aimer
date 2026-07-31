@@ -329,7 +329,7 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                         }
                         (KeyCode::Char('r'), _) => {
                             if device.target == Targets::Web {
-                                file_writer.write(b" ")?;
+                                file_writer.write_all(b" ")?;
                                 file_writer.set_modified(SystemTime::now())?;
                             } else {
                                 // Kill child process if running
