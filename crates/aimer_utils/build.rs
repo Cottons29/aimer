@@ -3,6 +3,11 @@ use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 fn main() {
+
+    if std::env::var("RUST_ANALYZER").is_ok() {
+        return;
+    }
+
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let workspace_root = workspace_root(&manifest_dir).unwrap_or_else(|| manifest_dir.clone());
     let mut source_files = Vec::new();

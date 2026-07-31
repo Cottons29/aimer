@@ -13,7 +13,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{fmt, process, thread};
-
+use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context, anyhow};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::{Color, ResetColor, SetForegroundColor};
@@ -42,6 +42,7 @@ impl fmt::Display for Device {
 
 fn fetch_devices() -> Vec<Device> {
     let mut devices = vec![
+        #[cfg(target_os = "macos")]
         Device {
             name: "macOS Desktop".to_string(),
             target: Targets::Macos,
@@ -257,7 +258,8 @@ pub fn execute(
 
         let devices_arc = Arc::new(Mutex::new(fetch_devices()));
         let devices_arc_clone = Arc::clone(&devices_arc);
-
+        let has_selected = Arc::new(AtomicBool::new(false));
+        let selected_clone = has_selected.clone();
         thread::spawn(move || {
             loop {
                 thread::sleep(Duration::from_millis(200));
@@ -265,11 +267,17 @@ pub fn execute(
                 if let Ok(mut devs) = devices_arc_clone.lock() {
                     *devs = new_devices;
                 }
+
+                if selected_clone.load(Ordering::Relaxed) {
+                    break;
+                }
             }
         });
 
         match pick_device(&devices_arc)? {
-            Some(d) => d,
+            Some(d) => {
+                has_selected.store(true, Ordering::Relaxed);
+                d },
             None => {
                 println!("Exiting.");
                 return Ok(());

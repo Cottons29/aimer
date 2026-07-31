@@ -10,7 +10,8 @@ pub mod button;
 pub use aimer_text::TextButton;
 
 pub mod input {
+    pub use crate::input_field::caret::*;
     pub use crate::input_field::controller::*;
     pub use crate::input_field::raw_fields::*;
-    pub use crate::input_field::text_field::*;
+    pub use crate::input_field::{TextField, TextFieldState};
 }

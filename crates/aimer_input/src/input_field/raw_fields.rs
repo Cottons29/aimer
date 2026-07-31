@@ -15,9 +15,11 @@ use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use aimer_text::RawTextWidget;
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{
-    Drawable, EventElement, EventResult, LayoutCache, LayoutElement, PointerKey, VisitorElement,
+    AnyElement, Drawable, Element, EventElement, EventResult, LayoutCache, LayoutElement,
+    PointerKey, VisitorElement, Widget,
 };
 
+use crate::input_field::caret::CaretBlink;
 use crate::input_field::controller::TextFieldController;
 
 /// Write text to the system clipboard.
@@ -63,7 +65,7 @@ fn clipboard_read() -> Option<String> {
     // fallback.
     let window = web_sys::window()?;
     let document = window.document()?;
-    let el = document.get_element_by_id("__aimer_hidden_input")?;
+    let el = document.get_element_by_id(HIDDEN_INPUT_ID)?;
     use wasm_bindgen::JsCast;
     let input: web_sys::HtmlInputElement = el.unchecked_into();
     let val = input.value();
@@ -270,25 +272,40 @@ pub struct Cursor {
     offset: UnsafeCell<usize>,
     /// Selection anchor (the end that doesn't move). `None` means no selection.
     selection_anchor: UnsafeCell<Option<usize>>,
-    visible: UnsafeCell<bool>,
-    blink_rate_ms: u64,
-    last_blink: UnsafeCell<AnimInstant>,
+    /// Blink timeline shared with the owning field state, so the phase outlives
+    /// the element it is painted from.
+    blink: CaretBlink,
     radius: Option<f32>,
     color: Colors,
 }
 
 impl Cursor {
+    /// Creates a cursor with a blink timeline of its own.
     pub fn new(color: Colors) -> Self {
+        Self::with_blink(color, CaretBlink::new())
+    }
+
+    /// Creates a cursor that blinks on `blink`.
+    ///
+    /// A field built by [`TextField`] passes the timeline owned by its state,
+    /// which is what keeps the caret rhythm continuous across rebuilds.
+    ///
+    /// [`TextField`]: crate::input_field::TextField
+    pub fn with_blink(color: Colors, blink: CaretBlink) -> Self {
         Self {
             cursor: "|".to_string(),
             offset: UnsafeCell::new(0),
             selection_anchor: UnsafeCell::new(None),
-            visible: UnsafeCell::new(true),
-            blink_rate_ms: 500,
-            last_blink: UnsafeCell::new(AnimInstant::now()),
+            blink,
             radius: None,
             color,
         }
+    }
+
+    /// Returns the blink timeline this cursor is painted from.
+    #[inline]
+    pub fn blink(&self) -> &CaretBlink {
+        &self.blink
     }
 
     pub fn offset(&self) -> usize {
@@ -301,38 +318,14 @@ impl Cursor {
         }
     }
 
+    /// Returns whether the caret is opaque at the current blink phase.
     pub fn is_visible(&self) -> bool {
-        unsafe { *self.visible.get() }
+        self.blink.is_visible()
     }
 
-    fn set_visible(&self, v: bool) {
-        unsafe {
-            *self.visible.get() = v;
-        }
-    }
-
-    /// Toggle visibility if enough time has elapsed. Returns true if toggled.
-    fn update_blink(&self) -> bool {
-        let now = AnimInstant::now();
-        let last = unsafe { *self.last_blink.get() };
-        if now.duration_since(last).as_millis() as u64 >= self.blink_rate_ms {
-            unsafe {
-                *self.last_blink.get() = now;
-            }
-            let vis = self.is_visible();
-            self.set_visible(!vis);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Reset cursor to visible and restart blink timer.
+    /// Restart the blink timeline so the caret is solid again.
     fn reset_blink(&self) {
-        self.set_visible(true);
-        unsafe {
-            *self.last_blink.get() = AnimInstant::now();
-        }
+        self.blink.reset();
     }
 
     /// Returns the selection anchor, if any.
@@ -373,6 +366,71 @@ pub enum ExpandDirection {
     #[default]
     None,
 }
+/// Everything a [`RawTextField`] needs that is configuration rather than
+/// runtime state.
+///
+/// [`TextField`] keeps one of these in its state and hands a clone to every
+/// element it builds, so the widget configuration and the caret timeline travel
+/// separately: the configuration is replaced on reconciliation while the
+/// timeline keeps running.
+///
+/// [`TextField`]: crate::input_field::TextField
+#[derive(Clone)]
+pub(crate) struct RawFieldConfig {
+    pub input_type: InputType,
+    pub controller: TextFieldController,
+    pub prompt: Arc<str>,
+    pub hint: Arc<str>,
+    pub hint_style: TextStyle,
+    pub text_style: TextStyle,
+    pub prompt_style: TextStyle,
+    pub text_align: TextAlign,
+    pub auto_focus: bool,
+    pub max_lines: Option<usize>,
+    pub min_lines: Option<usize>,
+    pub max_length: Option<usize>,
+    pub enable: bool,
+    pub expand: ExpandDirection,
+    pub decoration: BoxDecoration,
+    pub hover_decoration: Option<BoxDecoration>,
+    pub focus_decoration: Option<BoxDecoration>,
+    pub disabled_decoration: Option<BoxDecoration>,
+    pub selection_color: Color,
+    pub cursor_color: Colors,
+    pub on_changed: TextFieldCallback,
+    pub on_submitted: TextFieldCallback,
+    pub on_focus: TextFieldCallback,
+    pub on_blur: TextFieldCallback,
+    pub read_only: bool,
+    pub padding: LayoutSpacing,
+}
+
+/// The widget that mounts a [`RawTextField`] element.
+///
+/// The element owns the interaction state that only makes sense while mounted
+/// (focus, hover, selection drag, IME composition), so it must be produced from
+/// a widget rather than stored in one. This wrapper is that widget: it carries
+/// the configuration and the caret timeline of the field that built it.
+pub(crate) struct RawTextFieldWidget {
+    config: RawFieldConfig,
+    caret: CaretBlink,
+}
+
+impl RawTextFieldWidget {
+    /// Creates the widget for a field configured by `config` blinking on
+    /// `caret`.
+    #[inline]
+    pub(crate) fn new(config: RawFieldConfig, caret: CaretBlink) -> Self {
+        Self { config, caret }
+    }
+}
+
+impl Widget for RawTextFieldWidget {
+    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        RawTextField::new(self.config.clone(), self.caret.clone()).boxed()
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Rebuildable)]
 pub(crate) struct RawTextField {
@@ -411,7 +469,6 @@ pub(crate) struct RawTextField {
     pub scroll_x: Cell<f32>,
     pub preedit_text: Cell<String>,
     pub preedit_cursor: Cell<Option<(usize, usize)>>,
-    pub blink_scheduled: Cell<bool>,
     pub ime_enabled: Cell<bool>,
     pub ime_cursor_area: Cell<Option<ImeCaretArea>>,
     pub padding: LayoutSpacing,
@@ -439,6 +496,53 @@ impl RawTextField {
     /// method.
     const IME_CARET_WIDTH: f32 = 1.0;
 
+    /// Builds the element for `config`, painting its caret from `caret`.
+    ///
+    /// All runtime state starts empty except focus, which honors
+    /// [`RawFieldConfig::auto_focus`].
+    pub(crate) fn new(config: RawFieldConfig, caret: CaretBlink) -> Self {
+        Self {
+            input_type: config.input_type,
+            controller: config.controller,
+            prompt: config.prompt,
+            hint: config.hint,
+            hint_style: config.hint_style,
+            text_style: config.text_style,
+            prompt_style: config.prompt_style,
+            text_align: config.text_align,
+            auto_focus: config.auto_focus,
+            max_lines: config.max_lines,
+            min_lines: config.min_lines,
+            max_length: config.max_length,
+            enable: config.enable,
+            expand: config.expand,
+            cursor: Cursor::with_blink(config.cursor_color, caret),
+            decoration: config.decoration,
+            hover_decoration: config.hover_decoration,
+            focus_decoration: config.focus_decoration,
+            disabled_decoration: config.disabled_decoration,
+            selection_color: config.selection_color,
+            focused: Cell::new(config.auto_focus),
+            hovered: Cell::new(false),
+            cached_bounds: CacheBounds::new(),
+            on_changed: config.on_changed,
+            on_submitted: config.on_submitted,
+            on_focus: config.on_focus,
+            on_blur: config.on_blur,
+            read_only: config.read_only,
+            mouse_held: Cell::new(None),
+            last_click_time: Cell::new(AnimInstant::now()),
+            click_count: Cell::new(0),
+            pending_click: Cell::new(None),
+            scroll_x: Cell::new(0.0),
+            preedit_text: Cell::new(String::new()),
+            preedit_cursor: Cell::new(None),
+            ime_enabled: Cell::new(false),
+            ime_cursor_area: Cell::new(None),
+            padding: config.padding,
+        }
+    }
+
     fn scaled_font_size(&self, style: &TextStyle, scale: f32) -> f32 {
         let fs = if style.font_size == 0 {
             14.0
@@ -465,7 +569,6 @@ impl RawTextField {
             self.enable_platform_ime();
             return;
         }
-        self.blink_scheduled.set(false);
         if was_focused {
             self.clear_preedit();
         }
@@ -519,6 +622,14 @@ impl RawTextField {
     /// frame, and telling the window server about an unchanged area on each of
     /// them is pure overhead.
     fn update_ime_cursor_area(&self, caret: ImeCaretArea) {
+        // In the browser the caret is reported by moving the hidden input the
+        // composition happens in, and that element is positioned against the
+        // viewport rather than against the canvas. Converting before the
+        // comparison also makes a scrolled or resized page resubmit the area,
+        // because the canvas origin is part of what is being compared.
+        #[cfg(target_arch = "wasm32")]
+        let caret = ime_overlay_rect(caret, wasm_canvas_origin());
+
         if !self.ime_cursor_area_moved(caret) {
             return;
         }
@@ -531,6 +642,8 @@ impl RawTextField {
                 LogicalSize::new(caret.width.max(1.0) as f64, caret.height.max(1.0) as f64),
             );
         }
+        #[cfg(target_arch = "wasm32")]
+        wasm_place_ime_input(caret);
     }
 
     /// Returns whether `caret` differs from the last reported caret area.
@@ -974,6 +1087,80 @@ fn owns_selection_pointer(active: Option<PointerKey>, event: &ElementEvent) -> b
     active.is_some() && active == event_pointer_key(event)
 }
 
+/// Identifier of the hidden `<input>` element the browser composes into.
+#[cfg(target_arch = "wasm32")]
+const HIDDEN_INPUT_ID: &str = "__aimer_hidden_input";
+
+/// Identifier of the `<canvas>` element the application is rendered into.
+#[cfg(target_arch = "wasm32")]
+const CANVAS_ID: &str = "aimer_app";
+
+/// Converts a caret rectangle expressed in logical canvas coordinates into the
+/// viewport rectangle the hidden input element is placed at.
+///
+/// The browser anchors the candidate window to the element that owns the
+/// composition, so the caret can only be reported by moving that element on top
+/// of it. `canvas_origin` is the position of the rendering canvas inside the
+/// viewport, which is what turns canvas-local coordinates into the coordinates
+/// a `position: fixed` element is laid out in; it is not constant, because the
+/// page may scroll or embed the canvas in a larger document.
+///
+/// The rectangle is never allowed to collapse: a zero-sized element has no
+/// position to anchor to, and an empty field legitimately reports a caret of no
+/// width.
+#[cfg(any(target_arch = "wasm32", test))]
+fn ime_overlay_rect(caret: ImeCaretArea, canvas_origin: (f32, f32)) -> ImeCaretArea {
+    ImeCaretArea {
+        x: canvas_origin.0 + caret.x,
+        y: canvas_origin.1 + caret.y,
+        width: caret.width.max(RawTextField::IME_CARET_WIDTH),
+        height: caret.height.max(RawTextField::IME_CARET_WIDTH),
+    }
+}
+
+/// Returns the position of the rendering canvas inside the viewport, in CSS
+/// pixels.
+///
+/// A missing canvas resolves to the viewport origin so that a caret is still
+/// reported at a sane place instead of not at all.
+#[cfg(target_arch = "wasm32")]
+fn wasm_canvas_origin() -> (f32, f32) {
+    let Some(canvas) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(CANVAS_ID))
+    else {
+        return (0.0, 0.0);
+    };
+    let rect = canvas.get_bounding_client_rect();
+    (rect.left() as f32, rect.top() as f32)
+}
+
+/// Moves the hidden input element over `caret`, given in viewport coordinates.
+///
+/// The element stays invisible; only its box moves, which is enough for the
+/// browser to draw the composition popup at the insertion point instead of at
+/// the corner the element would otherwise be parked in.
+#[cfg(target_arch = "wasm32")]
+fn wasm_place_ime_input(caret: ImeCaretArea) {
+    use wasm_bindgen::JsCast;
+
+    let Some(element) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(HIDDEN_INPUT_ID))
+    else {
+        return;
+    };
+    let style = element.unchecked_into::<web_sys::HtmlElement>().style();
+    style.set_property("left", &format!("{}px", caret.x)).ok();
+    style.set_property("top", &format!("{}px", caret.y)).ok();
+    style
+        .set_property("width", &format!("{}px", caret.width))
+        .ok();
+    style
+        .set_property("height", &format!("{}px", caret.height))
+        .ok();
+}
+
 /// On wasm32 / mobile browsers, focusing a hidden `<input>` element inside a
 /// user-gesture handler is the only reliable way to raise the virtual keyboard.
 ///
@@ -991,24 +1178,30 @@ fn wasm_request_keyboard(show: bool) {
         return;
     };
 
-    let input: web_sys::HtmlInputElement = match document.get_element_by_id("__aimer_hidden_input")
-    {
+    let input: web_sys::HtmlInputElement = match document.get_element_by_id(HIDDEN_INPUT_ID) {
         Some(el) => el.unchecked_into(),
         None => {
             let el = document
                 .create_element("input")
                 .expect("failed to create hidden input")
                 .unchecked_into::<web_sys::HtmlInputElement>();
-            el.set_id("__aimer_hidden_input");
+            el.set_id(HIDDEN_INPUT_ID);
             el.set_type("text");
             el.set_attribute("autocapitalize", "off").ok();
             el.set_attribute("autocomplete", "off").ok();
             el.set_attribute("autocorrect", "off").ok();
             el.set_attribute("spellcheck", "false").ok();
+            // The element is invisible but must stay inside the viewport: the
+            // browser anchors the IME candidate window to the box of the
+            // element being composed into, so parking it off-screen is what
+            // made the popup appear away from the field. It is moved onto the
+            // caret by `wasm_place_ime_input` and never receives pointer
+            // events, so it cannot steal clicks from the canvas underneath.
             let style = el.style();
             style.set_property("position", "fixed").ok();
             style.set_property("opacity", "0").ok();
-            style.set_property("left", "-9999px").ok();
+            style.set_property("pointer-events", "none").ok();
+            style.set_property("left", "0").ok();
             style.set_property("top", "0").ok();
             style.set_property("width", "1px").ok();
             style.set_property("height", "1px").ok();
@@ -1027,7 +1220,7 @@ fn wasm_request_keyboard(show: bool) {
                         evt.prevent_default();
                         let Some(w) = web_sys::window() else { return };
                         let Some(doc) = w.document() else { return };
-                        let Some(canvas) = doc.get_element_by_id("aimer_app") else {
+                        let Some(canvas) = doc.get_element_by_id(CANVAS_ID) else {
                             return;
                         };
                         let new_evt = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(
@@ -1062,7 +1255,7 @@ fn wasm_request_keyboard(show: bool) {
                         evt.prevent_default();
                         let Some(w) = web_sys::window() else { return };
                         let Some(doc) = w.document() else { return };
-                        let Some(canvas) = doc.get_element_by_id("aimer_app") else {
+                        let Some(canvas) = doc.get_element_by_id(CANVAS_ID) else {
                             return;
                         };
                         let new_evt = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(
@@ -1104,7 +1297,7 @@ fn wasm_request_keyboard(show: bool) {
                         let Some(data) = evt.data() else { return };
                         let Some(w) = web_sys::window() else { return };
                         let Some(doc) = w.document() else { return };
-                        let Some(canvas) = doc.get_element_by_id("aimer_app") else {
+                        let Some(canvas) = doc.get_element_by_id(CANVAS_ID) else {
                             return;
                         };
                         // Synthesize a keydown + keyup pair for each character so
@@ -1126,7 +1319,7 @@ fn wasm_request_keyboard(show: bool) {
                             }
                         }
                         // Clear the hidden input so subsequent input events keep working.
-                        if let Some(el) = doc.get_element_by_id("__aimer_hidden_input") {
+                        if let Some(el) = doc.get_element_by_id(HIDDEN_INPUT_ID) {
                             let el: web_sys::HtmlInputElement = el.unchecked_into();
                             el.set_value("");
                         }
@@ -1151,7 +1344,7 @@ fn wasm_request_keyboard(show: bool) {
                         }
                         let Some(w) = web_sys::window() else { return };
                         let Some(doc) = w.document() else { return };
-                        let Some(canvas) = doc.get_element_by_id("aimer_app") else {
+                        let Some(canvas) = doc.get_element_by_id(CANVAS_ID) else {
                             return;
                         };
                         for ch in data.chars() {
@@ -1170,7 +1363,7 @@ fn wasm_request_keyboard(show: bool) {
                             }
                         }
                         // Clear the hidden input so the next composition starts clean.
-                        if let Some(el) = doc.get_element_by_id("__aimer_hidden_input") {
+                        if let Some(el) = doc.get_element_by_id(HIDDEN_INPUT_ID) {
                             let el: web_sys::HtmlInputElement = el.unchecked_into();
                             el.set_value("");
                         }
@@ -2105,40 +2298,34 @@ impl Drawable for RawTextField {
         ctx.canvas.restore(); // clip + translate
         ctx.canvas.restore(); // outer save
 
-        // Drive cursor blink: only schedule a new frame when the blink actually
-        // toggled (~500ms interval) instead of every frame (~16ms). This reduces
-        // focused rendering from ~60fps to ~2fps.
+        // Drive the caret from the frame clock: advance the shared blink
+        // timeline owned by the field state and keep the frame loop awake while
+        // this field holds focus. Detached sleeping threads used to schedule the
+        // next toggle, which drifted with thread wake-up latency and restarted
+        // whenever the element was rebuilt.
         if self.is_focused() {
-            let toggled = self.cursor.update_blink();
-            if toggled || !self.blink_scheduled.get() {
-                self.blink_scheduled.set(true);
-                let rate = self.cursor.blink_rate_ms;
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(rate));
-                    aimer_events::window::request_animation_frame();
-                });
-            }
+            self.cursor.blink().tick(AnimInstant::now());
+            aimer_events::window::request_animation_frame();
         }
     }
 }
 
 #[cfg(test)]
 mod test_support {
-    use std::cell::Cell;
     use std::sync::Arc;
 
-    use aimer_animation::AnimInstant;
-    use aimer_attribute::CacheBounds;
     use aimer_events::element::{ElementEvent, KeyAction, Modifiers};
     use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
     use aimer_widget::base::{Color, Colors};
 
-    use super::{Cursor, ExpandDirection, InputType, RawTextField, TextFieldCallback};
+    use super::{ExpandDirection, InputType, RawFieldConfig, RawTextField, TextFieldCallback};
+    use crate::input_field::caret::CaretBlink;
     use crate::input_field::controller::TextFieldController;
 
-    /// Builds a focused, editable single-line field around `controller`.
-    pub(super) fn focused_field(controller: TextFieldController) -> RawTextField {
-        RawTextField {
+    /// Builds the configuration of a focused, editable single-line field around
+    /// `controller`.
+    pub(super) fn field_config(controller: TextFieldController) -> RawFieldConfig {
+        RawFieldConfig {
             input_type: InputType::Text,
             controller,
             prompt: Arc::from(""),
@@ -2153,32 +2340,32 @@ mod test_support {
             max_length: None,
             enable: true,
             expand: ExpandDirection::default(),
-            cursor: Cursor::new(Colors::default()),
             decoration: BoxDecoration::default(),
             hover_decoration: None,
             focus_decoration: None,
             disabled_decoration: None,
             selection_color: Color::Rgba(66, 133, 244, 100),
-            focused: Cell::new(true),
-            hovered: Cell::new(false),
-            cached_bounds: CacheBounds::new(),
+            cursor_color: Colors::default(),
             on_changed: TextFieldCallback::default(),
             on_submitted: TextFieldCallback::default(),
             on_focus: TextFieldCallback::default(),
             on_blur: TextFieldCallback::default(),
             read_only: false,
-            mouse_held: Cell::new(None),
-            last_click_time: Cell::new(AnimInstant::now()),
-            click_count: Cell::new(0),
-            pending_click: Cell::new(None),
-            scroll_x: Cell::new(0.0),
-            preedit_text: Cell::new(String::new()),
-            preedit_cursor: Cell::new(None),
-            blink_scheduled: Cell::new(false),
-            ime_enabled: Cell::new(false),
-            ime_cursor_area: Cell::new(None),
             padding: LayoutSpacing::all(Spacing::Px(4)),
         }
+    }
+
+    /// Builds a focused, editable single-line field around `controller`.
+    pub(super) fn focused_field(controller: TextFieldController) -> RawTextField {
+        RawTextField::new(field_config(controller), CaretBlink::new())
+    }
+
+    /// Builds a focused field that blinks on `caret`.
+    pub(super) fn focused_field_with_caret(
+        controller: TextFieldController,
+        caret: CaretBlink,
+    ) -> RawTextField {
+        RawTextField::new(field_config(controller), caret)
     }
 
     /// A text payload delivered as one batched edit, like an IME commit.
@@ -2392,6 +2579,65 @@ mod ime_tests {
     }
 
     #[test]
+    fn the_caret_area_is_reported_in_logical_window_coordinates() {
+        let field = focused_field(TextFieldController::new());
+
+        field.publish_ime_caret(10.0, 4.0, 20.0, (100.0, 50.0), 2.0);
+
+        assert_eq!(
+            field.ime_cursor_area.get(),
+            Some(ImeCaretArea {
+                x: 55.0,
+                y: 27.0,
+                width: 1.0,
+                height: 10.0,
+            })
+        );
+    }
+
+    #[test]
+    fn an_unfocused_field_reports_no_caret_area() {
+        let field = focused_field(TextFieldController::new());
+        field.focused.set(false);
+
+        field.publish_ime_caret(10.0, 4.0, 20.0, (0.0, 0.0), 1.0);
+
+        assert_eq!(field.ime_cursor_area.get(), None);
+    }
+
+    #[test]
+    fn the_overlay_follows_the_caret_from_the_canvas_origin() {
+        let placed = super::ime_overlay_rect(caret(), (32.0, 64.0));
+
+        assert_eq!(
+            placed,
+            ImeCaretArea {
+                x: 42.0,
+                y: 84.0,
+                width: 1.0,
+                height: 16.0,
+            }
+        );
+    }
+
+    #[test]
+    fn the_overlay_never_collapses_to_nothing() {
+        let empty = ImeCaretArea {
+            x: 5.0,
+            y: 6.0,
+            width: 0.0,
+            height: 0.0,
+        };
+
+        let placed = super::ime_overlay_rect(empty, (0.0, 0.0));
+
+        assert_eq!(placed.x, 5.0);
+        assert_eq!(placed.y, 6.0);
+        assert_eq!(placed.width, super::RawTextField::IME_CARET_WIDTH);
+        assert_eq!(placed.height, super::RawTextField::IME_CARET_WIDTH);
+    }
+
+    #[test]
     fn composition_ranges_are_clamped_to_character_boundaries() {
         assert_eq!(super::floor_char_boundary("你好", 1), 0);
         assert_eq!(super::floor_char_boundary("你好", 3), 3);
@@ -2576,5 +2822,67 @@ mod pointer_capture_tests {
         assert!(owns_selection_pointer(Some(touch), &touch_move));
         assert!(!owns_selection_pointer(Some(touch), &mouse_move));
         assert!(!owns_selection_pointer(None, &touch_move));
+    }
+}
+
+#[cfg(test)]
+mod caret_tests {
+    use std::time::Duration;
+
+    use aimer_animation::AnimInstant;
+    use aimer_widget::EventElement;
+
+    use super::test_support::{commit, focused_field_with_caret, key};
+    use crate::input_field::caret::CaretBlink;
+    use crate::input_field::controller::TextFieldController;
+
+    const HALF: Duration = Duration::from_millis(500);
+
+    /// Advances `caret` to the middle of its hidden half.
+    fn hide(caret: &CaretBlink) {
+        let start = AnimInstant::now();
+        caret.tick(start);
+        caret.tick(start + HALF);
+    }
+
+    #[test]
+    fn caret_visibility_follows_the_shared_timeline() {
+        let caret = CaretBlink::new();
+        let field = focused_field_with_caret(TextFieldController::new(), caret.clone());
+
+        assert!(field.cursor.is_visible());
+
+        hide(&caret);
+
+        assert!(!field.cursor.is_visible());
+    }
+
+    #[test]
+    fn typing_keeps_the_caret_solid() {
+        let caret = CaretBlink::new();
+        let field = focused_field_with_caret(TextFieldController::new(), caret.clone());
+        hide(&caret);
+
+        assert!(field.on_event(&commit("a")).is_consumed());
+
+        assert!(field.cursor.is_visible());
+    }
+
+    #[test]
+    fn moving_the_caret_keeps_it_solid() {
+        let controller = TextFieldController::with_initial("hello");
+        let caret = CaretBlink::new();
+        let field = focused_field_with_caret(controller, caret.clone());
+        field.cursor.set_offset(5);
+        hide(&caret);
+
+        assert!(
+            field
+                .on_event(&key(aimer_events::element::NamedKey::ArrowLeft))
+                .is_consumed()
+        );
+
+        assert!(field.cursor.is_visible());
+        assert_eq!(field.cursor.offset(), 4);
     }
 }

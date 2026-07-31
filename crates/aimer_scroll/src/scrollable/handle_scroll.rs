@@ -1,7 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_events::element::{ElementEvent, KeyAction, NamedKey, ScrollDeltaKind};
-use aimer_utils::AnimInstant;
+use aimer_events::element::{ElementEvent, KeyAction, NamedKey, ScrollDeltaKind, TouchPhase};
+use aimer_utils::{info, AnimInstant};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, EventElement, EventResult, LayoutElement, PointerKey, VisitorElement};
 
@@ -244,8 +244,13 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         }
 
         let we_consumed = match event {
-            ElementEvent::Scroll { delta, kind, .. } => {
+            ElementEvent::Scroll { delta, kind, phase } => {
+                 // info!("Scroll phase: {phase:?}");
                 let offset = self.ctrl.scroll_offset.get();
+                //
+                // if *phase == TouchPhase::Ended {
+                //     self.ctrl.scroll_behavior.boun
+                // }
 
                 // println!("offset: {:?}", offset);
                 let clamped = self.ctrl.clamp_offset(offset);

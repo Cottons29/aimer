@@ -121,32 +121,39 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         result
     }
 
+    /// Delivers this frame's share of the pending scroll distance to the
+    /// widget tree.
+    ///
+    /// Each channel carries the gesture phase resolved by the smoother, so a
+    /// child sees `Started` when the gesture opens, `Moved` while it glides,
+    /// and `Ended` or `Cancelled` when it finishes — instead of an endless
+    /// stream of `Moved`.
     pub(crate) fn dispatch_smoothed_scroll(&mut self) -> EventResult {
         let frame = self.scroll_smoother.tick();
         let mut result = EventResult::ignored();
 
-        if let Some(delta) = frame.trackpad {
+        if let Some(step) = frame.trackpad {
             result = result.merge(self.dispatch_element_event(
                 self.cursor_pos,
                 &aimer_events::element::ElementEvent::Scroll {
                     delta: Vec2d {
-                        x: delta.x as f32,
-                        y: delta.y as f32,
+                        x: step.delta.x as f32,
+                        y: step.delta.y as f32,
                     },
-                    phase: winit::event::TouchPhase::Moved,
+                    phase: step.phase,
                     kind: aimer_events::element::ScrollDeltaKind::Pixel,
                 },
             ));
         }
-        if let Some(delta) = frame.wheel {
+        if let Some(step) = frame.wheel {
             result = result.merge(self.dispatch_element_event(
                 self.cursor_pos,
                 &aimer_events::element::ElementEvent::Scroll {
                     delta: Vec2d {
-                        x: delta.x as f32,
-                        y: delta.y as f32,
+                        x: step.delta.x as f32,
+                        y: step.delta.y as f32,
                     },
-                    phase: winit::event::TouchPhase::Moved,
+                    phase: step.phase,
                     kind: aimer_events::element::ScrollDeltaKind::Line,
                 },
             ));

@@ -1048,7 +1048,7 @@ mod tests {
     }
 
     struct ScrollRecordingWidget {
-        events: Arc<Mutex<Vec<(Vec2d, ScrollDeltaKind)>>>,
+        events: Arc<Mutex<Vec<(Vec2d, ScrollDeltaKind, TouchPhase)>>>,
     }
 
     impl Widget for ScrollRecordingWidget {
@@ -1061,7 +1061,7 @@ mod tests {
     }
 
     struct ScrollRecordingElement {
-        events: Arc<Mutex<Vec<(Vec2d, ScrollDeltaKind)>>>,
+        events: Arc<Mutex<Vec<(Vec2d, ScrollDeltaKind, TouchPhase)>>>,
     }
 
     impl Drawable for ScrollRecordingElement {
@@ -1080,11 +1080,11 @@ mod tests {
     }
     impl EventElement for ScrollRecordingElement {
         fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
-            if let ElementEvent::Scroll { delta, kind, .. } = event {
+            if let ElementEvent::Scroll { delta, kind, phase } = event {
                 self.events
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .push((*delta, *kind));
+                    .push((*delta, *kind, *phase));
                 return aimer_widget::EventResult::consumed();
             }
             aimer_widget::EventResult::ignored()
@@ -1119,9 +1119,50 @@ mod tests {
         assert!(
             events
                 .iter()
-                .all(|(_, kind)| *kind == ScrollDeltaKind::Line)
+                .all(|(_, kind, _)| *kind == ScrollDeltaKind::Line)
         );
-        assert!(events.iter().all(|(delta, _)| delta.y < 0.0));
+        assert!(events.iter().all(|(delta, _, _)| delta.y < 0.0));
+    }
+
+    #[test]
+    fn wheel_scroll_phases_reach_the_child_widget() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut app = AimerApp::start_headless(ScrollRecordingWidget {
+            events: events.clone(),
+        });
+        app.render_frame();
+        app.app.cursor_pos = Vec2d { x: 20.0, y: 20.0 };
+
+        app.send_window_event(WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(0.0, -2.0),
+            phase: TouchPhase::Moved,
+        });
+
+        let mut frames = 0;
+        while app.app.scroll_smoother.is_active() || frames == 0 {
+            app.render_frame();
+            frames += 1;
+            assert!(frames < 64);
+        }
+
+        let events = events.lock().unwrap();
+        let phases: Vec<TouchPhase> = events.iter().map(|(_, _, phase)| *phase).collect();
+
+        assert_eq!(phases.first(), Some(&TouchPhase::Started));
+        assert_eq!(phases.last(), Some(&TouchPhase::Ended));
+        assert!(
+            phases
+                .iter()
+                .filter(|phase| **phase == TouchPhase::Started)
+                .count()
+                == 1
+        );
+        assert!(
+            phases[1..phases.len() - 1]
+                .iter()
+                .all(|phase| *phase == TouchPhase::Moved)
+        );
     }
 
     #[test]

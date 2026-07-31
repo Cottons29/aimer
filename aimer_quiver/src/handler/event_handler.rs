@@ -1,7 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerSource;
-use aimer_utils::ExecTimes;
+use aimer_utils::{info, ExecTimes};
 use aimer_widget::{EventResult, PointerKey, Widget, broadcast_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
@@ -76,6 +76,11 @@ impl WindowEventHandler {
             WindowEvent::Ime(ime) => Self::handle_ime(ime, app),
 
             WindowEvent::MouseWheel { delta, phase, .. } => {
+                // info!("Scroll Phase: {:?}", phase);
+               if matches!(phase, TouchPhase::Ended) {
+                   app.scroll_smoother.clear();
+                   return;
+               }
                 Self::handle_mouse_wheel(delta, phase, app);
             }
 
@@ -174,6 +179,7 @@ impl WindowEventHandler {
                 HeadlessEventAction::None
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {
+
                 Self::handle_mouse_wheel(delta, phase, app);
                 HeadlessEventAction::None
             }
@@ -582,9 +588,17 @@ impl WindowEventHandler {
         }
     }
 
+    /// Feeds a platform wheel event into the frame smoother.
+    ///
+    /// The `phase` travels with the delta instead of being dropped here: the
+    /// smoother spreads one platform pulse across several frames, so only it
+    /// knows which of those frames opens and which one closes the gesture.
+    /// Widgets then receive `Scroll` events whose phase describes the real
+    /// gesture — a trackpad lift ends the scroll, and a plain mouse wheel,
+    /// which never reports a phase of its own, ends when its distance is spent.
     pub fn handle_mouse_wheel<W: Widget + 'static>(
         delta: MouseScrollDelta,
-        _phase: TouchPhase,
+        phase: TouchPhase,
         app: &mut AimerApplicationHandler<W>,
     ) {
         let (scroll_delta, kind) = Self::normalize_wheel_delta(delta, app.window_scale);
@@ -592,10 +606,10 @@ impl WindowEventHandler {
             let delta = PhysicalPosition::new(scroll_delta.x as f64, scroll_delta.y as f64);
             match kind {
                 aimer_events::element::ScrollDeltaKind::Pixel => {
-                    app.scroll_smoother.on_pixel_delta(delta);
+                    app.scroll_smoother.on_pixel_delta(delta, phase);
                 }
                 aimer_events::element::ScrollDeltaKind::Line => {
-                    app.scroll_smoother.on_wheel_delta(delta);
+                    app.scroll_smoother.on_wheel_delta(delta, phase);
                 }
             }
 

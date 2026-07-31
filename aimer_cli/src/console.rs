@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::Child;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::commands::run::Device;
 use crate::commands::run::pipeline::{self, RunContext};
@@ -329,7 +329,8 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                         }
                         (KeyCode::Char('r'), _) => {
                             if device.target == Targets::Web {
-                                file_writer.write_all(b" ")?;
+                                file_writer.write(b" ")?;
+                                file_writer.set_modified(SystemTime::now())?;
                             } else {
                                 // Kill child process if running
                                 if let Some(mut child) = current_child.lock().unwrap().take() {

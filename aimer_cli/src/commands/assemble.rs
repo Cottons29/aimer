@@ -428,7 +428,7 @@ pub(crate) fn package_ios(
             Some(plan.sdk),
             plan.arch,
         ),
-        Step::new(StepKind::Xcode, ("xcodebuild for iOS")),
+        Step::new(StepKind::Xcode, "xcodebuild for iOS"),
     )?;
 
     reporter.stage_assets(&artifact)?;
