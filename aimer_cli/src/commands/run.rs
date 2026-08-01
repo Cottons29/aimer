@@ -8,17 +8,17 @@ pub mod pipeline;
 pub mod utilities;
 pub mod web;
 
-use std::io::{Write, stdout};
-use std::process::Command;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use std::{fmt, process, thread};
-use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context, anyhow};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::{Color, ResetColor, SetForegroundColor};
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{cursor, execute};
+use std::io::{Write, stdout};
+use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use std::{fmt, process, thread};
 
 use crate::commands::run::utilities::get_project_root;
 use crate::console;
@@ -262,22 +262,24 @@ pub fn execute(
         let selected_clone = has_selected.clone();
         thread::spawn(move || {
             loop {
+                if selected_clone.load(Ordering::Relaxed) {
+                    break;
+                }
                 thread::sleep(Duration::from_millis(200));
                 let new_devices = fetch_devices();
                 if let Ok(mut devs) = devices_arc_clone.lock() {
                     *devs = new_devices;
                 }
 
-                if selected_clone.load(Ordering::Relaxed) {
-                    break;
-                }
+
             }
         });
 
         match pick_device(&devices_arc)? {
             Some(d) => {
                 has_selected.store(true, Ordering::Relaxed);
-                d },
+                d
+            }
             None => {
                 println!("Exiting.");
                 return Ok(());
