@@ -1,7 +1,7 @@
 pub struct BackendApi;
 
 // #[cfg(not(debug_assertions))]
-const BASE_API: &str = "https://aimer-api.cottonsofficial.com";
+const BASE_API: &str = "https://blog-api.aimers.dev";
 // #[cfg(debug_assertions)]
 // const BASE_API: &str = "http://localhost:3200";
 

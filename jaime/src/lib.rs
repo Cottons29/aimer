@@ -43,7 +43,8 @@ use crate::test_animation::TestFadingAnimation;
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
-    stateful_2::start_my_list();
+    test_text();
+    // stateful_2::start_my_list();
     // start_counter();
     // AimerApp::start(Container::new().child(Row::new().children([
     //     Expanded::new().child(TestFadingAnimation),
@@ -75,6 +76,7 @@ fn test_text() {
             .child(Container::new()
         .child(Text::new(
             r#"
+            你好吗
                 English — Hello / Hi               Khmer — សួស្តី (Suosdei)               French — BonjourEnglish — Hello / Hi
                 Spanish — Hola                            Portuguese — Olá                          Italian — Ciao
                 German — Hallo                            Dutch — Hallo                             Swedish — Hej
@@ -446,3 +448,4 @@ fn test_image() {
             ),
     )
 }
+                                 

@@ -1,6 +1,6 @@
 # Aimer
 
-A cross-platform UI framework built with Rust, inspired by Flutter's widget model. Aimer lets you build native user
+Aimer (pronounced "aa·may" it's mean "to love" in french) is a cross-platform UI framework built with Rust, inspired by Flutter's widget model. Aimer lets you build native user
 interfaces from a single codebase using a declarative, composable widget tree.
 
 ```rust

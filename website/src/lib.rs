@@ -15,7 +15,6 @@ use aimer::*;
 
 use crate::blog_store::BlogStore;
 use crate::router::AppRouter;
-
 #[cfg(test)]
 pub static TEST_STATE_UPDATED: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]

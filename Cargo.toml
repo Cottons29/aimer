@@ -125,7 +125,6 @@ proc-macro-crate = "3.5.0"
 chrono = "0.4.45"
 web-time = "1.1.0"
 objc = { version = "0.2.7" }
-core-foundation = { version = "0.10.1" }
 hashbrown = "0.17.1"
 crossbeam = "0.8.4"
 colored = "3.1.1"
@@ -150,7 +149,6 @@ unicode-bidi = "0.3.18"
 unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.13.3"
 image = { version = "0.25.10" }
-core-foundation-sys = "0.8.7"
 reqwest = { version = "0.13.4", default-features = false, features = ["native-tls", "http2"] }
 openssl = { version = "0.10.81", features = ["vendored"] }
 uuid = { version = "1.23.5", features = ["js", "v4"] }
@@ -165,7 +163,8 @@ arborium = "2.18.0"
 muda = "0.19.3"
 objc2-ui-kit = "0.3.2"
 objc2 = "0.6.4"
-
+objc2-core-text = { version = "0.3.2", default-features = false }
+objc2-core-foundation = { version = "0.3.2", default-features = false }
 
 # Aimer cli dependencies
 
@@ -188,8 +187,10 @@ sha2 = "0.11.0"
 hex = "0.4.3"
 rustls-platform-verifier = { version = "0.7.0", features = ["jni"] }
 bitflags = "2.13.0"
-axum = "0.8.6"
+axum = { version = "0.8.6", default-features = false }
 tower = "0.5.2"
+dotenvy = "0.15.7"
+
 
 [profile.release]
 opt-level = 3
