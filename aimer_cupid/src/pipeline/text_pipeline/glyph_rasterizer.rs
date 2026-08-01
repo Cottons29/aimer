@@ -18,7 +18,11 @@ use crate::text_pipeline::font_resolver::{
     FontData, FontRecord, SharedFontRecord, advance_width_from_face, font_ref,
     shared_fallback_chain,
 };
+use crate::text_pipeline::glyph_metrics::{self, GlyphMetrics};
 use crate::text_pipeline::glyph_outline::rasterize_outline_glyph;
+use crate::text_pipeline::system_fallback::{
+    SYSTEM_FALLBACK_ID_BASE, fallback_by_id, fallback_for_codepoint,
+};
 
 /// Embedded primary font (Roboto) — covers Latin and common scripts.
 const PRIMARY_FONT: &[u8] = include_bytes!("../../../fonts/GoogleSans-Regular.ttf");
@@ -166,68 +170,18 @@ fn load_system_font(family: &str) -> Option<Vec<u8>> {
     Some(font.load(None)?.data().to_vec())
 }
 
-/// macOS / iOS: use Core Text FFI to load a system font by family name.
-/// This avoids font-kit's SystemSource::new() which enumerates ALL system
-/// fonts, causing high RAM usage and slow startup.
+/// macOS / iOS: resolve a system font by family name through Core Text.
+///
+/// This avoids enumerating every installed face — the approach taken by
+/// generic font databases — which causes high RAM usage and slow startup on
+/// Apple platforms. See [`apple_fonts`] for the underlying lookup.
+///
+/// [`apple_fonts`]: crate::text_pipeline::apple_fonts
 #[allow(dead_code)]
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 pub(crate) fn load_system_font_path(family: &str) -> Option<PathBuf> {
-    use core_foundation::base::TCFType;
-    use core_foundation::string::CFString;
 
-    #[link(name = "CoreText", kind = "framework")]
-    unsafe extern "C" {
-        fn CTFontCreateWithName(
-            name: core_foundation_sys::string::CFStringRef,
-            size: f64,
-            matrix: *const std::ffi::c_void,
-        ) -> *const std::ffi::c_void;
-
-        fn CTFontCopyAttribute(
-            font: *const std::ffi::c_void,
-            attribute: core_foundation_sys::string::CFStringRef,
-        ) -> *const std::ffi::c_void;
-
-        static kCTFontURLAttribute: core_foundation_sys::string::CFStringRef;
-
-        fn CFRelease(cf: *const std::ffi::c_void);
-
-        fn CFURLGetFileSystemRepresentation(
-            url: *const std::ffi::c_void,
-            resolve_against_base: bool,
-            buffer: *mut u8,
-            max_buf_len: isize,
-        ) -> bool;
-    }
-
-    let cf_name = CFString::new(family);
-    unsafe {
-        let ct_font =
-            CTFontCreateWithName(cf_name.as_concrete_TypeRef() as _, 12.0, std::ptr::null());
-        if ct_font.is_null() {
-            return None;
-        }
-
-        let url_ref = CTFontCopyAttribute(ct_font, kCTFontURLAttribute);
-        CFRelease(ct_font);
-
-        if url_ref.is_null() {
-            return None;
-        }
-
-        let mut path_buf = [0u8; 1024];
-        let ok = CFURLGetFileSystemRepresentation(url_ref, true, path_buf.as_mut_ptr(), 1024);
-        CFRelease(url_ref);
-
-        if !ok {
-            return None;
-        }
-
-        let path_len = path_buf.iter().position(|&b| b == 0).unwrap_or(0);
-
-        let path = std::str::from_utf8(&path_buf[..path_len]).ok()?;
-        Some(PathBuf::from(path))
-    }
+    crate::text_pipeline::apple_fonts::system_font_path(family)
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +311,8 @@ pub struct GlyphRasterizer {
     shape_buffer: Option<harfrust::UnicodeBuffer>,
     #[cfg(test)]
     shape_call_count: usize,
+    #[cfg(test)]
+    rasterize_call_count: usize,
 }
 
 #[derive(Clone)]
@@ -422,6 +378,8 @@ impl GlyphRasterizer {
             shape_buffer: Some(harfrust::UnicodeBuffer::new()),
             #[cfg(test)]
             shape_call_count: 0,
+            #[cfg(test)]
+            rasterize_call_count: 0,
         }
     }
 
@@ -445,6 +403,8 @@ impl GlyphRasterizer {
             shape_buffer: Some(harfrust::UnicodeBuffer::new()),
             #[cfg(test)]
             shape_call_count: 0,
+            #[cfg(test)]
+            rasterize_call_count: 0,
         }
     }
 
@@ -502,6 +462,8 @@ impl GlyphRasterizer {
             shape_buffer: Some(harfrust::UnicodeBuffer::new()),
             #[cfg(test)]
             shape_call_count: 0,
+            #[cfg(test)]
+            rasterize_call_count: 0,
         }
     }
 
@@ -513,6 +475,16 @@ impl GlyphRasterizer {
     #[cfg(test)]
     pub fn shape_call_count(&self) -> usize {
         self.shape_call_count
+    }
+
+    #[cfg(test)]
+    pub fn reset_rasterize_call_count(&mut self) {
+        self.rasterize_call_count = 0;
+    }
+
+    #[cfg(test)]
+    pub fn rasterize_call_count(&self) -> usize {
+        self.rasterize_call_count
     }
 
     /// Ensure fallback fonts are loaded. Called lazily on first glyph miss.
@@ -624,17 +596,25 @@ impl GlyphRasterizer {
         self.cache.clear();
         self.advance_cache.clear();
         self.glyph_index_cache.clear();
+        glyph_metrics::forget_font(font_id);
         self.font_bytes_cache.remove(&font_id);
         self.shaper_data_cache.remove(&font_id);
         Some(font_id)
     }
 
+    /// Next id available for a font registered at runtime.
+    ///
+    /// Ids at or above [`SYSTEM_FALLBACK_ID_BASE`] belong to faces discovered
+    /// on demand and are owned by the shared store, so they are skipped here:
+    /// continuing from one of them would hand out an id the store may later
+    /// assign to a different face.
     fn next_fallback_font_id(&self) -> FontId {
         self.fallbacks
             .as_ref()
             .into_iter()
             .flatten()
             .map(|record| record.id)
+            .filter(|id| *id < SYSTEM_FALLBACK_ID_BASE)
             .chain(std::iter::once(self.primary.id))
             .max()
             .unwrap_or(self.primary.id)
@@ -691,7 +671,50 @@ impl GlyphRasterizer {
                     return (font_id, glyph_id, true);
                 }
             }
-            (self.primary.id, 0, false)
+            match self.resolve_system_fallback(codepoint) {
+                Some((font_id, glyph_id)) => (font_id, glyph_id, true),
+                None => (self.primary.id, 0, false),
+            }
+        }
+    }
+
+    /// Asks the platform for a face covering `codepoint` and adopts it.
+    ///
+    /// This runs only after every loaded face has been tried, which keeps the
+    /// cost off the common path: the answer is cached process wide, so a
+    /// codepoint is queried once per process no matter how many rasterizers
+    /// encounter it.
+    fn resolve_system_fallback(&mut self, codepoint: char) -> Option<(FontId, u16)> {
+        if !self.enable_fallbacks || self.unsupported_codepoints.contains(&codepoint) {
+            return None;
+        }
+        let record = fallback_for_codepoint(codepoint)?;
+        let font_id = record.id;
+        self.adopt_fallback(record);
+        let glyph_id = self.glyph_index_for_font(font_id, codepoint)?;
+        (glyph_id != 0).then_some((font_id, glyph_id))
+    }
+
+    /// Adds a face to this rasterizer's chain unless its id is already there.
+    fn adopt_fallback(&mut self, record: FontRecord) {
+        let fallbacks = self.fallbacks.get_or_insert_with(Vec::new);
+        if !fallbacks.iter().any(|fallback| fallback.id == record.id) {
+            fallbacks.push(record);
+        }
+    }
+
+    /// Adopts the on-demand face named by `font_id`, if this is a foreign id.
+    ///
+    /// Shaping, layout and rasterization run in separate rasterizers, so a key
+    /// can name a face this instance never resolved itself. The shared store
+    /// keeps ids stable process wide, which makes recovering the face a plain
+    /// lookup.
+    fn ensure_system_fallback_loaded(&mut self, font_id: FontId) {
+        if font_id < SYSTEM_FALLBACK_ID_BASE || self.font_record_by_id(font_id).is_some() {
+            return;
+        }
+        if let Some(record) = fallback_by_id(font_id) {
+            self.adopt_fallback(record);
         }
     }
 
@@ -734,6 +757,8 @@ impl GlyphRasterizer {
     }
 
     fn select_font_for_key(&mut self, key: GlyphKey) -> &mut FontRecord {
+        self.ensure_system_fallback_loaded(key.font_id);
+
         if key.font_id == self.primary.id {
             &mut self.primary
         } else if let Some(index) = self
@@ -817,7 +842,12 @@ impl GlyphRasterizer {
                 }
             });
 
+            #[cfg(test)]
+            {
+                self.rasterize_call_count += 1;
+            }
             self.advance_cache.insert(key, glyph.advance_width);
+            glyph_metrics::store(key, &glyph);
             self.insert_cached_glyph(key, glyph);
         }
 
@@ -895,6 +925,7 @@ impl GlyphRasterizer {
 
     pub(super) fn commit_prepared_glyph(&mut self, key: GlyphKey, glyph: RasterizedGlyph) {
         self.advance_cache.insert(key, glyph.advance_width);
+        glyph_metrics::store(key, &glyph);
         self.insert_cached_glyph(key, glyph);
     }
 
@@ -911,6 +942,25 @@ impl GlyphRasterizer {
 
     pub fn glyph_metrics_for_key(&mut self, key: GlyphKey, font_size: f32) -> RasterizedGlyph {
         self.rasterize_key(key, font_size).clone()
+    }
+
+    /// Returns the pixel box of `key` — bitmap size, pen and baseline offsets
+    /// and advance — rasterizing only when the glyph has never been measured.
+    ///
+    /// Positioning is the only consumer that needs those numbers without the
+    /// coverage bitmap. Because the metrics depend solely on the glyph key,
+    /// they are shared process-wide, so a layout pass running on a freshly
+    /// created worker context — which is what every frame of a window resize
+    /// does — reuses them instead of re-rasterizing the whole page.
+    pub(super) fn metrics_for_key(&mut self, key: GlyphKey, font_size: f32) -> GlyphMetrics {
+        if let Some(glyph) = self.cache.get(&key) {
+            return GlyphMetrics::from(glyph);
+        }
+        if let Some(metrics) = glyph_metrics::cached(key) {
+            return metrics;
+        }
+
+        GlyphMetrics::from(self.rasterize_key(key, font_size))
     }
 
     pub fn preload_text(&mut self, text: &str, font_size: f32) -> Vec<(GlyphKey, RasterizedGlyph)> {
@@ -1082,6 +1132,7 @@ impl GlyphRasterizer {
         if text.is_empty() {
             return Vec::new();
         }
+        self.ensure_system_fallback_loaded(font_id);
 
         // Retrieve cached font bytes for this font_id, populating the cache on
         // first access.  This avoids a file read (or Arc<[u8]> clone followed by
@@ -1267,6 +1318,23 @@ mod tests {
     }
 
     #[test]
+    fn codepoints_outside_the_static_probe_groups_rasterize_to_visible_glyphs() {
+        let mut rasterizer = GlyphRasterizer::new();
+        for codepoint in ['你', '好', '！', '，', 'ü', '₫'] {
+            let key = rasterizer.glyph_key_for_codepoint(codepoint, 20.0);
+            assert_ne!(
+                key.glyph_id, 0,
+                "{codepoint:?} resolved to .notdef instead of a real glyph"
+            );
+            let glyph = rasterizer.rasterize_key(key, 20.0);
+            assert!(
+                !glyph.bitmap.is_empty(),
+                "{codepoint:?} rasterized to an empty bitmap"
+            );
+        }
+    }
+
+    #[test]
     fn bitmap_cache_bytes_are_tracked_across_replace_and_release() {
         let mut rasterizer = GlyphRasterizer::primary_only();
         let key = GlyphKey::new(rasterizer.primary_font_id(), 1, 16.0);
@@ -1291,6 +1359,45 @@ mod tests {
         rasterizer.release_bitmap(key);
         assert_eq!(rasterizer.retained_bitmap_bytes, 0);
         assert_eq!(rasterizer.bitmap_cache_bytes(), 0);
+    }
+
+    #[test]
+    fn positioning_already_measured_glyphs_does_not_rasterize_again() {
+        // Resizing a window re-lays out every visible string at a new wrapping
+        // width on every frame, and each layout job runs in a freshly created
+        // worker context whose bitmap cache starts empty. Positioning only
+        // needs the glyph's bitmap box, which depends solely on the glyph key,
+        // so a glyph measured once must never be rasterized again.
+        let mut renderer = GlyphRasterizer::new();
+        let text = "Resize 你好 ជំរាបសួរ mixed العربية text";
+        let shaped = shape_text_styled(
+            &mut renderer,
+            text,
+            18.0,
+            FontFamily::SANS_SERIF,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        let expected = layout_shaped_text(&mut renderer, &shaped, 0.0, 0.0, 200.0);
+        assert!(!expected.is_empty());
+
+        let mut worker = GlyphPreparationContext::new(renderer.font_snapshot());
+        worker.rasterizer_mut().reset_rasterize_call_count();
+        let actual = layout_shaped_text(worker.rasterizer_mut(), &shaped, 0.0, 0.0, 200.0);
+
+        assert_eq!(
+            worker.rasterizer_mut().rasterize_call_count(),
+            0,
+            "a resize frame must reuse glyph metrics instead of rasterizing again"
+        );
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert_eq!(actual.glyph_key, expected.glyph_key);
+            assert_eq!(actual.x, expected.x);
+            assert_eq!(actual.y, expected.y);
+            assert_eq!(actual.width, expected.width);
+            assert_eq!(actual.height, expected.height);
+        }
     }
 
     #[test]
@@ -1755,33 +1862,24 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn fallback_chain_keeps_both_emoji_and_cjk() {
-        let chain = shared_fallback_chain();
+        let mut rasterizer = GlyphRasterizer::new();
 
-        let has_emoji = chain.iter().any(|fb| fb.is_color);
-        let has_cjk = chain.iter().any(|fb| !fb.is_color);
+        // Emoji and CJK are served by different files, so resolving both must
+        // grow the chain rather than replace its single entry: the color face
+        // may not answer for Han, and the Han face has no emoji strikes.
+        let emoji = rasterizer.glyph_key_for_codepoint('😀', 32.0);
+        let han = rasterizer.glyph_key_for_codepoint('漢', 32.0);
 
-        // We don't hard-fail when the system lacks AppleColorEmoji — just log.
-        if !has_emoji {
-            eprintln!(
-                "[note] no color font loaded — AppleColorEmoji missing from this macOS build"
-            );
-        }
-        // CJK *should* be present on any modern macOS install.
-        assert!(
-            has_cjk,
-            "no CJK fallback was loaded — chain: {} entries",
-            chain.len()
+        assert_ne!(emoji.font_id, rasterizer.primary_font_id());
+        assert_ne!(han.font_id, rasterizer.primary_font_id());
+        assert_ne!(
+            emoji.font_id, han.font_id,
+            "emoji and CJK must resolve to different faces"
         );
 
-        // Crucially, when both are present the chain must hold both — the old
-        // `break;` would have stopped at the first hit. This is the regression
-        // guard for fix C.
-        if has_emoji && has_cjk {
-            assert!(
-                chain.len() >= 2,
-                "chain truncated: emoji + CJK should coexist"
-            );
-        }
+        let chain = rasterizer.fallbacks.as_ref().expect("chain was populated");
+        assert!(chain.iter().any(|fallback| fallback.is_color));
+        assert!(chain.iter().any(|fallback| !fallback.is_color));
     }
 
     #[cfg(target_os = "macos")]

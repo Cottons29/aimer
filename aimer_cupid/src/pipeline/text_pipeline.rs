@@ -1,8 +1,12 @@
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+pub(crate) mod apple_fonts;
 mod font_resolver;
 pub mod glyph_atlas;
+mod glyph_metrics;
 mod glyph_outline;
 pub mod glyph_rasterizer;
 mod preparation_batch;
+pub(crate) mod system_fallback;
 pub mod text_layout;
 
 use std::collections::{HashMap, HashSet};
@@ -1243,12 +1247,13 @@ impl TextPipelineV2 {
                     for pg in positioned {
                         let key = pg.glyph_key;
 
-                        // Step 1: rasterize (cache hit if already done) to discover
-                        // whether the glyph is color or alpha. We only need three
-                        // scalar fields here, so the immutable borrow ends quickly.
+                        // Step 1: read the glyph's metrics to discover whether it
+                        // is color or alpha. Only three scalar fields are needed,
+                        // so this goes through the shared metrics cache and never
+                        // rasterizes a glyph that is already in the atlas.
 
                         let (is_color, rg_width, rg_height) = {
-                            let rg = self.rasterizer.rasterize_key(key, pg.font_size);
+                            let rg = self.rasterizer.metrics_for_key(key, pg.font_size);
                             (rg.is_color, rg.width, rg.height)
                         };
 

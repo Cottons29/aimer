@@ -150,16 +150,16 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
         cov = max(stroke_cov(abs(py - c0), ht), stroke_cov(abs(py - c1), ht));
     } else if style < 2.5 {
         // Dotted: solid vertically, round dots along x (~50% duty at `period`).
-        let line = stroke_cov(abs(py - center), ht);
+        let line_pos = stroke_cov(abs(py - center), ht);
         let phase = px - period * floor(px / period);
         let dot = stroke_cov(abs(phase - period * 0.5), period * 0.25);
-        cov = line * dot;
+        cov = line_pos * dot;
     } else if style < 3.5 {
         // Dashed: solid vertically, longer dashes along x (~60% duty).
-        let line = stroke_cov(abs(py - center), ht);
+        let line_pos = stroke_cov(abs(py - center), ht);
         let phase = px - period * floor(px / period);
         let dash = step(phase, period * 0.6);
-        cov = line * dash;
+        cov = line_pos * dash;
     } else {
         // Wavy: sine curve whose amplitude fills the remaining band height.
         let amp = max((band - thickness) * 0.5, 0.0);

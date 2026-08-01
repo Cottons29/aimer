@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use aimer_utils::time_cost;
+use swash::text::{Codepoint, Script};
 use unicode_bidi::BidiInfo;
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
@@ -203,18 +204,57 @@ pub fn layout_paragraph_with_shaper(
     }
 }
 
-/// A contiguous run of text that shares the same BiDi level and can be shaped
-/// as a unit.
+/// The script a grapheme cluster belongs to, or `None` when it belongs to no
+/// script in particular.
+///
+/// Spaces, digits and most punctuation are `Script::Common`, and combining
+/// marks that adopt the script of their base are `Script::Inherited`; neither
+/// identifies a writing system, so both are reported as `None` and left to the
+/// run they are surrounded by.
+fn cluster_script(cluster: &str) -> Option<Script> {
+    cluster.chars().find_map(|codepoint| {
+        match codepoint.script() {
+            Script::Common | Script::Inherited | Script::Unknown => None,
+            script => Some(script),
+        }
+    })
+}
+
+/// Reports whether `cluster` may join a shaping run of script `run_script`,
+/// adopting the run's script when it did not have one yet.
+///
+/// A shaping buffer carries exactly one script, guessed from its first strong
+/// character, and that script selects the shaping engine. Appending Khmer to a
+/// run opened by Latin text would therefore shape the Khmer with the default
+/// engine: COENG would survive as a visible sign instead of pulling the
+/// following consonant under its base as a subscript leg. Runs must end at
+/// script boundaries for the same reason they end at font boundaries.
+fn extends_script_run(run_script: &mut Option<Script>, cluster: &str) -> bool {
+    let Some(script) = cluster_script(cluster) else {
+        return true;
+    };
+    match run_script {
+        Some(current) => *current == script,
+        None => {
+            *run_script = Some(script);
+            true
+        }
+    }
+}
+
+/// A contiguous run of text that shares the same BiDi level and script, and can
+/// be shaped as a unit.
 struct ShapingRun<'a> {
     text: &'a str,
     start: usize,
     level: unicode_bidi::Level,
+    script: Option<Script>,
 }
 
 /// Collect grapheme clusters into shaping runs: contiguous clusters that share
-/// the same BiDi level are merged into a single run so that complex-script
-/// shaping (Arabic, Devanagari, etc.) operates on the full context instead of
-/// individual clusters.
+/// the same BiDi level and script are merged into a single run so that
+/// complex-script shaping (Arabic, Devanagari, etc.) operates on the full
+/// context instead of individual clusters.
 fn collect_shaping_runs<'a>(
     text: &'a str,
     bidi: &BidiInfo,
@@ -231,8 +271,11 @@ fn collect_shaping_runs<'a>(
             .or_else(|| bidi.levels.get(cluster_start).copied())
             .unwrap_or_else(unicode_bidi::Level::ltr);
 
-        let merge = result.last().is_some_and(|last| {
-            last.level == level && cluster != "\n" && !last.text.ends_with('\n')
+        let merge = result.last_mut().is_some_and(|last| {
+            last.level == level
+                && cluster != "\n"
+                && !last.text.ends_with('\n')
+                && extends_script_run(&mut last.script, cluster)
         });
 
         if merge {
@@ -248,6 +291,7 @@ fn collect_shaping_runs<'a>(
                 text: cluster,
                 start: cluster_start,
                 level,
+                script: cluster_script(cluster),
             });
         }
     }
@@ -309,6 +353,7 @@ where
         let run_text = shaping_run.text;
         let run_end = run_start + run_text.len();
         let level = shaping_run.level;
+        let script = shaping_run.script;
         let is_rtl = level.is_rtl();
 
         // Handle newline runs.
@@ -490,6 +535,7 @@ where
                         text: &text[trimmed..run_end],
                         start: trimmed,
                         level,
+                        script,
                     });
                 }
                 continue;
@@ -772,6 +818,7 @@ pub fn shape_text_styled(
             };
 
             let run_start_index = grapheme_index;
+            let mut run_script = cluster_script(cluster);
             grapheme_index += 1;
             while grapheme_index < graphemes.len() {
                 let next_cluster = graphemes[grapheme_index].1;
@@ -783,6 +830,7 @@ pub fn shape_text_styled(
                         font_weight,
                         font_style,
                     ) != Some(font_id)
+                    || !extends_script_run(&mut run_script, next_cluster)
                 {
                     break;
                 }
@@ -922,8 +970,12 @@ pub fn layout_shaped_text(
             }
 
             for &(glyph_key, advance, x_offset, y_offset) in &cluster.glyphs {
-                let rg = time_cost!("RasterizeKey", || rasterizer
-                    .rasterize_key(glyph_key, font_size));
+                // Only the glyph's pixel box is needed here, never its bitmap.
+                // Reading it from the shared metrics cache keeps a re-layout —
+                // every frame of a window resize triggers one — off the
+                // rasterization path.
+                let rg = time_cost!("GlyphMetrics", || rasterizer
+                    .metrics_for_key(glyph_key, font_size));
                 if rg.width > 0 && rg.height > 0 {
                     let gx = pen_x + rg.offset_x + x_offset;
                     // pen_y is the baseline; offset_y (ymin) is distance from baseline to
@@ -1100,6 +1152,68 @@ mod tests {
         assert_eq!(shaped.clusters.len(), 6);
         assert!(glyph_count < shaped.clusters.len());
         assert_eq!(rasterizer.shape_call_count(), 1);
+    }
+
+    #[test]
+    fn script_less_clusters_stay_inside_the_surrounding_run() {
+        let mut script = None;
+
+        // Leading punctuation has no script of its own, so it neither starts
+        // nor breaks a run.
+        assert!(extends_script_run(&mut script, "("));
+        assert_eq!(script, None);
+
+        assert!(extends_script_run(&mut script, "K"));
+        assert_eq!(script, Some(Script::Latin));
+
+        // Spaces, dashes and combining marks must not end a Latin run.
+        assert!(extends_script_run(&mut script, " "));
+        assert!(extends_script_run(&mut script, "—"));
+        assert!(extends_script_run(&mut script, "e\u{301}"));
+        assert_eq!(script, Some(Script::Latin));
+    }
+
+    #[test]
+    fn a_different_script_ends_the_run() {
+        let mut script = Some(Script::Latin);
+
+        assert!(!extends_script_run(&mut script, "ស"));
+        assert_eq!(
+            script,
+            Some(Script::Latin),
+            "a rejected cluster must not change the run it failed to join"
+        );
+    }
+
+    #[test]
+    fn khmer_shapes_the_same_inside_and_outside_latin_text() {
+        // A shaping buffer carries a single script, guessed from its first
+        // strong character. Merging Khmer into a Latin run therefore shapes it
+        // with the default shaper: COENG stays a visible sign and the
+        // subscript consonant keeps its full size instead of tucking under the
+        // base as a leg.
+        let mut rasterizer = GlyphRasterizer::new();
+        let khmer = "សួស្តី";
+
+        let isolated = shape_text(&mut rasterizer, khmer, 32.0);
+        let mixed = shape_text(&mut rasterizer, &format!("Khmer — {khmer} (Suosdei)"), 32.0);
+
+        assert_eq!(khmer_glyph_ids(&isolated), khmer_glyph_ids(&mixed));
+        assert!(
+            khmer_glyph_ids(&isolated).len() < khmer.chars().count(),
+            "COENG must combine into a subscript glyph, got {:?}",
+            khmer_glyph_ids(&isolated)
+        );
+    }
+
+    fn khmer_glyph_ids(shaped: &ShapedText) -> Vec<u16> {
+        shaped
+            .clusters
+            .iter()
+            .filter(|cluster| cluster_script(&cluster.text) == Some(Script::Khmer))
+            .flat_map(|cluster| cluster.glyphs.iter())
+            .map(|(glyph_key, _, _, _)| glyph_key.glyph_id)
+            .collect()
     }
 
     #[test]

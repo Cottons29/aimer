@@ -46,9 +46,15 @@ rayon = "1.12.0"
 fontique.workspace = true
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
-core-foundation = { workspace = true }
-core-foundation-sys.workspace = true
-core-text = "22.0.0"
+objc2-core-foundation = { workspace = true, features = [
+    "std",
+    "CFArray",
+    "CFCharacterSet",
+    "CFDictionary",
+    "CFString",
+    "CFURL",
+] }
+objc2-core-text = { workspace = true, features = ["std", "CTFont", "CTFontDescriptor"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true

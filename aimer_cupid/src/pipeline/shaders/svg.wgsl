@@ -41,15 +41,15 @@ fn vs_main(vertex: SvgVertex, instance: SvgInstance) -> VertexOutput {
     return output;
 }
 
-fn rounded_rect_distance(point: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>) -> f32 {
+fn rounded_rect_distance(input_point: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>) -> f32 {
     var radius: f32;
-    if point.x < 0.0 {
-        radius = select(radii.w, radii.x, point.y < 0.0);
+    if input_point.x < 0.0 {
+        radius = select(radii.w, radii.x, input_point.y < 0.0);
     } else {
-        radius = select(radii.z, radii.y, point.y < 0.0);
+        radius = select(radii.z, radii.y, input_point.y < 0.0);
     }
     radius = min(radius, min(half_size.x, half_size.y));
-    let q = abs(point) - half_size + vec2<f32>(radius);
+    let q = abs(input_point) - half_size + vec2<f32>(radius);
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - radius;
 }
 
