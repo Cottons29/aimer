@@ -19,8 +19,7 @@
 //! Upgrade path: evict on an explicit dispose hook, or cap it with an LRU.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
-
+use hashbrown::HashMap;
 use aimer_attribute::position::Vec2d;
 use aimer_widget::Key;
 

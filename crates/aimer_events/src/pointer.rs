@@ -1,8 +1,9 @@
 /// Identifies the origin of a pointer event.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[repr(u8)]
 pub enum PointerSource {
-    Mouse,
-    Touch,
+    Mouse = 0,
+    Touch = 1,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

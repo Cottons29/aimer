@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
 
@@ -5,12 +6,22 @@ use crate::Element;
 use crate::components::element::VisitorElement;
 
 /// Identifies one pointer independently of pointers from other input sources.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PointerKey {
     /// The device class that produced the pointer.
-    pub source: PointerSource,
+    pub source: PointerSource, // enum Mouse, Touch
     /// The source-local pointer identifier.
     pub id: u64,
+}
+
+impl Hash for PointerKey {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // pack tag + id into a single u64 write instead of two separate
+        // hasher calls — cheaper than write_u8 + write_u64 for most hashers,
+        // since a lot of the cost is per-call, not per-byte, for small inputs.
+        state.write_u64((self.id << 1) | self.source as u64);
+    }
 }
 
 impl PointerKey {

@@ -1,7 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerSource;
-use aimer_utils::{info, ExecTimes};
+use aimer_utils::ExecTimes;
 use aimer_widget::{EventResult, PointerKey, Widget, broadcast_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
@@ -538,8 +538,8 @@ impl WindowEventHandler {
     fn handle_ime<W: Widget + 'static>(ime: Ime, app: &mut AimerApplicationHandler<W>) {
         // Composition reports one event per keystroke, so this must not format
         // a string in a release build.
-        #[cfg(debug_assertions)]
-        aimer_utils::debug!("IME : {ime:?}");
+        // #[cfg(debug_assertions)]
+        // aimer_utils::debug!("IME : {ime:?}");
         match ime {
             Ime::Enabled => {
                 app.ime_composing = false;

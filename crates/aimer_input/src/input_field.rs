@@ -571,6 +571,12 @@ mod tests {
     }
 
     #[test]
+    fn size_of_text_field() {
+        eprintln!("Size Of TextField: {}", size_of::<TextField>())
+
+    }
+
+    #[test]
     fn adopting_a_configuration_does_not_restart_the_blink() {
         let mut state = TextField::new().create_state();
         let start = AnimInstant::now();

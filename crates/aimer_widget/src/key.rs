@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// A stable identity token attached to a [`Widget`](crate::Widget) so the
@@ -22,7 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 ///     MyItem::create_new(Some(Key::Value("item-2".into())), ...),
 /// ])
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Key {
     /// Equality-based key. Two widgets with the same `Value` are "the same".
     Value(String),
@@ -36,6 +37,26 @@ pub enum Key {
     Static(&'static str),
 }
 
+
+impl Hash for Key {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Key::Value(s) => {
+                state.write_u8(0);
+                state.write(s.as_bytes());
+            }
+            Key::Object(id) => {
+                state.write_u8(1);
+                state.write_usize(*id);
+            }
+            Key::Static(s) => {
+                state.write_u8(2);
+                state.write(s.as_bytes());
+            }
+        }
+    }
+}
 /// Ergonomic conversions so callers can pass a bare string literal or `String`
 /// wherever a `Key` is expected (e.g. `page_storage::read_or("my-tab", 0)`),
 /// producing the common equality-based [`Key::Value`].
