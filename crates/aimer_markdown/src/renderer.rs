@@ -198,7 +198,7 @@ fn render_blocks(
         .collect::<Vec<_>>();
     Column::new()
         .horizontal_alignment(BoxAlignment::Start)
-        .gaps(LayoutSpacing::all(theme.block_spacing.into()))
+        .gaps(LayoutSpacing::all(theme.block_spacing))
         .children(children)
         .boxed()
 }
@@ -261,7 +261,7 @@ fn render_table(
                 };
                 GridItem::new(
                     Container::new()
-                        .padding(LayoutSpacing::all(8_u32.into()))
+                        .padding(LayoutSpacing::all(8_u32))
                         .color(background)
                         .child(content)
                         .boxed(),
@@ -271,7 +271,7 @@ fn render_table(
         })
         .collect::<Vec<_>>();
     Container::new()
-        .padding(LayoutSpacing::all(1_u32.into()))
+        .padding(LayoutSpacing::all(1_u32))
         .color(theme.rule_color)
         .child(
             Grid::new()
@@ -299,7 +299,7 @@ fn render_block(
             render_paragraph(content, theme.body, theme, link_handler, image_resolver)
         }
         Block::Blockquote(blocks) => Container::new()
-            .padding(LayoutSpacing::all(8_u32.into()))
+            .padding(LayoutSpacing::all(8_u32))
             .box_decoration(
                 BoxDecoration::new()
                     .background_color(theme.quote_background)
@@ -341,7 +341,7 @@ fn render_block(
                     };
 
                     Row::new()
-                        .gaps(LayoutSpacing::all(8_u32.into()))
+                        .gaps(LayoutSpacing::all(8_u32))
                         .vertical_alignment(BoxAlignment::Start)
                         .children(vec![
                             match marker {
@@ -362,7 +362,7 @@ fn render_block(
                 .collect::<Vec<_>>();
             Column::new()
                 .horizontal_alignment(BoxAlignment::Start)
-                .gaps(LayoutSpacing::all(6_u32.into()))
+                .gaps(LayoutSpacing::all(6_u32))
                 .children(rows)
                 .boxed()
         }
@@ -403,7 +403,7 @@ fn render_block(
         Block::ThematicBreak => SizedBox::new().height(1.0).color(theme.rule_color).boxed(),
         Block::Table { alignments, rows } => render_table(alignments, rows, theme, link_handler),
         Block::FootnoteDefinition { identifier, blocks } => Row::new()
-            .gaps(LayoutSpacing::all(6_u32.into()))
+            .gaps(LayoutSpacing::all(6_u32))
             .children(vec![
                 Text::new(format!("[{identifier}]"))
                     .text_style(theme.body.font_weight(FontWeight::Bold))
@@ -464,7 +464,7 @@ fn render_blocks_with_style(
         .collect::<Vec<_>>();
     Column::new()
         .horizontal_alignment(BoxAlignment::Start)
-        .gaps(LayoutSpacing::all(8_u32.into()))
+        .gaps(LayoutSpacing::all(8_u32))
         .box_children(children)
 }
 
@@ -503,7 +503,7 @@ fn render_paragraph(
     }
     Column::new()
         .horizontal_alignment(BoxAlignment::Start)
-        .gaps(LayoutSpacing::all(8_u32.into()))
+        .gaps(LayoutSpacing::all(8_u32))
         .children(children)
         .boxed()
 }

@@ -37,8 +37,16 @@ pub const VELOCITY_EPSILON: f32 = 0.01;
 /// Lower values let the content coast further into the rubber-band zone.
 pub const OOB_OVERSHOOT_DAMPING: f32 = 0.25;
 
-/// Drag resistance multiplier applied when out-of-bounds.
-/// Content moves at this fraction of finger speed once past the edge.
+/// Drag resistance multiplier applied at the very start of an overscroll.
+///
+/// Content moves at this fraction of finger speed just past the edge, and at a
+/// steadily smaller fraction as the stretch grows, reaching zero at the
+/// overscroll limit (see [`MAX_OVERSCROLL_VIEWPORT_FRACTION`]). A *constant*
+/// factor would make the edge a fixed gear ratio instead of a rubber band: a
+/// gesture the user keeps feeding — scrolling and holding at an edge — would
+/// then creep outward without bound until the hard cap stopped it, which is
+/// visible as the content parking half a screen away from its edge.
+///
 /// Lower = harder to pull past the boundary. `0.1` = 10% of finger speed.
 pub const OOB_DRAG_RESISTANCE: f32 = 0.1;
 
@@ -121,8 +129,27 @@ pub const MAX_MOMENTUM_DURATION_S: f32 = 4.5;
 /// stop instead of hitting a wall.  Must be < MAX_MOMENTUM_DURATION_S.
 pub const MOMENTUM_FADEOUT_S: f32 = MAX_MOMENTUM_DURATION_S - 0.05;
 
-/// Size of the ring buffer used for trackpad velocity smoothing.
-pub const VELOCITY_HISTORY_SIZE: usize = 5;
+/// Size of the ring buffer of drag-velocity samples.
+///
+/// Sized so the buffer can hold a full [`VELOCITY_HORIZON_S`] window even at
+/// the densest cadence sampling allows ([`VELOCITY_SAMPLE_MIN_DT`]); anything
+/// older is outside the horizon and would be ignored anyway.
+pub const VELOCITY_HISTORY_SIZE: usize = 24;
+
+/// How far back (seconds) a drag-velocity sample may lie and still describe
+/// the finger at the moment it left the glass.
+///
+/// A fling is launched with the speed of the *end* of a gesture, not its
+/// average: a drag that races down the page and then eases to a standstill
+/// before the lift must launch nothing at all. Everything recorded inside this
+/// window is averaged by duration (travel ÷ time) and everything older is
+/// dropped, so the release speed follows the finger's last moments and decays
+/// to zero on its own once the finger stops feeding motion.
+///
+/// `0.1 s` matches the window Android's `VelocityTracker` and iOS use: long
+/// enough to smooth out per-frame jitter, short enough that a deliberate stop
+/// of a few frames is respected.
+pub const VELOCITY_HORIZON_S: f32 = 0.1;
 
 /// Drag activation threshold in device-independent pixels.
 pub const DRAG_START_THRESHOLD_DP: f32 = 10.0;
@@ -169,9 +196,56 @@ pub const SPRING_STIFFNESS: f32 = 2000.0;
 /// ζ = 1 = critically damped (no overshoot), ζ > 1 = overdamped (sluggish).
 /// 1.0 = critically damped — the fastest return without any overshoot.
 /// Content slides back to the boundary and stops, no shaking.
+///
+/// The ratio only describes what the user sees while the spring is advanced in
+/// steps no longer than [`SPRING_SUBSTEP_S`]; see
+/// [`spring`](crate::scrollable::spring) for why one step per rendered frame is
+/// not enough on a 60 Hz host.
 pub const SPRING_DAMPING_RATIO: f32 = 0.99;
 
-/// Maximum overscroll as a fraction of content dimension (0.30 = 30%).
-/// Prevents trackpad / momentum from carrying content hundreds of pixels
-/// past the edge — matches Chrome and iOS behaviour.
-pub const MAX_OVERSCROLL_FRACTION: f32 = 0.30;
+/// Longest integration step (seconds) the overscroll spring may take at once.
+///
+/// An explicit step of the damped spring is stable only while
+/// `dt < 1 / (2·ζ·√k)` ≈ 11 ms for [`SPRING_STIFFNESS`] /
+/// [`SPRING_DAMPING_RATIO`]. A native ProMotion frame (8.3 ms) is inside that
+/// limit; a browser frame (~16.7 ms, and the web target cannot render faster
+/// than the compositor) is not, which made the same spring ping-pong on the
+/// web while looking correct on native.
+///
+/// One 120 Hz frame is therefore the integration step everywhere: native keeps
+/// taking exactly one step per frame (identical feel), and a longer frame is
+/// split into as many steps as it covers, so both walk the same trajectory.
+pub const SPRING_SUBSTEP_S: f32 = 1.0 / 120.0;
+
+/// Maximum grace period (ms) after first crossing a scroll boundary before
+/// bouncy recovery begins, even though no terminating
+/// [`TouchPhase::Ended`](aimer_events::element::TouchPhase) frame arrived.
+///
+/// Later events do not refresh the grace period. This prevents a native
+/// momentum tail from delaying recovery while still allowing the first edge
+/// event to render without immediately fighting the spring.
+pub const OVERSCROLL_HOLD_IDLE_MS: u128 = 4;
+
+/// Maximum gap (ms) between device scroll events that still counts as the same
+/// overscroll episode.
+///
+/// The overscroll high-water mark exists only to swallow a *live* momentum tail
+/// that would otherwise re-stretch an edge that is already recovering. A tail
+/// delivers an event every frame, so once nothing has refreshed the mark for
+/// this long the gesture is over and the mark must stop gating input —
+/// otherwise a gesture boundary the platform never reported would leave the
+/// edge permanently unable to overscroll.
+pub const OVERSCROLL_PEAK_IDLE_MS: u128 = 120;
+
+/// Maximum overscroll as a fraction of the **viewport** dimension
+/// (0.15 = 15%).
+///
+/// This is both the hard cap on the stored offset and the point where
+/// [`OOB_DRAG_RESISTANCE`] has faded to zero, so a gesture asymptotically
+/// approaches it instead of hitting a wall.
+///
+/// The limit is viewport-relative because the stretch is judged against what
+/// the user can see: a fraction of the *content* let a long page stretch
+/// hundreds of pixels while a short one barely moved. 15% of the viewport
+/// matches the stretch Chrome and iOS allow.
+pub const MAX_OVERSCROLL_VIEWPORT_FRACTION: f32 = 0.15;

@@ -1,15 +1,31 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_events::element::{ElementEvent, KeyAction, NamedKey, ScrollDeltaKind, TouchPhase};
-use aimer_utils::{info, AnimInstant};
+use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
+use aimer_events::pointer::PointerSource;
+use aimer_utils::AnimInstant;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Element, EventElement, EventResult, LayoutElement, PointerKey, VisitorElement};
 
 use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
 use crate::scrollable::constants::*;
+use crate::scrollable::overscroll_source::OverscrollSource;
+use crate::scrollable::scroll_frame::apply_scroll_frame;
 
 const DRAG_AXIS_DOMINANCE_RATIO: f32 = 1.2;
+
+/// The overscroll source a pointer gesture belongs to.
+///
+/// A finger and a mouse button drive the very same drag code but are not the
+/// same device to a target that only trusts some of them with a rubber band,
+/// so the distinction is kept all the way into the scroll engine.
+#[inline]
+fn drag_overscroll_source(source: PointerSource) -> OverscrollSource {
+    match source {
+        PointerSource::Touch => OverscrollSource::Touch,
+        PointerSource::Mouse => OverscrollSource::Mouse,
+    }
+}
 
 fn drag_start_threshold() -> f32 {
     DRAG_START_THRESHOLD_DP
@@ -49,6 +65,24 @@ fn pointer_drag_delta(
     Vec2d {
         x: (current.x - last.x) * speed_multiplier,
         y: (current.y - last.y) * speed_multiplier,
+    }
+}
+
+/// Keep only the component of `velocity` the container can actually scroll.
+///
+/// A finger never travels along a single axis, and letting the cross-axis
+/// component through would seed a fling the viewport cannot show.
+#[inline]
+fn axis_velocity(axis: ScrollAxis, velocity: Vec2d) -> Vec2d {
+    match axis {
+        ScrollAxis::Vertical => Vec2d {
+            x: 0.0,
+            y: velocity.y,
+        },
+        ScrollAxis::Horizontal => Vec2d {
+            x: velocity.x,
+            y: 0.0,
+        },
     }
 }
 
@@ -194,8 +228,24 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     self.ctrl.clear_velocity_history();
                     self.ctrl.cancel_fling();
                 } else {
+                    // The gesture ended between two samples, so whatever the
+                    // finger did since the last one has not been measured yet
+                    // — including doing nothing at all, which is precisely how
+                    // a drag that was deliberately brought to a stop before
+                    // the lift looks. Closing that slice is what keeps such a
+                    // release from inheriting the speed of the swing that
+                    // preceded it.
+                    if mode_before == DragMode::Content
+                        && let Some((velocity, sample_dt)) = self.ctrl.flush_drag_velocity(now)
+                    {
+                        self.ctrl.push_velocity(
+                            axis_velocity(self.ctrl.axis, velocity),
+                            sample_dt,
+                            now,
+                        );
+                    }
                     let max_v = MAX_SCROLL_VELOCITY * self.ctrl.last_scale.get();
-                    let raw = self.ctrl.smoothed_velocity();
+                    let raw = self.ctrl.smoothed_velocity(now);
                     let sv = Vec2d {
                         x: (raw.x * RELEASE_VELOCITY_GAIN).clamp(-max_v, max_v),
                         y: (raw.y * RELEASE_VELOCITY_GAIN).clamp(-max_v, max_v),
@@ -210,6 +260,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             self.ctrl.last_frame_time.set(Some(now));
             self.ctrl.drag_mode.set(DragMode::None);
             self.ctrl.last_pointer_pos.set(None);
+            // A pointer interaction owns the edge from here on, so a wheel or
+            // trackpad gesture can no longer hold the stretch: without this a
+            // contact hold whose lift was never reported would freeze it.
+            self.ctrl.release_overscroll_recovery();
+            self.ctrl.begin_device_contact(false);
             match event {
                 ElementEvent::PointerUp(_, _, id) => {
                     if self.ctrl.active_touch_id.get() == Some(*id) {
@@ -244,55 +299,25 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         }
 
         let we_consumed = match event {
-            ElementEvent::Scroll { delta, kind, phase } => {
-                 // info!("Scroll phase: {phase:?}");
-                let offset = self.ctrl.scroll_offset.get();
-                //
-                // if *phase == TouchPhase::Ended {
-                //     self.ctrl.scroll_behavior.boun
-                // }
-
-                // println!("offset: {:?}", offset);
-                let clamped = self.ctrl.clamp_offset(offset);
-
-                let mut scroll_delta = match self.ctrl.axis {
-                    ScrollAxis::Vertical => Vec2d { x: 0.0, y: delta.y },
-                    ScrollAxis::Horizontal => Vec2d { x: delta.x, y: 0.0 },
-                };
-
-                if self.ctrl.scroll_behavior.bouncy {
-                    // Constant maximum resistance when out-of-bounds.
-                    // Content moves at OOB_DRAG_RESISTANCE × finger speed
-                    // the instant the boundary is crossed — no gradual ramp.
-                    match self.ctrl.axis {
-                        ScrollAxis::Vertical => {
-                            if offset.y != clamped.y {
-                                scroll_delta.y *= OOB_DRAG_RESISTANCE;
-                            }
-                        }
-                        ScrollAxis::Horizontal => {
-                            if offset.x != clamped.x {
-                                scroll_delta.x *= OOB_DRAG_RESISTANCE;
-                            }
-                        }
-                    }
+            ElementEvent::Scroll {
+                delta,
+                kind,
+                phase,
+                is_direct_manipulation,
+            } => {
+                if apply_scroll_frame(
+                    &self.ctrl,
+                    *delta,
+                    *kind,
+                    *phase,
+                    *is_direct_manipulation,
+                ) {
+                    self.ctrl.begin_scroll();
+                    aimer_events::window::request_animation_frame();
                 }
-
-                if matches!(kind, ScrollDeltaKind::Line) {
-                    self.ctrl.apply_line_wheel_delta(scroll_delta);
-                } else {
-                    self.ctrl.apply_precise_scroll_delta(scroll_delta);
-                }
-
-                self.ctrl.last_event_time.set(Some(AnimInstant::now()));
-
-                // A wheel/trackpad tick starts (or continues) a scroll session;
-                // the draw loop fires the matching `end` once the glide settles.
-                self.ctrl.begin_scroll();
-                aimer_events::window::request_animation_frame();
                 true
             }
-            ElementEvent::PointerDown(p, _, id) => {
+            ElementEvent::PointerDown(p, source, id) => {
                 if let Some(prev_id) = self.ctrl.active_touch_id.get()
                     && prev_id != *id
                 {
@@ -311,6 +336,14 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     }
                 }
                 self.ctrl.active_touch_id.set(Some(*id));
+                // A touch/mouse interaction takes over from any wheel/trackpad
+                // gesture, so it must not inherit that gesture's recovery state
+                // nor be judged by the device that produced it.
+                self.ctrl
+                    .set_overscroll_source(drag_overscroll_source(*source));
+                self.ctrl.release_overscroll_recovery();
+                self.ctrl.begin_device_contact(false);
+                self.ctrl.reset_overscroll_peak();
                 // info!("[scroll] PointerDown id={} pos=({:.1},{:.1})", id, p.x, p.y);
 
                 let mut mode = DragMode::Pending;
@@ -425,16 +458,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             self.ctrl.accumulate_drag_velocity(dx, dy, now)
                         {
                             let mut new_velocity = match mode {
-                                DragMode::Content => match self.ctrl.axis {
-                                    ScrollAxis::Vertical => Vec2d {
-                                        x: 0.0,
-                                        y: raw_velocity.y,
-                                    },
-                                    ScrollAxis::Horizontal => Vec2d {
-                                        x: raw_velocity.x,
-                                        y: 0.0,
-                                    },
-                                },
+                                DragMode::Content => axis_velocity(self.ctrl.axis, raw_velocity),
                                 _ => Vec2d { x: 0.0, y: 0.0 },
                             };
 
@@ -451,7 +475,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                                 }
                             }
 
-                            self.ctrl.push_velocity(new_velocity.x, new_velocity.y);
+                            self.ctrl.push_velocity(new_velocity, sample_dt, now);
 
                             let blend_factor = (sample_dt / DRAG_BLEND_WINDOW).min(1.0);
                             let blend_new =
@@ -467,28 +491,20 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         }
 
                         let mut offset = self.ctrl.scroll_offset.get();
-                        let clamped = self.ctrl.clamp_offset(offset);
 
                         match mode {
                             DragMode::Content => {
-                                // Constant maximum resistance when out-of-bounds.
-                                // Applied immediately — no gradual ramp.
-                                match self.ctrl.axis {
-                                    ScrollAxis::Vertical => {
-                                        let mut actual_dy = dy;
-                                        if offset.y != clamped.y {
-                                            actual_dy *= OOB_DRAG_RESISTANCE;
-                                        }
-                                        offset.y += actual_dy;
-                                    }
-                                    ScrollAxis::Horizontal => {
-                                        let mut actual_dx = dx;
-                                        if offset.x != clamped.x {
-                                            actual_dx *= OOB_DRAG_RESISTANCE;
-                                        }
-                                        offset.x += actual_dx;
-                                    }
-                                }
+                                // Same rubber band the wheel / trackpad path
+                                // uses: resistance grows with the stretch, so a
+                                // finger held past the edge stops pulling the
+                                // content further out.
+                                let step = self.ctrl.resisted_overscroll_delta(match self.ctrl.axis
+                                {
+                                    ScrollAxis::Vertical => Vec2d { x: 0.0, y: dy },
+                                    ScrollAxis::Horizontal => Vec2d { x: dx, y: 0.0 },
+                                });
+                                offset.x += step.x;
+                                offset.y += step.y;
                             }
                             DragMode::VerticalScrollbar => {
                                 let target_y = offset.y - dy * self.ctrl.v_scroll_multiplier.get();
@@ -503,7 +519,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             _ => {}
                         }
 
-                        if !self.ctrl.scroll_behavior.bouncy {
+                        if !self.ctrl.bouncy() {
                             offset = self.ctrl.clamp_offset(offset);
                         }
                         self.ctrl.scroll_offset.set(offset);
@@ -575,10 +591,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 };
 
                 if let Some(delta) = scroll {
+                    self.ctrl.set_overscroll_source(OverscrollSource::Keyboard);
                     let mut offset = self.ctrl.scroll_offset.get();
                     offset.x += delta.x;
                     offset.y += delta.y;
-                    if !self.ctrl.scroll_behavior.bouncy {
+                    if !self.ctrl.bouncy() {
                         offset = self.ctrl.clamp_offset(offset);
                     }
                     self.ctrl.scroll_offset.set(offset);
@@ -775,6 +792,7 @@ mod tests {
             delta: Vec2d { x: 0.0, y: -120.0 },
             phase: TouchPhase::Moved,
             kind: ScrollDeltaKind::Pixel,
+            is_direct_manipulation: false,
         };
 
         let position = child_dispatch_position(&event, cursor);

@@ -210,8 +210,6 @@ impl State<TextField> for TextFieldState {
 }
 
 impl TextField {
-    /// Default padding applied between the decoration and editable content.
-    pub const DEFAULT_PADDING: LayoutSpacing = LayoutSpacing::all(Spacing::Px(4));
 
     /// Creates an empty, enabled, editable field with default styling and no-op
     /// callbacks.
@@ -245,7 +243,7 @@ impl TextField {
             on_focus: TextFieldCallback::default(),
             on_blur: TextFieldCallback::default(),
             read_only: false,
-            padding: Self::DEFAULT_PADDING,
+            padding: LayoutSpacing::default(),
             widget_key: None,
         }
     }

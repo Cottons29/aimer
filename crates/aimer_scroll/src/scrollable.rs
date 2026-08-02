@@ -1,11 +1,25 @@
 pub mod constants;
 pub mod controller;
+pub mod device_contact;
 pub mod draw_scroll;
 pub mod handle_scroll;
+pub mod overscroll_source;
 pub mod raw_scroll;
+pub mod recovery_end;
 pub mod scroll_bar;
 pub mod scroll_behavior;
+pub mod scroll_frame;
 pub mod scroll_storage;
+pub mod spring;
+pub mod velocity_history;
+/// Browser-only gesture analysis. Compiled for the host as well so its logic
+/// stays covered by the workspace test run.
+#[cfg(any(target_arch = "wasm32", test))]
+pub mod web_overscroll;
+/// Browser-only gesture termination. Compiled for the host as well so its
+/// logic stays covered by the workspace test run.
+#[cfg(any(target_arch = "wasm32", test))]
+pub mod web_recovery_end;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -20,9 +34,11 @@ use aimer_widget::{
     AnyElement, AnyWidget, Element, Key, RequiredChild, State, StateUpdater, StatefulElement,
     StatefulWidget, Widget,
 };
+use controller::ScrollState;
 pub use controller::{DragMode, ScrollController};
-use controller::{ScrollState, VelocityHistory};
+pub use overscroll_source::{OverscrollSource, OverscrollSources};
 pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
+use velocity_history::VelocityHistory;
 
 use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
@@ -37,6 +53,10 @@ pub use crate::scrollable::scroll_bar::*;
 ///
 /// Attach a child with [`Scrollable::child`] to retain its concrete type, or
 /// with [`Scrollable::box_child`] when branches need a shared erased type.
+///
+/// On the web target the bouncy edges of [`ScrollBehavior`] are off for the
+/// wheel only; [`Scrollable::web_overscroll`] takes the bitmap that decides
+/// which input devices bounce there.
 ///
 /// # Example
 ///
@@ -68,6 +88,10 @@ pub struct Scrollable<W = RequiredChild> {
     /// controller shares this scrollable's state and survives rebuilds. `None`
     /// keeps the zero-cost default (internally managed) behavior.
     pub controller: Option<ScrollController>,
+    /// Which input devices may rubber-band a bouncy edge on the web target.
+    /// Defaults to [`OverscrollSources::WEB_DEFAULT`] and is ignored
+    /// everywhere else. See [`Scrollable::web_overscroll`].
+    pub web_overscroll: OverscrollSources,
 }
 
 impl Default for Scrollable {
@@ -92,6 +116,7 @@ impl Scrollable {
             horizontal_scroll_bar: Some(ScrollBar::default()),
             key: key!(),
             controller: None,
+            web_overscroll: OverscrollSources::WEB_DEFAULT,
         }
     }
 
@@ -111,6 +136,7 @@ impl Scrollable {
             horizontal_scroll_bar: Some(ScrollBar::default()),
             key: Key::unique(),
             controller: None,
+            web_overscroll: OverscrollSources::WEB_DEFAULT,
         }
     }
 
@@ -164,6 +190,47 @@ impl Scrollable {
         self
     }
 
+    /// Chooses which input devices may rubber-band a bouncy edge on the web
+    /// target.
+    ///
+    /// A browser reports a finger landing and lifting exactly like a native
+    /// platform does, so touch scrolling bounces there normally. Its `wheel`
+    /// stream reports neither: it appends a momentum tail of its own after the
+    /// user has let go, and an edge fed by that stream stretches on deltas
+    /// nobody is producing. Only the wheel is therefore clamped by default —
+    /// [`OverscrollSources::WEB_DEFAULT`].
+    ///
+    /// The bitmap only removes the bounce; it never adds one. A behavior that
+    /// is not [`bouncy`](ScrollBehavior::bouncy) stays rigid on every device,
+    /// and native targets ignore this setting entirely.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use aimer_container::SizedBox;
+    /// use aimer_scroll::{OverscrollSources, Scrollable};
+    ///
+    /// // Rubber-band edges in the browser for every device, wheel included.
+    /// let viewport = Scrollable::new().web_overscroll(OverscrollSources::ALL)
+    ///                                 .child(SizedBox::new().height(2000));
+    /// ```
+    ///
+    /// Narrow it instead of widening it — here nothing but a finger bounces:
+    ///
+    /// ```rust
+    /// use aimer_container::SizedBox;
+    /// use aimer_scroll::{OverscrollSource, OverscrollSources, Scrollable};
+    ///
+    /// let touch_only = OverscrollSources::NONE.with(OverscrollSource::Touch);
+    /// let viewport = Scrollable::new().web_overscroll(touch_only)
+    ///                                 .child(SizedBox::new().height(2000));
+    /// ```
+    #[inline]
+    pub fn web_overscroll(mut self, web_overscroll: impl Into<OverscrollSources>) -> Self {
+        self.web_overscroll = web_overscroll.into();
+        self
+    }
+
     /// Attaches an application-owned controller for reading or driving offset.
     ///
     /// By default no controller is attached. The supplied controller replaces
@@ -189,6 +256,7 @@ impl Scrollable {
             controller: self.controller,
             vertical_scroll_bar: self.vertical_scroll_bar,
             horizontal_scroll_bar: self.horizontal_scroll_bar,
+            web_overscroll: self.web_overscroll,
         }
     }
 
@@ -217,6 +285,7 @@ pub struct ScrollableState<W: Widget + 'static> {
     horizontal_scroll_bar: Option<ScrollBar>,
     key: Key,
     controller: Option<ScrollController>,
+    web_overscroll: OverscrollSources,
     scroll_state: RefCell<Option<Rc<ScrollState>>>,
     refresh_scroll_state: Cell<bool>,
 }
@@ -233,6 +302,7 @@ impl<W: Widget + 'static> StatefulWidget for Scrollable<W> {
             horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
             key: self.key.clone(),
             controller: self.controller.clone(),
+            web_overscroll: self.web_overscroll,
             scroll_state: RefCell::new(None),
             refresh_scroll_state: Cell::new(false),
         }
@@ -259,6 +329,7 @@ impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
         let engine_config_changed =
             !same_scroll_behavior(self.scroll_behavior, new.scroll_behavior)
                 || !same_scroll_axis(self.axis, new.axis)
+                || self.web_overscroll != new.web_overscroll
                 || self.key != new.key
                 || controller_changed;
 
@@ -268,6 +339,7 @@ impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
         self.vertical_scroll_bar = new.vertical_scroll_bar.clone();
         self.horizontal_scroll_bar = new.horizontal_scroll_bar.clone();
         self.key = new.key.clone();
+        self.web_overscroll = new.web_overscroll;
 
         if let Some(new_ctrl) = new.controller.clone() {
             self.controller = Some(new_ctrl);
@@ -345,6 +417,11 @@ impl<W: Widget + 'static> ScrollableState<W> {
             };
         }
 
+        // Which devices the target trusts with a rubber band is fixed for the
+        // life of the engine; only the device currently scrolling changes.
+        let overscroll_sources =
+            resolved_overscroll_sources(self.web_overscroll, cfg!(target_arch = "wasm32"));
+
         let state = Rc::new(ScrollState {
             speed_multiplier: ctx.scale,
             scroll_offset: Cell::new(initial_offset),
@@ -365,6 +442,8 @@ impl<W: Widget + 'static> ScrollableState<W> {
             h_scroll_multiplier: Cell::new(0.0),
             last_scale: Cell::new(ctx.scale),
             scroll_behavior: self.scroll_behavior,
+            overscroll_sources,
+            overscroll_source: Cell::new(OverscrollSource::Wheel),
             axis: self.axis,
             cursor_pos: Cell::new(None),
             velocity_history: RefCell::new(VelocityHistory::new()),
@@ -390,9 +469,40 @@ impl<W: Widget + 'static> ScrollableState<W> {
             on_scroll_end: RefCell::new(Callback::default()),
             on_scroll: RefCell::new(Callback::default()),
             last_reported_offset: Cell::new(None),
+            overscroll_hold: Cell::new(None),
+            direct_overscroll_hold: Cell::new(false),
+            highest_overscroll_offset: Default::default(),
+            overscroll_peak_at: Cell::new(None),
+            device_contact: Cell::new(false),
+            #[cfg(target_arch = "wasm32")]
+            web_overscroll_decay: web_overscroll::WebOverscrollDecay::new(),
+            #[cfg(target_arch = "wasm32")]
+            web_recovery_end: web_recovery_end::WebRecoveryEnd::new(),
         });
 
         state
+    }
+}
+
+/// The devices the scroll engine is actually built to rubber-band for.
+///
+/// `web_overscroll` is the [`Scrollable::web_overscroll`] bitmap and
+/// `target_web` whether the build runs in a browser. Only a browser narrows
+/// the set: every native platform reports the end of every gesture, so nothing
+/// there needs to be held back.
+///
+/// [`ScrollBehavior::bouncy`] is left untouched — resistance, recovery and
+/// friction stay exactly as declared, so a device that keeps its bounce keeps
+/// the tuning the app asked for.
+#[inline]
+const fn resolved_overscroll_sources(
+    web_overscroll: OverscrollSources,
+    target_web: bool,
+) -> OverscrollSources {
+    if target_web {
+        web_overscroll
+    } else {
+        OverscrollSources::ALL
     }
 }
 
@@ -453,9 +563,76 @@ impl<W: Widget + 'static> Widget for ScrollableFrame<W> {
 mod tests {
     use aimer_widget::{ErrorWidget, State, StatefulWidget};
 
-    use super::{ScrollAxis, Scrollable};
+    use super::{
+        OverscrollSource, OverscrollSources, ScrollAxis, Scrollable, resolved_overscroll_sources,
+    };
 
     fn assert_stateful_widget<W: StatefulWidget>() {}
+
+    #[test]
+    fn a_native_viewport_bounces_for_every_device() {
+        let narrowed = OverscrollSources::NONE.with(OverscrollSource::Touch);
+
+        assert_eq!(
+            resolved_overscroll_sources(narrowed, false),
+            OverscrollSources::ALL,
+            "a native platform reports every gesture, so nothing is held back"
+        );
+    }
+
+    #[test]
+    fn the_browser_clamps_only_the_devices_the_bitmap_leaves_out() {
+        let resolved = resolved_overscroll_sources(OverscrollSources::WEB_DEFAULT, true);
+
+        assert!(
+            !resolved.contains(OverscrollSource::Wheel),
+            "a browser wheel stream never reports the end of its gesture"
+        );
+        assert!(
+            resolved.contains(OverscrollSource::Touch),
+            "a touch screen scrolls normally in a browser"
+        );
+        assert_eq!(
+            resolved_overscroll_sources(OverscrollSources::ALL, true),
+            OverscrollSources::ALL,
+            "an app may hand the wheel its bounce back"
+        );
+    }
+
+    #[test]
+    fn only_the_wheel_is_clamped_on_the_web_by_default() {
+        assert_eq!(
+            Scrollable::new().web_overscroll,
+            OverscrollSources::WEB_DEFAULT
+        );
+        assert_eq!(
+            Scrollable::new()
+                .web_overscroll(OverscrollSources::ALL)
+                .web_overscroll,
+            OverscrollSources::ALL
+        );
+        assert_eq!(
+            Scrollable::new()
+                .web_overscroll(OverscrollSource::Touch)
+                .web_overscroll,
+            OverscrollSources::from(OverscrollSource::Touch),
+            "a single source names the set that holds just it"
+        );
+    }
+
+    #[test]
+    fn changing_the_web_bitmap_rebuilds_the_scroll_engine() {
+        let current = Scrollable::new().child(ErrorWidget::new("current"));
+        let next = Scrollable::new()
+            .web_overscroll(OverscrollSources::ALL)
+            .child(ErrorWidget::new("next"));
+        let mut state = current.create_state();
+
+        state.adopt_config_from(&next.create_state());
+
+        assert_eq!(state.web_overscroll, OverscrollSources::ALL);
+        assert!(state.refresh_scroll_state.get());
+    }
 
     #[test]
     fn scrollable_uses_the_standard_stateful_widget_lifecycle() {

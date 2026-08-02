@@ -11,69 +11,15 @@ use aimer_widget::Key;
 
 use crate::scrollable::ScrollAxis;
 use crate::scrollable::constants::*;
+use crate::scrollable::overscroll_source::{OverscrollSource, OverscrollSources};
 use crate::scrollable::scroll_behavior::ScrollBehavior;
+use crate::scrollable::spring::advance_overscroll_spring;
+use crate::scrollable::velocity_history::VelocityHistory;
 
 /// Minimum logical-pixel movement between two frames for `on_scroll` to fire.
 /// Collapses idle frames and sub-pixel jitter to no-ops so the per-frame
 /// callback only reports genuine scrolling.
 pub(crate) const SCROLL_NOTIFY_EPSILON: f32 = 0.01;
-
-/// Ring buffer of recent velocity samples for trackpad smoothing.
-#[derive(Clone)]
-pub(crate) struct VelocityHistory {
-    samples: Vec<(f32, f32)>,
-    count: usize,
-    write_pos: usize,
-}
-
-impl VelocityHistory {
-    pub(crate) fn new() -> Self {
-        Self {
-            samples: vec![(0.0, 0.0); VELOCITY_HISTORY_SIZE],
-            count: 0,
-            write_pos: 0,
-        }
-    }
-
-    fn push(&mut self, vx: f32, vy: f32) {
-        self.samples[self.write_pos] = (vx, vy);
-        self.write_pos = (self.write_pos + 1) % VELOCITY_HISTORY_SIZE;
-        if self.count < VELOCITY_HISTORY_SIZE {
-            self.count += 1;
-        }
-    }
-
-    fn weighted_average(&self) -> (f32, f32) {
-        if self.count == 0 {
-            return (0.0, 0.0);
-        }
-        let mut sum_x = 0.0f32;
-        let mut sum_y = 0.0f32;
-        let mut weight_sum = 0.0f32;
-        // Oldest written sample. When the buffer is full this is `write_pos`
-        // (the slot about to be overwritten); when it is only partially filled
-        // — e.g. right after `clear()` — the written samples occupy the `count`
-        // slots ENDING at `write_pos - 1`, so the oldest is `write_pos - count`.
-        // Using `write_pos` unconditionally (the old code) read stale/leftover
-        // slots on a partial buffer, so a `clear()` never actually took effect
-        // and stale opposite-direction velocity leaked into the release fling.
-        let start = (self.write_pos + VELOCITY_HISTORY_SIZE - self.count) % VELOCITY_HISTORY_SIZE;
-        for i in 0..self.count {
-            // Read oldest-first so newest entries get the heaviest weight.
-            let idx = (start + i) % VELOCITY_HISTORY_SIZE;
-            let weight = (i + 1) as f32;
-            sum_x += self.samples[idx].0 * weight;
-            sum_y += self.samples[idx].1 * weight;
-            weight_sum += weight;
-        }
-        (sum_x / weight_sum, sum_y / weight_sum)
-    }
-
-    fn clear(&mut self) {
-        self.count = 0;
-        self.write_pos = 0;
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DragMode {
@@ -92,6 +38,19 @@ impl ScrollState {
 
 pub struct ScrollState {
     pub(crate) scroll_behavior: ScrollBehavior,
+    /// Which input devices this target lets stretch a bouncy edge.
+    ///
+    /// Resolved once when the engine is built (see
+    /// [`Scrollable::overscroll_sources`](crate::Scrollable::overscroll_sources))
+    /// and never mutated, so reading it costs a load and a mask.
+    pub(crate) overscroll_sources: OverscrollSources,
+    /// The device that drove the most recent scroll input, which is the one
+    /// [`bouncy`](Self::bouncy) is resolved against.
+    ///
+    /// Momentum, spring-back and every other frame the draw loop produces
+    /// belong to the gesture that started them, so this deliberately survives
+    /// until the next input arrives.
+    pub(crate) overscroll_source: Cell<OverscrollSource>,
     pub(crate) axis: ScrollAxis,
     pub(crate) scroll_offset: Cell<Vec2d>,
     /// `PageStorage`-style key this scrollable saves its live offset under, so
@@ -116,6 +75,47 @@ pub struct ScrollState {
     pub(crate) cached_viewport: Cell<(f32, f32)>,
     pub(crate) cached_v_track_width: Cell<f32>,
     pub(crate) cached_h_track_width: Cell<f32>,
+    /// Furthest signed per-axis distance the content was stretched past an
+    /// edge during the current overscroll episode, in the same convention as
+    /// [`scroll_offset`](Self::scroll_offset).
+    ///
+    /// This high-water mark rejects weaker outward tail deltas after recovery
+    /// starts. It survives reaching the boundary and is cleared when the
+    /// device gesture terminates, a new gesture starts, or it goes idle (see
+    /// [`overscroll_peak_at`](Self::overscroll_peak_at)).
+    pub(crate) highest_overscroll_offset: Cell<Vec2d>,
+    /// Instant the overscroll high-water mark was last raised or measured
+    /// against a device delta, or `None` when no mark is live.
+    ///
+    /// The mark is only meaningful while the gesture that produced it can still
+    /// have events in flight, so it is timed exactly like the recovery hold:
+    /// after [`OVERSCROLL_PEAK_IDLE_MS`] without a single device event the
+    /// episode is over and the mark is dropped. Without this the mark depends
+    /// on gesture-boundary phases alone, and a boundary the platform never
+    /// delivers (a smoothing channel that stays active across two gestures, a
+    /// lift swallowed by a focus change) leaves the edge permanently unable to
+    /// stretch.
+    pub(crate) overscroll_peak_at: Cell<Option<AnimInstant>>,
+    /// Whether the last delivered scroll frame reported fingers on the device.
+    ///
+    /// Used to detect the rising edge of physical contact, which starts a new
+    /// overscroll episode regardless of the phase the smoothing layer chose to
+    /// label that frame with.
+    pub(crate) device_contact: Cell<bool>,
+    /// Recognizes the browser's post-lift momentum tail, which is the only
+    /// lift signal a web scroll gesture ever gets.
+    ///
+    /// Native platforms report contact themselves, so this exists on the web
+    /// target only and no other target pays for it.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) web_overscroll_decay: crate::scrollable::web_overscroll::WebOverscrollDecay,
+    /// Closes the synthesized web gesture once its bouncy edge has recovered,
+    /// and discards whatever the browser still delivers for it.
+    ///
+    /// Native platforms end their own gestures, so this exists on the web
+    /// target only and no other target pays for it.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) web_recovery_end: crate::scrollable::web_recovery_end::WebRecoveryEnd,
     /// Content size computed once at the start of each `draw`, reused by the
     /// scrollbar drawing path so child layout is not recomputed within a frame.
     pub(crate) cached_content_size: Cell<ResolvedSize>,
@@ -177,6 +177,22 @@ pub struct ScrollState {
     /// establishes the baseline (so the initial render never fires
     /// `on_scroll`).
     pub(crate) last_reported_offset: Cell<Option<Vec2d>>,
+    /// Instant when a wheel / trackpad gesture first crossed a scroll boundary,
+    /// or `None` when no recovery grace period is active.
+    ///
+    /// While this contains a recent timestamp, bouncy edge recovery is held so
+    /// the first overscroll event can render without immediately fighting the
+    /// spring. Later events do not refresh this grace period.
+    ///
+    /// The timestamp is what makes the hold self-terminating: see
+    /// [`overscroll_recovery_held_at`](Self::overscroll_recovery_held_at).
+    pub(crate) overscroll_hold: Cell<Option<AnimInstant>>,
+    /// Whether active trackpad contact is holding the stretched edge.
+    ///
+    /// Unlike [`overscroll_hold`](Self::overscroll_hold), this does not expire:
+    /// the platform's direct-manipulation signal releases it exactly when the
+    /// user lifts their fingers. Post-lift momentum never sets it.
+    pub(crate) direct_overscroll_hold: Cell<bool>,
 }
 
 impl ScrollState {
@@ -209,6 +225,218 @@ impl ScrollState {
         self.is_scrolling.set(prev.is_scrolling.get());
         self.last_reported_offset
             .set(prev.last_reported_offset.get());
+        self.overscroll_hold.set(prev.overscroll_hold.get());
+        self.overscroll_source.set(prev.overscroll_source.get());
+        self.direct_overscroll_hold
+            .set(prev.direct_overscroll_hold.get());
+        self.highest_overscroll_offset
+            .set(prev.highest_overscroll_offset.get());
+        self.overscroll_peak_at.set(prev.overscroll_peak_at.get());
+        self.device_contact.set(prev.device_contact.get());
+    }
+
+    /// Whether the edges rubber-band for the device that is currently
+    /// scrolling.
+    ///
+    /// [`ScrollBehavior::bouncy`] declares whether the viewport bounces at
+    /// all; [`overscroll_sources`](Self::overscroll_sources) decides which
+    /// devices are trusted with it on this target. Both must agree, so a
+    /// browser can keep bouncy touch scrolling while its wheel stream — which
+    /// never reports the end of a gesture — clamps at the edge.
+    #[inline]
+    pub(crate) fn bouncy(&self) -> bool {
+        self.scroll_behavior.bouncy && self.overscroll_sources.contains(self.overscroll_source.get())
+    }
+
+    /// Records the device that produced the input now being applied.
+    ///
+    /// Called at the head of every input path — wheel frames, pointer drags
+    /// and keyboard steps — so the frames that follow resolve
+    /// [`bouncy`](Self::bouncy) against the device the user actually used.
+    #[inline]
+    pub(crate) fn set_overscroll_source(&self, source: OverscrollSource) {
+        self.overscroll_source.set(source);
+    }
+
+    /// Briefly hold bouncy edge recovery when a wheel / trackpad gesture first
+    /// crosses a boundary.
+    #[inline]
+    pub(crate) fn hold_overscroll_recovery(&self) {
+        self.hold_overscroll_recovery_at(AnimInstant::now());
+    }
+
+    /// [`hold_overscroll_recovery`](Self::hold_overscroll_recovery) with an
+    /// explicit instant, so grace-period expiry is testable without sleeping.
+    #[inline]
+    pub(crate) fn hold_overscroll_recovery_at(&self, at: AnimInstant) {
+        self.overscroll_hold.set(Some(at));
+    }
+
+    /// Hold bouncy recovery while the user keeps physical contact with the
+    /// trackpad after stretching past an edge.
+    #[inline]
+    pub(crate) fn hold_overscroll_for_direct_manipulation(&self) {
+        self.direct_overscroll_hold.set(true);
+    }
+
+    /// Release the hold: the gesture ended, so the next frame springs the
+    /// content back to the edge. A no-op when nothing is held.
+    ///
+    /// The overscroll peak deliberately survives this call because it guards
+    /// the recovery that starts when the hold is released.
+    #[inline]
+    pub(crate) fn release_overscroll_recovery(&self) {
+        self.overscroll_hold.set(None);
+        self.direct_overscroll_hold.set(false);
+    }
+
+    /// Release only the contact hold, leaving a timed hold in place.
+    ///
+    /// Used when a frame proves the fingers left the device while the edge is
+    /// still stretched: the non-expiring contact hold must go, but the short
+    /// grace period that lets the crossing frame reach the screen may stay.
+    #[inline]
+    pub(crate) fn release_direct_overscroll_hold(&self) {
+        self.direct_overscroll_hold.set(false);
+    }
+
+    /// Signed per-axis distance `offset` sits past the valid scroll range, or
+    /// zero on an axis that is inside it.
+    #[inline]
+    pub(crate) fn overscroll_distance(&self, offset: Vec2d) -> Vec2d {
+        let clamped = self.clamp_offset(offset);
+        Vec2d {
+            x: offset.x - clamped.x,
+            y: offset.y - clamped.y,
+        }
+    }
+
+    /// Raise the current device gesture's high-water mark for each stretched
+    /// axis.
+    ///
+    /// Returning to the valid range deliberately does not clear the peak: the
+    /// operating system may still deliver outward momentum-tail events after
+    /// spring recovery finishes. Crossing to the opposite edge starts a new
+    /// per-axis peak.
+    #[inline]
+    pub(crate) fn record_overscroll_peak(&self, offset: Vec2d) {
+        self.record_overscroll_peak_at(offset, AnimInstant::now());
+    }
+
+    /// [`record_overscroll_peak`](Self::record_overscroll_peak) with an explicit
+    /// instant, so idle expiry is testable without sleeping.
+    ///
+    /// `at` is stored only when the mark actually grows: a shrinking stretch
+    /// (spring recovery) must not keep the episode alive, otherwise the mark
+    /// could never go idle.
+    pub(crate) fn record_overscroll_peak_at(&self, offset: Vec2d, at: AnimInstant) {
+        let stretch = self.overscroll_distance(offset);
+        let mut peak = self.highest_overscroll_offset.get();
+        let mut raised = false;
+        if stretch.x != 0.0
+            && (stretch.x.signum() != peak.x.signum() || stretch.x.abs() > peak.x.abs())
+        {
+            peak.x = stretch.x;
+            raised = true;
+        }
+        if stretch.y != 0.0
+            && (stretch.y.signum() != peak.y.signum() || stretch.y.abs() > peak.y.abs())
+        {
+            peak.y = stretch.y;
+            raised = true;
+        }
+        if raised {
+            self.highest_overscroll_offset.set(peak);
+            self.overscroll_peak_at.set(Some(at));
+        }
+    }
+
+    /// Clear device-tail suppression at a gesture lifecycle boundary.
+    #[inline]
+    pub(crate) fn reset_overscroll_peak(&self) {
+        self.highest_overscroll_offset.set(Vec2d::ZERO);
+        self.overscroll_peak_at.set(None);
+    }
+
+    /// Fold one frame's contact signal in, reporting whether it opens a new
+    /// physical gesture.
+    ///
+    /// A rising edge clears the previous episode's high-water mark: the fingers
+    /// just landed, so nothing about the last gesture may gate this one. This
+    /// is deliberately independent of [`TouchPhase`](aimer_events::element::TouchPhase),
+    /// which the smoothing layer synthesizes per channel and therefore cannot
+    /// be trusted to mark every gesture boundary.
+    pub(crate) fn begin_device_contact(&self, contact: bool) -> bool {
+        let started = !self.device_contact.replace(contact) && contact;
+        if started {
+            self.reset_overscroll_peak();
+        }
+        started
+    }
+
+    /// Drop an overscroll high-water mark whose episode went idle at `now`.
+    ///
+    /// Returns whether a mark is still live afterwards.
+    fn overscroll_peak_is_live_at(&self, now: AnimInstant) -> bool {
+        match self.overscroll_peak_at.get() {
+            Some(at) if now.duration_since(at).as_millis() <= OVERSCROLL_PEAK_IDLE_MS => true,
+            Some(_) => {
+                self.reset_overscroll_peak();
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Whether an input step may update an overscrolled axis at `now`.
+    ///
+    /// Steps that shorten the stretch always apply. An outward step applies
+    /// only when it exceeds the episode's previous peak, which distinguishes
+    /// renewed user intent from a decaying device-scroll tail during recovery.
+    /// A peak whose episode went idle no longer gates anything, so a gesture
+    /// boundary the platform failed to report cannot wedge the edge.
+    fn accepts_overscroll_step_at(
+        &self,
+        current: Vec2d,
+        next: Vec2d,
+        now: AnimInstant,
+    ) -> bool {
+        if !self.bouncy() {
+            return true;
+        }
+        if !self.overscroll_peak_is_live_at(now) {
+            return true;
+        }
+        let from = self.overscroll_distance(current);
+        let to = self.overscroll_distance(next);
+        let peak = self.highest_overscroll_offset.get();
+        Self::axis_accepts_overscroll_step(from.x, to.x, peak.x)
+            && Self::axis_accepts_overscroll_step(from.y, to.y, peak.y)
+    }
+
+    #[inline(always)]
+    fn axis_accepts_overscroll_step(from: f32, to: f32, peak: f32) -> bool {
+        to.abs() <= from.abs() || to.signum() != peak.signum() || to.abs() > peak.abs()
+    }
+
+    /// Whether edge recovery is still in its initial grace period at `now`.
+    ///
+    /// A hold older than [`OVERSCROLL_HOLD_IDLE_MS`] is expired and cleared on
+    /// the spot so recovery starts independently of the device gesture's tail.
+    pub(crate) fn overscroll_recovery_held_at(&self, now: AnimInstant) -> bool {
+        if self.direct_overscroll_hold.get() {
+            return true;
+        }
+        match self.overscroll_hold.get() {
+            Some(last) => {
+                let held = now.duration_since(last).as_millis() <= OVERSCROLL_HOLD_IDLE_MS;
+                if !held {
+                    self.overscroll_hold.set(None);
+                }
+                held
+            }
+            None => false,
+        }
     }
 
     /// Current scroll position in logical (unscaled) pixels, measured from the
@@ -396,6 +624,8 @@ impl ScrollController {
             s.cancel_fling();
             s.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
             s.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+            s.release_overscroll_recovery();
+            s.reset_overscroll_peak();
             // An instant jump is a self-contained scroll session: fire the
             // start/end edges around the position change so listeners still see
             // a matched pair even though no frames elapse.
@@ -589,7 +819,7 @@ impl ScrollState {
             x: offset.x + scroll_delta.x,
             y: offset.y + scroll_delta.y,
         };
-        if !self.scroll_behavior.bouncy {
+        if !self.bouncy() {
             next = self.clamp_offset(next);
         }
         next
@@ -600,10 +830,8 @@ impl ScrollState {
     /// A line wheel has no native gesture velocity to preserve. Each frame step
     /// therefore updates the offset once and clears any previous glide; bouncy
     /// edge recovery remains draw-driven.
-    pub(crate) fn apply_line_wheel_delta(&self, scroll_delta: Vec2d) {
-        let offset = self.apply_wheel_delta(self.scroll_offset.get(), scroll_delta);
-        self.scroll_offset.set(offset);
-        self.stop_device_scroll_momentum();
+    pub(crate) fn apply_line_wheel_delta(&self, scroll_delta: Vec2d) -> bool {
+        self.commit_device_scroll_delta(scroll_delta, AnimInstant::now())
     }
 
     /// Apply one pixel-precise device delta without deriving a second glide.
@@ -612,10 +840,36 @@ impl ScrollState {
     /// systems and browsers provide the gesture's own deceleration samples.
     /// Keeping this layer distance-only prevents double integration and leaves
     /// touch/mouse drag release flings unchanged.
-    pub(crate) fn apply_precise_scroll_delta(&self, scroll_delta: Vec2d) {
-        let offset = self.apply_wheel_delta(self.scroll_offset.get(), scroll_delta);
-        self.scroll_offset.set(offset);
+    pub(crate) fn apply_precise_scroll_delta(&self, scroll_delta: Vec2d) -> bool {
+        self.apply_precise_scroll_delta_at(scroll_delta, AnimInstant::now())
+    }
+
+    /// [`apply_precise_scroll_delta`](Self::apply_precise_scroll_delta) at an
+    /// explicit instant, so episode expiry is testable without sleeping.
+    pub(crate) fn apply_precise_scroll_delta_at(
+        &self,
+        scroll_delta: Vec2d,
+        now: AnimInstant,
+    ) -> bool {
+        self.commit_device_scroll_delta(scroll_delta, now)
+    }
+
+    /// Store one device delta unless it is a weaker outward re-stretch of an
+    /// overscroll episode that is already recovering.
+    ///
+    /// A rejected delta still proves the gesture's tail is running, so it keeps
+    /// the high-water mark alive; only a genuine silence lets the mark expire.
+    fn commit_device_scroll_delta(&self, scroll_delta: Vec2d, now: AnimInstant) -> bool {
+        let current = self.scroll_offset.get();
+        let next = self.apply_wheel_delta(current, scroll_delta);
+        if !self.accepts_overscroll_step_at(current, next, now) {
+            self.overscroll_peak_at.set(Some(now));
+            return false;
+        }
+        self.scroll_offset.set(next);
+        self.record_overscroll_peak_at(next, now);
         self.stop_device_scroll_momentum();
+        true
     }
 
     fn stop_device_scroll_momentum(&self) {
@@ -626,20 +880,75 @@ impl ScrollState {
         self.cancel_fling();
     }
 
-    /// Hard-cap overscroll to [`MAX_OVERSCROLL_FRACTION`] of the content size.
+    /// Per-axis distance (px) the content may be pulled past an edge.
+    ///
+    /// Derived from the viewport rather than the content size: the stretch is
+    /// judged against what the user can see, so the same gesture must feel the
+    /// same on a short and on a very long page. [`MIN_VIEWPORT`] keeps the
+    /// limit sane before the first layout has measured a viewport.
+    #[inline]
+    pub(crate) fn overscroll_limit(&self) -> Vec2d {
+        let (vp_w, vp_h) = self.cached_viewport.get();
+        Vec2d {
+            x: vp_w.max(MIN_VIEWPORT) * MAX_OVERSCROLL_VIEWPORT_FRACTION,
+            y: vp_h.max(MIN_VIEWPORT) * MAX_OVERSCROLL_VIEWPORT_FRACTION,
+        }
+    }
+
+    /// Scale one input step by the resistance the current stretch applies to it.
+    ///
+    /// Only the axis that is *already* past an edge is resisted, and only for
+    /// the direction that pulls further out: a step that shortens the stretch
+    /// answers the finger one to one, so the content can always be pulled back.
+    /// The outward factor starts at [`OOB_DRAG_RESISTANCE`] and fades linearly
+    /// to zero at [`overscroll_limit`](Self::overscroll_limit), which turns a
+    /// stream of equal deltas into an exponential approach to that limit —
+    /// the rubber band a held gesture is supposed to feel.
+    ///
+    /// The step that first *crosses* an edge is deliberately left untouched, so
+    /// a fling still carries its own momentum into the overscroll zone.
+    #[inline]
+    pub(crate) fn resisted_overscroll_delta(&self, delta: Vec2d) -> Vec2d {
+        if !self.bouncy() {
+            return delta;
+        }
+        let stretch = self.overscroll_distance(self.scroll_offset.get());
+        let limit = self.overscroll_limit();
+        Vec2d {
+            x: delta.x * Self::outward_resistance(stretch.x, delta.x, limit.x),
+            y: delta.y * Self::outward_resistance(stretch.y, delta.y, limit.y),
+        }
+    }
+
+    /// Resistance factor for one axis, given its signed `stretch` past the
+    /// edge, the signed input `delta`, and the axis' overscroll `limit`.
+    #[inline(always)]
+    fn outward_resistance(stretch: f32, delta: f32, limit: f32) -> f32 {
+        // In range, standing still, or pulling back toward the edge: no
+        // resistance at all.
+        if stretch == 0.0 || delta == 0.0 || stretch.signum() != delta.signum() {
+            return 1.0;
+        }
+        if limit <= 0.0 {
+            return 0.0;
+        }
+        let used = (stretch.abs() / limit).clamp(0.0, 1.0);
+        OOB_DRAG_RESISTANCE * (1.0 - used)
+    }
+
+    /// Hard-cap overscroll to [`MAX_OVERSCROLL_VIEWPORT_FRACTION`] of the
+    /// viewport.
     ///
     /// Unlike [`visual_offset`] (which applies a rubber-band *display*
     /// transform), this limits the **actual** stored offset so that momentum
     /// and trackpad events can't carry content hundreds of pixels past the
     /// edge — matching Chrome and iOS behaviour.
     fn clamp_overscroll(&self, offset: Vec2d) -> Vec2d {
-        let content = self.cached_content_size.get();
-        let max_ox = content.width * MAX_OVERSCROLL_FRACTION;
-        let max_oy = content.height * MAX_OVERSCROLL_FRACTION;
+        let limit = self.overscroll_limit();
         let clamped = self.clamp_offset(offset);
         Vec2d {
-            x: offset.x.clamp(clamped.x - max_ox, clamped.x + max_ox),
-            y: offset.y.clamp(clamped.y - max_oy, clamped.y + max_oy),
+            x: offset.x.clamp(clamped.x - limit.x, clamped.x + limit.x),
+            y: offset.y.clamp(clamped.y - limit.y, clamped.y + limit.y),
         }
     }
 
@@ -675,7 +984,7 @@ impl ScrollState {
         let min_y = -min.y;
         let max_y = -max.y;
 
-        if self.scroll_behavior.bouncy {
+        if self.bouncy() {
             let (vp_w, vp_h) = self.cached_viewport.get();
             let resistance = self.scroll_behavior.bouncy_resistance;
             let vx = Self::apply_bouncy(offset.x, max_x, min_x, vp_w.max(MIN_VIEWPORT), resistance);
@@ -705,15 +1014,20 @@ impl ScrollState {
         }
     }
 
-    /// Push a velocity sample into the ring buffer for trackpad smoothing.
-    pub(crate) fn push_velocity(&self, vx: f32, vy: f32) {
-        self.velocity_history.borrow_mut().push(vx, vy);
+    /// Record `velocity` as the speed the finger held for the `dt` seconds
+    /// that ended at `at`.
+    pub(crate) fn push_velocity(&self, velocity: Vec2d, dt: f32, at: AnimInstant) {
+        self.velocity_history.borrow_mut().push(velocity, dt, at);
     }
 
-    /// Return the weighted-average velocity across recent samples.
-    pub(crate) fn smoothed_velocity(&self) -> Vec2d {
-        let (sx, sy) = self.velocity_history.borrow().weighted_average();
-        Vec2d { x: sx, y: sy }
+    /// Return the speed the finger is moving at as of `now`, averaged over the
+    /// samples that still lie inside [`VELOCITY_HORIZON_S`].
+    ///
+    /// This is the speed a release fling is launched with, so it deliberately
+    /// describes the *end* of the gesture: a drag whose last recorded motion
+    /// has fallen out of the horizon reports zero and flings nothing.
+    pub(crate) fn smoothed_velocity(&self, now: AnimInstant) -> Vec2d {
+        self.velocity_history.borrow().velocity_at(now)
     }
 
     /// Clear the velocity history (e.g. on pointer-down).
@@ -764,6 +1078,37 @@ impl ScrollState {
         }
     }
 
+    /// Close the open sampling slice at `now` and return the velocity it
+    /// measured, or `None` while the slice is too short
+    /// ([`VELOCITY_SAMPLE_MIN_DT`]) to mean anything.
+    ///
+    /// A gesture ends between samples, and everything that happened since the
+    /// last one is still sitting in the accumulator: the tail of a coalesced
+    /// burst, or — the case that matters most — no motion at all, because the
+    /// finger came to rest on the glass and the platform stopped reporting
+    /// moves. Both describe the release far better than the last emitted
+    /// sample does, and a resting finger yields exactly the zero velocity that
+    /// keeps a deliberate stop from turning into a fling.
+    ///
+    /// Unlike [`Self::accumulate_drag_velocity`] this always closes the slice,
+    /// since no further move will arrive to close it.
+    pub(crate) fn flush_drag_velocity(&self, now: AnimInstant) -> Option<(Vec2d, f32)> {
+        let sample_time = self.vel_sample_time.get()?;
+        let sample_dt = now.duration_since(sample_time).as_secs_f32();
+        if sample_dt < VELOCITY_SAMPLE_MIN_DT {
+            return None;
+        }
+
+        let accum = self.vel_accum.get();
+        self.vel_accum.set(Vec2d { x: 0.0, y: 0.0 });
+        self.vel_sample_time.set(Some(now));
+        let velocity = Vec2d {
+            x: (accum.x / sample_dt) * FRAME_REF_120,
+            y: (accum.y / sample_dt) * FRAME_REF_120,
+        };
+        Some((velocity, sample_dt))
+    }
+
     /// Cancel any active cubic-bézier release fling.
     ///
     /// Called whenever a new input (touch-down, wheel, keyboard, scrollbar
@@ -790,10 +1135,14 @@ impl ScrollState {
         self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
         self.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
         self.momentum_start_time.set(None);
+        // A programmatic scroll supersedes any device gesture, so it must not be
+        // stalled by an edge-recovery hold left behind by that gesture.
+        self.release_overscroll_recovery();
+        self.reset_overscroll_peak();
 
         let start = self.scroll_offset.get();
         // Non-bouncy scrollables never overshoot; pin the target to the edge.
-        let target = if self.scroll_behavior.bouncy {
+        let target = if self.bouncy() {
             target
         } else {
             self.clamp_offset(target)
@@ -858,7 +1207,7 @@ impl ScrollState {
         };
         // Non-bouncy scrolling never overshoots, so pin the target to the edge
         // and let the curve ease straight into it.
-        if !self.scroll_behavior.bouncy {
+        if !self.bouncy() {
             target = self.clamp_offset(target);
         }
 
@@ -922,13 +1271,6 @@ impl ScrollState {
         let mut velocity = self.pointer_velocity.get();
         let mut needs_redraw = false;
 
-        // debug!("Offset: ({:.1},{:.1})", offset.x, offset.y);
-
-        // let vel_mag = (velocity.x * velocity.x + velocity.y * velocity.y).sqrt();
-        // if vel_mag > VELOCITY_EPSILON {
-        //     // info!("[scroll] update_momentum vel=({:.2},{:.2}) mag={:.4}
-        // offset=({:.1},{:.1})", velocity.x, velocity.y, vel_mag, offset.x, offset.y);
-        // }
 
         let now = AnimInstant::now();
         let dt = self
@@ -941,11 +1283,15 @@ impl ScrollState {
 
         let frame_ratio = dt / FRAME_REF_120;
 
+        let past_edge = offset.x != clamped.x || offset.y != clamped.y;
+        if self.bouncy() && past_edge && self.overscroll_recovery_held_at(now) {
+            let held = self.clamp_overscroll(offset);
+            let out_of_bounds = held.x != clamped.x || held.y != clamped.y;
+            return (held, out_of_bounds);
+        }
+
         if let Some(fling_start) = self.fling_start_time.get() {
-            // Curve-driven release fling: position follows
-            // `start + distance · cubic-bezier(t / duration)`. This replaces the
-            // per-frame velocity decay while the fling is active so the glide
-            // eases to a stop along the requested curve.
+
             let duration = self.fling_duration.get();
             let elapsed = now.duration_since(fling_start).as_secs_f32();
             let u = if duration > 0.0 {
@@ -954,8 +1300,6 @@ impl ScrollState {
                 1.0
             };
 
-            // A programmatic `animate_to` supplies its own easing curve; a
-            // normal release fling uses the tuned default bézier.
             let eased = match self.anim_curve.get() {
                 Some(curve) => curve.transform(u),
                 None => cubic_bezier_ease(
@@ -973,9 +1317,6 @@ impl ScrollState {
                 y: start.y + (target.y - start.y) * eased,
             };
 
-            // Per-frame step, reused as the handoff velocity (px/frame) so the
-            // spring-back / out-of-bounds code keeps working if the fling
-            // overshoots a bouncy edge.
             let step = Vec2d {
                 x: new.x - offset.x,
                 y: new.y - offset.y,
@@ -995,7 +1336,7 @@ impl ScrollState {
             needs_redraw = true;
 
             let oob = offset.x != clamped.x || offset.y != clamped.y;
-            if oob && self.scroll_behavior.bouncy {
+            if oob && self.bouncy() {
                 // Hand the remaining momentum to the velocity-based spring so the
                 // content bounces and recovers from the edge like native iOS.
                 self.cancel_fling();
@@ -1015,19 +1356,7 @@ impl ScrollState {
         } else if velocity.x.abs() > VELOCITY_EPSILON || velocity.y.abs() > VELOCITY_EPSILON {
             // Clear any in-flight spring oscillation when fresh momentum begins.
             self.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
-
-            // Hard-cap the momentum glide at MAX_MOMENTUM_DURATION_S.
-            // Without this the exponential friction tails off asymptotically,
-            // letting content creep for 15–20 s before stopping.
             let now_instant = AnimInstant::now();
-            // Arm the timer exactly once, on the first momentum frame. Use an
-            // `is_none()` sentinel rather than `elapsed == 0.0`: on coarse-clock
-            // targets (web `performance.now()` is resolution-clamped, iOS
-            // ProMotion/rAF frames get coalesced) two momentum frames can read
-            // the same instant, so `duration_since` rounds to exactly 0.0. With
-            // the old `== 0.0` check that re-armed the timer every frame, so the
-            // elapsed never grew to the cap and a touch fling never stopped at
-            // MAX_MOMENTUM_DURATION_S (friction alone tailed off over 15–20 s).
             let momentum_elapsed = match self.momentum_start_time.get() {
                 Some(t) => now_instant.duration_since(t).as_secs_f32(),
                 None => {
@@ -1055,28 +1384,10 @@ impl ScrollState {
                 }
             }
 
-            // Discrete per-frame velocity decay: v *= friction^(dt / FRAME_REF_120).
-            //
-            // This matches UIScrollView's deceleration model exactly: a fixed
-            // retention factor applied once per frame.  `friction` is calibrated
-            // per 120 fps (UIScrollView.DecelerationRate.normal ≈ 0.999 per
-            // 120 fps = 0.998 per 60 fps); the `powf(frame_ratio)` makes it
-            // frame-rate independent.
-            //     60 fps:  v *= 0.999^2.0 ≈ 0.998
-            //     120 fps: v *= 0.999^1.0 ≈ 0.999
             let decay = self.scroll_behavior.friction.powf(frame_ratio);
-
-            // Integrate position, then clamp and zero velocity at the edge.
-            // On iOS, UIScrollView never lets content fly past the edge during
-            // a fling (rubber-band only applies during the drag).
             offset.x += velocity.x * frame_ratio;
             offset.y += velocity.y * frame_ratio;
-
-            // Clamp to overscroll cap immediately after integration.
-            // Without this, a strong fling can carry the content hundreds
-            // of pixels past the boundary in a single frame, and the spring
-            // takes many frames to recover — causing visible shaking.
-            if self.scroll_behavior.bouncy {
+            if self.bouncy() {
                 let capped = self.clamp_overscroll(offset);
                 if capped.x != offset.x {
                     offset.x = capped.x;
@@ -1087,20 +1398,10 @@ impl ScrollState {
                     velocity.y = 0.0;
                 }
             }
-
             velocity.x *= decay;
             velocity.y *= decay;
-
-            // Recompute clamped boundaries from the post-integration offset.
-            // The pre-integration `clamped` is stale — using it would compare
-            // the moved offset against its old position, falsely triggering
-            // the out-of-bounds path on every frame and killing momentum.
             let clamped = self.clamp_offset(offset);
-
-            // Extra friction in the overscroll zone: content decelerates
-            // faster once it crosses the boundary, preventing it from
-            // coasting deep into the rubber-band on momentum alone.
-            if self.scroll_behavior.bouncy {
+            if self.bouncy() {
                 let oob_decay = OVERSCROLL_FRICTION.powf(frame_ratio);
                 if offset.x != clamped.x {
                     velocity.x *= oob_decay;
@@ -1109,11 +1410,7 @@ impl ScrollState {
                     velocity.y *= oob_decay;
                 }
             }
-
-            // Clamp to bounds: if we hit the edge, stop momentum on that axis.
-            // For bouncy scrolling, DON'T clamp here — let the offset overshoot
-            // so the spring-back code can pull it back with a smooth transition.
-            if !self.scroll_behavior.bouncy {
+            if !self.bouncy() {
                 if offset.x != clamped.x {
                     offset.x = clamped.x;
                     velocity.x = 0.0;
@@ -1123,26 +1420,19 @@ impl ScrollState {
                     velocity.y = 0.0;
                 }
             } else {
-                // Bouncy: spring takes over completely when out of bounds.
-                //
-                // Kill momentum velocity on out-of-bounds axes so the spring
-                // is the sole force driving recovery. This prevents residual
-                // momentum from fighting the spring and causing shaking.
-                let stiffness = SPRING_STIFFNESS;
-                let damping_coeff = 2.0 * SPRING_DAMPING_RATIO * stiffness.sqrt();
                 let mut sv = self.spring_velocity.get();
 
                 if offset.x != clamped.x {
                     velocity.x = 0.0;
-                    let err_x = offset.x - clamped.x;
-                    sv.x += (-stiffness * err_x - damping_coeff * sv.x) * dt;
-                    offset.x += sv.x * dt;
+                    let (err_x, vx) = advance_overscroll_spring(offset.x - clamped.x, sv.x, dt);
+                    offset.x = clamped.x + err_x;
+                    sv.x = vx;
                 }
                 if offset.y != clamped.y {
                     velocity.y = 0.0;
-                    let err_y = offset.y - clamped.y;
-                    sv.y += (-stiffness * err_y - damping_coeff * sv.y) * dt;
-                    offset.y += sv.y * dt;
+                    let (err_y, vy) = advance_overscroll_spring(offset.y - clamped.y, sv.y, dt);
+                    offset.y = clamped.y + err_y;
+                    sv.y = vy;
                 }
                 self.spring_velocity.set(sv);
 
@@ -1171,39 +1461,22 @@ impl ScrollState {
             self.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
             self.momentum_start_time.set(None);
         }
-
-        // Spring back if bouncy is enabled AND momentum has finished.
-        // Uses a proper damped-spring simulation (underdamped, ζ < 1) so the
-        // content overshoots the boundary, oscillates with decreasing amplitude,
-        // and settles at rest — the "bounce" feel the user expects.
         let v_check = self.pointer_velocity.get();
         let momentum_active =
             v_check.x.abs() > VELOCITY_EPSILON || v_check.y.abs() > VELOCITY_EPSILON;
-        if self.scroll_behavior.bouncy
+        if self.bouncy()
             && !momentum_active
             && (offset.x != clamped.x || offset.y != clamped.y)
         {
-            let stiffness = SPRING_STIFFNESS;
-            let damping_coeff = 2.0 * SPRING_DAMPING_RATIO * stiffness.sqrt();
-
             let mut sv = self.spring_velocity.get();
-
-            // Semi-implicit (symplectic) Euler: update velocity first, then
-            // position.  This is more stable than explicit Euler for
-            // oscillatory systems and preserves the energy envelope well.
             let err_x = offset.x - clamped.x;
             let err_y = offset.y - clamped.y;
-
-            sv.x += (-stiffness * err_x - damping_coeff * sv.x) * dt;
-            sv.y += (-stiffness * err_y - damping_coeff * sv.y) * dt;
-            offset.x += sv.x * dt;
-            offset.y += sv.y * dt;
-
-            // If the spring overshot past the boundary (sign flip on err),
-            // snap to the boundary and stop.  This prevents the underdamped
-            // spring from oscillating through the boundary multiple times.
-            let new_err_x = offset.x - clamped.x;
-            let new_err_y = offset.y - clamped.y;
+            let (new_err_x, vx) = advance_overscroll_spring(err_x, sv.x, dt);
+            let (new_err_y, vy) = advance_overscroll_spring(err_y, sv.y, dt);
+            sv.x = vx;
+            sv.y = vy;
+            offset.x = clamped.x + new_err_x;
+            offset.y = clamped.y + new_err_y;
             if err_x != 0.0 && (err_x > 0.0) != (new_err_x > 0.0) {
                 offset.x = clamped.x;
                 sv.x = 0.0;
@@ -1226,7 +1499,7 @@ impl ScrollState {
                 sv.y = 0.0;
             }
             self.spring_velocity.set(sv);
-        } else if !self.scroll_behavior.bouncy {
+        } else if !self.bouncy() {
             offset = clamped;
         }
 
@@ -1234,21 +1507,25 @@ impl ScrollState {
         // rubber-band from trackpad or high-velocity flings).
         offset = self.clamp_overscroll(offset);
 
+        // Keep the peak after reaching the boundary: the current device
+        // gesture may still have native momentum-tail events in flight.
+        self.record_overscroll_peak(offset);
+
         (offset, needs_redraw)
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::cell::RefCell;
+impl ScrollState {
+    /// A default vertical engine parked at `offset`, shared by the tests of
+    /// every module in this crate.
+    pub(crate) fn for_test_at(offset: Vec2d) -> Self {
+        use aimer_macro::key;
 
-    use aimer_macro::key;
-
-    use super::*;
-
-    fn ctrl_with_offset(offset: Vec2d) -> ScrollState {
-        ScrollState {
+        Self {
             scroll_behavior: ScrollBehavior::default(),
+            overscroll_sources: OverscrollSources::ALL,
+            overscroll_source: Cell::new(OverscrollSource::Wheel),
             axis: ScrollAxis::Vertical,
             scroll_offset: Cell::new(offset),
             storage_key: key!(),
@@ -1286,7 +1563,25 @@ mod tests {
             on_scroll_end: RefCell::new(Callback::default()),
             on_scroll: RefCell::new(Callback::default()),
             last_reported_offset: Cell::new(None),
+            overscroll_hold: Cell::new(None),
+            direct_overscroll_hold: Cell::new(false),
+            highest_overscroll_offset: Cell::new(Vec2d::ZERO),
+            overscroll_peak_at: Cell::new(None),
+            device_contact: Cell::new(false),
+            #[cfg(target_arch = "wasm32")]
+            web_overscroll_decay: crate::scrollable::web_overscroll::WebOverscrollDecay::new(),
+            #[cfg(target_arch = "wasm32")]
+            web_recovery_end: crate::scrollable::web_recovery_end::WebRecoveryEnd::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctrl_with_offset(offset: Vec2d) -> ScrollState {
+        ScrollState::for_test_at(offset)
     }
 
     // Reconciliation contract: on rebuild the freshly built controller starts at
@@ -1311,6 +1606,413 @@ mod tests {
         assert_eq!(fresh.scroll_offset.get().y, 150.0);
         assert_eq!(fresh.pointer_velocity.get().y, -12.0);
         assert_eq!(fresh.spring_velocity.get().y, -200.0);
+    }
+
+    /// A bouncy engine parked 40 px past the start edge, in a viewport large
+    /// enough that [`MAX_OVERSCROLL_VIEWPORT_FRACTION`] does not clamp the
+    /// stretch.
+    fn overscrolled_ctrl() -> ScrollState {
+        let ctrl = ctrl_with_offset(Vec2d { x: 0.0, y: 40.0 });
+        ctrl.cached_max_scroll.set(Vec2d { x: 0.0, y: 1000.0 });
+        ctrl.cached_viewport.set((400.0, 800.0));
+        ctrl.cached_content_size.set(ResolvedSize {
+            width: 400.0,
+            height: 2000.0,
+        });
+        ctrl
+    }
+
+    #[test]
+    fn overscroll_recovery_waits_during_the_initial_grace_period() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.hold_overscroll_recovery();
+
+        let (offset, needs_redraw) = ctrl.update_momentum(ctrl.scroll_offset.get());
+
+        assert_eq!(
+            offset.y, 40.0,
+            "the first overscroll frame keeps its complete stretch"
+        );
+        assert!(
+            needs_redraw,
+            "a held stretch keeps frames coming so recovery can start on its own"
+        );
+    }
+
+    #[test]
+    fn direct_manipulation_holds_overscroll_past_the_grace_period() {
+        let ctrl = overscrolled_ctrl();
+        let held_at = AnimInstant::now();
+        ctrl.hold_overscroll_recovery_at(held_at);
+        ctrl.hold_overscroll_for_direct_manipulation();
+
+        let well_past_grace =
+            held_at + Duration::from_millis(OVERSCROLL_HOLD_IDLE_MS as u64 + 1_000);
+
+        assert!(ctrl.overscroll_recovery_held_at(well_past_grace));
+        ctrl.release_overscroll_recovery();
+        assert!(!ctrl.overscroll_recovery_held_at(well_past_grace));
+    }
+
+    #[test]
+    fn a_lift_hands_the_contact_hold_over_to_the_grace_period() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.hold_overscroll_for_direct_manipulation();
+
+        // The first frame after the fingers left keeps the stretch only for the
+        // grace period, so recovery starts on its own from there.
+        let held_at = AnimInstant::now();
+        ctrl.release_direct_overscroll_hold();
+        ctrl.hold_overscroll_recovery_at(held_at);
+
+        assert!(ctrl.overscroll_recovery_held_at(held_at));
+        let stale = held_at + Duration::from_millis(OVERSCROLL_HOLD_IDLE_MS as u64 + 50);
+        assert!(
+            !ctrl.overscroll_recovery_held_at(stale),
+            "a lifted gesture cannot hold the stretch forever"
+        );
+    }
+
+    #[test]
+    fn overscroll_recovery_starts_once_the_device_gesture_ends() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.hold_overscroll_recovery();
+        ctrl.release_overscroll_recovery();
+
+        let (offset, needs_redraw) = ctrl.update_momentum(ctrl.scroll_offset.get());
+
+        assert!(
+            offset.y < 40.0 && offset.y >= 0.0,
+            "the spring pulls the content back toward the edge, got {}",
+            offset.y
+        );
+        assert!(needs_redraw);
+    }
+
+    #[test]
+    fn held_overscroll_recovery_expires_after_the_grace_period() {
+        let ctrl = overscrolled_ctrl();
+        let held_at = AnimInstant::now();
+        ctrl.hold_overscroll_recovery_at(held_at);
+
+        assert!(ctrl.overscroll_recovery_held_at(held_at));
+
+        let stale = held_at + Duration::from_millis(OVERSCROLL_HOLD_IDLE_MS as u64 + 50);
+        assert!(
+            !ctrl.overscroll_recovery_held_at(stale),
+            "an unterminated gesture cannot hold the stretch forever"
+        );
+        assert!(
+            ctrl.overscroll_hold.get().is_none(),
+            "the expired hold is cleared so later frames take the normal path"
+        );
+    }
+
+    // The stretch a user perceives is relative to what they can see, so the cap
+    // belongs to the viewport. Measuring it against the content made a long
+    // page allow a stretch of hundreds of pixels.
+    #[test]
+    fn a_held_gesture_never_stretches_past_the_overscroll_cap() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.hold_overscroll_recovery();
+
+        let (offset, _) = ctrl.update_momentum(Vec2d { x: 0.0, y: 5_000.0 });
+
+        assert_eq!(offset.y, 800.0 * MAX_OVERSCROLL_VIEWPORT_FRACTION);
+    }
+
+    #[test]
+    fn the_overscroll_cap_ignores_the_content_height() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.cached_content_size.set(ResolvedSize {
+            width: 400.0,
+            height: 20_000.0,
+        });
+        ctrl.hold_overscroll_recovery();
+
+        let (offset, _) = ctrl.update_momentum(Vec2d { x: 0.0, y: 5_000.0 });
+
+        assert_eq!(
+            offset.y,
+            800.0 * MAX_OVERSCROLL_VIEWPORT_FRACTION,
+            "a ten-times-longer page may not stretch ten times as far"
+        );
+    }
+
+    // Out-of-range input must feel like a rubber band, not like a constant
+    // gear ratio: the further the content is pulled, the less each further
+    // step of the gesture moves it.
+    #[test]
+    fn outward_resistance_grows_with_the_stretch() {
+        let ctrl = overscrolled_ctrl();
+        let limit = ctrl.overscroll_limit().y;
+
+        ctrl.scroll_offset.set(Vec2d { x: 0.0, y: 1.0 });
+        let near_edge = ctrl.resisted_overscroll_delta(Vec2d { x: 0.0, y: 30.0 }).y;
+
+        ctrl.scroll_offset.set(Vec2d {
+            x: 0.0,
+            y: limit * 0.5,
+        });
+        let half_way = ctrl.resisted_overscroll_delta(Vec2d { x: 0.0, y: 30.0 }).y;
+
+        ctrl.scroll_offset.set(Vec2d { x: 0.0, y: limit });
+        let at_limit = ctrl.resisted_overscroll_delta(Vec2d { x: 0.0, y: 30.0 }).y;
+
+        assert!(near_edge > half_way, "{near_edge} > {half_way}");
+        assert!(half_way > at_limit, "{half_way} > {at_limit}");
+        assert_eq!(at_limit, 0.0, "the limit absorbs the whole step");
+        assert!(
+            near_edge <= 30.0 * OOB_DRAG_RESISTANCE,
+            "the base resistance stays the softest the edge ever is"
+        );
+    }
+
+    // The reported bug: holding a trackpad gesture at an edge kept feeding
+    // outward deltas, and a constant resistance let them creep on until a
+    // content-relative cap stopped them half a screen away.
+    #[test]
+    fn a_sustained_gesture_at_the_edge_converges_on_the_overscroll_limit() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.scroll_offset.set(Vec2d::ZERO);
+        let limit = ctrl.overscroll_limit().y;
+
+        for _ in 0..400 {
+            let step = ctrl.resisted_overscroll_delta(Vec2d { x: 0.0, y: 30.0 });
+            let next = ctrl.apply_wheel_delta(ctrl.scroll_offset.get(), step);
+            ctrl.scroll_offset.set(next);
+        }
+
+        let stretch = ctrl.overscroll_distance(ctrl.scroll_offset.get()).y;
+        assert!(
+            stretch <= limit,
+            "a held gesture may never pull past the limit, got {stretch} > {limit}"
+        );
+        assert!(
+            stretch > limit * 0.5,
+            "but it must still reach a clearly visible stretch, got {stretch}"
+        );
+    }
+
+    #[test]
+    fn pulling_back_from_a_stretch_is_never_resisted() {
+        let ctrl = overscrolled_ctrl();
+
+        let step = ctrl.resisted_overscroll_delta(Vec2d { x: 0.0, y: -25.0 });
+
+        assert_eq!(
+            step.y, -25.0,
+            "input that shortens the stretch answers the finger one to one"
+        );
+    }
+
+    #[test]
+    fn an_in_range_step_is_never_resisted() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -200.0 });
+
+        let step = ctrl.resisted_overscroll_delta(Vec2d { x: 0.0, y: 30.0 });
+
+        assert_eq!(step.y, 30.0);
+    }
+
+    #[test]
+    fn a_non_bouncy_scrollable_ignores_the_recovery_hold() {
+        let mut ctrl = overscrolled_ctrl();
+        ctrl.scroll_behavior = ScrollBehavior::no_bounce();
+        ctrl.hold_overscroll_recovery();
+
+        let (offset, _) = ctrl.update_momentum(Vec2d { x: 0.0, y: 40.0 });
+
+        assert_eq!(offset.y, 0.0, "a non-bouncy viewport clamps to the edge");
+    }
+
+    #[test]
+    fn overscroll_recovery_idle_timeout_is_short_enough_to_feel_immediate() {
+        let timeout_ms = std::hint::black_box(OVERSCROLL_HOLD_IDLE_MS);
+        assert!(
+            timeout_ms <= 4,
+            "edge recovery should be eligible by the next rendered frame"
+        );
+    }
+
+    // A delta that stretches the content beyond the episode's existing peak is
+    // renewed user intent and must still move the content.
+    #[test]
+    fn a_stronger_device_delta_extends_the_overscroll_peak() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.record_overscroll_peak(ctrl.scroll_offset.get());
+
+        let applied = ctrl.apply_precise_scroll_delta(Vec2d { x: 0.0, y: 15.0 });
+
+        assert!(applied, "a stronger stretch is never ignored");
+        assert_eq!(ctrl.scroll_offset.get().y, 55.0);
+        assert_eq!(ctrl.highest_overscroll_offset.get().y, 55.0);
+    }
+
+    // Once recovery starts, weaker outward tail events must not pump the
+    // content back away from the edge.
+    #[test]
+    fn a_weaker_re_stretch_is_ignored_while_the_recovery_runs() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.record_overscroll_peak(ctrl.scroll_offset.get());
+        ctrl.scroll_offset.set(Vec2d { x: 0.0, y: 12.0 });
+
+        let applied = ctrl.apply_precise_scroll_delta(Vec2d { x: 0.0, y: 8.0 });
+
+        assert!(!applied, "20 px of stretch cannot beat a 40 px peak");
+        assert_eq!(ctrl.scroll_offset.get().y, 12.0);
+        assert_eq!(ctrl.highest_overscroll_offset.get().y, 40.0);
+    }
+
+    #[test]
+    fn a_delta_pulling_back_toward_the_edge_is_never_ignored() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.record_overscroll_peak(ctrl.scroll_offset.get());
+
+        let applied = ctrl.apply_precise_scroll_delta(Vec2d { x: 0.0, y: -25.0 });
+
+        assert!(applied);
+        assert_eq!(ctrl.scroll_offset.get().y, 15.0);
+        assert_eq!(ctrl.highest_overscroll_offset.get().y, 40.0);
+    }
+
+    #[test]
+    fn returning_in_range_keeps_the_peak_for_the_remaining_device_tail() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.record_overscroll_peak(ctrl.scroll_offset.get());
+
+        let applied = ctrl.apply_precise_scroll_delta(Vec2d { x: 0.0, y: -80.0 });
+
+        assert!(applied);
+        assert_eq!(ctrl.scroll_offset.get().y, -40.0);
+        assert_eq!(
+            ctrl.highest_overscroll_offset.get().y,
+            40.0,
+            "the old gesture's remaining events must stay gated after recovery"
+        );
+    }
+
+    #[test]
+    fn a_late_device_tail_cannot_bounce_after_recovery_finishes() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.record_overscroll_peak(ctrl.scroll_offset.get());
+        ctrl.release_overscroll_recovery();
+
+        assert_eq!(
+            ctrl.highest_overscroll_offset.get().y,
+            40.0,
+            "the peak must survive recovery start to guard the remaining tail"
+        );
+
+        let (offset, _) = ctrl.update_momentum(Vec2d { x: 0.0, y: 0.0 });
+        ctrl.scroll_offset.set(offset);
+        let applied = ctrl.apply_precise_scroll_delta(Vec2d { x: 0.0, y: 8.0 });
+
+        assert_eq!(offset.y, 0.0);
+        assert!(!applied, "the recovered gesture's outward tail is ignored");
+        assert_eq!(ctrl.scroll_offset.get().y, 0.0);
+        assert_eq!(ctrl.highest_overscroll_offset.get().y, 40.0);
+    }
+
+    #[test]
+    fn a_new_device_gesture_can_overscroll_the_same_edge() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.record_overscroll_peak(ctrl.scroll_offset.get());
+        ctrl.scroll_offset.set(Vec2d::ZERO);
+
+        ctrl.reset_overscroll_peak();
+        let applied = ctrl.apply_precise_scroll_delta(Vec2d { x: 0.0, y: 8.0 });
+
+        assert!(applied);
+        assert_eq!(ctrl.scroll_offset.get().y, 8.0);
+        assert_eq!(ctrl.highest_overscroll_offset.get().y, 8.0);
+    }
+
+    // The peak only guards against a *live* device tail. Once the device stops
+    // sending events there is no tail left to guard, so a peak that nothing
+    // refreshed must stop gating — otherwise a missed gesture boundary wedges
+    // the edge and no later gesture can overscroll at all.
+    #[test]
+    fn an_idle_overscroll_peak_stops_gating_the_next_gesture() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.record_overscroll_peak(ctrl.scroll_offset.get());
+        ctrl.scroll_offset.set(Vec2d::ZERO);
+
+        let idle =
+            AnimInstant::now() + Duration::from_millis(OVERSCROLL_PEAK_IDLE_MS as u64 + 10);
+        let applied = ctrl.apply_precise_scroll_delta_at(Vec2d { x: 0.0, y: 8.0 }, idle);
+
+        assert!(applied, "a stale peak cannot block the edge forever");
+        assert_eq!(ctrl.scroll_offset.get().y, 8.0);
+        assert_eq!(ctrl.highest_overscroll_offset.get().y, 8.0);
+    }
+
+    // A native momentum tail delivers an event every frame. Each of those
+    // events — including the ones the peak rejects — proves the tail is still
+    // running, so it must keep the peak alive.
+    #[test]
+    fn a_rejected_tail_event_keeps_the_peak_alive() {
+        let ctrl = overscrolled_ctrl();
+        let started = AnimInstant::now();
+        ctrl.record_overscroll_peak_at(ctrl.scroll_offset.get(), started);
+        ctrl.scroll_offset.set(Vec2d::ZERO);
+
+        let mut at = started;
+        for _ in 0..12 {
+            at += Duration::from_millis(OVERSCROLL_PEAK_IDLE_MS as u64 / 2);
+            assert!(
+                !ctrl.apply_precise_scroll_delta_at(Vec2d { x: 0.0, y: 8.0 }, at),
+                "a weaker tail event stays gated while the tail keeps arriving"
+            );
+        }
+
+        assert_eq!(ctrl.scroll_offset.get().y, 0.0);
+        assert_eq!(ctrl.highest_overscroll_offset.get().y, 40.0);
+    }
+
+    #[test]
+    fn fresh_contact_clears_the_previous_gesture_peak() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.record_overscroll_peak(ctrl.scroll_offset.get());
+        ctrl.scroll_offset.set(Vec2d::ZERO);
+
+        assert!(
+            ctrl.begin_device_contact(true),
+            "fingers landing on the device is a new gesture"
+        );
+        assert_eq!(ctrl.highest_overscroll_offset.get(), Vec2d::ZERO);
+        assert!(
+            !ctrl.begin_device_contact(true),
+            "later frames of the same contact are not a new gesture"
+        );
+
+        assert!(ctrl.apply_precise_scroll_delta(Vec2d { x: 0.0, y: 8.0 }));
+        assert_eq!(ctrl.scroll_offset.get().y, 8.0);
+    }
+
+    #[test]
+    fn losing_contact_arms_the_next_gesture_detection() {
+        let ctrl = overscrolled_ctrl();
+        assert!(ctrl.begin_device_contact(true));
+        assert!(!ctrl.begin_device_contact(false));
+        assert!(
+            ctrl.begin_device_contact(true),
+            "a lift followed by a touch is a new gesture again"
+        );
+    }
+
+    #[test]
+    fn the_opposite_edge_starts_a_new_peak_during_the_same_gesture() {
+        let ctrl = overscrolled_ctrl();
+        ctrl.record_overscroll_peak(ctrl.scroll_offset.get());
+        ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -1000.0 });
+
+        let applied = ctrl.apply_precise_scroll_delta(Vec2d { x: 0.0, y: -8.0 });
+
+        assert!(applied);
+        assert_eq!(ctrl.scroll_offset.get().y, -1008.0);
+        assert_eq!(ctrl.highest_overscroll_offset.get().y, -8.0);
     }
 
     #[test]
@@ -1433,26 +2135,93 @@ mod tests {
     #[test]
     fn small_reverse_flick_clears_stale_velocity_history() {
         let c = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
+        let slice = Duration::from_micros(4_000);
+        let slice_s = 0.004;
+        let mut at = AnimInstant::now();
 
-        // Prior fling: buffer full of positive (old-direction) samples.
-        for _ in 0..VELOCITY_HISTORY_SIZE {
-            c.push_velocity(0.0, 100.0);
+        // Prior fling: the horizon is full of positive (old-direction) samples.
+        for _ in 0..6 {
+            at += slice;
+            c.push_velocity(Vec2d { x: 0.0, y: 100.0 }, slice_s, at);
         }
 
         // A small reverse flick adds a single opposite sample.
-        c.push_velocity(0.0, -20.0);
-        // Without clearing, the weighted average is still the OLD direction.
+        at += slice;
+        c.push_velocity(Vec2d { x: 0.0, y: -20.0 }, slice_s, at);
+        // Without clearing, the average is still the OLD direction.
         assert!(
-            c.smoothed_velocity().y > 0.0,
+            c.smoothed_velocity(at).y > 0.0,
             "stale samples keep the average pointing the old way"
         );
 
         // Reversal handling clears the buffer before the new sample is recorded.
         c.clear_velocity_history();
-        c.push_velocity(0.0, -20.0);
+        c.push_velocity(Vec2d { x: 0.0, y: -20.0 }, slice_s, at);
         assert!(
-            c.smoothed_velocity().y < 0.0,
+            c.smoothed_velocity(at).y < 0.0,
             "after clearing, the release follows the new direction"
+        );
+    }
+
+    /// An engine tuned like a browser build: bouncy edges declared, but the
+    /// wheel left out of the trusted devices.
+    fn web_ctrl() -> ScrollState {
+        let mut ctrl = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
+        ctrl.overscroll_sources = OverscrollSources::WEB_DEFAULT;
+        ctrl.cached_max_scroll.set(Vec2d { x: 0.0, y: 1000.0 });
+        ctrl
+    }
+
+    #[test]
+    fn a_wheel_gesture_does_not_bounce_where_the_bitmap_leaves_the_wheel_out() {
+        let ctrl = web_ctrl();
+        ctrl.set_overscroll_source(OverscrollSource::Wheel);
+
+        assert!(
+            !ctrl.bouncy(),
+            "a browser wheel stream is not trusted with a rubber band"
+        );
+        let next = ctrl.apply_wheel_delta(Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 0.0, y: 40.0 });
+        assert_eq!(next.y, 0.0, "the edge clamps instead of stretching");
+    }
+
+    #[test]
+    fn a_touch_gesture_still_bounces_where_only_the_wheel_is_left_out() {
+        let ctrl = web_ctrl();
+        ctrl.set_overscroll_source(OverscrollSource::Touch);
+
+        assert!(
+            ctrl.bouncy(),
+            "a touch screen reports its lift, so it keeps the rubber band"
+        );
+        let next = ctrl.apply_wheel_delta(Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 0.0, y: 40.0 });
+        assert_eq!(next.y, 40.0, "the finger stretches the edge as usual");
+    }
+
+    #[test]
+    fn a_rigid_viewport_stays_rigid_for_every_trusted_device() {
+        let mut ctrl = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
+        ctrl.scroll_behavior.bouncy = false;
+        ctrl.overscroll_sources = OverscrollSources::ALL;
+
+        for source in [OverscrollSource::Wheel, OverscrollSource::Touch] {
+            ctrl.set_overscroll_source(source);
+            assert!(!ctrl.bouncy(), "the bitmap never grants a bounce");
+        }
+    }
+
+    #[test]
+    fn the_active_device_survives_reconciliation() {
+        let prev = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
+        prev.set_overscroll_source(OverscrollSource::Touch);
+        let fresh = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
+
+        fresh.adopt_scroll_state(&prev);
+
+        assert_eq!(
+            fresh.overscroll_source.get(),
+            OverscrollSource::Touch,
+            "a rebuild mid-gesture must not re-judge the edge as a wheel"
         );
     }
 

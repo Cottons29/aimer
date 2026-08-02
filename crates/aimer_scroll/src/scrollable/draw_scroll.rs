@@ -5,6 +5,7 @@ use aimer_widget::{Drawable, Element, LayoutElement};
 
 use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
+use crate::scrollable::recovery_end::finish_overscroll_recovery;
 
 fn snap_scroll_offset(offset: Vec2d) -> Vec2d {
     Vec2d {
@@ -66,6 +67,15 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             // vel_mag, offset.x, offset.y); }
             let (new_offset, needs_redraw) = self.ctrl.update_momentum(offset);
             offset = new_offset;
+
+            // A platform that cannot report a finger lift keeps its gesture
+            // open through the browser's own momentum tail. Landing the
+            // recovered edge is the last moment that gesture is still about
+            // what the user did, so it is terminated here and the distance it
+            // still owes is dropped — otherwise the queued tail stretches the
+            // edge a second time. A no-op everywhere the platform reports the
+            // lift itself.
+            finish_overscroll_recovery(&self.ctrl, offset);
 
             if needs_redraw {
                 aimer_events::window::request_animation_frame();

@@ -65,6 +65,12 @@ pub enum ElementEvent {
         delta: Vec2d,
         phase: TouchPhase,
         kind: ScrollDeltaKind,
+        /// Whether the user is still physically controlling the scroll.
+        ///
+        /// Trackpad contact sets this to `true` until finger lift. Native
+        /// momentum events emitted after lift retain their scroll phase but set
+        /// this to `false`. Mouse-wheel input is never a direct manipulation.
+        is_direct_manipulation: bool,
     },
     /// A character was typed (text input).
     CharInput {

@@ -60,7 +60,8 @@ impl LayoutSpacing {
     }
 
     #[inline]
-    pub const fn all(space: Spacing) -> Self {
+    pub fn all(space: impl Into<Spacing>) -> Self {
+        let space = space.into();
         Self {
             left: space,
             right: space,
