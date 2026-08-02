@@ -172,6 +172,8 @@ impl SvgPipeline {
                 include_str!("./shaders/svg.wgsl")
             )
         }
+
+        
     }
 
     fn multisample_state(antialiasing: crate::AntiAlias) -> wgpu::MultisampleState {

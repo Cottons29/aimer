@@ -78,7 +78,7 @@ impl FallbackStore {
             id: font_id,
             bytes: None,
             collection_index: source.1,
-            _path: Some(Arc::new(source.0.clone())),
+            path: Some(Arc::new(source.0.clone())),
             is_color: face.is_color,
         });
         self.ids_by_source.insert(source, font_id);
@@ -164,11 +164,34 @@ fn record_draws_codepoint(record: &FontRecord, codepoint: char) -> bool {
     if glyph_id.to_u32() == 0 {
         return false;
     }
-    record.is_color
+    if record.is_color
         || face
             .glyph_metrics(Size::unscaled(), LocationRef::default())
             .bounds(glyph_id)
             .is_some()
+    {
+        return true;
+    }
+    platform_draws_glyph(record, glyph_id.to_u32() as u16)
+}
+
+/// Reports whether the platform can draw a glyph this crate cannot decode.
+///
+/// Apple's system faces keep their glyph data in private formats — `hvgl`
+/// outlines, `emjc` strikes — so "no readable outline" does not mean "no
+/// glyph": the platform rasterizer draws these, and rejecting the face would
+/// leave the codepoint with no face at all.
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+fn platform_draws_glyph(record: &FontRecord, glyph_id: u16) -> bool {
+    record.path().is_some_and(|path| {
+        crate::text_pipeline::core_text_raster::draws_glyph(path, record.collection_index, glyph_id)
+    })
+}
+
+/// Platforms whose fonts this crate decodes itself.
+#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+fn platform_draws_glyph(_record: &FontRecord, _glyph_id: u16) -> bool {
+    false
 }
 
 /// Asks the platform which installed face draws `codepoint`.
@@ -190,8 +213,9 @@ fn resolve_face_for_codepoint(codepoint: char) -> Option<ResolvedFace> {
 ///
 /// A font file is not a face: collections (`.ttc`) hold many, and only some may
 /// map the codepoint. Each face is checked for a mapping *and* for renderable
-/// glyph data — a color strike, or an outline with a non-empty bounding box —
-/// because a cmap entry alone is satisfied by faces that draw nothing.
+/// glyph data — a color strike, an outline with a non-empty bounding box, or a
+/// glyph the platform rasterizer can draw — because a cmap entry alone is
+/// satisfied by faces that draw nothing.
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 fn face_drawing_codepoint(path: PathBuf, codepoint: char) -> Option<ResolvedFace> {
     use skrifa::MetadataProvider;
@@ -219,7 +243,14 @@ fn face_drawing_codepoint(path: PathBuf, codepoint: char) -> Option<ResolvedFace
             .glyph_metrics(Size::unscaled(), LocationRef::default())
             .bounds(glyph_id)
             .is_some();
-        if !is_color && !has_outline {
+        if !is_color
+            && !has_outline
+            && !crate::text_pipeline::core_text_raster::draws_glyph(
+                &path,
+                collection_index,
+                glyph_id.to_u32() as u16,
+            )
+        {
             return None;
         }
         Some(ResolvedFace {

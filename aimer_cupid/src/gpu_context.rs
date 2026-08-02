@@ -1,6 +1,6 @@
 #[cfg(target_arch = "wasm32")]
 use aimer_utils::warn;
-use aimer_utils::{debug, error, info};
+use aimer_utils::{debug, error, info, SyncFuture};
 use wgpu::{
     Device, Instance, Limits, Queue, Surface, SurfaceColorSpace, SurfaceConfiguration,
     SurfaceTexture, TextureFormat,
@@ -43,7 +43,7 @@ async fn create_gpu<'w>(
 ) -> Result<(Device, Queue, Surface<'w>, wgpu::Adapter), String> {
     #[cfg(not(target_os = "android"))]
     let _ = size;
-    // debug!("GPU backends: {:?}", backends);
+    debug!("GPU backends: {:?}", backends);
 
     let instance = Instance::new(wgpu::InstanceDescriptor {
         backends,
@@ -53,13 +53,13 @@ async fn create_gpu<'w>(
         display: None,
     });
 
-    // debug!("GPU instance: {:?}", instance);
+    debug!("GPU instance: {:?}", instance);
 
     let surface = instance
         .create_surface(window)
         .map_err(|err| format!("failed to create surface: {err}"))?;
 
-    // debug!("Surface: {:?}", surface);
+    debug!("Surface: {:?}", surface);
 
     let adapter = match instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -137,7 +137,7 @@ impl<'w> GpuContext<'w> {
     /// Synchronous initializer for non-wasm targets.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn initialize(window: &'w Window, size: PhysicalSize<u32>) -> Self {
-        pollster::block_on(Self::initialize_async(window, size))
+        Self::initialize_async(window, size).block()
     }
 
     /// Async initializer usable on all targets (required on wasm where blocking
@@ -175,7 +175,8 @@ impl<'w> GpuContext<'w> {
         let backends = {
             #[cfg(target_os = "android")]
             {
-                wgpu::Backends::GL | wgpu::Backends::VULKAN
+                // wgpu::Backends::GL | wgpu::Backends::VULKAN
+                wgpu::Backends::GL
             }
             #[cfg(any(target_os = "ios", target_os = "macos"))]
             {

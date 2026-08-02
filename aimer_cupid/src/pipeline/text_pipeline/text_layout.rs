@@ -136,6 +136,15 @@ pub struct ShapedCluster {
     pub base_codepoint: char,
     pub glyphs: Vec<(GlyphKey, f32, f32, f32)>,
     pub width: f32,
+    /// Whether a line may start at this cluster, per UAX #14.
+    ///
+    /// Scripts without word spaces — Han, Hiragana, Katakana — break between
+    /// almost any two characters, while a space-only wrapper would have to
+    /// rewind to the last space it saw, possibly a whole line back. Carrying
+    /// the opportunity on the cluster keeps the rule table out of the layout
+    /// loop: it is computed once while shaping, which is cached, and read as a
+    /// single bool per cluster while positioning, which is not.
+    pub can_break_before: bool,
 }
 
 #[derive(Clone)]
@@ -202,6 +211,27 @@ pub fn layout_paragraph_with_shaper(
             fallback_shape_segment(segment, text_offset, font_id, options.font_size)
         })
     }
+}
+
+/// Byte-indexed table of the line break opportunities in `text`, where index
+/// `i` reports whether a line may start at byte `i`.
+///
+/// The table follows the Unicode line breaking algorithm (UAX #14), so it
+/// keeps punctuation attached to the text it belongs to — a line never starts
+/// with `,`, `!`, `」` or `，` — and it allows breaks between ideographs, which
+/// is the only way text without word spaces can wrap at all.
+///
+/// The table is indexed by byte offset and therefore has `text.len() + 1`
+/// entries; the trailing entry marks the mandatory break at the end of the
+/// paragraph and the leading one is always `false`, since a paragraph start is
+/// not a break opportunity.
+pub(crate) fn line_break_opportunities(text: &str) -> Vec<bool> {
+    let mut allowed = vec![false; text.len() + 1];
+    for (offset, _) in linebreaks(text) {
+        allowed[offset] = true;
+    }
+    allowed[0] = false;
+    allowed
 }
 
 /// The script a grapheme cluster belongs to, or `None` when it belongs to no
@@ -404,7 +434,7 @@ where
             // at least one cluster (avoids an infinite wrapping loop on a single
             // wide cluster that can never fit).
             let mut sub_x = options.origin_x + line_width;
-            let mut remainder_start: Option<(usize, bool)> = None;
+            let mut remainder_start: Option<usize> = None;
             let mut last_word_break: Option<usize> = None;
             let mut cluster_offset = 0usize;
             for (_, cluster_str) in run_text.grapheme_indices(true) {
@@ -420,79 +450,64 @@ where
                     .map(|g| g.advance)
                     .sum();
 
-                // Track the last whitespace cluster as a preferred word break.
-                // Use the *start* of the space so that when we break here the
-                // space glyph is included on the current line (its advance is
-                // already part of `sub_x`).  The glyph filter below uses
-                // `<= break_point` to include it.
-                if cluster_str.chars().all(char::is_whitespace) {
+                // Track the last cluster a line is allowed to start at (UAX
+                // #14).  A break sits *after* the space that separates two
+                // words, so breaking here keeps that space — whose advance is
+                // already part of `sub_x` — on the line it terminates.
+                if break_offsets.binary_search(&cluster_byte_start).is_ok() {
                     last_word_break = Some(cluster_byte_start);
                 }
 
                 if sub_x + cluster_advance > options.origin_x + max_width
                     && sub_x > options.origin_x
                 {
-                    // Prefer breaking at the last word boundary rather than
-                    // mid-word.  If no word break was seen, fall back to the
+                    // Prefer breaking at the last break opportunity rather
+                    // than mid-word.  If the line holds none, fall back to the
                     // cluster-level break.
-                    if let Some(wb) = last_word_break {
-                        remainder_start = Some((wb, true));
+                    //
+                    // A break at the very start of the run only makes progress
+                    // while the line already holds something; on an empty line
+                    // it would re-queue the same run forever, so the
+                    // cluster-level break takes over.
+                    let candidate = last_word_break.unwrap_or(cluster_byte_start);
+                    remainder_start = Some(if candidate == run_start && line_width <= 0.0 {
+                        cluster_byte_start
                     } else {
-                        remainder_start = Some((cluster_byte_start, false));
-                    }
+                        candidate
+                    });
                     break;
                 }
                 sub_x += cluster_advance;
                 cluster_offset += cluster_str.len();
             }
 
-            if let Some((break_point, is_word_break)) = remainder_start {
-                // Emit glyphs up to break_point onto the current line.
-                // For word breaks we include the space glyph on the current
-                // line but position it separately at the accumulated width
-                // (not at line_start x), since it belongs after the word.
-                // For character breaks we exclude the overflowing char.
+            if let Some(break_point) = remainder_start {
+                // Emit glyphs up to break_point onto the current line; the
+                // next line starts at break_point, so everything from there on
+                // is left for the remainder.
                 let glyph_start = glyphs.len();
                 let line_glyphs: Vec<_> = shaped
                     .iter()
-                    .filter(|g| {
-                        if is_word_break {
-                            g.cluster <= break_point
-                        } else {
-                            g.cluster < break_point
-                        }
-                    })
+                    .filter(|g| g.cluster < break_point)
                     .cloned()
                     .collect();
                 // Track accumulated width for per-glyph positioning so the
                 // space lands after the preceding characters, not at the
                 // line's start x.
                 let mut acc_w = 0.0_f32;
-                // let mut space_advance = 0.0_f32;
                 for mut glyph in line_glyphs {
-                    // let is_space = is_word_break && glyph.cluster == break_point;
                     glyph.x = options.origin_x + line_width + acc_w;
                     glyph.y = baseline;
-                    // if is_space {
-                    //     space_advance = glyph.advance;
-                    // }
                     acc_w += glyph.advance;
                     glyphs.push(glyph);
                 }
-                // For word breaks the text_range must include the space byte.
-                let text_end = if is_word_break {
-                    break_point + 1
-                } else {
-                    break_point
-                };
+                let text_end = break_point;
                 runs.push(TextRun {
                     text_range: run_start..text_end,
                     level,
                     font_id,
                     glyph_range: glyph_start..glyphs.len(),
                 });
-                // line_run_width is the width of glyphs BEFORE the space;
-                // add the space advance for the total line width.
                 let line_run_width = acc_w;
                 finish_line(
                     &mut lines,
@@ -539,8 +554,11 @@ where
                     });
                 }
                 continue;
-            } else {
-                // Couldn't split — emit whole run on a new line.
+            } else if line_width > 0.0 {
+                // Couldn't split — move the whole run onto a new line.  An
+                // already empty line has nothing to move the run away from, so
+                // the run stays where it is and simply overflows instead of
+                // opening a blank line above itself.
                 finish_line(
                     &mut lines,
                     line_start_text..run_start,
@@ -789,6 +807,10 @@ pub fn shape_text_styled(
         text.grapheme_indices(true).collect()
     });
 
+    let can_break_before = time_cost!("text_layout::LayoutText - line break opportunities", {
+        line_break_opportunities(text)
+    });
+
     let clusters = time_cost!("text_layout::LayoutText - shape runs", {
         let mut clusters = Vec::with_capacity(graphemes.len());
         let mut grapheme_index = 0;
@@ -801,6 +823,7 @@ pub fn shape_text_styled(
                     base_codepoint: '\n',
                     glyphs: Vec::new(),
                     width: 0.0,
+                    can_break_before: false,
                 });
                 grapheme_index += 1;
                 continue;
@@ -848,11 +871,12 @@ pub fn shape_text_styled(
             );
             let cluster_output_start = clusters.len();
 
-            clusters.extend(run_graphemes.iter().map(|(_, cluster)| ShapedCluster {
+            clusters.extend(run_graphemes.iter().map(|(start, cluster)| ShapedCluster {
                 text: (*cluster).to_string(),
                 base_codepoint: cluster.chars().next().unwrap_or('\0'),
                 glyphs: Vec::new(),
                 width: 0.0,
+                can_break_before: can_break_before[*start],
             }));
 
             for glyph in shaped_glyphs {
@@ -914,11 +938,13 @@ pub fn layout_shaped_text(
     let mut pen_y = origin_y;
     let mut line_index = 0;
 
-    // Word-wrap state: track the last space position so we can break the line
-    // at word boundaries instead of mid-word.  If a single word is wider than
-    // max_width we fall back to character-level wrapping so text never overflows.
-    let mut last_space_glyph_idx: usize = usize::MAX;
-    let mut last_space_pen_x: f32 = origin_x;
+    // Word-wrap state: the last cluster on this line that a line is allowed to
+    // start at (UAX #14), so the line breaks there instead of mid-word.  When
+    // the line holds no break opportunity at all — a single word, or a URL,
+    // wider than max_width — we fall back to character-level wrapping so text
+    // never overflows.
+    let mut last_break_glyph_idx: usize = usize::MAX;
+    let mut last_break_pen_x: f32 = origin_x;
 
     time_cost!("text_layout::LayoutText - positioned shaped clusters", {
         for cluster in &shaped_text.clusters {
@@ -926,43 +952,50 @@ pub fn layout_shaped_text(
                 pen_x = origin_x;
                 pen_y += line_height;
                 line_index += 1;
-                last_space_glyph_idx = usize::MAX;
+                last_break_glyph_idx = usize::MAX;
                 continue;
             }
 
-            // Track the last space cluster so we know where to break.
-            if cluster.text.chars().all(char::is_whitespace) {
-                last_space_glyph_idx = glyphs.len();
-                last_space_pen_x = pen_x + cluster.width;
+            // Remember where this line could have been broken.  The pen is
+            // recorded *before* the cluster is placed, so a trailing space
+            // stays on the line it terminates.
+            if cluster.can_break_before {
+                last_break_glyph_idx = glyphs.len();
+                last_break_pen_x = pen_x;
             }
 
             if max_width > 0.0 && pen_x + cluster.width > origin_x + max_width && pen_x > origin_x {
-                if last_space_glyph_idx < glyphs.len() {
-                    // Word-wrap: move the part of the word that was already
-                    // placed after the last space down to a new line, keeping
-                    // those glyphs (they must not be discarded) and shifting
-                    // them so the word starts at the left margin.
-                    let wrap_offset = last_space_pen_x - origin_x;
+                if last_break_glyph_idx != usize::MAX {
+                    // Move everything placed after the break opportunity down to
+                    // a new line, keeping those glyphs (they must not be
+                    // discarded) and shifting them to the left margin.
+                    let wrap_offset = last_break_pen_x - origin_x;
                     // Width of the already-placed glyphs that belong to the
-                    // overflowing word (everything after the last space).
-                    let moved_width = pen_x - last_space_pen_x;
-                    for glyph in &mut glyphs[last_space_glyph_idx..] {
+                    // overflowing word (everything after the break).
+                    let moved_width = pen_x - last_break_pen_x;
+                    for glyph in &mut glyphs[last_break_glyph_idx..] {
                         glyph.x -= wrap_offset;
                         glyph.line_x -= wrap_offset;
                         glyph.y += line_height;
                         glyph.line_index += 1;
                     }
                     // Continue the new line right after the moved glyphs so the
-                    // current cluster is appended (not overlapped) below.
-                    pen_x = origin_x + moved_width;
+                    // current cluster is appended (not overlapped) below.  A
+                    // break at the current cluster moves nothing and simply
+                    // restarts at the margin.
+                    pen_x = if last_break_glyph_idx < glyphs.len() {
+                        origin_x + moved_width
+                    } else {
+                        origin_x
+                    };
                     pen_y += line_height;
                     line_index += 1;
-                    last_space_glyph_idx = usize::MAX;
+                    last_break_glyph_idx = usize::MAX;
                     // Fall through to the normal emit path below, which places
                     // the current cluster at the updated pen position.
                 } else {
-                    // No word break available (word wider than max_width) — fall
-                    // back to character-level wrapping.
+                    // No break opportunity on this line (a word wider than
+                    // max_width) — fall back to character-level wrapping.
                     pen_x = origin_x;
                     pen_y += line_height;
                     line_index += 1;
@@ -1075,6 +1108,28 @@ mod tests {
         assert!(layout.lines.len() > 1);
         assert!(layout.glyphs.iter().any(|glyph| glyph.text_range == (3..6)));
         assert!(!layout.lines.iter().any(|line| line.text_range.end == 4));
+    }
+
+    #[test]
+    fn paragraph_wrapping_breaks_between_ideographs() {
+        // Every cluster advances 5.0 with the fallback shaper, so eight of
+        // them fill a 40px line.  A space-only wrapper would rewind to the
+        // single space and leave "ab " alone on the first line.
+        let layout = test_layout("ab 你好世界你好世界", 40.0);
+
+        assert_eq!(layout.lines[0].glyph_range, 0..8);
+        assert_eq!(layout.lines[0].width, 40.0);
+    }
+
+    #[test]
+    fn paragraph_wrapping_terminates_when_no_cluster_fits() {
+        // A width narrower than a single cluster leaves no usable break
+        // opportunity; layout must still consume the text instead of
+        // re-queueing the same run forever.
+        let layout = test_layout("你好世界", 1.0);
+
+        assert_eq!(layout.lines.len(), 4);
+        assert_eq!(layout.glyphs.len(), 4);
     }
 
     #[test]
@@ -1214,6 +1269,88 @@ mod tests {
             .flat_map(|cluster| cluster.glyphs.iter())
             .map(|(glyph_key, _, _, _)| glyph_key.glyph_id)
             .collect()
+    }
+
+    #[test]
+    fn break_opportunities_follow_unicode_line_breaking() {
+        let text = "Hello, World!你好，世界";
+        let breaks = line_break_opportunities(text);
+
+        let offset_of = |needle: &str| text.find(needle).unwrap();
+
+        // A break belongs *after* the space, never between "Hello" and ",".
+        assert!(breaks[offset_of("World")]);
+        assert!(!breaks[offset_of(",")]);
+        // Han ideographs break between each other...
+        assert!(breaks[offset_of("好")]);
+        assert!(breaks[offset_of("世")]);
+        // ...but never before closing/trailing punctuation.
+        assert!(!breaks[offset_of("，")]);
+        // The paragraph start is not a break opportunity.
+        assert!(!breaks[0]);
+    }
+
+    #[test]
+    fn cjk_lines_fill_the_available_width_instead_of_rewinding_to_the_last_space() {
+        // Chinese has no spaces, so a space-only word wrapper rewinds to the
+        // last Latin space it saw — here the one inside "Hello, World!" — and
+        // pushes the whole ideographic tail onto the next line, leaving a
+        // ragged half-empty line behind.
+        let mut rasterizer = GlyphRasterizer::new();
+        let font_size = 16.0;
+        let text = "「Hello, World!」（世界你好！）之類字串的電腦程式在大多数通用编程语言中";
+        let max_width = 240.0;
+
+        let shaped = shape_text(&mut rasterizer, text, font_size);
+        let glyphs = layout_shaped_text(&mut rasterizer, &shaped, 0.0, 0.0, max_width);
+        let widths = positioned_line_widths(&glyphs);
+
+        assert!(widths.len() > 1, "the sample must wrap at {max_width}px");
+        for (index, width) in widths.iter().enumerate().take(widths.len() - 1) {
+            assert!(
+                *width > max_width - font_size * 1.5,
+                "line {index} stopped at {width}px of {max_width}px"
+            );
+        }
+    }
+
+    #[test]
+    fn latin_words_still_wrap_whole() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let font_size = 16.0;
+        let text = "alpha bravo charlie delta";
+
+        let shaped = shape_text(&mut rasterizer, text, font_size);
+        let single_line = layout_shaped_text(&mut rasterizer, &shaped, 0.0, 0.0, 0.0);
+        let word_width: f32 = shaped
+            .clusters
+            .iter()
+            .take("alpha".len())
+            .map(|cluster| cluster.width)
+            .sum();
+        let max_width = single_line
+            .last()
+            .map_or(0.0, |glyph| glyph.line_x + glyph.advance)
+            / 2.0;
+
+        let glyphs = layout_shaped_text(&mut rasterizer, &shaped, 0.0, 0.0, max_width);
+        let line_count = glyphs
+            .iter()
+            .map(|glyph| glyph.line_index)
+            .max()
+            .map_or(0, |last| last + 1);
+
+        assert!(line_count > 1);
+        // Every line starts a word, so the first glyph of each line sits at the
+        // left margin and no line begins mid-word.
+        for line in 0..line_count {
+            let first = glyphs
+                .iter()
+                .find(|glyph| glyph.line_index == line)
+                .expect("each line holds at least one glyph");
+            assert!(first.line_x.abs() < 0.01, "line {line} starts mid-word");
+        }
+        assert!(word_width > 0.0);
     }
 
     #[test]

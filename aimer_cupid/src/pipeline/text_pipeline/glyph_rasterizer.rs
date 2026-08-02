@@ -222,6 +222,43 @@ fn rasterize_color_glyph(
     })
 }
 
+/// Rasterizes a glyph through the platform, for faces Cupid cannot decode.
+///
+/// Apple ships system fonts whose glyph data uses private formats — `hvgl`
+/// outlines in the Chinese UI face, `emjc` compressed strikes in the iOS emoji
+/// face — which no third-party rasterizer can read. The platform can, and the
+/// bitmap it produces is indistinguishable from a decoded one downstream.
+///
+/// The advance is passed through rather than re-queried so a glyph keeps the
+/// `hmtx` advance shaping and layout already used for it.
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+fn rasterize_platform_glyph(
+    record: &FontRecord,
+    glyph_id: u16,
+    font_size: f32,
+    advance_width: f32,
+) -> Option<RasterizedGlyph> {
+    crate::text_pipeline::core_text_raster::rasterize_glyph(
+        record.path()?,
+        record.collection_index,
+        glyph_id,
+        font_size,
+        record.is_color,
+        advance_width,
+    )
+}
+
+/// Platforms whose fonts Cupid can always decode itself.
+#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+fn rasterize_platform_glyph(
+    _record: &FontRecord,
+    _glyph_id: u16,
+    _font_size: f32,
+    _advance_width: f32,
+) -> Option<RasterizedGlyph> {
+    None
+}
+
 #[inline]
 pub fn point_inside(contours: &[Vec<(f32, f32)>], x: f32, y: f32) -> bool {
     let mut inside = false;
@@ -802,17 +839,28 @@ impl GlyphRasterizer {
                     let record_snapshot = time_cost!("       |-RecordSnapshot", || self
                         .select_font_for_key(key)
                         .clone());
+                    let fallback_advance = record_snapshot
+                        .advance_width_for_glyph(key.glyph_id, font_size)
+                        .unwrap_or(font_size * 0.5);
                     time_cost!("       |-RasterizeColorGlyph", || {
                         rasterize_color_glyph(&record_snapshot, key.glyph_id, font_size)
+                            .or_else(|| {
+                                rasterize_platform_glyph(
+                                    &record_snapshot,
+                                    key.glyph_id,
+                                    font_size,
+                                    fallback_advance,
+                                )
+                            })
                             .unwrap_or_else(|| RasterizedGlyph {
                                 bitmap: Vec::new(),
                                 width: 0,
                                 height: 0,
                                 offset_x: 0.0,
                                 offset_y: 0.0,
-                                advance_width: font_size * 0.5,
+                                advance_width: fallback_advance,
                                 is_color: true,
-                            })
+                                })
                     })
                 } else {
                     let record = time_cost!("   |-SelectFontForRasterize", || {
@@ -828,6 +876,14 @@ impl GlyphRasterizer {
                         rasterize_swash_glyph(&record_snapshot, key.glyph_id, font_size)
                             .or_else(|| {
                                 rasterize_outline_glyph(&record_snapshot, key.glyph_id, font_size)
+                            })
+                            .or_else(|| {
+                                rasterize_platform_glyph(
+                                    &record_snapshot,
+                                    key.glyph_id,
+                                    font_size,
+                                    fallback_advance,
+                                )
                             })
                             .unwrap_or_else(|| RasterizedGlyph {
                                 bitmap: Vec::new(),
@@ -1859,7 +1915,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
     #[test]
     fn fallback_chain_keeps_both_emoji_and_cjk() {
         let mut rasterizer = GlyphRasterizer::new();
@@ -1882,17 +1938,17 @@ mod tests {
         assert!(chain.iter().any(|fallback| !fallback.is_color));
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
     #[test]
     fn emoji_glyph_rasterizes_as_color() {
         let mut rasterizer = GlyphRasterizer::new();
 
         let key = rasterizer.glyph_key_for_codepoint('😀', 32.0);
-        if key.font_id == rasterizer.primary_font_id() {
-            // No emoji fallback available — Roboto can't render '😀'. Skip.
-            eprintln!("[note] '😀' resolved to primary; AppleColorEmoji not on this macOS install");
-            return;
-        }
+        assert_ne!(
+            key.font_id,
+            rasterizer.primary_font_id(),
+            "'😀' must resolve to a color face, not to the Latin primary font"
+        );
 
         let glyph = rasterizer.glyph_metrics_for_key(key, 32.0);
         assert!(glyph.is_color, "'😀' should be tagged as a color glyph");
@@ -1900,14 +1956,40 @@ mod tests {
             glyph.width > 0 && glyph.height > 0,
             "'😀' bitmap dimensions must be non-zero"
         );
-        // RGBA8 → 4 bytes per pixel. The bitmap may be empty if the sbix
-        // strike was missing/unsupported (we'd hit the placeholder branch in
-        // rasterize_key), so guard the size check on the bitmap being present.
-        if !glyph.bitmap.is_empty() {
-            assert_eq!(
-                glyph.bitmap.len(),
-                (glyph.width * glyph.height * 4) as usize,
-                "'😀' bitmap must be RGBA8 (4 bytes per pixel)"
+        // RGBA8 → 4 bytes per pixel.
+        assert_eq!(
+            glyph.bitmap.len(),
+            (glyph.width * glyph.height * 4) as usize,
+            "'😀' bitmap must be RGBA8 (4 bytes per pixel)"
+        );
+    }
+
+    /// Simplified Chinese is the hardest fallback case on Apple platforms:
+    /// characters used only there — `吗`, `们`, `这` — are missing from the
+    /// Japanese and Korean faces that happen to cover shared ideographs, so the
+    /// only face left is the system's own Chinese font, whose outlines live in
+    /// a private table no third-party rasterizer can read.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn simplified_chinese_only_codepoints_rasterize_to_visible_glyphs() {
+        let mut rasterizer = GlyphRasterizer::new();
+
+        for codepoint in ['吗', '们', '这'] {
+            let key = rasterizer.glyph_key_for_codepoint(codepoint, 32.0);
+            assert_ne!(
+                key.font_id,
+                rasterizer.primary_font_id(),
+                "{codepoint:?} must resolve to a system face"
+            );
+            assert_ne!(key.glyph_id, 0, "{codepoint:?} resolved to .notdef");
+
+            let glyph = rasterizer.rasterize_key(key, 32.0);
+            assert!(
+                glyph.width > 0 && glyph.height > 0 && !glyph.bitmap.is_empty(),
+                "{codepoint:?} rasterized to nothing ({}x{}, {} bytes)",
+                glyph.width,
+                glyph.height,
+                glyph.bitmap.len()
             );
         }
     }

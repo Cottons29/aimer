@@ -37,9 +37,8 @@ hashbrown.workspace = true
 dirs.workspace = true
 memmap2 = "0.9.11"
 swash = "0.2.10"
-
+naga.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-pollster.workspace = true
 rayon = "1.12.0"
 
 [target.'cfg(not(any(target_os = "ios", target_os = "macos")))'.dependencies]
@@ -54,7 +53,23 @@ objc2-core-foundation = { workspace = true, features = [
     "CFString",
     "CFURL",
 ] }
-objc2-core-text = { workspace = true, features = ["std", "CTFont", "CTFontDescriptor"] }
+objc2-core-text = { workspace = true, features = [
+    "std",
+    "CTFont",
+    "CTFontDescriptor",
+    "CTFontManager",
+    # Enables the glyph drawing and bounding-rect entry points, which take
+    # Core Graphics types.
+    "objc2-core-graphics",
+] }
+objc2-core-graphics = { workspace = true, features = [
+    "std",
+    "CGBitmapContext",
+    "CGColorSpace",
+    "CGContext",
+    "CGFont",
+    "CGImage",
+] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true

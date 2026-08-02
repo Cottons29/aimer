@@ -50,12 +50,12 @@ fn resize_rgba8_nearest(
     resized
 }
 
-fn constrain_rgba8<'a>(
+fn constrain_rgba8(
     width: u32,
     height: u32,
-    data: &'a [u8],
+    data: &[u8],
     max_dimension: u32,
-) -> (u32, u32, Cow<'a, [u8]>) {
+) -> (u32, u32, Cow<'_, [u8]>) {
     let expected_len = (width as u64)
         .checked_mul(height as u64)
         .and_then(|pixels| pixels.checked_mul(4))

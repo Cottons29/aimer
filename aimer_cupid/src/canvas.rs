@@ -8,6 +8,7 @@ use crate::font::{FontFamily, FontStyle, FontWeight};
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
+use crate::text_pipeline::text_layout::line_break_opportunities;
 use crate::utilities::{Color, Rect, TextureId, Vec2d};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -450,41 +451,43 @@ impl CupidCanvas {
         let mut current_width = 0.0_f32;
         let mut line_count = 1_usize;
         let mut line_widths = Vec::new();
-        // Width position right after the most recent whitespace on the current
-        // line (relative to the line start). `None` means no break opportunity
-        // is available on the current line yet. This mirrors the word-wrapping
-        // performed by `layout_shaped_text` so the measured line count matches
-        // the rendered one (otherwise the last line would be clipped).
-        let mut last_space_end: Option<f32> = None;
+        // Width of the current line up to its last UAX #14 break opportunity.
+        // `None` means no break opportunity is available on the current line
+        // yet. This mirrors the word-wrapping performed by `layout_shaped_text`
+        // so the measured line count matches the rendered one (otherwise the
+        // last line would be clipped).
+        let mut last_break_end: Option<f32> = None;
+        let can_break_before = line_break_opportunities(text);
 
-        for c in text.chars() {
+        for (offset, c) in text.char_indices() {
             if c == '\n' {
                 width = width.max(current_width);
                 line_widths.push(current_width);
                 current_width = 0.0;
                 line_count += 1;
-                last_space_end = None;
+                last_break_end = None;
                 continue;
             }
 
             let glyph_width =
                 rasterizer.advance_width_for_family(c, font_size, font_family, weight, font_style);
 
-            // Track the last whitespace position as the preferred break point.
-            if c.is_whitespace() {
-                last_space_end = Some(current_width + glyph_width);
+            // Track where this line may be broken, measured before the
+            // character is added so a trailing space stays on its own line.
+            if can_break_before[offset] {
+                last_break_end = Some(current_width);
             }
 
             if max_width > 0.0 && current_width > 0.0 && current_width + glyph_width > max_width {
-                if let Some(space_end) = last_space_end {
-                    // Word-wrap: the partial word after the last space moves to
-                    // the next line, so the current line ends at the space.
-                    let moved_width = (current_width - space_end).max(0.0);
-                    width = width.max(space_end);
-                    line_widths.push(space_end);
+                if let Some(break_end) = last_break_end {
+                    // Word-wrap: the text after the break opportunity moves to
+                    // the next line, so the current line ends at the break.
+                    let moved_width = (current_width - break_end).max(0.0);
+                    width = width.max(break_end);
+                    line_widths.push(break_end);
                     current_width = moved_width;
                     line_count += 1;
-                    last_space_end = None;
+                    last_break_end = None;
                 } else {
                     // No break opportunity — fall back to character wrapping.
                     width = width.max(current_width);
@@ -841,5 +844,33 @@ mod family_metrics_tests {
 
         assert_eq!(widths.len(), 2);
         assert!(widths[1] < widths[0]);
+    }
+
+    #[test]
+    fn measured_cjk_lines_fill_the_available_width() {
+        // Chinese carries no spaces, so measuring must break between
+        // ideographs.  Rewinding to the last Latin space instead would report
+        // a half-empty line — and, being one line too many, an inflated
+        // height for the widget that owns the text.
+        let canvas = CupidCanvas::new();
+        let font_size = 16.0;
+        let max_width = 240.0;
+
+        let widths = canvas.measure_text_line_widths_styled(
+            "「Hello, World!」（世界你好！）之類字串的電腦程式在大多数通用编程语言中",
+            font_size,
+            max_width,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+
+        assert!(widths.len() > 1, "the sample must wrap at {max_width}px");
+        for (index, width) in widths.iter().enumerate().take(widths.len() - 1) {
+            assert!(
+                *width > max_width - font_size * 1.5,
+                "line {index} stopped at {width}px of {max_width}px"
+            );
+        }
     }
 }

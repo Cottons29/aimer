@@ -1,5 +1,7 @@
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 pub(crate) mod apple_fonts;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+pub(crate) mod core_text_raster;
 mod font_resolver;
 pub mod glyph_atlas;
 mod glyph_metrics;

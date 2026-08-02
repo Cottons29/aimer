@@ -23,7 +23,7 @@ pub struct FontRecord {
     pub id: FontId,
     pub bytes: Option<Arc<[u8]>>,
     pub(crate) collection_index: u32,
-    pub(crate) _path: Option<Arc<PathBuf>>,
+    pub(crate) path: Option<Arc<PathBuf>>,
     /// True when the font carries color glyph data (`sbix` / `CBDT` / `COLR`)
     /// and should be rasterized via color-glyph tables.
     pub is_color: bool,
@@ -78,7 +78,7 @@ static MAPPED_FONT_FILES: LazyLock<RwLock<HashMap<PathBuf, Arc<memmap2::Mmap>>>>
 /// Returns `None` when the file cannot be opened or mapped; failures are not
 /// cached, so a font that becomes readable later is picked up.
 #[cfg(not(target_arch = "wasm32"))]
-fn mapped_font_file(path: &Path) -> Option<Arc<memmap2::Mmap>> {
+pub(crate) fn mapped_font_file(path: &Path) -> Option<Arc<memmap2::Mmap>> {
     if let Ok(cache) = MAPPED_FONT_FILES.read()
         && let Some(mapping) = cache.get(path)
     {
@@ -119,7 +119,7 @@ impl FontRecord {
             id,
             bytes: Some(Arc::from(bytes)),
             collection_index: 0,
-            _path: None,
+            path: None,
             is_color: false,
         })
     }
@@ -131,7 +131,7 @@ impl FontRecord {
             id,
             bytes: Some(Arc::from(bytes)),
             collection_index: 0,
-            _path: None,
+            path: None,
             is_color,
         })
     }
@@ -144,7 +144,7 @@ impl FontRecord {
             id,
             bytes: Some(bytes),
             collection_index: 0,
-            _path: None,
+            path: None,
             is_color,
         })
     }
@@ -185,7 +185,7 @@ impl FontRecord {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            mapped_font_file(self._path.as_ref()?.as_ref()).map(FontData::Mapped)
+            mapped_font_file(self.path.as_ref()?.as_ref()).map(FontData::Mapped)
         }
         #[cfg(target_arch = "wasm32")]
         None
@@ -196,6 +196,17 @@ impl FontRecord {
         let data = self.data()?;
         font_ref(data.as_ref(), self.collection_index)?;
         Some(())
+    }
+
+    /// Returns the file this face was loaded from, if it is backed by one.
+    ///
+    /// Fonts registered from memory have no path. A path is what identifies a
+    /// face to the platform rasterizer, which is the only way to draw faces
+    /// whose glyph data Cupid cannot decode.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[inline]
+    pub(crate) fn path(&self) -> Option<&std::path::Path> {
+        self.path.as_ref().map(|path| path.as_path())
     }
 
     pub(crate) fn glyph_index(&self, codepoint: char) -> Option<u16> {
@@ -434,7 +445,7 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
                     id,
                     bytes: record_bytes,
                     collection_index: ci,
-                    _path: record_path,
+                    path: record_path,
                     is_color,
                 });
                 seen_ids.insert((source_id, ci));
@@ -473,7 +484,7 @@ mod tests {
     use std::sync::Arc;
 
     use skrifa::MetadataProvider;
-
+    
     #[cfg(not(target_arch = "wasm32"))]
     use super::{FontData, FontRecord, font_ref};
 
@@ -510,7 +521,7 @@ mod tests {
             id: 1,
             bytes: None,
             collection_index: 0,
-            _path: Some(Arc::new(path)),
+            path: Some(Arc::new(path)),
             is_color: false,
         };
 
@@ -525,14 +536,14 @@ mod tests {
             id: 1,
             bytes: None,
             collection_index: 0,
-            _path: Some(Arc::new(path.clone())),
+            path: Some(Arc::new(path.clone())),
             is_color: false,
         };
         let second = FontRecord {
             id: 2,
             bytes: None,
             collection_index: 0,
-            _path: Some(Arc::new(path)),
+            path: Some(Arc::new(path)),
             is_color: false,
         };
 
@@ -560,7 +571,7 @@ mod tests {
             id: 1,
             bytes: None,
             collection_index: 0,
-            _path: Some(Arc::new(missing)),
+            path: Some(Arc::new(missing)),
             is_color: false,
         };
 
@@ -571,7 +582,7 @@ mod tests {
             id: 2,
             bytes: None,
             collection_index: 0,
-            _path: Some(Arc::new(
+            path: Some(Arc::new(
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fonts/JetBrainsMono-Regular.ttf"),
             )),
             is_color: false,
