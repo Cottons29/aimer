@@ -30,13 +30,13 @@ pub static ANDROID_APP: std::sync::OnceLock<AndroidApp> = std::sync::OnceLock::n
 static APP_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
-pub enum AimerCustomAppEvent {
+pub enum AimerNativePlatformEvent {
     ForceBackspace,
     InsertText(String),
     FrameReady,
 }
 
-pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerCustomAppEvent>> = OnceLock::new();
+pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerNativePlatformEvent>> = OnceLock::new();
 
 /// Whether a `FrameReady` animation event is waiting in the event loop.
 ///
@@ -68,7 +68,7 @@ pub extern "C" fn trigger_rust_backspace() {
         return;
     };
 
-    if let Err(e) = proxy.send_event(AimerCustomAppEvent::ForceBackspace) {
+    if let Err(e) = proxy.send_event(AimerNativePlatformEvent::ForceBackspace) {
         aimer_utils::error!("trigger_rust_backspace: failed to send event: {:?}", e);
     }
 }
@@ -103,7 +103,7 @@ pub extern "C" fn aimer_ios_frame_tick() {
         return;
     };
 
-    if let Err(e) = proxy.send_event(AimerCustomAppEvent::FrameReady) {
+    if let Err(e) = proxy.send_event(AimerNativePlatformEvent::FrameReady) {
         aimer_utils::error!("aimer_ios_frame_tick: failed to send event: {:?}", e);
     }
 }
@@ -131,14 +131,14 @@ pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
         return;
     };
 
-    if let Err(e) = proxy.send_event(AimerCustomAppEvent::InsertText(text)) {
+    if let Err(e) = proxy.send_event(AimerNativePlatformEvent::InsertText(text)) {
         aimer_utils::error!("trigger_rust_insert_text: failed to send event: {:?}", e);
     }
 }
 
 // Android software-keyboard forwarding into Rust.
 //
-// These are the JNI entry points invoked by the Java `com.aimer.AimerActivity`
+// These are the JNI entry points invoked by the Kotlin `com.aimer.AimerActivity`
 // helper (see the Android build template). The hidden `EditText` managed by
 // that activity captures everything the soft keyboard produces — including
 // IME-composed CJK text once a candidate is committed — and forwards it here.
@@ -163,7 +163,7 @@ pub extern "system" fn Java_com_aimer_AimerActivity_nativeInsertText<'caller>(
             return Ok(());
         };
 
-        if let Err(e) = proxy.send_event(AimerCustomAppEvent::InsertText(text)) {
+        if let Err(e) = proxy.send_event(AimerNativePlatformEvent::InsertText(text)) {
             aimer_utils::error!("nativeInsertText: failed to send event: {:?}", e);
         }
         Ok(())
@@ -183,7 +183,7 @@ pub extern "system" fn Java_com_aimer_AimerActivity_nativeBackspace<'caller>(
             return Ok(());
         };
 
-        if let Err(e) = proxy.send_event(AimerCustomAppEvent::ForceBackspace) {
+        if let Err(e) = proxy.send_event(AimerNativePlatformEvent::ForceBackspace) {
             aimer_utils::error!("nativeBackspace: failed to send event: {:?}", e);
         }
         Ok(())
@@ -334,6 +334,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 widget_root: None,
                 event_dispatcher: aimer_widget::EventDispatcher::new(),
                 scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
+                #[cfg(target_arch = "wasm32")]
+                web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
                 pending_widget: Some(widget),
                 cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
                 current_modifiers: Default::default(),
@@ -428,7 +430,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 
     /// Delivers an Aimer user event through the same path as the native event
     /// loop.
-    pub fn send_user_event(&mut self, event: AimerCustomAppEvent) {
+    pub fn send_user_event(&mut self, event: AimerNativePlatformEvent) {
         crate::handler::user_events::handle_user_event(&mut self.app, event);
         self.window.request_redraw();
     }
@@ -613,7 +615,7 @@ fn start_event_loop(
 
     info!("Initializing EventLoop...");
     #[cfg(not(target_os = "android"))]
-    let event_loop = EventLoop::<AimerCustomAppEvent>::with_user_event()
+    let event_loop = EventLoop::<AimerNativePlatformEvent>::with_user_event()
         .build()
         .expect("Failed to create EventLoop");
 
@@ -639,7 +641,7 @@ fn start_event_loop(
         ];
         std::hint::black_box(_keep_jni);
 
-        EventLoop::<AimerCustomAppEvent>::with_user_event()
+        EventLoop::<AimerNativePlatformEvent>::with_user_event()
             .with_android_app(app)
             .build()
             .expect("Failed to create EventLoop")
@@ -658,7 +660,7 @@ fn start_event_loop(
         }
         let sent = EVENT_PROXY
             .get()
-            .is_some_and(|proxy| proxy.send_event(AimerCustomAppEvent::FrameReady).is_ok());
+            .is_some_and(|proxy| proxy.send_event(AimerNativePlatformEvent::FrameReady).is_ok());
         if !sent {
             complete_frame_ready_request(&FRAME_READY_PENDING);
         }
@@ -692,6 +694,8 @@ fn start_event_loop(
         widget_root: None,
         event_dispatcher: aimer_widget::EventDispatcher::new(),
         scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
+        #[cfg(target_arch = "wasm32")]
+        web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
         pending_widget: Some(widget),
         cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
         current_modifiers: Default::default(),
@@ -1080,7 +1084,13 @@ mod tests {
     }
     impl EventElement for ScrollRecordingElement {
         fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
-            if let ElementEvent::Scroll { delta, kind, phase } = event {
+            if let ElementEvent::Scroll {
+                delta,
+                kind,
+                phase,
+                ..
+            } = event
+            {
                 self.events
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())

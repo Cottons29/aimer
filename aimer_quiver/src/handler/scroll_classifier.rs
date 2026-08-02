@@ -116,6 +116,78 @@ impl ScrollClassifier {
     }
 }
 
+/// Longest gap that still attributes an opening phase to inertia instead of a
+/// new touch.
+///
+/// macOS reports the momentum that follows a lift as a second gesture start,
+/// and it arrives within the same event burst as the lift itself. A human
+/// cannot lift and touch down again that quickly, so a start seen this soon
+/// after contact ended is inertia.
+const MOMENTUM_BEGIN_GAP_MS: u128 = 32;
+
+/// Tracks whether the user's fingers are currently on the pointing device.
+///
+/// Contact is a property of the *device*, not of a smoothing channel: the
+/// classifier may attribute the opening deltas of one physical gesture to a
+/// different channel than its later deltas, so a per-channel flag would report
+/// a held gesture as released halfway through it. Widgets rely on this signal
+/// to keep an overscrolled edge stretched exactly as long as the fingers stay
+/// down, so it must never flicker within a gesture.
+///
+/// The platform vocabulary is ambiguous — [`TouchPhase::Started`] opens both a
+/// touch and its post-lift inertia — and is disambiguated with two facts:
+///
+/// * inertia can only follow contact, never other inertia, and
+/// * a trackpad announces a new touch twice (may-begin, then begin) while
+///   inertia announces itself once.
+#[derive(Debug, Default)]
+struct ContactTracker {
+    /// The fingers are on the device right now.
+    contact: bool,
+    /// The previous platform input opened a gesture.
+    last_was_start: bool,
+    /// When contact last ended, cleared once inertia or a new touch consumed
+    /// it, so inertia is never inferred twice in a row.
+    contact_ended_at: Option<Instant>,
+}
+
+impl ContactTracker {
+    /// Folds one platform phase into the tracked contact state.
+    fn on_input(&mut self, phase: TouchPhase) {
+        match phase {
+            TouchPhase::Started => {
+                let opens_momentum = !self.last_was_start
+                    && self.contact_ended_at.is_some_and(|at| {
+                        Instant::now().duration_since(at).as_millis() <= MOMENTUM_BEGIN_GAP_MS
+                    });
+                self.contact = !opens_momentum;
+                self.last_was_start = true;
+                self.contact_ended_at = None;
+            }
+            TouchPhase::Moved => {
+                // A phase-less stream (a plain mouse wheel) is never contact,
+                // and a glide keeps whatever the opening phase established.
+                self.last_was_start = false;
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                self.contact_ended_at = self.contact.then(Instant::now);
+                self.contact = false;
+                self.last_was_start = false;
+            }
+        }
+    }
+
+    /// Whether the fingers are on the device as of the last platform input.
+    #[inline]
+    fn is_direct_manipulation(&self) -> bool {
+        self.contact
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// Tracks the gesture phase of a single smoothing channel.
 ///
 /// A platform delta and the frame that finally delivers it are not the same
@@ -143,11 +215,24 @@ struct ScrollPhaseTracker {
     cancelled: bool,
     /// The window system reports explicit `Started`/`Ended` phases.
     platform_driven: bool,
+    /// The gesture was closed on a boundary the window system never reported.
+    forced_end: bool,
+    /// Input arrived while a forced end was still owed to the receiver.
+    deferred_start: bool,
 }
 
 impl ScrollPhaseTracker {
     /// Folds a platform phase into the tracked gesture state.
     fn on_input(&mut self, phase: TouchPhase) {
+        // A forced end is owed to the receiver and must not be erased by the
+        // gesture that follows it. Browsers open the next gesture in the same
+        // breath as the previous one is closed, so the new input only records
+        // that a start is due once the terminating frame has been delivered.
+        if self.forced_end && matches!(phase, TouchPhase::Started | TouchPhase::Moved) {
+            self.deferred_start = true;
+            return;
+        }
+
         match phase {
             TouchPhase::Started => {
                 self.platform_driven = true;
@@ -178,10 +263,47 @@ impl ScrollPhaseTracker {
         }
     }
 
+    /// Closes the gesture on a boundary the window system never reported.
+    ///
+    /// Unlike a [`TouchPhase::Ended`] fed through [`on_input`](Self::on_input),
+    /// this end survives later input: it is the only end a phase-less platform
+    /// will ever produce, so losing it would leave the gesture open forever.
+    /// A tracker with nothing in flight is left untouched, so an end injected
+    /// on an idle channel stays silent.
+    #[inline]
+    fn force_end(&mut self) {
+        if !self.active && !self.start_pending {
+            return;
+        }
+        self.forced_end = true;
+    }
+
     /// Returns whether the gesture terminates on this frame.
+    ///
+    /// A forced end waits for the queued distance to drain, exactly like a
+    /// platform-reported one — unless the next gesture is already waiting, in
+    /// which case its distance would keep the channel draining forever and the
+    /// end is emitted at once.
     #[inline]
     fn should_end(&self, still_draining: bool) -> bool {
+        if self.forced_end {
+            return self.deferred_start || !still_draining;
+        }
         !still_draining && (self.input_ended || !self.platform_driven)
+    }
+
+    /// Rearms the tracker after a terminating frame was delivered.
+    ///
+    /// Input held back while the end was owed opens its gesture on the next
+    /// emitted frame, so the receiver sees `Ended` followed by `Started`
+    /// instead of two gestures merged into one.
+    fn on_end_emitted(&mut self) {
+        let deferred = self.deferred_start;
+        self.reset();
+        if deferred {
+            self.start_pending = true;
+            self.platform_driven = true;
+        }
     }
 
     /// Returns whether a terminating frame is still owed to the receiver.
@@ -207,6 +329,7 @@ pub struct DualScroller {
     wheel: MomentumScroller,
     trackpad_phase: ScrollPhaseTracker,
     wheel_phase: ScrollPhaseTracker,
+    contact: ContactTracker,
     pending_unknown: Vec<PhysicalPosition<f64>>,
     pending_phase: Option<TouchPhase>,
 }
@@ -221,6 +344,15 @@ pub struct DualScroller {
 pub struct ScrollStep {
     pub delta: PhysicalPosition<f64>,
     pub phase: TouchPhase,
+    /// Whether the user's fingers are on the device as of this frame.
+    ///
+    /// This reports the state of the *device* (see [`ContactTracker`]), not of
+    /// the channel that produced the step, so every step of a frame agrees and
+    /// a held gesture never reads as released halfway through. Post-lift
+    /// momentum keeps flowing with this set to false, letting widgets tell a
+    /// held gesture from its inertial tail. Phase-less mouse wheels are never
+    /// direct manipulations.
+    pub is_direct_manipulation: bool,
 }
 
 /// Frame-synchronized deltas produced for each input-device behavior.
@@ -254,6 +386,7 @@ impl DualScroller {
             wheel,
             trackpad_phase: ScrollPhaseTracker::default(),
             wheel_phase: ScrollPhaseTracker::default(),
+            contact: ContactTracker::default(),
             pending_unknown: Vec::with_capacity(2),
             pending_phase: None,
         }
@@ -270,7 +403,12 @@ impl DualScroller {
         if !delta.x.is_finite() || !delta.y.is_finite() {
             return;
         }
-        
+
+        // Contact is tracked before classification so an ambiguous opening
+        // delta cannot hide the touch from the channel that ends up owning the
+        // rest of the gesture.
+        self.contact.on_input(phase);
+
         match self.classifier.classify(delta) {
             ScrollSource::Wheel => {
                 self.flush_unknown(ScrollSource::Wheel);
@@ -294,8 +432,40 @@ impl DualScroller {
         if !delta.x.is_finite() || !delta.y.is_finite() {
             return;
         }
+        self.contact.on_input(phase);
         self.wheel_phase.on_input(phase);
         Self::queue(&mut self.wheel, delta);
+    }
+
+    /// Closes the current gesture on every channel without queueing distance.
+    ///
+    /// Platforms whose wheel stream carries no phase — browsers report every
+    /// event as [`TouchPhase::Moved`] — segment gestures themselves and then
+    /// inject the boundary here. Feeding a zero-distance delta instead would
+    /// work, but it would also feed a fake sample to the device classifier and
+    /// bias the next gesture towards a wheel, so the phase is folded in on its
+    /// own.
+    ///
+    /// The queued distance is kept: the terminating frame is emitted once it
+    /// has been delivered, exactly like a platform-reported end. Contact is
+    /// reset rather than merely ended, because an injected boundary is always
+    /// followed by a genuinely new touch — never by the post-lift momentum a
+    /// macOS trackpad announces as a second `Started`.
+    ///
+    /// The device history survives as well. A gesture boundary says nothing
+    /// about which device produced it, and dropping the history would send the
+    /// opening samples of the next gesture back through classification, where
+    /// a lone pixel pulse is conservatively treated as a wheel — a trackpad
+    /// would lose its momentum policy on every boundary. The classifier
+    /// forgets a truly stale stream on its own after its reset gap.
+    pub fn end_gesture(&mut self) {
+        // A sample still waiting for classification belongs to the gesture
+        // that is being closed, so it is committed first — otherwise the flush
+        // would fold its phase in after the end and reopen the gesture.
+        self.flush_unknown(ScrollSource::Wheel);
+        self.contact.reset();
+        self.trackpad_phase.force_end();
+        self.wheel_phase.force_end();
     }
 
     /// Produces at most one step per source for the current rendered frame.
@@ -306,9 +476,10 @@ impl DualScroller {
             // creates trackpad-style release momentum.
             self.flush_unknown(ScrollSource::Wheel);
         }
+        let direct = self.contact.is_direct_manipulation();
         ScrollFrame {
-            trackpad: Self::tick_channel(&mut self.trackpad, &mut self.trackpad_phase),
-            wheel: Self::tick_channel(&mut self.wheel, &mut self.wheel_phase),
+            trackpad: Self::tick_channel(&mut self.trackpad, &mut self.trackpad_phase, direct),
+            wheel: Self::tick_channel(&mut self.wheel, &mut self.wheel_phase, direct),
         }
     }
 
@@ -322,6 +493,7 @@ impl DualScroller {
     fn tick_channel(
         scroller: &mut MomentumScroller,
         tracker: &mut ScrollPhaseTracker,
+        is_direct_manipulation: bool,
     ) -> Option<ScrollStep> {
         if tracker.cancelled {
             scroller.clear();
@@ -329,6 +501,7 @@ impl DualScroller {
             return Some(ScrollStep {
                 delta: PhysicalPosition::new(0.0, 0.0),
                 phase: TouchPhase::Cancelled,
+                is_direct_manipulation,
             });
         }
 
@@ -342,18 +515,23 @@ impl DualScroller {
                     TouchPhase::Moved
                 };
                 if phase == TouchPhase::Ended {
-                    tracker.reset();
+                    tracker.on_end_emitted();
                 } else {
                     tracker.active = true;
                 }
-                Some(ScrollStep { delta, phase })
+                Some(ScrollStep {
+                    delta,
+                    phase,
+                    is_direct_manipulation,
+                })
             }
             None => {
                 if tracker.active && tracker.should_end(false) {
-                    tracker.reset();
+                    tracker.on_end_emitted();
                     Some(ScrollStep {
                         delta: PhysicalPosition::new(0.0, 0.0),
                         phase: TouchPhase::Ended,
+                        is_direct_manipulation,
                     })
                 } else {
                     None
@@ -404,6 +582,7 @@ impl DualScroller {
         self.wheel.clear();
         self.trackpad_phase.reset();
         self.wheel_phase.reset();
+        self.contact.reset();
         self.pending_unknown.clear();
         self.pending_phase = None;
     }
@@ -461,7 +640,10 @@ mod tests {
     #[test]
     fn isolated_ambiguous_pixel_delta_is_emitted_without_trackpad_momentum() {
         let mut scroller = DualScroller::new();
-        scroller.on_pixel_delta(PhysicalPosition::new(0.0, -8.00048828125), TouchPhase::Moved);
+        scroller.on_pixel_delta(
+            PhysicalPosition::new(0.0, -8.00048828125),
+            TouchPhase::Moved,
+        );
 
         let frame = scroller.tick();
 
@@ -574,6 +756,137 @@ mod tests {
     }
 
     #[test]
+    fn direct_manipulation_survives_late_trackpad_classification() {
+        let mut scroller = DualScroller::new();
+        // A single pure-vertical pixel pulse cannot be attributed to a device,
+        // so the frame flushes it to the wheel channel. The trackpad channel
+        // therefore never receives the platform `Started` of this gesture.
+        scroller.on_pixel_delta(PhysicalPosition::new(0.0, -12.0), TouchPhase::Started);
+        let flushed = scroller.tick();
+        assert!(flushed.trackpad.is_none());
+        assert!(
+            flushed
+                .wheel
+                .expect("the ambiguous pulse must not be lost")
+                .is_direct_manipulation
+        );
+
+        // Cross-axis variation now identifies the trackpad mid-gesture.
+        scroller.on_pixel_delta(PhysicalPosition::new(1.5, -12.0), TouchPhase::Moved);
+        scroller.on_pixel_delta(PhysicalPosition::new(1.5, -12.0), TouchPhase::Moved);
+
+        let step = scroller
+            .tick()
+            .trackpad
+            .expect("trackpad distance must be delivered");
+        assert!(
+            step.is_direct_manipulation,
+            "contact belongs to the device, not to a smoothing channel"
+        );
+    }
+
+    #[test]
+    fn a_drained_channel_end_does_not_report_the_fingers_as_lifted() {
+        let mut scroller = DualScroller::new();
+        // Identify the trackpad first so the live gesture below is routed to its
+        // own channel instead of being held as an ambiguous pulse.
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Started);
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Moved);
+        assert!(scroller.tick().trackpad.is_some());
+        // A phase-less line pulse ends when its channel drains, which must not
+        // be mistaken for the end of the live trackpad contact.
+        scroller.on_wheel_delta(PhysicalPosition::new(0.0, -2.0), TouchPhase::Moved);
+
+        let mut ended = None;
+        for _ in 0..64 {
+            if let Some(step) = scroller.tick().wheel
+                && step.phase == TouchPhase::Ended
+            {
+                ended = Some(step);
+                break;
+            }
+        }
+
+        let ended = ended.expect("a phase-less wheel gesture ends when it drains");
+        assert!(ended.is_direct_manipulation);
+    }
+
+    #[test]
+    fn a_fresh_touch_pair_regains_contact_right_after_a_gesture() {
+        let mut scroller = DualScroller::new();
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Started);
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Moved);
+        assert!(
+            scroller
+                .tick()
+                .trackpad
+                .expect("contact distance must be delivered")
+                .is_direct_manipulation
+        );
+
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -8.0), TouchPhase::Ended);
+        // A trackpad announces a new touch twice (may-begin, then begin), which
+        // momentum never does — so this is contact even though it follows the
+        // previous gesture immediately.
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -6.0), TouchPhase::Started);
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -6.0), TouchPhase::Started);
+
+        let step = scroller
+            .tick()
+            .trackpad
+            .expect("the new gesture must be delivered");
+        assert!(step.is_direct_manipulation);
+    }
+
+    #[test]
+    fn a_touch_after_momentum_finished_is_contact_again() {
+        let mut scroller = DualScroller::new();
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Started);
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Ended);
+        // Post-lift momentum: begins, glides, then finishes.
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -20.0), TouchPhase::Started);
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -10.0), TouchPhase::Moved);
+        scroller.on_pixel_delta(PhysicalPosition::new(0.0, 0.0), TouchPhase::Ended);
+
+        // Momentum cannot follow momentum, so the next opening phase is a touch.
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -30.0), TouchPhase::Started);
+
+        let step = scroller
+            .tick()
+            .trackpad
+            .expect("the new gesture must be delivered");
+        assert!(step.is_direct_manipulation);
+    }
+
+    #[test]
+    fn direct_manipulation_ends_before_post_lift_momentum() {
+        let mut scroller = DualScroller::new();
+        scroller.on_pixel_delta(
+            PhysicalPosition::new(2.0, -40.0),
+            TouchPhase::Started,
+        );
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Moved);
+
+        let held_step = scroller
+            .tick()
+            .trackpad
+            .expect("direct trackpad distance must be delivered");
+        assert!(held_step.is_direct_manipulation);
+
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -8.0), TouchPhase::Ended);
+        scroller.on_pixel_delta(
+            PhysicalPosition::new(2.0, -4.0),
+            TouchPhase::Started,
+        );
+
+        let momentum_step = scroller
+            .tick()
+            .trackpad
+            .expect("post-lift momentum must still be delivered");
+        assert!(!momentum_step.is_direct_manipulation);
+    }
+
+    #[test]
     fn cancelled_gesture_drops_pending_distance_and_reports_cancel() {
         let mut scroller = DualScroller::new();
         scroller.on_wheel_delta(PhysicalPosition::new(0.0, -400.0), TouchPhase::Started);
@@ -585,6 +898,124 @@ mod tests {
         assert_eq!(step.phase, TouchPhase::Cancelled);
         assert_eq!(step.delta.y, 0.0);
         assert!(!scroller.is_active());
+        assert!(scroller.tick().wheel.is_none());
+    }
+
+    #[test]
+    fn an_injected_end_closes_a_gesture_without_queueing_distance() {
+        let mut scroller = DualScroller::new();
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Started);
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Moved);
+        assert!(scroller.tick().trackpad.is_some());
+
+        scroller.end_gesture();
+
+        let mut phases = Vec::new();
+        for _ in 0..64 {
+            if let Some(step) = scroller.tick().trackpad {
+                phases.push(step.phase);
+            }
+            if !scroller.is_active() {
+                break;
+            }
+        }
+
+        assert_eq!(phases.last(), Some(&TouchPhase::Ended));
+        assert!(!scroller.is_active());
+    }
+
+    #[test]
+    fn an_injected_start_after_an_injected_end_is_a_fresh_contact() {
+        let mut scroller = DualScroller::new();
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Started);
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Moved);
+        assert!(scroller.tick().trackpad.is_some());
+
+        // A browser gesture is segmented by cadence, so the end and the start
+        // of the next gesture are injected back to back. That pair is a new
+        // touch, never the momentum tail a trackpad reports on macOS.
+        scroller.end_gesture();
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Started);
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Moved);
+
+        let step = scroller
+            .tick()
+            .trackpad
+            .expect("the new gesture must be delivered");
+        assert!(step.is_direct_manipulation);
+    }
+
+    /// Collects the phase of every step both channels still owe.
+    fn drain_phases(scroller: &mut DualScroller) -> Vec<TouchPhase> {
+        let mut phases = Vec::new();
+        for _ in 0..256 {
+            let frame = scroller.tick();
+            phases.extend(frame.trackpad.map(|step| step.phase));
+            phases.extend(frame.wheel.map(|step| step.phase));
+            if !scroller.is_active() {
+                break;
+            }
+        }
+        phases
+    }
+
+    #[test]
+    fn an_injected_end_is_reported_even_when_the_next_gesture_opens_at_once() {
+        let mut scroller = DualScroller::new();
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Started);
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Moved);
+        assert!(scroller.tick().trackpad.is_some());
+
+        // A browser reports no gesture boundary, so the end is injected and the
+        // next gesture opens in the same breath — before a single frame was
+        // rendered. The terminating frame is still owed to the widget.
+        scroller.end_gesture();
+        scroller.on_pixel_delta(PhysicalPosition::new(2.0, -40.0), TouchPhase::Started);
+
+        let phases = drain_phases(&mut scroller);
+        let ended = phases
+            .iter()
+            .position(|phase| *phase == TouchPhase::Ended)
+            .expect("the injected end must reach the widget");
+        assert_eq!(
+            phases.get(ended + 1),
+            Some(&TouchPhase::Started),
+            "the deferred gesture opens on the frame after the end"
+        );
+        assert_eq!(
+            phases.iter().filter(|phase| **phase == TouchPhase::Ended).count(),
+            1,
+            "the deferred gesture stays open until its own boundary is injected"
+        );
+
+        scroller.end_gesture();
+        assert_eq!(drain_phases(&mut scroller).last(), Some(&TouchPhase::Ended));
+        assert!(!scroller.is_active());
+    }
+
+    #[test]
+    fn an_injected_end_is_reported_for_a_sample_that_is_still_unclassified() {
+        let mut scroller = DualScroller::new();
+        // A single pixel pulse cannot be classified yet, so it waits for the
+        // next frame — a cursor move can inject the end before that frame.
+        scroller.on_pixel_delta(PhysicalPosition::new(0.0, -40.0), TouchPhase::Started);
+
+        scroller.end_gesture();
+
+        let phases = drain_phases(&mut scroller);
+        assert_eq!(phases.first(), Some(&TouchPhase::Started));
+        assert_eq!(phases.last(), Some(&TouchPhase::Ended));
+        assert!(!scroller.is_active());
+    }
+
+    #[test]
+    fn an_injected_end_on_an_idle_scroller_stays_idle() {
+        let mut scroller = DualScroller::new();
+
+        scroller.end_gesture();
+
+        assert!(!scroller.is_active());
+        assert!(scroller.tick().trackpad.is_none());
         assert!(scroller.tick().wheel.is_none());
     }
 
@@ -601,6 +1032,9 @@ mod tests {
             frame.trackpad.map(|step| step.phase),
             Some(TouchPhase::Started)
         );
-        assert_eq!(frame.wheel.map(|step| step.phase), Some(TouchPhase::Started));
+        assert_eq!(
+            frame.wheel.map(|step| step.phase),
+            Some(TouchPhase::Started)
+        );
     }
 }

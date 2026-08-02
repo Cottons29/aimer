@@ -1,7 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerSource;
-use aimer_utils::ExecTimes;
+use aimer_utils::{info, ExecTimes};
 use aimer_widget::{EventResult, PointerKey, Widget, broadcast_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
@@ -51,7 +51,9 @@ impl WindowEventHandler {
 
             WindowEvent::Touch(item) => Self::handle_touch(item, app),
 
-            WindowEvent::CursorMoved { position, .. } => Self::handle_cursor_move(position, app),
+            WindowEvent::CursorMoved { position, .. } => {
+                Self::handle_cursor_move(position, app)
+            },
 
             WindowEvent::CursorLeft { .. } => Self::handle_cursor_left(app),
 
@@ -75,12 +77,11 @@ impl WindowEventHandler {
 
             WindowEvent::Ime(ime) => Self::handle_ime(ime, app),
 
+            // The reported phase is unused on the web, where it is replaced.
+            #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
             WindowEvent::MouseWheel { delta, phase, .. } => {
-                // info!("Scroll Phase: {:?}", phase);
-               if matches!(phase, TouchPhase::Ended) {
-                   app.scroll_smoother.clear();
-                   return;
-               }
+                #[cfg(target_arch = "wasm32")]
+                let phase = Self::web_wheel_phase(app);
                 Self::handle_mouse_wheel(delta, phase, app);
             }
 
@@ -115,6 +116,10 @@ impl WindowEventHandler {
                     {
                         window.request_redraw();
                     }
+                } else {
+                    #[cfg(target_arch = "wasm32")]
+                    app.web_scroll_phase.reset();
+                    app.scroll_smoother.clear();
                 }
             }
 
@@ -178,7 +183,14 @@ impl WindowEventHandler {
                 Self::handle_ime(ime, app);
                 HeadlessEventAction::None
             }
+            // The reported phase is unused on the web, where it is replaced.
+            #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
             WindowEvent::MouseWheel { delta, phase, .. } => {
+                // Same reconstruction as the windowed path: the browser hands
+                // over `Moved` for every event, so the boundary comes from the
+                // cadence tracker instead.
+                #[cfg(target_arch = "wasm32")]
+                let phase = Self::web_wheel_phase(app);
 
                 Self::handle_mouse_wheel(delta, phase, app);
                 HeadlessEventAction::None
@@ -197,6 +209,9 @@ impl WindowEventHandler {
                 HeadlessEventAction::Render
             }
             WindowEvent::Focused(false) => {
+                #[cfg(target_arch = "wasm32")]
+                app.web_scroll_phase.reset();
+                app.scroll_smoother.clear();
                 if app.widget_root.is_some() {
                     let result = app.cancel_element_events();
                     if result.needs_redraw() {
@@ -219,13 +234,12 @@ impl WindowEventHandler {
             x: (item.location.x / scale) as f32,
             y: (item.location.y / scale) as f32,
         };
+        // info!("Location: {pos:?}" );
         let touch_id = item.id;
-
         // All touch events are passed through with their finger ID.
         // Individual widgets (scrollable, gesture detector) decide which
         // fingers to track — the scrollable keeps its own primary-finger
         // filter so a second touch doesn't jump the scroll position.
-
         let event = match item.phase {
             TouchPhase::Started => ElementEvent::PointerDown(pos, PointerSource::Touch, touch_id),
             TouchPhase::Moved => ElementEvent::PointerMove(pos, PointerSource::Touch, touch_id),
@@ -275,6 +289,11 @@ impl WindowEventHandler {
             return;
         }
         app.cursor_pos = new_pos;
+        // Aiming at another target ends the scroll intent. A browser never
+        // reports the lift, so a real pointer move is the only evidence that
+        // the next wheel event belongs to a new gesture.
+        #[cfg(target_arch = "wasm32")]
+        Self::end_web_scroll_gesture(app);
         if app.widget_root.is_some() {
             let event = ElementEvent::PointerMove(app.cursor_pos, PointerSource::Mouse, 0);
             let result = app.dispatch_element_event(app.cursor_pos, &event);
@@ -616,6 +635,43 @@ impl WindowEventHandler {
             if let Some(window) = &app.window {
                 window.request_redraw();
             }
+        }
+    }
+
+    /// Resolves the gesture phase of one browser wheel event.
+    ///
+    /// The DOM `wheel` event carries no phase, so winit's web backend emits
+    /// every event as [`TouchPhase::Moved`]. The boundaries are inferred from
+    /// cadence by [`WebScrollPhase`](crate::handler::web_scroll_phase::WebScrollPhase)
+    /// instead. A restart means the previous gesture was still open when the
+    /// idle gap had already elapsed — no frame was rendered during the pause,
+    /// so the missing end is injected here before the new gesture opens.
+    #[cfg(target_arch = "wasm32")]
+    fn web_wheel_phase<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) -> TouchPhase {
+        use crate::handler::web_scroll_phase::WebScrollTransition;
+
+        match app.web_scroll_phase.on_wheel() {
+            WebScrollTransition::Continue => TouchPhase::Moved,
+            WebScrollTransition::Begin => TouchPhase::Started,
+            WebScrollTransition::Restart => {
+                app.scroll_smoother.end_gesture();
+                TouchPhase::Started
+            }
+        }
+    }
+
+    /// Closes an open browser scroll gesture and schedules its final frame.
+    ///
+    /// The terminating phase travels through the smoother, so a redraw is
+    /// requested to make sure the widget tree actually receives it.
+    #[cfg(target_arch = "wasm32")]
+    fn end_web_scroll_gesture<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) {
+        if !app.web_scroll_phase.end() {
+            return;
+        }
+        app.scroll_smoother.end_gesture();
+        if let Some(window) = &app.window {
+            window.request_redraw();
         }
     }
 

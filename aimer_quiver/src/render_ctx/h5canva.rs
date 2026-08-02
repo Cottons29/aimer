@@ -13,7 +13,7 @@ pub mod render_ctx {
     use winit::platform::web::WindowExtWebSys;
     use winit::window::Window;
 
-    use crate::aimer_app::{AimerCustomAppEvent, EVENT_PROXY};
+    use crate::aimer_app::{AimerNativePlatformEvent, EVENT_PROXY};
 
     struct GpuState {
         gpu: GpuContext<'static>,

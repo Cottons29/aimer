@@ -2,10 +2,16 @@ pub mod event_handler;
 pub mod scroll_classifier;
 pub mod scroll_utils;
 pub(crate) mod user_events;
+/// Gesture segmentation for the phase-less browser wheel stream.
+///
+/// Compiled for the web target only; the `test` predicate keeps the logic
+/// unit-testable from a host build, where no browser exists.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) mod web_scroll_phase;
 
 #[cfg(target_os = "android")]
 use crate::aimer_app::ANDROID_APP;
-use crate::aimer_app::AimerCustomAppEvent;
+use crate::aimer_app::AimerNativePlatformEvent;
 #[cfg(target_os = "android")]
 use crate::ffi_utils::android_screen;
 use crate::first_frame::FirstFrameNotifier;
@@ -34,6 +40,8 @@ use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
 #[allow(unused)]
 use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
+#[cfg(target_os = "android")]
+use aimer_utils::debug;
 
 pub(crate) type StartupHook = Box<dyn FnOnce() -> Box<dyn Any>>;
 
@@ -71,6 +79,9 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub widget_root: Option<AnyElement>,
     pub event_dispatcher: EventDispatcher,
     pub(crate) scroll_smoother: DualScroller,
+    /// Gesture boundaries inferred for the phase-less browser wheel stream.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase,
     pub pending_widget: Option<W>,
     pub cursor_pos: Vec2d,
     pub current_modifiers: aimer_events::element::Modifiers,
@@ -142,6 +153,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                     },
                     phase: step.phase,
                     kind: aimer_events::element::ScrollDeltaKind::Pixel,
+                    is_direct_manipulation: step.is_direct_manipulation,
                 },
             ));
         }
@@ -155,6 +167,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                     },
                     phase: step.phase,
                     kind: aimer_events::element::ScrollDeltaKind::Line,
+                    is_direct_manipulation: step.is_direct_manipulation,
                 },
             ));
         }
@@ -170,7 +183,7 @@ fn run_startup_hooks(
     startup_resources.extend(startup_hooks.drain(..).map(|hook| hook()));
 }
 
-impl<W: Widget + 'static> ApplicationHandler<AimerCustomAppEvent> for AimerApplicationHandler<W> {
+impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for AimerApplicationHandler<W> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         run_startup_hooks(&mut self.startup_hooks, &mut self.startup_resources);
 
@@ -277,7 +290,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerCustomAppEvent> for AimerAppli
         window.request_redraw();
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AimerCustomAppEvent) {
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AimerNativePlatformEvent) {
         // debug!("User event {:?}", event);
         handle_user_event(self, event);
     }
@@ -372,8 +385,23 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
+        // A browser never reports the end of a scroll, so the gesture is closed
+        // here once its stream has gone quiet — before this frame's step is
+        // dispatched, so the terminating phase rides along with it.
+        #[cfg(target_arch = "wasm32")]
+        if self.web_scroll_phase.poll_idle() {
+            self.scroll_smoother.end_gesture();
+        }
+
         let _ = self.dispatch_smoothed_scroll();
-        if self.scroll_smoother.is_active() {
+
+        // An open web gesture keeps the frame loop alive even with no distance
+        // left, because the idle poll above only runs on a rendered frame.
+        #[cfg(target_arch = "wasm32")]
+        let gesture_open = self.web_scroll_phase.is_open();
+        #[cfg(not(target_arch = "wasm32"))]
+        let gesture_open = false;
+        if self.scroll_smoother.is_active() || gesture_open {
             aimer_events::window::request_animation_frame();
         }
         #[cfg(target_os = "android")]
