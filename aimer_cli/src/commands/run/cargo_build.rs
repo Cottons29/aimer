@@ -8,7 +8,7 @@ use std::time::Duration;
 use crossbeam::channel::Sender;
 
 use crate::commands::assemble::link_flags;
-use crate::commands::run::cargo_message::{self, CargoMessage, ErrorReport};
+use crate::commands::run::cargo_message::{self, CargoMessage, ErrorReport, RenderedDiagnostics};
 use crate::commands::run::console::{RunnerEvent, Status};
 use crate::commands::run::utilities::LogStyling;
 
@@ -24,10 +24,15 @@ impl CargoBuildTarget {
     /// Whether the build is driven by cargo itself, and can therefore be asked
     /// for the JSON messages [`stream_cargo_json`] understands.
     ///
-    /// `wasm-pack` drives its own cargo invocation and does not forward
-    /// `--message-format`, so the web target keeps its plain text output.
+    /// Two build drivers own the message format and can't be asked for it:
+    /// `wasm-pack` drives its own cargo invocation without forwarding
+    /// `--message-format`, and `cargo ndk` appends
+    /// `--message-format json-render-diagnostics` of its own, which makes cargo
+    /// render the diagnostics as text on stderr instead of emitting them as
+    /// JSON. Both therefore go through [`RenderedDiagnostics`] instead, which
+    /// recovers the very same [`ErrorReport`] from that rendering.
     fn speaks_cargo_json(&self) -> bool {
-        !matches!(self, CargoBuildTarget::Web)
+        !matches!(self, CargoBuildTarget::Web | CargoBuildTarget::Android { .. })
     }
 }
 
@@ -49,13 +54,15 @@ pub fn cargo_command(target: &CargoBuildTarget, release: bool) -> Command {
             return c;
         }
         CargoBuildTarget::Android { rust_target } => {
+            // No `--message-format` here: `cargo ndk` sets its own and cargo
+            // would then see the flag twice. Its diagnostics are scraped back
+            // out of the rendering instead — see `speaks_cargo_json`.
             let mut c = Command::new("cargo");
             c.arg("ndk")
                 .arg("-t")
                 .arg(rust_target)
                 .arg("build")
-                .arg("--lib")
-                .arg(cargo_message::MESSAGE_FORMAT);
+                .arg("--lib");
             c
         }
         CargoBuildTarget::Darwin => {
@@ -125,22 +132,27 @@ pub fn spawn_cargo_build(
     // Cargo writes its diagnostics as JSON on stdout while keeping the
     // `Compiling` / `Finished` status lines on stderr, so the progress reader
     // below is unaffected by the message format.
-    let json_reader = if target.speaks_cargo_json() {
+    let speaks_json = target.speaks_cargo_json();
+    let json_reader = if speaks_json {
         Some(stream_cargo_json(stdout, tx.clone()))
     } else {
         let _ = stream_stdout_as_build_log(stdout, tx.clone());
         None
     };
-    let stderr_reader = stream_stderr_with_cargo_progress(stderr, tx.clone());
+    // A driver that owns the message format renders its diagnostics on stderr,
+    // so that is where the errors of the build have to be collected from.
+    let stderr_reader = stream_stderr_with_cargo_progress(stderr, tx.clone(), !speaks_json);
     let status = wait_for_child(current_child);
 
     // Both pipes are drained to their end before the report is written, so the
     // errors of a failed build are the very last thing in the pane instead of
     // something to scroll back for.
-    let _ = stderr_reader.join();
-    if let Some(report) = json_reader.and_then(|reader| reader.join().ok())
-        && !report.is_empty()
-    {
+    let scraped = stderr_reader.join().unwrap_or_default();
+    let report = match json_reader.and_then(|reader| reader.join().ok()) {
+        Some(parsed) => parsed,
+        None => scraped,
+    };
+    if !report.is_empty() {
         // Sent whole rather than line by line: the block fills the pane it lands
         // in, so only the console knows how wide to lay it out.
         let _ = tx.send(RunnerEvent::BuildReport(report));
@@ -199,18 +211,31 @@ pub fn stream_stdout_as_build_log(
     })
 }
 
+/// Stream cargo's status output as build log lines, tracking the compile
+/// progress on the way.
+///
+/// When `collect_diagnostics` is set, the stream is also fed through
+/// [`RenderedDiagnostics`], which is how a build driver that renders its own
+/// diagnostics (`cargo ndk`, `wasm-pack`) still ends with the `Compile Error`
+/// block. The returned report is empty otherwise, the diagnostics then arriving
+/// as JSON on stdout instead.
 pub fn stream_stderr_with_cargo_progress(
     stderr: impl Read + Send + 'static,
     tx: Sender<RunnerEvent>,
-) -> thread::JoinHandle<()> {
+    collect_diagnostics: bool,
+) -> thread::JoinHandle<ErrorReport> {
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
         // Resolved package count gives the compile progress a real denominator,
         // so the percentage tracks the build instead of sticking at 99%.
         let total_units = cargo_lock_package_count();
+        let mut scraper = RenderedDiagnostics::new();
         let mut fetch_count = 0;
         let mut compile_count: usize = 0;
         for l in reader.lines().map_while(Result::ok) {
+            if collect_diagnostics {
+                scraper.push(&l);
+            }
             if l.contains("Locking") || l.contains("Updating") {
                 let _ = tx.send(RunnerEvent::StatusChange(Status::Locking));
             } else if l.contains("Fetching")
@@ -228,6 +253,7 @@ pub fn stream_stderr_with_cargo_progress(
             }
             let _ = tx.send(RunnerEvent::BuildLog(l));
         }
+        scraper.finish()
     })
 }
 
@@ -454,9 +480,6 @@ mod tests {
             CargoBuildTarget::Ios {
                 rust_target: "aarch64-apple-ios".to_string(),
             },
-            CargoBuildTarget::Android {
-                rust_target: "aarch64-linux-android".to_string(),
-            },
         ] {
             let args = cargo_args(&target, true);
             assert!(
@@ -464,6 +487,19 @@ mod tests {
                 "{args:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_android_build_leaves_the_message_format_to_cargo_ndk() {
+        // `cargo ndk` appends `--message-format json-render-diagnostics`
+        // itself; passing ours as well would hand cargo the flag twice.
+        let args = cargo_args(
+            &CargoBuildTarget::Android {
+                rust_target: "aarch64-linux-android".to_string(),
+            },
+            false,
+        );
+        assert!(!args.iter().any(|a| a.contains("--message-format")), "{args:?}");
     }
 
     /// Collect every app log the reader thread produces for `input`, as the
@@ -668,14 +704,69 @@ mod tests {
             }
             .speaks_cargo_json()
         );
+        // wasm-pack drives cargo itself and drops the flag; cargo ndk overrides
+        // it with `json-render-diagnostics`. Both render their diagnostics as
+        // text, which the stderr reader scrapes back into a report.
+        assert!(!CargoBuildTarget::Web.speaks_cargo_json());
         assert!(
-            CargoBuildTarget::Android {
+            !CargoBuildTarget::Android {
                 rust_target: "arm64-v8a".to_string()
             }
             .speaks_cargo_json()
         );
-        // wasm-pack drives cargo itself and drops the flag.
-        assert!(!CargoBuildTarget::Web.speaks_cargo_json());
+    }
+
+    /// The report the stderr reader builds for `input`, and the build log lines
+    /// it forwarded.
+    fn stderr_build(input: &str, collect: bool) -> (Vec<String>, Vec<String>) {
+        let (tx, rx) = crossbeam::channel::unbounded();
+        let reader = stream_stderr_with_cargo_progress(Cursor::new(input.to_string()), tx, collect);
+        let report = reader.join().expect("reader thread");
+        let mut lines = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let RunnerEvent::BuildLog(line) = event {
+                lines.push(strip_ansi(&line));
+            }
+        }
+        (
+            lines,
+            report.lines().iter().map(|l| strip_ansi(l)).collect(),
+        )
+    }
+
+    /// The rendering cargo writes on stderr when it, rather than the console,
+    /// formats the diagnostics — the case for `cargo ndk` and `wasm-pack`.
+    const RENDERED_STDERR: &str = concat!(
+        "   Compiling demo v0.1.0 (/tmp/demo)\n",
+        "error[E0308]: mismatched types\n",
+        " --> src/lib.rs:1:21\n",
+        "  |\n",
+        "\n",
+        "error: could not compile `demo` (lib) due to 1 previous error\n",
+    );
+
+    #[test]
+    fn the_stderr_reader_recovers_the_report_of_a_rendered_build() {
+        let (lines, report) = stderr_build(RENDERED_STDERR, true);
+
+        // The output itself is still forwarded verbatim ...
+        assert!(lines.iter().any(|l| l.contains("Compiling demo")));
+        assert!(lines.iter().any(|l| l.contains("error[E0308]")));
+        // ... and the errors come back as the same grouped block the JSON path
+        // produces for the other targets.
+        assert!(report.iter().any(|l| l.contains("Compile Error")));
+        assert!(report.iter().any(|l| l.contains("mismatched types")));
+        assert!(report.last().unwrap().contains("1 error"));
+    }
+
+    #[test]
+    fn the_stderr_reader_reports_nothing_when_the_diagnostics_come_as_json() {
+        // The JSON reader owns the report then; scraping the same errors off
+        // stderr as well would list every one of them twice.
+        let (lines, report) = stderr_build(RENDERED_STDERR, false);
+
+        assert!(lines.iter().any(|l| l.contains("error[E0308]")));
+        assert!(report.is_empty());
     }
 
     #[test]

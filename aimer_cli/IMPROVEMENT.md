@@ -7,3 +7,6 @@
 - must provide the target platform like 'macos', 'android', 'ios' ...etc
 
 **Example:** aimer assemble macos --release # building the macOS bundle in release mode
+
+- cargo-ndk on doctor command
+- ndk on doctor command

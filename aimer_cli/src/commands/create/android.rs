@@ -3,8 +3,30 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+/// Gradle distribution the bundled wrapper (`gradlew`, `gradle-wrapper.jar`)
+/// was generated from.
+///
+/// Keep this in sync with `templates/android/dot_gradle/*`: the wrapper scripts
+/// and jar are shipped verbatim, so bumping only this constant would leave the
+/// project with a mismatched launcher.
+const GRADLE_VERSION: &str = "9.6.1";
+
+/// SHA-256 of `gradle-{GRADLE_VERSION}-bin.zip`, as published on
+/// <https://services.gradle.org/distributions/>.
+///
+/// Pinning it makes the wrapper reject a tampered or truncated distribution
+/// instead of executing it.
+const GRADLE_DISTRIBUTION_SHA256: &str =
+    "9c0f7faeeb306cb14e4279a3e084ca6b596894089a0638e68a07c945a32c9e14";
+
+/// Android Gradle plugin applied by the generated root build script.
+///
+/// AGP 9 ships built-in Kotlin support, which is why no separate
+/// `org.jetbrains.kotlin.android` plugin is declared anywhere in the scaffold —
+/// applying it would clash with AGP's own `kotlin` extension.
+const ANDROID_GRADLE_PLUGIN_VERSION: &str = "9.3.1";
+
 pub fn create(dir: &Path, name: &str, group: &str) {
-    fs::create_dir_all(dir.join("builds/android/app/src/main/java/com/example/app")).unwrap();
     fs::create_dir_all(dir.join("builds/android/app/src/main/res/values")).unwrap();
     fs::create_dir_all(dir.join("builds/android/gradle/wrapper")).unwrap();
 
@@ -13,11 +35,11 @@ pub fn create(dir: &Path, name: &str, group: &str) {
     // CJK / emoji / autocorrect input work on Android (a bare `NativeActivity`
     // surface cannot receive composed text). It forwards committed text into Rust
     // through the `nativeInsertText` / `nativeBackspace` JNI bridge.
-    let aimer_activity_dir = dir.join("builds/android/app/src/main/java/com/aimer");
+    let aimer_activity_dir = dir.join("builds/android/app/src/main/kotlin/com/aimer");
     fs::create_dir_all(&aimer_activity_dir).unwrap();
     fs::write(
-        aimer_activity_dir.join("AimerActivity.java"),
-        include_str!("../../../templates/android/AimerActivity.java.template"),
+        aimer_activity_dir.join("AimerActivity.kt"),
+        include_str!("../../../templates/android/AimerActivity.kt.template"),
     )
     .unwrap();
 
@@ -44,7 +66,7 @@ pub fn create(dir: &Path, name: &str, group: &str) {
 
     fs::write(
         dir.join("builds/android/gradle/wrapper/gradle-wrapper.properties"),
-        include_str!("../../../templates/android/dot_gradle/gradle-wrapper.properties"),
+        gradle_wrapper_properties(),
     )
     .unwrap();
 
@@ -62,12 +84,9 @@ pub fn create(dir: &Path, name: &str, group: &str) {
 
     fs::write(
         dir.join("builds/android/build.gradle.kts"),
-        r#"
-plugins {
-    id("com.android.application") version "8.2.0" apply false
-    id("org.jetbrains.kotlin.android") version "1.9.20" apply false
-}
-"#,
+        format!(
+            "plugins {{\n    id(\"com.android.application\") version \"{ANDROID_GRADLE_PLUGIN_VERSION}\" apply false\n}}\n"
+        ),
     )
     .unwrap();
 
@@ -90,8 +109,7 @@ plugins {
     fs::write(
         dir.join("builds/android/app/src/main/AndroidManifest.xml"),
         include_str!("../../../templates/android/AndroidManifest.xml.template")
-            .replace("${app_name}", &lib_name)
-            .replace("${group}", group),
+            .replace("${app_name}", &lib_name),
     )
     .unwrap();
 
@@ -145,5 +163,144 @@ plugins {
         let mipmap_dir = dir.join(format!("builds/android/app/src/main/res/{}", folder));
         fs::create_dir_all(&mipmap_dir).unwrap();
         fs::write(mipmap_dir.join("ic_launcher.png"), data).unwrap();
+    }
+}
+
+/// The `gradle-wrapper.properties` shipped with a freshly scaffolded project.
+///
+/// Generated from [`GRADLE_VERSION`] and [`GRADLE_DISTRIBUTION_SHA256`] rather
+/// than embedded as a template, so the distribution the wrapper downloads and
+/// the checksum it verifies can never drift apart.
+fn gradle_wrapper_properties() -> String {
+    format!(
+        "distributionBase=GRADLE_USER_HOME\n\
+         distributionPath=wrapper/dists\n\
+         distributionSha256Sum={GRADLE_DISTRIBUTION_SHA256}\n\
+         distributionUrl=https\\://services.gradle.org/distributions/gradle-{GRADLE_VERSION}-bin.zip\n\
+         networkTimeout=10000\n\
+         retries=0\n\
+         retryBackOffMs=500\n\
+         validateDistributionUrl=true\n\
+         zipStoreBase=GRADLE_USER_HOME\n\
+         zipStorePath=wrapper/dists\n"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Scaffold a throwaway Android project and hand its `builds/android`
+    /// directory to `assert`.
+    fn with_scaffold(assert: impl FnOnce(&Path)) {
+        let tmp = tempfile::tempdir().unwrap();
+        create(tmp.path(), "demo-app", "com.example.demo");
+        assert(&tmp.path().join("builds/android"));
+    }
+
+    #[test]
+    fn activity_is_generated_as_kotlin() {
+        with_scaffold(|android| {
+            assert!(
+                android
+                    .join("app/src/main/kotlin/com/aimer/AimerActivity.kt")
+                    .exists(),
+                "the activity must be scaffolded as Kotlin"
+            );
+            assert!(
+                !android
+                    .join("app/src/main/java/com/aimer/AimerActivity.java")
+                    .exists(),
+                "the Java activity must no longer be scaffolded"
+            );
+        });
+    }
+
+    #[test]
+    fn kotlin_activity_keeps_the_jni_entry_points() {
+        with_scaffold(|android| {
+            let source =
+                fs::read_to_string(android.join("app/src/main/kotlin/com/aimer/AimerActivity.kt"))
+                    .unwrap();
+
+            // `Java_com_aimer_AimerActivity_nativeInsertText` / `..._nativeBackspace`
+            // in `aimer_quiver` only resolve against *static* natives, which in
+            // Kotlin means `@JvmStatic external` members of a companion object.
+            assert!(source.contains("@JvmStatic"));
+            assert!(source.contains("external fun nativeInsertText(text: String)"));
+            assert!(source.contains("external fun nativeBackspace()"));
+        });
+    }
+
+    #[test]
+    fn gradle_wrapper_is_pinned_to_the_current_gradle() {
+        with_scaffold(|android| {
+            let properties =
+                fs::read_to_string(android.join("gradle/wrapper/gradle-wrapper.properties"))
+                    .unwrap();
+            assert!(
+                properties.contains(&format!("gradle-{GRADLE_VERSION}-bin.zip")),
+                "wrapper must request Gradle {GRADLE_VERSION}: {properties}"
+            );
+            assert!(
+                properties.contains("distributionSha256Sum="),
+                "the distribution must be checksum-verified"
+            );
+        });
+    }
+
+    #[test]
+    fn root_build_script_applies_only_the_android_plugin() {
+        with_scaffold(|android| {
+            let root = fs::read_to_string(android.join("build.gradle.kts")).unwrap();
+            assert!(root.contains(&format!(
+                "id(\"com.android.application\") version \"{ANDROID_GRADLE_PLUGIN_VERSION}\""
+            )));
+            // AGP 9 ships built-in Kotlin; applying the standalone plugin on top
+            // fails with a duplicate `kotlin` extension.
+            assert!(
+                !root.contains("org.jetbrains.kotlin.android"),
+                "the Kotlin Android plugin must not be applied alongside AGP 9"
+            );
+        });
+    }
+
+    #[test]
+    fn app_build_script_uses_the_built_in_kotlin_dsl() {
+        with_scaffold(|android| {
+            let app = fs::read_to_string(android.join("app/build.gradle.kts")).unwrap();
+            assert!(!app.contains("org.jetbrains.kotlin.android"));
+            assert!(
+                !app.contains("kotlinOptions"),
+                "`kotlinOptions` was removed in AGP 9"
+            );
+            assert!(app.contains("compilerOptions"));
+            assert!(app.contains("JvmTarget.JVM_17"));
+            assert!(app.contains("applicationId = \"com.example.demo\""));
+        });
+    }
+
+    #[test]
+    fn manifest_leaves_the_application_id_to_gradle() {
+        with_scaffold(|android| {
+            let manifest =
+                fs::read_to_string(android.join("app/src/main/AndroidManifest.xml")).unwrap();
+            // A `package` attribute is ignored (and warned about) since AGP 8.
+            assert!(!manifest.contains("package="));
+            assert!(manifest.contains("android:name=\"com.aimer.AimerActivity\""));
+            // The native library name still has to be spelled out for
+            // `NativeActivity` to find the Rust `cdylib`.
+            assert!(manifest.contains("android:value=\"demo_app\""));
+        });
+    }
+
+    #[test]
+    fn kotlin_source_set_is_registered_for_the_application() {
+        with_scaffold(|android| {
+            // The activity lives in `src/main/kotlin`, which AGP only compiles
+            // when the source set is declared.
+            let app = fs::read_to_string(android.join("app/build.gradle.kts")).unwrap();
+            assert!(app.contains("src/main/kotlin"));
+        });
     }
 }

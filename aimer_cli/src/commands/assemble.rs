@@ -609,10 +609,17 @@ fn assemble_desktop(
     Ok(artifact)
 }
 
+/// JDK feature releases the Android scaffold builds with, most preferred first.
+///
+/// Gradle 9 and the Android Gradle plugin both require JDK 17 as a minimum, so
+/// older runtimes (8, 11) are deliberately never selected — picking one would
+/// only trade a clear "no JDK found" into an opaque Gradle failure.
+const SUPPORTED_JDK_VERSIONS: &[&str] = &["17", "21", "23"];
+
 /// Locate a Gradle-compatible `JAVA_HOME` on macOS, preferring LTS releases.
 pub(crate) fn resolve_compatible_java_home() -> Option<String> {
     if cfg!(target_os = "macos") {
-        for version in ["17", "21", "23", "11"] {
+        for version in SUPPORTED_JDK_VERSIONS {
             let Ok(output) = Command::new("/usr/libexec/java_home")
                 .arg("-v")
                 .arg(version)
@@ -686,6 +693,15 @@ mod tests {
     fn xcode_configuration_maps_release_flag() {
         assert_eq!(xcode_configuration(true), "Release");
         assert_eq!(xcode_configuration(false), "Debug");
+    }
+
+    #[test]
+    fn only_jdk_17_and_newer_are_considered() {
+        assert!(!SUPPORTED_JDK_VERSIONS.is_empty());
+        for version in SUPPORTED_JDK_VERSIONS {
+            let feature: u32 = version.parse().expect("JDK feature release");
+            assert!(feature >= 17, "Gradle 9 rejects JDK {version}");
+        }
     }
 
     #[test]

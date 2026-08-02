@@ -282,6 +282,183 @@ impl ErrorReport {
     }
 }
 
+/// Headline prefixes of the summaries cargo and rustc print once a build has
+/// failed.
+///
+/// They are spelled as errors but restate the failure instead of describing one,
+/// and cargo's JSON output doesn't carry them as diagnostics either — so keeping
+/// them out is what makes a scraped report identical to a parsed one.
+const FAILURE_SUMMARIES: &[&str] = &[
+    "could not compile",
+    "aborting due to",
+    "build failed",
+    "failed to compile",
+];
+
+/// Collects rustc diagnostics out of build output that is already *rendered*.
+///
+/// Not every build speaks cargo's JSON: `cargo ndk` appends its own
+/// `--message-format json-render-diagnostics`, and `wasm-pack` drives cargo
+/// without forwarding the flag at all. Both end up with cargo rendering the
+/// diagnostics as plain text on stderr, which leaves
+/// [`CargoMessage::parse`] nothing to work with.
+///
+/// Feeding that stream through this collector recovers the same
+/// [`ErrorReport`] the JSON path produces, so every target ends a failed build
+/// with the one `Compile Error` block:
+///
+/// ```ignore
+/// let mut scraper = RenderedDiagnostics::new();
+/// for line in output.lines() {
+///     scraper.push(line);
+/// }
+/// let report = scraper.finish();
+/// ```
+///
+/// A diagnostic is recognised by its `level[code]: message` headline and runs
+/// until the next line that starts in the first column, which is exactly how
+/// rustc lays its output out. Lines that belong to no diagnostic — the
+/// `Compiling` / `Finished` status lines, a build script's own output — are
+/// ignored.
+#[derive(Debug, Default)]
+pub struct RenderedDiagnostics {
+    report: ErrorReport,
+    /// The diagnostic whose continuation lines are still arriving.
+    pending: Option<PendingDiagnostic>,
+}
+
+/// A diagnostic whose headline has been seen and whose body is still being read.
+#[derive(Debug)]
+struct PendingDiagnostic {
+    level: DiagnosticLevel,
+    message: String,
+    code: Option<String>,
+    location: Option<String>,
+    /// The lines as they arrived, colors included, so the report replays the
+    /// rendering rather than a reconstruction of it.
+    rendered: Vec<String>,
+}
+
+impl PendingDiagnostic {
+    /// The finished diagnostic, with the blank lines rustc leaves after a body
+    /// trimmed off.
+    fn into_diagnostic(mut self) -> Diagnostic {
+        while self
+            .rendered
+            .last()
+            .is_some_and(|line| strip_ansi(line).trim().is_empty())
+        {
+            self.rendered.pop();
+        }
+        Diagnostic {
+            level: self.level,
+            message: self.message,
+            code: self.code,
+            location: self.location,
+            rendered: Some(self.rendered.join("\n")),
+        }
+    }
+}
+
+impl RenderedDiagnostics {
+    /// A collector that has seen nothing yet.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Feed one line of build output.
+    pub fn push(&mut self, line: &str) {
+        let plain = strip_ansi(line);
+        if let Some((level, code, message)) = parse_headline(&plain) {
+            self.flush();
+            if level.is_error() && is_failure_summary(&message) {
+                return;
+            }
+            self.pending = Some(PendingDiagnostic {
+                level,
+                message,
+                code,
+                location: None,
+                rendered: vec![line.to_string()],
+            });
+            return;
+        }
+
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
+        if !is_continuation(&plain) {
+            self.flush();
+            return;
+        }
+        if pending.location.is_none()
+            && let Some(location) = plain.split_once("--> ")
+        {
+            pending.location = Some(location.1.trim().to_string());
+        }
+        pending.rendered.push(line.to_string());
+    }
+
+    /// The report of everything collected so far, closing the diagnostic the
+    /// stream ended on.
+    pub fn finish(mut self) -> ErrorReport {
+        self.flush();
+        self.report
+    }
+
+    /// Record the diagnostic that was being read, if any.
+    fn flush(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            self.report.record(&pending.into_diagnostic());
+        }
+    }
+}
+
+/// Split a `level[code]: message` headline, as rustc prints it in the first
+/// column, into its parts.
+///
+/// `None` for anything else, including a level this console has no rendering
+/// for — the line is then just build output.
+fn parse_headline(line: &str) -> Option<(DiagnosticLevel, Option<String>, String)> {
+    if line.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let (head, message) = line.split_once(": ")?;
+    let (level, code) = match head.split_once('[') {
+        Some((level, code)) => (level, Some(code.strip_suffix(']')?.to_string())),
+        None => (head, None),
+    };
+    Some((
+        DiagnosticLevel::from_cargo(level)?,
+        code,
+        message.trim().to_string(),
+    ))
+}
+
+/// Whether `line` belongs to the body of the diagnostic above it.
+///
+/// rustc indents everything below a headline — the `-->` location, the `|`
+/// gutter, the notes — with one exception: a numbered source line starts with
+/// its line number in the first column (`1 | pub fn f() ...`), as does the `...`
+/// that stands for the lines it skipped. Blank lines separate the parts of a
+/// body and are kept, then trimmed off its end.
+fn is_continuation(line: &str) -> bool {
+    if line.is_empty() || line.starts_with(char::is_whitespace) || line.starts_with("...") {
+        return true;
+    }
+    let digits = line.trim_start_matches(|c: char| c.is_ascii_digit());
+    digits.len() < line.len() && digits.trim_start().starts_with('|')
+}
+
+/// Whether `message` is one of the [`FAILURE_SUMMARIES`] rather than a
+/// diagnostic of its own.
+fn is_failure_summary(message: &str) -> bool {
+    FAILURE_SUMMARIES
+        .iter()
+        .any(|summary| message.starts_with(summary))
+}
+
 /// How wide the report should be drawn: the whole terminal, minus the columns the
 /// Build Logs pane spends on its border, so the block fills the pane it lands in.
 ///
@@ -936,5 +1113,186 @@ mod tests {
         {
             assert_eq!(line.chars().count(), MIN_WIDTH, "{line:?}");
         }
+    }
+
+    // ── Diagnostics scraped from rendered output ─────────────────────
+
+    /// The report [`RenderedDiagnostics`] builds from `output`, one line at a
+    /// time as a reader thread would feed it.
+    fn scraped(output: &str) -> ErrorReport {
+        let mut scraper = RenderedDiagnostics::new();
+        for line in output.lines() {
+            scraper.push(line);
+        }
+        scraper.finish()
+    }
+
+    /// The rendering `cargo build` writes for a type error, as `cargo ndk` and
+    /// `wasm-pack` let it through: plain text, on stderr, framed by the status
+    /// lines of the build.
+    const RENDERED_BUILD: &str = "\
+   Compiling demo v0.1.0 (/tmp/demo)
+error[E0308]: mismatched types
+ --> src/lib.rs:1:21
+  |
+1 | pub fn f() -> i32 { \"oops\" }
+  |               ---   ^^^^^^ expected `i32`, found `&str`
+  |
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `demo` (lib) due to 1 previous error
+";
+
+    #[test]
+    fn rendered_output_without_diagnostics_reports_nothing() {
+        assert!(scraped("   Compiling demo v0.1.0\n    Finished in 1s\n").is_empty());
+    }
+
+    #[test]
+    fn rendered_errors_are_collected_from_plain_output() {
+        let report = scraped(RENDERED_BUILD);
+        let lines = report_lines(&report);
+
+        assert!(!report.is_empty());
+        assert!(lines.iter().any(|l| l.contains("Compile Error")));
+        assert!(lines.iter().any(|l| l.contains("mismatched types")));
+        assert!(lines.last().unwrap().contains("1 error"));
+    }
+
+    #[test]
+    fn a_scraped_error_keeps_the_whole_rendering() {
+        let report = scraped(RENDERED_BUILD);
+        // Wide enough that no row of the rendering is wrapped, so each line can
+        // be matched whole.
+        let lines = report_lines_at(&report, 200);
+
+        // The carets and the source excerpt are what make a diagnostic
+        // readable, so the block replays every line rustc printed.
+        assert!(lines.iter().any(|l| l.contains("--> src/lib.rs:1:21")));
+        assert!(lines.iter().any(|l| l.contains("expected `i32`, found")));
+        // ... and nothing that came before or after it.
+        assert!(!lines.iter().any(|l| l.contains("Compiling demo")));
+        assert!(!lines.iter().any(|l| l.contains("rustc --explain")));
+    }
+
+    #[test]
+    fn a_numbered_source_line_does_not_end_a_diagnostic() {
+        // `1 | ...` is the one part of a body rustc does not indent, so a naive
+        // "indented means continuation" rule would cut every excerpt off.
+        let report = scraped(RENDERED_BUILD);
+        let lines = report_lines_at(&report, 200);
+
+        assert!(lines.iter().any(|l| l.contains("pub fn f() -> i32")));
+        assert!(lines.iter().any(|l| l.contains("^^^^^^")));
+    }
+
+    #[test]
+    fn the_cargo_summary_is_not_reported_as_an_error_of_its_own() {
+        // `could not compile` / `aborting due to` only restate the failure;
+        // cargo's JSON output doesn't carry them as diagnostics either.
+        let report = scraped(
+            "error: aborting due to 2 previous errors\nerror: could not compile `demo` (lib) due to 2 previous errors\n",
+        );
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn scraped_warnings_are_not_errors() {
+        let report = scraped(
+            "warning: unused variable: `x`\n --> src/lib.rs:2:9\n  |\n\nerror: expected `;`\n --> src/lib.rs:3:1\n",
+        );
+        let lines = report_lines(&report);
+
+        assert!(lines.iter().any(|l| l.contains("expected `;`")));
+        assert!(!lines.iter().any(|l| l.contains("unused variable")));
+        assert!(lines.last().unwrap().contains("1 error"));
+    }
+
+    #[test]
+    fn every_scraped_error_is_reported_in_order() {
+        let report = scraped(
+            "error[E0308]: first\n --> src/a.rs:1:1\n\nerror[E0425]: second\n --> src/b.rs:2:2\n\nerror: could not compile `demo` (lib) due to 2 previous errors\n",
+        );
+        let lines = report_lines(&report);
+        let position = |needle: &str| {
+            lines
+                .iter()
+                .position(|l| l.contains(needle))
+                .expect("error listed")
+        };
+
+        assert!(position("first") < position("second"));
+        assert!(lines.last().unwrap().contains("2 errors"));
+    }
+
+    #[test]
+    fn a_scraped_error_at_the_end_of_the_output_is_not_lost() {
+        // Nothing follows the last diagnostic, so it is only complete once the
+        // stream ends.
+        let report = scraped("error[E0433]: cannot find crate\n --> src/lib.rs:1:5\n");
+        assert!(!report.is_empty());
+        assert!(
+            report_lines(&report)
+                .iter()
+                .any(|l| l.contains("cannot find crate"))
+        );
+    }
+
+    /// The stderr of a real failing `cargo ndk -t arm64-v8a build --lib`, kept
+    /// verbatim: it is the output this collector exists for, down to the notes
+    /// `cargo ndk` adds of its own after cargo has given up.
+    const CARGO_NDK_STDERR: &str = "\
+    Building arm64-v8a (aarch64-linux-android)
+   Compiling ndkerr v0.1.0 (/private/tmp/ndkerr)
+error[E0308]: mismatched types
+ --> src/lib.rs:1:21
+  |
+1 | pub fn f() -> i32 { \"oops\" }
+  |               ---   ^^^^^^ expected `i32`, found `&str`
+  |               |
+  |               expected `i32` because of return type
+
+error[E0425]: cannot find function `missing` in this scope
+ --> src/lib.rs:2:14
+  |
+2 | pub fn g() { missing(); }
+  |              ^^^^^^^ not found in this scope
+
+Some errors have detailed explanations: E0308, E0425.
+For more information about an error, try `rustc --explain E0308`.
+error: could not compile `ndkerr` (lib) due to 2 previous errors
+note: If the build failed due to a missing target, you can run this command:
+note: 
+note:     rustup target install aarch64-linux-android
+";
+
+    #[test]
+    fn a_failing_cargo_ndk_build_reports_exactly_its_errors() {
+        let report = scraped(CARGO_NDK_STDERR);
+        let lines = report_lines_at(&report, 200);
+
+        assert!(lines.iter().any(|l| l.contains("mismatched types")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("cannot find function `missing`"))
+        );
+        assert!(lines.last().unwrap().contains("2 errors"));
+        // Cargo's trailing hints and cargo ndk's own notes are not errors.
+        assert!(!lines.iter().any(|l| l.contains("detailed explanations")));
+        assert!(!lines.iter().any(|l| l.contains("rustup target install")));
+    }
+
+    #[test]
+    fn scraped_errors_survive_the_colors_cargo_paints_them_with() {
+        // Cargo colors its rendering when it thinks it writes to a terminal;
+        // the level, the code and the message all sit behind escapes then.
+        let report = scraped("\x1b[1m\x1b[31merror[E0308]\x1b[0m: mismatched types\n");
+        assert!(!report.is_empty());
+        assert!(
+            report_lines(&report)
+                .iter()
+                .any(|l| l.contains("mismatched types"))
+        );
     }
 }
