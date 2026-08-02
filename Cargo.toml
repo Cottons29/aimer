@@ -77,7 +77,7 @@ members = [
     "crates/aimer_svg",
     "crates/aimer_native",
     "crates/aimer_modal"
-, "crates/rust-mcp-server"]
+]
 
 
 [workspace.dependencies]
@@ -141,7 +141,6 @@ ndk-glue = "0.7.0"
 ndk = "0.9.0"
 ndk-context = "0.1.1"
 wgpu = { version = "30.0.0", features = ["gles", "webgl", "web"] }
-pollster = "1.0.1"
 bytemuck = { version = "1.25.1", features = ["derive"] }
 harfrust = "0.12.0"
 fontique = "0.11.0"
@@ -165,6 +164,7 @@ objc2-ui-kit = "0.3.2"
 objc2 = "0.6.4"
 objc2-core-text = { version = "0.3.2", default-features = false }
 objc2-core-foundation = { version = "0.3.2", default-features = false }
+objc2-core-graphics = { version = "0.3.2", default-features = false }
 
 # Aimer cli dependencies
 
