@@ -43,7 +43,7 @@ use crate::test_animation::TestFadingAnimation;
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
-    test_text();
+    // test_text();
     // stateful_2::start_my_list();
     // start_counter();
     // AimerApp::start(Container::new().child(Row::new().children([
@@ -65,37 +65,40 @@ pub fn my_app() {
     // start_custom_animated_theme_example()
     // test_text()
     // start_loading_animation_example()
-    // floating::start_floating_example();
+    floating::start_floating_example();
 }
 
 #[allow(unused)]
 fn test_text() {
     AimerApp::start(
         Scrollable::new()
+            .vertical_scroll_bar(None)
             .axis(ScrollAxis::Vertical)
             .child(Container::new()
+                .padding(LayoutSpacing::all(12).top(50))
         .child(Text::new(
-            r#"
-            你好吗
-                English — Hello / Hi               Khmer — សួស្តី (Suosdei)               French — BonjourEnglish — Hello / Hi
-                Spanish — Hola                            Portuguese — Olá                          Italian — Ciao
-                German — Hallo                            Dutch — Hallo                             Swedish — Hej
-                Norwegian — Hei                           Danish — Hej                              Finnish — Hei
-                Icelandic — Halló                         Russian — Привет (Privet)                 Ukrainian — Привіт (Pryvit)
-                Polish — Cześć                            Czech — Ahoj                              Slovak — Ahoj
-                Hungarian — Szia                          Romanian — Salut                          Greek — Γεια σου (Yia sou)
-                Turkish — Merhaba                         Arabic — مرحبا (Marhaban)                 Hebrew — שלום (Shalom)
-                Persian — سلام (Salam)                    Hindi — नमस्ते (Namaste)                  Bengali — হ্যালো / নমস্কার
-                Punjabi — ਸਤ ਸ੍ਰੀ ਅਕਾਲ                    Urdu — السلام علیکم                       Tamil — வணக்கம்
-                Telugu — నమస్తే                           Kannada — ನಮಸ್ಕಾರ                         Malayalam — നമസ്കാരം
-                Thai — สวัสดี                             Lao — ສະບາຍດີ                             Vietnamese — Xin chào
-                Indonesian — Halo                         Malay — Hai / Halo                        Filipino — Kumusta
-                Chinese (Mandarin) — 你好 (Nǐ hǎo)          Cantonese — 你好 (Néih hóu)                 Japanese — こんにちは (Konnichiwa)
-                Korean — 안녕하세요 (Annyeonghaseyo)           Mongolian — Сайн байна уу                 Swahili — Jambo
-                Zulu — Sawubona                           Afrikaans — Hallo                         Esperanto — Saluton
-                Latin — Salve                             Hawaiian — Aloha                          Māori — Kia ora
-                អរគុណ 你哈皮  With State 你好 きみなと  👉
-"#)
+r#"
+你好吗
+English — Hello / Hi               Khmer — សួស្តី (Suosdei)               French — BonjourEnglish — Hello / Hi
+Spanish — Hola                            Portuguese — Olá                          Italian — Ciao
+German — Hallo                            Dutch — Hallo                             Swedish — Hej
+Norwegian — Hei                           Danish — Hej                              Finnish — Hei
+Icelandic — Halló                         Russian — Привет (Privet)                 Ukrainian — Привіт (Pryvit)
+Polish — Cześć                            Czech — Ahoj                              Slovak — Ahoj
+Hungarian — Szia                          Romanian — Salut                          Greek — Γεια σου (Yia sou)
+Turkish — Merhaba                         Arabic — مرحبا (Marhaban)                 Hebrew — שלום (Shalom)
+Persian — سلام (Salam)                    Hindi — नमस्ते (Namaste)                  Bengali — হ্যালো / নমস্কার
+Punjabi — ਸਤ ਸ੍ਰੀ ਅਕਾਲ                    Urdu — السلام علیکم                       Tamil — வணக்கம்
+Telugu — నమస్తే                           Kannada — ನಮಸ್ಕಾರ                         Malayalam — നമസ്കാരം
+Thai — สวัสดี                             Lao — ສະບາຍດີ                             Vietnamese — Xin chào
+Indonesian — Halo                         Malay — Hai / Halo                        Filipino — Kumusta
+Chinese (Mandarin) — 你好 (Nǐ hǎo)          Cantonese — 你好 (Néih hóu)                 Japanese — こんにちは (Konnichiwa)
+Korean — 안녕하세요 (Annyeonghaseyo)           Mongolian — Сайн байна уу                 Swahili — Jambo
+Zulu — Sawubona                           Afrikaans — Hallo                         Esperanto — Saluton
+Latin — Salve                             Hawaiian — Aloha                          Māori — Kia ora
+អរគុណ 你哈皮  With State 你好 きみなと  👉
+"#
+        )
             .text_style(TextStyle::new()
                 .text_overflow(TextOverflow::Clip)
                 .font_size(16)
@@ -448,4 +451,3 @@ fn test_image() {
             ),
     )
 }
-                                 

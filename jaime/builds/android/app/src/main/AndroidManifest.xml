@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.app">
+<!-- The application id comes from `namespace` / `applicationId` in
+     app/build.gradle.kts; declaring `package` here is ignored since AGP 8. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
         android:allowBackup="true"

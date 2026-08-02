@@ -74,7 +74,7 @@ impl State<MyList> for MyListState {
                                     .gaps(LayoutSpacing::all(Spacing::Px(10)))
                                     .children(vec![
                                         Container::new()
-                                            .width(Dimension::Px(70.0))
+                                            .width(Dimension::Px(50.0))
                                             .margin(LayoutSpacing { left: Spacing::Px(10), ..Default::default() })
                                             .child(
                                                 Text::new(format!("Item {}", self.list.len()))
@@ -84,7 +84,7 @@ impl State<MyList> for MyListState {
                                                         .color(Colors::Black))
                                             ).boxed(),
                                         Container::new()
-                                            .width(Dimension::Px(400.0))
+                                            .width(Dimension::Px(250.0))
                                             .padding(LayoutSpacing::all(Spacing::Px(10)))
                                             .child(
                                                 TextField::new()
