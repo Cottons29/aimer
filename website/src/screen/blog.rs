@@ -6,7 +6,7 @@ use aimer::style::{
 };
 use aimer::{BuildContext, Widget, widget, *};
 
-use crate::blog_store::{BlogStore, BlogSummary, LoadState, request_blog_list};
+use crate::blog_store::{BlogSummary, fetch_blog_list};
 use crate::components::loading_indicator::build_loading_indicator;
 use crate::router::AppRouter;
 use crate::utils::{app_padding, is_mobile};
@@ -23,27 +23,13 @@ impl BlogListPage {
 impl StatelessWidget for BlogListPage {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let theme = ThemeData::of(ctx);
-        let store = ctx.watch::<BlogStore>();
-        if matches!(store.list, LoadState::Idle) {
-            request_blog_list(ctx, ProviderHandle::<BlogStore>::of(ctx));
-        }
-
-        let content = match &store.list {
-            LoadState::Idle | LoadState::Loading => build_loading_indicator("Loading Post"),
-            LoadState::Error(error) => {
-                error!("{}", error);
-                status_text(error, Color::RED)
-            }
-
-            LoadState::Ready(blogs) if blogs.is_empty() => status_text(
-                "No blogs have been published yet.",
-                theme.on_background_color.with_opacity(150),
-            ),
-            LoadState::Ready(blogs) => {
-                let navigator = NavigatorController::<AppRouter>::of(ctx);
-                blog_archive(blogs.clone(), navigator, is_mobile(ctx), &theme)
-            }
-        };
+        let palette = *theme;
+        let mobile = is_mobile(ctx);
+        let navigator = NavigatorController::<AppRouter>::of(ctx);
+        let content = AsyncBuilder::new()
+            .future(fetch_blog_list)
+            .child(move |snapshot| blog_list_content(snapshot, &navigator, mobile, &palette))
+            .boxed();
 
         Container::new()
             .color(theme.background_color)
@@ -85,6 +71,32 @@ impl StatelessWidget for BlogListPage {
                             ),
                     ),
             )
+    }
+}
+
+/// Renders the archive for one [`AsyncSnapshot`] of the blog list request.
+///
+/// The waiting snapshot shows the animated loading indicator instead of
+/// blocking the render thread on the network.
+fn blog_list_content(
+    snapshot: &AsyncSnapshot<Vec<BlogSummary>, String>,
+    navigator: &NavigatorController<AppRouter>,
+    mobile: bool,
+    theme: &ThemeData,
+) -> AnyWidget {
+    match snapshot {
+        AsyncSnapshot::Waiting => build_loading_indicator("Loading Post"),
+        AsyncSnapshot::Error(error) => {
+            error!("{}", error);
+            status_text(error, Color::RED)
+        }
+        AsyncSnapshot::Data(blogs) if blogs.is_empty() => status_text(
+            "No blogs have been published yet.",
+            theme.on_background_color.with_opacity(150),
+        ),
+        AsyncSnapshot::Data(blogs) => {
+            blog_archive(blogs.clone(), navigator.clone(), mobile, theme)
+        }
     }
 }
 

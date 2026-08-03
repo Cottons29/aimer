@@ -1,14 +1,15 @@
 use aimer::router::NavigatorController;
 use aimer::style::{FontWeight, LayoutSpacing, TextOverflow, TextStyle, Theme, ThemeData};
 use aimer::{
-    AnyWidget, BoxAlignment, BuildContext, Color, Column, Container, Expanded, Key, MarkdownTheme,
-    MarkdownViewer, ProviderContext, ProviderHandle, Row, ScrollAxis, Scrollable, SizedBox,
+    AnyWidget, AsyncBuilder, AsyncSnapshot, BoxAlignment, BuildContext, Color, Column, Container,
+    Expanded, Key, MarkdownTheme, MarkdownViewer, Row, ScrollAxis, Scrollable, SizedBox,
     StatelessWidget, Text, Widget, ZeroSizedBox, widget,
 };
 
 use crate::aimer_widget;
-use crate::blog_store::{BlogDetail, BlogStore, LoadState, request_blog_detail};
+use crate::blog_store::{BlogDetail, fetch_blog_detail};
 use crate::components::BlogBackButton;
+use crate::components::loading_indicator::build_loading_indicator;
 use crate::router::AppRouter;
 use crate::utils::{app_padding, is_mobile};
 
@@ -117,87 +118,108 @@ impl BlogDetailPage {
 
 impl StatelessWidget for BlogDetailPage {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
-        let theme = ThemeData::of(ctx);
-        let store = ctx.watch::<BlogStore>();
-        let state = store.details.get(&self.id).cloned().unwrap_or_default();
-        if matches!(state, LoadState::Idle) {
-            request_blog_detail(ctx, ProviderHandle::<BlogStore>::of(ctx), self.id.clone());
-        }
+        let theme = *ThemeData::of(ctx);
+        let mobile = is_mobile(ctx);
+        let padding = app_padding(ctx);
         let navigator = NavigatorController::<AppRouter>::of(ctx);
-        let (content, metadata, blog_id) = match state {
-            LoadState::Idle | LoadState::Loading => (
-                crate::screen::blog::status_text("Loading blog…", theme.on_background_color),
-                None,
-                None,
-            ),
-            LoadState::Error(error) => (
-                crate::screen::blog::status_text(&error, Color::RED),
-                None,
-                None,
-            ),
-            LoadState::Ready(detail) => {
-                // info!("Markdown: {}", detail.markdown);
-                let is_mobile = is_mobile(ctx);
-                let metadata = metadata_sidebar(&detail, &theme);
-                let markdown_theme = themed_markdown(&theme);
-                let content = MarkdownViewer::new()
-                    .markdown(detail.markdown)
-                    .theme(markdown_theme)
-                    .scrollable(!is_mobile)
-                    .padding(LayoutSpacing::vertical(20).right(if !is_mobile { 20 } else { 0 }))
-                    .boxed();
-                (content, Some(metadata), Some(detail.id.clone()))
-            }
-        };
+        let id = self.id.clone();
 
-        let key = match blog_id {
-            Some(blog_id) => Key::from(blog_id),
-            None => Key::unique(),
-        };
+        AsyncBuilder::new()
+            .request_key(self.id.clone())
+            .future(move || fetch_blog_detail(id.clone()))
+            .child(move |snapshot| detail_page(snapshot, &navigator, mobile, padding, &theme))
+    }
+}
 
-        let back_button = Container::new()
-            .height(40)
-            .width(120)
-            .child(BlogBackButton::new().on_click(move || {
-                if navigator.can_pop() {
-                    navigator.pop()
-                } else {
-                    navigator.push(AppRouter::Blog)
-                }
-            }))
-            .boxed();
-        let mut sidebar_children = vec![SizedBox::new().height(28).boxed(), back_button];
-        if let Some(metadata) = metadata {
-            sidebar_children.push(SizedBox::new().height(32).boxed());
-            sidebar_children.push(metadata);
+/// Renders the post for one [`AsyncSnapshot`] of the blog detail request.
+///
+/// The waiting snapshot shows the same animated indicator as the blog archive,
+/// so the page stays responsive while the post is loaded off the render thread.
+fn detail_page(
+    snapshot: &AsyncSnapshot<BlogDetail, String>,
+    navigator: &NavigatorController<AppRouter>,
+    mobile: bool,
+    padding: LayoutSpacing,
+    theme: &ThemeData,
+) -> AnyWidget {
+    let (content, metadata, blog_id) = match snapshot {
+        AsyncSnapshot::Waiting => (
+            Container::new()
+                .padding(LayoutSpacing::new().top(24))
+                .box_child(build_loading_indicator("Loading Blog")),
+            None,
+            None,
+        ),
+        AsyncSnapshot::Error(error) => (
+            crate::screen::blog::status_text(error, Color::RED),
+            None,
+            None,
+        ),
+        AsyncSnapshot::Data(detail) => {
+            let metadata = metadata_sidebar(detail, theme);
+            let markdown_theme = themed_markdown(theme);
+            let content = MarkdownViewer::new()
+                .markdown(detail.markdown.clone())
+                .theme(markdown_theme)
+                .scrollable(!mobile)
+                .padding(LayoutSpacing::vertical(20).right(if !mobile { 20 } else { 0 }))
+                .boxed();
+            (content, Some(metadata), Some(detail.id.clone()))
         }
+    };
 
-        let sidebar = Column::new()
-            .horizontal_alignment(BoxAlignment::Start)
-            .children(sidebar_children);
+    let navigator = navigator.clone();
+    let key = match blog_id {
+        Some(blog_id) => Key::from(blog_id),
+        None => Key::unique(),
+    };
 
-        match detail_layout(is_mobile(ctx)) {
-            DetailLayout::Horizontal => Container::new()
-                .padding(app_padding(ctx).top(0).right(0).bottom(0))
-                .color(theme.background_color)
-                .box_child(
-                    Row::new()
-                        .vertical_alignment(BoxAlignment::Start)
-                        .children([
-                            Expanded::new()
-                                .flex(1.2)
-                                .child(
-                                    Container::new()
-                                        .padding(LayoutSpacing::new().right(16))
-                                        .child(sidebar),
-                                )
-                                .boxed(),
-                            Expanded::new().flex(4.0).child(content).boxed(),
-                        ]),
-                ),
-            DetailLayout::Vertical => Container::new().color(theme.background_color).box_child(
+    let back_button = Container::new()
+        .height(40)
+        .width(120)
+        .child(BlogBackButton::new().on_click(move || {
+            if navigator.can_pop() {
+                navigator.pop()
+            } else {
+                navigator.push(AppRouter::Blog)
+            }
+        }))
+        .boxed();
+    let mut sidebar_children = vec![SizedBox::new().height(28).boxed(), back_button];
+    if let Some(metadata) = metadata {
+        sidebar_children.push(SizedBox::new().height(32).boxed());
+        sidebar_children.push(metadata);
+    }
+
+    let sidebar = Column::new()
+        .horizontal_alignment(BoxAlignment::Start)
+        .children(sidebar_children);
+
+    match detail_layout(mobile) {
+        DetailLayout::Horizontal => Container::new()
+            .padding(padding.top(0).right(0).bottom(0))
+            .color(theme.background_color)
+            .box_child(
+                Row::new()
+                    .vertical_alignment(BoxAlignment::Start)
+                    .children([
+                        Expanded::new()
+                            .flex(1.2)
+                            .child(
+                                Container::new()
+                                    .padding(LayoutSpacing::new().right(16))
+                                    .child(sidebar),
+                            )
+                            .boxed(),
+                        Expanded::new().flex(4.0).child(content).boxed(),
+                    ]),
+            )
+            .boxed(),
+        DetailLayout::Vertical => Container::new()
+            .color(theme.background_color)
+            .box_child(
                 Scrollable::new().key(key).axis(ScrollAxis::Vertical).child(
-                    Container::new().padding(app_padding(ctx)).child(
+                    Container::new().padding(padding).child(
                         Column::new()
                             .horizontal_alignment(BoxAlignment::Start)
                             .children([
@@ -213,8 +235,8 @@ impl StatelessWidget for BlogDetailPage {
                             ]),
                     ),
                 ),
-            ),
-        }
+            )
+            .boxed(),
     }
 }
 

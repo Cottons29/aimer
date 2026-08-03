@@ -13,7 +13,6 @@ use aimer::console::{debug, info};
 use aimer::router::Navigator;
 use aimer::*;
 
-use crate::blog_store::BlogStore;
 use crate::router::AppRouter;
 #[cfg(test)]
 pub static TEST_STATE_UPDATED: AtomicBool = AtomicBool::new(false);
@@ -23,11 +22,7 @@ pub static CURRENT_INDEX: AtomicUsize = AtomicUsize::new(0);
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
-    let app = Provider::<BlogStore>::new()
-        .create(BlogStore::default)
-        .child(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
-            route.boxed()
-        }));
+    let app = Navigator::<AppRouter>::new(AppRouter::Home, |route| route.boxed());
     #[cfg(target_os = "macos")]
     AimerApp::start(app);
     #[cfg(not(target_os = "macos"))]
@@ -36,7 +31,6 @@ pub fn my_app() {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
     use std::sync::atomic::Ordering;
     use std::thread::sleep;
     use std::time::Duration;
@@ -44,37 +38,27 @@ mod test {
     use aimer::aimer_quiver::winit::event::WindowEvent;
     use aimer::quiver::winit::dpi::PhysicalSize;
     use aimer::router::Navigator;
-    use aimer::{AimerApp, Provider, Widget};
+    use aimer::{AimerApp, Widget};
 
     use crate::TEST_STATE_UPDATED;
-    use crate::blog_store::{BlogDetail, BlogStore, LoadState};
+    use crate::blog_store::{BlogDetail, cache_blog_detail};
     use crate::router::{AppRouter, take_route_builds};
 
     #[test]
-    fn direct_blog_detail_route_keeps_the_root_provider_scope() {
+    fn direct_blog_detail_route_renders_the_cached_post() {
         let id = "introducing-aimer".to_owned();
-        let details = HashMap::from([(
-            id.clone(),
-            LoadState::Ready(BlogDetail {
-                id: id.clone(),
-                upload_time: "2026-07-18T02:22:00Z".to_owned(),
-                title: "Introducing Aimer".to_owned(),
-                author: "Aimer Team".to_owned(),
-                tags: vec!["Aimer".to_owned(), "Rust".to_owned(), "GUI".to_owned()],
-                markdown: "# Introducing Aimer".to_owned(),
-            }),
-        )]);
-        let mut app = AimerApp::start_headless(
-            Provider::<BlogStore>::new()
-                .create(move || BlogStore {
-                    list: LoadState::Idle,
-                    details: details.clone(),
-                })
-                .child(Navigator::<AppRouter>::new(
-                    AppRouter::BlogDetail { id },
-                    |route| route.boxed(),
-                )),
-        );
+        cache_blog_detail(&BlogDetail {
+            id: id.clone(),
+            upload_time: "2026-07-18T02:22:00Z".to_owned(),
+            title: "Introducing Aimer".to_owned(),
+            author: "Aimer Team".to_owned(),
+            tags: vec!["Aimer".to_owned(), "Rust".to_owned(), "GUI".to_owned()],
+            markdown: "# Introducing Aimer".to_owned(),
+        });
+        let mut app = AimerApp::start_headless(Navigator::<AppRouter>::new(
+            AppRouter::BlogDetail { id },
+            |route| route.boxed(),
+        ));
 
         app.render_frame();
         app.send_window_event(WindowEvent::Resized(PhysicalSize::new(1024, 768)));
@@ -84,13 +68,10 @@ mod test {
     #[test]
     fn test_resize() {
         TEST_STATE_UPDATED.store(false, Ordering::Relaxed);
-        let mut app = AimerApp::start_headless(
-            Provider::<BlogStore>::new()
-                .create(BlogStore::default)
-                .child(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
-                    route.boxed()
-                })),
-        );
+        let mut app = AimerApp::start_headless(Navigator::<AppRouter>::new(
+            AppRouter::Home,
+            |route| route.boxed(),
+        ));
         sleep(Duration::from_millis(50));
         eprintln!("==========Rendered frame 1 call ===============");
         app.render_frame();

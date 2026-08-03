@@ -1,7 +1,6 @@
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
-use aimer::console::error;
-use aimer::{BuildContext, ProviderHandle};
 use serde::Deserialize;
 
 use crate::api::BackendApi;
@@ -25,22 +24,6 @@ pub struct BlogDetail {
     pub markdown: String,
 }
 
-#[cfg_attr(not(any(test, target_arch = "wasm32")), allow(dead_code))]
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum LoadState<T> {
-    #[default]
-    Idle,
-    Loading,
-    Ready(T),
-    Error(String),
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct BlogStore {
-    pub list: LoadState<Vec<BlogSummary>>,
-    pub details: HashMap<String, LoadState<BlogDetail>>,
-}
-
 impl Default for BlogDetail {
     fn default() -> Self {
         Self {
@@ -57,6 +40,21 @@ impl Default for BlogDetail {
 #[derive(Deserialize)]
 struct BlogListResponse {
     blogs: Vec<BlogSummary>,
+}
+
+static BLOG_LIST_CACHE: LazyLock<Mutex<Option<Vec<BlogSummary>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+static BLOG_DETAIL_CACHE: LazyLock<Mutex<HashMap<String, BlogDetail>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Locks a cache without propagating poisoning.
+///
+/// A panic while a cache is locked cannot leave the map in an inconsistent
+/// state, so the poisoned guard is recovered instead of aborting the render.
+#[inline]
+fn lock<T>(cache: &Mutex<T>) -> MutexGuard<'_, T> {
+    cache.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 pub fn decode_blog_list(json: &str) -> Result<Vec<BlogSummary>, String> {
@@ -76,123 +74,58 @@ pub fn detail_url(id: &str) -> String {
     BackendApi::blog_with_id(id)
 }
 
-impl BlogStore {
-    pub fn begin_list_load(&mut self) -> bool {
-        if !matches!(self.list, LoadState::Idle) {
-            return false;
-        }
-        self.list = LoadState::Loading;
-        true
-    }
-
-    pub fn begin_detail_load(&mut self, id: &str) -> bool {
-        if self.details.contains_key(id) {
-            return false;
-        }
-        self.details.insert(id.to_owned(), LoadState::Loading);
-        true
-    }
+/// Returns the blog archive fetched earlier in this session, when present.
+pub fn cached_blog_list() -> Option<Vec<BlogSummary>> {
+    lock(&BLOG_LIST_CACHE).clone()
 }
 
-pub fn request_blog_list(_ctx: &BuildContext, handle: ProviderHandle<BlogStore>) {
-    #[cfg(target_arch = "wasm32")]
-    let _ = _ctx;
-
-    if !matches!(handle.read().list, LoadState::Idle) {
-        return;
-    }
-    handle.update(|store| {
-        store.begin_list_load();
-    });
-
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_futures::spawn_local(async move {
-        let result = fetch_text(&BackendApi::blogs())
-            .await
-            .and_then(|body| decode_blog_list(&body));
-        handle.update(move |store| {
-            store.list = match result {
-                Ok(blogs) => LoadState::Ready(blogs),
-                Err(error) => {
-                    error!("Error at request_blog_list  {}", error);
-                    LoadState::Error(error)
-                }
-            };
-        });
-    });
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let result = _ctx
-            .async_handle
-            .block_on(fetch_text(&BackendApi::blogs()))
-            .and_then(|body| decode_blog_list(&body));
-        handle.update(move |store| {
-            store.list = match result {
-                Ok(blogs) => LoadState::Ready(blogs),
-                Err(error) => {
-                    error!("Error at request_blog_list  {}", error);
-                    LoadState::Error(error)
-                }
-            };
-        });
-    }
+/// Remembers the blog archive for the remainder of the session.
+pub fn cache_blog_list(blogs: &[BlogSummary]) {
+    *lock(&BLOG_LIST_CACHE) = Some(blogs.to_vec());
 }
 
-pub fn request_blog_detail(ctx: &BuildContext, handle: ProviderHandle<BlogStore>, id: String) {
-    #[cfg(target_arch = "wasm32")]
-    let _ = ctx;
-
-    if handle.read().details.contains_key(&id) {
-        return;
-    }
-    let loading_id = id.clone();
-    handle.update(move |store| {
-        store.begin_detail_load(&loading_id);
-    });
-
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_futures::spawn_local(async move {
-        let result = fetch_text(&detail_url(&id))
-            .await
-            .and_then(|body| decode_blog_detail(&body));
-        handle.update(move |store| {
-            store.details.insert(
-                id,
-                match result {
-                    Ok(markdown) => LoadState::Ready(markdown),
-                    Err(error) => LoadState::Error(error),
-                },
-            );
-        });
-    });
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let result = ctx
-            .async_handle
-            .block_on(fetch_text(&detail_url(&id)))
-            .and_then(|body| decode_blog_detail(&body));
-        handle.update(move |store| {
-            store.details.insert(
-                id,
-                match result {
-                    Ok(markdown) => LoadState::Ready(markdown),
-                    Err(error) => LoadState::Error(error),
-                },
-            );
-        });
-    }
+/// Returns the post fetched earlier in this session, when present.
+pub fn cached_blog_detail(id: &str) -> Option<BlogDetail> {
+    lock(&BLOG_DETAIL_CACHE).get(id).cloned()
 }
 
-#[cfg(any(test, target_arch = "wasm32"))]
-fn api_base_url() -> &'static str {
-    "http://localhost:3200"
+/// Remembers a single post for the remainder of the session.
+pub fn cache_blog_detail(detail: &BlogDetail) {
+    lock(&BLOG_DETAIL_CACHE).insert(detail.id.clone(), detail.clone());
 }
 
-#[cfg(all(not(test), not(target_arch = "wasm32")))]
-fn api_base_url() -> &'static str {
-    "http://localhost:3200"
+/// Loads the blog archive without blocking the render thread.
+///
+/// The first call performs one request and remembers the decoded archive, so
+/// later navigations back to the blog page resolve from the session cache
+/// instead of hitting the network again.
+///
+/// Intended to be driven by
+/// [`AsyncBuilder`](aimer::AsyncBuilder), which owns the future and cancels it
+/// when the page is dropped.
+pub async fn fetch_blog_list() -> Result<Vec<BlogSummary>, String> {
+    if let Some(cached) = cached_blog_list() {
+        return Ok(cached);
+    }
+    let body = fetch_text(&BackendApi::blogs()).await?;
+    let blogs = decode_blog_list(&body)?;
+    cache_blog_list(&blogs);
+    Ok(blogs)
+}
+
+/// Loads a single post without blocking the render thread.
+///
+/// Behaves like [`fetch_blog_list`], keyed by the post slug: a post that was
+/// already read in this session is returned from the cache, so reopening it
+/// costs no request.
+pub async fn fetch_blog_detail(id: String) -> Result<BlogDetail, String> {
+    if let Some(cached) = cached_blog_detail(&id) {
+        return Ok(cached);
+    }
+    let body = fetch_text(&detail_url(&id)).await?;
+    let detail = decode_blog_detail(&body)?;
+    cache_blog_detail(&detail);
+    Ok(detail)
 }
 
 fn is_valid_id(id: &str) -> bool {
@@ -240,6 +173,17 @@ mod tests {
             stream.write_all(response.as_bytes()).await.unwrap();
         });
         format!("http://{address}")
+    }
+
+    fn detail(id: &str) -> BlogDetail {
+        BlogDetail {
+            id: id.to_owned(),
+            upload_time: "2026-07-18T02:22:00Z".to_owned(),
+            title: "First post".to_owned(),
+            author: "Aimer Team".to_owned(),
+            tags: vec!["Rust".to_owned()],
+            markdown: "# First post".to_owned(),
+        }
     }
 
     #[tokio::test]
@@ -293,21 +237,46 @@ mod tests {
     }
 
     #[test]
-    fn loading_transitions_are_started_only_once() {
-        let mut store = BlogStore::default();
-
-        assert!(store.begin_list_load());
-        assert!(!store.begin_list_load());
-        assert_eq!(store.list, LoadState::Loading);
-
-        assert!(store.begin_detail_load("first-post"));
-        assert!(!store.begin_detail_load("first-post"));
-        assert_eq!(store.details["first-post"], LoadState::Loading);
-    }
-
-    #[test]
     fn detail_api_url_uses_the_validated_slug() {
         let expected = BackendApi::blog_with_id("first-post");
         assert_eq!(detail_url("first-post"), expected);
+    }
+
+    #[test]
+    fn detail_cache_round_trips_per_slug() {
+        let cached = detail("cache-round-trip");
+        assert_eq!(cached_blog_detail("cache-round-trip"), None);
+
+        cache_blog_detail(&cached);
+
+        assert_eq!(cached_blog_detail("cache-round-trip"), Some(cached));
+        assert_eq!(cached_blog_detail("another-slug"), None);
+    }
+
+    #[tokio::test]
+    async fn cached_posts_are_returned_without_a_request() {
+        let cached = detail("cached-without-request");
+        cache_blog_detail(&cached);
+
+        assert_eq!(
+            fetch_blog_detail("cached-without-request".to_owned())
+                .await
+                .unwrap(),
+            cached
+        );
+    }
+
+    #[tokio::test]
+    async fn cached_archive_is_returned_without_a_request() {
+        let blogs = vec![BlogSummary {
+            id: "cached-archive".to_owned(),
+            upload_time: "2026-07-18T02:22:00Z".to_owned(),
+            title: "Cached archive".to_owned(),
+            author: "Aimer Team".to_owned(),
+            tags: vec!["Rust".to_owned()],
+        }];
+        cache_blog_list(&blogs);
+
+        assert_eq!(fetch_blog_list().await.unwrap(), blogs);
     }
 }

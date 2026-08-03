@@ -53,7 +53,7 @@ pub fn my_app() {
     // test_positioned()
     // async_builder::start_async_builder_example()
     // custom_animated_theme::start_custom_animated_theme_example()
-    // test_scrollable()
+    test_scrollable()
     // test_scrollable_row()
     // start_modal_example();
     //    start_floating_example();
@@ -65,7 +65,7 @@ pub fn my_app() {
     // start_custom_animated_theme_example()
     // test_text()
     // start_loading_animation_example()
-    floating::start_floating_example();
+    // floating::start_floating_example();
 }
 
 #[allow(unused)]
@@ -263,53 +263,55 @@ fn test_border_outline() {
 
 #[allow(unused)]
 pub fn test_scrollable() {
-    let items: Vec<AnyWidget> = (0..1200)
-        .map(|i| {
+    // `list` keeps the data and maps it to children on demand, so the widget
+    // tree retains 120_000 `u32`s instead of 120_000 boxed containers.
+    //
+    // Every row is the same height, so the column predicts its scroll extent
+    // from a single probed row instead of measuring 120_000 of them, and
+    // re-checks that prediction against the rows it paints, recording the exact
+    // extent of any row that disagrees. That is what lets rows be materialized one
+    // viewport at a time: cold start builds a couple of dozen elements rather than
+    // 120_000, and a scroll rebuilds only the rows crossing the window edge. A row
+    // that leaves the window keeps its element for a while, so scrolling a few
+    // screens away and back preserves per-row state — none is used here.
+    //
+    // `.item_extent(Dimension::Px(270.0))` — the 240px row plus its 30px margin,
+    // the 12px gap being added by the container — would state the same extent up
+    // front and skip even the probe.
+    let content = Column::new()
+        .horizontal_alignment(BoxAlignment::Start)
+        .gaps(LayoutSpacing::new().bottom(12))
+        .list(0..120000u32)
+        // .item_extent(Dimension::Px(270.0))
+        .builder(|i| {
+            let i = *i;
             let color = if i % 2 == 0 {
                 Color::Rgb(100, 149, 237)
             } else {
                 Color::Rgb(255, 160, 122)
             };
-            if i == 5 {
-                Container::new()
-                    .padding(LayoutSpacing::all(Spacing::Px(10)))
-                    .height(Dimension::Px(200.0))
-                    .child(
-                        Text::new(format!("Item {}", i))
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
-                    )
-                    .boxed()
-            } else {
-                Container::new()
-                    .margin(LayoutSpacing {
-                        top: Spacing::Px(30),
-                        ..Default::default()
-                    })
-                    .box_decoration(
-                        BoxDecoration::new()
-                            .border(BoxBorder::all(
-                                BorderSlice::new()
-                                    .style(BorderStyle::Solid)
-                                    .stroke(Stroke::Px(1.0))
-                                    .color(Colors::Black),
-                            ))
-                            .background_color(color),
-                    )
-                    .height(Dimension::Px(80.0))
-                    .child(
-                        Text::new(format!("Item {}", i))
-                            .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
-                    )
-                    .boxed()
-            }
-        })
-        .collect();
-
-    let content = Column::new()
-        .horizontal_alignment(BoxAlignment::Start)
-        .children(items);
+            Container::new()
+                .margin(LayoutSpacing {
+                    top: Spacing::Px(30),
+                    ..Default::default()
+                })
+                .box_decoration(
+                    BoxDecoration::new()
+                        .border(BoxBorder::all(
+                            BorderSlice::new()
+                                .style(BorderStyle::Solid)
+                                .stroke(Stroke::Px(1.0))
+                                .color(Colors::Black),
+                        ))
+                        .background_color(color),
+                )
+                .height(Dimension::Px(240.0))
+                .box_child(
+                    Text::new(format!("Item {}", i))
+                        .text_align(TextAlign::MidCenter)
+                        .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                )
+        });
 
     let scrollbar = ScrollBar {
         track: ScrollTrack {
