@@ -1,21 +1,19 @@
 use std::ops::Range;
 use std::rc::Rc;
 
-use aimer_attribute::position::Vec2d;
-use aimer_attribute::size::ResolvedSize;
-use aimer_attribute::{BoxConstraint, CacheBounds, Dimension};
-use aimer_macro::Rebuildable;
-use aimer_style::LayoutSpacing;
-use aimer_widget::base::BuildContext;
-use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutCache, LayoutElement,
-    VisitorElement, Widget,
-};
-
 use crate::flex::children_source::{ChildrenSource, EagerChildren};
 use crate::flex::flex_layout::{FlexLayout, FlexLayoutCache};
 use crate::flex::flex_list::FlexList;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
+use aimer_attribute::position::Vec2d;
+use aimer_attribute::size::ResolvedSize;
+use aimer_attribute::{BoxConstraint, CacheBounds, Dimension};
+use aimer_style::LayoutSpacing;
+use aimer_widget::base::BuildContext;
+use aimer_widget::{
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutCache, LayoutElement,
+    Rebuildable, VisitorElement, Widget,
+};
 
 /// Arranges a homogeneous collection of children along a configurable main
 /// axis.
@@ -45,7 +43,6 @@ impl Default for Flex {
         Self::new()
     }
 }
-
 
 impl Flex {
     /// Creates an empty flex layout with inherited direction.
@@ -204,7 +201,6 @@ impl<W: Widget + 'static> Widget for Flex<W> {
 ///
 /// - Row: layout that always aligns children in a horizontal direction
 #[allow(dead_code)]
-#[derive(Rebuildable)]
 pub struct RawFlex {
     pub(crate) direction: LayoutDirection,
     pub(crate) vertical_alignment: BoxAlignment,
@@ -260,7 +256,26 @@ impl RawFlex {
         widget.draw(ctx);
         ctx.canvas.restore();
     }
+}
 
+/// How often one frame reconciles its table with the children it is about to
+/// paint.
+///
+/// Correcting a prediction moves the children after the correction, which can
+/// bring another one into the viewport, and that one has to be checked too. Two
+/// rounds settle any single correction; the third only exists so a cascade
+/// terminates rather than being chased forever.
+const RECONCILE_PASSES: usize = 3;
+
+/// Outcome of comparing the children about to be painted with the cached table.
+enum Reconciled {
+    /// The table describes them, so the frame can paint straight away.
+    Matched,
+    /// A prediction absorbed their exact extents. Offsets after the first
+    /// correction moved, so the painted range has to be resolved again.
+    Refined,
+    /// The table cannot be corrected in place and has to be rebuilt.
+    Stale,
 }
 
 /// Whether `value` is a real extent rather than an "unbounded" sentinel.
@@ -324,8 +339,11 @@ impl RawFlex {
         self.measure_layout(ctx)
     }
 
-    /// Rebuilds the cached table, measuring the children only when no item
-    /// extent was declared.
+    /// Rebuilds the cached table, measuring the children only when their extent
+    /// can be neither declared nor predicted.
+    ///
+    /// The three sources are tried in order of what they cost: a declared extent
+    /// is free, a prediction costs one child, and measuring costs all of them.
     ///
     /// Measuring is the one pass that needs every child at once, so a windowed
     /// source is asked to materialize its whole range first. That is the escape
@@ -335,8 +353,11 @@ impl RawFlex {
     fn measure_layout(&self, ctx: &BuildContext) -> Rc<FlexLayout> {
         let (gap_x, gap_y) = self.resole_gaps(ctx);
         let gap_main = self.gap_main(gap_x, gap_y);
-        let layout = Rc::new(match self.declared_layout(ctx, gap_main) {
-            Some(declared) => declared,
+        let known = self
+            .declared_layout(ctx, gap_main)
+            .or_else(|| self.estimated_layout(ctx, gap_main));
+        let layout = Rc::new(match known {
+            Some(table) => table,
             None => {
                 self.materialize_all(ctx);
                 FlexLayout::build(self.direction, self.children.as_ref(), ctx, gap_main)
@@ -361,8 +382,9 @@ impl RawFlex {
     /// percentage extent under an unbounded main axis and when the cross axis
     /// itself is unbounded.
     fn declared_layout(&self, ctx: &BuildContext, gap_main: f32) -> Option<FlexLayout> {
-        let extent = self.item_extent?;
         let is_row = self.is_row();
+        let extent = self.item_extent?;
+
         let (max_main, max_cross) = if is_row {
             (ctx.box_constraint.max_width, ctx.box_constraint.max_height)
         } else {
@@ -390,8 +412,78 @@ impl RawFlex {
         ))
     }
 
-    /// Reports whether the cached table no longer describes the children about
-    /// to be painted.
+    /// Predicts the main-axis table from a single probed child.
+    ///
+    /// Without a declared extent the container would have to measure every child
+    /// before it could report its own size, which is what makes a long list hang
+    /// on its first frame. Measuring *one* child and assuming the rest match it
+    /// costs one measure instead of `len`, and it is exact for the shape a long
+    /// scrolled list almost always has: uniform rows. The guess is not taken on
+    /// faith — [`RawFlex::reconcile`] re-measures the children each frame paints,
+    /// and a child that disagrees has its exact extent recorded in the table, so
+    /// a list of varying rows converges on its true extent as it is scrolled
+    /// without ever having to be measured whole.
+    ///
+    /// Returns `None`, leaving the exact measuring pass in charge, when:
+    ///
+    /// - the children are not built on demand, so measuring them is what the
+    ///   container already paid for, and a wrong guess would only add a visible
+    ///   correction to an ordinary [`Row`](crate::Row) or
+    ///   [`Column`](crate::Column);
+    /// - the main axis is bounded, which means the container is not inside a
+    ///   scroll viewport and its total is not what a scroll extent is derived
+    ///   from — there is nothing to win and a correction to lose;
+    /// - the probe is a flex child, whose size comes from distributing the
+    ///   leftover space rather than from the child itself.
+    ///
+    /// The probe is taken from the live window rather than from index zero: at a
+    /// deep scroll offset row zero does not exist, so probing it would build a
+    /// row only to drop it, and a first row is often the atypical one.
+    fn estimated_layout(&self, ctx: &BuildContext, gap_main: f32) -> Option<FlexLayout> {
+        let len = self.children.len();
+        if len == 0 || !self.children.is_windowed() {
+            return None;
+        }
+
+        let is_row = self.is_row();
+        let (max_main, max_cross) = if is_row {
+            (ctx.box_constraint.max_width, ctx.box_constraint.max_height)
+        } else {
+            (ctx.box_constraint.max_height, ctx.box_constraint.max_width)
+        };
+        if is_bounded(max_main) {
+            return None;
+        }
+
+        let index = self.children.live_start().unwrap_or(0);
+        if self.children.get(index).is_none() {
+            self.children.window(index..index + 1, ctx);
+        }
+        let probe = self.children.get(index)?;
+        if probe.flex().is_some() {
+            // Distribution decides the size, so there is nothing to extrapolate
+            // from — and every share depends on the other children anyway.
+            self.children.materialize_all(ctx);
+            return None;
+        }
+
+        // Measured exactly as `FlexLayout::build` would, so a later
+        // revalidation compares like with like.
+        let mut child_ctx = ctx.clone();
+        if is_row {
+            child_ctx.box_constraint.max_width = f32::MAX;
+            child_ctx.box_constraint.max_height = max_cross;
+        } else {
+            child_ctx.box_constraint.max_height = f32::MAX;
+            child_ctx.box_constraint.max_width = max_cross;
+        }
+        let probed = probe.computed_size(&child_ctx);
+
+        Some(FlexLayout::estimated(len, probed, is_row, gap_main))
+    }
+
+    /// Compares the children about to be painted with the cached table, and
+    /// corrects the table where it can.
     ///
     /// Nothing invalidates a flex container when a descendant resizes itself —
     /// an implicitly animated child rebuilds inside its own `draw` — so the
@@ -400,21 +492,28 @@ impl RawFlex {
     /// size while off-screen cannot be seen to be mispositioned, and it is
     /// picked up as soon as it scrolls into range.
     ///
+    /// A *predicted* table absorbs a disagreement instead of being thrown away:
+    /// [`FlexLayout::refine`] records the child's exact extent, the children
+    /// before it keep the offsets they were painted at, and the container stays
+    /// windowed. A long list of genuinely varying rows therefore converges on its
+    /// true extent as it is scrolled, rather than paying for measuring all of it
+    /// the moment one row disagrees.
+    ///
     /// A table containing flex children is never trusted across frames, because
     /// each share depends on what every other child consumed.
-    fn layout_is_stale(
+    fn reconcile(
         &self,
         ctx: &BuildContext,
         layout: &FlexLayout,
         range: &Range<usize>,
-    ) -> bool {
+    ) -> Reconciled {
         // A declared extent is authoritative, so nothing is re-measured.
         if layout.is_declared() {
-            return false;
+            return Reconciled::Matched;
         }
 
         if layout.has_flex() {
-            return true;
+            return Reconciled::Stale;
         }
 
         let is_row = self.is_row();
@@ -427,21 +526,46 @@ impl RawFlex {
             child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
         }
 
-        range.clone().any(|index| {
-            self.children
-                .get(index)
-                .is_some_and(|child| child.computed_size(&child_ctx) != layout.size(index))
-        })
+        let predicted = layout.is_estimated();
+        let mut refined = false;
+        for index in range.clone() {
+            let Some(child) = self.children.get(index) else {
+                continue;
+            };
+            // A flex child's size comes from distributing the leftover space, so
+            // no per-child correction can describe it and the whole list has to
+            // be measured together.
+            if child.flex().is_some() {
+                self.materialize_all(ctx);
+                return Reconciled::Stale;
+            }
+            let size = child.computed_size(&child_ctx);
+            if size == layout.size(index) {
+                continue;
+            }
+            if !predicted {
+                return Reconciled::Stale;
+            }
+            layout.refine(index, size);
+            refined = true;
+        }
+
+        if refined {
+            Reconciled::Refined
+        } else {
+            Reconciled::Matched
+        }
     }
 
-    /// Forces a windowed source to hold every child.
+    /// Forces the source to hold every child, permanently.
     ///
     /// Only the measuring and wrapping passes need this: both derive a result
-    /// from the whole list, so a partial window would produce a wrong size.
+    /// from the whole list, so a partial window would produce a wrong size. The
+    /// source stops windowing rather than merely widening its range, so the next
+    /// frame cannot drop what the measured table describes — and a container
+    /// that had to measure once never goes back to predicting.
     pub(crate) fn materialize_all(&self, ctx: &BuildContext) {
-        if self.children.is_windowed() {
-            self.children.window(0..self.children.len(), ctx);
-        }
+        self.children.materialize_all(ctx);
     }
 
     /// Main-axis shift applied to every child by the container's own alignment.
@@ -533,11 +657,30 @@ impl Drawable for RawFlex {
         // this must stay the last point at which children can be dropped.
         self.children.window(range.clone(), ctx);
 
-        if self.layout_is_stale(ctx, &layout, &range) {
-            layout = self.measure_layout(ctx);
+        for _ in 0..RECONCILE_PASSES {
+            let outcome = self.reconcile(ctx, &layout, &range);
+            if matches!(outcome, Reconciled::Matched) {
+                break;
+            }
+            let rebuilt = matches!(outcome, Reconciled::Stale);
+            if rebuilt {
+                layout = self.measure_layout(ctx);
+            } else {
+                // The container's own size changed underneath a parent that has
+                // already asked for it this frame — a scroll view reads
+                // `content_size` before it draws its child. Asking for another
+                // frame is what lets the scroll range catch up. It cannot loop:
+                // a recorded child agrees with the table from now on.
+                ctx.window.request_redraw();
+            }
             base_main = self.base_main(ctx, layout.total());
             range = self.painted_range(ctx, &layout, base_main);
             self.children.window(range.clone(), ctx);
+            if rebuilt {
+                // A rebuilt table measured every child, so there is nothing left
+                // to disagree with.
+                break;
+            }
         }
 
         // Painting resolved the whole table, so let a later `computed_size`
@@ -685,6 +828,45 @@ impl EventElement for RawFlex {
         }
     }
 }
+impl Rebuildable for RawFlex {
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    /// Takes over the rows and the measured table of the container being
+    /// replaced.
+    ///
+    /// Both escape ordinary reconciliation. A windowed container starts life
+    /// empty, so the positional walk finds no rows to pair — see the
+    /// [sparse-children contract](crate::flex::children_source). The table is not
+    /// a child at all, and it holds every extent the list learned by painting, so
+    /// dropping it would snap a predicted scroll extent back to its prediction.
+    ///
+    /// The rows are claimed by identity, so they transfer even when the data
+    /// changed. The table describes positions, so it only transfers when nothing
+    /// that decides them did: the same number of children, laid out under the
+    /// same rules.
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        let Some(old) = old
+            .option_any()
+            .and_then(|any| any.downcast_ref::<RawFlex>())
+        else {
+            return;
+        };
+
+        self.children.adopt_retained(old.children.take_retained());
+
+        if old.children.len() == self.children.len()
+            && old.direction == self.direction
+            && old.gaps == self.gaps
+            && old.overflow_behavior == self.overflow_behavior
+            && old.item_extent == self.item_extent
+        {
+            self.layout.adopt(&old.layout);
+        }
+    }
+}
+
 impl LayoutElement for RawFlex {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();

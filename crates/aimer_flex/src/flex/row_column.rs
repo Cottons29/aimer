@@ -174,6 +174,7 @@ impl<W: Widget + 'static> Widget for Column<W> {
             item_extent: None,
             debug_name: "Column",
             cache_bound: CacheBounds::new(),
+
         }
         .boxed()
     }
