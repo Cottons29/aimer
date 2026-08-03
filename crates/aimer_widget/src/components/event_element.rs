@@ -178,6 +178,22 @@ pub trait EventElement: VisitorElement {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.visit_children(visitor);
     }
+
+    /// Visit children that a pointer could plausibly hit.
+    ///
+    /// Position-based dispatch uses this hook instead of
+    /// [`EventElement::event_children`], which lets an element that paints only
+    /// part of its children — a clipped or virtualized list — keep the
+    /// hit-test walk proportional to what is on screen. Focus-directed and
+    /// broadcast delivery deliberately keep using `event_children`, so a child
+    /// that was never painted still receives keyboard input and lifecycle
+    /// notifications.
+    ///
+    /// The default forwards to `event_children`; overriding it is purely an
+    /// optimization and must never hide a child that was actually drawn.
+    fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.event_children(visitor);
+    }
 }
 
 #[cfg(test)]

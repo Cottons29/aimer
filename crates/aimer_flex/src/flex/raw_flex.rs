@@ -1,6 +1,9 @@
+use std::ops::Range;
+use std::rc::Rc;
+
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_attribute::{BoxConstraint, CacheBounds};
+use aimer_attribute::{BoxConstraint, CacheBounds, Dimension};
 use aimer_macro::Rebuildable;
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
@@ -9,7 +12,9 @@ use aimer_widget::{
     VisitorElement, Widget,
 };
 
-use crate::flex::flex_child::distribute_flex_space;
+use crate::flex::children_source::{ChildrenSource, EagerChildren};
+use crate::flex::flex_layout::{FlexLayout, FlexLayoutCache};
+use crate::flex::flex_list::FlexList;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 
 /// Arranges a homogeneous collection of children along a configurable main
@@ -40,6 +45,7 @@ impl Default for Flex {
         Self::new()
     }
 }
+
 
 impl Flex {
     /// Creates an empty flex layout with inherited direction.
@@ -112,6 +118,36 @@ impl<W: Widget + 'static> Flex<W> {
         self
     }
 
+    /// Supplies a data source instead of a widget collection.
+    ///
+    /// The returned [`FlexList`] is not yet a widget: pair it with
+    /// [`FlexList::builder`] to map each datum to a child. Prefer this over
+    /// [`Flex::children`] for long lists — the container then retains the data
+    /// rather than one widget per item. Children supplied earlier are replaced,
+    /// exactly as [`Flex::children`] replaces them.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use aimer_container::SizedBox;
+    /// use aimer_flex::{Flex, LayoutDirection};
+    ///
+    /// let flex = Flex::new().direction(LayoutDirection::Column)
+    ///                       .list(0..120_000)
+    ///                       .builder(|i| SizedBox::new().height(*i % 40));
+    /// ```
+    #[inline]
+    pub fn list<T>(self, items: impl IntoIterator<Item = T>) -> FlexList<T> {
+        FlexList::new(
+            self.direction,
+            self.vertical_alignment,
+            self.horizontal_alignment,
+            self.gaps,
+            self.overflow,
+            items,
+        )
+    }
+
     /// Replaces all children with the supplied homogeneous collection.
     ///
     /// This is not an append operation. The returned [`Flex`] adopts the item
@@ -149,8 +185,10 @@ impl<W: Widget + 'static> Widget for Flex<W> {
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
-            children: elements,
+            children: Box::new(EagerChildren(elements)),
             cache: LayoutCache::new(),
+            layout: FlexLayoutCache::new(),
+            item_extent: None,
             overflow_behavior: self.overflow,
             debug_name: "Flex",
             cache_bound: CacheBounds::new(),
@@ -172,79 +210,24 @@ pub struct RawFlex {
     pub(crate) vertical_alignment: BoxAlignment,
     pub(crate) horizontal_alignment: BoxAlignment,
     pub(crate) gaps: LayoutSpacing,
-    pub(crate) children: Vec<AnyElement>,
+    /// Supplies the children by index.
+    ///
+    /// A widget collection produces
+    /// [`EagerChildren`](crate::flex::children_source::EagerChildren), which
+    /// simply owns the vector. A data source with a declared item extent
+    /// produces a windowed one that materializes a viewport at a time — see the
+    /// [sparse-children contract](crate::flex::children_source).
+    pub(crate) children: Box<dyn ChildrenSource>,
     pub(crate) cache: LayoutCache,
+    pub(crate) layout: FlexLayoutCache,
+    /// Main-axis extent every child is declared to occupy, when known.
+    ///
+    /// Set through [`FlexList::item_extent`], it replaces the measuring pass
+    /// with arithmetic.
+    pub(crate) item_extent: Option<Dimension>,
     pub(crate) overflow_behavior: OverflowBehavior,
     pub(crate) debug_name: &'static str,
     pub(crate) cache_bound: CacheBounds,
-}
-
-struct WrapLayout {
-    offsets: Vec<(f32, f32)>,
-    size: ResolvedSize,
-}
-
-fn compute_wrap_layout(
-    children: &[ResolvedSize],
-    direction: LayoutDirection,
-    max_width: f32,
-    max_height: f32,
-    gap_x: f32,
-    gap_y: f32,
-) -> WrapLayout {
-    let mut offsets = Vec::with_capacity(children.len());
-    let mut main_offset: f32 = 0.0;
-    let mut cross_offset: f32 = 0.0;
-    let mut line_cross: f32 = 0.0;
-    let mut max_line_main: f32 = 0.0;
-
-    for child in children {
-        let (child_main, child_cross, max_main, main_gap, cross_gap) = match direction {
-            LayoutDirection::Row | LayoutDirection::Inherit => {
-                (child.width, child.height, max_width, gap_x, gap_y)
-            }
-            LayoutDirection::Column => (child.height, child.width, max_height, gap_y, gap_x),
-        };
-        let required_main = if main_offset > 0.0 {
-            main_offset + main_gap + child_main
-        } else {
-            child_main
-        };
-        if main_offset > 0.0 && required_main > max_main {
-            max_line_main = max_line_main.max(main_offset);
-            cross_offset += line_cross + cross_gap;
-            main_offset = 0.0;
-            line_cross = 0.0;
-        }
-        if main_offset > 0.0 {
-            main_offset += main_gap;
-        }
-        let offset = match direction {
-            LayoutDirection::Row | LayoutDirection::Inherit => (main_offset, cross_offset),
-            LayoutDirection::Column => (cross_offset, main_offset),
-        };
-        offsets.push(offset);
-        main_offset += child_main;
-        line_cross = line_cross.max(child_cross);
-    }
-
-    max_line_main = max_line_main.max(main_offset);
-    let total_cross = if children.is_empty() {
-        0.0
-    } else {
-        cross_offset + line_cross
-    };
-    let size = match direction {
-        LayoutDirection::Row | LayoutDirection::Inherit => ResolvedSize {
-            width: max_line_main,
-            height: total_cross,
-        },
-        LayoutDirection::Column => ResolvedSize {
-            width: total_cross,
-            height: max_line_main,
-        },
-    };
-    WrapLayout { offsets, size }
 }
 
 impl RawFlex {
@@ -262,107 +245,45 @@ impl RawFlex {
             vertical_alignment: Default::default(),
             horizontal_alignment: Default::default(),
             gaps: Default::default(),
-            children,
+            children: Box::new(EagerChildren(children)),
             cache: Default::default(),
+            layout: Default::default(),
+            item_extent: None,
             overflow_behavior: Default::default(),
             debug_name,
             cache_bound: CacheBounds::new(),
         }
     }
 
-    fn render_child(widget: &dyn Element, ctx: &BuildContext) {
+    pub(crate) fn render_child(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
         widget.draw(ctx);
         ctx.canvas.restore();
     }
 
-    fn wrapped_layout(
-        &self,
-        ctx: &BuildContext,
-        gap_x: f32,
-        gap_y: f32,
-    ) -> (Vec<ResolvedSize>, WrapLayout) {
-        let sizes = self
-            .children
-            .iter()
-            .map(|child| {
-                let mut child_ctx = ctx.clone();
-                match self.direction {
-                    LayoutDirection::Row | LayoutDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = f32::MAX;
-                    }
-                    LayoutDirection::Column => {
-                        child_ctx.box_constraint.max_height = f32::MAX;
-                    }
-                }
-                child.computed_size(&child_ctx)
-            })
-            .collect::<Vec<_>>();
-        let layout = compute_wrap_layout(
-            &sizes,
-            self.direction,
-            ctx.box_constraint.max_width,
-            ctx.box_constraint.max_height,
-            gap_x,
-            gap_y,
-        );
-        (sizes, layout)
-    }
+}
 
-    fn draw_wrapped(&self, ctx: &BuildContext, gap_x: f32, gap_y: f32) {
-        let (sizes, layout) = self.wrapped_layout(ctx, gap_x, gap_y);
-        let extra_width = (ctx.box_constraint.max_width - layout.size.width).max(0.0);
-        let extra_height = (ctx.box_constraint.max_height - layout.size.height).max(0.0);
-        let base_x = match self.horizontal_alignment {
-            BoxAlignment::Start => 0.0,
-            BoxAlignment::Center => extra_width / 2.0,
-            BoxAlignment::End => extra_width,
-        };
-        let base_y = match self.vertical_alignment {
-            BoxAlignment::Start => 0.0,
-            BoxAlignment::Center => extra_height / 2.0,
-            BoxAlignment::End => extra_height,
-        };
-        let mut draw_commands = Vec::with_capacity(self.children.len());
+/// Whether `value` is a real extent rather than an "unbounded" sentinel.
+#[inline]
+fn is_bounded(value: f32) -> bool {
+    value.is_finite() && value < f32::MAX
+}
 
-        for (index, child) in self.children.iter().enumerate() {
-            let child_size = sizes[index];
-            let offset_x = layout.offsets[index].0 + base_x;
-            let offset_y = layout.offsets[index].1 + base_y;
-            if let Some((vx, vy, vw, vh)) = ctx.visible_rect {
-                if offset_x + child_size.width < vx
-                    || offset_x > vx + vw
-                    || offset_y + child_size.height < vy
-                    || offset_y > vy + vh
-                {
-                    continue;
-                }
-            }
+/// Cache key component derived from the context's device scale.
+#[inline]
+fn scale_bits_of(ctx: &BuildContext) -> u32 {
+    ctx.scale.to_bits()
+}
 
-            let mut child_ctx = ctx.clone();
-            child_ctx.parent_size = child_size;
-            child_ctx.box_constraint = BoxConstraint {
-                min_width: 0.0,
-                min_height: 0.0,
-                max_width: child_size.width,
-                max_height: child_size.height,
-            };
-            child_ctx.visible_rect = ctx
-                .visible_rect
-                .map(|(x, y, width, height)| (x - offset_x, y - offset_y, width, height));
-            draw_commands.push((child.layer(), offset_x, offset_y, child_ctx, child.as_ref()));
-        }
-
-        draw_commands.sort_by_key(|command| command.0);
-        let scale = ctx.scale.max(1.0);
-        for (_, offset_x, offset_y, child_ctx, child) in draw_commands {
-            let x = (offset_x * scale).round() / scale;
-            let y = (offset_y * scale).round() / scale;
-            ctx.canvas.save();
-            ctx.canvas.translate(Vec2d { x, y });
-            Self::render_child(child, &child_ctx);
-            ctx.canvas.restore();
-        }
+/// Distance a child is pushed along one axis to satisfy `alignment`.
+///
+/// `extra` is the unused space on that axis and is never negative.
+#[inline]
+fn align_offset(alignment: BoxAlignment, extra: f32) -> f32 {
+    match alignment {
+        BoxAlignment::Start => 0.0,
+        BoxAlignment::Center => extra / 2.0,
+        BoxAlignment::End => extra,
     }
 }
 
@@ -378,40 +299,192 @@ impl RawFlex {
 
         (gap_x, gap_y)
     }
+
+    /// `true` when children run along the horizontal axis.
+    #[inline]
+    fn is_row(&self) -> bool {
+        !matches!(self.direction, LayoutDirection::Column)
+    }
+
+    /// Picks the gap that separates two adjacent children.
+    #[inline]
+    fn gap_main(&self, gap_x: f32, gap_y: f32) -> f32 {
+        if self.is_row() { gap_x } else { gap_y }
+    }
+
+    /// Returns the main-axis table for `ctx`, measuring the children only when
+    /// the constraint or the scale changed since the last pass.
+    ///
+    /// Measuring and painting share the result, so a scroll — which changes the
+    /// visible rectangle and nothing else — never re-measures the child list.
+    fn flex_layout(&self, ctx: &BuildContext) -> Rc<FlexLayout> {
+        if let Some(layout) = self.layout.get(ctx.box_constraint, scale_bits_of(ctx)) {
+            return layout;
+        }
+        self.measure_layout(ctx)
+    }
+
+    /// Rebuilds the cached table, measuring the children only when no item
+    /// extent was declared.
+    ///
+    /// Measuring is the one pass that needs every child at once, so a windowed
+    /// source is asked to materialize its whole range first. That is the escape
+    /// hatch for a declared extent that cannot be resolved under the current
+    /// constraints — the container reports an honest size instead of a total
+    /// derived from the handful of rows it happens to hold.
+    fn measure_layout(&self, ctx: &BuildContext) -> Rc<FlexLayout> {
+        let (gap_x, gap_y) = self.resole_gaps(ctx);
+        let gap_main = self.gap_main(gap_x, gap_y);
+        let layout = Rc::new(match self.declared_layout(ctx, gap_main) {
+            Some(declared) => declared,
+            None => {
+                self.materialize_all(ctx);
+                FlexLayout::build(self.direction, self.children.as_ref(), ctx, gap_main)
+            }
+        });
+        self.layout
+            .set(ctx.box_constraint, scale_bits_of(ctx), Rc::clone(&layout));
+        layout
+    }
+
+    /// Builds the main-axis table from [`RawFlex::item_extent`] alone.
+    ///
+    /// A declared extent turns the whole pass into arithmetic: the total is
+    /// `(extent + gap) * len - gap`, so a list of a hundred thousand rows
+    /// reports its scroll extent without a single child being measured, and the
+    /// first frame only touches the handful of children it paints. Children are
+    /// laid out across the container's full cross-axis maximum, since nothing
+    /// measured them.
+    ///
+    /// Returns `None` — falling back to measuring — when the extent states
+    /// nothing ([`Dimension::Auto`]) or cannot be resolved, which happens for a
+    /// percentage extent under an unbounded main axis and when the cross axis
+    /// itself is unbounded.
+    fn declared_layout(&self, ctx: &BuildContext, gap_main: f32) -> Option<FlexLayout> {
+        let extent = self.item_extent?;
+        let is_row = self.is_row();
+        let (max_main, max_cross) = if is_row {
+            (ctx.box_constraint.max_width, ctx.box_constraint.max_height)
+        } else {
+            (ctx.box_constraint.max_height, ctx.box_constraint.max_width)
+        };
+
+        let main = match extent {
+            // `Auto` declares nothing, so there is no table to build.
+            Dimension::Auto => return None,
+            Dimension::Px(value) => value * ctx.scale,
+            // A share of an unbounded axis is not a size.
+            Dimension::Percent(_) if !is_bounded(max_main) => return None,
+            percent => percent.resolve(max_main, ctx.scale),
+        };
+        if !is_bounded(main) || main < 0.0 || !is_bounded(max_cross) {
+            return None;
+        }
+
+        Some(FlexLayout::declared(
+            self.children.len(),
+            main,
+            max_cross.max(0.0),
+            is_row,
+            gap_main,
+        ))
+    }
+
+    /// Reports whether the cached table no longer describes the children about
+    /// to be painted.
+    ///
+    /// Nothing invalidates a flex container when a descendant resizes itself —
+    /// an implicitly animated child rebuilds inside its own `draw` — so the
+    /// children that are about to be painted are re-measured and compared. That
+    /// keeps the check proportional to what is on screen: a child that changed
+    /// size while off-screen cannot be seen to be mispositioned, and it is
+    /// picked up as soon as it scrolls into range.
+    ///
+    /// A table containing flex children is never trusted across frames, because
+    /// each share depends on what every other child consumed.
+    fn layout_is_stale(
+        &self,
+        ctx: &BuildContext,
+        layout: &FlexLayout,
+        range: &Range<usize>,
+    ) -> bool {
+        // A declared extent is authoritative, so nothing is re-measured.
+        if layout.is_declared() {
+            return false;
+        }
+
+        if layout.has_flex() {
+            return true;
+        }
+
+        let is_row = self.is_row();
+        let mut child_ctx = ctx.clone();
+        if is_row {
+            child_ctx.box_constraint.max_width = f32::MAX;
+            child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
+        } else {
+            child_ctx.box_constraint.max_height = f32::MAX;
+            child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
+        }
+
+        range.clone().any(|index| {
+            self.children
+                .get(index)
+                .is_some_and(|child| child.computed_size(&child_ctx) != layout.size(index))
+        })
+    }
+
+    /// Forces a windowed source to hold every child.
+    ///
+    /// Only the measuring and wrapping passes need this: both derive a result
+    /// from the whole list, so a partial window would produce a wrong size.
+    pub(crate) fn materialize_all(&self, ctx: &BuildContext) {
+        if self.children.is_windowed() {
+            self.children.window(0..self.children.len(), ctx);
+        }
+    }
+
+    /// Main-axis shift applied to every child by the container's own alignment.
+    #[inline]
+    fn base_main(&self, ctx: &BuildContext, total: ResolvedSize) -> f32 {
+        if self.is_row() {
+            align_offset(
+                self.horizontal_alignment,
+                (ctx.box_constraint.max_width - total.width).max(0.0),
+            )
+        } else {
+            align_offset(
+                self.vertical_alignment,
+                (ctx.box_constraint.max_height - total.height).max(0.0),
+            )
+        }
+    }
+
+    /// Resolves the children that `ctx.visible_rect` exposes.
+    ///
+    /// `base_main` is the main-axis shift the container's own alignment applies.
+    /// Without a visible rectangle every child is in range, which keeps an
+    /// unclipped flex behaving exactly as before.
+    fn painted_range(
+        &self,
+        ctx: &BuildContext,
+        layout: &FlexLayout,
+        base_main: f32,
+    ) -> Range<usize> {
+        let Some((vx, vy, vw, vh)) = ctx.visible_rect else {
+            return 0..layout.len();
+        };
+        let (start, extent) = if self.is_row() { (vx, vw) } else { (vy, vh) };
+        let start = (start - base_main) as f64;
+        layout.visible_range(start, start + extent as f64)
+    }
 }
 
 impl Drawable for RawFlex {
     fn draw(&self, ctx: &BuildContext) {
-        let size = self.computed_size(ctx);
         let (gap_x, gap_y) = self.resole_gaps(ctx);
         let max_w = ctx.box_constraint.max_width;
         let max_h = ctx.box_constraint.max_height;
-
-        let actual_w = size.width;
-        let actual_h = size.height;
-
-        let extra_w = (max_w - actual_w).max(0.0);
-        let extra_h = (max_h - actual_h).max(0.0);
-
-        let mut current_x = 0.0;
-        let mut current_y = 0.0;
-
-        match self.direction {
-            LayoutDirection::Row | LayoutDirection::Inherit => {
-                current_x = match self.horizontal_alignment {
-                    BoxAlignment::Start => 0.0,
-                    BoxAlignment::Center => extra_w / 2.0,
-                    BoxAlignment::End => extra_w,
-                };
-            }
-            LayoutDirection::Column => {
-                current_y = match self.vertical_alignment {
-                    BoxAlignment::Start => 0.0,
-                    BoxAlignment::Center => extra_h / 2.0,
-                    BoxAlignment::End => extra_h,
-                };
-            }
-        }
 
         ctx.canvas.save();
 
@@ -448,200 +521,106 @@ impl Drawable for RawFlex {
             return;
         }
 
-        let mut child_ctx = BuildContext {
-            parent_size: ctx.parent_size,
-            canvas: ctx.canvas.clone(),
-            scale: ctx.scale,
-            parent_pos: ctx.parent_pos,
-            cursor_pos: ctx.cursor_pos,
-            box_constraint: ctx.box_constraint,
-            visible_rect: ctx.visible_rect,
-            window: ctx.window.clone(),
-            #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx.async_handle.clone(),
-            inherited_states: ctx.inherited_states.clone(),
-        };
+        let is_row = self.is_row();
+        let mut layout = self.flex_layout(ctx);
+        // The container's own alignment shifts every child by the same amount
+        // along the main axis; the cross axis is aligned per child.
+        let mut base_main = self.base_main(ctx, layout.total());
+        let mut range = self.painted_range(ctx, &layout, base_main);
 
-        // Pass 1: measure regular children to find remaining space for flex children.
-        let child_count = self.children.len();
-        let total_gap = if child_count > 1 {
-            match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => gap_x * (child_count - 1) as f32,
-                LayoutDirection::Column => gap_y * (child_count - 1) as f32,
-            }
-        } else {
-            0.0
-        };
+        // Bring the slice about to be painted into existence before anything
+        // borrows a child. A windowed source drops what left the range here, so
+        // this must stay the last point at which children can be dropped.
+        self.children.window(range.clone(), ctx);
 
-        let mut sized_main: f32 = 0.0;
-        let mut weights: Vec<f32> = Vec::with_capacity(child_count);
-        let mut child_sizes: Vec<Option<ResolvedSize>> = Vec::with_capacity(child_count);
+        if self.layout_is_stale(ctx, &layout, &range) {
+            layout = self.measure_layout(ctx);
+            base_main = self.base_main(ctx, layout.total());
+            range = self.painted_range(ctx, &layout, base_main);
+            self.children.window(range.clone(), ctx);
+        }
 
-        for child in &self.children {
-            if let Some(flex) = child.flex() {
-                weights.push(flex.max(0.0));
-                child_sizes.push(None);
+        // Painting resolved the whole table, so let a later `computed_size`
+        // read the result straight back.
+        self.cache
+            .set_computed(ctx.box_constraint, scale_bits_of(ctx), layout.total());
+        self.layout.set_painted(&range);
+
+        // Children paint in layer order. Most lists never leave layer zero, so
+        // the sort is skipped unless a child actually asked to be lifted.
+        let mut order: Vec<(u32, usize)> = Vec::with_capacity(range.len().min(64));
+        let mut layered = false;
+        for index in range {
+            let Some(child) = self.children.get(index) else {
                 continue;
-            }
-
-            match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => {
-                    child_ctx.box_constraint.max_width = f32::MAX;
-                    child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
-                }
-                LayoutDirection::Column => {
-                    child_ctx.box_constraint.max_height = f32::MAX;
-                    child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
-                }
-            }
-            let s = child.computed_size(&child_ctx);
-            match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => sized_main += s.width,
-                LayoutDirection::Column => sized_main += s.height,
-            }
-            weights.push(0.0);
-            child_sizes.push(Some(s));
+            };
+            let layer = child.layer();
+            layered |= layer != 0;
+            order.push((layer, index));
         }
-
-        let remaining_main = match self.direction {
-            LayoutDirection::Row | LayoutDirection::Inherit => {
-                (max_w - sized_main - total_gap).max(0.0)
-            }
-            LayoutDirection::Column => (max_h - sized_main - total_gap).max(0.0),
-        };
-        let flex_shares = distribute_flex_space(remaining_main, &weights);
-
-        let mut draw_commands = Vec::with_capacity(self.children.len());
-
-        for (i, child) in self.children.iter().enumerate() {
-            let is_flex = child_sizes[i].is_none();
-            if is_flex && flex_shares[i] != f32::MAX {
-                match self.direction {
-                    LayoutDirection::Row | LayoutDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = flex_shares[i];
-                        child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
-                    }
-                    LayoutDirection::Column => {
-                        child_ctx.box_constraint.max_height = flex_shares[i];
-                        child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
-                    }
-                }
-            } else if let Some(size) = child_sizes[i] {
-                match self.direction {
-                    LayoutDirection::Row | LayoutDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = size.width;
-                        child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
-                    }
-                    LayoutDirection::Column => {
-                        child_ctx.box_constraint.max_height = size.height;
-                        child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
-                    }
-                }
-            } else {
-                match self.direction {
-                    LayoutDirection::Row | LayoutDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = (max_w - current_x).max(0.0);
-                        child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
-                    }
-                    LayoutDirection::Column => {
-                        child_ctx.box_constraint.max_height = (max_h - current_y).max(0.0);
-                        child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
-                    }
-                }
-            }
-
-            let mut child_size = child_sizes[i].unwrap_or_else(|| child.computed_size(&child_ctx));
-            if is_flex && flex_shares[i] != f32::MAX {
-                match self.direction {
-                    LayoutDirection::Row | LayoutDirection::Inherit => {
-                        child_size.width = flex_shares[i];
-                    }
-                    LayoutDirection::Column => {
-                        child_size.height = flex_shares[i];
-                    }
-                }
-            }
-            let c_w = child_size.width;
-            let c_h = child_size.height;
-
-            let mut offset_x = current_x;
-            let mut offset_y = current_y;
-
-            match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => {
-                    offset_y = match self.vertical_alignment {
-                        BoxAlignment::Start => 0.0,
-                        BoxAlignment::Center => (max_h - c_h).max(0.0) / 2.0,
-                        BoxAlignment::End => (max_h - c_h).max(0.0),
-                    };
-                }
-                LayoutDirection::Column => {
-                    offset_x = match self.horizontal_alignment {
-                        BoxAlignment::Start => 0.0,
-                        BoxAlignment::Center => (max_w - c_w).max(0.0) / 2.0,
-                        BoxAlignment::End => (max_w - c_w).max(0.0),
-                    };
-                }
-            }
-
-            let mut is_visible = true;
-            #[allow(clippy::collapsible_if)]
-            if let Some((vx, vy, vw, vh)) = ctx.visible_rect {
-                if (offset_x) + (c_w) < vx
-                    || (offset_x) > vx + vw
-                    || (offset_y) + (c_h) < vy
-                    || (offset_y) > vy + vh
-                {
-                    is_visible = false;
-                }
-            }
-
-            if is_visible {
-                let draw_ctx = BuildContext {
-                    parent_size: child_size,
-                    canvas: ctx.canvas.clone(),
-                    scale: ctx.scale,
-                    parent_pos: ctx.parent_pos,
-                    cursor_pos: ctx.cursor_pos,
-                    box_constraint: BoxConstraint {
-                        min_width: 0.0,
-                        min_height: 0.0,
-                        max_width: c_w,
-                        max_height: c_h,
-                    },
-                    visible_rect: ctx
-                        .visible_rect
-                        .map(|(vx, vy, vw, vh)| (vx - offset_x, vy - offset_y, vw, vh)),
-                    window: ctx.window.clone(),
-                    #[cfg(not(target_arch = "wasm32"))]
-                    async_handle: ctx.async_handle.clone(),
-                    inherited_states: ctx.inherited_states.clone(),
-                };
-
-                draw_commands.push((child.layer(), offset_x, offset_y, draw_ctx, child.as_ref()));
-            }
-
-            match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => {
-                    current_x += c_w + gap_x;
-                }
-                LayoutDirection::Column => {
-                    current_y += c_h + gap_y;
-                }
-            }
+        if layered {
+            order.sort_by_key(|(layer, _)| *layer);
         }
-
-        draw_commands.sort_by_key(|cmd| cmd.0);
 
         // Round child positions to device pixels so that adjacent backgrounds
         // always tile without sub-pixel seams.  Without this, a fractional
-        // scroll offset combined with float-accumulated `current_y` can place
-        // two sibling rectangles on fractional device-pixel boundaries, and the
+        // scroll offset combined with a float main-axis offset can place two
+        // sibling rectangles on fractional device-pixel boundaries, and the
         // GPU anti-aliasing blends the gap with the parent background (white).
         let scale = ctx.scale.max(1.0);
 
-        for cmd in draw_commands {
-            let (_, offset_x, offset_y, draw_ctx, child) = cmd;
+        for (_, index) in order {
+            let Some(child) = self.children.get(index) else {
+                continue;
+            };
+            let child_size = layout.size(index);
+            let c_w = child_size.width;
+            let c_h = child_size.height;
+            let main = base_main + layout.offset(index) as f32;
+
+            let (offset_x, offset_y) = if is_row {
+                (
+                    main,
+                    align_offset(self.vertical_alignment, (max_h - c_h).max(0.0)),
+                )
+            } else {
+                (
+                    align_offset(self.horizontal_alignment, (max_w - c_w).max(0.0)),
+                    main,
+                )
+            };
+
+            // The index range only bounds the main axis, so a child can still
+            // sit outside the viewport across it.
+            if let Some((vx, vy, vw, vh)) = ctx.visible_rect
+                && (offset_x + c_w < vx
+                    || offset_x > vx + vw
+                    || offset_y + c_h < vy
+                    || offset_y > vy + vh)
+            {
+                continue;
+            }
+
+            let draw_ctx = BuildContext {
+                parent_size: child_size,
+                canvas: ctx.canvas.clone(),
+                scale: ctx.scale,
+                parent_pos: ctx.parent_pos,
+                cursor_pos: ctx.cursor_pos,
+                box_constraint: BoxConstraint {
+                    min_width: 0.0,
+                    min_height: 0.0,
+                    max_width: c_w,
+                    max_height: c_h,
+                },
+                visible_rect: ctx
+                    .visible_rect
+                    .map(|(vx, vy, vw, vh)| (vx - offset_x, vy - offset_y, vw, vh)),
+                window: ctx.window.clone(),
+                #[cfg(not(target_arch = "wasm32"))]
+                async_handle: ctx.async_handle.clone(),
+                inherited_states: ctx.inherited_states.clone(),
+            };
 
             let rx = (offset_x * scale).round() / scale;
             let ry = (offset_y * scale).round() / scale;
@@ -661,10 +640,14 @@ impl Drawable for RawFlex {
 }
 
 impl VisitorElement for RawFlex {
+    /// Visits the children that exist.
+    ///
+    /// An eager container holds all of them. A windowed one holds the rows the
+    /// last frame needed, which is the [sparse-children
+    /// contract](crate::flex::children_source): a row outside the window has no
+    /// element yet, so there is nothing to visit.
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        for child in &self.children {
-            visitor(child.as_ref());
-        }
+        self.children.visit(visitor);
     }
 
     fn debug_name(&self) -> &'static str {
@@ -673,9 +656,32 @@ impl VisitorElement for RawFlex {
 }
 
 impl EventElement for RawFlex {
+    /// Offers every child that exists, painted or not.
+    ///
+    /// Focus and broadcast delivery use this, so an off-screen input field of an
+    /// eager container still receives keys. A windowed container can only offer
+    /// its live window — see the [sparse-children
+    /// contract](crate::flex::children_source).
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        for child in &self.children {
-            visitor(child.as_ref());
+        self.children.visit(visitor);
+    }
+
+    /// Offers only the children the last frame actually painted.
+    ///
+    /// A pointer can only land on something that was drawn, so a clipped list
+    /// hit-tests its viewport slice instead of its whole child vector — the
+    /// difference between a few dozen and a few hundred thousand visits per
+    /// pointer move. Keyboard focus and broadcasts keep using
+    /// [`EventElement::event_children`], so an off-screen field still receives
+    /// them.
+    fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        let Some(range) = self.layout.painted() else {
+            return self.event_children(visitor);
+        };
+        for index in range.start..range.end.min(self.children.len()) {
+            if let Some(child) = self.children.get(index) {
+                visitor(child);
+            }
         }
     }
 }
@@ -694,154 +700,8 @@ impl LayoutElement for RawFlex {
             return layout.size;
         }
 
-        let child_count = self.children.len();
-
-        let gap_x = self
-            .gaps
-            .left
-            .value(ctx.box_constraint.max_width, ctx.scale)
-            + self
-                .gaps
-                .right
-                .value(ctx.box_constraint.max_width, ctx.scale);
-        let gap_y = self
-            .gaps
-            .top
-            .value(ctx.box_constraint.max_height, ctx.scale)
-            + self
-                .gaps
-                .bottom
-                .value(ctx.box_constraint.max_height, ctx.scale);
-
-        let total_gap = if child_count > 1 {
-            match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => gap_x * (child_count - 1) as f32,
-                LayoutDirection::Column => gap_y * (child_count - 1) as f32,
-            }
-        } else {
-            0.0
-        };
-
-        let max_main = match self.direction {
-            LayoutDirection::Row | LayoutDirection::Inherit => ctx.box_constraint.max_width,
-            LayoutDirection::Column => ctx.box_constraint.max_height,
-        };
-
-        // Pass 1: measure sized children, collect flex weights
-        let mut sized_main: f32 = 0.0;
-        let mut weights: Vec<f32> = Vec::with_capacity(child_count);
-        let mut child_sizes: Vec<Option<ResolvedSize>> = Vec::with_capacity(child_count);
-
-        let mut child_ctx = BuildContext {
-            parent_size: ctx.parent_size,
-            canvas: ctx.canvas.clone(),
-            scale: ctx.scale,
-            parent_pos: ctx.parent_pos,
-            cursor_pos: ctx.cursor_pos,
-            box_constraint: ctx.box_constraint,
-            visible_rect: ctx.visible_rect,
-            window: ctx.window.clone(),
-            #[cfg(not(target_arch = "wasm32"))]
-            async_handle: ctx.async_handle.clone(),
-            inherited_states: ctx.inherited_states.clone(),
-        };
-
-        for child in &self.children {
-            // An `Expanded`-style child advertises its flex factor directly.
-            if let Some(flex) = child.flex() {
-                weights.push(flex.max(0.0));
-                child_sizes.push(None);
-                continue;
-            }
-
-            // Any other child keeps its own intrinsic main-axis size (measured
-            // with an unbounded main axis) and consumes that space before the
-            // flex children are laid out — only `Expanded`/`Flexible` grow.
-            match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => {
-                    child_ctx.box_constraint.max_width = f32::MAX;
-                    child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
-                }
-                LayoutDirection::Column => {
-                    child_ctx.box_constraint.max_height = f32::MAX;
-                    child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
-                }
-            }
-            let s = child.computed_size(&child_ctx);
-            match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => sized_main += s.width,
-                LayoutDirection::Column => sized_main += s.height,
-            }
-            weights.push(0.0);
-            child_sizes.push(Some(s));
-        }
-
-        // Pass 2: distribute remaining space to flexible children by weight.
-        // Under an unbounded main axis there is no space to share, so flex
-        // children fall back to their intrinsic size (measured with `f32::MAX`).
-        let flex_shares = if max_main == f32::MAX {
-            vec![f32::MAX; child_count]
-        } else {
-            let remaining = (max_main - sized_main - total_gap).max(0.0);
-            distribute_flex_space(remaining, &weights)
-        };
-
-        let mut total_width: f32 = 0.0;
-        let mut total_height: f32 = 0.0;
-
-        for (i, child) in self.children.iter().enumerate() {
-            let mut s = if let Some(s) = child_sizes[i] {
-                s
-            } else {
-                match self.direction {
-                    LayoutDirection::Row | LayoutDirection::Inherit => {
-                        child_ctx.box_constraint.max_width = flex_shares[i];
-                        child_ctx.box_constraint.max_height = ctx.box_constraint.max_height;
-                    }
-                    LayoutDirection::Column => {
-                        child_ctx.box_constraint.max_height = flex_shares[i];
-                        child_ctx.box_constraint.max_width = ctx.box_constraint.max_width;
-                    }
-                }
-                child.computed_size(&child_ctx)
-            };
-            if weights[i] > 0.0 {
-                match self.direction {
-                    LayoutDirection::Row | LayoutDirection::Inherit => {
-                        s.width = flex_shares[i];
-                    }
-                    LayoutDirection::Column => {
-                        s.height = flex_shares[i];
-                    }
-                }
-            }
-            match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => {
-                    total_width += s.width;
-                    total_height = total_height.max(s.height);
-                }
-                LayoutDirection::Column => {
-                    total_height += s.height;
-                    total_width = total_width.max(s.width);
-                }
-            }
-        }
-
-        if child_count > 1 {
-            match self.direction {
-                LayoutDirection::Row | LayoutDirection::Inherit => {
-                    total_width += gap_x * (child_count - 1) as f32;
-                }
-                LayoutDirection::Column => {
-                    total_height += gap_y * (child_count - 1) as f32;
-                }
-            }
-        }
-
-        let result = ResolvedSize {
-            width: total_width,
-            height: total_height,
-        };
+        let layout = self.flex_layout(ctx);
+        let result = layout.total();
         self.cache
             .set_computed(ctx.box_constraint, scale_bits, result);
         result
@@ -851,80 +711,18 @@ impl LayoutElement for RawFlex {
         self.computed_size(ctx)
     }
 
+    /// Drops this container's tables and those of every child that exists.
+    ///
+    /// The live window itself is kept: a resize invalidates layout on every
+    /// frame it produces, and rebuilding the visible rows each time would reset
+    /// their state while the user is still dragging the window edge.
     fn invalidate_layout(&self) {
         self.cache.invalidate();
-        for child in &self.children {
-            child.invalidate_layout();
-        }
+        self.layout.invalidate();
+        self.children.visit(&mut |child| child.invalidate_layout());
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.cache_bound.pos_start_end()
-    }
-}
-
-#[cfg(test)]
-mod wrap_tests {
-    use aimer_attribute::size::ResolvedSize;
-
-    use super::{LayoutDirection, compute_wrap_layout};
-
-    #[test]
-    fn row_wraps_children_onto_additional_lines() {
-        let children = vec![
-            ResolvedSize {
-                width: 60.0,
-                height: 10.0,
-            },
-            ResolvedSize {
-                width: 50.0,
-                height: 20.0,
-            },
-            ResolvedSize {
-                width: 40.0,
-                height: 15.0,
-            },
-        ];
-
-        let layout = compute_wrap_layout(&children, LayoutDirection::Row, 100.0, 100.0, 5.0, 3.0);
-
-        assert_eq!(
-            layout.size,
-            ResolvedSize {
-                width: 95.0,
-                height: 33.0
-            }
-        );
-        assert_eq!(layout.offsets, vec![(0.0, 0.0), (0.0, 13.0), (55.0, 13.0)]);
-    }
-
-    #[test]
-    fn column_wraps_children_onto_additional_columns() {
-        let children = vec![
-            ResolvedSize {
-                width: 10.0,
-                height: 60.0,
-            },
-            ResolvedSize {
-                width: 20.0,
-                height: 50.0,
-            },
-            ResolvedSize {
-                width: 15.0,
-                height: 40.0,
-            },
-        ];
-
-        let layout =
-            compute_wrap_layout(&children, LayoutDirection::Column, 100.0, 100.0, 3.0, 5.0);
-
-        assert_eq!(
-            layout.size,
-            ResolvedSize {
-                width: 33.0,
-                height: 95.0
-            }
-        );
-        assert_eq!(layout.offsets, vec![(0.0, 0.0), (13.0, 0.0), (13.0, 55.0)]);
     }
 }

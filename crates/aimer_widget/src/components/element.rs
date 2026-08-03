@@ -216,6 +216,10 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.element.event_children(visitor);
     }
+
+    fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.element.hit_test_children(visitor);
+    }
 }
 
 impl<E: Element + 'static> Drawable for ElementNode<E> {
@@ -326,6 +330,10 @@ impl EventElement for AnyElement {
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().event_children(visitor)
     }
+
+    fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref().hit_test_children(visitor)
+    }
 }
 
 impl Drawable for AnyElement {
@@ -427,6 +435,10 @@ impl EventElement for Box<dyn Element> {
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().event_children(visitor)
+    }
+
+    fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref().hit_test_children(visitor)
     }
 }
 
@@ -805,7 +817,7 @@ fn dispatch_routed_event_inner<'a>(
     let mut result = EventResult::ignored();
     let mut capture_owner = None;
     let start = children.len();
-    root.event_children(&mut |child| children.push(child));
+    root.hit_test_children(&mut |child| children.push(child));
 
     while children.len() > start {
         let child = children
@@ -864,7 +876,7 @@ fn dispatch_event_inner<'a>(
 ) -> EventResult {
     let mut result = EventResult::ignored();
     let start = children.len();
-    root.event_children(&mut |child| children.push(child));
+    root.hit_test_children(&mut |child| children.push(child));
 
     while children.len() > start {
         let child = children

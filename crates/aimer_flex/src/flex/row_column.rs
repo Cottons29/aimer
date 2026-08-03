@@ -3,6 +3,8 @@ use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, AnyWidget, Element, RequiredChild, Widget};
 
+use crate::flex::children_source::EagerChildren;
+use crate::flex::flex_list::FlexList;
 use crate::flex::raw_flex::RawFlex;
 use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 
@@ -114,6 +116,32 @@ impl Column {
         .boxed()
     }
 
+    /// Supplies a data source instead of a widget collection.
+    ///
+    /// The returned [`FlexList`] is not yet a widget: pair it with
+    /// [`FlexList::builder`] to map each datum to a child. Prefer this over
+    /// [`Column::children`] for long lists — the column then retains the data
+    /// rather than one widget per row.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use aimer_container::SizedBox;
+    /// use aimer_flex::Column;
+    ///
+    /// let column = Column::new().list(0..120_000)
+    ///                           .builder(|i| SizedBox::new().height(*i % 40));
+    /// ```
+    #[inline]
+    pub fn list<T>(self, items: impl IntoIterator<Item = T>) -> FlexList<T> {
+        FlexList::new(LayoutDirection::Column,
+                      self.vertical_alignment,
+                      self.horizontal_alignment,
+                      self.gaps,
+                      self.overflow,
+                      items)
+    }
+
     /// Replaces the child collection and completes this builder.
     ///
     /// All iterator items have one concrete widget type. This terminal
@@ -133,15 +161,17 @@ impl Column {
 
 impl<W: Widget + 'static> Widget for Column<W> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
+        let children = EagerChildren(self.children.iter().map(|c| c.to_element(ctx)).collect());
         RawFlex {
             direction: LayoutDirection::Column,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow_behavior: self.overflow,
-            children,
+            children: Box::new(children),
             cache: Default::default(),
+            layout: Default::default(),
+            item_extent: None,
             debug_name: "Column",
             cache_bound: CacheBounds::new(),
         }
@@ -224,6 +254,32 @@ impl Row {
         self
     }
 
+    /// Supplies a data source instead of a widget collection.
+    ///
+    /// The returned [`FlexList`] is not yet a widget: pair it with
+    /// [`FlexList::builder`] to map each datum to a child.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use aimer_container::SizedBox;
+    /// use aimer_flex::Row;
+    ///
+    /// let row = Row::new().list([40, 60, 80])
+    ///                     .builder(|width| SizedBox::new().width(*width));
+    /// ```
+    #[inline]
+    pub fn list<T>(self, items: impl IntoIterator<Item = T>) -> FlexList<T> {
+        FlexList::new(
+            LayoutDirection::Row,
+            self.vertical_alignment,
+            self.horizontal_alignment,
+            self.gaps,
+            self.overflow,
+            items,
+        )
+    }
+
     /// Replaces all children with a homogeneous collection.
     ///
     /// This is not an append operation. The returned row adopts the iterator's
@@ -290,15 +346,17 @@ impl Row {
 
 impl<W: Widget + 'static> Widget for Row<W> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
+        let children = EagerChildren(self.children.iter().map(|c| c.to_element(ctx)).collect());
         RawFlex {
             direction: LayoutDirection::Row,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
             gaps: self.gaps,
             overflow_behavior: self.overflow,
-            children,
+            children: Box::new(children),
             cache: Default::default(),
+            layout: Default::default(),
+            item_extent: None,
             debug_name: "Row",
             cache_bound: CacheBounds::new(),
         }
