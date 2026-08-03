@@ -187,6 +187,10 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
         self.element.rebuild_if_dirty(ctx);
     }
 
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        self.element.adopt_runtime_state_from(old);
+    }
+
     fn option_any(&self) -> Option<&dyn std::any::Any> {
         self.element.option_any()
     }
@@ -301,6 +305,10 @@ impl Rebuildable for AnyElement {
         self.as_ref().rebuild_if_dirty(ctx)
     }
 
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        self.as_ref().adopt_runtime_state_from(old)
+    }
+
     fn option_any(&self) -> Option<&dyn std::any::Any> {
         self.as_ref().option_any()
     }
@@ -405,6 +413,10 @@ impl LayoutElement for Box<dyn Element> {
 impl Rebuildable for Box<dyn Element> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         self.as_ref().rebuild_if_dirty(ctx)
+    }
+
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        self.as_ref().adopt_runtime_state_from(old)
     }
 
     fn option_any(&self) -> Option<&dyn std::any::Any> {

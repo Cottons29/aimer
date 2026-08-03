@@ -111,3 +111,19 @@ pub use crate::layout_cache::LayoutCache;
 pub use crate::widget::Widget;
 pub use crate::widget::stateful::{State, StateUpdater, StatefulElement, StatefulWidget};
 pub use crate::widget::stateless::{NamedWidget, StatelessElement, StatelessWidget};
+
+/// Carries the live state of an old element subtree into the subtree replacing
+/// it.
+///
+/// This is the step a rebuild performs between building the replacement and
+/// installing it: every state-owning element in `new` that corresponds to one in
+/// `old` adopts its runtime state, so a `set_state` above a subtree does not
+/// reset the widgets inside it. Containers that materialize their children on
+/// demand also exchange them here, through
+/// [`Rebuildable::take_retained_children`].
+///
+/// Safe to call on any pair: elements that do not correspond are left alone.
+#[inline]
+pub fn carry_element_state(old: &dyn Element, new: &dyn Element, ctx: &base::BuildContext) {
+    crate::widget::stateful::carry_child_state(old, new, ctx);
+}

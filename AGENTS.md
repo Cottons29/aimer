@@ -84,6 +84,7 @@ This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `e
   of prepare call stack frame.
 - **One Rust File Cannot Bigger Than 900 LOD** It's good for spliting the logic into the modular file rather than one
   big Rust File.
+- **Avoid Using Third Party If Possible** It's would be good if some small feature can be implemented in local crate.
 
 ### Rust std Documentation Example 
 

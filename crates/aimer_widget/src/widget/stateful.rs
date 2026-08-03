@@ -877,6 +877,25 @@ fn carry_keyed_child_state_in_context(
     }
 }
 
+/// Lets `new` take over the runtime state `old` was holding beside its children.
+///
+/// The positional walk below reaches every child an element owns, which covers
+/// almost everything. What it cannot reach is a container that materializes its
+/// children on demand — a freshly built one has none, so there is no pair to walk
+/// — or state a container keeps beside them, such as a measurement of a list too
+/// long to measure again. Both are handed over here instead; see
+/// [`Rebuildable::adopt_runtime_state_from`].
+///
+/// Restricted to elements of the same concrete type, so an element is never
+/// offered state it cannot interpret.
+fn adopt_runtime_state(old: &dyn Element, new: &dyn Element) {
+    if old.element_type_id() != new.element_type_id() || old.debug_name() != new.debug_name() {
+        return;
+    }
+
+    new.adopt_runtime_state_from(old);
+}
+
 fn carry_unkeyed_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
     new.with_rebuild_context(ctx, &mut |ctx| {
         carry_unkeyed_child_state_in_context(old, new, ctx)
@@ -884,6 +903,8 @@ fn carry_unkeyed_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildCo
 }
 
 fn carry_unkeyed_child_state_in_context(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    adopt_runtime_state(old, new);
+
     if old.is_stateful_element() && new.is_stateful_element() {
         if new
             .option_any()

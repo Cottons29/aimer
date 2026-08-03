@@ -1,5 +1,5 @@
 use crate::base::BuildContext;
-use crate::components::element::VisitorElement;
+use crate::components::element::{Element, VisitorElement};
 
 // Rebuild capabilities
 pub trait Rebuildable: VisitorElement {
@@ -20,6 +20,24 @@ pub trait Rebuildable: VisitorElement {
     fn is_carry_state(&self) -> bool {
         false
     }
+
+    /// Adopts whatever runtime state the element this one replaces was holding.
+    ///
+    /// Reconciliation pairs children by sibling position, which reaches
+    /// everything an ordinary element owns. Two kinds of state escape it:
+    ///
+    /// - children a container materializes *on demand*, because a freshly built
+    ///   container has none of them yet, so the walk finds no pair;
+    /// - state a container keeps beside its children, such as a measurement of a
+    ///   list too long to measure again.
+    ///
+    /// Such an element overrides this and takes what it needs — including the
+    /// children themselves — out of `old`, which is always the same concrete type
+    /// and is dropped immediately afterwards. Reach the concrete type through
+    /// [`Rebuildable::option_any`].
+    #[inline]
+    #[allow(unused_variables)]
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {}
 
     /// Run reconciliation work with any inherited state published by this
     /// element available in `ctx`.
