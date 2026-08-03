@@ -5,6 +5,7 @@ pub mod gpu_context;
 pub mod utilities;
 
 pub mod canvas;
+mod lru_map;
 mod pipeline;
 pub mod pipeline_cache;
 pub mod renderer;

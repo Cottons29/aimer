@@ -1,10 +1,10 @@
 use std::cell::{Ref, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::draw_cmd::DrawList;
 use crate::font::{FontFamily, FontStyle, FontWeight};
+use crate::lru_map::LruMap;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
@@ -38,11 +38,20 @@ struct CachedTextMetrics {
     line_widths: Vec<f32>,
 }
 
+/// How many measured strings the canvas remembers.
+///
+/// A scrolled list of distinct rows measures a viewport's worth of new strings
+/// per frame, so the cache is sized to hold many screens of them and evicts the
+/// coldest quarter when it fills. It must never be emptied outright: that would
+/// drop the strings the current frame is built from and turn every newly visible
+/// row into a permanent miss.
+const METRICS_CACHE_CAPACITY: usize = 4096;
+
 #[derive(Clone)]
 pub struct CupidCanvas {
     draw_list: Rc<RefCell<DrawList>>,
     rasterizer: Rc<RefCell<GlyphRasterizer>>,
-    metrics_cache: Rc<RefCell<HashMap<TextMetricsKey, CachedTextMetrics>>>,
+    metrics_cache: Rc<RefCell<LruMap<TextMetricsKey, CachedTextMetrics>>>,
 }
 
 impl CupidCanvas {
@@ -50,7 +59,7 @@ impl CupidCanvas {
         Self {
             draw_list: Rc::new(RefCell::new(DrawList::new())),
             rasterizer: Rc::new(RefCell::new(GlyphRasterizer::new())),
-            metrics_cache: Rc::new(RefCell::new(HashMap::new())),
+            metrics_cache: Rc::new(RefCell::new(LruMap::new(METRICS_CACHE_CAPACITY))),
         }
     }
 
@@ -438,7 +447,7 @@ impl CupidCanvas {
             font_style,
             font_weight,
         };
-        if let Some(cached) = self.metrics_cache.borrow().get(&key) {
+        if let Some(cached) = self.metrics_cache.borrow_mut().get(&key) {
             return cached.metrics;
         }
 
@@ -514,11 +523,7 @@ impl CupidCanvas {
             line_count,
         };
 
-        let mut cache = self.metrics_cache.borrow_mut();
-        if cache.len() > 1024 {
-            cache.clear();
-        }
-        cache.insert(
+        self.metrics_cache.borrow_mut().insert(
             key,
             CachedTextMetrics {
                 metrics,
@@ -557,7 +562,7 @@ impl CupidCanvas {
             font_weight,
         );
         self.metrics_cache
-            .borrow()
+            .borrow_mut()
             .get(&key)
             .map(|cached| cached.line_widths.clone())
             .unwrap_or_default()
