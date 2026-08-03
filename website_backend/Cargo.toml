@@ -1,21 +1,28 @@
 [package]
 name = "website_backend"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
+# `cdylib` is what `worker-build` compiles to WebAssembly; `rlib` keeps the
+# router testable on the host toolchain.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
-worker = { version = "0.8", features = ['http', 'axum'] }
-worker-macros = { version = "0.8", features = ['http'] }
-axum = { workspace = true, features = ["http1", "json", "tokio"] }
-dotenvy.workspace = true
+axum = { workspace = true, features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["fs", "macros", "net", "rt-multi-thread"] }
-tower-http = { version = "0.7.0", features = ["cors"] }
+tower-http.workspace = true
 
+# The Workers runtime only exists inside the WebAssembly target, so the bindings
+# are compiled there alone. Everything above stays portable, which is what lets
+# `cargo test` exercise the same router natively.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+worker = { workspace = true, features = ["http", "axum"] }
+worker-macros = { workspace = true, features = ["http"] }
+tower-service.workspace = true
 
 [dev-dependencies]
-aimer_rubick.workspace = true
-tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
 tower.workspace = true

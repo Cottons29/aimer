@@ -1,21 +1,14 @@
 {
   "name": "aimer-website-backend",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
-  "type": "module",
-  "description": "Cloudflare Worker fronting the Aimer blog API container.",
+  "description": "Cloudflare Worker serving the Aimer blog API from Rust compiled to WebAssembly.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "types": "wrangler types",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@cloudflare/containers": "^0.3.7"
+    "types": "wrangler types"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260731.1",
-    "typescript": "^7.0.2",
     "wrangler": "^4.118.0"
   }
 }

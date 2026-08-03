@@ -1,62 +1,63 @@
 # website_backend
 
-The blog API behind [aimer.cottonsofficial.com](https://aimer.cottonsofficial.com). It is an
-[axum](https://github.com/tokio-rs/axum) server that reads the markdown in `content/blogs` and
-exposes it as JSON:
+The blog API behind [aimers.dev](https://aimers.dev). It is an
+[axum](https://github.com/tokio-rs/axum) router compiled to WebAssembly and deployed as a single
+[Cloudflare Worker](https://developers.cloudflare.com/workers/languages/rust/) — no container, no
+Docker, no Durable Object:
 
-| Route            | Description                              |
-|------------------|------------------------------------------|
-| `GET /api/blogs` | Every blog summary, newest first.        |
+| Route                 | Description                        |
+|-----------------------|------------------------------------|
+| `GET /api/blogs`      | Every blog summary, newest first.   |
 | `GET /api/blogs/{id}` | One blog, including its markdown.   |
+
+Anything else answers `404` with the same `{"error": ...}` shape.
+
+## Content
+
+`content/blogs/index.json` lists the published posts and `content/blogs/<id>.md` holds each body.
+A Worker has no filesystem, so `build.rs` embeds every markdown file into the module at compile
+time and `BlogStore::embedded` validates the pair on startup: an id must be a lowercase dashed slug,
+its metadata must be complete, and it must have a document. Markdown that no index entry claims stays
+embedded but unreachable, which is how an unpublished draft is kept next to the published posts.
+
+Publishing a post is therefore an edit of `index.json` plus a redeploy — the listing and its JSON
+encoding are computed once when the isolate starts, so serving it costs nothing per request.
 
 ## Configuration
 
-The server takes three settings and supplies no defaults, so a deployment mistake fails at startup
-instead of silently listening on the wrong address:
+| Variable      | Meaning                                                          |
+|---------------|------------------------------------------------------------------|
+| `SERVER_CORS` | Comma separated allowed CORS origins; may be empty to allow none. |
 
-| Variable      | Meaning                                                         |
-|---------------|-----------------------------------------------------------------|
-| `SERVER_IP`   | IP address the listener binds to.                                |
-| `SERVER_PORT` | TCP port the listener binds to.                                  |
-| `SERVER_CORS` | Comma separated allowed CORS origins; may be empty to allow none.|
+It is the only setting left — a Worker binds no address — and it lives in the `[vars]` table of
+`wrangler.toml`, which `wrangler dev` also uses locally. Do not put it in a `.env`: Wrangler loads
+that file as secrets, and a secret silently overrides `[vars]` in a deployment.
 
-They are read from a `.env` file when one exists, otherwise from the process environment
-(see `Config::resolve`). Two extra variables tune the process itself: `AIMER_ENV_FILE` picks a
-different dotenv file and `AIMER_BLOG_DIR` a different content directory.
+## Development
 
 ```bash
-cp .env.example .env
-cargo run -p website_backend
-```
-
-## Docker
-
-The image is built from the repository root, because the crate is a Cargo workspace member:
-
-```bash
-docker build -f website_backend/Dockerfile -t aimer-website-backend ..
-docker run --rm -p 3200:3200 -e SERVER_CORS=http://localhost:3000 aimer-website-backend
-```
-
-No `.env` is baked into the image; the `SERVER_*` variables are set as defaults in the `Dockerfile`
-and overridden by whatever runs the container.
-
-## Cloudflare Containers
-
-`wrangler.toml` deploys the image as a [Container](https://developers.cloudflare.com/containers/)
-fronted by the Worker in `worker/index.ts`. The Worker forwards `/api/*` to one of
-`INSTANCE_COUNT` interchangeable container instances and answers everything else with `404`; the
-`[vars]` table is passed to the container process as its `SERVER_*` environment.
-
-Deploying requires a running Docker daemon — Wrangler builds the image locally and pushes it to
-Cloudflare's managed registry:
-
-```bash
+cargo test -p website_backend        # the router, the store, and the embedded content
 npm install
-npm run deploy        # wrangler deploy
-npx wrangler deploy --dry-run --outdir=.wrangler/dry-run   # validate without publishing
-npx wrangler containers list
+npm run dev                          # wrangler dev — serves the real module on localhost
 ```
 
-Changing the port means changing `SERVER_PORT` in `[vars]` only: the Worker derives the container's
-`defaultPort` from it and the binary binds to it.
+`cargo test` runs on the host toolchain: everything but `src/entry.rs` is target independent, so the
+same router that answers in production is what the tests exercise.
+
+## Deploying
+
+```bash
+rustup target add wasm32-unknown-unknown
+npm run deploy                                              # wrangler deploy
+npx wrangler deploy --dry-run --outdir=.wrangler/dry-run     # validate without publishing
+```
+
+`wrangler.toml` builds the crate with [`worker-build`](https://github.com/cloudflare/workers-rs),
+which runs `wasm-bindgen` and `wasm-opt` and writes `build/index.js` next to the `.wasm` module. Two
+workspace settings are overridden for that build and the reasons are recorded in `wrangler.toml`:
+the `atomics` target feature (Workers have no shared memory) and `strip = "symbols"` (it removes
+symbols `wasm-bindgen` needs).
+
+The first deploy after the container was removed also applies the `v2` migration that deletes the
+`AimerApiContainer` Durable Object class. Keep both `[[migrations]]` entries: they are a history,
+not a state.

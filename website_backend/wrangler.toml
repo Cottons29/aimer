@@ -1,38 +1,44 @@
-# Cloudflare Workers + Containers deployment for the Aimer blog API.
+# Cloudflare Worker deployment for the Aimer blog API.
 #
-# `npx wrangler deploy` (from this directory) builds `Dockerfile` with the
-# repository root as its build context — `website_backend` is a workspace
-# member, so Cargo needs the whole workspace — pushes the image to the
-# Cloudflare managed registry, and deploys the Worker in `worker/index.ts`.
-# Docker must be running locally for the build step.
+# The Worker is the `website_backend` crate compiled to WebAssembly: there is no
+# container and no Durable Object any more. `npx wrangler deploy` (from this
+# directory) runs the build command below, which invokes `worker-build` to
+# produce `build/index.js` plus the `.wasm` module, and uploads the result.
+# Docker is no longer needed — only the `wasm32-unknown-unknown` target:
+#
+#     rustup target add wasm32-unknown-unknown
 
 name = "aimer-website-backend"
-main = "worker/index.ts"
+main = "build/index.js"
 compatibility_date = "2026-07-01"
 
-# Settings handed to the container process as environment variables. They are
-# the same keys the binary reads from `.env` during local development, so the
-# deployment is configured here instead of baking a file into the image.
+# Two workspace settings have to be overridden for this crate:
+#
+# * `RUSTFLAGS` replaces the `.cargo/config.toml` flags, which enable the
+#   `atomics` target feature for the threaded Aimer web build. Workers have no
+#   shared memory, so the Worker is compiled without it.
+# * `strip = "symbols"` in the workspace release profile removes the symbols
+#   `wasm-bindgen` needs to generate the panic recovery wrappers, which fails
+#   the build with `externref table required for catch wrappers`. `wasm-opt`,
+#   which `worker-build` runs anyway, shrinks the module instead.
+[build]
+command = "cargo install -q \"worker-build@^0.8\" && RUSTFLAGS=\"-C target-feature=+bulk-memory\" CARGO_PROFILE_RELEASE_STRIP=false worker-build --release"
+
+# The only runtime setting left: the browsers origins allowed to call the API.
+# The blog content itself is embedded in the module at compile time.
 [vars]
-SERVER_IP = "0.0.0.0"
-SERVER_PORT = "3200"
-SERVER_CORS = "https://aimers.dev,http://localhost:3000"
+SERVER_CORS = "https://aimers.dev,aimers.dev"
 
 [observability]
 enabled = true
 
-[[containers]]
-class_name = "AimerApiContainer"
-image = "./Dockerfile"
-image_build_context = ".."
-instance_type = "basic"
-max_instances = 5
-
-[[durable_objects.bindings]]
-name = "AIMER_API_CONTAINER"
-class_name = "AimerApiContainer"
-
-# Containers are backed by Durable Objects, which must be SQLite backed.
+# The container was backed by a Durable Object, and a class is only detached
+# from a deployed Worker by a migration that names it. Migrations are a history
+# rather than a state, so `v1` — the one that created the class — stays.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["AimerApiContainer"]
+
+[[migrations]]
+tag = "v2"
+deleted_classes = ["AimerApiContainer"]
