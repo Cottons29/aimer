@@ -6,6 +6,7 @@ pub mod layout_cache;
 pub mod page_storage;
 pub mod reconcile;
 mod widget;
+pub mod window_metrics;
 
 /// An Empty Widget that using as placeholder
 ///
@@ -111,6 +112,7 @@ pub use crate::layout_cache::LayoutCache;
 pub use crate::widget::Widget;
 pub use crate::widget::stateful::{State, StateUpdater, StatefulElement, StatefulWidget};
 pub use crate::widget::stateless::{NamedWidget, StatelessElement, StatelessWidget};
+pub use crate::window_metrics::{WindowMetrics, notify_window_metrics_changed};
 
 /// Carries the live state of an old element subtree into the subtree replacing
 /// it.

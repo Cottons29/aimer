@@ -161,7 +161,7 @@ impl BuildConsumer {
         })
     }
 
-    fn begin_build(&self) {
+    pub(crate) fn begin_build(&self) {
         self.dependencies.borrow_mut().clear();
         for cleanup in self.cleanups.borrow_mut().drain(..) {
             cleanup();
@@ -287,6 +287,69 @@ impl<'a> BuildContext<'a> {
     pub fn current_build_consumer(&self) -> Option<Rc<BuildConsumer>> {
         self.get_state::<CurrentBuildConsumer>()
             .map(|consumer| consumer.0.clone())
+    }
+
+    /// Reads the window metrics and rebuilds the widget currently building
+    /// whenever they change.
+    ///
+    /// This is the only way to observe the window from a `build` and stay
+    /// correct: a resize rebuilds the widgets that registered here and nobody
+    /// else, because rebuilding a tree that cannot have changed is what makes a
+    /// window drag stutter. Reading [`BuildContext::window`] directly registers
+    /// nothing, so a widget that lays itself out differently on a phone-sized
+    /// window would keep the layout it was first built with.
+    ///
+    /// Outside a build — from layout, drawing or an event handler — there is
+    /// nothing to register and the metrics are simply returned; such code reads
+    /// them again on the next frame anyway.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn build(&self, ctx: &BuildContext) -> impl Widget {
+    ///     let compact = ctx.watch_window_metrics().logical_size().width < 600.0;
+    ///     // ... this widget is rebuilt when that answer can change
+    /// }
+    /// ```
+    pub fn watch_window_metrics(&self) -> crate::WindowMetrics {
+        if let Some(consumer) = self.current_build_consumer() {
+            crate::window_metrics::subscribe(&consumer, &self.window);
+        }
+        crate::WindowMetrics::of(&self.window)
+    }
+
+    /// Answers one question about the window and rebuilds the widget currently
+    /// building only when that answer changes.
+    ///
+    /// Almost no widget depends on the window itself; it depends on something
+    /// derived from it — a breakpoint, a column count — whose answer changes
+    /// once in a whole drag, if at all. Registering the question instead of the
+    /// metrics is the difference between rebuilding on every pixel and
+    /// rebuilding when the layout genuinely differs.
+    ///
+    /// Each call registers separately, so a build may ask several independent
+    /// questions.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn build(&self, ctx: &BuildContext) -> impl Widget {
+    ///     // Rebuilt when the window crosses 600, and at no other width.
+    ///     let compact = ctx.select_window_metrics(|window| {
+    ///         window.logical_size().width < 600.0
+    ///     });
+    /// }
+    /// ```
+    pub fn select_window_metrics<T: Clone + PartialEq + 'static>(
+        &self,
+        selector: impl Fn(&crate::WindowMetrics) -> T + 'static,
+    ) -> T {
+        match self.current_build_consumer() {
+            Some(consumer) => {
+                crate::window_metrics::subscribe_selected(&consumer, &self.window, selector)
+            }
+            None => selector(&crate::WindowMetrics::of(&self.window)),
+        }
     }
 }
 

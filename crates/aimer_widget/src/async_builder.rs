@@ -743,14 +743,16 @@ mod tests {
     use crate::base::{BuildContext, WindowHandle};
     use crate::{
         AnyElement, AnyWidget, AsyncBuilder, AsyncSnapshot, Drawable, Element, EventElement,
-        LayoutElement, Rebuildable, VisitorElement, Widget,
+        LayoutCache, LayoutElement, Rebuildable, VisitorElement, Widget,
     };
 
-    struct MarkerWidget(&'static str);
+    /// A leaf of a stated height, so a snapshot can be told apart by what it
+    /// measures as well as by its name.
+    struct MarkerWidget(&'static str, f32);
 
     impl Widget for MarkerWidget {
         fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
-            MarkerElement(self.0).boxed()
+            MarkerElement(self.0, self.1).boxed()
         }
 
         fn debug_name(&self) -> &'static str {
@@ -758,7 +760,7 @@ mod tests {
         }
     }
 
-    struct MarkerElement(&'static str);
+    struct MarkerElement(&'static str, f32);
 
     impl VisitorElement for MarkerElement {
         fn debug_name(&self) -> &'static str {
@@ -771,8 +773,72 @@ mod tests {
     }
 
     impl EventElement for MarkerElement {}
-    impl LayoutElement for MarkerElement {}
+
+    impl LayoutElement for MarkerElement {
+        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            ResolvedSize {
+                width: 0.0,
+                height: self.1,
+            }
+        }
+    }
+
     impl Rebuildable for MarkerElement {}
+
+    /// An ancestor that memoizes what it measured, exactly like `Container`,
+    /// `Row` and `Column` do.
+    ///
+    /// This is the shape a `Scrollable` reads its content extent through, so it
+    /// is the shape that decides whether a completed request can be scrolled.
+    struct CachingParent {
+        child: AnyElement,
+        cache: LayoutCache,
+    }
+
+    impl CachingParent {
+        fn new(child: AnyElement) -> Self {
+            Self {
+                child,
+                cache: LayoutCache::new(),
+            }
+        }
+    }
+
+    impl VisitorElement for CachingParent {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "CachingParent"
+        }
+    }
+
+    impl Drawable for CachingParent {
+        fn draw(&self, ctx: &BuildContext) {
+            self.child.draw(ctx);
+        }
+    }
+
+    impl EventElement for CachingParent {}
+
+    impl LayoutElement for CachingParent {
+        fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+            let scale_bits = ctx.scale.to_bits();
+            if let Some(cached) = self.cache.get_content(ctx.box_constraint, scale_bits) {
+                return cached;
+            }
+            let size = self.child.content_size(ctx);
+            self.cache.set_content(ctx.box_constraint, scale_bits, size);
+            size
+        }
+    }
+
+    impl Rebuildable for CachingParent {
+        fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+            self.child.rebuild_if_dirty(ctx);
+        }
+    }
 
     fn context() -> BuildContext<'static> {
         let canvas = {
@@ -806,10 +872,39 @@ mod tests {
 
     fn marker(snapshot: &AsyncSnapshot<usize, &'static str>) -> AnyWidget {
         match snapshot {
-            AsyncSnapshot::Waiting => MarkerWidget("Waiting").boxed(),
-            AsyncSnapshot::Data(_) => MarkerWidget("Data").boxed(),
-            AsyncSnapshot::Error(_) => MarkerWidget("Error").boxed(),
+            AsyncSnapshot::Waiting => MarkerWidget("Waiting", WAITING_HEIGHT).boxed(),
+            AsyncSnapshot::Data(_) => MarkerWidget("Data", DATA_HEIGHT).boxed(),
+            AsyncSnapshot::Error(_) => MarkerWidget("Error", WAITING_HEIGHT).boxed(),
         }
+    }
+
+    /// Height of the loading state: a spinner is short.
+    const WAITING_HEIGHT: f32 = 40.0;
+
+    /// Height of the loaded state: the archive it was waiting for is long.
+    const DATA_HEIGHT: f32 = 4_000.0;
+
+    /// A completed request grows the content, and every ancestor that already
+    /// measured the loading state has to report the new extent.
+    ///
+    /// A `Scrollable` derives its scroll range from exactly this measurement, so
+    /// an ancestor answering with the height of the spinner is a page that
+    /// renders its data and refuses to scroll.
+    #[tokio::test]
+    async fn a_completed_request_grows_the_measurement_of_a_caching_ancestor() {
+        let widget = AsyncBuilder::new()
+            .future(|| async { Ok::<_, &'static str>(42_usize) })
+            .child(marker);
+        let ctx = context();
+        let parent = CachingParent::new(widget.to_element(&ctx));
+
+        parent.rebuild_if_dirty(&ctx);
+        assert_eq!(parent.content_size(&ctx).height, WAITING_HEIGHT);
+
+        tokio::task::yield_now().await;
+        parent.rebuild_if_dirty(&ctx);
+
+        assert_eq!(parent.content_size(&ctx).height, DATA_HEIGHT);
     }
 
     #[tokio::test]

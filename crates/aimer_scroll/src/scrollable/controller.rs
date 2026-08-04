@@ -562,11 +562,18 @@ impl ScrollController {
 
     /// Attach (or re-attach, on rebuild) the live scroll engine. Applies any
     /// position requested before attachment.
+    ///
+    /// Re-attaching the engine already bound is a pointer comparison, so every
+    /// build of a `Scrollable` can offer the engine it is about to draw with
+    /// without paying for it. That is what keeps the controller pointing at a
+    /// live engine: a rebuild may create an engine it then discards in favour of
+    /// the one it carried over, and the controller has to follow the survivor.
     pub(crate) fn attach(&self, state: Rc<ScrollState>) {
         let previous = self.inner.state.borrow().clone();
-        if let Some(previous) = previous
-            && !Rc::ptr_eq(&previous, &state)
-        {
+        if let Some(previous) = previous {
+            if Rc::ptr_eq(&previous, &state) {
+                return;
+            }
             state.adopt_scroll_state(&previous);
         }
         if let Some(pos) = self.inner.pending.take() {

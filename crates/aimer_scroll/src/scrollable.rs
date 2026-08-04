@@ -376,15 +376,24 @@ impl<W: Widget + 'static> ScrollableState<W> {
             if let Some(previous) = live.as_ref() {
                 next.adopt_scroll_state(previous);
             }
-            if let Some(controller) = &self.controller {
-                controller.attach(next.clone());
-            }
             *live = Some(next);
         }
 
-        live.as_ref()
+        let state = live
+            .as_ref()
             .expect("scroll state is initialized before the frame is built")
-            .clone()
+            .clone();
+
+        // Offered on every build, not only when the engine is created: a rebuild
+        // can produce a state that is then dropped in favour of the one the
+        // surviving element carried, and the controller must end up on whichever
+        // engine actually draws this frame. Re-offering the bound engine is a
+        // pointer comparison.
+        if let Some(controller) = &self.controller {
+            controller.attach(state.clone());
+        }
+
+        state
     }
     #[inline]
     fn create_scroll_state(&self, ctx: &BuildContext) -> Rc<ScrollState> {
