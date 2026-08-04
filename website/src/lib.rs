@@ -22,11 +22,9 @@ pub static CURRENT_INDEX: AtomicUsize = AtomicUsize::new(0);
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
-    let app = Navigator::<AppRouter>::new(AppRouter::Home, |route| route.boxed());
-    #[cfg(target_os = "macos")]
-    AimerApp::start(app);
-    #[cfg(not(target_os = "macos"))]
-    AimerApp::start(app);
+    AimerApp::start(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
+        route.boxed()
+    }));
 }
 
 #[cfg(test)]
@@ -65,64 +63,37 @@ mod test {
         app.render_frame();
     }
 
+    /// Dragging the window rebuilds nothing above the widgets that read it.
+    ///
+    /// A route picks the page for a path; it never asks how wide the window is,
+    /// so no width — not even one that crosses the phone breakpoint — can change
+    /// what it produces. The widgets inside the page that *do* ask are rebuilt
+    /// on their own, which is what keeps a drag from re-running the whole
+    /// application once per pixel.
     #[test]
     fn test_resize() {
         TEST_STATE_UPDATED.store(false, Ordering::Relaxed);
-        let mut app = AimerApp::start_headless(Navigator::<AppRouter>::new(
-            AppRouter::Home,
-            |route| route.boxed(),
-        ));
+        let mut app =
+            AimerApp::start_headless(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
+                route.boxed()
+            }));
         sleep(Duration::from_millis(50));
-        eprintln!("==========Rendered frame 1 call ===============");
         app.render_frame();
-        take_route_builds();
-        eprintln!("==========Rendered frame after resize the window ===============");
-        sleep(Duration::from_millis(50));
-        app.send_window_event(WindowEvent::Resized(PhysicalSize::new(1000, 800)));
-        assert_eq!(take_route_builds(), vec![AppRouter::Blog]);
-        eprintln!("==========Rendered frame 3 call ===============");
-        sleep(Duration::from_millis(50));
-        app.send_window_event(WindowEvent::Resized(PhysicalSize::new(1000, 800)));
-        assert_eq!(take_route_builds(), vec![AppRouter::Blog]);
-        sleep(Duration::from_millis(50));
+        assert!(!take_route_builds().is_empty(), "the first frame built no route");
 
-        eprintln!("==========Rendered frame 4 call ===============");
-        app.send_window_event(WindowEvent::Resized(PhysicalSize::new(390, 844)));
-        app.render_frame();
-        assert_eq!(take_route_builds(), vec![AppRouter::Blog]);
+        for size in [
+            PhysicalSize::new(1000, 800),
+            PhysicalSize::new(1000, 800),
+            PhysicalSize::new(390, 844),
+        ] {
+            sleep(Duration::from_millis(50));
+            app.send_window_event(WindowEvent::Resized(size));
+            app.render_frame();
+            assert_eq!(
+                take_route_builds(),
+                Vec::new(),
+                "resizing to {size:?} rebuilt a route that never reads the window"
+            );
+        }
     }
-}                                              
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+}

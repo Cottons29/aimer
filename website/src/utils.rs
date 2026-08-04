@@ -13,8 +13,7 @@ pub fn app_padding(_: &BuildContext) -> LayoutSpacing {
 }
 
 pub fn is_mobile(ctx: &BuildContext) -> bool {
-    let window_size = MediaQuery::of(ctx).size;
-    window_size.width < 600f32
+    MediaQuery::select(ctx, |media| media.size.width < 600f32)
 }
 
 pub fn resp_position(ctx: &BuildContext, wide: f32, slim: f32) -> Dimension {

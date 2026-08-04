@@ -94,9 +94,7 @@ fn blog_list_content(
             "No blogs have been published yet.",
             theme.on_background_color.with_opacity(150),
         ),
-        AsyncSnapshot::Data(blogs) => {
-            blog_archive(blogs.clone(), navigator.clone(), mobile, theme)
-        }
+        AsyncSnapshot::Data(blogs) => blog_archive(blogs.clone(), navigator.clone(), mobile, theme),
     }
 }
 
