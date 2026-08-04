@@ -13,7 +13,8 @@ use aimer_attribute::size::ResolvedSize;
 use aimer_canvas::{Canvas, InnerCanvas};
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
+    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, StatelessElement,
+    VisitorElement,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -67,6 +68,43 @@ pub(crate) fn dummy_build_context(
         inherited_states: Default::default(),
     }
 }
+
+/// Replaces one generated subtree, which is what advances the element tree
+/// generation.
+///
+/// Every cached measurement is keyed by that generation, so this is how a test
+/// reproduces the frame in which a `setState` or a completed `AsyncBuilder`
+/// retires what the previous frames measured.
+pub(crate) fn replace_a_generated_subtree(ctx: &BuildContext) {
+    let element = StatelessElement::new(
+        MarkerChild.boxed(),
+        |_| MarkerChild.boxed(),
+        None,
+        "GenerationBump",
+    );
+    element.mark_needs_rebuild();
+    element.rebuild_if_dirty(ctx);
+}
+
+/// The smallest possible child of the element built by
+/// [`replace_a_generated_subtree`].
+struct MarkerChild;
+
+impl VisitorElement for MarkerChild {
+    fn debug_name(&self) -> &'static str {
+        "MarkerChild"
+    }
+}
+
+impl EventElement for MarkerChild {}
+
+impl Rebuildable for MarkerChild {}
+
+impl Drawable for MarkerChild {
+    fn draw(&self, _ctx: &BuildContext) {}
+}
+
+impl LayoutElement for MarkerChild {}
 
 /// A leaf element with a fixed size that counts how often it is measured and
 /// drawn.

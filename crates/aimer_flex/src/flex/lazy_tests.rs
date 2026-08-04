@@ -9,10 +9,12 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use aimer_widget::{Drawable, EventElement, LayoutElement};
+use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable};
 
 use crate::flex::raw_flex::RawFlex;
-use crate::flex::test_support::{CountingChild, ResizingChild, dummy_build_context};
+use crate::flex::test_support::{
+    CountingChild, ResizingChild, dummy_build_context, replace_a_generated_subtree,
+};
 use crate::flex::LayoutDirection;
 
 const CHILD_COUNT: usize = 100_000;
@@ -158,6 +160,83 @@ fn a_resized_child_moves_its_siblings_on_the_next_frame() {
 
     assert_eq!(first_at.get().1, 0.0);
     assert_eq!(second_at.get().1, 50.0);
+}
+
+/// Replacing the children below a container must retire the cached table.
+///
+/// A list that grew — an `AsyncBuilder` swapping a spinner for the rows it
+/// waited on — is measured by a `Scrollable` through the container above it. If
+/// that container answers from a table measured before the swap, the scroll
+/// view is told the content still fits and the page will not scroll.
+#[test]
+fn a_replaced_child_list_is_measured_again() {
+    let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
+
+    // The frame that only had the loading state to show.
+    let height = Rc::new(Cell::new(CHILD_HEIGHT));
+    let placement = Rc::new(Cell::new((0.0, 0.0)));
+    let column = RawFlex::new(
+        LayoutDirection::Column,
+        vec![ResizingChild::boxed_new(&height, &placement)],
+        "Column",
+    );
+    assert_eq!(column.computed_size(&ctx).height, CHILD_HEIGHT);
+
+    // The frame the completed future produced: taller content under the very
+    // same container.
+    height.set(CHILD_HEIGHT * 20.0);
+    replace_a_generated_subtree(&ctx);
+
+    assert_eq!(
+        column.computed_size(&ctx).height,
+        CHILD_HEIGHT * 20.0,
+        "the container reported the extent it had before the rebuild"
+    );
+}
+
+/// A table measured from rows that did not survive the rebuild describes
+/// nothing and must not be trusted, however well the two containers match.
+///
+/// This is the `Column` an `AsyncBuilder` rebuilds when the data arrives: same
+/// direction, same gaps, same number of children — and completely different
+/// children. Trusting the table there is a page that paints its content and
+/// refuses to scroll, because the `Scrollable` above is told the old extent.
+#[test]
+fn an_adopted_table_is_not_trusted_when_the_rows_were_rebuilt() {
+    let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
+    let placement = Rc::new(Cell::new((0.0, 0.0)));
+
+    // The container that measured the loading state.
+    let short = Rc::new(Cell::new(CHILD_HEIGHT));
+    let old = RawFlex::new(
+        LayoutDirection::Column,
+        vec![
+            ResizingChild::boxed_new(&short, &placement),
+            ResizingChild::boxed_new(&short, &placement),
+        ],
+        "Column",
+    );
+    assert_eq!(old.computed_size(&ctx).height, CHILD_HEIGHT * 2.0);
+
+    // The container the completed request produced: the same shape, rows built
+    // from scratch out of the data that arrived.
+    let tall = Rc::new(Cell::new(CHILD_HEIGHT * 20.0));
+    let new = RawFlex::new(
+        LayoutDirection::Column,
+        vec![
+            ResizingChild::boxed_new(&tall, &placement),
+            ResizingChild::boxed_new(&tall, &placement),
+        ],
+        "Column",
+    );
+    new.adopt_runtime_state_from(&old as &dyn Element);
+    replace_a_generated_subtree(&ctx);
+
+    assert_eq!(
+        new.computed_size(&ctx).height,
+        CHILD_HEIGHT * 40.0,
+        "the rebuilt container answered from the table its predecessor measured"
+    );
 }
 
 /// The total main-axis extent must survive the lazy path: 100_000 children

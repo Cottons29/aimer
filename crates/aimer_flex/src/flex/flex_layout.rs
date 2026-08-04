@@ -401,6 +401,21 @@ impl FlexLayout {
         self.origin == Origin::Estimated
     }
 
+    /// Whether the table states what the children measured, and so stops
+    /// describing them once the element tree below the container changes.
+    ///
+    /// A [`Origin::Declared`] extent comes from the caller and holds whatever
+    /// the children turn out to be. A [`Origin::Estimated`] one is a prediction
+    /// that every painted frame re-verifies through
+    /// [`refine`](FlexLayout::refine), so it repairs itself and must *not* be
+    /// thrown away — the corrections it accumulated are the only record of the
+    /// rows a scrolled list has already resolved. Only a measured table has to
+    /// be taken at its word, which is exactly why it has to expire.
+    #[inline]
+    pub(crate) fn describes_measured_children(&self) -> bool {
+        self.origin == Origin::Measured
+    }
+
     /// Number of children described by this table.
     #[inline]
     pub(crate) fn len(&self) -> usize {
@@ -558,14 +573,35 @@ impl FlexLayout {
     }
 }
 
+/// A [`FlexLayout`] together with everything that decides whether it still
+/// describes the container.
+struct CachedTable {
+    constraint: BoxConstraint,
+    scale_bits: u32,
+    generation: u64,
+    layout: Rc<FlexLayout>,
+}
+
 /// Holds one flex container's [`FlexLayout`] between frames.
 ///
 /// The table is keyed by the constraint and scale it was measured under, so a
 /// scroll — which only changes the visible rectangle — reuses it instead of
 /// re-measuring the child list. The last painted index range is kept alongside
 /// it so hit testing can skip the children that were never painted.
+///
+/// A table that measured its children also carries the [element-tree
+/// generation](aimer_widget::element_tree_generation) it was built in, for the
+/// same reason [`LayoutCache`](aimer_widget::LayoutCache) does: it states what
+/// the children were, so replacing a generated subtree below this container — a
+/// `setState`, or an `AsyncBuilder` swapping its loading state for the data it
+/// waited on — retires it. A container that itself never rebuilt would
+/// otherwise keep reporting the extent its content had before the swap, and a
+/// scroll view above it would never learn that there is something to scroll.
+///
+/// A declared or predicted table is kept across generations, see
+/// [`FlexLayout::describes_measured_children`].
 pub(crate) struct FlexLayoutCache {
-    table: UnsafeCell<Option<(BoxConstraint, u32, Rc<FlexLayout>)>>,
+    table: UnsafeCell<Option<CachedTable>>,
     painted: Cell<Option<(usize, usize)>>,
 }
 
@@ -579,27 +615,35 @@ impl FlexLayoutCache {
         }
     }
 
-    /// Returns the cached table when it was measured under the same inputs.
+    /// Returns the cached table when it was measured under the same inputs and
+    /// the element tree still holds the children it was measured from.
     #[inline]
     pub(crate) fn get(&self, constraint: BoxConstraint, scale_bits: u32) -> Option<Rc<FlexLayout>> {
-        // Only ever read through this shared reference, and never while `set`
+        // Only ever read through this exclusive reference, and never while `set`
         // holds its own; the element tree is single-threaded.
         let slot = unsafe { &*self.table.get() };
-        match slot {
-            Some((cached, bits, layout))
-                if *cached == constraint && *bits == scale_bits =>
-            {
-                Some(Rc::clone(layout))
-            }
-            _ => None,
+        let cached = slot.as_ref()?;
+        if cached.constraint != constraint || cached.scale_bits != scale_bits {
+            return None;
         }
+        if cached.generation != aimer_widget::element_tree_generation()
+            && cached.layout.describes_measured_children()
+        {
+            return None;
+        }
+        Some(Rc::clone(&cached.layout))
     }
 
     /// Stores `layout` as the table for `constraint` and `scale_bits`.
     #[inline]
     pub(crate) fn set(&self, constraint: BoxConstraint, scale_bits: u32, layout: Rc<FlexLayout>) {
         let slot = unsafe { &mut *self.table.get() };
-        *slot = Some((constraint, scale_bits, layout));
+        *slot = Some(CachedTable {
+            constraint,
+            scale_bits,
+            generation: aimer_widget::element_tree_generation(),
+            layout,
+        });
     }
 
     /// Takes over the table and painted range of the cache this one replaces.
@@ -608,6 +652,14 @@ impl FlexLayoutCache {
     /// every row a frame corrected — lives in the table. A rebuild of the
     /// container would otherwise start from the prediction again, which a scroll
     /// view sees as its content suddenly changing size.
+    ///
+    /// The table keeps the generation it was measured in, so the replacement
+    /// inherits exactly as much of it as [`FlexLayoutCache::get`] still trusts:
+    /// a prediction or a declared extent, which never described a particular
+    /// child, comes across whole, while extents measured from rows that were
+    /// built anew are retired by the very rebuild that carried them. That is
+    /// what a `Column` an `AsyncBuilder` rebuilds needs — same direction, same
+    /// count, completely different children.
     ///
     /// Only sound for a container describing the same children under the same
     /// rules, which the caller establishes. Nothing already cached here is

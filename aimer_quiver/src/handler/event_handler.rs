@@ -98,7 +98,7 @@ impl WindowEventHandler {
                 Self::update_scale_factor(&mut app.window_scale, scale_factor);
                 if let Some(root) = &app.widget_root {
                     root.invalidate_layout();
-                    aimer_widget::Rebuildable::mark_needs_rebuild(root.as_ref());
+                    aimer_widget::notify_window_metrics_changed();
                 }
                 if let Some(window) = app.window {
                     window.request_redraw();
@@ -204,7 +204,7 @@ impl WindowEventHandler {
                 Self::update_scale_factor(&mut app.window_scale, scale_factor);
                 if let Some(root) = &app.widget_root {
                     root.invalidate_layout();
-                    aimer_widget::Rebuildable::mark_needs_rebuild(root.as_ref());
+                    aimer_widget::notify_window_metrics_changed();
                 }
                 HeadlessEventAction::Render
             }
@@ -778,6 +778,15 @@ impl WindowEventHandler {
         app.render(event_loop);
     }
 
+    /// Prepares the tree for a window that is now `size`.
+    ///
+    /// A drag delivers one of these per pixel the edge travels, so this runs on
+    /// the frame budget: the cached measurements are dropped, because every
+    /// constraint below the root has changed, but only the widgets that read the
+    /// window metrics while building are rebuilt. Marking the whole tree dirty
+    /// instead re-runs every `build` in the application for a window that got
+    /// one pixel wider, which on a page of any size is the difference between a
+    /// drag that tracks the cursor and one that crawls.
     fn apply_resize<W: Widget + 'static>(
         size: PhysicalSize<u32>,
         app: &mut AimerApplicationHandler<W>,
@@ -786,7 +795,7 @@ impl WindowEventHandler {
 
         if let Some(root) = &app.widget_root {
             root.invalidate_layout();
-            aimer_widget::Rebuildable::mark_needs_rebuild(root.as_ref());
+            aimer_widget::notify_window_metrics_changed();
         }
     }
 

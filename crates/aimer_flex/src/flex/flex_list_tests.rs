@@ -15,7 +15,7 @@ use aimer_widget::{
 };
 
 use super::*;
-use crate::flex::test_support::{CountingChild, dummy_build_context};
+use crate::flex::test_support::{CountingChild, dummy_build_context, replace_a_generated_subtree};
 use crate::flex::{Column, Row};
 
 /// Main-axis extent shared by the declared-extent tests.
@@ -667,6 +667,43 @@ fn a_scrolled_undeclared_list_converges_on_the_exact_extent() {
         element.computed_size(&top).height,
         exact,
         "scrolling away must not discard what was already corrected"
+    );
+}
+
+/// A windowed list hands its rows to the container replacing it, so the table
+/// taken from them still describes them and must survive the rebuild.
+///
+/// The table is the only place the exact extent of every painted row lives.
+/// Dropping it would send the list back to its prediction, which a scroll view
+/// sees as its content changing size for no reason, and would re-measure a list
+/// the windowing exists to avoid touching.
+#[test]
+fn a_windowed_list_keeps_its_corrected_extent_across_a_rebuild() {
+    let counters = Counters::default();
+    let ctx = scrolled_context(0.0);
+    let exact = 21.0 * ROW_EXTENT;
+
+    let old = varying_column(&counters, 1, 20).to_element(&ctx);
+    old.draw(&ctx);
+    assert_eq!(old.computed_size(&ctx).height, exact);
+
+    // What reconciliation does: the replacement claims the runtime state of the
+    // container it stands in for, and the swap advances the generation.
+    let new = varying_column(&counters, 1, 20).to_element(&ctx);
+    new.adopt_runtime_state_from(old.as_ref());
+    replace_a_generated_subtree(&ctx);
+
+    counters.measured.set(0);
+
+    assert_eq!(
+        new.computed_size(&ctx).height,
+        exact,
+        "the rebuilt list fell back to its prediction"
+    );
+    assert!(
+        counters.measured.get() < 20,
+        "re-measured {} rows that came across untouched",
+        counters.measured.get()
     );
 }
 

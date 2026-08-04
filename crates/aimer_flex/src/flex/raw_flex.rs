@@ -846,6 +846,10 @@ impl Rebuildable for RawFlex {
     /// changed. The table describes positions, so it only transfers when nothing
     /// that decides them did: the same number of children, laid out under the
     /// same rules.
+    ///
+    /// The rows the replacement builds are new elements either way, so only the
+    /// part of the table that never described a particular child survives the
+    /// handover — see [`FlexLayoutCache::adopt`].
     fn adopt_runtime_state_from(&self, old: &dyn Element) {
         let Some(old) = old
             .option_any()
