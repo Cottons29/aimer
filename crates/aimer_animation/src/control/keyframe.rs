@@ -31,7 +31,9 @@ impl<T: Animatable + Clone> Keyframe<T> {
 /// between the two values.
 ///
 /// # Example
-/// ```ignore
+/// ```rust
+/// use self::aimer_animation::KeyframeAnimation;
+///
 /// let anim = KeyframeAnimation::from_values(&[
 ///     (0.0, 0.0f32),
 ///     (0.5, 100.0),   // peak at halfway

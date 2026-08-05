@@ -6,7 +6,9 @@ use crate::primitives::animatable::Animatable;
 /// `Tween::lerp` produces the interpolated value.
 ///
 /// # Example
-/// ```ignore
+/// ```rust
+/// use self::aimer_animation::Tween;
+///
 /// let tween = Tween::new(0.0f32, 100.0);
 /// let value = tween.lerp(0.5); // 50.0
 /// ```
