@@ -1,3 +1,19 @@
+/// The pointer identifier reserved for a drag coming from the operating system.
+///
+/// A file drag has no pointer of its own — there is no press to own it — but the
+/// events that describe a drag are keyed by one, so file drags are filed under
+/// an identifier no real device can produce: a mouse has id `0` and a touch id
+/// counts up from there, and neither will ever reach `u64::MAX`.
+///
+/// # Examples
+///
+/// ```
+/// use aimer_events::pointer::FILE_DRAG_POINTER_ID;
+///
+/// assert_ne!(FILE_DRAG_POINTER_ID, 0);
+/// ```
+pub const FILE_DRAG_POINTER_ID: u64 = u64::MAX;
+
 /// Identifies the origin of a pointer event.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 #[repr(u8)]

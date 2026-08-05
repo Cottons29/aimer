@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::Arc;
+
 use aimer_attribute::position::Vec2d;
 pub use winit::event::TouchPhase;
 
@@ -103,9 +105,80 @@ pub enum ElementEvent {
         text: String,
         cursor: Option<(usize, usize)>,
     },
-    HoveredFile{path: PathBuf},
-    DroppedFile{path: PathBuf},
+    /// A file dragged in from the operating system is hovering over the window.
+    ///
+    /// One event per file: a five-file drag reports five hovers, with no marker
+    /// saying the batch has ended.
+    ///
+    /// `pos` is where the cursor was when the platform reported the drag, in
+    /// logical window coordinates, or `None` where the platform will not say.
+    /// winit attaches no position to this event, and macOS sends no cursor
+    /// motion at all during a drag session, so the position is resolved by the
+    /// windowing layer rather than carried by winit.
+    ///
+    /// winit's web backend never emits this event, so an application built for
+    /// the browser will not see file drags at all.
+    HoveredFile {
+        path: PathBuf,
+        pos: Option<Vec2d>,
+    },
+
+    /// The file drag already over the window has moved to `pos`.
+    ///
+    /// [`Self::HoveredFile`] is announced once, when the drag crosses into the
+    /// window, and the platform then says nothing more until it is dropped or
+    /// leaves — while the user goes on moving it. This is the framework's own
+    /// continuation of that drag, produced by the windowing layer for every
+    /// position the drag is found at, so a region can light up as the files
+    /// reach it rather than only where they came in.
+    ///
+    /// It carries the whole batch, unlike the one-file-per-event hovers it
+    /// follows: a drag of any size moves as one thing, and paying per file for
+    /// every move of a hundred-file drag would be absurd. The paths are shared
+    /// rather than copied for the same reason.
+    HoveredFileMoved {
+        paths: Arc<[PathBuf]>,
+        pos: Vec2d,
+    },
+
+    /// A file dragged in from the operating system was released over the
+    /// window. One event per file; see [`Self::HoveredFile`] for `pos`.
+    DroppedFile {
+        path: PathBuf,
+        pos: Option<Vec2d>,
+    },
+
+    /// The file drag left the window without being dropped.
     HoveredFileCancelled,
+
+    /// A drag is passing over the element, at `pos`.
+    ///
+    /// Unlike [`Self::PointerMove`], this is delivered by hit test to the
+    /// element *under* the pointer even while another element owns the pointer,
+    /// which is what lets the widget being dragged keep the capture while the
+    /// widget being dragged *onto* still hears about it. The pointer is carried
+    /// loose as `(source, id)` because the key type that pairs them lives one
+    /// crate above this one.
+    DragOver {
+        pos: Vec2d,
+        source: PointerSource,
+        id: u64,
+    },
+
+    /// The drag that was over the element is over it no longer.
+    ///
+    /// It carries no position: by the time an element learns it was left, the
+    /// pointer is somewhere else entirely, and the only useful answer is "not
+    /// here".
+    DragLeave { source: PointerSource, id: u64 },
+
+    /// A drag was released at `pos`, over the element receiving this.
+    DragDrop {
+        pos: Vec2d,
+        source: PointerSource,
+        id: u64,
+    },
+
     Cancel,
 }
 
@@ -115,6 +188,9 @@ impl ElementEvent {
             ElementEvent::PointerDown(p, _, _)
             | ElementEvent::PointerUp(p, _, _)
             | ElementEvent::PointerMove(p, _, _) => Some(*p),
+            ElementEvent::DragOver { pos, .. } | ElementEvent::DragDrop { pos, .. } => Some(*pos),
+            ElementEvent::HoveredFileMoved { pos, .. } => Some(*pos),
+            ElementEvent::HoveredFile { pos, .. } | ElementEvent::DroppedFile { pos, .. } => *pos,
             _ => None,
         }
     }
