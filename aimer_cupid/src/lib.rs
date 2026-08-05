@@ -1,6 +1,7 @@
 pub mod custom_pipeline;
 pub mod draw_cmd;
 pub mod font;
+pub mod frame;
 pub mod gpu_context;
 pub mod utilities;
 

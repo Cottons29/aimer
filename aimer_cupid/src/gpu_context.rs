@@ -8,7 +8,35 @@ use wgpu::{
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-fn render_dimensions(size: PhysicalSize<u32>, max_dimension: u32) -> PhysicalSize<u32> {
+/// Shrink `size` to fit within `max_dimension` on both axes, preserving the
+/// aspect ratio.
+///
+/// The swap chain cannot be configured larger than the adapter's maximum 2D
+/// texture dimension, so an oversized window is rendered to a proportionally
+/// smaller surface instead of failing. Sizes that already fit are returned
+/// unchanged.
+///
+/// This is the single source of truth for the backing size: a caller that keeps
+/// its own copy of the surface size — for example because the [`GpuContext`]
+/// itself has been moved to a raster thread — must run the requested size
+/// through this function to stay in agreement with [`GpuContext::resize`].
+///
+/// # Examples
+///
+/// ```
+/// use aimer_cupid::gpu_context::render_dimensions;
+/// use winit::dpi::PhysicalSize;
+///
+/// assert_eq!(
+///     render_dimensions(PhysicalSize::new(3072, 1728), 2048),
+///     PhysicalSize::new(2048, 1152)
+/// );
+/// assert_eq!(
+///     render_dimensions(PhysicalSize::new(800, 600), 2048),
+///     PhysicalSize::new(800, 600)
+/// );
+/// ```
+pub fn render_dimensions(size: PhysicalSize<u32>, max_dimension: u32) -> PhysicalSize<u32> {
     if size.width <= max_dimension && size.height <= max_dimension {
         return size;
     }
@@ -254,6 +282,19 @@ impl<'w> GpuContext<'w> {
             self.viewport_size = size;
             self.surface.configure(&self.device, &self.config);
         }
+    }
+
+    /// The adapter's maximum 2D texture dimension, which caps the surface size.
+    ///
+    /// Paired with [`render_dimensions`] this lets a caller predict the backing
+    /// size a [`resize`] would produce without holding the context — needed when
+    /// the context lives on a raster thread and the UI thread still has to build
+    /// frames for the right dimensions.
+    ///
+    /// [`resize`]: GpuContext::resize
+    #[inline]
+    pub fn max_texture_dimension(&self) -> u32 {
+        self.device.limits().max_texture_dimension_2d
     }
 
     pub fn width(&self) -> u32 {

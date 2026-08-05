@@ -67,6 +67,30 @@ impl CupidCanvas {
         self.draw_list.borrow_mut().clear();
     }
 
+    /// Moves the frame recorded so far out of the canvas.
+    ///
+    /// The returned list owns its command buffer, so it can be handed to
+    /// another thread for encoding while the canvas keeps serving the next
+    /// frame. Ownership must come back through [`recycle_draw_list`] before the
+    /// next [`begin_frame`], otherwise the allocation is dropped and the
+    /// texture-size table the list carries is lost.
+    ///
+    /// [`recycle_draw_list`]: CupidCanvas::recycle_draw_list
+    /// [`begin_frame`]: CupidCanvas::begin_frame
+    #[inline]
+    pub fn take_draw_list(&self) -> DrawList {
+        std::mem::take(&mut *self.draw_list.borrow_mut())
+    }
+
+    /// Gives a list taken by [`take_draw_list`] back to the canvas so its
+    /// buffers are reused instead of reallocated every frame.
+    ///
+    /// [`take_draw_list`]: CupidCanvas::take_draw_list
+    #[inline]
+    pub fn recycle_draw_list(&self, draw_list: DrawList) {
+        *self.draw_list.borrow_mut() = draw_list;
+    }
+
     pub fn register_font_bytes(&self, bytes: Vec<u8>) -> Option<crate::text_layout::FontId> {
         let font_id = self.rasterizer.borrow_mut().register_font_bytes(bytes)?;
         self.metrics_cache.borrow_mut().clear();

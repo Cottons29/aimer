@@ -595,6 +595,30 @@ mod memory_tests {
     use crate::font::{FontFamily, FontStyle};
     use crate::svg::{SvgScene, SvgViewport};
 
+    /// A finished frame is handed to the raster thread by value, so the whole
+    /// draw list — every command payload included — has to be `Send`.
+    #[test]
+    fn draw_list_can_cross_a_thread_boundary() {
+        fn assert_send<T: Send>() {}
+        assert_send::<DrawCommand>();
+        assert_send::<DrawList>();
+
+        let mut list = DrawList::new();
+        list.fill_rect(
+            Rect::new(0.0, 0.0, 2.0, 2.0),
+            Color::red(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+
+        let moved = std::thread::spawn(move || list.commands().len())
+            .join()
+            .expect("raster worker panicked");
+
+        assert_eq!(moved, 1);
+    }
+
     #[test]
     fn removing_a_texture_clears_metadata_and_records_gpu_release() {
         let mut list = DrawList::new();

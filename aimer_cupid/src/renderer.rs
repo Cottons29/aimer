@@ -1067,6 +1067,15 @@ mod tests {
     use super::*;
     use crate::svg::{SvgScene, SvgViewport};
 
+    /// The renderer is owned by whichever thread encodes frames. Moving it to a
+    /// raster thread requires it — and every pipeline it owns, including the text
+    /// pipeline's glyph atlas — to be `Send`.
+    #[test]
+    fn renderer_can_be_owned_by_a_raster_thread() {
+        fn assert_send<T: Send>() {}
+        assert_send::<Renderer>();
+    }
+
     #[test]
     fn alpha_state_restores_nested_saved_values() {
         let mut state = AlphaState::default();
