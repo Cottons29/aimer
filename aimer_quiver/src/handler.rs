@@ -16,7 +16,6 @@ use crate::aimer_app::ANDROID_APP;
 use crate::aimer_app::AimerNativePlatformEvent;
 #[cfg(target_os = "android")]
 use crate::ffi_utils::android_screen;
-use crate::first_frame::FirstFrameNotifier;
 #[allow(unused)]
 use crate::handler;
 use crate::handler::event_handler::WindowEventHandler;
@@ -87,6 +86,13 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub(crate) web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase,
     pub pending_widget: Option<W>,
     pub cursor_pos: Vec2d,
+    /// The mouse button currently held, if any.
+    ///
+    /// The platform reports a button only when it changes state, but a move or a
+    /// release during a drag has to carry the button that started the drag —
+    /// otherwise every move looks like a primary-button move and a
+    /// secondary-button drag loses its identity halfway through.
+    pub pressed_button: Option<aimer_events::pointer::PointerButton>,
     pub current_modifiers: aimer_events::element::Modifiers,
     pub ime_composing: bool,
     pub window_scale: f64,
@@ -95,7 +101,6 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub(crate) startup_hooks: Vec<StartupHook>,
     pub(crate) startup_resources: Vec<Box<dyn Any>>,
     pub start_up_frames: Cell<u8>,
-    pub(crate) first_frame_notifier: FirstFrameNotifier,
     pub active_touch_id: Option<u64>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
@@ -248,6 +253,19 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         // the active window scene so it becomes visible and starts redrawing.
         #[cfg(target_os = "ios")]
         crate::ios_screen::attach_window_to_active_scene(window);
+
+        // The appearance the system is in right now: a theme that follows the
+        // system has to start in the right one, not switch into it on the first
+        // change. Platforms that do not report an appearance leave the light
+        // default in place. Asked after the window is on screen, because UIKit
+        // resolves the appearance against a window and has no answer before
+        // that.
+        crate::system_appearance::announce(window);
+
+        // Where the platform does not deliver appearance changes as a window
+        // event — iOS reports them as UIKit trait changes — they are subscribed
+        // to here instead.
+        crate::system_appearance::start_observing(window);
 
         #[allow(unused_mut)]
         let mut size = window.inner_size();
@@ -519,10 +537,12 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             }
         };
 
-        let presented = self.render_ctx.render_frame(draw_widgets);
-        self.first_frame_notifier
-            .notify_after_present(presented, crate::first_frame::dispatch_first_frame_rendered);
-        if !presented {
+        let outcome = self.render_ctx.render_frame(draw_widgets);
+        // A deferred frame is still in flight on the raster thread: it reports
+        // the first-frame notification and any retry itself, from `on_present`,
+        // because the outcome is not known until a frame later.
+        crate::first_frame::notify_first_frame_presented(outcome.is_presented());
+        if outcome.needs_retry() {
             // Surface texture was not available (e.g. surface outdated or
             // window not ready).  Request a redraw so we retry next frame
             // instead of staying blank.  Critical on web (async GPU init)

@@ -5,6 +5,19 @@ edition = "2024"
 resolver = "3"
 
 
+[features]
+default = []
+# Encode and present frames on a dedicated raster thread instead of inline on
+# the UI thread. Off by default: it caps latency at one extra frame and moves
+# the presentation outcome — and with it the first-frame notification — off the
+# UI thread. Turn it on only once `frame_stats` shows encode + present are a
+# meaningful share of the frame. Ignored on wasm32, which has no thread the
+# WebGPU objects could move to.
+raster-thread = []
+# Measure build / encode / present per frame. Off by default so the render path
+# reads no clock at all.
+frame-stats = []
+
 [dependencies]
 
 aimer_widget.workspace = true

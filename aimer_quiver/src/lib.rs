@@ -16,7 +16,14 @@ mod ios_screen {
 }
 
 mod adapter_detail;
-mod render_ctx;
+pub mod frame_stats;
+/// Where the platform's light / dark appearance comes from.
+mod system_appearance;
+/// Off-thread rasterization. Native only: the browser has no thread the WebGPU
+/// objects could move to, so the web backend presents inline.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod raster;
+pub mod render_ctx;
 pub mod window_attr;
 
 pub use winit;

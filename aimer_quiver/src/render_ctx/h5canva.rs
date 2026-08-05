@@ -5,6 +5,7 @@ pub mod render_ctx {
 
     use aimer_cupid::AntiAlias;
     use aimer_cupid::canvas::CupidCanvas;
+    use aimer_cupid::frame::Frame;
     use aimer_cupid::gpu_context::GpuContext;
     use aimer_cupid::renderer::Renderer;
     use aimer_utils::info;
@@ -13,7 +14,8 @@ pub mod render_ctx {
     use winit::platform::web::WindowExtWebSys;
     use winit::window::Window;
 
-    use crate::aimer_app::{AimerNativePlatformEvent, EVENT_PROXY};
+    use crate::frame_stats::{FramePhase, PhaseTimer};
+    use crate::render_ctx::PresentOutcome;
 
     struct GpuState {
         gpu: GpuContext<'static>,
@@ -102,39 +104,91 @@ pub mod render_ctx {
 
         /// Render a frame using the GPU pipeline, matching the native WgpuApi
         /// interface.
-        pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> bool {
+        pub fn render_frame(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
+        ) -> PresentOutcome {
+            match self.build_frame(draw_fn) {
+                Some(frame) => self.present(frame),
+                None => PresentOutcome::Dropped,
+            }
+        }
+
+        /// Record a frame without touching the swap chain, mirroring the native
+        /// `WgpuApi::build_frame`.
+        ///
+        /// The browser has no usable thread to hand the frame to — `wasm32`
+        /// needs `SharedArrayBuffer` plus atomics, and the WebGPU objects are
+        /// bound to the realm that created them — so the frame is always
+        /// presented on the same task. The split is kept so both backends share
+        /// one shape, and so the widget walk stops running while a surface
+        /// texture is held here too.
+        ///
+        /// Returns `None` until the async GPU init has completed.
+        pub fn build_frame(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
+        ) -> Option<Frame> {
+            let mut state_ref = self.state.borrow_mut();
+            let state = state_ref.as_mut()?;
+
+            let width = state.gpu.width();
+            let height = state.gpu.height();
+
+            let build = PhaseTimer::start();
+            state.canvas.begin_frame();
+            draw_fn(&state.canvas, width, height);
+            let frame = Frame::new(state.canvas.take_draw_list(), width, height);
+            build.finish(FramePhase::Build);
+
+            Some(frame)
+        }
+
+        /// Encode a recorded frame and put it on screen.
+        ///
+        /// Never returns [`PresentOutcome::Deferred`]: there is no raster thread
+        /// on the web, so the outcome is always known by the time this returns.
+        /// [`PresentOutcome::Dropped`] means the surface texture could not be
+        /// acquired and the caller is expected to request another redraw. The
+        /// frame's buffer goes back to the canvas either way.
+        pub fn present(&mut self, frame: Frame) -> PresentOutcome {
             let mut state_ref = self.state.borrow_mut();
             let state = match state_ref.as_mut() {
-                Some(s) => s,
-                None => return false, // GPU not ready yet
+                Some(state) => state,
+                None => return PresentOutcome::Dropped, // GPU not ready yet
             };
 
-            let frame = match state.gpu.begin_frame() {
+            let presented = Self::encode(state, &frame);
+            state.canvas.recycle_draw_list(frame.into_draw_list());
+            PresentOutcome::from_presented(presented)
+        }
+
+        fn encode(state: &mut GpuState, frame: &Frame) -> bool {
+            let encode = PhaseTimer::start();
+
+            let surface = match state.gpu.begin_frame() {
                 wgpu::CurrentSurfaceTexture::Success(texture)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
                 _ => return false,
             };
 
-            let view = frame.texture.create_view(&Default::default());
+            let view = surface.texture.create_view(&Default::default());
 
-            let width = state.gpu.width();
-            let height = state.gpu.height();
-
-            state.canvas.begin_frame();
-            draw_fn(&state.canvas, width, height);
-
-            let draw_list = state.canvas.draw_list();
             state.renderer.render(
                 &state.gpu.device,
                 &state.gpu.queue,
                 &view,
-                width,
-                height,
+                frame.width,
+                frame.height,
                 state.gpu.is_srgb,
-                &draw_list,
+                &frame.draw_list,
             );
+            encode.finish(FramePhase::Encode);
 
-            state.gpu.end_frame(frame);
+            let present = PhaseTimer::start();
+            state.gpu.end_frame(surface);
+            present.finish(FramePhase::Present);
+
             true
         }
     }

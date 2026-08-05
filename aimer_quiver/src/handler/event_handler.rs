@@ -1,14 +1,13 @@
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
-use aimer_events::pointer::{FILE_DRAG_POINTER_ID, PointerSource};
-use aimer_utils::{info, ExecTimes};
+use aimer_events::pointer::{FILE_DRAG_POINTER_ID, PointerButton, PointerInfo, PointerSource};
 use aimer_widget::{EventResult, PointerKey, Widget, broadcast_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
     ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent,
 };
 use winit::event_loop::ActiveEventLoop;
-use winit::window::{CursorIcon, WindowId};
+use winit::window::{CursorIcon, Theme, WindowId};
 
 use crate::handler::AimerApplicationHandler;
 
@@ -104,7 +103,16 @@ impl WindowEventHandler {
                     root.invalidate_layout();
                     aimer_widget::notify_window_metrics_changed();
                 }
+                Self::refresh_system_appearance(app);
                 if let Some(window) = app.window {
+                    window.request_redraw();
+                }
+            }
+
+            WindowEvent::ThemeChanged(theme) => {
+                if Self::handle_theme_changed(theme)
+                    && let Some(window) = app.window
+                {
                     window.request_redraw();
                 }
             }
@@ -239,7 +247,14 @@ impl WindowEventHandler {
                     root.invalidate_layout();
                     aimer_widget::notify_window_metrics_changed();
                 }
+                Self::refresh_system_appearance(app);
                 HeadlessEventAction::Render
+            }
+            WindowEvent::ThemeChanged(theme) => {
+                if Self::handle_theme_changed(theme) {
+                    return HeadlessEventAction::Render;
+                }
+                HeadlessEventAction::None
             }
             WindowEvent::Focused(false) => {
                 #[cfg(target_arch = "wasm32")]
@@ -261,6 +276,35 @@ impl WindowEventHandler {
         *window_scale = scale_factor;
     }
 
+    /// Reports the appearance the system just switched to, and answers whether a
+    /// frame has to be drawn for it.
+    ///
+    /// The switch reaches the widgets that follow the appearance and no others,
+    /// so an application that pins its theme costs nothing here: no widget is
+    /// marked, and no repaint is asked for.
+    fn handle_theme_changed(theme: Theme) -> bool {
+        aimer_widget::set_platform_brightness(theme.into()) > 0
+    }
+
+    /// Re-reads the appearance from the platform after it reported that its
+    /// configuration moved.
+    ///
+    /// Android is the platform that needs this: it announces a light/dark switch
+    /// as a configuration change — which winit forwards as
+    /// [`WindowEvent::ScaleFactorChanged`] — and nothing else tells the
+    /// application about it. A frame is already being asked for by the
+    /// configuration change itself, so the answer is not needed here.
+    ///
+    /// Everywhere else the appearance arrives as
+    /// [`WindowEvent::ThemeChanged`] and this reads nothing at all.
+    #[cfg_attr(not(target_os = "android"), allow(unused_variables))]
+    fn refresh_system_appearance<W: Widget + 'static>(app: &AimerApplicationHandler<W>) {
+        #[cfg(target_os = "android")]
+        if let Some(window) = app.window {
+            crate::system_appearance::announce(window);
+        }
+    }
+
     fn handle_touch<W: Widget + 'static>(item: Touch, app: &mut AimerApplicationHandler<W>) {
         let scale = app.window_scale;
         let pos = Vec2d {
@@ -273,10 +317,11 @@ impl WindowEventHandler {
         // Individual widgets (scrollable, gesture detector) decide which
         // fingers to track — the scrollable keeps its own primary-finger
         // filter so a second touch doesn't jump the scroll position.
+        let contact = PointerInfo::touch(pos, touch_id);
         let event = match item.phase {
-            TouchPhase::Started => ElementEvent::PointerDown(pos, PointerSource::Touch, touch_id),
-            TouchPhase::Moved => ElementEvent::PointerMove(pos, PointerSource::Touch, touch_id),
-            TouchPhase::Ended => ElementEvent::PointerUp(pos, PointerSource::Touch, touch_id),
+            TouchPhase::Started => ElementEvent::PointerDown(contact),
+            TouchPhase::Moved => ElementEvent::PointerMove(contact),
+            TouchPhase::Ended => ElementEvent::PointerUp(contact),
             TouchPhase::Cancelled => ElementEvent::Cancel,
         };
         #[allow(clippy::collapsible_if)]
@@ -292,7 +337,7 @@ impl WindowEventHandler {
                     // elements with an active drag (e.g. scrollable fling) receive
                     // the release event even when the finger lifts outside their
                     // bounds — the common case for a fast flick on touch screens.
-                    if matches!(&event, ElementEvent::PointerDown(_, _, _))
+                    if matches!(&event, ElementEvent::PointerDown(_))
                         && let Some(root) = &app.widget_root
                     {
                         result = result.merge(broadcast_event(root.as_ref(), &event));
@@ -324,7 +369,13 @@ impl WindowEventHandler {
         #[cfg(target_arch = "wasm32")]
         Self::end_web_scroll_gesture(app);
         if app.widget_root.is_some() {
-            let event = ElementEvent::PointerMove(app.cursor_pos, PointerSource::Mouse, 0);
+            // The button reported with a move is the one being held, so a drag
+            // started with the secondary button stays a secondary-button drag all
+            // the way to its release.
+            let event = ElementEvent::PointerMove(PointerInfo::mouse(
+                app.cursor_pos,
+                app.pressed_button.unwrap_or_default(),
+            ));
             let result = app.dispatch_element_event(app.cursor_pos, &event);
             if let Some(window) = &app.window {
                 if !result.is_consumed() {
@@ -364,29 +415,42 @@ impl WindowEventHandler {
         }
     }
 
+    /// Translates a winit mouse button into the framework's own.
+    ///
+    /// Named by role rather than by side, so a left-handed OS mouse setting needs
+    /// no special case anywhere above this line. Every button is translated: the
+    /// middle button used to be dropped here, which made middle-click impossible
+    /// to observe at all, and the right button was translated to nothing at all —
+    /// so a secondary press arrived as an ordinary one and fired tap handlers.
+    fn pointer_button(button: MouseButton) -> PointerButton {
+        match button {
+            MouseButton::Left => PointerButton::Primary,
+            MouseButton::Right => PointerButton::Secondary,
+            MouseButton::Middle => PointerButton::Middle,
+            MouseButton::Back => PointerButton::Other(3),
+            MouseButton::Forward => PointerButton::Other(4),
+            MouseButton::Other(code) => PointerButton::Other(code),
+        }
+    }
+
     fn handle_mouse_input<W: Widget + 'static>(
         state: ElementState,
         button: MouseButton,
         app: &mut AimerApplicationHandler<W>,
     ) {
-        // Only handle left and right mouse buttons here.
-        // Middle button and others are ignored for now.
-        if !matches!(button, MouseButton::Left | MouseButton::Right) {
-            return;
-        }
-
         let c = app.cursor_pos;
-        let event = if button == MouseButton::Right {
-            // Right-click: only fire on press, not release.
-            if state.is_pressed() {
-                ElementEvent::PointerDown(c, PointerSource::Mouse, 0)
-            } else {
-                ElementEvent::PointerUp(c, PointerSource::Mouse, 0)
-            }
-        } else if state.is_pressed() {
-            ElementEvent::PointerDown(c, PointerSource::Mouse, 0)
+        let pressed = state.is_pressed();
+        let button = Self::pointer_button(button);
+        let pointer = PointerInfo::mouse(c, button);
+
+        // Remembered so a move or release during a drag reports the button that
+        // started it, which a hover-time move has no way of knowing.
+        app.pressed_button = pressed.then_some(button);
+
+        let event = if pressed {
+            ElementEvent::PointerDown(pointer)
         } else {
-            ElementEvent::PointerUp(c, PointerSource::Mouse, 0)
+            ElementEvent::PointerUp(pointer)
         };
 
         #[allow(clippy::collapsible_if)]
@@ -397,7 +461,7 @@ impl WindowEventHandler {
             #[cfg(not(debug_assertions))]
             let inspector_handled = false;
             if !result.is_consumed() && !inspector_handled {
-                if matches!(&event, ElementEvent::PointerDown(_, _, _))
+                if matches!(&event, ElementEvent::PointerDown(_))
                     && let Some(root) = &app.widget_root
                 {
                     result = result.merge(broadcast_event(root.as_ref(), &event));
@@ -922,7 +986,7 @@ impl WindowEventHandler {
     ) {
 
 
-        info!("ElementEvent : {:?}", event);
+        // info!("ElementEvent : {:?}", event);
         let mut result = app.dispatch_element_event(app.cursor_pos, event);
 
         // A cancelled file drag carries no position, and the region that lit up

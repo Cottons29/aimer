@@ -338,6 +338,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
                 pending_widget: Some(widget),
                 cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
+                pressed_button: None,
                 current_modifiers: Default::default(),
                 ime_composing: false,
                 window_scale: scale_factor,
@@ -356,7 +357,6 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 #[cfg(debug_assertions)]
                 inspector_redraw_frames: Cell::new(0),
                 start_up_frames: Cell::new(0),
-                first_frame_notifier: Default::default(),
                 active_touch_id: None,
                 file_drag: crate::handler::file_drag::FileDrag::new(),
             },
@@ -699,6 +699,7 @@ fn start_event_loop(
         web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
         pending_widget: Some(widget),
         cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
+        pressed_button: None,
         current_modifiers: Default::default(),
         ime_composing: false,
         window_scale: 1.0,
@@ -717,7 +718,6 @@ fn start_event_loop(
         #[cfg(debug_assertions)]
         inspector_redraw_frames: Cell::new(0),
         start_up_frames: Cell::new(255),
-        first_frame_notifier: Default::default(),
         active_touch_id: None,
         file_drag: crate::handler::file_drag::FileDrag::new(),
     };
@@ -1005,10 +1005,16 @@ mod tests {
         fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
             self.events.fetch_add(1, Ordering::SeqCst);
             match event {
-                ElementEvent::PointerDown(_, source, id) => aimer_widget::EventResult::consumed()
-                    .with_pointer_capture(aimer_widget::PointerKey::new(*source, *id)),
-                ElementEvent::PointerUp(_, source, id) => aimer_widget::EventResult::consumed()
-                    .with_pointer_release(aimer_widget::PointerKey::new(*source, *id)),
+                ElementEvent::PointerDown(pointer) => aimer_widget::EventResult::consumed()
+                    .with_pointer_capture(aimer_widget::PointerKey::new(
+                        pointer.source,
+                        pointer.id,
+                    )),
+                ElementEvent::PointerUp(pointer) => aimer_widget::EventResult::consumed()
+                    .with_pointer_release(aimer_widget::PointerKey::new(
+                        pointer.source,
+                        pointer.id,
+                    )),
                 _ => aimer_widget::EventResult::consumed(),
             }
         }
