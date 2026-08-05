@@ -4,7 +4,7 @@ use std::sync::Arc;
 use aimer_attribute::position::Vec2d;
 pub use winit::event::TouchPhase;
 
-use crate::pointer::PointerSource;
+use crate::pointer::{PointerInfo, PointerSource};
 
 /// Key actions for keyboard events.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,12 +55,17 @@ pub enum ScrollDeltaKind {
 /// Pointer and keyboard event types for dispatch.
 #[derive(Clone, Debug)]
 pub enum ElementEvent {
-    /// Pointer down. The `u64` is the touch finger ID (0 for mouse).
-    PointerDown(Vec2d, PointerSource, u64),
-    /// Pointer up. The `u64` is the touch finger ID (0 for mouse).
-    PointerUp(Vec2d, PointerSource, u64),
-    /// Pointer move. The `u64` is the touch finger ID (0 for mouse).
-    PointerMove(Vec2d, PointerSource, u64),
+    /// A button went down, or a finger touched the surface.
+    ///
+    /// [`PointerInfo`] carries the position, the device, the pointer id and the
+    /// button, so a secondary or middle press is this same variant rather than
+    /// one of its own.
+    PointerDown(PointerInfo),
+    /// A button came up, or a finger left the surface.
+    PointerUp(PointerInfo),
+    /// The pointer moved. [`PointerInfo::button`] reports the button being held,
+    /// or [`crate::pointer::PointerButton::Primary`] for a plain hover.
+    PointerMove(PointerInfo),
     /// Pointer left the window. The `u64` is the pointer ID (0 for mouse).
     PointerExited(PointerSource, u64),
     Scroll {
@@ -183,11 +188,39 @@ pub enum ElementEvent {
 }
 
 impl ElementEvent {
+    /// The pointer this event is about, for the three variants that have one.
+    ///
+    /// Saves every consumer from re-matching the down/up/move triple just to
+    /// reach a position, a pointer id or a button.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_attribute::position::Vec2d;
+    /// use aimer_events::element::ElementEvent;
+    /// use aimer_events::pointer::{PointerButton, PointerInfo};
+    ///
+    /// let press = PointerInfo::mouse(Vec2d { x: 3.0, y: 4.0 }, PointerButton::Secondary);
+    /// let event = ElementEvent::PointerDown(press);
+    ///
+    /// assert_eq!(event.pointer().map(|p| p.button), Some(PointerButton::Secondary));
+    /// assert!(ElementEvent::Cancel.pointer().is_none());
+    /// ```
+    #[inline]
+    pub fn pointer(&self) -> Option<&PointerInfo> {
+        match self {
+            ElementEvent::PointerDown(pointer)
+            | ElementEvent::PointerUp(pointer)
+            | ElementEvent::PointerMove(pointer) => Some(pointer),
+            _ => None,
+        }
+    }
+
     pub fn get_pointer_pos(&self) -> Option<Vec2d> {
         match self {
-            ElementEvent::PointerDown(p, _, _)
-            | ElementEvent::PointerUp(p, _, _)
-            | ElementEvent::PointerMove(p, _, _) => Some(*p),
+            ElementEvent::PointerDown(pointer)
+            | ElementEvent::PointerUp(pointer)
+            | ElementEvent::PointerMove(pointer) => Some(pointer.pos),
             ElementEvent::DragOver { pos, .. } | ElementEvent::DragDrop { pos, .. } => Some(*pos),
             ElementEvent::HoveredFileMoved { pos, .. } => Some(*pos),
             ElementEvent::HoveredFile { pos, .. } | ElementEvent::DroppedFile { pos, .. } => *pos,

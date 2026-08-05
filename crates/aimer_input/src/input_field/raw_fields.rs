@@ -1075,10 +1075,10 @@ fn floor_char_boundary(text: &str, byte: usize) -> usize {
 
 fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
     match event {
-        ElementEvent::PointerDown(_, source, id)
-        | ElementEvent::PointerUp(_, source, id)
-        | ElementEvent::PointerMove(_, source, id)
-        | ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
+        ElementEvent::PointerDown(info)
+        | ElementEvent::PointerUp(info)
+        | ElementEvent::PointerMove(info) => Some(PointerKey::new(info.source, info.id)),
+        ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
         _ => None,
     }
 }
@@ -1403,13 +1403,14 @@ impl EventElement for RawTextField {
             // debug!("RawTextField on_event: {:?}", event);
 
             match event {
-                ElementEvent::PointerDown(pos, source, id) => {
+                ElementEvent::PointerDown(info) => {
+                    let pos = &info.pos;
                     let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
                     if is_inside {
                         let was_focused = self.is_focused();
                         self.set_focused(true);
-                        self.mouse_held.set(Some(PointerKey::new(*source, *id)));
+                        self.mouse_held.set(Some(PointerKey::new(info.source, info.id)));
                         self.cursor.clear_selection();
 
                         // Double/triple-click detection
@@ -1779,7 +1780,8 @@ impl EventElement for RawTextField {
                     }
                     result
                 }
-                ElementEvent::PointerMove(pos, _, _) => {
+                ElementEvent::PointerMove(info) => {
+                    let pos = &info.pos;
                     let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
                     let was_hovered = self.is_hovered();
                     if let Some(w) = get_window() {
@@ -1799,7 +1801,7 @@ impl EventElement for RawTextField {
 
                     was_hovered != is_inside
                 }
-                ElementEvent::PointerUp(_pos, _, _) => {
+                ElementEvent::PointerUp(_) => {
                     if owns_selection_pointer(self.mouse_held.get(), event) {
                         self.mouse_held.set(None);
                         true
@@ -2808,7 +2810,7 @@ mod grapheme_tests {
 mod pointer_capture_tests {
     use aimer_attribute::Vec2d;
     use aimer_events::element::ElementEvent;
-    use aimer_events::pointer::PointerSource;
+    use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
     use aimer_widget::PointerKey;
 
     use super::owns_selection_pointer;
@@ -2816,8 +2818,11 @@ mod pointer_capture_tests {
     #[test]
     fn selection_drag_matches_pointer_source_and_id() {
         let touch = PointerKey::new(PointerSource::Touch, 0);
-        let touch_move = ElementEvent::PointerMove(Vec2d::default(), PointerSource::Touch, 0);
-        let mouse_move = ElementEvent::PointerMove(Vec2d::default(), PointerSource::Mouse, 0);
+        let touch_move = ElementEvent::PointerMove(PointerInfo::touch(Vec2d::default(), 0));
+        let mouse_move = ElementEvent::PointerMove(PointerInfo::mouse(
+            Vec2d::default(),
+            PointerButton::Primary,
+        ));
 
         assert!(owns_selection_pointer(Some(touch), &touch_move));
         assert!(!owns_selection_pointer(Some(touch), &mouse_move));

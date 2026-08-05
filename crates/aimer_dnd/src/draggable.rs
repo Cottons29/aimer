@@ -9,8 +9,8 @@
 //! for one reason: a drag has to travel with the pointer *and* be handed to a
 //! second element on the same event, and the detector's result has no way to
 //! express the second half. The thresholds are the framework's own —
-//! [`TAP_SLOP`] and [`LONG_PRESS_DURATION`] — so a drag begins exactly where a
-//! tap stops being a tap.
+//! [`tap_slop`] and [`LONG_PRESS_DURATION`] — so a drag begins exactly where a
+//! tap stops being a tap, for the device in hand.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -21,7 +21,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
-use aimer_input::gesture::{LONG_PRESS_DURATION, TAP_SLOP};
+use aimer_input::gesture::{LONG_PRESS_DURATION, tap_slop};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, FollowUp, LayoutElement,
@@ -59,7 +59,7 @@ use crate::{DragPayload, DragSession};
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DragStartMode {
-    /// The drag begins as soon as the pointer has moved past [`TAP_SLOP`].
+    /// The drag begins as soon as the pointer has moved past its device's slop.
     Immediate,
     /// The drag begins only once the pointer has also been held for
     /// [`LONG_PRESS_DURATION`], leaving shorter movements to whatever else
@@ -263,7 +263,11 @@ impl RawDraggable {
     fn should_start(&self, press: &Press, pos: Vec2d) -> bool {
         let dx = pos.x - press.at.x;
         let dy = pos.y - press.at.y;
-        if (dx * dx + dy * dy).sqrt() < TAP_SLOP {
+        // Per device: a finger is allowed eighteen pixels of wobble, a mouse
+        // barely one. Using the touch tolerance for a mouse — which this did
+        // until the slop became per-source — meant a card had to be dragged
+        // almost two centimetres before it would pick up.
+        if (dx * dx + dy * dy).sqrt() < tap_slop(press.pointer.source) {
             return false;
         }
         let mode = self
@@ -334,14 +338,14 @@ impl VisitorElement for RawDraggable {
 impl EventElement for RawDraggable {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         match event {
-            ElementEvent::PointerDown(pos, source, id) => {
-                if !self.bounds.is_inside(pos.x, pos.y) {
+            ElementEvent::PointerDown(info) => {
+                if !self.bounds.is_inside(info.x(), info.y()) {
                     return EventResult::ignored();
                 }
-                let pointer = PointerKey::new(*source, *id);
+                let pointer = PointerKey::new(info.source, info.id);
                 *self.press.borrow_mut() = Some(Press {
                     pointer,
-                    at: *pos,
+                    at: info.pos,
                     when: AnimInstant::now(),
                 });
                 // Ownership is taken now, not when the drag starts: once the
@@ -351,15 +355,15 @@ impl EventElement for RawDraggable {
                 EventResult::ignored().with_pointer_capture(pointer)
             }
 
-            ElementEvent::PointerMove(pos, source, id) => {
-                let pointer = PointerKey::new(*source, *id);
+            ElementEvent::PointerMove(info) => {
+                let pointer = PointerKey::new(info.source, info.id);
                 let mut press = self.press.borrow_mut();
                 let Some(press) = press.as_mut().filter(|press| press.pointer == pointer) else {
                     return EventResult::ignored();
                 };
 
                 if !self.dragging.get() {
-                    if !self.should_start(press, *pos) {
+                    if !self.should_start(press, info.pos) {
                         return EventResult::ignored();
                     }
                     if !self.begin(press) {
@@ -367,14 +371,14 @@ impl EventElement for RawDraggable {
                     }
                 }
 
-                DragSession::update(pointer, *pos);
+                DragSession::update(pointer, info.pos);
                 EventResult::consumed()
                     .with_redraw()
                     .with_follow_up(FollowUp::DragOver)
             }
 
-            ElementEvent::PointerUp(_, source, id) => {
-                let pointer = PointerKey::new(*source, *id);
+            ElementEvent::PointerUp(info) => {
+                let pointer = PointerKey::new(info.source, info.id);
                 let taken = self
                     .press
                     .borrow_mut()
@@ -485,6 +489,7 @@ impl Rebuildable for RawDraggable {
 #[cfg(test)]
 mod tests {
     use aimer_container::{Container, ZeroSizedBox};
+    use aimer_events::pointer::{PointerButton, PointerInfo};
 
     use super::*;
     use crate::test_support::headless_context;
@@ -492,18 +497,25 @@ mod tests {
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct CardId(u32);
 
-    const MOUSE: (PointerSource, u64) = (PointerSource::Mouse, 0);
+    fn mouse(x: f32, y: f32) -> PointerInfo {
+        PointerInfo::mouse(Vec2d { x, y }, PointerButton::Primary)
+    }
 
     fn down(x: f32, y: f32) -> ElementEvent {
-        ElementEvent::PointerDown(Vec2d { x, y }, MOUSE.0, MOUSE.1)
+        ElementEvent::PointerDown(mouse(x, y))
     }
 
     fn moved(x: f32, y: f32) -> ElementEvent {
-        ElementEvent::PointerMove(Vec2d { x, y }, MOUSE.0, MOUSE.1)
+        ElementEvent::PointerMove(mouse(x, y))
     }
 
     fn lifted(x: f32, y: f32) -> ElementEvent {
-        ElementEvent::PointerUp(Vec2d { x, y }, MOUSE.0, MOUSE.1)
+        ElementEvent::PointerUp(mouse(x, y))
+    }
+
+    /// Comfortably past the tolerance for whichever device is being simulated.
+    fn past_slop(source: PointerSource) -> f32 {
+        tap_slop(source) + 4.0
     }
 
     /// A card sitting at the origin, big enough to be pressed inside.
@@ -542,11 +554,51 @@ mod tests {
         let card = card_element(&ctx);
 
         let _ = card.on_event(&down(10.0, 10.0));
-        let result = card.on_event(&moved(10.0 + TAP_SLOP + 4.0, 12.0));
+        let result = card.on_event(&moved(10.0 + past_slop(PointerSource::Mouse), 12.0));
 
         assert!(result.is_consumed());
         assert_eq!(result.follow_up(), FollowUp::DragOver);
         assert_eq!(DragSession::with_payload(|id: &CardId| id.0), Some(7));
+
+        fresh();
+    }
+
+    // The mouse tolerance used to be the *touch* tolerance, so a card had to be
+    // dragged eighteen logical pixels — nearly two centimetres — before it would
+    // pick up, while a five-pixel drag did nothing at all.
+    #[test]
+    fn a_short_mouse_drag_is_enough_to_pick_a_card_up() {
+        fresh();
+        let ctx = headless_context(400.0, 400.0);
+        let card = card_element(&ctx);
+
+        let _ = card.on_event(&down(10.0, 10.0));
+        let result = card.on_event(&moved(15.0, 10.0));
+
+        assert!(
+            DragSession::is_active(),
+            "5 px of deliberate mouse travel is a drag"
+        );
+        assert_eq!(result.follow_up(), FollowUp::DragOver);
+
+        fresh();
+    }
+
+    // The same movement by finger is still a tap: a contact patch centimetres
+    // wide rolls as it presses, so a card must not leap out from under it.
+    #[test]
+    fn the_same_short_travel_by_finger_does_not_pick_a_card_up() {
+        fresh();
+        let ctx = headless_context(400.0, 400.0);
+        let card = card_element(&ctx);
+        let finger = PointerInfo::touch(Vec2d { x: 10.0, y: 10.0 }, 0);
+
+        let _ = card.on_event(&ElementEvent::PointerDown(finger));
+        let _ = card.on_event(&ElementEvent::PointerMove(
+            finger.at(Vec2d { x: 15.0, y: 10.0 }),
+        ));
+
+        assert!(!DragSession::is_active(), "5 px of finger wobble is a tap");
 
         fresh();
     }
@@ -562,7 +614,7 @@ mod tests {
         let card = card_element(&ctx);
 
         let _ = card.on_event(&down(10.0, 10.0));
-        let _ = card.on_event(&moved(10.0 + TAP_SLOP + 4.0, 12.0));
+        let _ = card.on_event(&moved(10.0 + past_slop(PointerSource::Mouse), 12.0));
         assert!(DragSession::is_active(), "the drag has begun");
 
         // Exactly what reconciliation does with the element a rebuild produced.

@@ -5,14 +5,13 @@ use aimer_attribute::CacheBounds;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
 use aimer_events::window::request_animation_frame;
-use aimer_macro::Rebuildable;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventDispatcher, EventElement, EventResult,
-    LayoutElement, PointerKey, RequiredChild, VisitorElement, Widget,
+    LayoutElement, PointerKey, Rebuildable, RequiredChild, VisitorElement, Widget,
 };
 
-use crate::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
+use crate::callback::{CallbackExecutor, VoidCallback, ambient_spawner};
 
 /// Whether a mouse pointer is currently inside a [`MouseRegion`].
 #[derive(Debug, Copy, Clone, Default)]
@@ -162,7 +161,6 @@ impl<W: Widget + 'static> Widget for MouseRegion<W> {
 ///
 /// Event dispatch is handled manually: `event_children` returns empty so that
 /// `on_event` is called first, then events are forwarded to the child.
-#[derive(Rebuildable)]
 pub struct RawMouseRegion<E: Element> {
     pub(crate) on_hover_enter: VoidCallback,
     pub(crate) on_hover_exit: VoidCallback,
@@ -175,18 +173,15 @@ pub struct RawMouseRegion<E: Element> {
 }
 
 impl<E: Element> RawMouseRegion<E> {
+    /// Fires one hover callback.
+    ///
+    /// The region holds no runtime handle of its own, so an async callback goes
+    /// to whichever runtime the frame is being built on — which is how it
+    /// reaches the application's. Before the spawning policy moved into
+    /// [`CallbackExecutor::execute`] this arm did nothing at all, silently.
     #[inline]
     fn execute_void_callback(cb: &VoidCallback) {
-        if let Some(callback) = (*cb.get()).as_ref() {
-            match callback {
-                RawInnerCallback::Empty => (),
-                RawInnerCallback::Sync(f) => f(()),
-                RawInnerCallback::Async(_) => {
-                    // MouseRegion doesn't own a runtime handle.
-                    // Async hover callbacks are not supported.
-                }
-            }
-        }
+        cb.execute((), &ambient_spawner());
     }
 
     /// Reconcile the stored hover state with `is_inside`, firing the
@@ -214,6 +209,39 @@ impl<E: Element> RawMouseRegion<E> {
     }
 }
 
+impl<E: Element + 'static> Rebuildable for RawMouseRegion<E> {
+    #[inline]
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    /// Claims the pointer the element being replaced was routing.
+    ///
+    /// This region dispatches to its child itself, so the capture a pressed
+    /// child took lives in the dispatcher *beside* the children rather than in
+    /// them — which is exactly the state reconciliation's positional walk cannot
+    /// reach. A press that rebuilds the subtree while the pointer is still down
+    /// — a [`crate::button::Button`] darkening under the finger — would leave the
+    /// replacement owning nothing, so a release outside the bounds would be
+    /// rejected as a miss and the child would never hear the pointer lift.
+    ///
+    /// The dispatcher is *moved* out of `old`, which reconciliation drops
+    /// immediately afterwards. It names the old subtree's identities, and those
+    /// identities are transferred onto the new elements in the pass that follows
+    /// this one, so the carried capture resolves once reconciliation completes.
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        let Some(old) = old
+            .option_any()
+            .and_then(|value| value.downcast_ref::<Self>())
+        else {
+            return;
+        };
+
+        *self.event_dispatcher.borrow_mut() =
+            std::mem::take(&mut *old.event_dispatcher.borrow_mut());
+    }
+}
+
 impl<E: Element> VisitorElement for RawMouseRegion<E> {
     fn visit_children<'b>(&'b self, visitor: &mut dyn FnMut(&'b dyn Element)) {
         visitor(&self.child);
@@ -227,10 +255,10 @@ impl<E: Element> VisitorElement for RawMouseRegion<E> {
 impl<E: Element> EventElement for RawMouseRegion<E> {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         let pointer = match event {
-            ElementEvent::PointerDown(_, source, id)
-            | ElementEvent::PointerUp(_, source, id)
-            | ElementEvent::PointerMove(_, source, id)
-            | ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
+            ElementEvent::PointerDown(info)
+            | ElementEvent::PointerUp(info)
+            | ElementEvent::PointerMove(info) => Some(PointerKey::new(info.source, info.id)),
+            ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
             _ => None,
         };
         let was_captured =
@@ -244,9 +272,9 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
         }
 
         let pos = match event {
-            ElementEvent::PointerDown(p, _, _)
-            | ElementEvent::PointerUp(p, _, _)
-            | ElementEvent::PointerMove(p, _, _) => *p,
+            ElementEvent::PointerDown(info)
+            | ElementEvent::PointerUp(info)
+            | ElementEvent::PointerMove(info) => info.pos,
             ElementEvent::PointerExited(_, _) | ElementEvent::Cancel => Vec2d::default(),
             _ => return EventResult::ignored(),
         };
@@ -333,6 +361,7 @@ mod tests {
     use std::any::Any;
     use std::cell::RefCell;
 
+    use aimer_events::pointer::{PointerButton, PointerInfo};
     use aimer_widget::base::WindowHandle;
     use aimer_widget::{CaptureRequest, EventResult, PointerKey, Rebuildable};
     use winit::dpi::PhysicalSize;
@@ -400,12 +429,10 @@ mod tests {
         fn on_event(&self, event: &ElementEvent) -> EventResult {
             self.events.set(self.events.get() + 1);
             match event {
-                ElementEvent::PointerDown(_, source, id) => {
-                    EventResult::consumed().with_pointer_capture(PointerKey::new(*source, *id))
-                }
-                ElementEvent::PointerUp(_, source, id) => {
-                    EventResult::consumed().with_pointer_release(PointerKey::new(*source, *id))
-                }
+                ElementEvent::PointerDown(info) => EventResult::consumed()
+                    .with_pointer_capture(PointerKey::new(info.source, info.id)),
+                ElementEvent::PointerUp(info) => EventResult::consumed()
+                    .with_pointer_release(PointerKey::new(info.source, info.id)),
                 _ => EventResult::consumed(),
             }
         }
@@ -466,11 +493,12 @@ mod tests {
             event_dispatcher: RefCell::new(EventDispatcher::new()),
         };
 
-        let result = region.on_event(&ElementEvent::PointerMove(
+        let result = region.on_event(&ElementEvent::PointerMove(PointerInfo::new(
             aimer_attribute::position::Vec2d { x: 10.0, y: 10.0 },
             PointerSource::Mouse,
             7,
-        ));
+            PointerButton::Primary,
+        )));
 
         assert!(result.is_consumed());
         assert!(result.needs_redraw());
@@ -496,25 +524,74 @@ mod tests {
         };
         let pointer = PointerKey::new(PointerSource::Touch, 2);
 
-        let down = region.on_event(&ElementEvent::PointerDown(
+        let down = region.on_event(&ElementEvent::PointerDown(PointerInfo::touch(
             Vec2d { x: 10.0, y: 10.0 },
-            pointer.source,
             pointer.id,
-        ));
+        )));
         assert_eq!(down.capture_request(), CaptureRequest::Capture(pointer));
 
-        let _ = region.on_event(&ElementEvent::PointerMove(
+        let _ = region.on_event(&ElementEvent::PointerMove(PointerInfo::touch(
             Vec2d { x: 200.0, y: 200.0 },
-            pointer.source,
             pointer.id,
-        ));
-        let up = region.on_event(&ElementEvent::PointerUp(
+        )));
+        let up = region.on_event(&ElementEvent::PointerUp(PointerInfo::touch(
             Vec2d { x: 200.0, y: 200.0 },
-            pointer.source,
             pointer.id,
-        ));
+        )));
 
         assert_eq!(events.get(), 3);
+        assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
+    }
+
+    /// A region laid out over the top-left 100x100 corner, wrapping a child that
+    /// captures the pointer it is pressed with.
+    fn capturing_region(events: Rc<Cell<usize>>) -> RawMouseRegion<AnyElement> {
+        let cached_bounds = CacheBounds::new();
+        cached_bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+
+        RawMouseRegion {
+            on_hover_enter: VoidCallback::default(),
+            on_hover_exit: VoidCallback::default(),
+            cursor: None,
+            current_state: Rc::new(Cell::new(PointerState::Outside)),
+            cached_bounds,
+            child: CapturingElement { events }.boxed(),
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+        }
+    }
+
+    // A rebuild triggered by the press itself — a `Button` darkening under the
+    // finger — replaces this region. The capture the child took lives in the
+    // dispatcher beside the children rather than in them, so the positional walk
+    // cannot reach it: without the hand-over, the replacement rejects the release
+    // as being outside its bounds, the child never hears the pointer lift, and
+    // the press stays visually stuck.
+    #[test]
+    fn a_rebuild_during_a_press_keeps_the_capture_so_a_release_outside_still_lands() {
+        let events = Rc::new(Cell::new(0));
+        let pressed = capturing_region(events.clone());
+        let pointer = PointerKey::new(PointerSource::Touch, 2);
+
+        let down = pressed.on_event(&ElementEvent::PointerDown(PointerInfo::touch(
+            Vec2d { x: 10.0, y: 10.0 },
+            pointer.id,
+        )));
+        assert_eq!(down.capture_request(), CaptureRequest::Capture(pointer));
+
+        let rebuilt = capturing_region(events.clone());
+        // Standing in for the identity transfer reconciliation performs around
+        // the hand-over, which is what makes the carried capture resolve against
+        // the new subtree.
+        rebuilt.child.set_element_id(pressed.child.id());
+        rebuilt.adopt_runtime_state_from(&pressed as &dyn Element);
+
+        let up = rebuilt.on_event(&ElementEvent::PointerUp(PointerInfo::touch(
+            Vec2d { x: 200.0, y: 200.0 },
+            pointer.id,
+        )));
+
+        assert_eq!(events.get(), 2, "the child must hear the release it is owed");
         assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
     }
 }

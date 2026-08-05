@@ -11,8 +11,16 @@ use aimer_widget::{
 };
 
 use crate::callback::VoidCallback;
+use crate::gesture::GestureEvent;
 use crate::gesture::gesture_detector::GestureDetector;
 use crate::mouse_region::{MouseRegion, PointerState};
+
+/// How much the background is darkened while the button is held.
+///
+/// A press has to be visible *before* the gesture resolves, or the button feels
+/// unresponsive on a slow tap; the depth is chosen to read as pushed-in next to
+/// the hover lightening rather than to compete with it.
+const PRESSED_DARKEN: f32 = 0.15;
 
 /// A clickable button widget with visual feedback.
 ///
@@ -49,6 +57,13 @@ pub struct Button<W = RequiredChild> {
 /// Mounted state used internally by [`Button`].
 pub struct ButtonState<W: Widget + 'static> {
     is_hover: bool,
+    /// Whether a pointer is currently held on the button.
+    ///
+    /// Distinct from `is_hover`: hovering is where the cursor is, pressing is
+    /// what the button is doing. Driven by the recognizer's press lifecycle, so
+    /// the highlight is dropped whether the press became a tap or was abandoned
+    /// by sliding away.
+    is_pressed: bool,
     pub on_press: VoidCallback,
     pub is_disabled: bool,
     pub on_long_press: VoidCallback,
@@ -234,6 +249,7 @@ impl<W: Widget + 'static> StatefulWidget for Button<W> {
     fn create_state(&self) -> Self::State {
         ButtonState {
             is_hover: false,
+            is_pressed: false,
             on_press: self.on_press.clone(),
             on_long_press: self.on_long_press.clone(),
             on_double_press: self.on_double_press.clone(),
@@ -268,6 +284,8 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
     }
 
     fn adopt_config_from(&mut self, new: &Self) {
+        // `is_hover` and `is_pressed` are deliberately not adopted: they describe
+        // what the pointer is doing right now, which a rebuild does not change.
         self.on_press = new.on_press.clone();
         self.is_disabled = new.is_disabled;
         self.on_long_press = new.on_long_press.clone();
@@ -286,6 +304,14 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
             && let Some(color) = decor.background_color
         {
             decor.background_color = Some(color.lighten(0.2));
+        }
+
+        // After the hover lightening, so a hovered button still visibly reacts to
+        // being pressed rather than the two cancelling out.
+        if self.is_pressed
+            && let Some(color) = decor.background_color
+        {
+            decor.background_color = Some(color.darken(PRESSED_DARKEN));
         }
 
         if self.is_disabled {
@@ -335,6 +361,21 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
                         self.on_long_press.clone()
                     })
                     .on_right_tap(self.on_right_press.clone())
+                    .on_gesture({
+                        let updater = self.state_updater.clone();
+                        move |event: GestureEvent| match event {
+                            GestureEvent::TapDown { .. } => {
+                                updater.set_state(|state| state.is_pressed = true)
+                            }
+                            // Either terminator ends the press: the recognizer
+                            // guarantees one of them arrives, so the highlight
+                            // cannot be left stuck on.
+                            GestureEvent::TapUp { .. } | GestureEvent::TapCancel => {
+                                updater.set_state(|state| state.is_pressed = false)
+                            }
+                            _ => {}
+                        }
+                    })
                     .child(child),
             )
             .boxed()
