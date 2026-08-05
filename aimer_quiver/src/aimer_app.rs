@@ -358,6 +358,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 start_up_frames: Cell::new(0),
                 first_frame_notifier: Default::default(),
                 active_touch_id: None,
+                file_drag: crate::handler::file_drag::FileDrag::new(),
             },
             canvas: aimer_canvas::InnerCanvas::new(),
             window,
@@ -718,6 +719,7 @@ fn start_event_loop(
         start_up_frames: Cell::new(255),
         first_frame_notifier: Default::default(),
         active_touch_id: None,
+        file_drag: crate::handler::file_drag::FileDrag::new(),
     };
 
     info!("Started main event loop");

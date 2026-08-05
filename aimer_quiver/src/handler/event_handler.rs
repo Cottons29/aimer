@@ -1,6 +1,6 @@
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
-use aimer_events::pointer::PointerSource;
+use aimer_events::pointer::{FILE_DRAG_POINTER_ID, PointerSource};
 use aimer_utils::{info, ExecTimes};
 use aimer_widget::{EventResult, PointerKey, Widget, broadcast_event};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -52,6 +52,13 @@ impl WindowEventHandler {
             WindowEvent::Touch(item) => Self::handle_touch(item, app),
 
             WindowEvent::CursorMoved { position, .. } => {
+                // A cursor moving with files in tow is not a hover and not a
+                // click: it is the file drag continuing, and the widgets under
+                // it want to hear about it as one.
+                if app.file_drag.is_active() {
+                    Self::report_file_drag_move(app, Self::logical_cursor(position, app));
+                    return;
+                }
                 Self::handle_cursor_move(position, app)
             },
 
@@ -86,10 +93,7 @@ impl WindowEventHandler {
             }
 
             WindowEvent::RedrawRequested => {
-                #[cfg(debug_assertions)]
-                ExecTimes::no_param("MainAppRenderer", || app.render(event_loop));
-                #[cfg(not(debug_assertions))]
-                app.render(event_loop);
+                app.render(event_loop)
             }
 
             WindowEvent::Resized(size) => Self::handle_resize(size, app, event_loop),
@@ -123,16 +127,24 @@ impl WindowEventHandler {
                 }
             }
 
-            WindowEvent::HoveredFile(pat) => {
-                Self::handle_generic_event(app, &ElementEvent::HoveredFile { path: pat });
+            WindowEvent::HoveredFile(path) => {
+                let pos = Self::refresh_file_drag_cursor(app);
+                app.file_drag.enter(&path, app.cursor_pos);
+                Self::handle_generic_event(app, &ElementEvent::HoveredFile { path, pos });
             }
 
             WindowEvent::HoveredFileCancelled => {
+                app.file_drag.finish();
                 Self::handle_generic_event(app, &ElementEvent::HoveredFileCancelled);
             }
 
-            WindowEvent::DroppedFile(file_path) => {
-                Self::handle_generic_event(app, &ElementEvent::DroppedFile { path: file_path });
+            WindowEvent::DroppedFile(path) => {
+                let pos = Self::refresh_file_drag_cursor(app);
+                // The drag is over, but the platform reports a five-file drop as
+                // five events: the tracker is emptied by the first of them and
+                // the rest simply find nothing in flight.
+                app.file_drag.finish();
+                Self::handle_generic_event(app, &ElementEvent::DroppedFile { path, pos });
             }
 
             _ => (),
@@ -150,6 +162,10 @@ impl WindowEventHandler {
                 HeadlessEventAction::None
             }
             WindowEvent::CursorMoved { position, .. } => {
+                if app.file_drag.is_active() {
+                    Self::report_file_drag_move(app, Self::logical_cursor(position, app));
+                    return HeadlessEventAction::None;
+                }
                 Self::handle_cursor_move(position, app);
                 HeadlessEventAction::None
             }
@@ -193,6 +209,23 @@ impl WindowEventHandler {
                 let phase = Self::web_wheel_phase(app);
 
                 Self::handle_mouse_wheel(delta, phase, app);
+                HeadlessEventAction::None
+            }
+            WindowEvent::HoveredFile(path) => {
+                let pos = Some(app.cursor_pos);
+                app.file_drag.enter(&path, app.cursor_pos);
+                Self::handle_generic_event(app, &ElementEvent::HoveredFile { path, pos });
+                HeadlessEventAction::None
+            }
+            WindowEvent::HoveredFileCancelled => {
+                app.file_drag.finish();
+                Self::handle_generic_event(app, &ElementEvent::HoveredFileCancelled);
+                HeadlessEventAction::None
+            }
+            WindowEvent::DroppedFile(path) => {
+                let pos = Some(app.cursor_pos);
+                app.file_drag.finish();
+                Self::handle_generic_event(app, &ElementEvent::DroppedFile { path, pos });
                 HeadlessEventAction::None
             }
             WindowEvent::RedrawRequested => HeadlessEventAction::Render,
@@ -278,11 +311,7 @@ impl WindowEventHandler {
         position: PhysicalPosition<f64>,
         app: &mut AimerApplicationHandler<W>,
     ) {
-        let scale = app.window_scale as f32;
-        let new_pos = Vec2d {
-            x: position.x as f32 / scale,
-            y: position.y as f32 / scale,
-        };
+        let new_pos = Self::logical_cursor(position, app);
         let dx = (new_pos.x - app.cursor_pos.x).abs();
         let dy = (new_pos.y - app.cursor_pos.y).abs();
         if dx < 1.0 && dy < 1.0 {
@@ -799,49 +828,120 @@ impl WindowEventHandler {
         }
     }
 
+    /// Brings `app.cursor_pos` up to date for a file drag, and reports the
+    /// position the event should carry.
+    ///
+    /// winit attaches no position to the file events, and macOS delivers no
+    /// cursor motion at all while a drag session is running, so on that
+    /// platform the position is queried directly from AppKit. Everywhere else
+    /// the last cursor position is the best answer available and is used as-is:
+    /// it is correct on the platforms that keep sending motion during a drag,
+    /// and no worse than the previous behaviour on the ones that do not.
+    fn refresh_file_drag_cursor<W: Widget + 'static>(
+        app: &mut AimerApplicationHandler<W>,
+    ) -> Option<Vec2d> {
+        #[cfg(target_os = "macos")]
+        if let Some(window) = app.window
+            && let Some(pos) = crate::ffi_utils::macos_drag::cursor_in_window(window)
+        {
+            app.cursor_pos = pos;
+        }
+
+        Some(app.cursor_pos)
+    }
+
+    /// Converts a physical cursor position into the logical coordinates every
+    /// element is measured in.
+    #[inline]
+    fn logical_cursor<W: Widget + 'static>(
+        position: PhysicalPosition<f64>,
+        app: &AimerApplicationHandler<W>,
+    ) -> Vec2d {
+        let scale = app.window_scale as f32;
+        Vec2d {
+            x: position.x as f32 / scale,
+            y: position.y as f32 / scale,
+        }
+    }
+
+    /// Reports the file drag in flight at `at`, if it has travelled far enough
+    /// to matter.
+    ///
+    /// The platform announces a file drag *entering* the window and then falls
+    /// silent, so this is what keeps the drop zones informed: one hit-tested
+    /// [`ElementEvent::HoveredFileMoved`] carrying the whole batch, whatever its
+    /// size.
+    ///
+    /// A drag that reaches nothing — wandering over the background between two
+    /// zones — is a leave, and the zone that lit up has to hear it, so a
+    /// [`ElementEvent::DragLeave`] is broadcast on the move that leaves and on no
+    /// other: it is the one case where the drag has no addressee to route to.
+    fn report_file_drag_move<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>, at: Vec2d) {
+        let Some(paths) = app.file_drag.moved_to(at) else {
+            return;
+        };
+        app.cursor_pos = at;
+
+        let event = ElementEvent::HoveredFileMoved { paths, pos: at };
+        let mut result = app.dispatch_element_event(at, &event);
+
+        if app.file_drag.note_answered(result.is_consumed())
+            && let Some(root) = &app.widget_root
+        {
+            let left = ElementEvent::DragLeave {
+                source: PointerSource::Mouse,
+                id: FILE_DRAG_POINTER_ID,
+            };
+            result = result.merge(broadcast_event(root.as_ref(), &left));
+        }
+
+        if let Some(window) = &app.window
+            && Self::should_redraw(result, true)
+        {
+            window.request_redraw();
+        }
+    }
+
+    /// Asks the platform where the file drag is now, and reports it.
+    ///
+    /// Called once per frame while a drag is in flight, because macOS runs its
+    /// drag session without delivering any cursor motion at all: there is no
+    /// event to react to, only a question to ask. Every other platform keeps
+    /// sending [`WindowEvent::CursorMoved`] throughout the drag and needs no
+    /// polling, which is why this is compiled for macOS alone.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn poll_file_drag<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) {
+        if let Some(at) = Self::refresh_file_drag_cursor(app) {
+            Self::report_file_drag_move(app, at);
+        }
+    }
+
     fn handle_generic_event<W: Widget + 'static>(
         app: &mut AimerApplicationHandler<W>,
         event: &ElementEvent,
     ) {
-        let result = app.dispatch_element_event(app.cursor_pos, event);
-        if result.needs_redraw() {
-            if let Some(window) = &app.window {
-                window.request_redraw();
-            }
+
+
+        info!("ElementEvent : {:?}", event);
+        let mut result = app.dispatch_element_event(app.cursor_pos, event);
+
+        // A cancelled file drag carries no position, and the region that lit up
+        // is not necessarily the one the cursor rests on now. Everyone who
+        // reacted to the drag has to hear that it is over, so this one is
+        // broadcast rather than hit-tested.
+        if matches!(event, ElementEvent::HoveredFileCancelled)
+            && let Some(root) = &app.widget_root
+        {
+            result = result.merge(broadcast_event(root.as_ref(), event));
+        }
+
+        if result.needs_redraw()
+            && let Some(window) = &app.window
+        {
+            window.request_redraw();
         }
     }
 }
-
-// impl WindowEventHandler {
-//     const PIXELS_PER_LINE: f64 = 100.0; // total pixel distance per 1.0 line unit
-//     const EXPAND_STEPS: usize = 16;     // how many sub-events to emit
-//
-//     /// Expands one LineDelta into a queue of synthetic PixelDelta events,
-//     /// distributed over EXPAND_STEPS along an ease-out curve (fast start,
-//     /// smooth taper to zero) — mimicking natural trackpad momentum.
-//     fn expand_line_delta(x: f32, y: f32) -> VecDeque<PhysicalPosition<f64>> {
-//         let target_x = x as f64 * Self::PIXELS_PER_LINE;
-//         let target_y = y as f64 * Self::PIXELS_PER_LINE;
-//
-//         let mut queue = VecDeque::with_capacity(Self::EXPAND_STEPS);
-//         let (mut prev_x, mut prev_y) = (0.0, 0.0);
-//
-//         for i in 1..=Self::EXPAND_STEPS {
-//             let t = i as f64 / Self::EXPAND_STEPS as f64;
-//             let eased = 1.0 - (1.0 - t).powi(3); // ease-out cubic
-//
-//             let pos_x = target_x * eased;
-//             let pos_y = target_y * eased;
-//
-//             queue.push_back(PhysicalPosition::new(pos_x - prev_x, pos_y - prev_y));
-//
-//             prev_x = pos_x;
-//             prev_y = pos_y;
-//         }
-//
-//         queue
-//     }
-// }
 
 #[cfg(test)]
 mod tests {

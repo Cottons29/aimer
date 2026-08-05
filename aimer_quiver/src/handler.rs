@@ -1,4 +1,6 @@
 pub mod event_handler;
+/// The file drag the window is currently under.
+pub(crate) mod file_drag;
 pub mod scroll_classifier;
 pub mod scroll_utils;
 pub(crate) mod user_events;
@@ -18,6 +20,7 @@ use crate::first_frame::FirstFrameNotifier;
 #[allow(unused)]
 use crate::handler;
 use crate::handler::event_handler::WindowEventHandler;
+use crate::handler::file_drag::FileDrag;
 use crate::handler::scroll_classifier::DualScroller;
 use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
@@ -106,6 +109,10 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub inspector_prev_enabled: Cell<bool>,
     #[cfg(debug_assertions)]
     pub inspector_redraw_frames: Cell<u8>,
+    /// The batch of files being dragged over the window, so the drag can be
+    /// re-reported for every position it is found at rather than only for the
+    /// one it came in at.
+    pub(crate) file_drag: FileDrag,
 }
 
 impl<W: Widget + 'static> AimerApplicationHandler<W> {
@@ -300,6 +307,18 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // A file drag is the one gesture the platform stops describing once it
+        // has begun: macOS delivers no cursor motion at all while its own drag
+        // session runs. So the position is asked for here instead, and a frame
+        // is asked for in turn, which brings us back here for as long as the
+        // drag lasts and not one wake-up longer.
+        #[cfg(target_os = "macos")]
+        if self.file_drag.is_active() {
+            WindowEventHandler::poll_file_drag(self);
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+        }
         if self.start_up_frames.get() > 0 {
             let Some(window) = self.window.as_ref() else {
                 return;
