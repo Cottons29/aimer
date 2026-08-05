@@ -1,0 +1,21 @@
+[package]
+name = "aimer_dnd"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aimer_animation.workspace = true
+aimer_attribute.workspace = true
+aimer_container.workspace = true
+aimer_events.workspace = true
+aimer_input.workspace = true
+aimer_modal.workspace = true
+aimer_space.workspace = true
+aimer_widget.workspace = true
+
+[dev-dependencies]
+aimer_canvas.workspace = true
+winit.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
