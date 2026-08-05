@@ -19,6 +19,16 @@ use aimer_quiver::AimerApp;
 /// Height of the loaded post: far taller than the headless viewport.
 const CONTENT_HEIGHT: u32 = 4_000;
 
+/// How long the stand-in request takes to answer.
+///
+/// The point of these tests is what happens when the loading state is *replaced*,
+/// so the loading state has to be on screen for the first frame. An immediately
+/// ready future does not guarantee that: the runtime is free to complete it
+/// before the frame is drawn, and under a loaded machine it does, which turns
+/// the first assertion into a coin toss. A request that takes a moment makes the
+/// ordering the test is about an actual fact rather than a race.
+const REQUEST_LATENCY: Duration = Duration::from_millis(20);
+
 /// Builds the page for one snapshot, mirroring the vertical branch of the blog
 /// detail screen: the `Scrollable` is part of what the request rebuilds, so the
 /// loading state and the post are measured by two different container elements
@@ -66,7 +76,10 @@ fn a_page_rebuilt_by_a_completed_request_can_be_scrolled() {
     let attached = controller.clone();
     let page = AsyncBuilder::new()
         .request_key("first-post".to_owned())
-        .future(|| async { Ok::<_, String>(CONTENT_HEIGHT) })
+        .future(|| async {
+            sleep(REQUEST_LATENCY);
+            Ok::<_, String>(CONTENT_HEIGHT)
+        })
         .child(move |snapshot| detail_page(snapshot, &attached));
 
     let mut app = AimerApp::start_headless(page);

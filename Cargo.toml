@@ -34,6 +34,7 @@ aimer_provider.workspace = true
 aimer_svg.workspace = true
 aimer_markdown.workspace = true
 aimer_modal.workspace = true
+aimer_dnd.workspace = true
 aimer_native.workspace = true
 
 [features]
@@ -76,7 +77,8 @@ members = [
     "crates/aimer_markdown",
     "crates/aimer_svg",
     "crates/aimer_native",
-    "crates/aimer_modal"
+    "crates/aimer_modal",
+    "crates/aimer_dnd"
 ]
 
 
@@ -107,6 +109,7 @@ aimer_provider = { path = "crates/aimer_provider" }
 aimer_svg = { path = "crates/aimer_svg" }
 aimer_markdown = { path = "crates/aimer_markdown" }
 aimer_modal = { path = "crates/aimer_modal" }
+aimer_dnd = { path = "crates/aimer_dnd" }
 aimer_native = {path = "crates/aimer_native"}
 
 #############
@@ -194,6 +197,15 @@ tower-http = { version = "0.7.0", default-features = false, features = ["cors"] 
 worker = { version = "0.8.5", default-features = false }
 worker-macros = { version = "0.8.5", default-features = false }
 
+
+# `aimer_rubick` is the ownership primitive behind every widget and element.
+# Its inline storage, its static operation tables and its block pool are thin
+# abstractions that only pay for themselves once the compiler inlines them; at
+# `opt-level = 0` a thread-local free list costs more than the allocator it
+# replaces. Optimizing this one crate keeps debug builds of an application fast
+# without touching the debuggability of application code.
+[profile.dev.package.aimer_rubick]
+opt-level = 3
 
 [profile.release]
 opt-level = 3

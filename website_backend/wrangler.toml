@@ -27,7 +27,7 @@ command = "cargo install -q \"worker-build@^0.8\" && RUSTFLAGS=\"-C target-featu
 # The only runtime setting left: the browsers origins allowed to call the API.
 # The blog content itself is embedded in the module at compile time.
 [vars]
-SERVER_CORS = "https://aimers.dev,aimers.dev"
+SERVER_CORS = "https://aimers.dev,aimers.dev,http://localhost:3000"
 
 [observability]
 enabled = true

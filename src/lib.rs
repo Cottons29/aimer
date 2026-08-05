@@ -8,6 +8,10 @@ pub use aimer_attribute::position::Vec2d;
 pub use aimer_attribute::size::{ResolvedSize, Size};
 pub use aimer_color::prelude::*;
 pub use aimer_container::*;
+pub use aimer_dnd::{
+    DragAxis, DragOverlay, DragPayload, DragSession, DragStartMode, DragTarget, DragTargetState,
+    Draggable, DropZone, FileDrop,
+};
 pub use aimer_flex::*;
 pub use aimer_grid::*;
 pub use aimer_input::button::Button;
@@ -25,7 +29,7 @@ pub use aimer_markdown::{
 pub use aimer_modal::{
     Anchor, AnchorHandle, Floating, FloatingAlign, FloatingPlacement, FloatingSide, Modal,
     ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId, OverflowPolicy,
-    PlacementSpec, resolve_placement,
+    OverlayLayer, OverlayLayerHandle, PlacementSpec, resolve_placement,
 };
 #[cfg(feature = "provider")]
 pub use aimer_provider::{
@@ -36,7 +40,7 @@ pub use aimer_quiver::{
     self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions,
     set_first_frame_rendered_callback,
 };
-pub use aimer_rubick::{self, Rubick};
+pub use aimer_rubick::{self, ErasedFrom, Rubick};
 pub use aimer_scroll::*;
 pub use aimer_space::*;
 #[cfg(feature = "svg")]

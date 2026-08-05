@@ -128,9 +128,16 @@ cd my_aimer && Aimer run
 
 - [ ] Gesture system
     - [x] Tap, double-tap `⚠️ Unstable`
-    - [ ] Drag and pan
+    - [x] Drag and pan `⚠️ Unstable`
     - [ ] Swipe
     - [x] Long press `⚠️ Unstable`
+- [ ] Drag and drop
+    - [x] `Draggable` / `DragTarget<T>` with typed payloads `⚠️ Unstable` — see `jaime/src/drag_and_drop.rs`
+    - [x] Feedback painted above every clip boundary, with spring-back on a refused drop `⚠️ Unstable`
+    - [x] `DropZone` for files dragged in from the desktop `⚠️ Unstable` — see `jaime/src/file_drop_zone.rs`
+    - [ ] Auto-scroll when dragging near the edge of a `Scrollable`
+    - [ ] Reorderable lists
+    - [ ] File drop on the web (winit's web backend emits no file-drag events)
 - [ ] Navigation and routing
     - [x] Navigator / route stack `⚠️ Unstable`
     - [x] Named routes (typed path + query parameters) `⚠️ Unstable`

@@ -4,6 +4,8 @@ mod async_builder;
 mod color_sync;
 mod custom_animated_theme;
 mod custom_font;
+pub mod drag_and_drop;
+pub mod file_drop_zone;
 mod floating;
 mod loading_animation;
 mod markdown_example;
@@ -53,10 +55,12 @@ pub fn my_app() {
     // test_positioned()
     // async_builder::start_async_builder_example()
     // custom_animated_theme::start_custom_animated_theme_example()
-    test_scrollable()
+    // test_scrollable()
     // test_scrollable_row()
     // start_modal_example();
     //    start_floating_example();
+    // drag_and_drop::start_drag_and_drop_example();
+    // file_drop_zone::start_file_drop_zone_example();
     // start_markdown_example();
     // start_panic_recovery_example();
     // test_scroll_and_row();
@@ -66,6 +70,8 @@ pub fn my_app() {
     // test_text()
     // start_loading_animation_example()
     // floating::start_floating_example();
+    file_drop_zone::start_file_drop_zone_example()
+    // drag_and_drop::start_drag_and_drop_example();
 }
 
 #[allow(unused)]

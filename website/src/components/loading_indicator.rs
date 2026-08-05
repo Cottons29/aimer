@@ -60,7 +60,7 @@ pub fn build_loading_indicator(text: &'static str) -> AnyWidget {
 
     Container::new()
         .height(LOADING_ICON_SIZE * 2f32)
-        .color(Color::WHITE)
+        .color(Color::Transparent)
         .box_child(
             Column::new()
                 .horizontal_alignment(BoxAlignment::Center)

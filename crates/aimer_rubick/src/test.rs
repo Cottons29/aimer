@@ -5,11 +5,20 @@ mod tests {
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::rc::Rc;
 
-    use crate::{INLINE_ALIGNMENT, INLINE_CAPACITY, Rubick};
+    use crate::{DEFAULT_WORDS, ErasedFrom, INLINE_ALIGNMENT, INLINE_CAPACITY, Rubick};
+
+    /// A word-sized owner reference plus the payload buffer.
+    const OWNER_OVERHEAD: usize = size_of::<usize>();
 
     trait Value {
         fn value(&self) -> usize;
         fn set_value(&mut self, value: usize);
+    }
+
+    // SAFETY: The template is `null::<V>()` coerced to the target, so it
+    // carries exactly `V`'s vtable and a null data address.
+    unsafe impl<V: Value + 'static> ErasedFrom<V> for dyn Value {
+        const TEMPLATE: *const Self = std::ptr::null::<V>() as *const dyn Value;
     }
 
     #[derive(Debug)]
@@ -73,10 +82,67 @@ mod tests {
     }
 
     #[test]
-    fn fixed_layout_matches_representative_aimer_values() {
-        assert_eq!(INLINE_CAPACITY, 4 * size_of::<usize>());
-        assert_eq!(INLINE_ALIGNMENT, 16);
-        assert!(INLINE_CAPACITY / size_of::<usize>() < 8);
+    fn the_default_capacity_matches_representative_aimer_values() {
+        assert_eq!(DEFAULT_WORDS, 4);
+        assert_eq!(INLINE_CAPACITY, DEFAULT_WORDS * size_of::<usize>());
+        assert_eq!(INLINE_ALIGNMENT, align_of::<usize>());
+        assert_eq!(
+            <Rubick<dyn Value>>::INLINE_CAPACITY,
+            INLINE_CAPACITY,
+            "the default capacity must agree with the crate constant"
+        );
+    }
+
+    #[test]
+    fn owners_cost_their_payload_plus_one_word() {
+        assert_eq!(
+            size_of::<Rubick<u32>>(),
+            INLINE_CAPACITY + OWNER_OVERHEAD,
+            "no storage tag and no per-instance operation table"
+        );
+        assert_eq!(size_of::<Rubick<dyn Value>>(), INLINE_CAPACITY + OWNER_OVERHEAD);
+        assert_eq!(align_of::<Rubick<u32>>(), align_of::<usize>());
+    }
+
+    #[test]
+    fn capacity_is_selected_per_alias() {
+        assert_eq!(size_of::<Rubick<dyn Value, 1>>(), 2 * size_of::<usize>());
+        assert_eq!(size_of::<Rubick<dyn Value, 8>>(), 9 * size_of::<usize>());
+        assert_eq!(<Rubick<dyn Value, 8>>::INLINE_CAPACITY / size_of::<usize>(), 8);
+
+        let thin: Rubick<dyn Value, 1> = Rubick::erase(ExactBoundary([1; INLINE_CAPACITY]));
+        let roomy: Rubick<dyn Value, 8> = Rubick::erase(ExactBoundary([1; INLINE_CAPACITY]));
+
+        assert!(thin.is_heap(), "a thin owner never inlines a large payload");
+        assert!(roomy.is_inline(), "a roomy owner inlines the same payload");
+        assert_eq!(thin.value(), 1);
+        assert_eq!(roomy.value(), 1);
+    }
+
+    #[test]
+    fn a_roomy_owner_inlines_a_container_sized_value() {
+        struct Container {
+            fields: [usize; 8],
+        }
+
+        impl Value for Container {
+            fn value(&self) -> usize {
+                self.fields[0]
+            }
+
+            fn set_value(&mut self, value: usize) {
+                self.fields[0] = value;
+            }
+        }
+
+        let container: Rubick<dyn Value, 8> = Rubick::erase(Container { fields: [3; 8] });
+
+        assert_eq!(size_of::<Container>() / size_of::<usize>(), 8);
+        assert!(
+            container.is_inline(),
+            "eight words of capacity must hold an eight word value"
+        );
+        assert_eq!(container.value(), 3);
     }
 
     #[test]
@@ -104,13 +170,72 @@ mod tests {
         let maximally_aligned = Rubick::new(MaximallyAligned([7; INLINE_CAPACITY]));
         let over_aligned_zero_sized = Rubick::new(OverAlignedZeroSized);
 
-        assert_eq!(align_of::<MaximallyAligned>(), INLINE_ALIGNMENT);
+        assert!(align_of::<MaximallyAligned>() > INLINE_ALIGNMENT);
         assert_eq!(maximally_aligned.0[INLINE_CAPACITY - 1], 7);
-        assert!(maximally_aligned.is_inline());
+        assert!(
+            maximally_aligned.is_heap(),
+            "inline storage only guarantees word alignment"
+        );
 
         assert_eq!(size_of::<OverAlignedZeroSized>(), 0);
         assert!(align_of::<OverAlignedZeroSized>() > INLINE_ALIGNMENT);
         assert!(over_aligned_zero_sized.is_heap());
+    }
+
+    #[test]
+    fn erased_values_dispatch_without_an_adapter_inline_and_on_heap() {
+        let mut inline: Rubick<dyn Value> = Rubick::erase(ExactBoundary([3; INLINE_CAPACITY]));
+        let mut heap: Rubick<dyn Value> = Rubick::erase(Oversized([5; INLINE_CAPACITY + 1]));
+
+        inline.set_value(11);
+        heap.set_value(13);
+
+        assert!(inline.is_inline());
+        assert!(heap.is_heap());
+        assert!(inline.is_direct());
+        assert!(heap.is_direct());
+        assert_eq!(inline.value(), 11);
+        assert_eq!(heap.value(), 13);
+    }
+
+    #[test]
+    fn erasing_stores_no_adapters_alongside_the_value() {
+        let erased: Rubick<dyn Value> = Rubick::erase(ExactBoundary([0; INLINE_CAPACITY]));
+        let projected: Rubick<dyn Value> = Rubick::new_projected(
+            ExactBoundary([0; INLINE_CAPACITY]),
+            project_value,
+            project_value_mut,
+        );
+
+        assert!(
+            erased.is_inline(),
+            "a payload at the capacity boundary stays inline when erased"
+        );
+        assert!(!projected.is_direct());
+        assert!(
+            projected.is_inline(),
+            "zero sized adapters do not consume capacity"
+        );
+    }
+
+    #[test]
+    fn capturing_adapters_count_toward_inline_capacity() {
+        let flag = Rc::new(Cell::new(0_usize));
+        let projected: Rubick<dyn Value> = Rubick::new_projected(
+            ExactBoundary([0; INLINE_CAPACITY]),
+            {
+                let flag = Rc::clone(&flag);
+                move |value: &ExactBoundary| {
+                    flag.set(flag.get() + 1);
+                    value as &(dyn Value + 'static)
+                }
+            },
+            |value: &mut ExactBoundary| value as &mut (dyn Value + 'static),
+        );
+
+        assert!(projected.is_heap());
+        assert_eq!(projected.value(), 0);
+        assert_eq!(flag.get(), 1);
     }
 
     #[test]
@@ -137,11 +262,7 @@ mod tests {
 
     #[test]
     fn moves_swaps_and_collection_growth_rebuild_projection() {
-        let first: Rubick<dyn Value> = Rubick::new_projected(
-            ExactBoundary([1; INLINE_CAPACITY]),
-            project_value,
-            project_value_mut,
-        );
+        let first: Rubick<dyn Value> = Rubick::erase(ExactBoundary([1; INLINE_CAPACITY]));
         let second: Rubick<dyn Value> = Rubick::new_projected(
             Oversized([2; INLINE_CAPACITY + 1]),
             project_value,
@@ -248,6 +369,11 @@ mod tests {
 
     impl<const N: usize> DropTarget for DropValue<N> {}
 
+    // SAFETY: The template is `null::<D>()` coerced to the target.
+    unsafe impl<D: DropTarget + 'static> ErasedFrom<D> for dyn DropTarget {
+        const TEMPLATE: *const Self = std::ptr::null::<D>() as *const dyn DropTarget;
+    }
+
     fn project_drop_target<U: DropTarget + 'static>(value: &U) -> &(dyn DropTarget + 'static) {
         value
     }
@@ -302,6 +428,79 @@ mod tests {
     }
 
     #[test]
+    fn replace_destroys_the_old_value_and_installs_the_new_one() {
+        let first_drops = Rc::new(Cell::new(0));
+        let second_drops = Rc::new(Cell::new(0));
+        let mut owner: Rubick<dyn DropTarget> = Rubick::erase(DropValue::<0> {
+            drops: Rc::clone(&first_drops),
+            bytes: [],
+        });
+
+        owner.replace(DropValue::<0> {
+            drops: Rc::clone(&second_drops),
+            bytes: [],
+        });
+        assert_eq!(first_drops.get(), 1);
+        assert_eq!(second_drops.get(), 0);
+
+        drop(owner);
+        assert_eq!(second_drops.get(), 1);
+    }
+
+    #[test]
+    fn replace_reuses_a_heap_block_of_the_same_class() {
+        let drops = Rc::new(Cell::new(0));
+        let mut owner: Rubick<dyn DropTarget> = Rubick::erase(DropValue::<INLINE_CAPACITY> {
+            drops: Rc::clone(&drops),
+            bytes: [0; INLINE_CAPACITY],
+        });
+        assert!(owner.is_heap());
+        let block = (&*owner) as *const dyn DropTarget as *const u8;
+
+        owner.replace(DropValue::<INLINE_CAPACITY> {
+            drops: Rc::clone(&drops),
+            bytes: [1; INLINE_CAPACITY],
+        });
+
+        assert_eq!(drops.get(), 1);
+        assert!(owner.is_heap());
+        assert_eq!(
+            (&*owner) as *const dyn DropTarget as *const u8,
+            block,
+            "an identical layout must reuse the existing block"
+        );
+        drop(owner);
+        assert_eq!(drops.get(), 2);
+    }
+
+    #[test]
+    fn replace_switches_between_storage_modes() {
+        let drops = Rc::new(Cell::new(0));
+        let mut owner: Rubick<dyn DropTarget> = Rubick::erase(DropValue::<0> {
+            drops: Rc::clone(&drops),
+            bytes: [],
+        });
+        assert!(owner.is_inline());
+
+        owner.replace(DropValue::<INLINE_CAPACITY> {
+            drops: Rc::clone(&drops),
+            bytes: [7; INLINE_CAPACITY],
+        });
+        assert!(owner.is_heap());
+        assert_eq!(drops.get(), 1);
+
+        owner.replace(DropValue::<0> {
+            drops: Rc::clone(&drops),
+            bytes: [],
+        });
+        assert!(owner.is_inline());
+        assert_eq!(drops.get(), 2);
+
+        drop(owner);
+        assert_eq!(drops.get(), 3);
+    }
+
+    #[test]
     fn values_drop_during_panic_unwinding() {
         let inline_drops = Rc::new(Cell::new(0));
         let heap_drops = Rc::new(Cell::new(0));
@@ -334,14 +533,10 @@ mod tests {
         let mut owners = Vec::with_capacity(1);
         for index in 0..OWNER_COUNT {
             let owner: Rubick<dyn DropTarget> = if index % 2 == 0 {
-                Rubick::new_projected(
-                    DropValue::<0> {
-                        drops: Rc::clone(&drops),
-                        bytes: [],
-                    },
-                    project_drop_target,
-                    project_drop_target_mut,
-                )
+                Rubick::erase(DropValue::<0> {
+                    drops: Rc::clone(&drops),
+                    bytes: [],
+                })
             } else {
                 Rubick::new_projected(
                     DropValue::<INLINE_CAPACITY> {
@@ -370,9 +565,42 @@ mod tests {
             bytes: [],
         });
         let outer = Rubick::new(inner);
-        assert!(outer.is_heap());
+        assert!(
+            outer.is_heap(),
+            "a five word owner does not fit four words of capacity"
+        );
         drop(outer);
         assert_eq!(nested_drops.get(), 1);
+    }
+
+    #[test]
+    fn recycled_blocks_keep_distinct_live_payloads_separate() {
+        const OWNER_COUNT: usize = 512;
+
+        let mut owners: Vec<Rubick<dyn Value>> = Vec::with_capacity(OWNER_COUNT);
+        for index in 0..OWNER_COUNT {
+            let mut payload = Oversized([0; INLINE_CAPACITY + 1]);
+            payload.0[0] = index as u8;
+            owners.push(Rubick::erase(payload));
+        }
+        for (index, owner) in owners.iter().enumerate() {
+            assert_eq!(owner.value(), index as u8 as usize);
+        }
+
+        owners.truncate(OWNER_COUNT / 2);
+        for index in 0..OWNER_COUNT / 2 {
+            let mut payload = Oversized([0; INLINE_CAPACITY + 1]);
+            payload.0[0] = (index + 1) as u8;
+            owners.push(Rubick::erase(payload));
+        }
+        for (index, owner) in owners.iter().enumerate() {
+            let expected = if index < OWNER_COUNT / 2 {
+                index as u8
+            } else {
+                (index - OWNER_COUNT / 2 + 1) as u8
+            };
+            assert_eq!(owner.value(), usize::from(expected));
+        }
     }
 
     #[test]
@@ -380,8 +608,8 @@ mod tests {
         fn assert_unpin<T: Unpin>() {}
 
         assert_unpin::<Rubick<u32>>();
-        assert!(size_of::<Rubick<u32>>() >= INLINE_CAPACITY);
-        assert!(align_of::<Rubick<u32>>() >= INLINE_ALIGNMENT);
+        assert_eq!(size_of::<Rubick<u32>>(), INLINE_CAPACITY + OWNER_OVERHEAD);
+        assert_eq!(align_of::<Rubick<u32>>(), INLINE_ALIGNMENT);
     }
 
     #[test]
