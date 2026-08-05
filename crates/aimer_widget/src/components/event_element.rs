@@ -44,6 +44,43 @@ pub enum CaptureRequest {
     Release(PointerKey),
 }
 
+/// Asks the dispatcher for one extra routed pass after the current one.
+///
+/// An element that holds a pointer capture is, by construction, the only
+/// element that hears about the pointer — which is exactly wrong for a drag,
+/// where the widget being carried owns the pointer but the widget being dropped
+/// *onto* is the one that needs to know. Rather than give drag-and-drop its own
+/// hit-tester, the capturing element asks for a second pass of the ordinary
+/// routed dispatch, and the topmost element under the pointer receives a
+/// [`ElementEvent::DragOver`] or [`ElementEvent::DragDrop`].
+///
+/// The request deliberately carries no position. [`EventResult`] is `Copy + Eq`
+/// and a position is neither, and the dispatcher already holds the position it
+/// would have carried.
+///
+/// # Examples
+///
+/// ```
+/// use aimer_widget::{EventResult, FollowUp};
+///
+/// let moving = EventResult::consumed().with_follow_up(FollowUp::DragOver);
+///
+/// assert_eq!(moving.follow_up(), FollowUp::DragOver);
+/// assert_eq!(EventResult::consumed().follow_up(), FollowUp::None);
+/// ```
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FollowUp {
+    /// No extra pass. This is what every handler that knows nothing about
+    /// dragging reports, and it costs nothing.
+    #[default]
+    None,
+    /// Route one [`ElementEvent::DragOver`] at the dispatch position.
+    DragOver,
+    /// Route one [`ElementEvent::DragDrop`] at the dispatch position, then
+    /// release the capture that asked for it.
+    DragDrop,
+}
+
 /// The independent effects produced by an element event handler.
 ///
 /// Consumption controls event propagation, while redraw indicates that visual
@@ -55,6 +92,7 @@ pub struct EventResult {
     consumed: bool,
     needs_redraw: bool,
     capture_request: CaptureRequest,
+    follow_up: FollowUp,
 }
 
 impl EventResult {
@@ -65,6 +103,7 @@ impl EventResult {
             consumed: false,
             needs_redraw: false,
             capture_request: CaptureRequest::None,
+            follow_up: FollowUp::None,
         }
     }
 
@@ -125,6 +164,28 @@ impl EventResult {
         self.capture_request
     }
 
+    /// Asks the dispatcher to route one drag event after this one.
+    ///
+    /// See [`FollowUp`] for why a drag needs a second pass at all.
+    #[inline]
+    pub const fn with_follow_up(mut self, follow_up: FollowUp) -> Self {
+        self.follow_up = follow_up;
+        self
+    }
+
+    /// Returns the extra pass this result asked for.
+    #[inline]
+    pub const fn follow_up(self) -> FollowUp {
+        self.follow_up
+    }
+
+    /// Removes the follow-up request after a dispatcher has run it.
+    #[inline]
+    pub const fn without_follow_up(mut self) -> Self {
+        self.follow_up = FollowUp::None;
+        self
+    }
+
     /// Removes the ownership request after a dispatcher has applied it.
     ///
     /// Consumption and redraw are preserved so nested dispatchers can return
@@ -147,6 +208,10 @@ impl EventResult {
             capture_request: match self.capture_request {
                 CaptureRequest::None => other.capture_request,
                 request => request,
+            },
+            follow_up: match self.follow_up {
+                FollowUp::None => other.follow_up,
+                follow_up => follow_up,
             },
         }
     }

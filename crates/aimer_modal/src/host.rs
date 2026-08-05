@@ -22,6 +22,89 @@ thread_local! {
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
     static COMMANDS: RefCell<VecDeque<ModalCommand>> = const { RefCell::new(VecDeque::new()) };
     static ENTRIES: RefCell<Vec<HostedModal>> = const { RefCell::new(Vec::new()) };
+    static LAYERS: RefCell<Vec<HostedLayer>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A painter installed above every modal, receiving no events.
+///
+/// A modal is a *mode*: presenting one deliberately cancels the gestures
+/// underneath it and puts a barrier between the user and the rest of the
+/// application. Some overlays are the opposite of that — drag feedback follows
+/// a gesture that must keep running, and must never intercept the pointer it is
+/// chasing. Those install a layer instead: it paints last, above the modals,
+/// and that is all it does.
+///
+/// The painter returns whether it should stay installed, so an overlay that
+/// finishes an animation can retire itself from inside the frame that finished
+/// it.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::rc::Rc;
+///
+/// use aimer_modal::OverlayLayer;
+///
+/// // Paints for exactly one frame, then removes itself.
+/// let handle = OverlayLayer::install(Rc::new(|_ctx| false));
+/// handle.remove();
+/// ```
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OverlayLayer;
+
+/// Identifies an installed [`OverlayLayer`] so it can be taken down again.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct OverlayLayerHandle(u64);
+
+/// Paints one frame of an overlay layer, returning whether to keep it.
+pub type OverlayPainter = Rc<dyn Fn(&BuildContext) -> bool>;
+
+struct HostedLayer {
+    id: OverlayLayerHandle,
+    paint: OverlayPainter,
+}
+
+impl OverlayLayer {
+    /// Installs `paint` above every modal and returns its handle.
+    pub fn install(paint: OverlayPainter) -> OverlayLayerHandle {
+        let id = NEXT_ID.with(|next_id| {
+            let id = OverlayLayerHandle(next_id.get());
+            next_id.set(next_id.get().wrapping_add(1).max(1));
+            id
+        });
+        LAYERS.with_borrow_mut(|layers| layers.push(HostedLayer { id, paint }));
+        request_animation_frame();
+        id
+    }
+
+    /// Returns whether any layer is installed.
+    pub fn is_installed() -> bool {
+        LAYERS.with_borrow(|layers| !layers.is_empty())
+    }
+}
+
+impl OverlayLayerHandle {
+    /// Takes the layer down. Repeated calls are harmless.
+    pub fn remove(self) {
+        LAYERS.with_borrow_mut(|layers| layers.retain(|layer| layer.id != self));
+        request_animation_frame();
+    }
+}
+
+/// Paints the installed layers, dropping the ones that asked to retire.
+///
+/// The list is taken out of the slot for the duration of the walk, so a painter
+/// is free to install or remove a layer while it runs.
+fn draw_layers(ctx: &BuildContext) {
+    let mut layers = LAYERS.with_borrow_mut(std::mem::take);
+    if layers.is_empty() {
+        return;
+    }
+    layers.retain(|layer| (layer.paint)(ctx));
+    LAYERS.with_borrow_mut(|installed| {
+        layers.append(installed);
+        *installed = layers;
+    });
 }
 
 /// Stable identity assigned to a presented modal.
@@ -208,6 +291,7 @@ impl RawModalOverlay {
                 retain
             });
         });
+        draw_layers(ctx);
     }
 }
 
@@ -515,6 +599,7 @@ fn enqueue(command: ModalCommand) {
 fn clear_registry() {
     COMMANDS.with(|commands| commands.borrow_mut().clear());
     ENTRIES.with(|entries| entries.borrow_mut().clear());
+    LAYERS.with(|layers| layers.borrow_mut().clear());
 }
 
 pub(crate) fn show(animation: Option<ModalAnimation>, build: EntryBuilder) -> ModalHandle {

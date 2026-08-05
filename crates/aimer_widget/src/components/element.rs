@@ -6,11 +6,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
+use aimer_rubick::ErasedFrom;
 use smallvec::SmallVec;
 use hashbrown::{HashMap, HashSet};
 
 use crate::base::*;
-use crate::components::event_element::{CaptureRequest, EventElement, EventResult, PointerKey};
+use crate::components::event_element::{
+    CaptureRequest, EventElement, EventResult, FollowUp, PointerKey,
+};
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
@@ -93,25 +96,17 @@ pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable +
     where
         Self: Sized + 'static,
     {
-        AnyElement::new_projected(
-            ElementNode {
-                id: Cell::new(ElementId::next()),
-                element: self,
-            },
-            project_element,
-            project_element_mut,
-        )
+        AnyElement::erase(ElementNode {
+            id: Cell::new(ElementId::next()),
+            element: self,
+        })
     }
 }
 
-fn project_element<E: Element + 'static>(value: &ElementNode<E>) -> &(dyn Element + 'static) {
-    value
-}
-
-fn project_element_mut<E: Element + 'static>(
-    value: &mut ElementNode<E>,
-) -> &mut (dyn Element + 'static) {
-    value
+// SAFETY: The template is `null::<ElementNode<E>>()` coerced to the target, so
+// it carries exactly that node's vtable and a null data address.
+unsafe impl<E: Element + 'static> ErasedFrom<ElementNode<E>> for dyn Element {
+    const TEMPLATE: *const Self = std::ptr::null::<ElementNode<E>>() as *const dyn Element;
 }
 
 impl<E: Element + 'static> VisitorElement for ElementNode<E> {
@@ -492,7 +487,12 @@ fn structural_children(element: &dyn Element) -> SmallVec<[&dyn Element; 8]> {
     children
 }
 
-fn identities_are_compatible(old: &dyn Element, new: &dyn Element) -> bool {
+/// Whether two elements describe the same widget in the same role.
+///
+/// Same concrete element type, same debug name and the same reconciliation key —
+/// two keyed elements match only on equal keys, and a keyed one never matches an
+/// unkeyed one.
+pub(crate) fn identities_are_compatible(old: &dyn Element, new: &dyn Element) -> bool {
     if old.element_type_id() != new.element_type_id() || old.debug_name() != new.debug_name() {
         return false;
     }
@@ -630,15 +630,65 @@ impl EventDispatcher {
             return dispatch_focused_event(root, event).without_capture_request();
         }
 
-        if routes_to_capture && let Some(pointer) = pointer {
-            if was_captured {
-                return self.dispatch_captured(root, pointer, event);
-            }
+        if routes_to_capture
+            && was_captured
+            && let Some(pointer) = pointer
+        {
+            let result = self.dispatch_captured(root, pointer, event);
+            return self.run_follow_up(root, pos, pointer, result);
         }
 
         let outcome = dispatch_routed_event(root, pos, event);
         self.apply_capture_request(outcome.result.capture_request(), outcome.capture_owner);
-        outcome.result.without_capture_request()
+        let result = outcome.result.without_capture_request();
+        match pointer {
+            Some(pointer) => self.run_follow_up(root, pos, pointer, result),
+            None => result.without_follow_up(),
+        }
+    }
+
+    /// Runs the extra routed pass a handler asked for, if it asked for one.
+    ///
+    /// This is the whole of drag routing: the element carrying the drag owns the
+    /// pointer and therefore hears about it alone, so it asks for one more
+    /// ordinary hit-tested dispatch at the position already in hand, and the
+    /// topmost element under the pointer receives the drag event. Nothing
+    /// happens — no traversal, no allocation — unless a handler asked, so an
+    /// application that never drags pays only the cost of reading one field.
+    ///
+    /// A [`FollowUp::DragDrop`] ends the drag, so the capture that asked for it
+    /// is released once the drop has been delivered.
+    fn run_follow_up(
+        &mut self,
+        root: &dyn Element,
+        pos: Vec2d,
+        pointer: PointerKey,
+        result: EventResult,
+    ) -> EventResult {
+        let follow_up = result.follow_up();
+        let follow_up_event = match follow_up {
+            FollowUp::None => return result,
+            FollowUp::DragOver => ElementEvent::DragOver {
+                pos,
+                source: pointer.source,
+                id: pointer.id,
+            },
+            FollowUp::DragDrop => ElementEvent::DragDrop {
+                pos,
+                source: pointer.source,
+                id: pointer.id,
+            },
+        };
+
+        let outcome = dispatch_routed_event(root, pos, &follow_up_event);
+        if matches!(follow_up, FollowUp::DragDrop) {
+            self.captures.remove(&pointer);
+        }
+
+        result
+            .merge(outcome.result)
+            .without_capture_request()
+            .without_follow_up()
     }
 
     /// Returns the element currently owning `pointer`, if any.
@@ -1311,6 +1361,231 @@ mod tests {
         );
 
         ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| assert_eq!(count.get(), 1));
+    }
+
+    /// An element that carries a drag: it takes the pointer on press and then
+    /// asks for the drag to be routed to whoever is underneath.
+    struct DragCarrier {
+        bounds: (Vec2d, Vec2d),
+        follows_up: bool,
+    }
+
+    impl VisitorElement for DragCarrier {
+        fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
+
+        fn debug_name(&self) -> &'static str {
+            "DragCarrier"
+        }
+    }
+
+    impl EventElement for DragCarrier {
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            match event {
+                ElementEvent::PointerDown(_, source, id) => {
+                    EventResult::consumed().with_pointer_capture(PointerKey::new(*source, *id))
+                }
+                ElementEvent::PointerMove(_, _, _) if self.follows_up => {
+                    EventResult::consumed().with_follow_up(FollowUp::DragOver)
+                }
+                ElementEvent::PointerUp(_, _, _) if self.follows_up => {
+                    EventResult::consumed().with_follow_up(FollowUp::DragDrop)
+                }
+                _ => EventResult::consumed(),
+            }
+        }
+    }
+
+    impl LayoutElement for DragCarrier {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(self.bounds)
+        }
+    }
+
+    impl Drawable for DragCarrier {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for DragCarrier {}
+
+    /// An element that counts the drags routed onto it.
+    struct DragReceiver {
+        bounds: (Vec2d, Vec2d),
+        overs: Rc<Cell<usize>>,
+        drops: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for DragReceiver {
+        fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
+
+        fn debug_name(&self) -> &'static str {
+            "DragReceiver"
+        }
+    }
+
+    impl EventElement for DragReceiver {
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            match event {
+                ElementEvent::DragOver { .. } => {
+                    self.overs.set(self.overs.get() + 1);
+                    EventResult::consumed()
+                }
+                ElementEvent::DragDrop { .. } => {
+                    self.drops.set(self.drops.get() + 1);
+                    EventResult::consumed()
+                }
+                _ => EventResult::ignored(),
+            }
+        }
+    }
+
+    impl LayoutElement for DragReceiver {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(self.bounds)
+        }
+    }
+
+    impl Drawable for DragReceiver {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for DragReceiver {}
+
+    /// A carrier on the left, a receiver on the right, side by side and not
+    /// overlapping — the shape of a card being dragged out of one column and
+    /// onto another.
+    fn drag_tree(
+        follows_up: bool,
+        overs: Rc<Cell<usize>>,
+        drops: Rc<Cell<usize>>,
+    ) -> (AnyElement, Vec2d, Vec2d) {
+        let carrier = DragCarrier {
+            bounds: (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
+            follows_up,
+        }
+        .boxed();
+        let receiver = DragReceiver {
+            bounds: (Vec2d { x: 20.0, y: 0.0 }, Vec2d { x: 30.0, y: 10.0 }),
+            overs,
+            drops,
+        }
+        .boxed();
+        let root = RoutedIdentityBranch(vec![carrier, receiver]).boxed();
+
+        (
+            root,
+            Vec2d { x: 5.0, y: 5.0 },
+            Vec2d { x: 25.0, y: 5.0 },
+        )
+    }
+
+    /// A parent that is transparent to hit testing: it has no bounds of its own
+    /// and does not consume, so a routed pass reaches both of its children.
+    struct RoutedIdentityBranch(Vec<AnyElement>);
+
+    impl VisitorElement for RoutedIdentityBranch {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for child in &self.0 {
+                visitor(child.as_ref());
+            }
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "RoutedIdentityBranch"
+        }
+    }
+
+    impl EventElement for RoutedIdentityBranch {}
+
+    impl LayoutElement for RoutedIdentityBranch {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            None
+        }
+    }
+
+    impl Drawable for RoutedIdentityBranch {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for RoutedIdentityBranch {}
+
+    /// The element carrying a drag owns the pointer, so it is the only element
+    /// that hears the move — which is exactly why the drag has to be routed
+    /// separately to whoever is underneath.
+    #[test]
+    fn a_captured_drag_reaches_the_element_under_the_pointer() {
+        let overs = Rc::new(Cell::new(0));
+        let drops = Rc::new(Cell::new(0));
+        let (root, source, over_receiver) = drag_tree(true, overs.clone(), drops.clone());
+        let mut dispatcher = EventDispatcher::new();
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            source,
+            &ElementEvent::PointerDown(source, PointerSource::Mouse, 0),
+        );
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            over_receiver,
+            &ElementEvent::PointerMove(over_receiver, PointerSource::Mouse, 0),
+        );
+
+        assert_eq!(overs.get(), 1, "the receiver was not told about the drag");
+        assert_eq!(drops.get(), 0);
+    }
+
+    /// A drop is the end of the drag: it is delivered once, and the pointer
+    /// goes back to routing normally.
+    #[test]
+    fn a_drop_is_delivered_once_and_releases_the_capture() {
+        let overs = Rc::new(Cell::new(0));
+        let drops = Rc::new(Cell::new(0));
+        let (root, source, over_receiver) = drag_tree(true, overs.clone(), drops.clone());
+        let pointer = PointerKey::new(PointerSource::Mouse, 0);
+        let mut dispatcher = EventDispatcher::new();
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            source,
+            &ElementEvent::PointerDown(source, PointerSource::Mouse, 0),
+        );
+        assert!(dispatcher.is_captured(pointer));
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            over_receiver,
+            &ElementEvent::PointerUp(over_receiver, PointerSource::Mouse, 0),
+        );
+
+        assert_eq!(drops.get(), 1);
+        assert!(!dispatcher.is_captured(pointer));
+    }
+
+    /// The cost of drag support for an application that never drags: a captured
+    /// move that asks for nothing traverses nothing.
+    #[test]
+    fn a_capture_that_asks_for_no_follow_up_traverses_nothing() {
+        let overs = Rc::new(Cell::new(0));
+        let drops = Rc::new(Cell::new(0));
+        let (root, source, over_receiver) = drag_tree(false, overs.clone(), drops.clone());
+        let mut dispatcher = EventDispatcher::new();
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            source,
+            &ElementEvent::PointerDown(source, PointerSource::Mouse, 0),
+        );
+        ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| count.set(0));
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            over_receiver,
+            &ElementEvent::PointerMove(over_receiver, PointerSource::Mouse, 0),
+        );
+
+        ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| {
+            assert_eq!(count.get(), 0, "an idle pointer walked the tree anyway")
+        });
+        assert_eq!(overs.get(), 0);
     }
 
     #[test]

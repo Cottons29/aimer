@@ -4,9 +4,20 @@ use crate::callback::VoidParamedFunction;
 pub mod gesture_detector;
 
 pub(crate) const DOUBLE_TAP_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
-pub(crate) const LONG_PRESS_DURATION: std::time::Duration = std::time::Duration::from_millis(500);
+/// How long a pointer must rest before a press becomes a long press.
+///
+/// Public so that gestures built outside this crate — a drag that only starts
+/// after a long press, so an enclosing scrollable keeps working on touch — agree
+/// with the recognizers here instead of inventing a second threshold.
+pub const LONG_PRESS_DURATION: std::time::Duration = std::time::Duration::from_millis(500);
 
-pub(crate) const TAP_SLOP: f32 = 18.0;
+/// How far a pointer may travel and still count as a tap rather than a drag,
+/// in logical pixels.
+///
+/// Public for the same reason as [`LONG_PRESS_DURATION`]: a drag recognized
+/// elsewhere must begin exactly where a tap stops being a tap, or the two
+/// disagree about what the user did.
+pub const TAP_SLOP: f32 = 18.0;
 pub(crate) const SWIPE_VELOCITY_THRESHOLD: f32 = 300.0; // px/sec
 pub(crate) const SWIPE_MAX_DURATION_MS: u64 = 500;
 

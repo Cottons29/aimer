@@ -11,6 +11,7 @@ use aimer_events::window::request_animation_frame;
 use aimer_utils::error;
 
 use crate::base::*;
+use crate::components::element::identities_are_compatible;
 use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
 use crate::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
@@ -868,6 +869,7 @@ fn carry_keyed_child_state_in_context(
                 >= new_stateful.state_revision.borrow().get()
         {
             new_stateful.adopt_state_from(old_stateful, ctx);
+            carry_state_below_keyed(old_stateful, new_stateful, ctx);
         }
         return;
     }
@@ -875,6 +877,72 @@ fn carry_keyed_child_state_in_context(
     for child in element_children(new) {
         carry_keyed_child_state(old_root, child, ctx);
     }
+}
+
+/// Hands the subtree below a keyed stateful element over to the element that
+/// replaced it.
+///
+/// A keyed element keeps its own state wherever it reappears — it is looked up
+/// by key, not by position — but the subtree it rebuilds from that state is
+/// constructed anew, and everything below it is ordinary unkeyed state: a
+/// request an `AsyncBuilder` already completed, a scroll offset, an animation
+/// halfway through. Without this hand-over all of it starts over whenever an
+/// ancestor rebuilds, which for a route transition wrapping a page means every
+/// tick of an unrelated animation above it.
+///
+/// Unlike the walk below an unkeyed element, this one cannot assume the two
+/// subtrees line up. A keyed element deliberately outlives changes to what it
+/// contains — one route transition keeps its identity while the page inside it
+/// is replaced — so a pair is only descended into once both sides agree on what
+/// they are. Everything else keeps the state it was built with, which is how a
+/// navigation still gets its new page.
+fn carry_state_below_keyed(old: &StatefulElement, new: &StatefulElement, ctx: &BuildContext) {
+    if std::ptr::eq(old, new) {
+        return;
+    }
+
+    carry_matching_child_state(old, new, ctx);
+}
+
+/// Pairs the children of `old` and `new` by position and hands over the state of
+/// every pair that describes the same widget.
+fn carry_matching_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    let old_children = element_children(old);
+    if old_children.is_empty() {
+        return;
+    }
+
+    let new_children = element_children(new);
+    for (old_child, new_child) in old_children.iter().zip(new_children.iter()) {
+        if !identities_are_compatible(*old_child, *new_child) {
+            continue;
+        }
+
+        carry_matching_state(*old_child, *new_child, ctx);
+    }
+}
+
+/// Hands one compatible pair over, then continues into their children.
+fn carry_matching_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    new.with_rebuild_context(ctx, &mut |ctx| {
+        adopt_runtime_state(old, new);
+
+        if old.is_stateful_element()
+            && new.is_stateful_element()
+            && let Some(new_stateful) = new
+                .option_any()
+                .and_then(|value| value.downcast_ref::<StatefulElement>())
+        {
+            // A keyed element is the keyed pass's business, not this walk's.
+            if new_stateful.key.is_some() {
+                return;
+            }
+
+            carry_stateful(old, new, ctx);
+        }
+
+        carry_matching_child_state(old, new, ctx);
+    });
 }
 
 /// Lets `new` take over the runtime state `old` was holding beside its children.
@@ -1255,7 +1323,7 @@ mod tests {
     use aimer_events::pointer::PointerSource;
 
     use super::*;
-    use crate::EventDispatcher;
+    use crate::{EventDispatcher, StatelessElement};
 
     #[cfg(not(target_arch = "wasm32"))]
     fn dummy_async_handle() -> tokio::runtime::Handle {
@@ -1304,6 +1372,126 @@ mod tests {
     impl LayoutElement for TestLeaf {}
     impl EventElement for TestLeaf {}
     impl Rebuildable for TestLeaf {}
+
+    /// An unkeyed stateful widget that records which of its states built the
+    /// subtree that is live.
+    ///
+    /// Each state takes the next identity from `next_id`, so a state created by
+    /// a rebuild is distinguishable from the one it was meant to replace.
+    #[derive(Clone)]
+    struct InnerProbe {
+        next_id: Rc<Cell<usize>>,
+        built_by: Rc<Cell<usize>>,
+    }
+
+    struct InnerProbeState {
+        id: usize,
+        built_by: Rc<Cell<usize>>,
+    }
+
+    impl StatefulWidget for InnerProbe {
+        type State = InnerProbeState;
+
+        fn create_state(&self) -> Self::State {
+            let id = self.next_id.get();
+            self.next_id.set(id + 1);
+            InnerProbeState {
+                id,
+                built_by: self.built_by.clone(),
+            }
+        }
+    }
+
+    impl State<InnerProbe> for InnerProbeState {
+        fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            self.built_by.set(self.id);
+            LeafProbe
+        }
+    }
+
+    impl Widget for InnerProbe {
+        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+            StatefulElement::from_widget(self, ctx, "InnerProbe", None)
+        }
+    }
+
+    struct LeafProbe;
+
+    impl Widget for LeafProbe {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            TestLeaf.boxed()
+        }
+    }
+
+    /// One of two interchangeable "pages" below the keyed element, distinguished
+    /// only by the name it builds under — the shape a route's pages have.
+    #[derive(Clone)]
+    struct ProbePage {
+        name: &'static str,
+        inner: InnerProbe,
+    }
+
+    impl Widget for ProbePage {
+        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+            let inner = self.inner.clone();
+            StatelessElement::from_builder(
+                ctx,
+                move |ctx| inner.to_element(ctx),
+                None,
+                self.name,
+            )
+            .boxed()
+        }
+
+        fn debug_name(&self) -> &'static str {
+            self.name
+        }
+    }
+
+    /// A keyed stateful widget standing where a route transition stands: it
+    /// keeps its own state by key, and everything below it does not.
+    struct KeyedOuter {
+        page: ProbePage,
+    }
+
+    struct KeyedOuterState {
+        page: ProbePage,
+    }
+
+    impl StatefulWidget for KeyedOuter {
+        type State = KeyedOuterState;
+
+        fn create_state(&self) -> Self::State {
+            KeyedOuterState {
+                page: self.page.clone(),
+            }
+        }
+    }
+
+    impl State<KeyedOuter> for KeyedOuterState {
+        fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+
+        fn adopt_config_from(&mut self, new: &Self) {
+            self.page = new.page.clone();
+        }
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            self.page.clone()
+        }
+    }
+
+    impl Widget for KeyedOuter {
+        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+            StatefulElement::from_widget(
+                self,
+                ctx,
+                "KeyedOuter",
+                Some(crate::key::Key::from("keyed-outer")),
+            )
+        }
+    }
 
     struct EventProbeWidget {
         events: Rc<Cell<usize>>,
@@ -1726,6 +1914,88 @@ mod tests {
         assert_eq!(queue.drain_into(&mut state, || {}), 3);
         assert_eq!(state, vec![1, 2, 3]);
         assert_eq!(queue.drain_into(&mut state, || {}), 0);
+    }
+
+    /// A keyed element is found by key, so it keeps its state wherever it
+    /// reappears — but the subtree it rebuilds from that state is built anew,
+    /// and what lives below it is unkeyed.
+    ///
+    /// This is the route transition an application wraps every page in: a theme
+    /// change rebuilds the shell above it, and the request the page completed —
+    /// an `AsyncBuilder`'s snapshot — must not start over because the switcher
+    /// between them was rebuilt.
+    #[test]
+    fn state_below_a_keyed_element_outlives_a_rebuild_of_its_ancestor() {
+        let context = dummy_build_context();
+        let built_by = Rc::new(Cell::new(usize::MAX));
+        let page = ProbePage {
+            name: "ProbePageOne",
+            inner: InnerProbe {
+                next_id: Rc::new(Cell::new(0)),
+                built_by: built_by.clone(),
+            },
+        };
+
+        let old = KeyedOuter { page: page.clone() }.to_element(&context);
+        assert_eq!(built_by.get(), 0, "the first subtree builds from its state");
+
+        let new = KeyedOuter { page: page.clone() }.to_element(&context);
+        assert_eq!(built_by.get(), 1, "a fresh subtree builds from fresh state");
+
+        carry_child_state(old.as_ref(), new.as_ref(), &context);
+
+        assert_eq!(
+            built_by.get(),
+            0,
+            "the state below the keyed element was replaced by a fresh one"
+        );
+    }
+
+    /// The other half of the same rule: a keyed element outlives changes to what
+    /// it contains, so what it contains must be free to change.
+    ///
+    /// One route transition keeps its identity across every route. When the page
+    /// inside it is replaced, the outgoing page's state must stay with the
+    /// outgoing page — handing it to the page that replaced it would render the
+    /// route that was navigated away from.
+    #[test]
+    fn a_replaced_page_below_a_keyed_element_keeps_its_own_state() {
+        let context = dummy_build_context();
+        let built_by = Rc::new(Cell::new(usize::MAX));
+        let next_id = Rc::new(Cell::new(0));
+
+        let old = KeyedOuter {
+            page: ProbePage {
+                name: "ProbePageOne",
+                inner: InnerProbe {
+                    next_id: next_id.clone(),
+                    built_by: built_by.clone(),
+                },
+            },
+        }
+        .to_element(&context);
+        assert_eq!(built_by.get(), 0);
+
+        let new = KeyedOuter {
+            page: ProbePage {
+                name: "ProbePageTwo",
+                inner: InnerProbe {
+                    next_id: next_id.clone(),
+                    built_by: built_by.clone(),
+                },
+            },
+        }
+        .to_element(&context);
+        let page_two_state = built_by.get();
+        assert_ne!(page_two_state, 0, "the second page builds from its own state");
+
+        carry_child_state(old.as_ref(), new.as_ref(), &context);
+
+        assert_ne!(
+            built_by.get(),
+            0,
+            "the replaced page's state was handed to the page that replaced it"
+        );
     }
 
     #[test]

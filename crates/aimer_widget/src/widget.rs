@@ -30,7 +30,7 @@ pub trait Widget {
     where
         Self: Sized + 'static,
     {
-        AnyWidget::new_projected(self, project_widget, project_widget_mut)
+        AnyWidget::erase(self)
     }
 
     /// Returns the text content if this is a text widget.
@@ -40,12 +40,10 @@ pub trait Widget {
     }
 }
 
-fn project_widget<W: Widget + 'static>(value: &W) -> &(dyn Widget + 'static) {
-    value
-}
-
-fn project_widget_mut<W: Widget + 'static>(value: &mut W) -> &mut (dyn Widget + 'static) {
-    value
+// SAFETY: The template is `null::<W>()` coerced to the target, so it carries
+// exactly `W`'s vtable and a null data address.
+unsafe impl<W: Widget + 'static> aimer_rubick::ErasedFrom<W> for dyn Widget {
+    const TEMPLATE: *const Self = std::ptr::null::<W>() as *const dyn Widget;
 }
 
 impl Widget for AnyWidget {
@@ -63,6 +61,20 @@ impl Widget for AnyWidget {
 
     fn text_content(&self) -> Option<&str> {
         self.as_ref().text_content()
+    }
+
+    /// Returns this owner unchanged.
+    ///
+    /// An [`AnyWidget`] is already erased, so wrapping it again would store an
+    /// owner inside an owner: one extra indirection on every borrow and, since
+    /// the inner owner is larger than the inline capacity, one guaranteed
+    /// allocation per rebuild.
+    #[inline]
+    fn boxed(self) -> AnyWidget
+    where
+        Self: Sized + 'static,
+    {
+        self
     }
 }
 
@@ -154,9 +166,10 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use aimer_rubick::INLINE_CAPACITY;
-
     use super::*;
+
+    /// Payload bytes an [`AnyWidget`] holds without allocating.
+    const WIDGET_CAPACITY: usize = AnyWidget::INLINE_CAPACITY;
 
     struct StorageWidget<const N: usize>([u8; N]);
 
@@ -173,7 +186,7 @@ mod tests {
     #[test]
     fn erased_widgets_select_inline_or_heap_storage_and_dispatch_after_moves() {
         let inline = StorageWidget([]).boxed();
-        let heap = StorageWidget([0; INLINE_CAPACITY + 1]).boxed();
+        let heap = StorageWidget([0; WIDGET_CAPACITY + 1]).boxed();
 
         assert!(inline.is_inline());
         assert!(heap.is_heap());
@@ -181,6 +194,52 @@ mod tests {
         let owners = std::hint::black_box([inline, heap]);
         assert_eq!(owners[0].debug_name(), "StorageWidget");
         assert_eq!(owners[1].debug_name(), "StorageWidget");
+    }
+
+    #[test]
+    fn an_erased_widget_costs_its_capacity_plus_one_word() {
+        assert_eq!(WIDGET_CAPACITY / size_of::<usize>(), 8);
+        assert_eq!(size_of::<AnyWidget>(), 9 * size_of::<usize>());
+        assert_eq!(size_of::<AnyElement>(), 2 * size_of::<usize>());
+    }
+
+    #[test]
+    fn container_sized_widgets_are_erased_without_allocating() {
+        let container = StorageWidget([0; WIDGET_CAPACITY]).boxed();
+
+        assert!(
+            container.is_inline(),
+            "a container sized widget must fit the erased owner"
+        );
+        assert!(
+            container.is_direct(),
+            "erasing must not store projection adapters"
+        );
+    }
+
+    #[test]
+    fn erasing_an_already_erased_widget_returns_the_same_owner() {
+        let inline = StorageWidget([0; WIDGET_CAPACITY]).boxed();
+        let inline = inline.boxed();
+
+        assert!(
+            inline.is_inline(),
+            "re-erasing must not wrap the owner in another owner"
+        );
+        assert_eq!(inline.debug_name(), "StorageWidget");
+
+        // A heap payload keeps its allocation across owner moves, so its
+        // address proves that no second erasure took place.
+        let heap = StorageWidget([0; WIDGET_CAPACITY + 1]).boxed();
+        let address = heap.as_ref() as *const dyn Widget as *const u8;
+        let heap = heap.boxed();
+
+        assert!(heap.is_heap());
+        assert_eq!(
+            heap.as_ref() as *const dyn Widget as *const u8,
+            address,
+            "the payload must not be re-erased into a new allocation"
+        );
     }
 
     struct DroppingWidget<const N: usize> {
@@ -211,7 +270,7 @@ mod tests {
             .boxed();
             let heap = DroppingWidget {
                 drops: Rc::clone(&drops),
-                _bytes: [0; INLINE_CAPACITY],
+                _bytes: [0; WIDGET_CAPACITY],
             }
             .boxed();
 

@@ -9,7 +9,10 @@ mod placement;
 pub use anchor::{Anchor, AnchorHandle};
 pub use animation::ModalAnimation;
 pub use floating::Floating;
-pub use host::{ModalController, ModalHandle, ModalHost, ModalId};
+pub use host::{
+    ModalController, ModalHandle, ModalHost, ModalId, OverlayLayer, OverlayLayerHandle,
+    OverlayPainter,
+};
 pub use modal::Modal;
 pub use placement::{
     FloatingAlign, FloatingPlacement, FloatingSide, OverflowPolicy, PlacementSpec,

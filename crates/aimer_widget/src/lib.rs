@@ -20,26 +20,33 @@ pub mod window_metrics;
 /// ```
 pub struct RequiredChild;
 
-/// An owned, type-erased [`Element`] with inline storage and heap fallback.
+/// An owned, type-erased [`Element`], stored as a thin two-word owner.
 ///
-/// `AnyElement` embeds a concrete element directly when its size and alignment
-/// fit [`aimer_rubick::Rubick`]'s inline capacity. Larger or over-aligned
-/// elements use one heap allocation. Borrowing through `Deref` or `AsRef`
-/// provides a `dyn Element` view with normal dynamic dispatch.
+/// Elements are the retained side of the tree and are large: the smallest
+/// documented layout is well over a hundred bytes, so no realistic inline
+/// capacity would ever avoid their allocation. `AnyElement` therefore asks
+/// [`aimer_rubick::Rubick`] for the minimum capacity of one word, which is
+/// exactly the heap pointer. The owner costs two words instead of carrying an
+/// inline buffer that could never be used, which matters because the retained
+/// tree holds one owner per node for the lifetime of the application.
 ///
-/// Moving an inline owner also moves its concrete element, so the element's
-/// address is not stable. Use Rust pinning when an element requires a stable
-/// address. The name of [`Element::boxed`] is retained for source familiarity;
-/// that method returns this owner and does not necessarily allocate.
-pub type AnyElement = aimer_rubick::Rubick<dyn Element>;
+/// Borrowing through `Deref` or `AsRef` provides a `dyn Element` view with
+/// normal dynamic dispatch and no adapter call. The name of [`Element::boxed`]
+/// is retained for source familiarity.
+pub type AnyElement = aimer_rubick::Rubick<dyn Element, 1>;
 
 /// An owned, type-erased [`Widget`] with inline storage and heap fallback.
 ///
-/// Small, sufficiently aligned widgets are embedded in the owner without an
-/// additional allocation. Larger or over-aligned widgets transparently use one
-/// heap allocation. `Deref` and `AsRef` expose the stored widget as
-/// `dyn Widget`, and [`aimer_rubick::Rubick::is_inline`] and
-/// [`aimer_rubick::Rubick::is_heap`] report the selected mode.
+/// Widgets are the throwaway side of the tree: they are rebuilt every frame
+/// and are small, so avoiding their allocation is worth spending owner bytes
+/// on. `AnyWidget` reserves eight words of inline capacity, which covers the
+/// common containers — a `Row` or `Column` is eight words — and leaves the
+/// owner itself at nine words. Larger or over-aligned widgets transparently
+/// take one pooled heap block.
+///
+/// `Deref` and `AsRef` expose the stored widget as `dyn Widget`, and
+/// [`aimer_rubick::Rubick::is_inline`] and [`aimer_rubick::Rubick::is_heap`]
+/// report the selected mode.
 ///
 /// Moving an inline `AnyWidget` changes the address of its concrete widget. The
 /// owner does not provide implicit unsizing or a stable-address guarantee;
@@ -60,7 +67,7 @@ pub type AnyElement = aimer_rubick::Rubick<dyn Element>;
 /// let widget = Badge.boxed();
 /// assert!(widget.is_inline());
 /// ```
-pub type AnyWidget = aimer_rubick::Rubick<dyn Widget>;
+pub type AnyWidget = aimer_rubick::Rubick<dyn Widget, 8>;
 
 // #[cfg(debug_assertions)]
 pub mod inspector_overlay {
@@ -87,7 +94,9 @@ pub use crate::components::drawable::Drawable;
 pub use crate::components::element::{
     Element, ElementId, ElementPath, EventDispatcher, element_tree_generation,
 };
-pub use crate::components::event_element::{CaptureRequest, EventElement, EventResult, PointerKey};
+pub use crate::components::event_element::{
+    CaptureRequest, EventElement, EventResult, FollowUp, PointerKey,
+};
 pub use crate::components::layout_element::LayoutElement;
 pub use crate::components::rebuildable::Rebuildable;
 pub use crate::components::visitor_element::VisitorElement;
