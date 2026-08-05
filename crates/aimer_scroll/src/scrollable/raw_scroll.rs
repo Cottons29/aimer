@@ -5,15 +5,13 @@ use aimer_attribute::CacheBounds;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_macro::Rebuildable;
 use aimer_widget::base::*;
-use aimer_widget::{Element, EventDispatcher};
+use aimer_widget::{Element, EventDispatcher, Rebuildable};
 
 pub use crate::scrollable::controller::DragMode;
 use crate::scrollable::controller::ScrollState;
 use crate::scrollable::scroll_bar::ScrollBar;
 
-#[derive(Rebuildable)]
 pub struct RawScrollableContainer<E: Element> {
     pub(crate) child: E,
     /// The live scroll engine. Held behind an `Rc` so an app-supplied
@@ -24,6 +22,44 @@ pub struct RawScrollableContainer<E: Element> {
     pub(crate) horizontal_scroll_bar: Option<ScrollBar>,
     pub(crate) bounds: CacheBounds,
     pub(crate) event_dispatcher: RefCell<EventDispatcher>,
+}
+
+impl<E: Element + 'static> Rebuildable for RawScrollableContainer<E> {
+    #[inline]
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    /// Claims the pointer the element being replaced was routing.
+    ///
+    /// This container dispatches to its child itself, so the capture a pressed
+    /// child took lives in the dispatcher *beside* the children rather than in
+    /// them — precisely the state reconciliation's positional walk cannot reach.
+    /// A press that rebuilds the subtree while the pointer is still down — a
+    /// button in the list darkening under the finger — would leave the
+    /// replacement owning nothing, and
+    /// [`child_route_allowed`](crate::scrollable::handle_scroll) gates child
+    /// routing on exactly that capture: the release would be dismissed as
+    /// landing outside the viewport and the captured child would be stranded
+    /// mid-gesture, never hearing the pointer lift.
+    ///
+    /// The dispatcher is *moved* out of `old`, which reconciliation drops
+    /// immediately afterwards. Two containers both believing they own the
+    /// pointer would deliver every remaining event twice. It names the old
+    /// subtree's identities, and those identities are transferred onto the new
+    /// elements in the pass that follows this one, so the carried capture
+    /// resolves once reconciliation completes.
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        let Some(old) = old
+            .option_any()
+            .and_then(|value| value.downcast_ref::<Self>())
+        else {
+            return;
+        };
+
+        *self.event_dispatcher.borrow_mut() =
+            std::mem::take(&mut *old.event_dispatcher.borrow_mut());
+    }
 }
 
 impl<E: Element> RawScrollableContainer<E> {
@@ -280,5 +316,109 @@ impl<E: Element> RawScrollableContainer<E> {
         );
 
         ctx.canvas.restore();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use aimer_events::element::ElementEvent;
+    use aimer_events::pointer::{PointerInfo, PointerSource};
+    use aimer_widget::{
+        AnyElement, CaptureRequest, Drawable, EventElement, EventResult, LayoutElement, PointerKey,
+        VisitorElement,
+    };
+
+    use super::*;
+
+    struct CapturingChild {
+        events: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for CapturingChild {
+        fn debug_name(&self) -> &'static str {
+            "CapturingChild"
+        }
+    }
+
+    impl EventElement for CapturingChild {
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            self.events.set(self.events.get() + 1);
+            match event {
+                ElementEvent::PointerDown(pointer) => EventResult::consumed()
+                    .with_pointer_capture(PointerKey::new(pointer.source, pointer.id)),
+                ElementEvent::PointerUp(pointer) => EventResult::consumed()
+                    .with_pointer_release(PointerKey::new(pointer.source, pointer.id)),
+                _ => EventResult::consumed(),
+            }
+        }
+    }
+
+    impl LayoutElement for CapturingChild {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some((Vec2d::default(), Vec2d { x: 100.0, y: 100.0 }))
+        }
+    }
+
+    impl Drawable for CapturingChild {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for CapturingChild {}
+
+    /// A container laid out over the top-left 100x100 corner, wrapping a child
+    /// that captures the pointer it is pressed with. Both elements of a rebuild
+    /// share `ctrl`, exactly as the live scroll engine is shared across one.
+    fn capturing_scrollable(
+        events: Rc<Cell<usize>>,
+        ctrl: Rc<ScrollState>,
+    ) -> RawScrollableContainer<AnyElement> {
+        let bounds = CacheBounds::new();
+        bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+
+        RawScrollableContainer {
+            child: CapturingChild { events }.boxed(),
+            ctrl,
+            vertical_scroll_bar: None,
+            horizontal_scroll_bar: None,
+            bounds,
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+        }
+    }
+
+    // A rebuild triggered by the press itself — a `Button` inside the list
+    // darkening under the finger — replaces this container. The capture the child
+    // took lives in the dispatcher beside the children rather than in them, so
+    // the positional walk cannot reach it: without the hand-over,
+    // `child_route_allowed` sees no capture, the replacement rejects the release
+    // as being outside its viewport, and the child never hears the pointer lift.
+    #[test]
+    fn a_rebuild_during_a_press_keeps_the_capture_so_a_release_outside_still_lands() {
+        let events = Rc::new(Cell::new(0));
+        let ctrl = Rc::new(ScrollState::for_test_at(Vec2d::default()));
+        let pressed = capturing_scrollable(events.clone(), ctrl.clone());
+        let pointer = PointerKey::new(PointerSource::Touch, 2);
+
+        let down = pressed.on_event(&ElementEvent::PointerDown(PointerInfo::touch(
+            Vec2d { x: 10.0, y: 10.0 },
+            pointer.id,
+        )));
+        assert_eq!(down.capture_request(), CaptureRequest::Capture(pointer));
+
+        let rebuilt = capturing_scrollable(events.clone(), ctrl);
+        // Standing in for the identity transfer reconciliation performs around
+        // the hand-over, which is what makes the carried capture resolve against
+        // the new subtree.
+        rebuilt.child.set_element_id(pressed.child.id());
+        rebuilt.adopt_runtime_state_from(&pressed as &dyn Element);
+
+        let up = rebuilt.on_event(&ElementEvent::PointerUp(PointerInfo::touch(
+            Vec2d { x: 200.0, y: 200.0 },
+            pointer.id,
+        )));
+
+        assert_eq!(events.get(), 2, "the child must hear the release it is owed");
+        assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
     }
 }

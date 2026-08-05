@@ -70,6 +70,86 @@ the existing subtree transitions to the new palette instead of changing every co
 `AnimatedTheme` uses a 200 millisecond linear transition by default. Set the duration to `Duration::ZERO` when an
 immediate update is preferred.
 
+## Follow the System Appearance
+
+The user already told the operating system how they want to read a screen, so a fresh `AnimatedTheme` follows it: it
+supplies `ThemeData::light()` or `ThemeData::dark()` depending on what the platform reports, and it keeps following that
+report. Switching appearance in the system settings animates the running application into the other theme; nothing has to
+be restarted.
+
+```rust
+use aimer::style::AnimatedTheme;
+use aimer::Widget;
+
+fn themed_app(child: impl Widget + 'static) -> impl Widget {
+    // Light or dark, whichever the system asks for.
+    AnimatedTheme::new().child(child)
+}
+```
+
+A custom theme follows the system once both appearances are supplied:
+
+```rust
+AnimatedTheme::new()
+    .adaptive(BrandTheme::light(), BrandTheme::dark())
+    .child(child)
+```
+
+The appearance itself is available to any widget as `Brightness`, read from the build context with
+`ctx.watch_platform_brightness()`. Only the widgets that read it are rebuilt when the user switches, so an application
+that does not care about the system pays nothing for it.
+
+### Where the Appearance Comes From
+
+Every platform keeps its own answer, and Aimer asks each one in its own way — desktop, mobile and web all report a live
+switch, so the behaviour above is the same everywhere:
+
+| Platform            | Read from                               | Switch reported by    |
+|---------------------|-----------------------------------------|-----------------------|
+| macOS, Windows, X11 | the window's theme                      | the windowing system  |
+| Web                 | the `prefers-color-scheme` media query  | the browser           |
+| iOS                 | `UITraitCollection.userInterfaceStyle`  | a UIKit trait change  |
+| Android             | the activity's night-mode configuration | a configuration change |
+
+None of them is polled: each platform announces the switch, and Aimer draws one frame for it — and only if some widget
+follows the appearance at all.
+
+On Android, one manifest attribute decides whether the switch can be animated. The activity has to declare `uiMode` in
+`android:configChanges`, otherwise the system destroys and recreates it, restarting the application in the new
+appearance:
+
+```xml
+<activity
+    android:name="com.aimer.AimerActivity"
+    android:configChanges="orientation|keyboardHidden|screenSize|uiMode">
+```
+
+Projects created with `aimer create` already declare it; an older project has to add `uiMode` to its existing
+`configChanges` list.
+
+## Ignore the System Appearance
+
+An application that decides its own appearance overrides the system with `ThemeMode`:
+
+```rust
+use aimer::style::{AnimatedTheme, ThemeMode};
+
+// Always dark, whatever the system reports.
+AnimatedTheme::new().mode(ThemeMode::Dark).child(child)
+```
+
+Naming a single theme with `data` says the same thing — one theme, in every appearance:
+
+```rust
+AnimatedTheme::new().data(ThemeData::dark()).child(child)
+```
+
+Neither form registers as a follower of the platform, so a system switch cannot rebuild them. Add an appearance back with
+`dark`, or return to following the system with `ThemeMode::System`.
+
+Changing the mode is a theme change like any other, so it animates too: handing the decision back to a system that asks
+for the other appearance crosses into it over the configured duration instead of snapping.
+
 ## Read the Current Theme
 
 A descendant subscribes to the nearest matching theme with `ThemeData::of(ctx)`. The widget is rebuilt whenever the
@@ -97,16 +177,17 @@ programming error.
 
 ## A Light and Dark Theme Toggle
 
-Theme selection belongs to application state. A small mode enum keeps that state separate from the palette itself:
+An application that offers its own toggle owns that choice as state. A small mode enum keeps it separate from the palette
+itself:
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ThemeMode {
+enum AppThemeMode {
     Light,
     Dark,
 }
 
-impl ThemeMode {
+impl AppThemeMode {
     fn theme(self) -> ThemeData {
         match self {
             Self::Light => ThemeData::light(),
@@ -123,9 +204,10 @@ impl ThemeMode {
 }
 ```
 
-Store `ThemeMode` in a `StatefulWidget`, update it through `StateUpdater`, and pass `mode.theme()` to `AnimatedTheme`.
+Store `AppThemeMode` in a `StatefulWidget`, update it through `StateUpdater`, and pass `mode.theme()` to `AnimatedTheme`.
 This is the pattern used by the Aimer website: one state change animates the background, text, surfaces, icons, and any
-other descendant that reads semantic theme colors.
+other descendant that reads semantic theme colors. Because the theme is named explicitly, the system appearance is left
+out of it — offer `ThemeMode::System` as a third choice when the toggle should be able to hand the decision back.
 
 > press the button in the top-right corner to see the theme change. 
 

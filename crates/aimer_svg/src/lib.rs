@@ -276,18 +276,18 @@ mod tests {
     fn pressed_svg_requests_capture_and_terminal_release() {
         use aimer_attribute::Vec2d;
         use aimer_events::element::ElementEvent;
-        use aimer_events::pointer::PointerSource;
+        use aimer_events::pointer::{PointerInfo, PointerSource};
         use aimer_widget::{CaptureRequest, EventResult, PointerKey};
 
         let pointer = PointerKey::new(PointerSource::Touch, 3);
         let down = widget::svg_pointer_capture_effect(
             EventResult::consumed(),
-            &ElementEvent::PointerDown(Vec2d::default(), pointer.source, pointer.id),
+            &ElementEvent::PointerDown(PointerInfo::touch(Vec2d::default(), pointer.id)),
             true,
         );
         let up = widget::svg_pointer_capture_effect(
             EventResult::ignored(),
-            &ElementEvent::PointerUp(Vec2d::default(), pointer.source, pointer.id),
+            &ElementEvent::PointerUp(PointerInfo::touch(Vec2d::default(), pointer.id)),
             false,
         );
 

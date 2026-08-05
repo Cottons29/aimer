@@ -613,8 +613,8 @@ impl EventDispatcher {
         let pointer = event_pointer_key(event);
         let routes_to_capture = matches!(
             event,
-            ElementEvent::PointerMove(_, _, _)
-                | ElementEvent::PointerUp(_, _, _)
+            ElementEvent::PointerMove(_)
+                | ElementEvent::PointerUp(_)
                 | ElementEvent::PointerExited(_, _)
         );
         let was_captured = routes_to_capture
@@ -781,7 +781,7 @@ impl EventDispatcher {
 
         let result = target.on_event(event);
         self.apply_capture_request(result.capture_request(), Some(owner));
-        if matches!(event, ElementEvent::PointerUp(_, _, _)) {
+        if matches!(event, ElementEvent::PointerUp(_)) {
             self.captures.remove(&pointer);
         }
         result.without_capture_request()
@@ -827,10 +827,10 @@ struct RoutedEventResult {
 
 fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
     match event {
-        ElementEvent::PointerDown(_, source, id)
-        | ElementEvent::PointerUp(_, source, id)
-        | ElementEvent::PointerMove(_, source, id)
-        | ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
+        ElementEvent::PointerDown(pointer)
+        | ElementEvent::PointerUp(pointer)
+        | ElementEvent::PointerMove(pointer) => Some(PointerKey::new(pointer.source, pointer.id)),
+        ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
         _ => None,
     }
 }
@@ -1042,7 +1042,7 @@ mod tests {
     use std::rc::Rc;
 
     use aimer_events::element::{KeyAction, Modifiers, NamedKey};
-    use aimer_events::pointer::PointerSource;
+    use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
     use aimer_rubick::INLINE_CAPACITY;
 
     use super::*;
@@ -1288,11 +1288,13 @@ mod tests {
         fn on_event(&self, event: &ElementEvent) -> EventResult {
             self.events.set(self.events.get() + 1);
             match event {
-                ElementEvent::PointerDown(_, source, pointer) if self.capture_on_down => {
-                    EventResult::consumed().with_pointer_capture(PointerKey::new(*source, *pointer))
+                ElementEvent::PointerDown(pointer) if self.capture_on_down => {
+                    EventResult::consumed()
+                        .with_pointer_capture(PointerKey::new(pointer.source, pointer.id))
                 }
-                ElementEvent::PointerMove(_, source, pointer) if self.release_on_move => {
-                    EventResult::consumed().with_pointer_release(PointerKey::new(*source, *pointer))
+                ElementEvent::PointerMove(pointer) if self.release_on_move => {
+                    EventResult::consumed()
+                        .with_pointer_release(PointerKey::new(pointer.source, pointer.id))
                 }
                 _ => EventResult::consumed(),
             }
@@ -1357,7 +1359,10 @@ mod tests {
         let _ = EventDispatcher::new().dispatch(
             root.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerMove(Vec2d { x: 5.0, y: 5.0 }, PointerSource::Mouse, 0),
+            &ElementEvent::PointerMove(PointerInfo::mouse(
+                Vec2d { x: 5.0, y: 5.0 },
+                PointerButton::Primary,
+            )),
         );
 
         ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| assert_eq!(count.get(), 1));
@@ -1381,13 +1386,12 @@ mod tests {
     impl EventElement for DragCarrier {
         fn on_event(&self, event: &ElementEvent) -> EventResult {
             match event {
-                ElementEvent::PointerDown(_, source, id) => {
-                    EventResult::consumed().with_pointer_capture(PointerKey::new(*source, *id))
-                }
-                ElementEvent::PointerMove(_, _, _) if self.follows_up => {
+                ElementEvent::PointerDown(pointer) => EventResult::consumed()
+                    .with_pointer_capture(PointerKey::new(pointer.source, pointer.id)),
+                ElementEvent::PointerMove(_) if self.follows_up => {
                     EventResult::consumed().with_follow_up(FollowUp::DragOver)
                 }
-                ElementEvent::PointerUp(_, _, _) if self.follows_up => {
+                ElementEvent::PointerUp(_) if self.follows_up => {
                     EventResult::consumed().with_follow_up(FollowUp::DragDrop)
                 }
                 _ => EventResult::consumed(),
@@ -1521,12 +1525,12 @@ mod tests {
         let _ = dispatcher.dispatch(
             root.as_ref(),
             source,
-            &ElementEvent::PointerDown(source, PointerSource::Mouse, 0),
+            &ElementEvent::PointerDown(PointerInfo::mouse(source, PointerButton::Primary)),
         );
         let _ = dispatcher.dispatch(
             root.as_ref(),
             over_receiver,
-            &ElementEvent::PointerMove(over_receiver, PointerSource::Mouse, 0),
+            &ElementEvent::PointerMove(PointerInfo::mouse(over_receiver, PointerButton::Primary)),
         );
 
         assert_eq!(overs.get(), 1, "the receiver was not told about the drag");
@@ -1546,14 +1550,14 @@ mod tests {
         let _ = dispatcher.dispatch(
             root.as_ref(),
             source,
-            &ElementEvent::PointerDown(source, PointerSource::Mouse, 0),
+            &ElementEvent::PointerDown(PointerInfo::mouse(source, PointerButton::Primary)),
         );
         assert!(dispatcher.is_captured(pointer));
 
         let _ = dispatcher.dispatch(
             root.as_ref(),
             over_receiver,
-            &ElementEvent::PointerUp(over_receiver, PointerSource::Mouse, 0),
+            &ElementEvent::PointerUp(PointerInfo::mouse(over_receiver, PointerButton::Primary)),
         );
 
         assert_eq!(drops.get(), 1);
@@ -1572,14 +1576,14 @@ mod tests {
         let _ = dispatcher.dispatch(
             root.as_ref(),
             source,
-            &ElementEvent::PointerDown(source, PointerSource::Mouse, 0),
+            &ElementEvent::PointerDown(PointerInfo::mouse(source, PointerButton::Primary)),
         );
         ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| count.set(0));
 
         let _ = dispatcher.dispatch(
             root.as_ref(),
             over_receiver,
-            &ElementEvent::PointerMove(over_receiver, PointerSource::Mouse, 0),
+            &ElementEvent::PointerMove(PointerInfo::mouse(over_receiver, PointerButton::Primary)),
         );
 
         ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| {
@@ -1729,7 +1733,12 @@ mod tests {
         let _ = dispatcher.dispatch(
             root.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, touch.source, touch.id),
+            &ElementEvent::PointerDown(PointerInfo::new(
+                Vec2d { x: 5.0, y: 5.0 },
+                touch.source,
+                touch.id,
+                PointerButton::Primary,
+            )),
         );
         target_events.set(0);
         unrelated_events.set(0);
@@ -1737,7 +1746,12 @@ mod tests {
         let _ = dispatcher.dispatch(
             root.as_ref(),
             Vec2d { x: 500.0, y: 500.0 },
-            &ElementEvent::PointerMove(Vec2d { x: 500.0, y: 500.0 }, touch.source, touch.id),
+            &ElementEvent::PointerMove(PointerInfo::new(
+                Vec2d { x: 500.0, y: 500.0 },
+                touch.source,
+                touch.id,
+                PointerButton::Primary,
+            )),
         );
 
         assert_eq!(dispatcher.captured_owner(touch), Some(target_id));
@@ -1778,20 +1792,22 @@ mod tests {
         let _ = dispatcher.dispatch(
             root.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(
+            &ElementEvent::PointerDown(PointerInfo::new(
                 Vec2d { x: 5.0, y: 5.0 },
                 mouse_pointer.source,
                 mouse_pointer.id,
-            ),
+                PointerButton::Primary,
+            )),
         );
         let _ = dispatcher.dispatch(
             root.as_ref(),
             Vec2d { x: 25.0, y: 25.0 },
-            &ElementEvent::PointerDown(
+            &ElementEvent::PointerDown(PointerInfo::new(
                 Vec2d { x: 25.0, y: 25.0 },
                 touch_pointer.source,
                 touch_pointer.id,
-            ),
+                PointerButton::Primary,
+            )),
         );
 
         assert_eq!(dispatcher.captured_owner(mouse_pointer), Some(mouse_id));
@@ -1813,12 +1829,22 @@ mod tests {
         let _ = dispatcher.dispatch(
             target.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerDown(PointerInfo::new(
+                Vec2d { x: 5.0, y: 5.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
         let _ = dispatcher.dispatch(
             target.as_ref(),
             Vec2d { x: 50.0, y: 50.0 },
-            &ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerMove(PointerInfo::new(
+                Vec2d { x: 50.0, y: 50.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
 
         assert_eq!(dispatcher.captured_owner(pointer), None);
@@ -1845,7 +1871,12 @@ mod tests {
         let _ = dispatcher.dispatch(
             old.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerDown(PointerInfo::new(
+                Vec2d { x: 5.0, y: 5.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
         let owner = dispatcher.captured_owner(pointer);
 
@@ -1868,7 +1899,12 @@ mod tests {
         let _ = dispatcher.dispatch(
             rebuilt.as_ref(),
             Vec2d { x: 50.0, y: 50.0 },
-            &ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerMove(PointerInfo::new(
+                Vec2d { x: 50.0, y: 50.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
 
         assert_eq!(dispatcher.captured_owner(pointer), owner);
@@ -1923,7 +1959,12 @@ mod tests {
         let _ = dispatcher.dispatch(
             root.as_ref(),
             Vec2d::default(),
-            &ElementEvent::PointerDown(Vec2d::default(), pointer.source, pointer.id),
+            &ElementEvent::PointerDown(PointerInfo::new(
+                Vec2d::default(),
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
 
         assert_eq!(dispatcher.captured_owner(pointer), Some(child_id));
@@ -1954,13 +1995,23 @@ mod tests {
             let _ = dispatcher.dispatch(
                 root.as_ref(),
                 Vec2d { x: 5.0, y: 5.0 },
-                &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
+                &ElementEvent::PointerDown(PointerInfo::new(
+                    Vec2d { x: 5.0, y: 5.0 },
+                    pointer.source,
+                    pointer.id,
+                    PointerButton::Primary,
+                )),
             );
         }
         let _ = dispatcher.dispatch(
             root.as_ref(),
             Vec2d { x: 50.0, y: 50.0 },
-            &ElementEvent::PointerUp(Vec2d { x: 50.0, y: 50.0 }, mouse.source, mouse.id),
+            &ElementEvent::PointerUp(PointerInfo::new(
+                Vec2d { x: 50.0, y: 50.0 },
+                mouse.source,
+                mouse.id,
+                PointerButton::Primary,
+            )),
         );
         assert_eq!(dispatcher.captured_owner(mouse), None);
         assert!(dispatcher.captured_owner(touch).is_some());
@@ -1983,7 +2034,12 @@ mod tests {
         let _ = dispatcher.dispatch(
             old.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerDown(PointerInfo::new(
+                Vec2d { x: 5.0, y: 5.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
 
         let replacement = ReplacementLeaf.boxed();
@@ -1991,7 +2047,12 @@ mod tests {
         let result = dispatcher.dispatch(
             replacement.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerMove(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerMove(PointerInfo::new(
+                Vec2d { x: 5.0, y: 5.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
 
         assert_eq!(dispatcher.captured_owner(pointer), None);
@@ -2012,7 +2073,12 @@ mod tests {
         let _ = dispatcher.dispatch(
             target.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerDown(PointerInfo::new(
+                Vec2d { x: 5.0, y: 5.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
         let owner = dispatcher
             .captured_owner(pointer)
@@ -2025,7 +2091,12 @@ mod tests {
         let result = dispatcher.dispatch(
             target.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerMove(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerMove(PointerInfo::new(
+                Vec2d { x: 5.0, y: 5.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
 
         assert_eq!(result, EventResult::ignored());
@@ -2047,8 +2118,9 @@ mod tests {
         fn on_event(&self, event: &ElementEvent) -> EventResult {
             self.events.set(self.events.get() + 1);
             match event {
-                ElementEvent::PointerDown(_, source, 7) => {
-                    EventResult::consumed().with_pointer_capture(PointerKey::new(*source, 7))
+                ElementEvent::PointerDown(pointer) if pointer.id == 7 => {
+                    EventResult::consumed()
+                        .with_pointer_capture(PointerKey::new(pointer.source, 7))
                 }
                 _ => EventResult::consumed(),
             }
@@ -2146,8 +2218,6 @@ mod tests {
 
     #[test]
     fn captured_pointer_move_is_delivered_outside_element_bounds() {
-        use aimer_events::pointer::PointerSource;
-
         let events = Rc::new(Cell::new(0));
         let element = CapturingElement {
             events: Cell::new(0),
@@ -2157,9 +2227,9 @@ mod tests {
         let _ = dispatcher.dispatch(
             element.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, PointerSource::Touch, 7),
+            &ElementEvent::PointerDown(PointerInfo::touch(Vec2d { x: 5.0, y: 5.0 }, 7)),
         );
-        let event = ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, PointerSource::Touch, 7);
+        let event = ElementEvent::PointerMove(PointerInfo::touch(Vec2d { x: 50.0, y: 50.0 }, 7));
 
         assert!(
             dispatcher
@@ -2180,7 +2250,12 @@ mod tests {
         let _ = dispatcher.dispatch(
             element.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerDown(PointerInfo::new(
+                Vec2d { x: 5.0, y: 5.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
 
         assert!(
@@ -2216,7 +2291,12 @@ mod tests {
         let _ = dispatcher.dispatch(
             element.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerDown(PointerInfo::new(
+                Vec2d { x: 5.0, y: 5.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
 
         assert!(

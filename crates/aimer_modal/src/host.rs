@@ -408,10 +408,10 @@ struct HostedModal {
 
 fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
     match event {
-        ElementEvent::PointerDown(_, source, id)
-        | ElementEvent::PointerUp(_, source, id)
-        | ElementEvent::PointerMove(_, source, id)
-        | ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
+        ElementEvent::PointerDown(pointer)
+        | ElementEvent::PointerUp(pointer)
+        | ElementEvent::PointerMove(pointer) => Some(PointerKey::new(pointer.source, pointer.id)),
+        ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
         _ => None,
     }
 }
@@ -641,7 +641,7 @@ mod tests {
     use aimer_animation::{AnimInstant, Curve};
     use aimer_attribute::Vec2d;
     use aimer_events::element::ElementEvent;
-    use aimer_events::pointer::PointerSource;
+    use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
     use aimer_widget::base::BuildContext;
     use aimer_widget::{
         CaptureRequest, Drawable, Element, EventDispatcher, EventElement, EventResult,
@@ -665,12 +665,10 @@ mod tests {
         fn on_event(&self, event: &ElementEvent) -> EventResult {
             self.events.set(self.events.get() + 1);
             match event {
-                ElementEvent::PointerDown(_, source, id) => {
-                    EventResult::consumed().with_pointer_capture(PointerKey::new(*source, *id))
-                }
-                ElementEvent::PointerUp(_, source, id) => {
-                    EventResult::consumed().with_pointer_release(PointerKey::new(*source, *id))
-                }
+                ElementEvent::PointerDown(pointer) => EventResult::consumed()
+                    .with_pointer_capture(PointerKey::new(pointer.source, pointer.id)),
+                ElementEvent::PointerUp(pointer) => EventResult::consumed()
+                    .with_pointer_release(PointerKey::new(pointer.source, pointer.id)),
                 _ => EventResult::consumed(),
             }
         }
@@ -704,19 +702,34 @@ mod tests {
         let down = dispatch_hosted_event(
             &entry,
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerDown(Vec2d { x: 5.0, y: 5.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerDown(PointerInfo::new(
+                Vec2d { x: 5.0, y: 5.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
         assert_eq!(down.capture_request(), CaptureRequest::Capture(pointer));
 
         let _ = dispatch_hosted_event(
             &entry,
             Vec2d { x: 50.0, y: 50.0 },
-            &ElementEvent::PointerMove(Vec2d { x: 50.0, y: 50.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerMove(PointerInfo::new(
+                Vec2d { x: 50.0, y: 50.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
         let up = dispatch_hosted_event(
             &entry,
             Vec2d { x: 50.0, y: 50.0 },
-            &ElementEvent::PointerUp(Vec2d { x: 50.0, y: 50.0 }, pointer.source, pointer.id),
+            &ElementEvent::PointerUp(PointerInfo::new(
+                Vec2d { x: 50.0, y: 50.0 },
+                pointer.source,
+                pointer.id,
+                PointerButton::Primary,
+            )),
         );
 
         assert_eq!(events.get(), 3);

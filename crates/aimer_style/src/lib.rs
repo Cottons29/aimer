@@ -1,10 +1,13 @@
 mod animated_theme;
 mod style;
 mod theme;
+mod theme_mode;
 
 pub use aimer_macro::Theme;
+pub use aimer_widget::Brightness;
 pub use animated_theme::AnimatedTheme;
 pub use theme::{Theme, ThemeData};
+pub use theme_mode::{ThemeMode, ThemeSelection};
 
 #[doc(hidden)]
 pub mod __private {

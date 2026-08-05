@@ -7,7 +7,7 @@ use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_events::pointer::PointerSource;
 use aimer_macro::Rebuildable;
 use aimer_style::{FontStyle, TextAlign, TextDecorationLine, TextOverflow, TextStyle};
-use aimer_utils::callback::{Callback, CallbackExecutor, RawInnerCallback};
+use aimer_utils::callback::{Callback, CallbackExecutor, ambient_spawner};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
@@ -422,21 +422,19 @@ fn interactive_cursor_for_event(
     over_link: bool,
     event: &ElementEvent,
 ) -> Option<SelectableCursor> {
-    match event {
-        ElementEvent::PointerDown(_, PointerSource::Mouse, _)
-        | ElementEvent::PointerUp(_, PointerSource::Mouse, _)
-        | ElementEvent::PointerMove(_, PointerSource::Mouse, _)
-            if selectable =>
-        {
+    if let Some(pointer) = event.pointer() {
+        if pointer.source != PointerSource::Mouse {
+            return None;
+        }
+        return if selectable {
             Some(SelectableCursor::Text)
-        }
-        ElementEvent::PointerDown(_, PointerSource::Mouse, _)
-        | ElementEvent::PointerUp(_, PointerSource::Mouse, _)
-        | ElementEvent::PointerMove(_, PointerSource::Mouse, _)
-            if over_link =>
-        {
+        } else if over_link {
             Some(SelectableCursor::Pointer)
-        }
+        } else {
+            None
+        };
+    }
+    match event {
         ElementEvent::PointerExited(PointerSource::Mouse, _) => Some(SelectableCursor::Default),
         _ => None,
     }
@@ -657,21 +655,13 @@ impl RawRichText {
         }
     }
 
+    /// Fires the link callback for `target`.
+    ///
+    /// The paragraph holds no runtime handle, so an async callback goes to
+    /// whichever runtime the frame is being built on.
+    #[inline]
     fn execute_link(&self, target: Rc<str>) {
-        if let Some(callback) = self.on_link.get().as_ref() {
-            match callback {
-                RawInnerCallback::Empty => {}
-                RawInnerCallback::Sync(function) => function(target),
-                RawInnerCallback::Async(function) => {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                        handle.spawn(function(target));
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    wasm_bindgen_futures::spawn_local(function(target));
-                }
-            }
-        }
+        self.on_link.execute(target, &ambient_spawner());
     }
 }
 
@@ -684,9 +674,13 @@ impl VisitorElement for RawRichText {
 impl EventElement for RawRichText {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         let hovered_link = match event {
-            ElementEvent::PointerDown(pos, PointerSource::Mouse, _)
-            | ElementEvent::PointerUp(pos, PointerSource::Mouse, _)
-            | ElementEvent::PointerMove(pos, PointerSource::Mouse, _) => self.link_at(pos.x, pos.y),
+            ElementEvent::PointerDown(info)
+            | ElementEvent::PointerUp(info)
+            | ElementEvent::PointerMove(info)
+                if info.source == PointerSource::Mouse =>
+            {
+                self.link_at(info.x(), info.y())
+            }
             ElementEvent::PointerExited(PointerSource::Mouse, _) | ElementEvent::Cancel => None,
             _ => self.hovered_link.borrow().clone(),
         };
@@ -711,13 +705,14 @@ impl EventElement for RawRichText {
         let cursor_claimed = false;
 
         match event {
-            ElementEvent::PointerDown(pos, source, pointer) => {
+            ElementEvent::PointerDown(info) => {
+                let pos = info.pos;
                 let target = self.link_at(pos.x, pos.y);
                 *self.pressed_link.borrow_mut() = target;
                 if self.selectable
                     && let Some(offset) = text_offset_at(&self.text_regions.borrow(), pos.x, pos.y)
                 {
-                    let pointer = PointerKey::new(*source, *pointer);
+                    let pointer = PointerKey::new(info.source, info.id);
                     self.selection.claim();
                     self.selection.focused.set(true);
                     self.selection.borrow_mut().begin(offset, pointer);
@@ -725,8 +720,9 @@ impl EventElement for RawRichText {
                 }
                 self.pressed_link.borrow().is_some() || cursor_claimed
             }
-            ElementEvent::PointerMove(pos, source, pointer) if self.selectable => {
-                let pointer = PointerKey::new(*source, *pointer);
+            ElementEvent::PointerMove(info) if self.selectable => {
+                let pos = info.pos;
+                let pointer = PointerKey::new(info.source, info.id);
                 let mut selection = self.selection.borrow_mut();
                 if !selection.is_active() {
                     return cursor_claimed.into();
@@ -743,8 +739,9 @@ impl EventElement for RawRichText {
                 }
                 return EventResult::consumed();
             }
-            ElementEvent::PointerUp(pos, source, pointer) => {
-                let pointer = PointerKey::new(*source, *pointer);
+            ElementEvent::PointerUp(info) => {
+                let pos = info.pos;
+                let pointer = PointerKey::new(info.source, info.id);
                 let selection_owned =
                     self.selectable && self.selection.borrow().active_pointer() == Some(pointer);
                 let dragged = if selection_owned {
@@ -1097,7 +1094,7 @@ mod tests {
 
     use aimer_attribute::{Bounds, CacheBounds, Vec2d};
     use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
-    use aimer_events::pointer::PointerSource;
+    use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
     use aimer_style::{TextAlign, TextOverflow, TextStyle};
     use aimer_widget::base::{Color, WindowHandle};
     use aimer_widget::{EventElement, PointerKey};
@@ -1208,9 +1205,12 @@ mod tests {
 
     #[test]
     fn selectable_text_cursor_takes_priority_over_link_cursor() {
-        let hover = ElementEvent::PointerMove(Vec2d { x: 1.0, y: 1.0 }, PointerSource::Mouse, 0);
+        let hover = ElementEvent::PointerMove(PointerInfo::mouse(
+            Vec2d { x: 1.0, y: 1.0 },
+            PointerButton::Primary,
+        ));
         let exit = ElementEvent::PointerExited(PointerSource::Mouse, 0);
-        let touch = ElementEvent::PointerMove(Vec2d { x: 1.0, y: 1.0 }, PointerSource::Touch, 1);
+        let touch = ElementEvent::PointerMove(PointerInfo::touch(Vec2d { x: 1.0, y: 1.0 }, 1));
 
         assert_eq!(
             interactive_cursor_for_event(true, true, &hover),
@@ -1272,22 +1272,20 @@ mod tests {
     fn moving_into_and_out_of_a_link_updates_hover_and_requests_redraw() {
         let text = selectable_raw_text(LinkCallback::default());
 
-        text.on_event(&ElementEvent::PointerMove(
+        text.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
             Vec2d { x: 1.0, y: 5.0 },
-            PointerSource::Mouse,
-            0,
-        ));
+            PointerButton::Primary,
+        )));
         assert_eq!(
             text.hovered_link.borrow().as_deref(),
             Some("https://aimer.dev")
         );
         assert!(text.window.take_redraw_request());
 
-        text.on_event(&ElementEvent::PointerMove(
+        text.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
             Vec2d { x: 50.0, y: 50.0 },
-            PointerSource::Mouse,
-            0,
-        ));
+            PointerButton::Primary,
+        )));
         assert!(text.hovered_link.borrow().is_none());
         assert!(text.window.take_redraw_request());
     }
@@ -1297,14 +1295,10 @@ mod tests {
         let text = selectable_raw_text(LinkCallback::default());
 
         for x in 1..20 {
-            text.on_event(&ElementEvent::PointerMove(
-                Vec2d {
-                    x: x as f32,
-                    y: 5.0,
-                },
-                PointerSource::Mouse,
-                0,
-            ));
+            text.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
+                Vec2d { x: x as f32, y: 5.0 },
+                PointerButton::Primary,
+            )));
 
             assert_eq!(
                 text.hovered_link.borrow().as_deref(),
@@ -1316,11 +1310,10 @@ mod tests {
     #[test]
     fn select_all_shortcut_selects_the_visible_text_after_focus() {
         let text = selectable_raw_text(LinkCallback::default());
-        text.on_event(&ElementEvent::PointerDown(
+        text.on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
             Vec2d { x: 1.0, y: 5.0 },
-            PointerSource::Mouse,
-            0,
-        ));
+            PointerButton::Primary,
+        )));
 
         let handled = text.on_event(&ElementEvent::KeyInput {
             key: NamedKey::Other("a".into()),
@@ -1345,11 +1338,12 @@ mod tests {
             selectable_raw_text_with_coordinator(LinkCallback::default(), coordinator.clone());
         let second = selectable_raw_text_with_coordinator(LinkCallback::default(), coordinator);
 
-        let _ = first.on_event(&ElementEvent::PointerDown(
+        let _ = first.on_event(&ElementEvent::PointerDown(PointerInfo::new(
             Vec2d { x: 1.0, y: 5.0 },
             PointerSource::Mouse,
             7,
-        ));
+            PointerButton::Primary,
+        )));
         first
             .selection
             .borrow_mut()
@@ -1361,11 +1355,12 @@ mod tests {
         );
         let _ = first.window.take_redraw_request();
 
-        let second_result = second.on_event(&ElementEvent::PointerDown(
+        let second_result = second.on_event(&ElementEvent::PointerDown(PointerInfo::new(
             Vec2d { x: 1.0, y: 5.0 },
             PointerSource::Mouse,
             8,
-        ));
+            PointerButton::Primary,
+        )));
 
         assert_eq!(
             first.selection.borrow().selection(),
@@ -1410,11 +1405,10 @@ mod tests {
             move |_| activations.set(activations.get() + 1)
         }));
 
-        let down_result = text.on_event(&ElementEvent::PointerDown(
+        let down_result = text.on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
             Vec2d { x: 1.0, y: 5.0 },
-            PointerSource::Mouse,
-            0,
-        ));
+            PointerButton::Primary,
+        )));
         let pointer = PointerKey::new(PointerSource::Mouse, 0);
         assert_eq!(
             down_result.capture_request(),
@@ -1424,16 +1418,14 @@ mod tests {
             text.selection.borrow().selection(),
             TextSelection::collapsed(0)
         );
-        let _ = text.on_event(&ElementEvent::PointerMove(
+        let _ = text.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
             Vec2d { x: 19.0, y: 5.0 },
-            PointerSource::Mouse,
-            0,
-        ));
-        let up_result = text.on_event(&ElementEvent::PointerUp(
+            PointerButton::Primary,
+        )));
+        let up_result = text.on_event(&ElementEvent::PointerUp(PointerInfo::mouse(
             Vec2d { x: 19.0, y: 5.0 },
-            PointerSource::Mouse,
-            0,
-        ));
+            PointerButton::Primary,
+        )));
 
         assert_eq!(
             text.selection.borrow().selection(),
@@ -1455,21 +1447,18 @@ mod tests {
             TextHitRegion::new(5..6, Bounds::new(10.0, 30.0, 10.0, 10.0)),
         ]);
 
-        text.on_event(&ElementEvent::PointerDown(
+        text.on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
             Vec2d { x: 10.0, y: 25.0 },
-            PointerSource::Mouse,
-            0,
-        ));
-        text.on_event(&ElementEvent::PointerMove(
+            PointerButton::Primary,
+        )));
+        text.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
             Vec2d { x: 200.0, y: 50.0 },
-            PointerSource::Mouse,
-            0,
-        ));
-        text.on_event(&ElementEvent::PointerUp(
+            PointerButton::Primary,
+        )));
+        text.on_event(&ElementEvent::PointerUp(PointerInfo::mouse(
             Vec2d { x: 200.0, y: 50.0 },
-            PointerSource::Mouse,
-            0,
-        ));
+            PointerButton::Primary,
+        )));
 
         let selection = text.selection.borrow().selection();
         assert_eq!(selection, TextSelection::new(0, text.plain_text.len()));

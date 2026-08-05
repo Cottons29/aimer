@@ -92,10 +92,10 @@ fn child_dispatch_position(event: &ElementEvent, cursor: Vec2d) -> Vec2d {
 
 fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
     match event {
-        ElementEvent::PointerDown(_, source, id)
-        | ElementEvent::PointerUp(_, source, id)
-        | ElementEvent::PointerMove(_, source, id)
-        | ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
+        ElementEvent::PointerDown(pointer)
+        | ElementEvent::PointerUp(pointer)
+        | ElementEvent::PointerMove(pointer) => Some(PointerKey::new(pointer.source, pointer.id)),
+        ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
         _ => None,
     }
 }
@@ -150,19 +150,19 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
         let mode_before = self.ctrl.drag_mode.get();
         let pending_content_drag_won = match event {
-            ElementEvent::PointerMove(current, _, id)
+            ElementEvent::PointerMove(pointer)
                 if mode_before == DragMode::Pending
                     && self
                         .ctrl
                         .active_touch_id
                         .get()
-                        .is_none_or(|active| active == *id) =>
+                        .is_none_or(|active| active == pointer.id) =>
             {
                 self.ctrl.last_pointer_pos.get().is_some_and(|start| {
                     pending_content_drag_wins(
                         self.ctrl.axis,
                         start,
-                        *current,
+                        pointer.pos,
                         drag_start_threshold(),
                     )
                 })
@@ -171,22 +171,19 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         };
         let mut child_result = EventResult::ignored();
 
-        if matches!(
-            event,
-            ElementEvent::PointerUp(_, _, _) | ElementEvent::Cancel
-        ) {
-            if let ElementEvent::PointerUp(_, _, pointer) = event
+        if matches!(event, ElementEvent::PointerUp(_) | ElementEvent::Cancel) {
+            if let ElementEvent::PointerUp(pointer) = event
                 && self
                     .ctrl
                     .active_touch_id
                     .get()
-                    .is_some_and(|active| active != *pointer)
+                    .is_some_and(|active| active != pointer.id)
             {
                 return EventResult::ignored();
             }
             let owned_pointer = match event {
-                ElementEvent::PointerUp(_, _, pointer) => {
-                    owns_pointer(self.ctrl.active_touch_id.get(), *pointer)
+                ElementEvent::PointerUp(pointer) => {
+                    owns_pointer(self.ctrl.active_touch_id.get(), pointer.id)
                 }
                 ElementEvent::Cancel => {
                     self.ctrl.active_touch_id.get().is_some() || mode_before != DragMode::None
@@ -198,11 +195,12 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 DragMode::VerticalScrollbar | DragMode::HorizontalScrollbar
             ) {
                 match event {
-                    ElementEvent::PointerUp(_, source, pointer) => {
+                    ElementEvent::PointerUp(pointer) => {
                         child_result = child_result.merge(
-                            self.event_dispatcher
-                                .borrow_mut()
-                                .cancel_pointer(&self.child, PointerKey::new(*source, *pointer)),
+                            self.event_dispatcher.borrow_mut().cancel_pointer(
+                                &self.child,
+                                PointerKey::new(pointer.source, pointer.id),
+                            ),
                         );
                     }
                     ElementEvent::Cancel => {
@@ -211,7 +209,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     _ => {}
                 }
             } else if matches!(mode_before, DragMode::None | DragMode::Pending)
-                && matches!(event, ElementEvent::PointerUp(_, _, _))
+                && matches!(event, ElementEvent::PointerUp(_))
             {
                 child_result = child_result.merge(dispatch_child_event(self, pos, event));
             }
@@ -266,8 +264,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             self.ctrl.release_overscroll_recovery();
             self.ctrl.begin_device_contact(false);
             match event {
-                ElementEvent::PointerUp(_, _, id) => {
-                    if self.ctrl.active_touch_id.get() == Some(*id) {
+                ElementEvent::PointerUp(pointer) => {
+                    if self.ctrl.active_touch_id.get() == Some(pointer.id) {
                         self.ctrl.active_touch_id.set(None);
                     }
                 }
@@ -276,18 +274,19 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             aimer_events::window::request_animation_frame();
             let result = child_result.merge(EventResult::from(owned_pointer).with_redraw());
             return match event {
-                ElementEvent::PointerUp(_, source, pointer) => {
-                    result.with_pointer_release(PointerKey::new(*source, *pointer))
+                ElementEvent::PointerUp(pointer) => {
+                    result.with_pointer_release(PointerKey::new(pointer.source, pointer.id))
                 }
                 _ => result,
             };
         }
 
-        if pending_content_drag_won && let ElementEvent::PointerMove(_, source, pointer) = event {
+        if pending_content_drag_won && let ElementEvent::PointerMove(pointer) = event {
             child_result = child_result.merge(
-                self.event_dispatcher
-                    .borrow_mut()
-                    .cancel_pointer(&self.child, PointerKey::new(*source, *pointer)),
+                self.event_dispatcher.borrow_mut().cancel_pointer(
+                    &self.child,
+                    PointerKey::new(pointer.source, pointer.id),
+                ),
             );
         }
 
@@ -317,9 +316,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 }
                 true
             }
-            ElementEvent::PointerDown(p, source, id) => {
+            ElementEvent::PointerDown(pointer) => {
+                let p = &pointer.pos;
                 if let Some(prev_id) = self.ctrl.active_touch_id.get()
-                    && prev_id != *id
+                    && prev_id != pointer.id
                 {
                     let stale = self.ctrl.last_event_time.get().is_none_or(|t| {
                         AnimInstant::now().duration_since(t).as_millis() > STALE_TOUCH_THRESHOLD_MS
@@ -335,12 +335,12 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         return child_result.merge(EventResult::consumed());
                     }
                 }
-                self.ctrl.active_touch_id.set(Some(*id));
+                self.ctrl.active_touch_id.set(Some(pointer.id));
                 // A touch/mouse interaction takes over from any wheel/trackpad
                 // gesture, so it must not inherit that gesture's recovery state
                 // nor be judged by the device that produced it.
                 self.ctrl
-                    .set_overscroll_source(drag_overscroll_source(*source));
+                    .set_overscroll_source(drag_overscroll_source(pointer.source));
                 self.ctrl.release_overscroll_recovery();
                 self.ctrl.begin_device_contact(false);
                 self.ctrl.reset_overscroll_peak();
@@ -413,10 +413,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 self.ctrl.last_pointer_pos.set(Some(*p));
                 true
             }
-            ElementEvent::PointerMove(p, _, id) => {
+            ElementEvent::PointerMove(pointer) => {
+                let p = &pointer.pos;
                 // Ignore moves from non-primary fingers.
                 if self.ctrl.active_touch_id.get().is_some()
-                    && self.ctrl.active_touch_id.get() != Some(*id)
+                    && self.ctrl.active_touch_id.get() != Some(pointer.id)
                 {
                     // info!("[scroll] MOVE REJECTED — non-primary finger active={:?} got={}",
                     // self.ctrl.active_touch_id.get(), id);
@@ -614,9 +615,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             }
             // PointerUp/Cancel is handled early above (before child dispatch),
             // so it never reaches this match.
-            ElementEvent::PointerUp(_, _, id) => {
+            ElementEvent::PointerUp(pointer) => {
                 // Release primary-finger lock.
-                if self.ctrl.active_touch_id.get() == Some(*id) {
+                if self.ctrl.active_touch_id.get() == Some(pointer.id) {
                     self.ctrl.active_touch_id.set(None);
                 }
                 false
@@ -635,11 +636,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
         let result = child_result.merge(EventResult::from(we_consumed));
         match event {
-            ElementEvent::PointerDown(_, source, pointer) if we_consumed => {
-                result.with_pointer_capture(PointerKey::new(*source, *pointer))
+            ElementEvent::PointerDown(pointer) if we_consumed => {
+                result.with_pointer_capture(PointerKey::new(pointer.source, pointer.id))
             }
-            ElementEvent::PointerMove(_, source, pointer) if pending_content_drag_won => {
-                result.with_pointer_capture(PointerKey::new(*source, *pointer))
+            ElementEvent::PointerMove(pointer) if pending_content_drag_won => {
+                result.with_pointer_capture(PointerKey::new(pointer.source, pointer.id))
             }
             _ => result,
         }

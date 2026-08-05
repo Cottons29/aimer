@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use aimer::animation::Curve;
 use aimer::router::Outlet;
-use aimer::style::{AnimatedTheme, Theme, ThemeData};
+use aimer::style::{AnimatedTheme, Theme, ThemeData, ThemeMode};
 use aimer::{BuildContext, Widget, widget, *};
 
 use crate::components::header::HeaderSection;

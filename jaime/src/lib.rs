@@ -18,6 +18,7 @@ mod starter;
 pub mod stateful;
 mod stateful_2;
 mod svg_test;
+mod system_theme;
 mod test_animation;
 
 use aimer::style::*;
@@ -27,6 +28,7 @@ use aimer::{AimerApp, *};
 
 #[allow(unused_imports)]
 use crate::animated::start_my_animated_list;
+#[allow(unused_imports)]
 use crate::custom_animated_theme::start_custom_animated_theme_example;
 #[allow(unused_imports)]
 use crate::floating::start_floating_example;
@@ -40,6 +42,8 @@ use crate::scroll_and_row::test_scroll_and_row;
 #[allow(unused_imports)]
 use crate::stateful::start_counter;
 use crate::svg_test::start_svg_test;
+#[allow(unused_imports)]
+use crate::system_theme::start_system_theme_example;
 use crate::test_animation::TestFadingAnimation;
 
 // this is the entry point of the app
@@ -54,11 +58,10 @@ pub fn my_app() {
     // ])))
     // test_positioned()
     // async_builder::start_async_builder_example()
-    // custom_animated_theme::start_custom_animated_theme_example()
     // test_scrollable()
     // test_scrollable_row()
     // start_modal_example();
-    //    start_floating_example();
+    // start_floating_example();
     // drag_and_drop::start_drag_and_drop_example();
     // file_drop_zone::start_file_drop_zone_example();
     // start_markdown_example();
@@ -67,10 +70,12 @@ pub fn my_app() {
     // start_svg_test();
     // panic_recovery::start_panic_recovery_example()
     // start_custom_animated_theme_example()
+    // start_system_theme_example()
+    system_theme::start_system_theme_example();
     // test_text()
     // start_loading_animation_example()
     // floating::start_floating_example();
-    file_drop_zone::start_file_drop_zone_example()
+    // file_drop_zone::start_file_drop_zone_example()
     // drag_and_drop::start_drag_and_drop_example();
 }
 

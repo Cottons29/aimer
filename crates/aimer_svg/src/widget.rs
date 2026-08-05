@@ -7,9 +7,9 @@ use aimer_cupid::svg::{
     SvgViewport,
 };
 use aimer_events::element::ElementEvent;
-use aimer_events::pointer::PointerSource;
+use aimer_events::pointer::{PointerInfo, PointerSource};
 use aimer_events::window::request_animation_frame;
-use aimer_utils::callback::{Callback, CallbackExecutor, RawInnerCallback};
+use aimer_utils::callback::{Callback, CallbackExecutor, ambient_spawner};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
@@ -716,20 +716,7 @@ impl RawSvg {
             .iter()
             .filter(|rule| rule.selector.matches(node))
         {
-            if let Some(callback) = rule.callback.get().as_ref() {
-                match callback {
-                    RawInnerCallback::Empty => {}
-                    RawInnerCallback::Sync(function) => function(hit.clone()),
-                    RawInnerCallback::Async(function) => {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                            handle.spawn(function(hit.clone()));
-                        }
-                        #[cfg(target_arch = "wasm32")]
-                        wasm_bindgen_futures::spawn_local(function(hit.clone()));
-                    }
-                }
-            }
+            rule.callback.execute(hit.clone(), &ambient_spawner());
         }
     }
 }
@@ -777,8 +764,12 @@ impl Drawable for RawSvg {
 impl EventElement for RawSvg {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         match event {
-            ElementEvent::PointerMove(position, PointerSource::Mouse, _) => {
-                self.set_hovered(self.hit_at(position.x, position.y).map(|hit| hit.node_id));
+            ElementEvent::PointerMove(PointerInfo {
+                pos,
+                source: PointerSource::Mouse,
+                ..
+            }) => {
+                self.set_hovered(self.hit_at(pos.x, pos.y).map(|hit| hit.node_id));
                 EventResult::ignored()
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => {
@@ -790,8 +781,8 @@ impl EventElement for RawSvg {
                 self.interaction.borrow_mut().cancel();
                 svg_pointer_capture_effect(EventResult::ignored(), event, false)
             }
-            ElementEvent::PointerDown(position, _, _) => {
-                let hit = self.hit_at(position.x, position.y);
+            ElementEvent::PointerDown(pointer) => {
+                let hit = self.hit_at(pointer.x(), pointer.y());
                 self.interaction
                     .borrow_mut()
                     .pointer_down(hit.as_ref().map(|hit| hit.node_id));
@@ -803,8 +794,8 @@ impl EventElement for RawSvg {
                 };
                 svg_pointer_capture_effect(result, event, captured)
             }
-            ElementEvent::PointerUp(position, _, _) => {
-                let hit = self.hit_at(position.x, position.y);
+            ElementEvent::PointerUp(pointer) => {
+                let hit = self.hit_at(pointer.x(), pointer.y());
                 let pressed = self
                     .interaction
                     .borrow_mut()
@@ -835,10 +826,13 @@ pub(crate) fn svg_pointer_capture_effect(
     capture_on_down: bool,
 ) -> EventResult {
     match event {
-        ElementEvent::PointerDown(_, source, id) if capture_on_down => {
-            result.with_pointer_capture(PointerKey::new(*source, *id))
+        ElementEvent::PointerDown(pointer) if capture_on_down => {
+            result.with_pointer_capture(PointerKey::new(pointer.source, pointer.id))
         }
-        ElementEvent::PointerUp(_, source, id) | ElementEvent::PointerExited(source, id) => {
+        ElementEvent::PointerUp(pointer) => {
+            result.with_pointer_release(PointerKey::new(pointer.source, pointer.id))
+        }
+        ElementEvent::PointerExited(source, id) => {
             result.with_pointer_release(PointerKey::new(*source, *id))
         }
         _ => result,

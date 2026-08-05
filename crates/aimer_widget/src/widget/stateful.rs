@@ -1320,7 +1320,7 @@ impl Rebuildable for StatefulElement {
 mod tests {
     use std::panic::AssertUnwindSafe;
 
-    use aimer_events::pointer::PointerSource;
+    use aimer_events::pointer::{PointerButton, PointerInfo};
 
     use super::*;
     use crate::{EventDispatcher, StatelessElement};
@@ -1572,7 +1572,10 @@ mod tests {
         let _ = EventDispatcher::new().dispatch(
             &element,
             Vec2d::default(),
-            &ElementEvent::PointerMove(Vec2d::default(), PointerSource::Mouse, 0),
+            &ElementEvent::PointerMove(PointerInfo::mouse(
+                Vec2d::default(),
+                PointerButton::Primary,
+            )),
         );
 
         assert_eq!(events.get(), 1);

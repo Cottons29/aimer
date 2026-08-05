@@ -228,8 +228,8 @@ impl Drawable for RawModal {
 impl EventElement for RawModal {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         let dismiss = match event {
-            ElementEvent::PointerDown(position, _, _)
-                if self.barrier_dismissible && !self.contains_child(*position) =>
+            ElementEvent::PointerDown(pointer)
+                if self.barrier_dismissible && !self.contains_child(pointer.pos) =>
             {
                 true
             }

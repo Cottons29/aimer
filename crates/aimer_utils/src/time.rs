@@ -6,7 +6,12 @@
 use std::time::Duration;
 
 /// A cross-platform instant in time.
-#[derive(Debug, Clone, Copy)]
+///
+/// Comparable and orderable, because state that records *when* something
+/// happened is compared in tests — an instant derived from `now() - 600ms` is
+/// how a five-hundred-millisecond threshold is exercised without a sleeping,
+/// flaky test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AnimInstant {
     inner: web_time::Instant,
 }
@@ -106,6 +111,16 @@ mod tests {
         let mut b = a;
         b += Duration::from_millis(50);
         assert_eq!(b.duration_since(a), Duration::from_millis(50));
+    }
+
+    #[test]
+    fn an_earlier_instant_orders_before_a_later_one() {
+        let earlier = AnimInstant::now();
+        let later = earlier + Duration::from_millis(1);
+
+        assert!(earlier < later);
+        assert_eq!(earlier, earlier);
+        assert_ne!(earlier, later);
     }
 
     #[test]

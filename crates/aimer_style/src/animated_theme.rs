@@ -6,58 +6,95 @@ use aimer_animation::{AnimInstant, AnimationController, Curve};
 use aimer_provider::{Provider, ProviderHandle};
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
-    RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, AnyWidget, Brightness, Drawable, Element, EventElement, Key, LayoutElement,
+    Rebuildable, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget,
+    StatelessElement, VisitorElement, Widget, platform_brightness,
 };
 
-use crate::{Theme, ThemeData};
+use crate::{Theme, ThemeData, ThemeMode, ThemeSelection};
 
 fn request_next_frame() {
     aimer_events::window::request_animation_frame();
 }
 
-/// Supplies a [`Theme`] value to descendants and animates changes to it.
+/// Supplies a [`Theme`] value to descendants, follows the system appearance,
+/// and animates every change to it.
 ///
-/// Descendants read the interpolated value with [`Theme::of`]. When `data`
-/// changes, `AnimatedTheme` interpolates the theme without replacing the
-/// descendant widget tree. If the target changes during a transition, the new
-/// transition begins at the currently displayed theme. A zero duration applies
-/// the target immediately.
+/// Descendants read the interpolated value with [`Theme::of`]. When the theme
+/// changes, `AnimatedTheme` interpolates it without replacing the descendant
+/// widget tree. If the target changes during a transition, the new transition
+/// begins at the currently displayed theme. A zero duration applies the target
+/// immediately.
 ///
 /// The default transition lasts 200 milliseconds and uses [`Curve::Linear`].
 ///
-/// # Examples
+/// # Following the system
+///
+/// A fresh `AnimatedTheme` supplies [`ThemeData::light`] and
+/// [`ThemeData::dark`] and follows the appearance the platform reports, so an
+/// application that says nothing about theming already switches with the system
+/// — and animates while doing it. The switch is followed live: the user
+/// changing appearance in the system settings crosses the application into the
+/// other theme without restarting it.
+///
+/// ```
+/// use aimer_style::{AnimatedTheme, ThemeData};
+/// use aimer_widget::Widget;
+///
+/// fn themed_app(child: impl Widget + 'static) -> impl Widget {
+///     // Light or dark, whichever the system asks for.
+///     AnimatedTheme::new().child(child)
+/// }
+/// ```
+///
+/// A custom theme follows it too, once both appearances are supplied with
+/// [`AnimatedTheme::adaptive`].
+///
+/// # Ignoring the system
+///
+/// An application with its own light/dark switch overrides the system with
+/// [`AnimatedTheme::mode`], and one with a single theme states it with
+/// [`AnimatedTheme::data`]. Neither registers as a follower of the platform, so
+/// a system switch cannot rebuild them.
+///
+/// Changing the mode is a theme change like any other and animates the same
+/// way: handing the decision back to a system that asks for the other
+/// appearance crosses into it rather than snapping.
 ///
 /// ```
 /// use std::time::Duration;
 ///
 /// use aimer_animation::Curve;
-/// use aimer_style::{AnimatedTheme, ThemeData};
+/// use aimer_style::{AnimatedTheme, ThemeData, ThemeMode};
 /// use aimer_widget::Widget;
 ///
-/// fn themed_app(child: impl Widget + 'static) -> impl Widget {
-///     AnimatedTheme::new().data(ThemeData::dark())
+/// fn dark_app(child: impl Widget + 'static) -> impl Widget {
+///     AnimatedTheme::new().mode(ThemeMode::Dark)
 ///                         .duration(Duration::from_millis(300))
 ///                         .curve(Curve::EaseInOut)
 ///                         .child(child)
 /// }
+///
+/// fn single_theme_app(child: impl Widget + 'static) -> impl Widget {
+///     AnimatedTheme::new().data(ThemeData::dark()).child(child)
+/// }
 /// ```
 pub struct AnimatedTheme<W = RequiredChild, T = ThemeData> {
-    data: T,
+    selection: ThemeSelection<T>,
     duration: Duration,
     curve: Curve,
     child: Rc<W>,
 }
 
 impl AnimatedTheme {
-    /// Creates an animated theme with a light theme and the default transition
-    /// settings.
+    /// Creates an animated theme that follows the system appearance between the
+    /// built-in light and dark themes, with the default transition settings.
     ///
     /// Attach the descendant subtree last with [`AnimatedTheme::child`].
     #[inline]
     pub fn new() -> Self {
         Self {
-            data: ThemeData::default(),
+            selection: ThemeSelection::adaptive(ThemeData::light(), ThemeData::dark()),
             duration: Duration::from_millis(200),
             curve: Curve::Linear,
             child: Rc::new(RequiredChild),
@@ -71,16 +108,77 @@ impl Default for AnimatedTheme {
     }
 }
 
+/// Cloning an `AnimatedTheme` copies its settings and shares its child subtree,
+/// so a build can keep the configuration it has to resolve again on the next
+/// appearance change without duplicating the widgets below it.
+impl<W, T: Clone> Clone for AnimatedTheme<W, T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            selection: self.selection.clone(),
+            duration: self.duration,
+            curve: self.curve,
+            child: self.child.clone(),
+        }
+    }
+}
+
 impl<W, T> AnimatedTheme<W, T> {
-    /// Sets the target theme supplied to descendants.
+    /// Sets the one theme supplied to descendants, whatever the system asks
+    /// for.
+    ///
+    /// This replaces any light/dark pair set before it: an application that
+    /// names a single theme means to use it, so the result no longer follows the
+    /// system. Add an appearance back with [`AnimatedTheme::dark`].
     #[inline]
     pub fn data<U: Theme>(self, data: U) -> AnimatedTheme<W, U> {
         AnimatedTheme {
-            data,
+            selection: ThemeSelection::fixed(data),
             duration: self.duration,
             curve: self.curve,
             child: self.child,
         }
+    }
+
+    /// Sets the pair of themes to follow the system appearance between.
+    ///
+    /// This is how a custom theme adapts: the platform reports an appearance and
+    /// the matching half of the pair is supplied to descendants, animated like
+    /// any other theme change.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// AnimatedTheme::new().adaptive(BrandTheme::light(), BrandTheme::dark())
+    ///                     .child(app)
+    /// ```
+    #[inline]
+    pub fn adaptive<U: Theme>(self, light: U, dark: U) -> AnimatedTheme<W, U> {
+        AnimatedTheme {
+            selection: ThemeSelection::adaptive(light, dark),
+            duration: self.duration,
+            curve: self.curve,
+            child: self.child,
+        }
+    }
+
+    /// Sets the theme used when the resolved appearance is dark, keeping the
+    /// current theme as the light one.
+    #[inline]
+    pub fn dark(mut self, dark: T) -> Self {
+        self.selection.dark = Some(dark);
+        self
+    }
+
+    /// Sets whether the system appearance is followed or overridden.
+    ///
+    /// [`ThemeMode::System`] is the default. An explicit mode pins the
+    /// appearance and stops the platform from being consulted at all — which is
+    /// what an application offering its own theme switch wants.
+    #[inline]
+    pub fn mode(mut self, mode: ThemeMode) -> Self {
+        self.selection.mode = mode;
+        self
     }
 
     /// Sets how long a theme transition lasts.
@@ -104,7 +202,7 @@ impl<W, T> AnimatedTheme<W, T> {
     #[inline]
     pub fn child<C: Widget>(self, child: C) -> AnimatedTheme<C, T> {
         AnimatedTheme {
-            data: self.data,
+            selection: self.selection,
             duration: self.duration,
             curve: self.curve,
             child: Rc::new(child),
@@ -123,6 +221,37 @@ impl<W, T> AnimatedTheme<W, T> {
         T: Theme,
     {
         self.child(child).boxed()
+    }
+}
+
+/// The theme an [`AnimatedTheme`] settled on, and the animation that carries it.
+///
+/// Resolving the appearance and animating the result are two jobs: this is the
+/// second one. Splitting them is what lets a system switch reach the animation
+/// the same way an application's own theme change does — as a new configuration
+/// of this widget, which retargets the running transition instead of replacing
+/// the subtree.
+struct ResolvedTheme<T> {
+    data: T,
+    duration: Duration,
+    curve: Curve,
+    child: Rc<dyn Widget>,
+    key: Option<Key>,
+}
+
+impl<T: Theme> Widget for ResolvedTheme<T> {
+    fn key(&self) -> Option<Key> {
+        self.key.clone()
+    }
+
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        StatefulElement::new_with_name(self, ctx, "AnimatedTheme", self.key())
+            .0
+            .boxed()
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "AnimatedTheme"
     }
 }
 
@@ -166,7 +295,7 @@ pub struct AnimatedThemeState<T: Theme> {
     handle: ProviderHandle<T>,
 }
 
-impl<W: Widget + 'static, T: Theme> StatefulWidget for AnimatedTheme<W, T> {
+impl<T: Theme> StatefulWidget for ResolvedTheme<T> {
     type State = AnimatedThemeState<T>;
 
     fn create_state(&self) -> Self::State {
@@ -183,7 +312,7 @@ impl<W: Widget + 'static, T: Theme> StatefulWidget for AnimatedTheme<W, T> {
     }
 }
 
-impl<W: Widget + 'static, T: Theme> State<AnimatedTheme<W, T>> for AnimatedThemeState<T> {
+impl<T: Theme> State<ResolvedTheme<T>> for AnimatedThemeState<T> {
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
     fn adopt_config_from(&mut self, new: &Self) {
@@ -232,15 +361,61 @@ impl<T: Theme> AnimatedThemeState<T> {
     }
 }
 
+impl<W: Widget + 'static, T: Theme> AnimatedTheme<W, T> {
+    /// Reads the appearance to resolve against, subscribing to it only when it
+    /// can change the answer.
+    ///
+    /// A theme that overrides the system resolves the same way whatever the
+    /// platform reports, so registering it as a follower would buy a rebuild per
+    /// system switch and change nothing. One that follows reads the appearance
+    /// from inside the build, so a switch marks that build — and nothing else —
+    /// for rebuild.
+    #[inline]
+    fn system_appearance(&self, ctx: &BuildContext) -> Brightness {
+        if self.selection.follows_system() {
+            ctx.watch_platform_brightness()
+        } else {
+            platform_brightness()
+        }
+    }
+
+    /// Lowers the builder into the widget that animates one settled theme.
+    #[inline]
+    fn resolved(&self, brightness: Brightness, key: Option<Key>) -> ResolvedTheme<T> {
+        ResolvedTheme {
+            data: self.selection.resolve(brightness),
+            duration: self.duration,
+            curve: self.curve,
+            child: self.child.clone(),
+            key,
+        }
+    }
+}
+
 impl<W: Widget + 'static, T: Theme> Widget for AnimatedTheme<W, T> {
     fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "AnimatedTheme", self.key())
-            .0
-            .boxed()
+        // Resolving the appearance always happens in this one place, whether the
+        // system is followed or overridden. Both answers therefore hang under
+        // the same element, and an application that flips between them keeps the
+        // animation running underneath instead of being rebuilt from scratch —
+        // turning "follow the system" back on is a theme change, and a theme
+        // change animates.
+        let theme = self.clone();
+        StatelessElement::from_builder(
+            ctx,
+            move |ctx| {
+                theme
+                    .resolved(theme.system_appearance(ctx), None)
+                    .to_element(ctx)
+            },
+            self.key(),
+            "AdaptiveTheme",
+        )
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
-        "AnimatedTheme"
+        "AdaptiveTheme"
     }
 }
 
@@ -406,21 +581,95 @@ mod tests {
         ThemeData::new().primary_color(Color::Rgba(value, value, value, 255))
     }
 
-    fn widget(data: ThemeData, duration: Duration) -> AnimatedTheme<TestWidget> {
+    fn widget(data: ThemeData, duration: Duration) -> ResolvedTheme<ThemeData> {
         AnimatedTheme::new()
             .data(data)
             .duration(duration)
             .child(TestWidget)
+            .resolved(Brightness::Light, None)
     }
 
-    fn custom_widget(
-        data: CustomTheme,
-        duration: Duration,
-    ) -> AnimatedTheme<TestWidget, CustomTheme> {
+    fn custom_widget(data: CustomTheme, duration: Duration) -> ResolvedTheme<CustomTheme> {
         AnimatedTheme::new()
             .data(data)
             .duration(duration)
             .child(TestWidget)
+            .resolved(Brightness::Light, None)
+    }
+
+    #[test]
+    fn a_fresh_theme_follows_the_system_appearance() {
+        let widget = AnimatedTheme::new().child(TestWidget);
+
+        assert_eq!(
+            widget.resolved(Brightness::Light, None).data,
+            ThemeData::light()
+        );
+        assert_eq!(
+            widget.resolved(Brightness::Dark, None).data,
+            ThemeData::dark()
+        );
+    }
+
+    #[test]
+    fn a_custom_pair_follows_the_system_appearance() {
+        let widget = AnimatedTheme::new()
+            .adaptive(CustomTheme { value: 1.0 }, CustomTheme { value: 2.0 })
+            .child(TestWidget);
+
+        assert_eq!(
+            widget.resolved(Brightness::Dark, None).data,
+            CustomTheme { value: 2.0 }
+        );
+        assert_eq!(
+            widget.resolved(Brightness::Light, None).data,
+            CustomTheme { value: 1.0 }
+        );
+    }
+
+    #[test]
+    fn a_single_theme_ignores_the_system_appearance() {
+        let widget = AnimatedTheme::new().data(theme(7)).child(TestWidget);
+
+        assert_eq!(widget.resolved(Brightness::Dark, None).data, theme(7));
+    }
+
+    #[test]
+    fn an_explicit_mode_ignores_the_system_appearance() {
+        let light_only = AnimatedTheme::new().mode(ThemeMode::Light).child(TestWidget);
+        let dark_only = AnimatedTheme::new().mode(ThemeMode::Dark).child(TestWidget);
+
+        assert_eq!(
+            light_only.resolved(Brightness::Dark, None).data,
+            ThemeData::light()
+        );
+        assert_eq!(
+            dark_only.resolved(Brightness::Light, None).data,
+            ThemeData::dark()
+        );
+    }
+
+    #[test]
+    fn only_a_theme_following_the_system_watches_the_platform() {
+        let following = AnimatedTheme::new().child(TestWidget);
+        let pinned = AnimatedTheme::new().mode(ThemeMode::Dark).child(TestWidget);
+        let single = AnimatedTheme::new().data(theme(7)).child(TestWidget);
+
+        assert!(following.selection.follows_system());
+        assert!(!pinned.selection.follows_system());
+        assert!(!single.selection.follows_system());
+    }
+
+    #[test]
+    fn a_dark_counterpart_restores_following_after_a_single_theme() {
+        let widget = AnimatedTheme::new()
+            .data(theme(7))
+            .dark(theme(9))
+            .child(TestWidget);
+
+        assert!(widget.selection.follows_system());
+        assert_eq!(widget.resolved(Brightness::Dark, None).data, theme(9));
+        assert_eq!(widget.resolved(Brightness::Light, None).data, theme(7));
     }
 
     #[test]
@@ -465,7 +714,7 @@ mod tests {
         let mut state = widget(theme(0), Duration::from_millis(200)).create_state();
         let new_state = widget(theme(101), Duration::ZERO).create_state();
 
-        <AnimatedThemeState<ThemeData> as State<AnimatedTheme<TestWidget>>>::adopt_config_from(
+        <AnimatedThemeState<ThemeData> as State<ResolvedTheme<ThemeData>>>::adopt_config_from(
             &mut state, &new_state,
         );
 
@@ -480,7 +729,7 @@ mod tests {
             custom_widget(CustomTheme { value: 0.0 }, Duration::from_millis(200)).create_state();
         let new_state = custom_widget(CustomTheme { value: 101.0 }, Duration::ZERO).create_state();
 
-        <AnimatedThemeState<CustomTheme> as State<AnimatedTheme<TestWidget, CustomTheme>>>::adopt_config_from(
+        <AnimatedThemeState<CustomTheme> as State<ResolvedTheme<CustomTheme>>>::adopt_config_from(
             &mut state,
             &new_state,
         );
@@ -495,7 +744,7 @@ mod tests {
         let mut state = widget(theme(0), Duration::from_millis(200)).create_state();
         let new_state = widget(theme(101), Duration::from_millis(400)).create_state();
 
-        <AnimatedThemeState<ThemeData> as State<AnimatedTheme<TestWidget>>>::adopt_config_from(
+        <AnimatedThemeState<ThemeData> as State<ResolvedTheme<ThemeData>>>::adopt_config_from(
             &mut state, &new_state,
         );
 

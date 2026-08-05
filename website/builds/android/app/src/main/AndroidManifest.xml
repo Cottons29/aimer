@@ -12,7 +12,7 @@
         <activity
             android:name="com.aimer.AimerActivity"
             android:exported="true"
-            android:configChanges="orientation|keyboardHidden|screenSize"
+            android:configChanges="orientation|keyboardHidden|screenSize|uiMode"
             android:windowSoftInputMode="stateHidden|adjustResize">
             <meta-data android:name="android.app.lib_name" android:value="website" />
             <intent-filter>

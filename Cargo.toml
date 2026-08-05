@@ -41,6 +41,11 @@ aimer_native.workspace = true
 markdown = []
 provider = []
 svg = []
+# Present frames from a dedicated raster thread. Off by default — see the
+# feature notes in `aimer_quiver/Cargo.toml`.
+raster-thread = ["aimer_quiver/raster-thread"]
+# Collect the per-frame build / encode / present breakdown.
+frame-stats = ["aimer_quiver/frame-stats"]
 
 [workspace]
 resolver = "3"
@@ -79,7 +84,7 @@ members = [
     "crates/aimer_native",
     "crates/aimer_modal",
     "crates/aimer_dnd"
-]
+, "crates/aimer_ffi_utils"]
 
 
 [workspace.dependencies]
@@ -170,7 +175,6 @@ objc2-core-foundation = { version = "0.3.2", default-features = false }
 objc2-core-graphics = { version = "0.3.2", default-features = false }
 
 # Aimer cli dependencies
-
 
 crossterm = "0.29.0"
 clap = { version = "4.6.1", features = ["derive"] }

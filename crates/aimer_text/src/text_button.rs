@@ -9,7 +9,7 @@ use aimer_events::pointer::PointerSource;
 use aimer_events::window::request_animation_frame;
 use aimer_style::{TextOverflow, TextStyle};
 use aimer_utils::AnimInstant;
-use aimer_utils::callback::{CallbackExecutor, RawInnerCallback, VoidCallback};
+use aimer_utils::callback::{CallbackExecutor, VoidCallback, ambient_spawner};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutCache, LayoutElement,
@@ -334,21 +334,13 @@ impl RawTextButton {
             .save(ctx.scale, x, y, line_widths, line_height, size.height);
     }
 
+    /// Fires one press callback.
+    ///
+    /// The button holds no runtime handle, so an async callback goes to
+    /// whichever runtime the frame is being built on.
+    #[inline]
     fn execute(callback: &VoidCallback) {
-        if let Some(callback) = callback.get().as_ref() {
-            match callback {
-                RawInnerCallback::Empty => {}
-                RawInnerCallback::Sync(function) => function(()),
-                RawInnerCallback::Async(function) => {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                        handle.spawn(function(()));
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    wasm_bindgen_futures::spawn_local(function(()));
-                }
-            }
-        }
+        callback.execute((), &ambient_spawner());
     }
 
     fn press(&self) {
@@ -382,8 +374,10 @@ impl VisitorElement for RawTextButton {
 impl EventElement for RawTextButton {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         match event {
-            ElementEvent::PointerMove(pos, PointerSource::Mouse, _) => {
-                self.set_hovered(self.bounds.is_inside(pos.x, pos.y) && !self.widget.disabled);
+            ElementEvent::PointerMove(info) if info.source == PointerSource::Mouse => {
+                self.set_hovered(
+                    self.bounds.is_inside(info.x(), info.y()) && !self.widget.disabled,
+                );
                 false
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => {
@@ -391,18 +385,18 @@ impl EventElement for RawTextButton {
                 self.interaction.borrow_mut().cancel();
                 false
             }
-            ElementEvent::PointerDown(pos, _, _) => {
-                let inside = self.bounds.is_inside(pos.x, pos.y);
+            ElementEvent::PointerDown(info) => {
+                let inside = self.bounds.is_inside(info.x(), info.y());
                 self.interaction
                     .borrow_mut()
                     .pointer_down(inside, self.widget.disabled);
                 inside && !self.widget.disabled
             }
-            ElementEvent::PointerUp(pos, _, _) => {
-                let action = self
-                    .interaction
-                    .borrow_mut()
-                    .pointer_up(self.bounds.is_inside(pos.x, pos.y), self.widget.disabled);
+            ElementEvent::PointerUp(info) => {
+                let action = self.interaction.borrow_mut().pointer_up(
+                    self.bounds.is_inside(info.x(), info.y()),
+                    self.widget.disabled,
+                );
                 if action == ButtonAction::Press {
                     self.press();
                     true
@@ -451,6 +445,7 @@ mod tests {
 
     use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
     use aimer_cupid::draw_cmd::DrawCommand;
+    use aimer_events::pointer::{PointerButton, PointerInfo};
     use aimer_style::TextDecoration;
     use aimer_widget::base::WindowHandle;
 
@@ -539,14 +534,10 @@ mod tests {
         assert_eq!(size, intrinsic);
         assert!(
             !button
-                .on_event(&ElementEvent::PointerDown(
-                    Vec2d {
-                        x: intrinsic.width + 1.0,
-                        y: intrinsic.height / 2.0
-                    },
-                    PointerSource::Mouse,
-                    0,
-                ))
+                .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+                    Vec2d { x: intrinsic.width + 1.0, y: intrinsic.height / 2.0 },
+                    PointerButton::Primary,
+                )))
                 .is_consumed()
         );
     }
@@ -569,14 +560,10 @@ mod tests {
         assert!(size.height > 17.0);
         assert!(
             !button
-                .on_event(&ElementEvent::PointerDown(
-                    Vec2d {
-                        x: 31.0,
-                        y: size.height / 2.0
-                    },
-                    PointerSource::Mouse,
-                    0,
-                ))
+                .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+                    Vec2d { x: 31.0, y: size.height / 2.0 },
+                    PointerButton::Primary,
+                )))
                 .is_consumed()
         );
     }
@@ -597,26 +584,18 @@ mod tests {
         assert!(size.height > 17.0);
         assert!(
             button
-                .on_event(&ElementEvent::PointerDown(
-                    Vec2d {
-                        x: 1.0,
-                        y: size.height - 1.0
-                    },
-                    PointerSource::Mouse,
-                    0,
-                ))
+                .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+                    Vec2d { x: 1.0, y: size.height - 1.0 },
+                    PointerButton::Primary,
+                )))
                 .is_consumed()
         );
         assert!(
             !button
-                .on_event(&ElementEvent::PointerDown(
-                    Vec2d {
-                        x: size.width - 1.0,
-                        y: size.height - 1.0
-                    },
-                    PointerSource::Mouse,
-                    0,
-                ))
+                .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+                    Vec2d { x: size.width - 1.0, y: size.height - 1.0 },
+                    PointerButton::Primary,
+                )))
                 .is_consumed()
         );
     }

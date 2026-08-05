@@ -318,6 +318,33 @@ impl<'a> BuildContext<'a> {
         crate::WindowMetrics::of(&self.window)
     }
 
+    /// Reads the appearance the platform asks for and rebuilds the widget
+    /// currently building whenever the user switches it.
+    ///
+    /// Desktop and mobile systems switch between light and dark appearance
+    /// while an application is running, so a widget that chooses colors from
+    /// the system appearance has to be told when the choice changes; reading
+    /// [`crate::platform_brightness`] directly registers nothing and leaves the
+    /// widget with the appearance it was first built with.
+    ///
+    /// Outside a build there is nothing to register and the appearance is
+    /// simply returned.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn build(&self, ctx: &BuildContext) -> impl Widget {
+    ///     let brightness = ctx.watch_platform_brightness();
+    ///     // ... this widget is rebuilt when the system appearance changes
+    /// }
+    /// ```
+    pub fn watch_platform_brightness(&self) -> crate::Brightness {
+        if let Some(consumer) = self.current_build_consumer() {
+            crate::platform_brightness::subscribe(&consumer);
+        }
+        crate::platform_brightness()
+    }
+
     /// Answers one question about the window and rebuilds the widget currently
     /// building only when that answer changes.
     ///

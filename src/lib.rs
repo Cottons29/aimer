@@ -15,7 +15,7 @@ pub use aimer_dnd::{
 pub use aimer_flex::*;
 pub use aimer_grid::*;
 pub use aimer_input::button::Button;
-pub use aimer_input::callback::{AsyncCallback, CallbackInner, RawInnerCallback};
+pub use aimer_input::callback::{AsyncCallback, RawInnerCallback};
 pub use aimer_input::input::*;
 pub use aimer_input::*;
 pub use aimer_macro::{Theme, key, main};
@@ -36,6 +36,7 @@ pub use aimer_provider::{
     NotifierProvider, Provider, ProviderContext, ProviderHandle, StoreProvider,
 };
 pub use aimer_quiver as quiver;
+pub use aimer_quiver::frame_stats;
 pub use aimer_quiver::{
     self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions,
     set_first_frame_rendered_callback,

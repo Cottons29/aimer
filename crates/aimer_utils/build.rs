@@ -77,7 +77,7 @@ fn is_ignored_directory(path: &Path) -> bool {
     path.file_name().is_some_and(|name| {
         matches!(
             name.to_str(),
-            Some(".git" | ".junie" | "node_modules" | "target")
+            Some(".git" | ".junie" | "node_modules" | "target" | ".github" | ".codegraph" | "Cargo.lock")
         )
     })
 }

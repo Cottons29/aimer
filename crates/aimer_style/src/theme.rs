@@ -1,6 +1,7 @@
 use aimer_animation::Animatable;
 use aimer_color::prelude::Color;
 use aimer_provider::{ProviderContext, Snapshot};
+use aimer_widget::Brightness;
 use aimer_widget::base::BuildContext;
 
 /// Semantic colors used by themed widgets.
@@ -63,6 +64,25 @@ impl ThemeData {
             on_background_color: Color::WHITE,
             surface_color: Color::Rgba(30, 30, 30, 255),
             on_surface_color: Color::WHITE,
+        }
+    }
+
+    /// Creates the built-in theme matching an appearance.
+    ///
+    /// This is how the system appearance becomes a theme: the platform reports
+    /// a [`Brightness`] and the application answers with the theme it draws in.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_style::{Brightness, ThemeData};
+    ///
+    /// assert_eq!(ThemeData::for_brightness(Brightness::Dark), ThemeData::dark());
+    /// ```
+    pub const fn for_brightness(brightness: Brightness) -> Self {
+        match brightness {
+            Brightness::Light => Self::light(),
+            Brightness::Dark => Self::dark(),
         }
     }
 

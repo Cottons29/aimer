@@ -330,8 +330,8 @@ impl Drawable for RawFloating {
 impl EventElement for RawFloating {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         let dismiss = match event {
-            ElementEvent::PointerDown(position, _, _)
-                if self.barrier_dismissible && !contains(&self.child_bounds, *position) =>
+            ElementEvent::PointerDown(pointer)
+                if self.barrier_dismissible && !contains(&self.child_bounds, pointer.pos) =>
             {
                 true
             }
