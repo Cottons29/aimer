@@ -1,0 +1,14 @@
+[package]
+name = "aimer_ctxmenu"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aimer_attribute.workspace = true
+aimer_events.workspace = true
+aimer_modal.workspace = true
+aimer_style.workspace = true
+aimer_widget.workspace = true
+
+[dev-dependencies]
+winit.workspace = true
