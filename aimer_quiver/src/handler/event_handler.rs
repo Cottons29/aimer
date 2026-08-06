@@ -18,6 +18,11 @@ pub(crate) const CURSOR_OUTSIDE_POSITION: Vec2d = Vec2d {
     y: f32::MIN,
 };
 
+/// What a headless application has to do after an event was handled.
+///
+/// The windowed loop answers these three questions to `winit` — exit, redraw,
+/// present a resized surface — and a headless application has no loop to
+/// answer them to, so they are handed back to its owner instead.
 pub(crate) enum HeadlessEventAction {
     None,
     Render,
@@ -48,6 +53,29 @@ impl WindowEventHandler {
                 event_loop.exit()
             }
 
+            WindowEvent::RedrawRequested => app.render(event_loop),
+
+            WindowEvent::Resized(size) => Self::handle_resize(size, app, event_loop),
+
+            other => Self::handle_common_event(app, other),
+        }
+    }
+
+    /// Handles every event whose answer does not depend on who is driving the
+    /// application.
+    ///
+    /// A frame is asked for through [`AimerApplicationHandler::window`], which
+    /// is a real window under the platform loop and a recording one in a
+    /// headless application — so both see the same events, dispatched the same
+    /// way, requesting frames on exactly the same conditions. The three events
+    /// that *do* depend on the driver — closing, redrawing, and resizing, each
+    /// of which the windowed loop answers by calling back into `winit` — are
+    /// handled by the callers instead.
+    fn handle_common_event<W: Widget + 'static>(
+        app: &mut AimerApplicationHandler<W>,
+        event: WindowEvent,
+    ) {
+        match event {
             WindowEvent::Touch(item) => Self::handle_touch(item, app),
 
             WindowEvent::CursorMoved { position, .. } => {
@@ -91,27 +119,22 @@ impl WindowEventHandler {
                 Self::handle_mouse_wheel(delta, phase, app);
             }
 
-            WindowEvent::RedrawRequested => {
-                app.render(event_loop)
-            }
-
-            WindowEvent::Resized(size) => Self::handle_resize(size, app, event_loop),
-
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 Self::update_scale_factor(&mut app.window_scale, scale_factor);
+                app.sync_headless_metrics(None);
                 if let Some(root) = &app.widget_root {
                     root.invalidate_layout();
                     aimer_widget::notify_window_metrics_changed();
                 }
                 Self::refresh_system_appearance(app);
-                if let Some(window) = app.window {
+                if let Some(window) = &app.window {
                     window.request_redraw();
                 }
             }
 
             WindowEvent::ThemeChanged(theme) => {
                 if Self::handle_theme_changed(theme)
-                    && let Some(window) = app.window
+                    && let Some(window) = &app.window
                 {
                     window.request_redraw();
                 }
@@ -124,7 +147,7 @@ impl WindowEventHandler {
                 if is_focus {
                     let result = app.cancel_element_events();
                     if let Some(window) = &app.window
-                        && result.needs_redraw()
+                        && Self::should_redraw(result, true)
                     {
                         window.request_redraw();
                     }
@@ -159,116 +182,30 @@ impl WindowEventHandler {
         }
     }
 
+    /// Delivers a window event to an application that has no platform loop
+    /// behind it.
+    ///
+    /// Every event a widget can observe travels through
+    /// [`handle_common_event`](Self::handle_common_event), the very code the
+    /// windowed loop runs, so a headless application sees the same dispatch,
+    /// the same cursor changes, and the same frame requests. Only the answers
+    /// the windowed loop gives back to `winit` are returned to the caller
+    /// instead of being acted on here.
     pub(crate) fn handle_headless_event<W: Widget + 'static>(
         app: &mut AimerApplicationHandler<W>,
         event: WindowEvent,
     ) -> HeadlessEventAction {
         match event {
             WindowEvent::CloseRequested => HeadlessEventAction::Exit,
-            WindowEvent::Touch(item) => {
-                Self::handle_touch(item, app);
-                HeadlessEventAction::None
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                if app.file_drag.is_active() {
-                    Self::report_file_drag_move(app, Self::logical_cursor(position, app));
-                    return HeadlessEventAction::None;
-                }
-                Self::handle_cursor_move(position, app);
-                HeadlessEventAction::None
-            }
-            WindowEvent::CursorLeft { .. } => {
-                Self::handle_cursor_left(app);
-                HeadlessEventAction::None
-            }
-            WindowEvent::CursorEntered { .. } => {
-                Self::handle_cursor_entered(app);
-                HeadlessEventAction::None
-            }
-            WindowEvent::MouseInput { state, button, .. } => {
-                Self::handle_mouse_input(state, button, app);
-                HeadlessEventAction::None
-            }
-            WindowEvent::ModifiersChanged(mods) => {
-                let state = mods.state();
-                app.current_modifiers = Modifiers {
-                    ctrl: state.control_key(),
-                    shift: state.shift_key(),
-                    alt: state.alt_key(),
-                    meta: state.super_key(),
-                };
-                HeadlessEventAction::None
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                Self::handle_keyboard_input(event, app);
-                HeadlessEventAction::None
-            }
-            WindowEvent::Ime(ime) => {
-                Self::handle_ime(ime, app);
-                HeadlessEventAction::None
-            }
-            // The reported phase is unused on the web, where it is replaced.
-            #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
-            WindowEvent::MouseWheel { delta, phase, .. } => {
-                // Same reconstruction as the windowed path: the browser hands
-                // over `Moved` for every event, so the boundary comes from the
-                // cadence tracker instead.
-                #[cfg(target_arch = "wasm32")]
-                let phase = Self::web_wheel_phase(app);
-
-                Self::handle_mouse_wheel(delta, phase, app);
-                HeadlessEventAction::None
-            }
-            WindowEvent::HoveredFile(path) => {
-                let pos = Some(app.cursor_pos);
-                app.file_drag.enter(&path, app.cursor_pos);
-                Self::handle_generic_event(app, &ElementEvent::HoveredFile { path, pos });
-                HeadlessEventAction::None
-            }
-            WindowEvent::HoveredFileCancelled => {
-                app.file_drag.finish();
-                Self::handle_generic_event(app, &ElementEvent::HoveredFileCancelled);
-                HeadlessEventAction::None
-            }
-            WindowEvent::DroppedFile(path) => {
-                let pos = Some(app.cursor_pos);
-                app.file_drag.finish();
-                Self::handle_generic_event(app, &ElementEvent::DroppedFile { path, pos });
-                HeadlessEventAction::None
-            }
             WindowEvent::RedrawRequested => HeadlessEventAction::Render,
             WindowEvent::Resized(size) => {
                 Self::apply_resize(size, app);
                 HeadlessEventAction::Render
             }
-            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                Self::update_scale_factor(&mut app.window_scale, scale_factor);
-                if let Some(root) = &app.widget_root {
-                    root.invalidate_layout();
-                    aimer_widget::notify_window_metrics_changed();
-                }
-                Self::refresh_system_appearance(app);
-                HeadlessEventAction::Render
-            }
-            WindowEvent::ThemeChanged(theme) => {
-                if Self::handle_theme_changed(theme) {
-                    return HeadlessEventAction::Render;
-                }
+            other => {
+                Self::handle_common_event(app, other);
                 HeadlessEventAction::None
             }
-            WindowEvent::Focused(false) => {
-                #[cfg(target_arch = "wasm32")]
-                app.web_scroll_phase.reset();
-                app.scroll_smoother.clear();
-                if app.widget_root.is_some() {
-                    let result = app.cancel_element_events();
-                    if result.needs_redraw() {
-                        return HeadlessEventAction::Render;
-                    }
-                }
-                HeadlessEventAction::None
-            }
-            _ => HeadlessEventAction::None,
         }
     }
 
@@ -300,7 +237,7 @@ impl WindowEventHandler {
     #[cfg_attr(not(target_os = "android"), allow(unused_variables))]
     fn refresh_system_appearance<W: Widget + 'static>(app: &AimerApplicationHandler<W>) {
         #[cfg(target_os = "android")]
-        if let Some(window) = app.window {
+        if let Some(window) = app.native_window() {
             crate::system_appearance::announce(window);
         }
     }
@@ -500,6 +437,8 @@ impl WindowEventHandler {
                 PhysicalKey::Code(KeyCode::KeyC) => Some(NamedKey::Other("c".into())),
                 PhysicalKey::Code(KeyCode::KeyV) => Some(NamedKey::Other("v".into())),
                 PhysicalKey::Code(KeyCode::KeyX) => Some(NamedKey::Other("x".into())),
+                PhysicalKey::Code(KeyCode::KeyZ) => Some(NamedKey::Other("z".into())),
+                PhysicalKey::Code(KeyCode::KeyY) => Some(NamedKey::Other("y".into())),
                 _ => None,
             };
             if let Some(key) = named {
@@ -835,7 +774,7 @@ impl WindowEventHandler {
                     if app.window.is_none() {
                         return;
                     }
-                    app.window.unwrap().inner_size()
+                    app.window.as_ref().unwrap().inner_size()
                 }
             }
         };
@@ -885,6 +824,11 @@ impl WindowEventHandler {
         app: &mut AimerApplicationHandler<W>,
     ) {
         app.pending_resize = Some(size);
+        // A platform window has already grown to `size` by the time it reports
+        // the resize, so anything that reads the window while the event is
+        // handled — a breakpoint, a media query — sees the new one. A headless
+        // window only knows what it is told, and is told here.
+        app.sync_headless_metrics(Some(size));
 
         if let Some(root) = &app.widget_root {
             root.invalidate_layout();
@@ -905,7 +849,7 @@ impl WindowEventHandler {
         app: &mut AimerApplicationHandler<W>,
     ) -> Option<Vec2d> {
         #[cfg(target_os = "macos")]
-        if let Some(window) = app.window
+        if let Some(window) = app.native_window()
             && let Some(pos) = crate::ffi_utils::macos_drag::cursor_in_window(window)
         {
             app.cursor_pos = pos;

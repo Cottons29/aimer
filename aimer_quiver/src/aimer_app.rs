@@ -3,7 +3,6 @@ use std::net::IpAddr;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
 use aimer_cupid::AntiAlias;
 #[cfg(not(target_arch = "wasm32"))]
@@ -11,7 +10,7 @@ use aimer_inspector::InspectorAppHandle;
 use aimer_modal::ModalHost;
 use aimer_utils::info;
 use aimer_widget::Widget;
-use aimer_widget::base::{BuildContext, WindowHandle};
+use aimer_widget::base::WindowHandle;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 use winit::dpi::PhysicalSize;
@@ -34,6 +33,9 @@ pub enum AimerNativePlatformEvent {
     ForceBackspace,
     InsertText(String),
     FrameReady,
+    /// An editing shortcut the macOS menu bar claimed before the window could
+    /// see it, handed back to the widget tree. See [`crate::menu`].
+    MenuShortcut(crate::menu::MenuShortcut),
 }
 
 pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerNativePlatformEvent>> = OnceLock::new();
@@ -202,92 +204,30 @@ pub struct AimerApp<W = ()> {
     startup_hooks: Vec<StartupHook>,
 }
 
-#[cfg(target_os = "macos")]
-fn install_macos_menu() -> muda::Menu {
-    use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-
-    let menu = Menu::new();
-
-    let app_menu = Submenu::new("Aimer", true);
-    app_menu
-        .append_items(&[
-            &PredefinedMenuItem::about(None, None),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::services(None),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::hide(None),
-            &PredefinedMenuItem::hide_others(None),
-            &PredefinedMenuItem::show_all(None),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::quit(None),
-        ])
-        .unwrap();
-
-    let file_menu = Submenu::new("File", true);
-    file_menu
-        .append_items(&[
-            &MenuItem::new("New", true, None),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::close_window(None),
-        ])
-        .unwrap();
-
-    let edit_menu = Submenu::new("Edit", true);
-    edit_menu
-        .append_items(&[
-            &PredefinedMenuItem::undo(None),
-            &PredefinedMenuItem::redo(None),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::cut(None),
-            &PredefinedMenuItem::copy(None),
-            &PredefinedMenuItem::paste(None),
-            &PredefinedMenuItem::select_all(None),
-        ])
-        .unwrap();
-
-    let view_menu = Submenu::new("View", true);
-    view_menu
-        .append_items(&[&PredefinedMenuItem::fullscreen(None)])
-        .unwrap();
-
-    let window_menu = Submenu::new("Window", true);
-    window_menu
-        .append_items(&[
-            &PredefinedMenuItem::minimize(None),
-            &PredefinedMenuItem::maximize(None),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::close_window(None),
-        ])
-        .unwrap();
-
-    let help_menu = Submenu::new("Help", true);
-    help_menu
-        .append_items(&[&MenuItem::new("Aimer Help", true, None)])
-        .unwrap();
-
-    menu.append_items(&[
-        &app_menu,
-        &file_menu,
-        &edit_menu,
-        &view_menu,
-        &window_menu,
-        &help_menu,
-    ])
-    .unwrap();
-
-    menu.init_for_nsapp();
-    menu
-}
-
-fn default_startup_hooks() -> Vec<StartupHook> {
+/// The setup the framework itself needs before a native window appears.
+///
+/// Only the platform loop runs these: they install native objects — the macOS
+/// application menu — which need a real application behind them and mean
+/// nothing to an application running without a window.
+fn platform_startup_hooks() -> Vec<StartupHook> {
     #[cfg(target_os = "macos")]
     {
-        vec![Box::new(|| Box::new(install_macos_menu()))]
+        vec![Box::new(|| Box::new(crate::menu::install_macos_menu()))]
     }
     #[cfg(not(target_os = "macos"))]
     {
         Vec::new()
     }
+}
+
+/// The hooks a native run performs, framework setup first.
+///
+/// The platform's own setup runs before anything the application registered,
+/// so a callback that needs the native application to exist finds it there.
+fn native_startup_hooks(application_hooks: Vec<StartupHook>) -> Vec<StartupHook> {
+    let mut hooks = platform_startup_hooks();
+    hooks.extend(application_hooks);
+    hooks
 }
 /// Mocked display properties used by a headless application.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -307,16 +247,31 @@ impl Default for HeadlessOptions {
 
 /// A running Aimer application that builds, lays out, draws, and handles events
 /// without creating a native window or a `winit` event loop.
+///
+/// The application is the same one the platform loop runs: events go through
+/// the same handlers, frames through the same drawer, and a frame is asked for
+/// on exactly the same conditions. What a window would do — present the frame,
+/// deliver the request for the next one — is done by whoever owns this value,
+/// by calling [`render_frame`](Self::render_frame) or
+/// [`pump_frames`](Self::pump_frames).
 pub struct HeadlessAimerApp<W: Widget + 'static> {
     app: AimerApplicationHandler<W>,
     canvas: aimer_canvas::InnerCanvas,
     window: WindowHandle,
     size: PhysicalSize<u32>,
     exit_requested: bool,
+    /// The frame requester that was installed for this thread before this
+    /// application took it over, put back when the application is dropped.
+    previous_frame_requester: Option<std::rc::Rc<dyn Fn()>>,
 }
 
 impl<W: Widget + 'static> HeadlessAimerApp<W> {
-    fn new(widget: W, options: HeadlessOptions, antialiasing: AntiAlias) -> HeadlessAimerApp<W> {
+    fn new(
+        widget: W,
+        options: HeadlessOptions,
+        antialiasing: AntiAlias,
+        startup_hooks: Vec<StartupHook>,
+    ) -> HeadlessAimerApp<W> {
         let scale_factor = if options.scale_factor.is_finite() && options.scale_factor > 0.0 {
             options.scale_factor
         } else {
@@ -327,9 +282,9 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         let async_runtime = Runtime::new().expect("Failed to create async runtime");
 
         let window = WindowHandle::headless(options.size, scale_factor);
-        Self {
+        let mut headless = Self {
             app: AimerApplicationHandler {
-                window: None,
+                window: Some(window.clone()),
                 render_ctx: AimerRenderContext::new(antialiasing),
                 widget_root: None,
                 event_dispatcher: aimer_widget::EventDispatcher::new(),
@@ -344,7 +299,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 window_scale: scale_factor,
                 native_window_size: None,
                 pending_resize: None,
-                startup_hooks: Vec::new(),
+                startup_hooks,
                 startup_resources: Vec::new(),
                 #[cfg(not(target_arch = "wasm32"))]
                 async_runtime,
@@ -361,69 +316,113 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 file_drag: crate::handler::file_drag::FileDrag::new(),
             },
             canvas: aimer_canvas::InnerCanvas::new(),
-            window,
+            window: window.clone(),
             size: options.size,
             exit_requested: false,
-        }
+            // A widget schedules its next frame through the platform requester:
+            // a state update, an animation step, an overlay that just opened.
+            // Without a platform there is nothing to schedule through, so the
+            // requests are taken here and land on this application's window,
+            // just as they land on a real one.
+            previous_frame_requester: aimer_events::window::set_thread_redraw_requester(
+                move || window.request_redraw(),
+            ),
+        };
+
+        // The windowed application runs its setup the moment the platform loop
+        // resumes, before the first window exists. Construction is the same
+        // moment here: an application is running from the point it is handed
+        // back, so whatever its setup produces is already in place.
+        crate::handler::run_startup_hooks(
+            &mut headless.app.startup_hooks,
+            &mut headless.app.startup_resources,
+        );
+
+        // An application that has just come up owes the screen a frame, and the
+        // windowed loop asks for it the moment its window exists. Starting with
+        // the same request pending is what lets `pump_frames` draw the first
+        // frame without being told to.
+        headless.window.request_redraw();
+
+        headless
     }
 
     /// Builds and draws one frame into the non-presenting in-memory canvas.
+    ///
+    /// A frame does what a windowed frame does: this frame's share of a scroll
+    /// gesture is delivered, a resize the surface has not caught up with is
+    /// applied, and the tree is drawn through the shared frame drawer. An
+    /// animation that is not finished asks for the next frame, which
+    /// [`take_redraw_request`](Self::take_redraw_request) reports and
+    /// [`pump_frames`](Self::pump_frames) acts on.
     pub fn render_frame(&mut self) {
         if self.exit_requested {
             return;
         }
 
-        let _ = self.app.dispatch_smoothed_scroll();
+        // Drawing is the pending request being delivered, exactly as a window
+        // clears it when it hands over `RedrawRequested`. Whatever this frame
+        // asks for is a request for the *next* one.
+        self.window.take_redraw_request();
 
-        let scale_factor = self.app.window_scale;
-        let frame_size = ResolvedSize {
-            width: self.size.width as f32,
-            height: self.size.height as f32,
-        };
+        self.app.begin_frame();
+        self.apply_pending_resize();
+
         let canvas = aimer_canvas::Canvas::new(&self.canvas);
         canvas.begin_frame();
-        let ctx = BuildContext {
-            parent_size: frame_size,
-            canvas,
-            scale: scale_factor as f32,
-            parent_pos: Default::default(),
-            cursor_pos: self.app.cursor_pos,
-            box_constraint: BoxConstraint {
-                min_width: 0.0,
-                min_height: 0.0,
-                max_width: frame_size.width,
-                max_height: frame_size.height,
-            },
-            visible_rect: None,
-            window: self.window.clone(),
-            #[cfg(not(target_arch = "wasm32"))]
-            async_handle: self.app.async_runtime.handle().clone(),
-            inherited_states: Default::default(),
-        };
 
-        if self.app.widget_root.is_none()
-            && let Some(widget) = self.app.pending_widget.take()
-        {
-            self.app.widget_root = Some(widget.to_element(&ctx));
+        let (width, height) = (self.size.width, self.size.height);
+        let window = self.window.clone();
+        self.app
+            .frame_drawer(window)
+            .draw(&self.canvas, width, height);
+
+        crate::first_frame::notify_first_frame_presented(true);
+    }
+
+    /// Renders frames for as long as the application keeps asking for them, up
+    /// to `max_frames`, and reports how many were drawn.
+    ///
+    /// This is the headless stand-in for the platform's frame loop: an
+    /// animation, a scroll gesture gliding to a stop, or a widget rebuilding
+    /// itself all ask for the next frame the same way they do on a window, and
+    /// this is what delivers it. The budget is what keeps a permanently
+    /// animating tree from turning a test into a hang, so a caller that runs
+    /// out of it can tell: the count equals `max_frames` and the request is
+    /// still pending.
+    pub fn pump_frames(&mut self, max_frames: usize) -> usize {
+        let mut frames = 0;
+        while frames < max_frames && self.take_redraw_request() && !self.exit_requested {
+            self.render_frame();
+            frames += 1;
         }
-        if let Some(root) = &self.app.widget_root {
-            root.draw(&ctx);
+        frames
+    }
+
+    /// Adopts the size a resize event asked for.
+    ///
+    /// A window reconfigures its surface on the frame that answers the resize
+    /// rather than while the event is being handled, and this is that frame.
+    /// The metrics the tree reads were already brought up to date by the event
+    /// itself, exactly as a platform window reports its new size the moment it
+    /// has one.
+    fn apply_pending_resize(&mut self) {
+        if let Some(size) = self.app.pending_resize.take() {
+            self.size = size;
         }
-        self.app.pending_resize = None;
     }
 
     /// Delivers a `winit` window event to the headless application.
+    ///
+    /// The event travels the path the windowed loop uses, so a frame follows
+    /// only where a window would have been sent one — which
+    /// [`take_redraw_request`](Self::take_redraw_request) reports. A resize is
+    /// the one event a window answers with a frame of its own, drawn before the
+    /// compositor can stretch the old one, and it is answered that way here too.
     pub fn send_window_event(&mut self, event: WindowEvent) {
-        if let WindowEvent::Resized(size) = &event {
-            self.size = *size;
-            self.window
-                .update_headless_metrics(self.size, self.app.window_scale);
-        }
         let action = WindowEventHandler::handle_headless_event(&mut self.app, event);
-        self.window
-            .update_headless_metrics(self.size, self.app.window_scale);
         match action {
-            HeadlessEventAction::None => self.window.request_redraw(),
+            HeadlessEventAction::None => {}
             HeadlessEventAction::Render => self.render_frame(),
             HeadlessEventAction::Exit => self.exit_requested = true,
         }
@@ -433,7 +432,6 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     /// loop.
     pub fn send_user_event(&mut self, event: AimerNativePlatformEvent) {
         crate::handler::user_events::handle_user_event(&mut self.app, event);
-        self.window.request_redraw();
     }
 
     pub fn physical_size(&self) -> PhysicalSize<u32> {
@@ -452,7 +450,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     }
 
     pub fn has_native_window(&self) -> bool {
-        self.app.window.is_some()
+        self.app.native_window().is_some()
     }
 
     pub fn is_exit_requested(&self) -> bool {
@@ -472,6 +470,14 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     }
 }
 
+impl<W: Widget + 'static> Drop for HeadlessAimerApp<W> {
+    /// Stops taking the frame requests of this thread once the application is
+    /// gone, so a later one — or none at all — receives them instead.
+    fn drop(&mut self) {
+        aimer_events::window::restore_thread_redraw_requester(self.previous_frame_requester.take());
+    }
+}
+
 impl AimerApp {
     /// Creates an application builder using lightweight analytic antialiasing.
     #[inline]
@@ -479,7 +485,7 @@ impl AimerApp {
         Self {
             child: (),
             antialiasing: AntiAlias::default(),
-            startup_hooks: default_startup_hooks(),
+            startup_hooks: Vec::new(),
         }
     }
 
@@ -570,7 +576,7 @@ impl<W: Widget + 'static> AimerApp<W> {
     pub fn run(self) {
         start_event_loop(
             ModalHost::new().child(self.child),
-            self.startup_hooks,
+            native_startup_hooks(self.startup_hooks),
             self.antialiasing,
         );
     }
@@ -581,7 +587,7 @@ impl<W: Widget + 'static> AimerApp<W> {
         self.startup_hooks.push(Box::new(move || Box::new(setup())));
         start_event_loop(
             ModalHost::new().child(self.child),
-            self.startup_hooks,
+            native_startup_hooks(self.startup_hooks),
             self.antialiasing,
         );
     }
@@ -598,6 +604,7 @@ impl<W: Widget + 'static> AimerApp<W> {
             ModalHost::new().child(self.child),
             options,
             self.antialiasing,
+            self.startup_hooks,
         )
     }
 }
@@ -659,9 +666,11 @@ fn start_event_loop(
         if !try_begin_frame_ready_request(&FRAME_READY_PENDING) {
             return;
         }
-        let sent = EVENT_PROXY
-            .get()
-            .is_some_and(|proxy| proxy.send_event(AimerNativePlatformEvent::FrameReady).is_ok());
+        let sent = EVENT_PROXY.get().is_some_and(|proxy| {
+            proxy
+                .send_event(AimerNativePlatformEvent::FrameReady)
+                .is_ok()
+        });
         if !sent {
             complete_frame_ready_request(&FRAME_READY_PENDING);
         }
@@ -780,7 +789,7 @@ mod tests {
 
     #[test]
     fn app_builder_appends_each_setup_hook() {
-        let default_hook_count = usize::from(cfg!(target_os = "macos"));
+        let default_hook_count = 0;
         let app = AimerApp::new()
             .setup(|| "first resource")
             .setup(|| "second resource")
@@ -917,7 +926,7 @@ mod tests {
         );
         app.render_frame();
 
-        app.send_window_event(WindowEvent::Focused(false));
+        app.send_window_event(WindowEvent::Focused(true));
         assert!(app.take_redraw_request());
         app.send_window_event(WindowEvent::Resized(PhysicalSize::new(800, 600)));
 
@@ -1005,16 +1014,16 @@ mod tests {
         fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
             self.events.fetch_add(1, Ordering::SeqCst);
             match event {
-                ElementEvent::PointerDown(pointer) => aimer_widget::EventResult::consumed()
-                    .with_pointer_capture(aimer_widget::PointerKey::new(
-                        pointer.source,
-                        pointer.id,
-                    )),
-                ElementEvent::PointerUp(pointer) => aimer_widget::EventResult::consumed()
-                    .with_pointer_release(aimer_widget::PointerKey::new(
-                        pointer.source,
-                        pointer.id,
-                    )),
+                ElementEvent::PointerDown(pointer) => {
+                    aimer_widget::EventResult::consumed().with_pointer_capture(
+                        aimer_widget::PointerKey::new(pointer.source, pointer.id),
+                    )
+                }
+                ElementEvent::PointerUp(pointer) => {
+                    aimer_widget::EventResult::consumed().with_pointer_release(
+                        aimer_widget::PointerKey::new(pointer.source, pointer.id),
+                    )
+                }
                 _ => aimer_widget::EventResult::consumed(),
             }
         }
@@ -1093,10 +1102,7 @@ mod tests {
     impl EventElement for ScrollRecordingElement {
         fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
             if let ElementEvent::Scroll {
-                delta,
-                kind,
-                phase,
-                ..
+                delta, kind, phase, ..
             } = event
             {
                 self.events
@@ -1169,12 +1175,12 @@ mod tests {
 
         assert_eq!(phases.first(), Some(&TouchPhase::Started));
         assert_eq!(phases.last(), Some(&TouchPhase::Ended));
-        assert!(
+        assert_eq!(
             phases
                 .iter()
                 .filter(|phase| **phase == TouchPhase::Started)
-                .count()
-                == 1
+                .count(),
+            1
         );
         assert!(
             phases[1..phases.len() - 1]
@@ -1218,6 +1224,240 @@ mod tests {
                 height: 240.0
             }
         );
+    }
+
+    #[test]
+    fn headless_events_no_widget_answered_do_not_ask_for_a_frame() {
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: Arc::new(AtomicUsize::new(0)),
+        });
+        app.render_frame();
+        assert!(!app.take_redraw_request());
+
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(20.0, 30.0),
+        });
+
+        assert!(!app.take_redraw_request());
+    }
+
+    struct CursorWidget;
+
+    impl Widget for CursorWidget {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            CursorElement.boxed()
+        }
+    }
+
+    struct CursorElement;
+
+    impl Drawable for CursorElement {
+        fn draw(&self, ctx: &BuildContext) {
+            ctx.window.set_pointer_cursor();
+        }
+    }
+    impl LayoutElement for CursorElement {}
+    impl Rebuildable for CursorElement {}
+    impl VisitorElement for CursorElement {
+        fn debug_name(&self) -> &'static str {
+            "CursorElement"
+        }
+    }
+    impl EventElement for CursorElement {}
+
+    #[test]
+    fn headless_cursor_follows_the_widget_tree_and_resets_when_nothing_answers() {
+        let mut app = AimerApp::start_headless(CursorWidget);
+
+        app.render_frame();
+        assert_eq!(app.cursor_icon(), winit::window::CursorIcon::Pointer);
+
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(20.0, 30.0),
+        });
+
+        assert_eq!(app.cursor_icon(), winit::window::CursorIcon::Default);
+    }
+
+    #[test]
+    fn headless_focus_changes_match_the_windowed_loop() {
+        let cancels = Arc::new(AtomicUsize::new(0));
+        let mut app = AimerApp::start_headless(ScrollRecordingWidget {
+            events: Arc::new(Mutex::new(Vec::new())),
+        });
+        app.render_frame();
+        app.app.cursor_pos = Vec2d { x: 20.0, y: 20.0 };
+        app.send_window_event(WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(0.0, -2.0),
+            phase: TouchPhase::Moved,
+        });
+        assert!(app.app.scroll_smoother.is_active());
+
+        app.send_window_event(WindowEvent::Focused(false));
+        assert!(!app.app.scroll_smoother.is_active());
+
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: cancels.clone(),
+        });
+        app.render_frame();
+
+        app.send_window_event(WindowEvent::Focused(true));
+
+        assert_eq!(cancels.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn headless_frames_drive_a_scroll_gesture_to_its_end() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut app = AimerApp::start_headless(ScrollRecordingWidget {
+            events: events.clone(),
+        });
+        app.render_frame();
+        app.app.cursor_pos = Vec2d { x: 20.0, y: 20.0 };
+        let _ = app.take_redraw_request();
+
+        app.send_window_event(WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(0.0, -2.0),
+            phase: TouchPhase::Moved,
+        });
+
+        let mut frames = 0;
+        while app.take_redraw_request() {
+            app.render_frame();
+            frames += 1;
+            assert!(frames < 64);
+        }
+
+        assert!(frames > 1);
+        assert!(!app.app.scroll_smoother.is_active());
+        let events = events.lock().unwrap();
+        assert_eq!(
+            events.last().map(|(_, _, phase)| *phase),
+            Some(TouchPhase::Ended)
+        );
+    }
+
+    #[test]
+    fn headless_pump_renders_until_the_tree_stops_asking_for_frames() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut app = AimerApp::start_headless(ScrollRecordingWidget {
+            events: events.clone(),
+        });
+        app.render_frame();
+        app.app.cursor_pos = Vec2d { x: 20.0, y: 20.0 };
+
+        app.send_window_event(WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(0.0, -2.0),
+            phase: TouchPhase::Moved,
+        });
+        let frames = app.pump_frames(64);
+
+        assert!(frames > 1);
+        assert!(!app.take_redraw_request());
+        assert!(!app.app.scroll_smoother.is_active());
+    }
+
+    #[test]
+    fn headless_pump_stops_at_the_frame_budget() {
+        let mut app = AimerApp::start_headless(RedrawWidget);
+
+        let frames = app.pump_frames(4);
+
+        assert_eq!(frames, 4);
+        assert!(app.take_redraw_request());
+    }
+
+    struct AnimatingWidget {
+        frames: Arc<AtomicUsize>,
+    }
+
+    impl Widget for AnimatingWidget {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            AnimatingElement {
+                frames: self.frames.clone(),
+            }
+            .boxed()
+        }
+    }
+
+    struct AnimatingElement {
+        frames: Arc<AtomicUsize>,
+    }
+
+    impl Drawable for AnimatingElement {
+        fn draw(&self, _ctx: &BuildContext) {
+            // The way an animation, a state update, or an opening overlay asks
+            // for the frame that continues it.
+            if self.frames.fetch_add(1, Ordering::SeqCst) < 2 {
+                aimer_events::window::request_animation_frame();
+            }
+        }
+    }
+    impl LayoutElement for AnimatingElement {}
+    impl Rebuildable for AnimatingElement {}
+    impl VisitorElement for AnimatingElement {
+        fn debug_name(&self) -> &'static str {
+            "AnimatingElement"
+        }
+    }
+    impl EventElement for AnimatingElement {}
+
+    #[test]
+    fn headless_receives_the_frame_requests_widgets_make_through_the_platform() {
+        let frames = Arc::new(AtomicUsize::new(0));
+        let mut app = AimerApp::start_headless(AnimatingWidget {
+            frames: frames.clone(),
+        });
+
+        let pumped = app.pump_frames(16);
+
+        assert_eq!(pumped, 3);
+        assert_eq!(frames.load(Ordering::SeqCst), 3);
+        assert!(!app.take_redraw_request());
+    }
+
+    #[test]
+    fn a_dropped_headless_application_stops_taking_frame_requests() {
+        let frames = Arc::new(AtomicUsize::new(0));
+        drop(AimerApp::start_headless(AnimatingWidget {
+            frames: frames.clone(),
+        }));
+
+        let mut app = AimerApp::start_headless(AnimatingWidget {
+            frames: frames.clone(),
+        });
+        frames.store(0, Ordering::SeqCst);
+
+        assert_eq!(app.pump_frames(16), 3);
+    }
+
+    #[test]
+    fn headless_startup_hooks_run_once_before_the_first_frame() {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let hook_runs = runs.clone();
+        let mut app = AimerApp::new()
+            .setup(move || {
+                hook_runs.fetch_add(1, Ordering::SeqCst);
+            })
+            .child(RecordingWidget {
+                builds: Arc::new(AtomicUsize::new(0)),
+                cancels: Arc::new(AtomicUsize::new(0)),
+            })
+            .run_headless();
+
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+
+        app.render_frame();
+        app.render_frame();
+
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
     }
 
     struct RedrawWidget;

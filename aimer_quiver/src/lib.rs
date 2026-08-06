@@ -16,6 +16,8 @@ mod ios_screen {
 }
 
 mod adapter_detail;
+/// The native application menu, and the shortcuts macOS routes through it.
+pub mod menu;
 pub mod frame_stats;
 /// Where the platform's light / dark appearance comes from.
 mod system_appearance;

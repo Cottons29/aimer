@@ -27,8 +27,8 @@ use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_inspector::InspectorOverlay;
-use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyElement, Element, EventDispatcher, EventResult, Widget};
+use aimer_widget::base::{BuildContext, WindowHandle};
+use aimer_widget::{AnyElement, EventDispatcher, EventResult, Widget};
 use std::any::Any;
 use std::cell::Cell;
 #[cfg(not(target_arch = "wasm32"))]
@@ -76,7 +76,14 @@ fn find_hovered_node(
 }
 
 pub struct AimerApplicationHandler<W: Widget + 'static> {
-    pub window: Option<&'static Window>,
+    /// The window this application draws into and asks for frames.
+    ///
+    /// A [`WindowHandle`] rather than a `Window`, because a headless
+    /// application has no platform window and still has to answer the very
+    /// questions the event handlers ask of one: repaint, change the cursor,
+    /// report its metrics. Keeping the handle here is what lets both drivers
+    /// run the same event and frame code.
+    pub window: Option<WindowHandle>,
     pub render_ctx: AimerRenderContext,
     pub widget_root: Option<AnyElement>,
     pub event_dispatcher: EventDispatcher,
@@ -121,6 +128,95 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
 }
 
 impl<W: Widget + 'static> AimerApplicationHandler<W> {
+    /// The platform window behind this application, if it has one.
+    ///
+    /// Only code that talks to the platform itself — surface creation, native
+    /// appearance queries, AppKit drag polling — needs this; everything else
+    /// goes through [`window`](Self::window) and works headlessly too.
+    #[inline]
+    pub(crate) fn native_window(&self) -> Option<&'static Window> {
+        self.window.as_ref().and_then(WindowHandle::native_window)
+    }
+
+    /// Tells a headless window the metrics the platform would already have
+    /// given a real one.
+    ///
+    /// `size` is the size the window has just become, or `None` to keep the
+    /// one it has and refresh the scale alone. A native window answers for
+    /// itself and is left untouched.
+    pub(crate) fn sync_headless_metrics(&self, size: Option<PhysicalSize<u32>>) {
+        let Some(window) = &self.window else { return };
+        let size = size.unwrap_or_else(|| window.inner_size());
+        window.update_headless_metrics(size, self.window_scale);
+    }
+
+    /// Asks for the frame that continues an animation.
+    ///
+    /// A native window goes through the platform requester, the only path iOS
+    /// honours for a request issued from inside the draw cycle. A headless
+    /// window has no platform behind it, so the request is recorded on its
+    /// handle for whoever pumps the frames to find.
+    #[inline]
+    pub(crate) fn request_animation_frame(&self) {
+        match &self.window {
+            Some(window @ WindowHandle::Headless(_)) => window.request_redraw(),
+            _ => aimer_events::window::request_animation_frame(),
+        }
+    }
+
+    /// The bookkeeping every frame does before anything is drawn.
+    ///
+    /// This frame's share of a scroll gesture is delivered here, and a gesture
+    /// that is not finished asks for the frame that continues it — which is
+    /// what keeps momentum alive without a platform timer. Shared by the
+    /// windowed loop and the headless application so a frame costs the same
+    /// work in both.
+    pub(crate) fn begin_frame(&mut self) {
+        // A browser never reports the end of a scroll, so the gesture is closed
+        // here once its stream has gone quiet — before this frame's step is
+        // dispatched, so the terminating phase rides along with it.
+        #[cfg(target_arch = "wasm32")]
+        if self.web_scroll_phase.poll_idle() {
+            self.scroll_smoother.end_gesture();
+        }
+
+        let _ = self.dispatch_smoothed_scroll();
+
+        // An open web gesture keeps the frame loop alive even with no distance
+        // left, because the idle poll above only runs on a rendered frame.
+        #[cfg(target_arch = "wasm32")]
+        let gesture_open = self.web_scroll_phase.is_open();
+        #[cfg(not(target_arch = "wasm32"))]
+        let gesture_open = false;
+        if self.scroll_smoother.is_active() || gesture_open {
+            self.request_animation_frame();
+        }
+
+        #[cfg(debug_assertions)]
+        self.poll_inspector_frames();
+    }
+
+    /// Keeps the inspector overlay repainting for a few frames after it is
+    /// switched on or off, so the change is not left half-drawn on an idle
+    /// application.
+    #[cfg(debug_assertions)]
+    pub(crate) fn poll_inspector_frames(&self) {
+        let current = self.inspector_enabled();
+        let prev = self.inspector_prev_enabled.get();
+        if current != prev {
+            self.inspector_prev_enabled.set(current);
+            self.inspector_change.set(true);
+            self.inspector_redraw_frames.set(5);
+        }
+        let frames = self.inspector_redraw_frames.get();
+        if frames > 0 {
+            self.inspector_redraw_frames.set(frames - 1);
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+        }
+    }
+
     pub(crate) fn dispatch_element_event(
         &mut self,
         pos: Vec2d,
@@ -188,7 +284,96 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     }
 }
 
-fn run_startup_hooks(
+/// Builds and draws the widget tree of a single frame.
+///
+/// Owns nothing: it borrows the tree, the widget waiting to become one, and
+/// the window they are drawn for, which is what allows the same code to paint
+/// a platform surface and a headless canvas. The window it carries is the one
+/// the tree sees in its [`BuildContext`], so a widget that asks for a repaint
+/// or changes the cursor reaches the same handle the event handlers do.
+pub(crate) struct FrameDrawer<'a, W: Widget + 'static> {
+    widget_root: &'a mut Option<AnyElement>,
+    pending_widget: &'a mut Option<W>,
+    window: WindowHandle,
+    scale: f32,
+    cursor_pos: Vec2d,
+    #[cfg(not(target_arch = "wasm32"))]
+    async_handle: tokio::runtime::Handle,
+    #[cfg(debug_assertions)]
+    inspector_enabled: bool,
+}
+
+impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
+    /// Draws one frame of `width` by `height` physical pixels into `canvas`.
+    ///
+    /// The root element is created on the first frame and reused afterwards,
+    /// exactly as the windowed loop does — a headless application that renders
+    /// twice does not rebuild its tree twice. The tree is drawn inside a saved
+    /// canvas scope so a widget that leaves a transform behind cannot leak it
+    /// into the next frame.
+    pub(crate) fn draw(&mut self, canvas: &aimer_canvas::InnerCanvas, width: u32, height: u32) {
+        let canvas = aimer_canvas::Canvas::new(canvas);
+        let build_ctx = BuildContext {
+            parent_size: ResolvedSize {
+                width: width as f32,
+                height: height as f32,
+            },
+            canvas,
+            scale: self.scale,
+            parent_pos: Default::default(),
+            cursor_pos: self.cursor_pos,
+            box_constraint: BoxConstraint {
+                min_width: 0.0,
+                min_height: 0.0,
+                max_width: width as f32,
+                max_height: height as f32,
+            },
+            visible_rect: None,
+            window: self.window.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            async_handle: self.async_handle.clone(),
+            inherited_states: Default::default(),
+        };
+
+        if self.widget_root.is_none()
+            && let Some(widget) = self.pending_widget.take()
+        {
+            *self.widget_root = Some(widget.to_element(&build_ctx));
+        }
+
+        let Some(root) = self.widget_root.as_ref() else {
+            return;
+        };
+
+        #[cfg(debug_assertions)]
+        if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
+            *hovered = None;
+        }
+
+        build_ctx.canvas.save();
+        root.draw(&build_ctx);
+        build_ctx.canvas.restore();
+
+        #[cfg(debug_assertions)]
+        if self.inspector_enabled {
+            // Save and restore canvas state to ensure the inspector overlay
+            // always renders at the top layer above all widgets,
+            // unaffected by any residual transforms.
+            build_ctx.canvas.save();
+            InspectorOverlay::draw(
+                root.as_ref(),
+                &build_ctx.canvas,
+                self.cursor_pos,
+                build_ctx.scale,
+            );
+            build_ctx.canvas.restore();
+        }
+    }
+}
+
+/// Runs every hook the application registered, once, in registration order,
+/// and keeps whatever they return alive for the rest of the run.
+pub(crate) fn run_startup_hooks(
     startup_hooks: &mut Vec<StartupHook>,
     startup_resources: &mut Vec<Box<dyn Any>>,
 ) {
@@ -242,10 +427,12 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
             let window = event_loop.create_window(window_attributes).unwrap();
             let window: &'static Window = Box::leak(Box::new(window)); // Leak to static ref
             aimer_events::window::set_window(window);
-            self.window = Some(window);
+            self.window = Some(WindowHandle::native(window));
         }
 
-        let window = self.window.unwrap();
+        let window = self
+            .native_window()
+            .expect("the windowed loop always owns a native window");
 
         // winit's iOS window is created without a `UIWindowScene`. On the
         // iOS 26/27 SDK the scene life cycle is mandatory, so a scene-less
@@ -347,22 +534,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
             // self.start_up_frames.get());
         }
         #[cfg(debug_assertions)]
-        {
-            let current = self.inspector_enabled();
-            let prev = self.inspector_prev_enabled.get();
-            if current != prev {
-                self.inspector_prev_enabled.set(current);
-                self.inspector_change.set(true);
-                self.inspector_redraw_frames.set(5);
-            }
-            let frames = self.inspector_redraw_frames.get();
-            if frames > 0 {
-                self.inspector_redraw_frames.set(frames - 1);
-                if let Some(window) = &self.window {
-                    window.request_redraw();
-                }
-            }
-        }
+        self.poll_inspector_frames();
     }
 }
 #[allow(dead_code)]
@@ -373,15 +545,54 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             .as_ref()
             .is_some_and(|inspector| inspector.is_enabled())
     }
-    fn render_widget_tree(widget: &dyn Element, ctx: &BuildContext) {
+    /// Splits the handler into the renderer that owns the frame and a drawer
+    /// for the widget tree that goes into it.
+    ///
+    /// The two have to be borrowed apart because the tree is drawn from inside
+    /// a closure the renderer runs: the closure cannot hold the handler while
+    /// the renderer is being borrowed out of it. A headless application takes
+    /// the drawer alone through [`frame_drawer`](Self::frame_drawer) and paints
+    /// into its own canvas, so the tree is built, laid out, and drawn by
+    /// identical code whichever way the frame was asked for.
+    pub(crate) fn split_for_frame(
+        &mut self,
+        window: WindowHandle,
+    ) -> (&mut AimerRenderContext, FrameDrawer<'_, W>) {
         #[cfg(debug_assertions)]
-        if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
-            *hovered = None;
-        }
+        let inspector_enabled = self.inspector_enabled();
+        let scale = self.window_scale as f32;
+        let cursor_pos = self.cursor_pos;
+        let Self {
+            render_ctx,
+            widget_root,
+            pending_widget,
+            #[cfg(not(target_arch = "wasm32"))]
+            async_runtime,
+            ..
+        } = self;
+        #[cfg(not(target_arch = "wasm32"))]
+        let async_handle = async_runtime.handle().clone();
 
-        ctx.canvas.save();
-        widget.draw(ctx);
-        ctx.canvas.restore();
+        (
+            render_ctx,
+            FrameDrawer {
+                widget_root,
+                pending_widget,
+                window,
+                scale,
+                cursor_pos,
+                #[cfg(not(target_arch = "wasm32"))]
+                async_handle,
+                #[cfg(debug_assertions)]
+                inspector_enabled,
+            },
+        )
+    }
+
+    /// Borrows everything a frame needs to build and draw the widget tree.
+    #[inline]
+    pub(crate) fn frame_drawer(&mut self, window: WindowHandle) -> FrameDrawer<'_, W> {
+        self.split_for_frame(window).1
     }
 
     #[cfg(debug_assertions)]
@@ -422,25 +633,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
-        // A browser never reports the end of a scroll, so the gesture is closed
-        // here once its stream has gone quiet — before this frame's step is
-        // dispatched, so the terminating phase rides along with it.
-        #[cfg(target_arch = "wasm32")]
-        if self.web_scroll_phase.poll_idle() {
-            self.scroll_smoother.end_gesture();
-        }
+        self.begin_frame();
 
-        let _ = self.dispatch_smoothed_scroll();
-
-        // An open web gesture keeps the frame loop alive even with no distance
-        // left, because the idle poll above only runs on a rendered frame.
-        #[cfg(target_arch = "wasm32")]
-        let gesture_open = self.web_scroll_phase.is_open();
-        #[cfg(not(target_arch = "wasm32"))]
-        let gesture_open = false;
-        if self.scroll_smoother.is_active() || gesture_open {
-            aimer_events::window::request_animation_frame();
-        }
         #[cfg(target_os = "android")]
         {
             if let Some(android_app) = crate::aimer_app::ANDROID_APP.get() {
@@ -451,24 +645,6 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             }
         }
 
-        #[cfg(debug_assertions)]
-        {
-            let current = self.inspector_enabled();
-            let prev = self.inspector_prev_enabled.get();
-            if current != prev {
-                self.inspector_prev_enabled.set(current);
-                self.inspector_change.set(true);
-                self.inspector_redraw_frames.set(5);
-            }
-            let frames = self.inspector_redraw_frames.get();
-            if frames > 0 {
-                self.inspector_redraw_frames.set(frames - 1);
-                if let Some(window) = &self.window {
-                    window.request_redraw();
-                }
-            }
-        }
-
         #[allow(clippy::collapsible_if)]
         if self.render_ctx.is_ready() {
             if let Some(size) = self.pending_resize.take() {
@@ -476,68 +652,13 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             }
         }
 
-        let Some(window) = self.window else { return };
-        let window_scale = self.window_scale;
-        let cursor_pos = self.cursor_pos;
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let async_handle = self.async_runtime.handle().clone();
-        #[cfg(debug_assertions)]
-        let inspector_enabled = self.inspector_enabled();
-        let widget_root = &mut self.widget_root;
-        let pending_widget = &mut self.pending_widget;
-
-        let draw_widgets = |canvas: &aimer_canvas::InnerCanvas, width: u32, height: u32| {
-            let canvas = aimer_canvas::Canvas::new(canvas);
-            let build_ctx = BuildContext {
-                parent_size: ResolvedSize {
-                    width: width as f32,
-                    height: height as f32,
-                },
-                canvas: canvas.clone(),
-                scale: window_scale as f32,
-                parent_pos: Default::default(),
-                cursor_pos,
-                box_constraint: BoxConstraint {
-                    min_width: 0.0,
-                    min_height: 0.0,
-                    max_width: width as f32,
-                    max_height: height as f32,
-                },
-                visible_rect: None,
-                window: aimer_widget::base::WindowHandle::native(window),
-                #[cfg(not(target_arch = "wasm32"))]
-                async_handle: async_handle.clone(),
-                inherited_states: Default::default(),
-            };
-
-            #[allow(clippy::collapsible_if)]
-            if widget_root.is_none() {
-                if let Some(w) = pending_widget.take() {
-                    *widget_root = Some(w.to_element(&build_ctx));
-                }
-            }
-
-            if let Some(root) = widget_root {
-                Self::render_widget_tree(root.as_ref(), &build_ctx);
-                #[cfg(debug_assertions)]
-                if inspector_enabled {
-                    // Save and restore canvas state to ensure the inspector overlay
-                    // always renders at the top layer above all widgets,
-                    // unaffected by any residual transforms.
-                    build_ctx.canvas.save();
-                    InspectorOverlay::draw(
-                        root.as_ref(),
-                        &build_ctx.canvas,
-                        cursor_pos,
-                        build_ctx.scale,
-                    );
-                    build_ctx.canvas.restore();
-                }
-            }
+        let Some(window) = self.window.clone() else {
+            return;
         };
+        let (render_ctx, mut drawer) = self.split_for_frame(window);
 
-        let outcome = self.render_ctx.render_frame(draw_widgets);
+        let outcome =
+            render_ctx.render_frame(move |canvas, width, height| drawer.draw(canvas, width, height));
         // A deferred frame is still in flight on the raster thread: it reports
         // the first-frame notification and any retry itself, from `on_present`,
         // because the outcome is not known until a frame later.
