@@ -15,6 +15,8 @@ wasm-bindgen-futures.workspace = true
 
 [dependencies]
 web-time.workspace = true
+winit.workspace = true
+aimer_events.workspace = true
 
 
 

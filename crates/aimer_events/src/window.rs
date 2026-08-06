@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -29,6 +31,63 @@ unsafe extern "C" {
 }
 
 type RedrawRequester = Box<dyn Fn() + Send + Sync + 'static>;
+
+thread_local! {
+    /// A redraw requester that answers for this thread alone.
+    ///
+    /// The platform requester and the global window are one per process, which
+    /// is exactly right for an application that owns the screen. An application
+    /// running without a window is not that: several of them can be alive at
+    /// once, each with its own frames to schedule, and each on its own thread.
+    /// Installing per thread keeps a frame request with the application that
+    /// made it.
+    static THREAD_REDRAW_REQUESTER: RefCell<Option<Rc<dyn Fn()>>> =
+        const { RefCell::new(None) };
+}
+
+/// Install a redraw requester for the current thread, replacing any previous
+/// one, and hand back the one it replaced.
+///
+/// Takes precedence over the process-wide requester and the global window, so
+/// an application that has no platform window still receives the frame requests
+/// its widgets make — a state update, an animation step, an overlay that just
+/// opened. Return the previous requester to
+/// [`restore_thread_redraw_requester`] once the application is gone, so a
+/// dropped application stops receiving them.
+///
+/// # Examples
+///
+/// ```
+/// use std::cell::Cell;
+/// use std::rc::Rc;
+///
+/// let requests = Rc::new(Cell::new(0));
+/// let counted = requests.clone();
+/// let previous = aimer_events::window::set_thread_redraw_requester(move || {
+///     counted.set(counted.get() + 1);
+/// });
+///
+/// aimer_events::window::request_animation_frame();
+/// assert_eq!(requests.get(), 1);
+///
+/// aimer_events::window::restore_thread_redraw_requester(previous);
+/// ```
+pub fn set_thread_redraw_requester<F>(requester: F) -> Option<Rc<dyn Fn()>>
+where
+    F: Fn() + 'static,
+{
+    THREAD_REDRAW_REQUESTER.with(|slot| slot.borrow_mut().replace(Rc::new(requester)))
+}
+
+/// Put back the requester that [`set_thread_redraw_requester`] replaced.
+pub fn restore_thread_redraw_requester(previous: Option<Rc<dyn Fn()>>) {
+    THREAD_REDRAW_REQUESTER.with(|slot| *slot.borrow_mut() = previous);
+}
+
+/// The requester installed for this thread, if any.
+fn thread_redraw_requester() -> Option<Rc<dyn Fn()>> {
+    THREAD_REDRAW_REQUESTER.with(|slot| slot.borrow().clone())
+}
 
 /// Optional, platform-supplied redraw requester. When installed it is used to
 /// schedule the next frame through the event loop (e.g. an `EventLoopProxy`)
@@ -78,6 +137,14 @@ where
 /// itself once a tick observes no pending request, so the app stays idle when
 /// nothing is animating.
 pub fn request_animation_frame() {
+    // An application without a platform window schedules its own frames, and
+    // says so per thread, so its request never reaches the display link or a
+    // window belonging to somebody else.
+    if let Some(requester) = thread_redraw_requester() {
+        requester();
+        return;
+    }
+
     #[cfg(target_os = "ios")]
     {
         // Mark a frame as pending and make sure the display link is running so

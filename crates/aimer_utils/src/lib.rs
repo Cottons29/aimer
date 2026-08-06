@@ -1,4 +1,5 @@
 pub mod callback;
+pub mod cursor;
 pub mod log;
 mod panic_helper;
 mod time;
