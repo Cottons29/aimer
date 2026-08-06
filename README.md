@@ -82,7 +82,7 @@ cd my_aimer && Aimer run
     - [x] `doctor` for checking the development environment.
     - [x] `build` to build the project
     - [x] shell completion
-    - [x] project scaffolding (`Aimer new`)
+    - [x] project scaffolding
     - [x] auto restart app
     - [ ] widget inspector `⛔️ Very Unstable`
 - [x] Core widget system
@@ -93,62 +93,61 @@ cd my_aimer && Aimer run
 - [x] Layout engine
     - [x] `Row` and `Column` (flexbox-inspired)
     - [x] `Container` with padding, margin, and decoration
-    - [x] `Scrollable` with scroll bar support `⚠️ Unstable`
-    - [x] `Spacing` and `LayoutSpacing` attributes `⚠️ Unstable`
-    - [x] `BoxAlignment` (start, center, end, stretch) `⚠️ Unstable`
+    - [x] `Scrollable` with scroll bar support 
+    - [x] `Spacing` and `LayoutSpacing` attributes
+    - [x] `BoxAlignment` (start, center, end, stretch)
 - [x] Basic controls
     - [x] `Button` with press handler and hover/style variants
-    - [x] `GestureDetector` `⚠️ Unstable`
+    - [x] `GestureDetector`
     - [x] `InputField` (text field) `⚠️ Unstable`
     - [ ] `Checkbox`
     - [ ] `Switch` / `Toggle`
     - [ ] `Slider`
-    - [ ] `DropdownMenu` / `Select`
+    - [x] `DropdownMenu` / `Select`
     - [ ] `Radio` button
 - [x] Text
     - [x] `Text` widget with `TextStyle` (font size, color)
     - [x] `TextAlign` (left, center, right)
-    - [ ] Rich text (inline spans, mixed styles)
-    - [ ] Custom font loading
+    - [x] Rich text (inline spans, mixed styles)
+    - [x] Custom font loading
 - [x] Color system
     - [x] Named color palettes (`Color::BLUE`, `Color::GRAY`, etc.)
-- [x] Animation framework (Experiemental)
-    - [ ] `AnimationController` (forward, reverse, repeat, auto-reverse) `⛔️ Very Unstable`
-    - [ ] Curves (`EaseIn`, `EaseOut`, `EaseInOut`, `Bounce`, `Linear`, etc.) `⛔️ Very Unstable`
-    - [ ] `Animated` widget with effects (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`)
-      `⛔️ Very Unstable`
-    - [ ] Enter and exit (delete) transitions `⛔️ Very Unstable`
+- [x] Animation framework
+    - [x] `AnimationController` (forward, reverse, repeat, auto-reverse)
+    - [x] Curves (`EaseIn`, `EaseOut`, `EaseInOut`, `Bounce`, `Linear`, etc.) 
+    - [x] `Animated` widget with effects (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`)
+    - [x] Enter and exit (delete) transitions
 - [x] Cross-platform support
-    - [x] macOS (Cupid) `⚠️ Unstable`
-    - [x] iOS (Cupid) `⚠️ Unstable`
-    - [x] Android (Cupid) `⚠️ Unstable`
-    - [x] Web / WASM (Cupid) `⚠️ Unstable`
-    - [ ] Windows (Cupid)
-    - [ ] Linux (Cupid)
+    - [x] macOS (Cupid) 
+    - [x] iOS (Cupid)
+    - [x] Android (Cupid) 
+    - [x] Web / WASM (Cupid)
+    - [x] Windows (Cupid) `Binary Crate`
+    - [x] Linux (Cupid) `Binary Crate`
 
 - [ ] Gesture system
-    - [x] Tap, double-tap `⚠️ Unstable`
+    - [x] Tap, double-tap
     - [x] Drag and pan `⚠️ Unstable`
     - [ ] Swipe
     - [x] Long press `⚠️ Unstable`
 - [ ] Drag and drop
-    - [x] `Draggable` / `DragTarget<T>` with typed payloads `⚠️ Unstable` — see `jaime/src/drag_and_drop.rs`
+    - [x] `Draggable` / `DragTarget<T>` with typed payloads — see `jaime/src/drag_and_drop.rs`
     - [x] Feedback painted above every clip boundary, with spring-back on a refused drop `⚠️ Unstable`
-    - [x] `DropZone` for files dragged in from the desktop `⚠️ Unstable` — see `jaime/src/file_drop_zone.rs`
+    - [x] `DropZone` for files dragged in from the desktop — see `jaime/src/file_drop_zone.rs`
     - [ ] Auto-scroll when dragging near the edge of a `Scrollable`
     - [ ] Reorderable lists
     - [ ] File drop on the web (winit's web backend emits no file-drag events)
-- [ ] Navigation and routing
-    - [x] Navigator / route stack `⚠️ Unstable`
-    - [x] Named routes (typed path + query parameters) `⚠️ Unstable`
-    - [x] Redirects & guards `⚠️ Unstable`
-    - [x] Nested & Shell routes (`Shell` / `Outlet`) `⚠️ Unstable`
-    - [x] StatefulShellRoute (per-branch history stacks) `⚠️ Unstable`
-    - [ ] Page transitions
-- [ ] Theming and dark mode
-    - [ ] Theme data (colors, typography, spacing)
-    - [ ] Dark / light mode switching
-    - [ ] Custom theme support
+- [x] Navigation and routing
+    - [x] Navigator / route stack
+    - [x] Named routes (typed path + query parameters)
+    - [x] Redirects & guards
+    - [x] Nested & Shell routes (`Shell` / `Outlet`) 
+    - [x] StatefulShellRoute (per-branch history stacks) 
+    - [x] Page transitions
+- [x] Theming and dark mode
+    - [x] Theme data (colors, typography, spacing)
+    - [x] Dark / light mode switching
+    - [x] Custom theme support
 
 > ⚠️ Unstable — feature is implemented but may have breaking changes or incomplete edge cases.
 >
