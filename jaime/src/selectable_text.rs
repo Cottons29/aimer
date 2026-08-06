@@ -2,7 +2,7 @@ use aimer::Dimension::Percent;
 use aimer::style::{LayoutSpacing, Spacing, TextDecoration, TextOverflow, TextStyle};
 use aimer::{
     AimerApp, Color, Container, Dimension, Flex, FontStyle, FontWeight, LayoutDirection, RichText,
-    SizedBox, SpanStyle, Text, TextSpan, Widget,
+    SelectionArea, SizedBox, SpanStyle, Text, TextSpan, Widget,
 };
 
 pub fn selectable_text_example() -> impl Widget {
@@ -13,44 +13,58 @@ pub fn selectable_text_example() -> impl Widget {
             Flex::new()
                 .direction(LayoutDirection::Column)
                 .children([
-                    Text::new("Selectable RichText")
+                    Text::new("Selectable text region")
                         .text_style(TextStyle::new().font_size(30).color(Color::BLACK))
                         .boxed(),
                     SizedBox::new().height(16).boxed(),
                     Text::new(
-                        "Drag across the text below to select it. Press Cmd/Ctrl+A to select all and Cmd/Ctrl+C to copy.",
+                        "Drag from the heading through the paragraph and into the caption: one gesture selects across every widget. Press Cmd/Ctrl+A to select the whole region and Cmd/Ctrl+C to copy it. Right-click a word to open the desktop menu where you clicked; hold a finger on one instead and the same verbs arrive as a pill floating above the selection, with a blue handle at each end that you can drag to adjust it.",
                     )
-                    .text_style(TextStyle::new().font_size(16).color(Color::GRAY))
+                    .text_style(
+                        TextStyle::new()
+                        .font_size(16)
+                        .color(Color::GRAY)
+                        .text_overflow(TextOverflow::Wrap)
+                    )
                     .boxed(),
                     SizedBox::new().height(24).boxed(),
                     Container::new()
                         // .width(Percent(50.0))
                         .padding(LayoutSpacing::all(Spacing::Px(20)))
                         .color(Color::Rgb(245, 247, 250))
-                        .child(
-                            RichText::new(TextSpan::root([
-                                TextSpan::new("Selection works across "),
-                                TextSpan::new("bold text")
-                                    .style(SpanStyle::new().font_weight(FontWeight::Bolder)),
-                                TextSpan::new(", "),
-                                TextSpan::new("italic text")
-                                    .style(
+                        .child(SelectionArea::new().selection_color(Color::Rgba(51, 153, 255, 96)).child(
+                            Flex::new().direction(LayoutDirection::Column).children([
+                                Text::new("A heading that joins the selection")
+                                    .text_style(TextStyle::new().font_size(24).color(Color::BLACK))
+                                    .boxed(),
+                                SizedBox::new().height(12).boxed(),
+                                RichText::new(TextSpan::root([
+                                    TextSpan::new("Selection works across "),
+                                    TextSpan::new("bold text")
+                                        .style(SpanStyle::new().font_weight(FontWeight::Bolder)),
+                                    TextSpan::new(", "),
+                                    TextSpan::new("italic text").style(
                                         SpanStyle::new()
                                             .font_style(FontStyle::Italic)
-                                            .text_decoration(TextDecoration::Underline)
+                                            .text_decoration(TextDecoration::Underline),
                                     ),
-                                TextSpan::new(", colors, wrapped lines, and Unicode: "),
-                                TextSpan::new("Aimer • 你好 • សួស្តី • 👩‍💻")
-                                    .style(SpanStyle::new().color(Color::BLUE)),
-                                TextSpan::new(
-                                    "\n\nThe copied value is plain text, without style metadata.",
-                                ),
-                            ]))
+                                    TextSpan::new(", colors, wrapped lines, and Unicode: "),
+                                    TextSpan::new("Aimer • 你好 • សួស្តី • 👩‍💻")
+                                        .style(SpanStyle::new().color(Color::BLUE)),
+                                    TextSpan::new(
+                                        "\n\nThe copied value is plain text, without style metadata.",
+                                    ),
+                                ]))
                                 .text_overflow(TextOverflow::Wrap)
-                                .selection_color(Color::RED)
-                            .text_style(TextStyle::new().font_size(20).color(Color::BLACK))
-                            .selectable(),
-                        )
+                                .text_style(TextStyle::new().font_size(20).color(Color::BLACK))
+                                .boxed(),
+                                SizedBox::new().height(12).boxed(),
+                                Text::new("A caption, selectable because it sits inside the region.")
+                                    .text_style(TextStyle::new().font_size(14).color(Color::GRAY))
+                                    .wrapped()
+                                    .boxed(),
+                            ]),
+                        ))
                         .boxed(),
                 ]),
         )

@@ -8,6 +8,10 @@ pub use aimer_attribute::position::Vec2d;
 pub use aimer_attribute::size::{ResolvedSize, Size};
 pub use aimer_color::prelude::*;
 pub use aimer_container::*;
+pub use aimer_ctxmenu::{
+    ContextMenu, ContextMenuAnchor, ContextMenuAnchorSource, ContextMenuItem, ContextMenuLayout,
+    ContextMenuRequest, ContextMenuStyle,
+};
 pub use aimer_dnd::{
     DragAxis, DragOverlay, DragPayload, DragSession, DragStartMode, DragTarget, DragTargetState,
     Draggable, DropZone, FileDrop,
@@ -50,7 +54,7 @@ pub use aimer_svg::{
     SvgLimits, SvgLoadState, SvgLoader, SvgNodeId, SvgNodeMetadata, SvgPath, SvgSelector,
     SvgSource, SvgStyle, SvgTransform,
 };
-pub use aimer_text::{RichText, SpanStyle, Text, TextButton, TextSpan};
+pub use aimer_text::{RichText, SelectionArea, SpanStyle, Text, TextButton, TextSpan};
 pub use aimer_widget::base::BuildContext;
 pub use aimer_widget::{self, Key, State, StatefulWidget, StatelessWidget, Widget, *};
 

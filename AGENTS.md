@@ -57,7 +57,6 @@ This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `e
 | `dev_tools/aimer_lsp`    | Language server tooling.                                         |
 | `jaime/`                 | Internal tooling crate.                                          |
 | `website/`               | Project website (WASM demo).                                     |
-| `aimer_book/`            | Documentation / book.                                            |
 
 > **Large monorepo note:** subprojects may carry their own nested `AGENTS.md`. When working inside a
 > subproject, read its local `AGENTS.md` first — it takes precedence over this root file for that
@@ -85,8 +84,38 @@ This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `e
 - **One Rust File Cannot Bigger Than 1000 LOD** It's good for spliting the logic into the modular file rather than one
   big Rust File.
 - **Avoid Using Third Party If Possible** It's would be good if some small feature can be implemented in local crate.
+- **Apply Zero-Copy Principle if Possible** It's another way to avoid allocation and increase overall performance.
+- **In a crate the file should be tidy into their related folder if possible** It's make each crate are look
+  organized and easy to maintain rather than a crate/src is full of Rust source file, prefer no mod.rs
 
-### Rust std Documentation Example 
+### In-Crate Tidy Structure Example 
+
+```text
+aimer_input
+├── Cargo.toml
+└── src
+    ├── button.rs
+    ├── gesture
+    │   ├── gesture_detector.rs
+    │   ├── handlers.rs
+    │   ├── recognize
+    │   │   ├── drag.rs
+    │   │   ├── scale.rs
+    │   │   └── tap.rs
+    │   ├── recognize.rs
+    │   └── state.rs
+    ├── gesture.rs
+    ├── input_field
+    │   ├── caret.rs
+    │   ├── controller.rs
+    │   └── raw_fields.rs
+    ├── input_field.rs
+    ├── lib.rs
+    └── mouse_region.rs
+
+```
+
+### Rust STD Documentation Example `Option<T>`
 
 ```rust
 
@@ -256,6 +285,15 @@ impl MyWidget {
             child,
             size: self.size
         }
+    }
+
+    #[inline]
+    /// Sugar of MyWidget::new().child(...).boxed()
+    pub fn dyn_child<W: Widget>(self, child: W) -> AnyWidget {
+        MyWidget {
+            child,
+            size: self.size
+        }.boxed()
     }
 }
 

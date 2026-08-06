@@ -896,9 +896,20 @@ fn carry_keyed_child_state_in_context(
 /// is replaced — so a pair is only descended into once both sides agree on what
 /// they are. Everything else keeps the state it was built with, which is how a
 /// navigation still gets its new page.
+///
+/// Keys nested below this one are resolved first, and by key rather than by
+/// position: the walk that follows deliberately steps over keyed elements, and
+/// the pass that would otherwise claim them stopped at this element. A section
+/// that names itself inside a page inside a keyed route transition — the shape
+/// `website/src/screen/home_screen.rs` builds — would otherwise be the one
+/// thing an ancestor's rebuild resets.
 fn carry_state_below_keyed(old: &StatefulElement, new: &StatefulElement, ctx: &BuildContext) {
     if std::ptr::eq(old, new) {
         return;
+    }
+
+    for child in element_children(new) {
+        carry_keyed_child_state(old, child, ctx);
     }
 
     carry_matching_child_state(old, new, ctx);

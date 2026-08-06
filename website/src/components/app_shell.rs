@@ -26,6 +26,7 @@ pub(crate) enum WebsiteThemeMode {
 
 impl WebsiteThemeMode {
     fn theme(self) -> ThemeData {
+
         match self {
             Self::Light => ThemeData::light(),
             Self::Dark => ThemeData::dark(),

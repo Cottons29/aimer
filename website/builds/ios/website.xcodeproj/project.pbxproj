@@ -160,6 +160,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = website/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Website;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				OTHER_LDFLAGS = (
 					"-L$(SRCROOT)/Libraries",
@@ -297,6 +298,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = website/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Website;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				OTHER_LDFLAGS = (
 					"-L$(SRCROOT)/Libraries",

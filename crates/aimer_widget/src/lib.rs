@@ -1,5 +1,4 @@
 mod async_builder;
-pub mod clipboard;
 pub mod components;
 pub mod key;
 pub mod layout_cache;

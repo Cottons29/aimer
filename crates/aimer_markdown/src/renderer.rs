@@ -93,7 +93,7 @@ fn build_code_header(value: &str, language: Option<&str>, theme: &MarkdownTheme)
                     )
                     .on_press(move || {
                         if let Err(error) =
-                            copy_code_with(&source, aimer_widget::clipboard::set_text)
+                            copy_code_with(&source, aimer_native::clipboard::set_text)
                         {
                             eprintln!("Failed to copy Markdown code block: {error}");
                         }

@@ -295,9 +295,9 @@ impl Default for TextStyle {
 #[allow(dead_code)]
 #[derive(Default, Clone, Copy, Debug)]
 pub enum TextOverflow {
-    #[default]
     Clip,
     Ellipsis,
+    #[default]
     Wrap,
     Value(u32),
 }

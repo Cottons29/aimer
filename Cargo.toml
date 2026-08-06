@@ -36,6 +36,7 @@ aimer_markdown.workspace = true
 aimer_modal.workspace = true
 aimer_dnd.workspace = true
 aimer_native.workspace = true
+aimer_ctxmenu.workspace = true
 
 [features]
 markdown = []
@@ -84,7 +85,7 @@ members = [
     "crates/aimer_native",
     "crates/aimer_modal",
     "crates/aimer_dnd"
-, "crates/aimer_ffi_utils"]
+, "crates/aimer_ffi_utils", "crates/aimer_ctxmenu"]
 
 
 [workspace.dependencies]
@@ -116,6 +117,7 @@ aimer_markdown = { path = "crates/aimer_markdown" }
 aimer_modal = { path = "crates/aimer_modal" }
 aimer_dnd = { path = "crates/aimer_dnd" }
 aimer_native = {path = "crates/aimer_native"}
+aimer_ctxmenu = { path = "crates/aimer_ctxmenu" }
 
 #############
 

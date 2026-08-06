@@ -1,7 +1,17 @@
+pub(crate) mod cursor;
+pub(crate) mod handles;
+pub(crate) mod selectable;
+pub(crate) mod session;
+pub(crate) mod touch_hold;
+pub(crate) mod ui;
+
 use std::ops::Range;
+use std::rc::Rc;
 
 use aimer_attribute::Bounds;
 use aimer_widget::PointerKey;
+
+use crate::selection::session::SelectionSlot;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TextHitRegion {
@@ -100,31 +110,92 @@ impl TextSelection {
     }
 }
 
-#[derive(Debug, Default)]
+/// One end of a selection: a participant plus a UTF-8 offset inside it.
+#[derive(Clone)]
+pub(crate) struct SelectionPoint {
+    pub slot: Rc<SelectionSlot>,
+    pub offset: usize,
+}
+
+impl SelectionPoint {
+    /// Creates a point at `offset` inside `slot`.
+    #[inline]
+    pub const fn new(slot: Rc<SelectionSlot>, offset: usize) -> Self {
+        Self { slot, offset }
+    }
+
+    /// Reports whether both points address the same offset of the same
+    /// participant.
+    #[inline]
+    pub fn is_same(&self, other: &Self) -> bool {
+        self.offset == other.offset && Rc::ptr_eq(&self.slot, &other.slot)
+    }
+}
+
+/// A selection spanning from an anchor to a focus, each in its own participant.
+///
+/// The pair keeps the gesture's direction: `anchor` is where the pointer went
+/// down and `focus` is where it currently is.
+#[derive(Clone)]
+pub(crate) struct PointSelection {
+    pub anchor: SelectionPoint,
+    pub focus: SelectionPoint,
+}
+
+impl PointSelection {
+    /// Creates an empty selection at `point`.
+    #[inline]
+    pub fn collapsed(point: SelectionPoint) -> Self {
+        Self {
+            anchor: point.clone(),
+            focus: point,
+        }
+    }
+
+    /// Reports whether the selection covers nothing.
+    #[inline]
+    pub fn is_collapsed(&self) -> bool {
+        self.anchor.is_same(&self.focus)
+    }
+}
+
+/// Pointer-driven selection bookkeeping shared by every session.
+///
+/// The state owns exactly one gesture at a time: only the pointer that began a
+/// drag may extend or end it, and cancelling restores the selection from before
+/// that pointer went down.
+#[derive(Default)]
 pub(crate) struct SelectionState {
-    selection: TextSelection,
-    selection_before_gesture: Option<TextSelection>,
+    selection: Option<PointSelection>,
+    selection_before_gesture: Option<Option<PointSelection>>,
     active_pointer: Option<PointerKey>,
     dragged: bool,
 }
 
 impl SelectionState {
-    pub fn begin(&mut self, offset: usize, pointer: PointerKey) {
-        self.selection_before_gesture = Some(self.selection);
-        self.selection = TextSelection::collapsed(offset);
+    /// Collapses the selection at `point` and takes ownership of `pointer`.
+    pub fn begin(&mut self, point: SelectionPoint, pointer: PointerKey) {
+        self.selection_before_gesture = Some(self.selection.take());
+        self.selection = Some(PointSelection::collapsed(point));
         self.active_pointer = Some(pointer);
         self.dragged = false;
     }
 
-    pub fn update(&mut self, offset: usize, pointer: PointerKey) -> bool {
+    /// Moves the focus to `point`, ignoring pointers that did not begin the
+    /// gesture.
+    pub fn update(&mut self, point: SelectionPoint, pointer: PointerKey) -> bool {
         if self.active_pointer != Some(pointer) {
             return false;
         }
-        self.selection = TextSelection::new(self.selection.anchor(), offset);
-        self.dragged |= !self.selection.is_collapsed();
+        let Some(selection) = &mut self.selection else {
+            return false;
+        };
+        selection.focus = point;
+        self.dragged |= !selection.is_collapsed();
         true
     }
 
+    /// Commits the gesture owned by `pointer`.
     pub fn end(&mut self, pointer: PointerKey) -> bool {
         if self.active_pointer != Some(pointer) {
             return false;
@@ -134,6 +205,7 @@ impl SelectionState {
         true
     }
 
+    /// Restores the selection from before the current gesture.
     pub fn cancel(&mut self) {
         if let Some(selection) = self.selection_before_gesture.take() {
             self.selection = selection;
@@ -142,32 +214,40 @@ impl SelectionState {
         self.dragged = false;
     }
 
+    /// Drops the selection and any gesture in progress.
     pub fn clear(&mut self) {
-        self.selection = TextSelection::default();
+        self.selection = None;
         self.selection_before_gesture = None;
         self.active_pointer = None;
         self.dragged = false;
     }
 
-    pub fn select_all(&mut self, text_len: usize) {
-        self.selection = TextSelection::new(0, text_len);
+    /// Replaces the selection outside of any gesture.
+    pub fn set(&mut self, selection: PointSelection) {
+        self.selection = Some(selection);
         self.selection_before_gesture = None;
         self.active_pointer = None;
         self.dragged = false;
     }
 
-    pub const fn selection(&self) -> TextSelection {
-        self.selection
+    /// Replaces the selection without touching the gesture in progress.
+    ///
+    /// Used when a participant's text changed under a live selection.
+    pub fn replace_selection(&mut self, selection: PointSelection) {
+        self.selection = Some(selection);
     }
 
-    pub const fn is_active(&self) -> bool {
-        self.active_pointer.is_some()
+    /// The current selection, if there is one.
+    pub fn selection(&self) -> Option<&PointSelection> {
+        self.selection.as_ref()
     }
 
+    /// The pointer that began the current gesture.
     pub const fn active_pointer(&self) -> Option<PointerKey> {
         self.active_pointer
     }
 
+    /// Reports whether the current gesture ever covered more than one offset.
     pub const fn was_dragged(&self) -> bool {
         self.dragged
     }
@@ -176,14 +256,8 @@ impl SelectionState {
 #[cfg(test)]
 mod tests {
     use aimer_attribute::Bounds;
-    use aimer_events::pointer::PointerSource;
-    use aimer_widget::PointerKey;
 
-    use super::{SelectionState, TextHitRegion, TextSelection, text_offset_at};
-
-    fn touch(id: u64) -> PointerKey {
-        PointerKey::new(PointerSource::Touch, id)
-    }
+    use super::{TextHitRegion, TextSelection, text_offset_at};
 
     #[test]
     fn reversed_selection_normalizes_without_losing_direction() {
@@ -261,75 +335,4 @@ mod tests {
         assert_eq!(text_offset_at(&regions, -100.0, 10.0), Some(0));
     }
 
-    #[test]
-    fn selection_drag_tracks_only_the_pointer_that_started_it() {
-        let mut state = SelectionState::default();
-        let touch = PointerKey::new(PointerSource::Touch, 42);
-        let mouse_with_same_id = PointerKey::new(PointerSource::Mouse, 42);
-        let other_touch = PointerKey::new(PointerSource::Touch, 7);
-
-        state.begin(8, touch);
-        assert!(!state.update(2, other_touch));
-        assert!(!state.update(2, mouse_with_same_id));
-        assert_eq!(state.selection(), TextSelection::collapsed(8));
-        assert!(state.update(2, touch));
-        assert_eq!(state.selection(), TextSelection::new(8, 2));
-        assert!(state.was_dragged());
-        assert!(!state.end(other_touch));
-        assert!(state.end(touch));
-        assert!(!state.is_active());
-    }
-
-    #[test]
-    fn select_all_uses_the_complete_visible_utf8_range() {
-        let text = "Aé\n👩‍💻";
-        let mut state = SelectionState::default();
-
-        state.select_all(text.len());
-
-        assert_eq!(state.selection(), TextSelection::new(0, text.len()));
-        assert_eq!(state.selection().selected_text(text), Some(text));
-    }
-
-    #[test]
-    fn cancelled_drag_restores_selection_from_before_pointer_down() {
-        let mut state = SelectionState::default();
-        state.select_all(12);
-
-        state.begin(3, touch(7));
-        assert!(state.update(9, touch(7)));
-        state.cancel();
-
-        assert_eq!(state.selection(), TextSelection::new(0, 12));
-        assert!(!state.is_active());
-        assert!(!state.was_dragged());
-    }
-
-    #[test]
-    fn ended_drag_commits_new_selection() {
-        let mut state = SelectionState::default();
-        state.select_all(12);
-
-        state.begin(3, touch(7));
-        assert!(state.update(9, touch(7)));
-        assert!(state.end(touch(7)));
-        state.cancel();
-
-        assert_eq!(state.selection(), TextSelection::new(3, 9));
-        assert!(!state.is_active());
-    }
-
-    #[test]
-    fn clear_removes_selection_and_active_pointer() {
-        let mut state = SelectionState::default();
-        state.select_all(12);
-        state.begin(3, touch(7));
-        assert!(state.update(9, touch(7)));
-
-        state.clear();
-
-        assert_eq!(state.selection(), TextSelection::default());
-        assert!(!state.is_active());
-        assert!(!state.was_dragged());
-    }
 }

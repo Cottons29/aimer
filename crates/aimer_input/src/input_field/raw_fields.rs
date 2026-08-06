@@ -1,4 +1,4 @@
-use std::cell::{Cell, UnsafeCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -8,68 +8,52 @@ use aimer_animation::AnimInstant;
 use aimer_attribute::CacheBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+use aimer_ctxmenu::ContextMenu;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
+use aimer_events::pointer::PointerButton;
 use aimer_events::window::get_window;
 use aimer_macro::Rebuildable;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use aimer_text::RawTextWidget;
-use aimer_widget::base::{BuildContext, Color, Colors};
+use aimer_widget::base::{BuildContext, Color, Colors, WindowHandle};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutCache, LayoutElement,
     PointerKey, VisitorElement, Widget,
 };
 
 use crate::input_field::caret::CaretBlink;
+use crate::input_field::context_menu::{FieldAction, HoldOutcome, TouchHold};
 use crate::input_field::controller::TextFieldController;
 
 /// Write text to the system clipboard.
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+///
+/// Copy is best-effort: a clipboard the platform will not give us is not worth
+/// failing an edit over.
 fn clipboard_write(text: &str) {
-    if let Ok(mut cb) = arboard::Clipboard::new() {
-        cb.set_text(text).ok();
-    }
+    let _ = aimer_native::clipboard::set_text(text);
 }
 
 /// Read text from the system clipboard.
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+///
+/// On the web the platform clipboard is asynchronous and cannot be awaited from
+/// a key handler, so the hidden `<input>` the IME already writes through is used
+/// as the fallback — the browser fills it on a native paste.
 fn clipboard_read() -> Option<String> {
-    arboard::Clipboard::new()
-        .ok()
-        .and_then(|mut cb| cb.get_text().ok())
-}
-
-/// Clipboard stub for Android (not yet supported).
-#[cfg(target_os = "android")]
-fn clipboard_write(_text: &str) {}
-
-#[cfg(target_os = "android")]
-fn clipboard_read() -> Option<String> {
+    if let Ok(text) = aimer_native::clipboard::get_text() {
+        return Some(text);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let window = web_sys::window()?;
+        let document = window.document()?;
+        let element = document.get_element_by_id(HIDDEN_INPUT_ID)?;
+        use wasm_bindgen::JsCast;
+        let input: web_sys::HtmlInputElement = element.unchecked_into();
+        let value = input.value();
+        return if value.is_empty() { None } else { Some(value) };
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     None
-}
-
-/// Write text to the browser clipboard (fire-and-forget).
-#[cfg(target_arch = "wasm32")]
-fn clipboard_write(text: &str) {
-    let Some(window) = web_sys::window() else {
-        return;
-    };
-    let clipboard = window.navigator().clipboard();
-    let _ = clipboard.write_text(text);
-}
-
-/// Read text from the browser clipboard (synchronous fallback: returns None on
-/// wasm because the async Clipboard API cannot be awaited here).
-#[cfg(target_arch = "wasm32")]
-fn clipboard_read() -> Option<String> {
-    // The web Clipboard API is async-only; we read from the hidden input as a
-    // fallback.
-    let window = web_sys::window()?;
-    let document = window.document()?;
-    let el = document.get_element_by_id(HIDDEN_INPUT_ID)?;
-    use wasm_bindgen::JsCast;
-    let input: web_sys::HtmlInputElement = el.unchecked_into();
-    let val = input.value();
-    if val.is_empty() { None } else { Some(val) }
 }
 type BoxedTextFieldFuture = Box<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
@@ -426,9 +410,22 @@ impl RawTextFieldWidget {
 }
 
 impl Widget for RawTextFieldWidget {
-    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
-        RawTextField::new(self.config.clone(), self.caret.clone()).boxed()
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        RawTextField::new(self.config.clone(), self.caret.clone(), ctx.window.clone()).boxed()
     }
+}
+
+/// What a pending context-menu request is anchored to.
+///
+/// A right-click pins the menu to the click, the way every desktop menu does.
+/// A hold has no cursor to pin to and covers whatever it touches, so its pill
+/// floats clear of the whole field.
+#[derive(Clone, Copy)]
+enum MenuOrigin {
+    /// A hold: the pill floats above the field.
+    Hold,
+    /// A secondary click: the list opens at the click.
+    Click(Vec2d),
 }
 
 #[allow(dead_code)]
@@ -472,6 +469,25 @@ pub(crate) struct RawTextField {
     pub ime_enabled: Cell<bool>,
     pub ime_cursor_area: Cell<Option<ImeCaretArea>>,
     pub padding: LayoutSpacing,
+    /// The clipboard menu this field offers, closed until asked for.
+    pub menu: Rc<ContextMenu>,
+    /// Watches a finger for the hold that raises that menu.
+    pub touch_hold: TouchHold,
+    /// A menu asked for by an event and raised by the next frame, once the
+    /// deferred click has been resolved into a caret offset.
+    pending_menu: Cell<Option<MenuOrigin>>,
+    /// What the open menu is anchored to, so a verb that reshapes the
+    /// selection can re-offer it in the same place.
+    menu_origin: Cell<Option<MenuOrigin>>,
+    /// The verbs of the open menu, in the order it draws them.
+    menu_actions: Rc<RefCell<Vec<FieldAction>>>,
+    /// The verb the open menu was just told to run.
+    chosen_action: Rc<Cell<Option<FieldAction>>>,
+    /// A fixed instant for tests, so a hold's five hundred milliseconds are
+    /// exercised by handing in a time rather than by sleeping — the same way
+    /// `gesture::recognize::tap` keeps its thresholds testable.
+    #[cfg(test)]
+    test_clock: Cell<Option<AnimInstant>>,
 }
 
 /// Caret rectangle reported to the platform input method, in logical window
@@ -500,7 +516,7 @@ impl RawTextField {
     ///
     /// All runtime state starts empty except focus, which honors
     /// [`RawFieldConfig::auto_focus`].
-    pub(crate) fn new(config: RawFieldConfig, caret: CaretBlink) -> Self {
+    pub(crate) fn new(config: RawFieldConfig, caret: CaretBlink, window: WindowHandle) -> Self {
         Self {
             input_type: config.input_type,
             controller: config.controller,
@@ -540,7 +556,25 @@ impl RawTextField {
             ime_enabled: Cell::new(false),
             ime_cursor_area: Cell::new(None),
             padding: config.padding,
+            menu: ContextMenu::new(window),
+            touch_hold: TouchHold::new(),
+            pending_menu: Cell::new(None),
+            menu_origin: Cell::new(None),
+            menu_actions: Rc::new(RefCell::new(Vec::new())),
+            chosen_action: Rc::new(Cell::new(None)),
+            #[cfg(test)]
+            test_clock: Cell::new(None),
         }
+    }
+
+    /// The instant gestures are reckoned against.
+    #[inline]
+    fn now(&self) -> AnimInstant {
+        #[cfg(test)]
+        if let Some(now) = self.test_clock.get() {
+            return now;
+        }
+        AnimInstant::now()
     }
 
     fn scaled_font_size(&self, style: &TextStyle, scale: f32) -> f32 {
@@ -909,6 +943,17 @@ impl RawTextField {
 
         self.cursor.set_selection_anchor(Some(line_start));
         self.cursor.set_offset(line_end);
+    }
+
+    /// Whether the placeholder should be painted.
+    ///
+    /// An input method composing into an empty field has the field showing the
+    /// composition, not nothing: painting the placeholder underneath it stacks
+    /// two texts in the same place, which is what a CJK user sees as their
+    /// prediction tangled with the hint.
+    #[inline]
+    fn placeholder_visible(&self) -> bool {
+        !self.is_composing()
     }
 
     /// Adjust `scroll_x` so the cursor is visible within `content_width`.
@@ -1386,6 +1431,8 @@ fn wasm_request_keyboard(show: bool) {
     }
 }
 
+mod menu;
+
 impl VisitorElement for RawTextField {
     fn debug_name(&self) -> &'static str {
         "TextField"
@@ -1394,6 +1441,16 @@ impl VisitorElement for RawTextField {
 
 impl EventElement for RawTextField {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
+        // The panel is painted over the field, so it is offered every pointer
+        // event first; a press that missed it closes it and is handed back, to
+        // go on meaning whatever it meant without the menu open.
+        if self.enable && let Some(result) = self.menu.handle_event(event) {
+            if let Some(action) = self.chosen_action.take() {
+                self.run_menu_action(action);
+            }
+            return result.with_redraw();
+        }
+
         let active_before = self.mouse_held.get();
         let consumed = (|| {
             if !self.enable {
@@ -1409,12 +1466,28 @@ impl EventElement for RawTextField {
 
                     if is_inside {
                         let was_focused = self.is_focused();
+
+                        // A secondary click asks for the desktop menu, not a
+                        // caret: it neither moves the selection it is about to
+                        // act on nor starts a drag.
+                        if info.button == PointerButton::Secondary {
+                            self.set_focused(true);
+                            if self.cursor.selection_range().is_none() {
+                                self.select_word_under(*pos);
+                            }
+                            self.request_menu(MenuOrigin::Click(*pos));
+                            if !was_focused {
+                                self.on_focus.call(self.controller.text());
+                            }
+                            return true;
+                        }
+
                         self.set_focused(true);
                         self.mouse_held.set(Some(PointerKey::new(info.source, info.id)));
                         self.cursor.clear_selection();
 
                         // Double/triple-click detection
-                        let now = AnimInstant::now();
+                        let now = self.now();
                         let elapsed = now.duration_since(self.last_click_time.get());
                         let prev_count = self.click_count.get();
                         let new_count = if elapsed.as_millis() < 500 {
@@ -1433,6 +1506,15 @@ impl EventElement for RawTextField {
                             self.on_focus.call(self.controller.text());
                         }
 
+                        // A finger has no modifier keys to copy with, so it is
+                        // watched for the hold that raises the menu instead.
+                        self.touch_hold.press(
+                            PointerKey::new(info.source, info.id),
+                            info.source,
+                            *pos,
+                            now,
+                        );
+
                         // Clear IME preedit on new click
                         self.clear_preedit();
                         true
@@ -1440,6 +1522,7 @@ impl EventElement for RawTextField {
                         if self.mouse_held.get().is_some() {
                             return false;
                         }
+                        self.dismiss_menu();
                         self.set_focused(false);
                         self.on_blur.call(self.controller.text());
                         false
@@ -1452,6 +1535,7 @@ impl EventElement for RawTextField {
                     if *action == KeyAction::Released {
                         return false;
                     }
+                    self.dismiss_menu();
 
                     let mut encoded = [0u8; 4];
                     self.insert_text(ch.encode_utf8(&mut encoded))
@@ -1463,6 +1547,7 @@ impl EventElement for RawTextField {
                     if *action == KeyAction::Released {
                         return false;
                     }
+                    self.dismiss_menu();
 
                     self.insert_text(text)
                 }
@@ -1477,6 +1562,7 @@ impl EventElement for RawTextField {
                     if *action == KeyAction::Released {
                         return false;
                     }
+                    self.dismiss_menu();
 
                     let is_shortcut = modifiers.ctrl || modifiers.meta;
 
@@ -1793,6 +1879,17 @@ impl EventElement for RawTextField {
                     }
                     self.set_hovered(is_inside);
 
+                    // A finger that rested long enough asks for the menu, and
+                    // stops being a drag.
+                    let pointer = PointerKey::new(info.source, info.id);
+                    if self.touch_hold.moved(pointer, *pos, self.now()) == HoldOutcome::Held
+                    {
+                        self.select_word_under(*pos);
+                        self.request_menu(MenuOrigin::Hold);
+                        self.mouse_held.set(None);
+                        return true;
+                    }
+
                     // Drag-to-select: when mouse is held, defer position resolution to draw()
                     if owns_selection_pointer(self.mouse_held.get(), event) {
                         self.pending_click.set(Some(*pos));
@@ -1801,12 +1898,19 @@ impl EventElement for RawTextField {
 
                     was_hovered != is_inside
                 }
-                ElementEvent::PointerUp(_) => {
+                ElementEvent::PointerUp(info) => {
+                    let pointer = PointerKey::new(info.source, info.id);
+                    let held =
+                        self.touch_hold.release(pointer, info.pos, self.now()) == HoldOutcome::Held;
+                    if held {
+                        self.select_word_under(info.pos);
+                        self.request_menu(MenuOrigin::Hold);
+                    }
                     if owns_selection_pointer(self.mouse_held.get(), event) {
                         self.mouse_held.set(None);
                         true
                     } else {
-                        false
+                        held
                     }
                 }
                 ElementEvent::ImePreedit { text, cursor } => {
@@ -1819,6 +1923,7 @@ impl EventElement for RawTextField {
                     self.set_preedit(text, *cursor)
                 }
                 ElementEvent::Cancel => {
+                    self.dismiss_menu();
                     self.set_focused(false);
                     self.mouse_held.set(None);
                     self.on_blur.call(self.controller.text());
@@ -1992,6 +2097,11 @@ impl Drawable for RawTextField {
             self.cursor.reset_blink();
         }
 
+        // A menu asked for by the last gesture is raised here, where the click
+        // it was asked from has just become a caret offset and a selection —
+        // so its verbs describe what the user actually pressed on.
+        self.raise_pending_menu();
+
         // Context with parent_size set to the padded content area
         let mut content_ctx = ctx.clone();
         content_ctx.parent_size = ResolvedSize {
@@ -2004,15 +2114,17 @@ impl Drawable for RawTextField {
         let content_origin = (abs_x + pad_left, abs_y + pad_top);
 
         if is_empty {
-            // --- Draw prompt (visible when field is empty) ---
-            if !self.prompt.is_empty() {
-                let prompt_widget =
-                    self.build_text_widget(&self.prompt, &self.prompt_style, self.text_align);
-                prompt_widget.draw(&content_ctx);
-            } else if !self.hint.is_empty() {
-                let hint_widget =
-                    self.build_text_widget(&self.hint, &self.hint_style, self.text_align);
-                hint_widget.draw(&content_ctx);
+            // --- Draw prompt (visible when field is empty and not composing) ---
+            if self.placeholder_visible() {
+                if !self.prompt.is_empty() {
+                    let prompt_widget =
+                        self.build_text_widget(&self.prompt, &self.prompt_style, self.text_align);
+                    prompt_widget.draw(&content_ctx);
+                } else if !self.hint.is_empty() {
+                    let hint_widget =
+                        self.build_text_widget(&self.hint, &self.hint_style, self.text_align);
+                    hint_widget.draw(&content_ctx);
+                }
             }
 
             // --- Draw cursor / composition when field is empty but focused ---
@@ -2313,12 +2425,15 @@ impl Drawable for RawTextField {
 }
 
 #[cfg(test)]
+mod menu_tests;
+
+#[cfg(test)]
 mod test_support {
     use std::sync::Arc;
 
     use aimer_events::element::{ElementEvent, KeyAction, Modifiers};
     use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
-    use aimer_widget::base::{Color, Colors};
+    use aimer_widget::base::{Color, Colors, WindowHandle};
 
     use super::{ExpandDirection, InputType, RawFieldConfig, RawTextField, TextFieldCallback};
     use crate::input_field::caret::CaretBlink;
@@ -2357,9 +2472,14 @@ mod test_support {
         }
     }
 
+    /// A window that records what it is told instead of showing it.
+    pub(super) fn headless_window() -> WindowHandle {
+        WindowHandle::headless(winit::dpi::PhysicalSize::new(400, 800), 1.0)
+    }
+
     /// Builds a focused, editable single-line field around `controller`.
     pub(super) fn focused_field(controller: TextFieldController) -> RawTextField {
-        RawTextField::new(field_config(controller), CaretBlink::new())
+        RawTextField::new(field_config(controller), CaretBlink::new(), headless_window())
     }
 
     /// Builds a focused field that blinks on `caret`.
@@ -2367,7 +2487,7 @@ mod test_support {
         controller: TextFieldController,
         caret: CaretBlink,
     ) -> RawTextField {
-        RawTextField::new(field_config(controller), caret)
+        RawTextField::new(field_config(controller), caret, headless_window())
     }
 
     /// A text payload delivered as one batched edit, like an IME commit.

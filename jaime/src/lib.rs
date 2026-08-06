@@ -21,9 +21,11 @@ mod svg_test;
 mod system_theme;
 mod test_animation;
 
+#[allow(unused_imports)]
 use aimer::style::*;
 #[allow(unused_imports)]
 use aimer::*;
+#[allow(unused_imports)]
 use aimer::{AimerApp, *};
 
 #[allow(unused_imports)]
@@ -32,25 +34,30 @@ use crate::animated::start_my_animated_list;
 use crate::custom_animated_theme::start_custom_animated_theme_example;
 #[allow(unused_imports)]
 use crate::floating::start_floating_example;
+#[allow(unused_imports)]
 use crate::loading_animation::start_loading_animation_example;
+#[allow(unused_imports)]
 use crate::markdown_example::start_markdown_example;
 #[allow(unused_imports)]
 use crate::modal::start_modal_example;
 #[allow(unused_imports)]
 use crate::panic_recovery::start_panic_recovery_example;
+#[allow(unused_imports)]
 use crate::scroll_and_row::test_scroll_and_row;
 #[allow(unused_imports)]
 use crate::stateful::start_counter;
+#[allow(unused_imports)]
 use crate::svg_test::start_svg_test;
 #[allow(unused_imports)]
 use crate::system_theme::start_system_theme_example;
+#[allow(unused_imports)]
 use crate::test_animation::TestFadingAnimation;
 
 // this is the entry point of the app
 #[main]
 pub fn my_app() {
     // test_text();
-    // stateful_2::start_my_list();
+    stateful_2::start_my_list();
     // start_counter();
     // AimerApp::start(Container::new().child(Row::new().children([
     //     Expanded::new().child(TestFadingAnimation),
@@ -71,13 +78,16 @@ pub fn my_app() {
     // panic_recovery::start_panic_recovery_example()
     // start_custom_animated_theme_example()
     // start_system_theme_example()
-    system_theme::start_system_theme_example();
+    // system_theme::start_system_theme_example();
     // test_text()
     // start_loading_animation_example()
     // floating::start_floating_example();
     // file_drop_zone::start_file_drop_zone_example()
     // drag_and_drop::start_drag_and_drop_example();
+    // selectable_text::start_selectable_text_example();
 }
+
+
 
 #[allow(unused)]
 fn test_text() {

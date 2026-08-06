@@ -18,6 +18,7 @@ aimer_style.workspace = true
 webbrowser.workspace = true
 aimer_svg.workspace = true
 aimer_input.workspace = true
+aimer_native.workspace = true
 arborium = { workspace = true, features = ["default", "lang-python", "lang-rust", "lang-toml"] }
 
 [dev-dependencies]
