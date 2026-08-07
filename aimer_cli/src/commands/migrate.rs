@@ -174,6 +174,39 @@ mod tests {
     }
 
     #[test]
+    fn migrate_mobile_scaffolds_installs_revisioned_text_mirrors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        migrate_platform(
+            dir,
+            "ios",
+            "demo_app",
+            "com.example.demo",
+            &create::ios::create,
+        )
+        .unwrap();
+        migrate_platform(
+            dir,
+            "android",
+            "demo_app",
+            "com.example.demo",
+            &create::android::create,
+        )
+        .unwrap();
+
+        let swift = fs::read_to_string(dir.join("builds/ios/demo_app/main.swift")).unwrap();
+        let kotlin = fs::read_to_string(
+            dir.join("builds/android/app/src/main/kotlin/com/aimer/AimerActivity.kt"),
+        )
+        .unwrap();
+        assert!(swift.contains("aimer_ios_sync_text_state"));
+        assert!(swift.contains("trigger_rust_text_editing_delta"));
+        assert!(kotlin.contains("fun syncTextState"));
+        assert!(kotlin.contains("nativeTextEditingDelta"));
+    }
+
+    #[test]
     fn migrate_rejects_unknown_target() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();

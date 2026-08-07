@@ -204,7 +204,6 @@ mod tests {
 
     #[test]
     fn migrate_target_as_str_round_trip() {
-        use std::str::FromStr;
         let variants = [
             MigrateTarget::Macos,
             MigrateTarget::Windows,
@@ -234,7 +233,6 @@ mod tests {
 
     #[test]
     fn value_enum_targets_excludes_hidden_variants() {
-        use std::str::FromStr;
         // These should parse fine via ValueEnum
         assert!(Targets::from_str("macos", true).is_ok());
         assert!(Targets::from_str("web", true).is_ok());

@@ -4,7 +4,7 @@ use aimer::*;
 
 // this is the entry point of the app
 #[main]
-pub fn my_app() {
+fn main() {
     // simply start the app with AimerApp::start
     AimerApp::start(CounterWidget!(initial_count: 1))
 }

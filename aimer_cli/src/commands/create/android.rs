@@ -223,12 +223,60 @@ mod tests {
                 fs::read_to_string(android.join("app/src/main/kotlin/com/aimer/AimerActivity.kt"))
                     .unwrap();
 
-            // `Java_com_aimer_AimerActivity_nativeInsertText` / `..._nativeBackspace`
-            // in `aimer_quiver` only resolve against *static* natives, which in
-            // Kotlin means `@JvmStatic external` members of a companion object.
+            // The JNI export in `aimer_quiver` resolves against a static native,
+            // which in Kotlin means an `@JvmStatic external` companion member.
             assert!(source.contains("@JvmStatic"));
-            assert!(source.contains("external fun nativeInsertText(text: String)"));
-            assert!(source.contains("external fun nativeBackspace()"));
+            assert!(source.contains("external fun nativeTextEditingDelta("));
+            for parameter in [
+                "sessionId: Long",
+                "revision: Long",
+                "replaceStart: Int",
+                "replaceEnd: Int",
+                "replacementText: String",
+                "selectionStart: Int",
+                "selectionEnd: Int",
+                "composingStart: Int",
+                "composingEnd: Int",
+            ] {
+                assert!(source.contains(parameter), "missing JNI parameter {parameter}");
+            }
+            assert!(!source.contains("external fun nativeInsertText"));
+            assert!(!source.contains("external fun nativeSetComposingText"));
+            assert!(!source.contains("external fun nativeBackspace"));
+        });
+    }
+
+    #[test]
+    fn kotlin_activity_mirrors_revisioned_editor_state() {
+        with_scaffold(|android| {
+            let source =
+                fs::read_to_string(android.join("app/src/main/kotlin/com/aimer/AimerActivity.kt"))
+                    .unwrap();
+
+            for required in [
+                "fun syncTextState(",
+                "private var sessionId = 0L",
+                "private var revision = 0L",
+                "beforeTextChanged",
+                "afterTextChanged",
+                "onSelectionChanged",
+                "BaseInputConnection.getComposingSpanStart",
+                "BaseInputConnection.getComposingSpanEnd",
+                "setComposingText",
+                "setComposingRegion",
+                "InputType.TYPE_CLASS_NUMBER",
+                "InputType.TYPE_TEXT_VARIATION_PASSWORD",
+                "PasswordTransformationMethod.getInstance()",
+                "restartInput(view)",
+                "revision += 1",
+                "revision < this.revision",
+                "reportDelta(selectionStart, selectionStart, \"\")",
+                "suppressCallbacks = true",
+                "suppressCallbacks = false",
+            ] {
+                assert!(source.contains(required), "missing {required} in generated activity");
+            }
+            assert!(!source.contains("PLACEHOLDER"));
         });
     }
 

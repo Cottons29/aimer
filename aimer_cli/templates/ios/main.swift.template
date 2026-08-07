@@ -11,6 +11,26 @@ func trigger_rust_backspace()
 @_silgen_name("trigger_rust_insert_text")
 func trigger_rust_insert_text(_ ptr: UnsafePointer<UInt8>, _ len: Int)
 
+// Provisional text a multistage input method is still composing ("marked
+// text" in UIKit's vocabulary). Rust paints it in the focused field the way a
+// desktop `Ime::Preedit` is painted; an empty string ends the composition.
+@_silgen_name("trigger_rust_set_marked_text")
+func trigger_rust_set_marked_text(_ ptr: UnsafePointer<UInt8>, _ len: Int)
+
+@_silgen_name("trigger_rust_text_editing_delta")
+func trigger_rust_text_editing_delta(
+    _ sessionId: UInt64,
+    _ revision: UInt64,
+    _ replaceStart: Int,
+    _ replaceEnd: Int,
+    _ utf8Ptr: UnsafePointer<UInt8>?,
+    _ utf8Len: Int,
+    _ selectionStart: Int,
+    _ selectionEnd: Int,
+    _ composingStart: Int,
+    _ composingEnd: Int
+)
+
 @_cdecl("aimer_ios_show_keyboard")
 func aimer_ios_show_keyboard() {
     DispatchQueue.main.async {
@@ -22,6 +42,38 @@ func aimer_ios_show_keyboard() {
 func aimer_ios_dismiss_keyboard() {
     DispatchQueue.main.async {
         KeyboardForwarder.shared.dismissKeyboard()
+    }
+}
+
+@_cdecl("aimer_ios_sync_text_state")
+func aimer_ios_sync_text_state(
+    _ sessionId: UInt64,
+    _ revision: UInt64,
+    _ utf8Ptr: UnsafePointer<UInt8>?,
+    _ utf8Len: Int,
+    _ selectionStart: Int,
+    _ selectionEnd: Int,
+    _ composingStart: Int,
+    _ composingEnd: Int,
+    _ secure: Bool,
+    _ inputKind: Int32
+) {
+    guard utf8Len >= 0, utf8Len == 0 || utf8Ptr != nil else { return }
+    let text = utf8Len == 0
+        ? ""
+        : String(decoding: UnsafeBufferPointer(start: utf8Ptr!, count: utf8Len), as: UTF8.self)
+    DispatchQueue.main.async {
+        KeyboardForwarder.shared.syncTextState(
+            sessionId: sessionId,
+            revision: revision,
+            text: text,
+            selectionStart: selectionStart,
+            selectionEnd: selectionEnd,
+            composingStart: composingStart,
+            composingEnd: composingEnd,
+            secure: secure,
+            inputKind: inputKind
+        )
     }
 }
 
@@ -79,15 +131,14 @@ func aimer_ios_pause_frames() {
 final class KeyboardForwardingTextView: UITextView, UITextViewDelegate {
     override var canBecomeFirstResponder: Bool { true }
 
-    // Keep a placeholder so the backspace key stays enabled.
-    private let placeholder = " "
-
-    func ensurePlaceholder() {
-        if (text ?? "").isEmpty {
-            text = placeholder
-            selectedRange = NSRange(location: placeholder.utf16.count, length: 0)
-        }
-    }
+    private var sessionId: UInt64 = 0
+    private var revision: UInt64 = 0
+    private var isApplyingRustSnapshot = false
+    private var pendingReplacement: (range: NSRange, text: String)?
+    private var mirroredText = ""
+    private var lastReportedSelection: NSRange?
+    private var lastReportedComposing: NSRange?
+    private var selectionReportScheduled = false
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -103,49 +154,235 @@ final class KeyboardForwardingTextView: UITextView, UITextViewDelegate {
         smartDashesType = .no
         smartInsertDeleteType = .no
         keyboardDismissMode = .none
-        ensurePlaceholder()
     }
 
-    private func forward(_ text: String) {
-        if let data = text.data(using: .utf8) {
-            data.withUnsafeBytes { rawBuf in
-                if let base = rawBuf.bindMemory(to: UInt8.self).baseAddress {
-                    trigger_rust_insert_text(base, rawBuf.count)
+    func applyRustSnapshot(
+        sessionId: UInt64,
+        revision: UInt64,
+        text snapshot: String,
+        selectionStart: Int,
+        selectionEnd: Int,
+        composingStart: Int,
+        composingEnd: Int,
+        secure: Bool,
+        inputKind: Int32
+    ) {
+        if self.sessionId == sessionId && revision < self.revision {
+            return
+        }
+        if self.sessionId != 0 && sessionId < self.sessionId {
+            return
+        }
+
+        let newSession = self.sessionId != sessionId
+        self.sessionId = sessionId
+        self.revision = revision
+        pendingReplacement = nil
+        selectionReportScheduled = false
+
+        isApplyingRustSnapshot = true
+        defer { isApplyingRustSnapshot = false }
+
+        let keyboardType: UIKeyboardType = inputKind == 1 ? .numberPad : .default
+        let traitsChanged = isSecureTextEntry != secure || self.keyboardType != keyboardType
+        isSecureTextEntry = secure
+        self.keyboardType = keyboardType
+
+        if newSession {
+            unmarkText()
+        }
+        if (text ?? "") != snapshot {
+            text = snapshot
+        }
+        let selection = clampedRange(
+            start: selectionStart,
+            end: selectionEnd,
+            utf16Length: snapshot.utf16.count
+        )
+        if selectedRange != selection {
+            selectedRange = selection
+        }
+
+        mirroredText = snapshot
+        lastReportedSelection = selection
+        lastReportedComposing = optionalRange(
+            start: composingStart,
+            end: composingEnd,
+            utf16Length: snapshot.utf16.count
+        )
+        if traitsChanged && isFirstResponder {
+            reloadInputViews()
+        }
+    }
+
+    func textView(
+        _ textView: UITextView,
+        shouldChangeTextIn range: NSRange,
+        replacementText text: String
+    ) -> Bool {
+        if !isApplyingRustSnapshot {
+            pendingReplacement = (range, text)
+        }
+        return true
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+        guard !isApplyingRustSnapshot else { return }
+        guard sessionId != 0 else {
+            forwardMarkedTextFallback(from: textView)
+            return
+        }
+
+        let replacement: (range: NSRange, text: String)
+        if let pendingReplacement {
+            replacement = pendingReplacement
+        } else if (textView.text ?? "") != mirroredText {
+            replacement = (
+                NSRange(location: 0, length: mirroredText.utf16.count),
+                textView.text ?? ""
+            )
+        } else {
+            replacement = (NSRange(location: normalizedSelection(in: textView).location, length: 0), "")
+        }
+        self.pendingReplacement = nil
+        reportDelta(replacing: replacement.range, with: replacement.text, from: textView)
+    }
+
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        guard !isApplyingRustSnapshot,
+              sessionId != 0,
+              pendingReplacement == nil,
+              !selectionReportScheduled else { return }
+        selectionReportScheduled = true
+        let scheduledSession = sessionId
+        DispatchQueue.main.async { [weak self, weak textView] in
+            guard let self, let textView else { return }
+            self.selectionReportScheduled = false
+            guard !self.isApplyingRustSnapshot,
+                  self.sessionId == scheduledSession,
+                  self.pendingReplacement == nil else { return }
+            let selection = self.normalizedSelection(in: textView)
+            self.reportDelta(
+                replacing: NSRange(location: selection.location, length: 0),
+                with: "",
+                from: textView
+            )
+        }
+    }
+
+    private func reportDelta(replacing range: NSRange, with replacement: String, from textView: UITextView) {
+        let selection = normalizedSelection(in: textView)
+        let composing = markedRange(in: textView)
+        if range.length == 0,
+           replacement.isEmpty,
+           lastReportedSelection == selection,
+           lastReportedComposing == composing {
+            return
+        }
+
+        let replacementRange = clampedRange(range, utf16Length: mirroredText.utf16.count)
+        let composingStart = composing?.location ?? -1
+        let composingEnd = composing.map { $0.location + $0.length } ?? -1
+        let utf8 = replacement.utf8
+        if utf8.isEmpty {
+            trigger_rust_text_editing_delta(
+                sessionId, revision,
+                replacementRange.location, replacementRange.location + replacementRange.length,
+                nil, 0,
+                selection.location, selection.location + selection.length,
+                composingStart, composingEnd
+            )
+        } else {
+            let usedContiguousStorage = utf8.withContiguousStorageIfAvailable { buffer -> Bool in
+                trigger_rust_text_editing_delta(
+                    sessionId, revision,
+                    replacementRange.location, replacementRange.location + replacementRange.length,
+                    buffer.baseAddress, buffer.count,
+                    selection.location, selection.location + selection.length,
+                    composingStart, composingEnd
+                )
+                return true
+            } ?? false
+            if !usedContiguousStorage {
+                let bytes = Array(utf8)
+                bytes.withUnsafeBufferPointer { buffer in
+                    trigger_rust_text_editing_delta(
+                        sessionId, revision,
+                        replacementRange.location, replacementRange.location + replacementRange.length,
+                        buffer.baseAddress, buffer.count,
+                        selection.location, selection.location + selection.length,
+                        composingStart, composingEnd
+                    )
                 }
             }
         }
+
+        mirroredText = textView.text ?? ""
+        lastReportedSelection = selection
+        lastReportedComposing = composing
     }
 
-    // IMPORTANT: do NOT forward text from `shouldChangeTextIn` / `insertText`.
-    // While a multistage input method is composing "marked text" (Chinese Pinyin,
-    // Japanese Kana, Korean Hangul, ...) UIKit reports every provisional keystroke
-    // through those hooks too, so forwarding there leaks the raw Latin pinyin (e.g.
-    // "nihao") into the field alongside the committed characters ("你好").
-    //
-    // Instead we forward only from `textViewDidChange`, and only once the IME has
-    // finished composing (`markedTextRange == nil`). At that point the buffer holds
-    // the sentinel placeholder followed by the freshly committed text (a finalized
-    // IME candidate, or a plainly typed character).
-    func textViewDidChange(_ textView: UITextView) {
-        // Still composing marked text: the content is provisional, never forward it.
-        if textView.markedTextRange != nil { return }
+    private func normalizedSelection(in textView: UITextView) -> NSRange {
+        clampedRange(textView.selectedRange, utf16Length: (textView.text ?? "").utf16.count)
+    }
 
-        let full = textView.text ?? ""
-        if full.isEmpty {
-            // The sentinel placeholder itself was deleted -> backspace.
-            trigger_rust_backspace()
-        } else if full.hasPrefix(placeholder) && full.count > placeholder.count {
-            // Everything past the sentinel is freshly committed text.
-            let committed = String(full.dropFirst(placeholder.count))
-            forward(committed)
+    private func markedRange(in textView: UITextView) -> NSRange? {
+        guard let marked = textView.markedTextRange else { return nil }
+        let start = textView.offset(from: textView.beginningOfDocument, to: marked.start)
+        let end = textView.offset(from: textView.beginningOfDocument, to: marked.end)
+        guard start >= 0, end >= 0 else { return nil }
+        return clampedRange(
+            start: start,
+            end: end,
+            utf16Length: (textView.text ?? "").utf16.count
+        )
+    }
+
+    private func clampedRange(_ range: NSRange, utf16Length: Int) -> NSRange {
+        guard range.location != NSNotFound else {
+            return NSRange(location: utf16Length, length: 0)
         }
-
-        // Collapse the hidden buffer back to the placeholder so it never grows and
-        // the backspace key always has something to delete. Setting `text`
-        // programmatically does not re-trigger `textViewDidChange`.
-        textView.text = placeholder
-        textView.selectedRange = NSRange(location: placeholder.utf16.count, length: 0)
+        let location = min(range.location, utf16Length)
+        return NSRange(location: location, length: min(range.length, utf16Length - location))
     }
+
+    private func clampedRange(start: Int, end: Int, utf16Length: Int) -> NSRange {
+        let lower = min(max(min(start, end), 0), utf16Length)
+        let upper = min(max(max(start, end), lower), utf16Length)
+        return NSRange(location: lower, length: upper - lower)
+    }
+
+    private func optionalRange(start: Int, end: Int, utf16Length: Int) -> NSRange? {
+        guard start >= 0, end >= 0 else { return nil }
+        return clampedRange(start: start, end: end, utf16Length: utf16Length)
+    }
+
+    private var forwardedMarkedText = ""
+    private let emptyMarker = UnsafePointer<UInt8>(bitPattern: 1)!
+
+    private func forwardMarkedTextFallback(from textView: UITextView) {
+        let marked = markedRange(in: textView)
+        let value = marked.map { (textView.text as NSString?)?.substring(with: $0) ?? "" } ?? ""
+        guard value != forwardedMarkedText else { return }
+        forwardedMarkedText = value
+        let data = value.data(using: .utf8) ?? Data()
+        data.withUnsafeBytes { rawBuffer in
+            let base = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            trigger_rust_set_marked_text(base ?? emptyMarker, rawBuffer.count)
+        }
+    }
+}
+
+private struct RustTextState {
+    let sessionId: UInt64
+    let revision: UInt64
+    let text: String
+    let selectionStart: Int
+    let selectionEnd: Int
+    let composingStart: Int
+    let composingEnd: Int
+    let secure: Bool
+    let inputKind: Int32
 }
 
 final class KeyboardForwarder {
@@ -154,6 +391,7 @@ final class KeyboardForwarder {
     private var installAttempts: Int = 0
     private var installScheduled: Bool = false
     private var observers: [NSObjectProtocol] = []
+    private var pendingTextState: RustTextState?
 
     func dismissKeyboard() {
         guard let v = inputView else { return }
@@ -164,14 +402,66 @@ final class KeyboardForwarder {
         ensureFirstResponder()
     }
 
+    func syncTextState(
+        sessionId: UInt64,
+        revision: UInt64,
+        text: String,
+        selectionStart: Int,
+        selectionEnd: Int,
+        composingStart: Int,
+        composingEnd: Int,
+        secure: Bool,
+        inputKind: Int32
+    ) {
+        let state = RustTextState(
+            sessionId: sessionId,
+            revision: revision,
+            text: text,
+            selectionStart: selectionStart,
+            selectionEnd: selectionEnd,
+            composingStart: composingStart,
+            composingEnd: composingEnd,
+            secure: secure,
+            inputKind: inputKind
+        )
+        if let pendingTextState {
+            if pendingTextState.sessionId == sessionId && revision < pendingTextState.revision {
+                return
+            }
+            if sessionId < pendingTextState.sessionId {
+                return
+            }
+        }
+        pendingTextState = state
+        if inputView == nil {
+            installIfPossible()
+        }
+        applyPendingTextState()
+    }
+
     private func ensureFirstResponder() {
         if inputView == nil {
             installIfPossible()
             return
         }
         guard let v = inputView else { return }
-        v.ensurePlaceholder()
         _ = v.becomeFirstResponder()
+    }
+
+    private func applyPendingTextState() {
+        guard let view = inputView, let state = pendingTextState else { return }
+        pendingTextState = nil
+        view.applyRustSnapshot(
+            sessionId: state.sessionId,
+            revision: state.revision,
+            text: state.text,
+            selectionStart: state.selectionStart,
+            selectionEnd: state.selectionEnd,
+            composingStart: state.composingStart,
+            composingEnd: state.composingEnd,
+            secure: state.secure,
+            inputKind: state.inputKind
+        )
     }
 
     private func keyWindow() -> UIWindow? {
@@ -224,9 +514,8 @@ final class KeyboardForwarder {
         v.alpha = 0.01
         window.addSubview(v)
         window.bringSubviewToFront(v)
-        v.ensurePlaceholder()
         inputView = v
-
+        applyPendingTextState()
     }
 
     func start() {

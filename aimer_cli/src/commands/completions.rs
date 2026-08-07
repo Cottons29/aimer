@@ -6,7 +6,6 @@ use clap::CommandFactory;
 use clap_complete::Shell;
 use clap_complete::env::Shells;
 use aimer_utils::info;
-use aimer_utils::log::debug;
 use crate::Cli;
 
 /// Environment variable the generated scripts use to ask the binary for

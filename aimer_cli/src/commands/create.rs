@@ -165,10 +165,10 @@ fn scaffold(
 
     // src/lib.rs
     fs::write(
-        dir.join("src/lib.rs"),
-        include_str!("../../templates/lib.rs.template"),
+        dir.join("src/main.rs"),
+        include_str!("../../templates/main.rs.template"),
     )
-    .context("writing src/lib.rs")?;
+    .context("writing src/main.rs")?;
 
     // build.rs — iOS cdylib link workaround for the Swift-provided frame-driver
     // symbols (see the template for details).
@@ -188,7 +188,7 @@ fn scaffold(
     // re-parsing Cargo.toml.
     AimerManifest::new(project_name, version, description, author, group)
         .write_to(dir)
-        .context("writing aimer.toml")?;
+        .context("writing Aimer.toml")?;
 
     Ok(())
 }
@@ -289,10 +289,10 @@ mod tests {
         .unwrap();
 
         // Core files and directories are present.
-        assert!(dir.join("src/lib.rs").exists(), "missing src/lib.rs");
+        assert!(dir.join("src/main.rs").exists(), "missing src/main.rs");
         assert!(dir.join("build.rs").exists(), "missing build.rs");
         assert!(dir.join("Cargo.toml").exists(), "missing Cargo.toml");
-        assert!(dir.join("aimer.toml").exists(), "missing aimer.toml");
+        assert!(dir.join("Aimer.toml").exists(), "missing Aimer.toml");
         assert!(dir.join(".gitignore").exists(), "missing .gitignore");
         assert!(dir.join("README.md").exists(), "missing README.md");
         assert!(dir.join("builds/web").is_dir(), "missing builds/web");

@@ -6,7 +6,6 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam::channel::Sender;
-use aimer_utils::log::JSON_OUTPUT_FLAG;
 use crate::commands::assemble::{self, AndroidPlan};
 use crate::commands::run::cargo_build::{
     self, CargoBuildTarget, stream_as_app_log_split_cr, wait_for_child,

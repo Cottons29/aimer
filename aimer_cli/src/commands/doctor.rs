@@ -45,6 +45,12 @@ const TOOLS: &[Tool] = &[
         probe: &["--version"],
         purpose: "Android project builds",
     },
+    #[cfg(target_os = "macos")]
+    Tool {
+        bin: "llvm-ar",
+        probe: &["--version"],
+        purpose: "Web (for building markdown syntax highlight)"
+    }
 ];
 
 /// Return `true` when `bin` can be executed (i.e. it is installed and on PATH).
@@ -102,3 +108,5 @@ pub fn execute() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+

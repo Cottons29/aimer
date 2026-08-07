@@ -217,10 +217,10 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
         return Err(anyhow::anyhow!("Failed to get project root"));
     };
 
-    let lib_path = proj_root.join("src/lib.rs");
+    let lib_path = proj_root.join("src/main.rs");
     if !lib_path.exists() {
         return Err(anyhow::anyhow!(
-            "src/lib.rs is not found! :  {}",
+            "src/main.rs is not found! :  {}",
             lib_path.display()
         ));
     }

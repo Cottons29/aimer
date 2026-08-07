@@ -99,6 +99,22 @@ mod tests {
         assert!(!pbxproj.contains("\"-framework\","), "{pbxproj}");
     }
 
+    #[test]
+    fn the_scaffold_ships_the_revisioned_ios_text_bridge() {
+        let dir = scaffolded("my_app");
+
+        let swift = fs::read_to_string(dir.join("builds/ios/my_app/main.swift")).unwrap();
+        for required in [
+            "@_silgen_name(\"trigger_rust_text_editing_delta\")",
+            "@_cdecl(\"aimer_ios_sync_text_state\")",
+            "textView.selectedRange",
+            "textViewDidChangeSelection",
+        ] {
+            assert!(swift.contains(required), "missing {required} in generated main.swift");
+        }
+        assert!(!swift.contains("private let placeholder"), "{swift}");
+    }
+
     /// A scratch project directory with the iOS scaffold in it.
     fn scaffolded(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
