@@ -109,6 +109,10 @@ mod tests {
             "@_cdecl(\"aimer_ios_sync_text_state\")",
             "textView.selectedRange",
             "textViewDidChangeSelection",
+            // What `shouldChangeTextIn` announces is only trusted when
+            // replaying it reproduces the view's actual text; a misattributed
+            // newline would submit the field mid-composition.
+            "replayed(announced, on: mirroredText) == actual",
         ] {
             assert!(swift.contains(required), "missing {required} in generated main.swift");
         }

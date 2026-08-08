@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn test_from_raw() {
         let raw = "fn main(){}";
-        let span = Highlighter::new().highlight_spans("rust", &raw).unwrap();
+        let span = Highlighter::new().highlight_spans("rust", raw).unwrap();
         let capture: Vec<CaptureSpan> = span.into_iter().map(CaptureSpan::from).collect();
 
         assert_eq!(

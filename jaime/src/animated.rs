@@ -95,7 +95,7 @@ impl State<MyAnimatedList> for MyListState {
                                                         move || {
                                                             updater.set_state(|state| {
                                                                 let uuid = Uuid::new_v4().to_string();
-                                                                let mut controller = AnimationController::new(
+                                                                let controller = AnimationController::new(
                                                                     Duration::from_millis(1000),
                                                                     Curve::EaseOut,
                                                                 );

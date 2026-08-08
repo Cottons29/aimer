@@ -454,6 +454,16 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         // to here instead.
         crate::system_appearance::start_observing(window);
 
+        // The region the system reserves in the window — the status bar, the
+        // notch, the home indicator. Read after the window is on screen for the
+        // same reason the appearance is: UIKit resolves it against a laid-out
+        // view. A rotation reports it again, as a resize.
+        crate::system_safe_area::announce(window);
+
+        // A browser changes the reservation without winit hearing about it, so
+        // its own resize notifications are subscribed to here.
+        crate::system_safe_area::start_observing(window);
+
         #[allow(unused_mut)]
         let mut size = window.inner_size();
 

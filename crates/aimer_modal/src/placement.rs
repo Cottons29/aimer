@@ -1,6 +1,7 @@
 use aimer_attribute::bounds::Bounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+use aimer_widget::SafeAreaInsets;
 
 /// The side of the anchor a floating panel is placed on.
 ///
@@ -108,6 +109,7 @@ pub struct PlacementSpec {
     gap: f32,
     offset: Vec2d,
     overflow: OverflowPolicy,
+    safe_area: SafeAreaInsets,
 }
 
 impl Default for PlacementSpec {
@@ -127,6 +129,7 @@ impl PlacementSpec {
             gap: 0.0,
             offset: Vec2d { x: 0.0, y: 0.0 },
             overflow: OverflowPolicy::Flip,
+            safe_area: SafeAreaInsets::ZERO,
         }
     }
 
@@ -171,6 +174,36 @@ impl PlacementSpec {
         self
     }
 
+    /// Sets the edges of the viewport the panel must stay clear of.
+    ///
+    /// The insets are expressed in the same coordinate space as the anchor and
+    /// the viewport, and they shrink the rectangle the panel is fitted into:
+    /// [`OverflowPolicy::Flip`] flips away from a side that only fits *inside*
+    /// a reserved edge, and the slide back into view stops at the edge instead
+    /// of at the window. [`OverflowPolicy::Fixed`] ignores them, as it ignores
+    /// the viewport.
+    ///
+    /// This is what keeps a panel out of the region the system draws over — the
+    /// status bar, the notch, the home indicator — where a press never reaches
+    /// the application. [`crate::Floating`] fills it in from the platform, so a
+    /// panel only sets it to reserve something extra.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use aimer_modal::PlacementSpec;
+    /// use aimer_widget::SafeAreaInsets;
+    ///
+    /// let spec = PlacementSpec::new().safe_area(SafeAreaInsets::new(0.0, 59.0, 0.0, 34.0));
+    ///
+    /// assert_eq!(spec.safe_area_value().top, 59.0);
+    /// ```
+    #[inline]
+    pub const fn safe_area(mut self, safe_area: SafeAreaInsets) -> Self {
+        self.safe_area = safe_area;
+        self
+    }
+
     /// Returns the preferred side.
     #[inline]
     pub const fn side_value(&self) -> FloatingSide {
@@ -199,6 +232,12 @@ impl PlacementSpec {
     #[inline]
     pub const fn overflow_value(&self) -> OverflowPolicy {
         self.overflow
+    }
+
+    /// Returns the reserved viewport edges.
+    #[inline]
+    pub const fn safe_area_value(&self) -> SafeAreaInsets {
+        self.safe_area
     }
 }
 
@@ -242,10 +281,18 @@ pub fn resolve_placement(
     panel: ResolvedSize,
     viewport: ResolvedSize,
 ) -> FloatingPlacement {
+    // What the panel may actually use: the viewport minus whatever the system —
+    // or the caller — keeps for itself.
+    let usable = if spec.overflow == OverflowPolicy::Fixed {
+        SafeAreaInsets::ZERO
+    } else {
+        spec.safe_area
+    };
+
     let mut side = spec.side;
     if spec.overflow == OverflowPolicy::Flip
-        && !fits(side, anchor, panel, viewport, spec.gap)
-        && fits(side.flipped(), anchor, panel, viewport, spec.gap)
+        && !fits(side, anchor, panel, viewport, usable, spec.gap)
+        && fits(side.flipped(), anchor, panel, viewport, usable, spec.gap)
     {
         side = side.flipped();
     }
@@ -255,8 +302,18 @@ pub fn resolve_placement(
     origin.y += spec.offset.y;
 
     if spec.overflow != OverflowPolicy::Fixed {
-        origin.x = shift_inside(origin.x, panel.width, viewport.width);
-        origin.y = shift_inside(origin.y, panel.height, viewport.height);
+        origin.x = shift_inside(
+            origin.x,
+            panel.width,
+            usable.left,
+            viewport.width - usable.right,
+        );
+        origin.y = shift_inside(
+            origin.y,
+            panel.height,
+            usable.top,
+            viewport.height - usable.bottom,
+        );
     }
 
     FloatingPlacement { origin, side }
@@ -312,21 +369,28 @@ fn fits(
     anchor: Bounds,
     panel: ResolvedSize,
     viewport: ResolvedSize,
+    usable: SafeAreaInsets,
     gap: f32,
 ) -> bool {
     match side {
-        FloatingSide::Top => anchor.y - panel.height - gap >= 0.0,
-        FloatingSide::Bottom => anchor.y + anchor.height + gap + panel.height <= viewport.height,
-        FloatingSide::Left => anchor.x - panel.width - gap >= 0.0,
-        FloatingSide::Right => anchor.x + anchor.width + gap + panel.width <= viewport.width,
+        FloatingSide::Top => anchor.y - panel.height - gap >= usable.top,
+        FloatingSide::Bottom => {
+            anchor.y + anchor.height + gap + panel.height <= viewport.height - usable.bottom
+        }
+        FloatingSide::Left => anchor.x - panel.width - gap >= usable.left,
+        FloatingSide::Right => {
+            anchor.x + anchor.width + gap + panel.width <= viewport.width - usable.right
+        }
     }
 }
 
-fn shift_inside(origin: f32, extent: f32, limit: f32) -> f32 {
-    if extent >= limit {
-        return 0.0;
+/// Slides `origin` into `min..max`, giving up on the trailing edge when the
+/// panel is too large to fit between them: half a panel reachable beats none.
+fn shift_inside(origin: f32, extent: f32, min: f32, max: f32) -> f32 {
+    if extent >= max - min {
+        return min;
     }
-    origin.clamp(0.0, limit - extent)
+    origin.clamp(min, max - extent)
 }
 
 #[cfg(test)]
@@ -478,6 +542,117 @@ mod tests {
 
         assert_eq!(placement.side, FloatingSide::Bottom);
         assert_origin(placement, 760.0, 560.0);
+    }
+
+    /// An iPhone in portrait: the status bar and the notch own the top of the
+    /// window, the home indicator the bottom.
+    const PHONE: SafeAreaInsets = SafeAreaInsets {
+        left: 0.0,
+        top: 59.0,
+        right: 0.0,
+        bottom: 34.0,
+    };
+
+    #[test]
+    fn a_panel_above_an_anchor_under_the_status_bar_flips_below_it() {
+        // The text being selected sits right under the status bar, so the
+        // callout's preferred place — above it — is where touches belong to the
+        // system.
+        let placement = resolve_placement(
+            PlacementSpec::new()
+                .side(FloatingSide::Top)
+                .gap(8.0)
+                .safe_area(PHONE),
+            Bounds::new(40.0, 70.0, 100.0, 20.0),
+            panel(180.0, 44.0),
+            VIEWPORT,
+        );
+
+        assert_eq!(placement.side, FloatingSide::Bottom);
+        assert_origin(placement, 40.0, 98.0);
+    }
+
+    #[test]
+    fn a_panel_that_fits_above_the_status_bar_line_stays_there() {
+        let placement = resolve_placement(
+            PlacementSpec::new()
+                .side(FloatingSide::Top)
+                .gap(8.0)
+                .safe_area(PHONE),
+            Bounds::new(40.0, 140.0, 100.0, 20.0),
+            panel(180.0, 44.0),
+            VIEWPORT,
+        );
+
+        assert_eq!(placement.side, FloatingSide::Top);
+        assert_origin(placement, 40.0, 88.0);
+    }
+
+    #[test]
+    fn a_panel_that_fits_nowhere_is_pushed_clear_of_the_reserved_edges() {
+        // Neither side fits, so the panel keeps its side and slides inside —
+        // and "inside" now stops at the status bar rather than at the window.
+        let placement = resolve_placement(
+            PlacementSpec::new().side(FloatingSide::Top).safe_area(PHONE),
+            Bounds::new(40.0, 20.0, 100.0, 20.0),
+            panel(180.0, 560.0),
+            VIEWPORT,
+        );
+
+        assert!(placement.origin.y >= PHONE.top - 1e-4);
+    }
+
+    #[test]
+    fn a_panel_at_the_bottom_edge_clears_the_home_indicator() {
+        let placement = resolve_placement(
+            PlacementSpec::new().safe_area(PHONE),
+            Bounds::new(40.0, 580.0, 100.0, 20.0),
+            panel(180.0, 44.0),
+            VIEWPORT,
+        );
+
+        assert_origin(placement, 40.0, 522.0);
+    }
+
+    #[test]
+    fn reserved_side_edges_hold_a_panel_off_them() {
+        let landscape = SafeAreaInsets::new(59.0, 0.0, 59.0, 21.0);
+        let placement = resolve_placement(
+            PlacementSpec::new().safe_area(landscape),
+            Bounds::new(780.0, 60.0, 20.0, 20.0),
+            panel(180.0, 44.0),
+            VIEWPORT,
+        );
+
+        assert_origin(placement, 561.0, 80.0);
+    }
+
+    #[test]
+    fn a_fixed_panel_ignores_the_reserved_edges() {
+        let placement = resolve_placement(
+            PlacementSpec::new()
+                .side(FloatingSide::Top)
+                .overflow(OverflowPolicy::Fixed)
+                .safe_area(PHONE),
+            Bounds::new(40.0, 70.0, 100.0, 20.0),
+            panel(180.0, 44.0),
+            VIEWPORT,
+        );
+
+        assert_eq!(placement.side, FloatingSide::Top);
+        assert_origin(placement, 40.0, 26.0);
+    }
+
+    #[test]
+    fn a_panel_taller_than_the_usable_height_starts_at_the_reserved_edge() {
+        let placement = resolve_placement(
+            PlacementSpec::new().safe_area(PHONE),
+            Bounds::new(400.0, 300.0, 30.0, 20.0),
+            panel(900.0, 700.0),
+            VIEWPORT,
+        );
+
+        assert_origin(placement, 0.0, 59.0);
     }
 
     #[test]

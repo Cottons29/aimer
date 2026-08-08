@@ -167,7 +167,7 @@
 					"-lc++",
 					"$(AIMER_RUST_LDFLAGS)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.cottons.jaime;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aimer.jaime;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -304,7 +304,7 @@
 					"-lc++",
 					"$(AIMER_RUST_LDFLAGS)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.cottons.jaime;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aimer.jaime;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;

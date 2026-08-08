@@ -106,6 +106,12 @@ impl MomentumScroller {
     }
 }
 
+impl Default for MomentumScroller {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

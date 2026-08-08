@@ -9,7 +9,7 @@ use aimer_utils::AnimInstant;
 use aimer_utils::callback::{Callback, CallbackExecutor, ambient_spawner};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
+    AnyElement, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement, PointerKey,
     VisitorElement, Widget,
 };
 
@@ -181,7 +181,9 @@ impl Widget for RichText {
             hovered_link: RefCell::new(None),
             hover_cursor: HoverCursor::new(),
             touch_hold: TouchHoldGate::new(),
+            focus_node: FocusNode::new(),
         }
+        .attached()
         .boxed()
     }
 }
@@ -211,6 +213,11 @@ pub struct RawRichText {
     hover_cursor: HoverCursor,
     /// Keeps a finger from selecting until it has rested; a mouse never waits.
     touch_hold: TouchHoldGate,
+    /// The keyboard focus of a text that owns its selection.
+    ///
+    /// Inside a [`SelectionArea`](crate::SelectionArea) the region is the one
+    /// that holds the focus, and this node is never attached to anything.
+    focus_node: FocusNode,
 }
 
 impl RawRichText {
@@ -230,6 +237,18 @@ impl RawRichText {
     #[inline]
     fn slot(&self) -> Rc<SelectionSlot> {
         Rc::clone(&self.binding.borrow().slot)
+    }
+
+    /// Hands this element's focus to the session it owns, and returns it.
+    ///
+    /// Only the owner of a session has a keyboard to give: inside a region the
+    /// focus is the region's, and attaching here would take it away from the
+    /// element that can actually answer for the whole selection.
+    fn attached(self) -> Self {
+        if self.selectable && self.owns_session() {
+            self.session().attach_focus_node(&self.focus_node);
+        }
+        self
     }
 
     /// Reports whether the element created its own session, which is the case
@@ -301,10 +320,28 @@ impl aimer_widget::Rebuildable for RawRichText {
             old_binding.adopt(Rc::clone(&self.plain_text))
         };
         *self.binding.borrow_mut() = adopted;
+        // The adopted session was pointed at the focus of the element being
+        // replaced, which is about to be dropped; a live selection would stop
+        // hearing about outside presses without this.
+        if self.selectable && self.owns_session() {
+            self.session().attach_focus_node(&self.focus_node);
+        }
     }
 }
 
 impl EventElement for RawRichText {
+    /// A text that owns its selection is focusable exactly while it holds one.
+    ///
+    /// Holding the keyboard focus is how such a text learns of a press it is
+    /// never offered: routing hit-tests, so a press on another widget goes
+    /// there and nowhere else, but it moves the focus all the same. Inside a
+    /// [`SelectionArea`] the selection — and with it the keyboard — belongs to
+    /// the region, which is focusable in this text's stead.
+    fn focus_node(&self) -> Option<&FocusNode> {
+        (self.selectable && self.owns_session() && self.binding.borrow().session.is_focused())
+            .then_some(&self.focus_node)
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         let hovered_link = match event {
             ElementEvent::PointerDown(info)
@@ -419,6 +456,13 @@ impl EventElement for RawRichText {
             ElementEvent::PointerUp(info) => {
                 let pos = info.pos;
                 let pointer = PointerKey::new(info.source, info.id);
+                if self.touch_hold.release_was_stationary(pointer, pos) {
+                    let session = self.session();
+                    session.end(pointer);
+                    ui::offer_menu_after_gesture(&session, info.source);
+                    self.pressed_link.borrow_mut().take();
+                    return EventResult::consumed();
+                }
                 if let TouchHold::Entered(offset) =
                     self.touch_hold.poll(pointer, pos, AnimInstant::now())
                 {
@@ -467,6 +511,12 @@ impl EventElement for RawRichText {
                 } else {
                     result
                 };
+            }
+            // Something else took the keyboard, which is what a press anywhere
+            // outside this text amounts to.
+            ElementEvent::FocusLost if self.selectable && self.owns_session() => {
+                self.session().blur();
+                false
             }
             ElementEvent::PointerExited(_, _) | ElementEvent::Cancel => {
                 self.pressed_link.borrow_mut().take();
@@ -525,6 +575,10 @@ impl LayoutElement for RawRichText {
 
 impl Drawable for RawRichText {
     fn draw(&self, ctx: &BuildContext) {
+        if let Some((pointer, offset)) = self.touch_hold.poll_stationary(AnimInstant::now()) {
+            enter_hold(&self.session(), &self.slot(), offset, pointer);
+            self.pressed_link.borrow_mut().take();
+        }
         let slot = self.slot();
         let geometry_state = self.geometry();
         slot.stamp();
@@ -612,7 +666,9 @@ impl Drawable for RawRichText {
         // paints its own. The callout is nobody's to paint: it goes through the
         // modal host's overlay, clear of every clip.
         if self.selectable && self.owns_session() {
-            ui::paint_handles(ctx, &self.session());
+            let session = self.session();
+            ui::track_menu(&session);
+            ui::paint_handles(ctx, &session);
         }
     }
 }

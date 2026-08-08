@@ -1,7 +1,6 @@
-use aimer::Dimension::Percent;
 use aimer::style::{LayoutSpacing, Spacing, TextDecoration, TextOverflow, TextStyle};
 use aimer::{
-    AimerApp, Color, Container, Dimension, Flex, FontStyle, FontWeight, LayoutDirection, RichText,
+    AimerApp, Color, Container, Flex, FontStyle, FontWeight, LayoutDirection, RichText,
     SelectionArea, SizedBox, SpanStyle, Text, TextSpan, Widget,
 };
 

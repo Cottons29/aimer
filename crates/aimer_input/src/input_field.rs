@@ -1,6 +1,7 @@
 pub mod caret;
 pub mod context_menu;
-pub mod controller;
+#[cfg(test)]
+mod controller;
 pub mod raw_fields;
 
 use std::sync::Arc;
@@ -8,14 +9,14 @@ use std::sync::Arc;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{
-    AnyElement, Key, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
+    AnyElement, FocusNode, Key, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
 };
 
 use crate::input_field::caret::CaretBlink;
-use crate::input_field::controller::TextFieldController;
 use crate::input_field::raw_fields::{
     ExpandDirection, InputType, RawFieldConfig, RawTextFieldWidget, TextFieldCallback,
 };
+use crate::TextEditingController;
 
 #[allow(dead_code)]
 ///
@@ -25,8 +26,8 @@ use crate::input_field::raw_fields::{
 ///
 /// # Fields
 ///
-/// * `controller` - The `TextFieldController` instance to control the
-///   `TextField` widget. Defaults to the `TextFieldController` implementation.
+/// * `controller` - The `TextEditingController` instance used to control the
+///   field and observe immutable editing values.
 ///
 /// * `input_type` - Specifies the type of input allowed (e.g., text, number,
 ///   password). Defaults to a default implementation of `InputType`.
@@ -52,20 +53,11 @@ use crate::input_field::raw_fields::{
 /// * `auto_focus` - Boolean indicating if the field should be automatically
 ///   focused upon rendering. Defaults to `false`.
 ///
-/// * `max_lines` - An optional maximum number of lines allowed for the text
-///   input. Defaults to `None`.
-///
-/// * `min_lines` - An optional minimum number of lines for the text input.
-///   Defaults to `None`.
-///
 /// * `max_length` - An optional maximum number of characters allowed in the
 ///   input. Defaults to `None`.
 ///
 /// * `enable` - Indicates whether the `TextField` is enabled for interaction.
 ///   Defaults to `true`.
-///
-/// * `expand` - Determines the expansion direction of the `TextField`. Defaults
-///   to a default implementation of `ExpandDirection`.
 ///
 /// * `decoration` - The default decoration applied to the `TextField`. Defaults
 ///   to `BoxDecoration`.
@@ -107,9 +99,9 @@ use crate::input_field::raw_fields::{
 /// # Example
 ///
 /// ```
-/// use aimer_input::input::{InputType, TextField, TextFieldController};
+/// use aimer_input::{TextEditingController, input::{InputType, TextField}};
 ///
-/// let controller = TextFieldController::with_initial("hello");
+/// let controller = TextEditingController::with_text("hello");
 /// let field = TextField::new().controller(controller)
 ///                             .input_type(InputType::Text)
 ///                             .hint("Message")
@@ -117,7 +109,7 @@ use crate::input_field::raw_fields::{
 ///                             .on_changed(|text| println!("changed to {text}"));
 /// ```
 pub struct TextField {
-    controller: TextFieldController,
+    controller: TextEditingController,
     pub input_type: InputType,
     pub prompt: Arc<str>,
     pub hint: Arc<str>,
@@ -125,12 +117,10 @@ pub struct TextField {
     pub text_style: TextStyle,
     pub prompt_style: TextStyle,
     pub text_align: TextAlign,
+    focus_node: Option<FocusNode>,
     pub auto_focus: bool,
-    pub max_lines: Option<usize>,
-    pub min_lines: Option<usize>,
     pub max_length: Option<usize>,
     pub enable: bool,
-    pub expand: ExpandDirection,
     pub decoration: BoxDecoration,
     pub hover_decoration: Option<BoxDecoration>,
     pub focus_decoration: Option<BoxDecoration>,
@@ -150,11 +140,7 @@ impl StatefulWidget for TextField {
     type State = TextFieldState;
 
     fn create_state(&self) -> Self::State {
-        TextFieldState {
-            config: self.config(),
-            caret: CaretBlink::new(),
-            updater: StateUpdater::empty(),
-        }
+        self.create_state_with_config(self.config())
     }
 }
 
@@ -170,7 +156,7 @@ impl Widget for TextField {
     }
 }
 
-/// The mounted state of a [`TextField`].
+/// The mounted state shared by [`TextField`] and [`TextArea`](crate::TextArea).
 ///
 /// The state owns the caret blink timeline, so the caret keeps its rhythm when
 /// the field is rebuilt with a new configuration — a rebuild replaces the
@@ -182,10 +168,45 @@ impl Widget for TextField {
 pub struct TextFieldState {
     config: RawFieldConfig,
     caret: CaretBlink,
+    focus_node: FocusNode,
+    provided_focus_node: bool,
     updater: StateUpdater<Self>,
 }
 
 impl TextFieldState {
+    /// Returns the raw configuration for state-construction tests.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn config(&self) -> &RawFieldConfig {
+        &self.config
+    }
+
+    /// Attaches the updater supplied by the stateful element.
+    #[inline]
+    pub(crate) fn init(&mut self, updater: StateUpdater<Self>) {
+        self.updater = updater;
+    }
+
+    /// Replaces widget configuration while retaining mounted editing state.
+    #[inline]
+    pub(crate) fn adopt(&mut self, new: &Self) {
+        self.config = new.config.clone();
+        if new.provided_focus_node {
+            self.focus_node = new.focus_node.clone();
+        }
+        self.provided_focus_node = new.provided_focus_node;
+    }
+
+    /// Builds the raw field widget from the current shared state.
+    #[inline]
+    pub(crate) fn raw_widget(&self) -> RawTextFieldWidget {
+        RawTextFieldWidget::new(
+            self.config.clone(),
+            self.caret.clone(),
+            self.focus_node.clone(),
+        )
+    }
+
     /// Returns the caret blink timeline this field paints from.
     #[inline]
     pub fn caret(&self) -> &CaretBlink {
@@ -198,15 +219,15 @@ impl State<TextField> for TextFieldState {
     where
         Self: Sized,
     {
-        self.updater = updater;
+        self.init(updater);
     }
 
     fn adopt_config_from(&mut self, new: &Self) {
-        self.config = new.config.clone();
+        self.adopt(new);
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
-        RawTextFieldWidget::new(self.config.clone(), self.caret.clone())
+        self.raw_widget()
     }
 }
 
@@ -216,7 +237,7 @@ impl TextField {
     /// callbacks.
     pub fn new() -> Self {
         Self {
-            controller: TextFieldController::default(),
+            controller: TextEditingController::default(),
             input_type: InputType::default(),
             prompt: Arc::default(),
             hint: Arc::default(),
@@ -224,12 +245,10 @@ impl TextField {
             text_style: TextStyle::default(),
             prompt_style: TextStyle::default(),
             text_align: TextAlign::default(),
+            focus_node: None,
             auto_focus: false,
-            max_lines: None,
-            min_lines: None,
             max_length: None,
             enable: true,
-            expand: ExpandDirection::default(),
             decoration: BoxDecoration {
                 background_color: Some(Colors::White.into()),
                 ..Default::default()
@@ -260,7 +279,7 @@ impl TextField {
     }
 
     /// Collects the configuration handed to the element on every build.
-    fn config(&self) -> RawFieldConfig {
+    pub(crate) fn config(&self) -> RawFieldConfig {
         RawFieldConfig {
             input_type: self.input_type,
             controller: self.controller.clone(),
@@ -271,11 +290,11 @@ impl TextField {
             prompt_style: self.prompt_style,
             text_align: self.text_align,
             auto_focus: self.auto_focus,
-            max_lines: self.max_lines,
-            min_lines: self.min_lines,
+            max_lines: Some(1),
+            min_lines: Some(1),
             max_length: self.max_length,
             enable: self.enable,
-            expand: self.expand,
+            expand: ExpandDirection::Horizontal,
             decoration: self.decoration.clone(),
             hover_decoration: self.hover_decoration.clone(),
             focus_decoration: self.focus_decoration.clone(),
@@ -291,13 +310,25 @@ impl TextField {
         }
     }
 
+    /// Creates shared field state using `config` and this field's focus node.
+    #[inline]
+    pub(crate) fn create_state_with_config(&self, config: RawFieldConfig) -> TextFieldState {
+        TextFieldState {
+            config,
+            caret: CaretBlink::new(),
+            focus_node: self.focus_node.clone().unwrap_or_default(),
+            provided_focus_node: self.focus_node.is_some(),
+            updater: StateUpdater::empty(),
+        }
+    }
+
     /// Uses `controller` as the field's shared text and selection-history
     /// owner.
     ///
     /// Clones of the controller observe the same text, undo stack, and redo
     /// stack.
     #[inline]
-    pub fn controller(mut self, controller: TextFieldController) -> Self {
+    pub fn controller(mut self, controller: TextEditingController) -> Self {
         self.controller = controller;
         self
     }
@@ -352,6 +383,16 @@ impl TextField {
         self
     }
 
+    /// Attaches the handle used for imperative focus control.
+    ///
+    /// Retain a clone of `focus_node` to request or release this field's focus
+    /// after it is mounted. The node remains attached across rebuilds.
+    #[inline]
+    pub fn focus_node(mut self, focus_node: FocusNode) -> Self {
+        self.focus_node = Some(focus_node);
+        self
+    }
+
     /// Sets whether a newly created field starts focused.
     ///
     /// This initializes focus when the widget becomes an element; it is not an
@@ -362,24 +403,6 @@ impl TextField {
         self
     }
 
-    /// Sets the optional maximum number of laid-out input lines.
-    ///
-    /// `None` removes the limit. A value of `Some(1)` produces single-line
-    /// submission behavior.
-    #[inline]
-    pub fn max_lines(mut self, max_lines: Option<usize>) -> Self {
-        self.max_lines = max_lines;
-        self
-    }
-
-    /// Sets the optional minimum number of lines reserved by layout.
-    ///
-    /// `None` reserves only the space required by the current content.
-    #[inline]
-    pub fn min_lines(mut self, min_lines: Option<usize>) -> Self {
-        self.min_lines = min_lines;
-        self
-    }
 
     /// Sets the optional maximum input length in Unicode scalar values.
     ///
@@ -399,13 +422,6 @@ impl TextField {
         self
     }
 
-    /// Sets the directions in which the field expands to consume available
-    /// layout space.
-    #[inline]
-    pub fn expand(mut self, expand: ExpandDirection) -> Self {
-        self.expand = expand;
-        self
-    }
 
     /// Replaces the normal field decoration.
     #[inline]
@@ -532,7 +548,7 @@ mod tests {
 
     #[test]
     fn created_state_carries_the_widget_configuration() {
-        let controller = TextFieldController::with_initial("hello");
+        let controller = TextEditingController::with_text("hello");
         let state = TextField::new()
             .controller(controller.clone())
             .hint("Message")
@@ -543,7 +559,17 @@ mod tests {
         assert_eq!(&*state.config.hint, "Message");
         assert_eq!(state.config.max_length, Some(7));
         assert!(state.config.read_only);
-        assert_eq!(state.config.controller.text(), "hello");
+        assert_eq!(state.config.controller.value().text(), "hello");
+    }
+
+    #[test]
+    fn text_field_is_always_single_line_and_number_is_only_an_input_hint() {
+        let state = TextField::new().input_type(InputType::Number).create_state();
+
+        assert_eq!(state.config.input_type, InputType::Number);
+        assert_eq!(state.config.min_lines, Some(1));
+        assert_eq!(state.config.max_lines, Some(1));
+        assert_eq!(state.config.expand, ExpandDirection::Horizontal);
     }
 
     #[test]
@@ -563,7 +589,7 @@ mod tests {
         assert!(!state.caret().is_visible());
 
         let rebuilt = TextField::new().hint("after").create_state();
-        state.adopt_config_from(&rebuilt);
+        State::<TextField>::adopt_config_from(&mut state, &rebuilt);
 
         assert_eq!(&*state.config.hint, "after");
         assert!(!state.caret().is_visible());
@@ -581,7 +607,7 @@ mod tests {
         let start = AnimInstant::now();
         state.caret().tick(start);
 
-        state.adopt_config_from(&TextField::new().create_state());
+        State::<TextField>::adopt_config_from(&mut state, &TextField::new().create_state());
 
         assert!(state.caret().tick(start + HALF));
         assert!(!state.caret().is_visible());

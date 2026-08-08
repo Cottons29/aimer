@@ -21,6 +21,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use aimer_attribute::position::Vec2d;
+use aimer_native::haptic::{Haptics, ImpactStyle};
 use aimer_utils::AnimInstant;
 use aimer_widget::PointerKey;
 
@@ -49,6 +50,13 @@ struct PendingTouch {
     offset: usize,
     at: Vec2d,
     since: AnimInstant,
+}
+
+/// A hold promoted by a frame while its pointer remains down.
+#[derive(Clone, Copy)]
+struct PromotedTouch {
+    pointer: PointerKey,
+    at: Vec2d,
 }
 
 /// What a pending touch press has become.
@@ -90,6 +98,7 @@ pub(crate) enum TouchHold {
 /// ```
 pub(crate) struct TouchHoldGate {
     pending: Cell<Option<PendingTouch>>,
+    promoted: Cell<Option<PromotedTouch>>,
 }
 
 impl TouchHoldGate {
@@ -98,24 +107,33 @@ impl TouchHoldGate {
     pub fn new() -> Self {
         Self {
             pending: Cell::new(None),
+            promoted: Cell::new(None),
         }
     }
 
     /// Records a touch press on `offset` that may become a selection.
+    ///
+    /// The first animation frame is requested here. Each frame that observes a
+    /// still-waiting hold requests one successor through
+    /// [`Self::poll_stationary`], keeping the application idle outside the
+    /// finite hold interval.
     #[inline]
     pub fn press(&self, pointer: PointerKey, offset: usize, at: Vec2d, now: AnimInstant) {
+        self.promoted.set(None);
         self.pending.set(Some(PendingTouch {
             pointer,
             offset,
             at,
             since: now,
         }));
+        aimer_events::window::request_animation_frame();
     }
 
     /// Forgets whatever was pending, as a cancelled gesture must.
     #[inline]
     pub fn clear(&self) {
         self.pending.set(None);
+        self.promoted.set(None);
     }
 
     /// Judges the pending press against where `pointer` is now.
@@ -132,6 +150,7 @@ impl TouchHoldGate {
         }
         if now.duration_since(pending.since) >= TOUCH_SELECTION_HOLD {
             self.pending.set(None);
+
             return TouchHold::Entered(pending.offset);
         }
         let dx = pos.x - pending.at.x;
@@ -141,6 +160,53 @@ impl TouchHoldGate {
             return TouchHold::Abandoned;
         }
         TouchHold::Waiting
+    }
+
+    /// Advances a pending hold while its finger remains stationary.
+    ///
+    /// A pointer does not emit move events while it rests, so selectable text
+    /// calls this once per requested frame. Waiting schedules only the next
+    /// frame; completing the hold returns the pointer and pressed offset once.
+    ///
+    /// The completed pointer is remembered until release so lifting at the
+    /// original position preserves the selected word. `None` therefore means
+    /// either that no hold completed or that the next frame has been requested.
+    pub fn poll_stationary(&self, now: AnimInstant) -> Option<(PointerKey, usize)> {
+        let pending = self.pending.get()?;
+        match self.poll(pending.pointer, pending.at, now) {
+            TouchHold::Waiting => {
+                aimer_events::window::request_animation_frame();
+                None
+            }
+            TouchHold::Entered(offset) => {
+                self.promoted.set(Some(PromotedTouch {
+                    pointer: pending.pointer,
+                    at: pending.at,
+                }));
+                Some((pending.pointer, offset))
+            }
+            TouchHold::Idle | TouchHold::Abandoned => None,
+        }
+    }
+
+    /// Reports whether `pointer` is releasing a frame-promoted hold where it
+    /// began.
+    ///
+    /// The promotion marker is consumed for the matching pointer. A release
+    /// outside the touch slop returns `false`, allowing the caller to extend the
+    /// selection to the release position instead of preserving the initial
+    /// word.
+    pub fn release_was_stationary(&self, pointer: PointerKey, pos: Vec2d) -> bool {
+        let Some(promoted) = self.promoted.get() else {
+            return false;
+        };
+        if promoted.pointer != pointer {
+            return false;
+        }
+        self.promoted.set(None);
+        let dx = pos.x - promoted.at.x;
+        let dy = pos.y - promoted.at.y;
+        dx * dx + dy * dy < TOUCH_SELECTION_SLOP * TOUCH_SELECTION_SLOP
     }
 
     /// Rewinds the pending press so a test can reach the far side of the hold
@@ -186,7 +252,8 @@ pub(crate) fn word_range_at(text: &str, offset: usize) -> std::ops::Range<usize>
 /// already highlighted.
 ///
 /// The gesture stays open and owned by `pointer`, so the finger can go on to
-/// extend the selection into the next participant.
+/// extend the selection into the next participant. A light haptic confirms the
+/// single transition from waiting to active selection.
 pub(crate) fn enter_hold(
     session: &Rc<SelectionSession>,
     slot: &Rc<SelectionSlot>,
@@ -199,6 +266,7 @@ pub(crate) fn enter_hold(
         SelectionPoint::new(Rc::clone(slot), word.end),
         pointer,
     );
+    Haptics::impact(ImpactStyle::Light);
 }
 
 #[cfg(test)]

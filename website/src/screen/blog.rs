@@ -266,7 +266,6 @@ pub(crate) fn display_upload_time(upload_time: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use aimer::style::{FontStyle, TextDecorationLine};
 
     use super::*;
 

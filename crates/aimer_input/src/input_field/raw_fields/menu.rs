@@ -6,10 +6,11 @@
 
 use std::rc::Rc;
 
+use aimer_attribute::bounds::Bounds;
 use aimer_attribute::position::Vec2d;
-use aimer_ctxmenu::{ContextMenuAnchor, ContextMenuRequest, ContextMenuStyle};
+use aimer_ctxmenu::{ContextMenu, ContextMenuShape};
 
-use super::{MenuOrigin, RawTextField, clipboard_read, clipboard_write};
+use super::{InputType, MenuOrigin, RawTextField, clipboard_read, clipboard_write};
 use crate::input_field::context_menu::{FieldAction, FieldMenuState, actions_for, items};
 
 impl RawTextField {
@@ -48,39 +49,73 @@ impl RawTextField {
         };
         let actions = actions_for(self.menu_state());
         if actions.is_empty() {
-            self.menu.hide();
+            self.close_menu();
             return;
         }
 
-        let anchor = match origin {
-            MenuOrigin::Click(pos) => ContextMenuAnchor::Point(pos),
+        let (shape, anchor) = match origin {
+            MenuOrigin::Click(pos) => (
+                ContextMenuShape::List,
+                Bounds::new(pos.x, pos.y, 0.0, 0.0),
+            ),
             MenuOrigin::Hold => match self.cached_bounds.get_bounds() {
-                Some(bounds) => ContextMenuAnchor::Rect(bounds),
+                Some(bounds) => (ContextMenuShape::Pill, bounds),
                 None => return,
             },
-        };
-        let style = match origin {
-            MenuOrigin::Click(_) => ContextMenuStyle::List,
-            MenuOrigin::Hold => ContextMenuStyle::Pill,
         };
 
         *self.menu_actions.borrow_mut() = actions.clone();
         self.menu_origin.set(Some(origin));
 
-        // The menu cannot reach back into the element — it outlives no part of
-        // it and holds no reference to it — so a choice is recorded here and
-        // applied by `on_event` the moment `handle_event` returns.
+        // The menu cannot reach back into the element — it holds no reference
+        // to it and outlives no part of it — so a choice is recorded here and
+        // applied by the next `draw`, which is also where a deferred click
+        // becomes a caret offset.
         let chosen = Rc::clone(&self.chosen_action);
         let rows = Rc::clone(&self.menu_actions);
-        self.menu.show(
-            ContextMenuRequest::new()
-                .style(style)
-                .at(anchor)
-                .items(items(&actions))
-                .on_select(move |index| {
-                    chosen.set(rows.borrow().get(index).copied());
-                }),
-        );
+        self.close_menu();
+        let handle = ContextMenu::new()
+            .shape(shape)
+            .around(anchor)
+            .items(items(&actions))
+            // The verb decides: everything but `Select All` finishes the job.
+            .dismiss_on_select(false)
+            .on_select(move |index| {
+                chosen.set(rows.borrow().get(index).copied());
+            })
+            .show();
+        *self.menu.borrow_mut() = Some(handle);
+        self.menu_shape.set(Some(shape));
+    }
+
+    /// Runs the verb the open menu was told to run, if any.
+    pub(super) fn apply_chosen_action(&self) {
+        if let Some(action) = self.chosen_action.take() {
+            self.run_menu_action(action);
+        }
+    }
+
+    /// Closes the open menu, if there is one.
+    ///
+    /// Repeated calls are harmless, which is what lets every dismissal path
+    /// call it without asking first.
+    pub(super) fn close_menu(&self) {
+        if let Some(handle) = self.menu.borrow_mut().take() {
+            handle.dismiss();
+        }
+        self.menu_shape.set(None);
+    }
+
+    /// Whether the field's menu is showing.
+    ///
+    /// The registry is asked rather than the handle alone, because the barrier
+    /// and `Escape` close a menu without telling its owner.
+    #[inline]
+    pub(super) fn menu_is_open(&self) -> bool {
+        self.menu
+            .borrow()
+            .as_ref()
+            .is_some_and(|handle| handle.is_showing())
     }
 
     /// Runs a verb chosen from the menu.
@@ -91,27 +126,25 @@ impl RawTextField {
     /// the user reached for it to do.
     pub(super) fn run_menu_action(&self, action: FieldAction) {
         match action {
-            FieldAction::Cut if !self.read_only => {
+            FieldAction::Cut if !self.read_only && self.input_type != InputType::Obscure => {
                 if let Some((start, end)) = self.cursor.selection_range() {
-                    let removed = self.controller.delete_range(start, end);
+                    let removed = self.controller.get_range(start, end);
                     clipboard_write(&removed);
-                    self.cursor.set_offset(start);
-                    self.cursor.clear_selection();
-                    self.on_changed.call(self.controller.text());
+                    self.replace_cursor_selection("", None);
                 }
-                self.menu.hide();
+                self.close_menu();
             }
-            FieldAction::Copy => {
+            FieldAction::Copy if self.input_type != InputType::Obscure => {
                 if let Some((start, end)) = self.cursor.selection_range() {
                     clipboard_write(&self.controller.get_range(start, end));
                 }
-                self.menu.hide();
+                self.close_menu();
             }
             FieldAction::Paste if !self.read_only => {
                 if let Some(text) = clipboard_read() {
                     self.insert_text(&text);
                 }
-                self.menu.hide();
+                self.close_menu();
             }
             FieldAction::SelectAll => {
                 self.cursor.set_selection_anchor(Some(0));
@@ -119,10 +152,10 @@ impl RawTextField {
                 if let Some(origin) = self.menu_origin.get() {
                     self.request_menu(origin);
                 } else {
-                    self.menu.hide();
+                    self.close_menu();
                 }
             }
-            _ => self.menu.hide(),
+            _ => self.close_menu(),
         }
         self.cursor.reset_blink();
     }
@@ -135,7 +168,7 @@ impl RawTextField {
         self.pending_menu.set(None);
         self.menu_origin.set(None);
         self.touch_hold.forget();
-        self.menu.hide();
+        self.close_menu();
     }
 
     /// Selects the word under a deferred click, resolved by the next frame.
@@ -147,4 +180,285 @@ impl RawTextField {
         self.click_count.set(2);
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    //! The field's clipboard menu, driven through the element itself.
+    //!
+    //! What a menu offers depends on a selection, and a selection depends on a
+    //! canvas the field only has while painting, so these tests do what `draw`
+    //! does: fill the cached bounds, drive the gesture, then raise the pending
+    //! menu. Nothing here touches the clipboard except through
+    //! [`super::RawTextField::menu_state`], and every assertion is about verbs the
+    //! clipboard cannot take away.
+
+    use std::time::Duration;
+
+    use aimer_animation::AnimInstant;
+    use aimer_attribute::position::Vec2d;
+    use aimer_ctxmenu::ContextMenuShape;
+    use aimer_events::element::ElementEvent;
+    use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
+    use aimer_widget::EventElement;
+
+    use super::super::test_support::focused_field;
+    use super::{FieldAction, MenuOrigin, RawTextField};
+    use crate::gesture::LONG_PRESS_DURATION;
+    use crate::input_field::controller::TextFieldController;
+
+    /// A field holding `text`, painted once at a known place.
+    fn field(text: &str) -> RawTextField {
+        let controller = TextFieldController::new();
+        controller.set_text(text.to_owned());
+        let field = focused_field(controller);
+        field.cached_bounds.save(1.0, 0.0, 0.0, 200.0, 32.0);
+        field.test_clock.set(Some(AnimInstant::now()));
+        field
+    }
+
+    fn advance(field: &RawTextField, by: Duration) {
+        let now = field.test_clock.get().expect("a fixed clock");
+        field.test_clock.set(Some(now + by));
+    }
+
+    fn press(source: PointerSource, button: PointerButton, x: f32, y: f32) -> ElementEvent {
+        ElementEvent::PointerDown(PointerInfo::new(Vec2d { x, y }, source, 0, button))
+    }
+
+    fn release(source: PointerSource, x: f32, y: f32) -> ElementEvent {
+        ElementEvent::PointerUp(PointerInfo::new(
+            Vec2d { x, y },
+            source,
+            0,
+            PointerButton::Primary,
+        ))
+    }
+
+    fn verbs(field: &RawTextField) -> Vec<FieldAction> {
+        field.menu_actions.borrow().clone()
+    }
+
+    #[test]
+    fn a_finger_that_rests_raises_the_pill() {
+        let field = field("hello world");
+        let _ = field.on_event(&press(PointerSource::Touch, PointerButton::Primary, 20.0, 16.0));
+        advance(&field, LONG_PRESS_DURATION);
+
+        assert!(
+            field
+                .on_event(&release(PointerSource::Touch, 20.0, 16.0))
+                .is_consumed()
+        );
+        field.raise_pending_menu();
+
+        assert!(field.menu_is_open());
+        assert_eq!(field.menu_shape.get(), Some(ContextMenuShape::Pill));
+    }
+
+    #[test]
+    fn a_finger_that_taps_raises_nothing() {
+        let field = field("hello world");
+        let _ = field.on_event(&press(PointerSource::Touch, PointerButton::Primary, 20.0, 16.0));
+        advance(&field, Duration::from_millis(60));
+
+        let _ = field.on_event(&release(PointerSource::Touch, 20.0, 16.0));
+        field.raise_pending_menu();
+
+        assert!(!field.menu_is_open());
+    }
+
+    #[test]
+    fn a_finger_that_drags_raises_nothing() {
+        let field = field("hello world");
+        let _ = field.on_event(&press(PointerSource::Touch, PointerButton::Primary, 20.0, 16.0));
+        let _ = field.on_event(&ElementEvent::PointerMove(PointerInfo::new(
+            Vec2d { x: 180.0, y: 16.0 },
+            PointerSource::Touch,
+            0,
+            PointerButton::Primary,
+        )));
+        advance(&field, LONG_PRESS_DURATION);
+
+        let _ = field.on_event(&release(PointerSource::Touch, 180.0, 16.0));
+        field.raise_pending_menu();
+
+        assert!(!field.menu_is_open(), "a drag is a selection, not a menu");
+    }
+
+    #[test]
+    fn a_right_click_opens_the_desktop_list_where_it_landed() {
+        let field = field("hello world");
+
+        assert!(
+            field
+                .on_event(&press(
+                    PointerSource::Mouse,
+                    PointerButton::Secondary,
+                    20.0,
+                    16.0
+                ))
+                .is_consumed()
+        );
+        field.raise_pending_menu();
+
+        assert!(field.menu_is_open());
+        assert_eq!(field.menu_shape.get(), Some(ContextMenuShape::List));
+        assert_eq!(
+            field.menu_origin.get().map(|origin| matches!(origin, MenuOrigin::Click(_))),
+            Some(true),
+            "opened at the click"
+        );
+    }
+
+    #[test]
+    fn a_right_click_does_not_start_a_drag_selection() {
+        let field = field("hello world");
+        let _ = field.on_event(&press(
+            PointerSource::Mouse,
+            PointerButton::Secondary,
+            20.0,
+            16.0,
+        ));
+
+        assert!(field.mouse_held.get().is_none());
+    }
+
+    #[test]
+    fn a_selection_puts_cut_and_copy_in_the_menu() {
+        let field = field("hello world");
+        field.cursor.set_selection_anchor(Some(0));
+        field.cursor.set_offset(5);
+
+        field.request_menu(MenuOrigin::Hold);
+        field.raise_pending_menu();
+
+        let verbs = verbs(&field);
+        assert_eq!(verbs.first(), Some(&FieldAction::Cut));
+        assert_eq!(verbs.get(1), Some(&FieldAction::Copy));
+    }
+
+    #[test]
+    fn select_all_from_the_menu_offers_it_again_with_copy_in_it() {
+        let field = field("hello world");
+        field.request_menu(MenuOrigin::Hold);
+        field.raise_pending_menu();
+        assert!(!verbs(&field).contains(&FieldAction::Copy));
+
+        field.run_menu_action(FieldAction::SelectAll);
+        field.raise_pending_menu();
+
+        assert_eq!(
+            field.cursor.selection_range(),
+            Some((0, field.controller.grapheme_count()))
+        );
+        assert!(field.menu_is_open(), "the menu stays, reshaped");
+        assert!(verbs(&field).contains(&FieldAction::Copy));
+    }
+
+    #[test]
+    fn an_empty_read_only_field_raises_no_menu_at_all() {
+        let controller = TextFieldController::new();
+        let mut field = focused_field(controller);
+        field.read_only = true;
+        field.cached_bounds.save(1.0, 0.0, 0.0, 200.0, 32.0);
+
+        field.request_menu(MenuOrigin::Hold);
+        field.raise_pending_menu();
+
+        assert!(!field.menu_is_open());
+    }
+
+    #[test]
+    fn typing_dismisses_the_menu() {
+        let field = field("hello world");
+        field.request_menu(MenuOrigin::Hold);
+        field.raise_pending_menu();
+        assert!(field.menu_is_open());
+
+        let _ = field.on_event(&super::super::test_support::commit("x"));
+
+        assert!(!field.menu_is_open());
+    }
+
+    #[test]
+    fn a_press_outside_the_field_dismisses_the_menu() {
+        let field = field("hello world");
+        field.request_menu(MenuOrigin::Hold);
+        field.raise_pending_menu();
+
+        let _ = field.on_event(&press(
+            PointerSource::Mouse,
+            PointerButton::Primary,
+            400.0,
+            400.0,
+        ));
+
+        assert!(!field.menu_is_open());
+    }
+
+    #[test]
+    fn a_cancelled_gesture_forgets_the_press_that_would_raise_a_menu() {
+        let field = field("hello world");
+        let _ = field.on_event(&press(PointerSource::Touch, PointerButton::Primary, 20.0, 16.0));
+
+        let _ = field.on_event(&ElementEvent::Cancel);
+        advance(&field, LONG_PRESS_DURATION);
+        let _ = field.on_event(&release(PointerSource::Touch, 20.0, 16.0));
+        field.raise_pending_menu();
+
+        assert!(!field.menu_is_open(), "the press is gone, so is its menu");
+        assert!(
+            field.is_focused(),
+            "cancelling a pointer gesture does not relinquish keyboard focus"
+        );
+    }
+
+    #[test]
+    fn the_cancel_the_menu_itself_causes_leaves_it_open() {
+        let field = field("hello world");
+        let _ = field.on_event(&press(
+            PointerSource::Mouse,
+            PointerButton::Secondary,
+            20.0,
+            16.0,
+        ));
+        field.raise_pending_menu();
+        assert!(field.menu_is_open());
+
+        // What the modal host broadcasts one frame after presenting a modal: the
+        // gestures underneath a barrier are cancelled — and the field's own menu is
+        // that barrier.
+        let _ = field.on_event(&ElementEvent::Cancel);
+
+        assert!(field.menu_is_open(), "a menu may not cancel itself");
+        assert!(
+            field.is_focused(),
+            "the selection the menu acts on has to survive it"
+        );
+    }
+
+    #[test]
+    fn the_placeholder_hides_while_an_input_method_composes() {
+        let field = field("");
+
+        assert!(field.placeholder_visible(), "an idle empty field shows it");
+
+        let _ = field.on_event(&ElementEvent::ImePreedit {
+            text: "ni".to_owned(),
+            cursor: Some((2, 2)),
+        });
+
+        assert!(
+            !field.placeholder_visible(),
+            "the composition is the field's content now"
+        );
+
+        let _ = field.on_event(&ElementEvent::ImePreedit {
+            text: String::new(),
+            cursor: None,
+        });
+
+        assert!(field.placeholder_visible(), "and comes back when it ends");
+    }
 }

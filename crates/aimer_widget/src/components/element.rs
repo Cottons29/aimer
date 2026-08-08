@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_events::element::ElementEvent;
+use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_rubick::ErasedFrom;
 use smallvec::SmallVec;
 use hashbrown::{HashMap, HashSet};
@@ -17,6 +17,8 @@ use crate::components::event_element::{
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
+use crate::focus::{FocusNode, FocusRequest, focus_request_generation};
+use crate::pointer_claim;
 use crate::{AnyElement, Drawable, Key};
 
 type EventChildren<'a> = SmallVec<[&'a dyn Element; 32]>;
@@ -208,6 +210,14 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
 }
 
 impl<E: Element + 'static> EventElement for ElementNode<E> {
+    fn focus_node(&self) -> Option<&FocusNode> {
+        self.element.focus_node()
+    }
+
+    fn autofocus(&self) -> bool {
+        self.element.autofocus()
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         self.element.on_event(event)
     }
@@ -326,6 +336,14 @@ impl Rebuildable for AnyElement {
 }
 
 impl EventElement for AnyElement {
+    fn focus_node(&self) -> Option<&FocusNode> {
+        self.as_ref().focus_node()
+    }
+
+    fn autofocus(&self) -> bool {
+        self.as_ref().autofocus()
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         self.as_ref().on_event(event)
     }
@@ -436,6 +454,14 @@ impl Rebuildable for Box<dyn Element> {
 }
 
 impl EventElement for Box<dyn Element> {
+    fn focus_node(&self) -> Option<&FocusNode> {
+        self.as_ref().focus_node()
+    }
+
+    fn autofocus(&self) -> bool {
+        self.as_ref().autofocus()
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         self.as_ref().on_event(event)
     }
@@ -553,7 +579,51 @@ pub(crate) fn reconcile_element_identities(old: &dyn Element, new: &dyn Element)
 /// path indexes.
 pub(crate) fn reconcile_generated_tree(old: &dyn Element, new: &dyn Element) {
     reconcile_element_identities(old, new);
+    clear_removed_focus(old, new);
     advance_element_tree_generation();
+}
+
+fn clear_removed_focus(old: &dyn Element, new: &dyn Element) {
+    let Some((focused_element, focused_id, focused_node)) = find_focused_element(old) else {
+        return;
+    };
+    if contains_focus_attachment(new, focused_id, focused_node) {
+        return;
+    }
+
+    focused_node.set_focused(false);
+    let _ = focused_element.on_event(&ElementEvent::FocusLost);
+}
+
+fn find_focused_element(element: &dyn Element) -> Option<(&dyn Element, ElementId, &FocusNode)> {
+    if let (Some(id), Some(node)) = (element.element_id(), element.focus_node())
+        && node.has_focus()
+    {
+        return Some((element, id, node));
+    }
+    for child in structural_children(element) {
+        if let Some(focused) = find_focused_element(child) {
+            return Some(focused);
+        }
+    }
+    None
+}
+
+fn contains_focus_attachment(
+    element: &dyn Element,
+    focused_id: ElementId,
+    focused_node: &FocusNode,
+) -> bool {
+    if element.element_id() == Some(focused_id)
+        && element
+            .focus_node()
+            .is_some_and(|node| node.ptr_eq(focused_node))
+    {
+        return true;
+    }
+    structural_children(element)
+        .into_iter()
+        .any(|child| contains_focus_attachment(child, focused_id, focused_node))
 }
 
 /// A root-relative sequence of structural child indexes.
@@ -573,6 +643,16 @@ pub struct EventDispatcher {
     paths: HashMap<ElementId, ElementPath>,
     indexed_generation: u64,
     indexed_root: Option<ElementId>,
+    focused: Option<FocusOwner>,
+    focus_indexed_generation: u64,
+    focus_indexed_root: Option<ElementId>,
+    focus_request_generation: u64,
+    autofocus_seen: HashSet<ElementId>,
+}
+
+struct FocusOwner {
+    id: ElementId,
+    node: FocusNode,
 }
 
 impl Default for EventDispatcher {
@@ -590,6 +670,11 @@ impl EventDispatcher {
             paths: HashMap::new(),
             indexed_generation: u64::MAX,
             indexed_root: None,
+            focused: None,
+            focus_indexed_generation: u64::MAX,
+            focus_indexed_root: None,
+            focus_request_generation: 0,
+            autofocus_seen: HashSet::new(),
         }
     }
 
@@ -604,12 +689,35 @@ impl EventDispatcher {
     /// hit testing entirely and are offered to the whole tree until an element
     /// that owns keyboard focus consumes them, so text and composition reach the
     /// focused field no matter where the pointer is.
+    ///
+    /// Delivery is also where a [pointer claim](crate::pointer_claim) expires: a
+    /// claim describes a gesture in progress, so it cannot outlive the pointer
+    /// that made it. Whatever a descendant forgot to give back is released once
+    /// the pointer goes up, and cancellation drops every claim at once — without
+    /// which a single missed release would leave an enclosing scrollable
+    /// standing down forever.
     pub fn dispatch(
         &mut self,
         root: &dyn Element,
         pos: Vec2d,
         event: &ElementEvent,
     ) -> EventResult {
+        let result = self.route(root, pos, event);
+        match event {
+            ElementEvent::PointerUp(pointer) => {
+                pointer_claim::release_pointer(PointerKey::new(pointer.source, pointer.id));
+            }
+            ElementEvent::Cancel => {
+                pointer_claim::release_all_pointers();
+            }
+            _ => {}
+        }
+        result
+    }
+
+    /// Routes one event, leaving pointer-claim housekeeping to
+    /// [`Self::dispatch`].
+    fn route(&mut self, root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> EventResult {
         let pointer = event_pointer_key(event);
         let routes_to_capture = matches!(
             event,
@@ -621,13 +729,41 @@ impl EventDispatcher {
             && pointer.is_some_and(|pointer| self.captures.contains_key(&pointer));
 
         self.synchronize_paths(root);
+        let focus_result = self.synchronize_focus(root);
+
+        if let ElementEvent::KeyInput {
+            key: NamedKey::Tab,
+            action: KeyAction::Pressed | KeyAction::Repeat,
+            modifiers,
+        } = event
+            && let Some(traversal_result) = self.traverse_focus(root, modifiers.shift)
+        {
+            return focus_result
+                .merge(traversal_result)
+                .merge(EventResult::consumed());
+        }
 
         if matches!(event, ElementEvent::Cancel) {
-            return self.cancel_captures(root, event).without_capture_request();
+            return focus_result.merge(
+                self.cancel_captures(root, event)
+                    .without_capture_request(),
+            );
         }
 
         if event.is_focus_directed() {
-            return dispatch_focused_event(root, event).without_capture_request();
+            return focus_result.merge(self.dispatch_to_focused(root, event));
+        }
+
+        if matches!(event, ElementEvent::KeyInput { .. }) {
+            let focused_result = self.dispatch_to_focused(root, event);
+            if focused_result.is_consumed() {
+                return focus_result.merge(focused_result);
+            }
+
+            let outcome = dispatch_routed_event(root, pos, event);
+            return focus_result
+                .merge(focused_result)
+                .merge(outcome.result.without_capture_request().without_follow_up());
         }
 
         if routes_to_capture
@@ -635,15 +771,26 @@ impl EventDispatcher {
             && let Some(pointer) = pointer
         {
             let result = self.dispatch_captured(root, pointer, event);
-            return self.run_follow_up(root, pos, pointer, result);
+            return focus_result.merge(self.run_follow_up(root, pos, pointer, result));
         }
 
         let outcome = dispatch_routed_event(root, pos, event);
         self.apply_capture_request(outcome.result.capture_request(), outcome.capture_owner);
+        let pointer_focus_result = if matches!(event, ElementEvent::PointerDown(_)) {
+            self.transition_focus(root, outcome.focus_owner.clone())
+        } else {
+            EventResult::ignored()
+        };
         let result = outcome.result.without_capture_request();
         match pointer {
-            Some(pointer) => self.run_follow_up(root, pos, pointer, result),
-            None => result.without_follow_up(),
+            Some(pointer) => {
+                focus_result
+                    .merge(pointer_focus_result)
+                    .merge(self.run_follow_up(root, pos, pointer, result))
+            }
+            None => focus_result
+                .merge(pointer_focus_result)
+                .merge(result.without_follow_up()),
         }
     }
 
@@ -753,8 +900,158 @@ impl EventDispatcher {
         index_element_paths(root, &mut path, &mut self.paths);
         self.captures
             .retain(|_, owner| self.paths.contains_key(owner));
+        self.autofocus_seen
+            .retain(|owner| self.paths.contains_key(owner));
         self.indexed_generation = generation;
         self.indexed_root = root_id;
+    }
+
+    fn synchronize_focus(&mut self, root: &dyn Element) -> EventResult {
+        let request_generation = focus_request_generation();
+        if self.focus_indexed_generation == self.indexed_generation
+            && self.focus_indexed_root == self.indexed_root
+            && self.focus_request_generation == request_generation
+        {
+            return EventResult::ignored();
+        }
+
+        let mut candidates: SmallVec<[FocusCandidate; 16]> = SmallVec::new();
+        collect_focus_candidates(root, &mut candidates);
+
+        let mut target = self.focused.as_ref().and_then(|focused| {
+            candidates
+                .iter()
+                .find(|candidate| {
+                    candidate.id == focused.id && candidate.node.ptr_eq(&focused.node)
+                })
+                .cloned()
+        });
+        if target.is_none() {
+            for candidate in &candidates {
+                if candidate.autofocus && self.autofocus_seen.insert(candidate.id) && target.is_none()
+                {
+                    target = Some(candidate.clone());
+                }
+            }
+        }
+        let mut requests: SmallVec<[(u64, FocusRequest, FocusCandidate); 16]> = SmallVec::new();
+        for candidate in &candidates {
+            if let Some(request) = candidate.node.request() {
+                let order = match request {
+                    FocusRequest::Focus(order) | FocusRequest::Unfocus(order) => order,
+                };
+                requests.push((order, request, candidate.clone()));
+                candidate.node.clear_request();
+            }
+        }
+        requests.sort_unstable_by_key(|(order, _, _)| *order);
+        for (_, request, candidate) in requests {
+            match request {
+                FocusRequest::Focus(_) => target = Some(candidate),
+                FocusRequest::Unfocus(_) => {
+                    if target
+                        .as_ref()
+                        .is_some_and(|target| target.node.ptr_eq(&candidate.node))
+                    {
+                        target = None;
+                    }
+                }
+            }
+        }
+
+        let result = self.transition_focus(root, target);
+        self.focus_indexed_generation = self.indexed_generation;
+        self.focus_indexed_root = self.indexed_root;
+        self.focus_request_generation = request_generation;
+        result
+    }
+
+    fn transition_focus(
+        &mut self,
+        root: &dyn Element,
+        target: Option<FocusCandidate>,
+    ) -> EventResult {
+        if self.focused.as_ref().is_some_and(|focused| {
+            target.as_ref().is_some_and(|target| {
+                focused.id == target.id && focused.node.ptr_eq(&target.node)
+            })
+        }) {
+            return EventResult::ignored();
+        }
+
+        let mut result = EventResult::ignored();
+        if let Some(focused) = self.focused.take() {
+            focused.node.set_focused(false);
+            if let Some(target) = self.resolve_owner(root, focused.id)
+                && target
+                    .focus_node()
+                    .is_some_and(|node| node.ptr_eq(&focused.node))
+            {
+                result = result.merge(target.on_event(&ElementEvent::FocusLost));
+            }
+        }
+        if let Some(target) = target {
+            target.node.set_focused(true);
+            if let Some(element) = self.resolve_owner(root, target.id) {
+                result = result.merge(element.on_event(&ElementEvent::FocusGained));
+            }
+            self.focused = Some(FocusOwner {
+                id: target.id,
+                node: target.node,
+            });
+        }
+        result
+    }
+
+    fn traverse_focus(&mut self, root: &dyn Element, reverse: bool) -> Option<EventResult> {
+        let mut candidates: SmallVec<[FocusCandidate; 16]> = SmallVec::new();
+        collect_focus_candidates(root, &mut candidates);
+        if candidates.is_empty() {
+            return None;
+        }
+
+        let current = self.focused.as_ref().and_then(|focused| {
+            candidates.iter().position(|candidate| {
+                candidate.id == focused.id && candidate.node.ptr_eq(&focused.node)
+            })
+        });
+        let next = match (current, reverse) {
+            (Some(0), true) | (None, true) => candidates.len() - 1,
+            (Some(index), true) => index - 1,
+            (Some(index), false) => (index + 1) % candidates.len(),
+            (None, false) => 0,
+        };
+        Some(self.transition_focus(root, Some(candidates[next].clone())))
+    }
+
+    fn dispatch_to_focused(
+        &self,
+        root: &dyn Element,
+        event: &ElementEvent,
+    ) -> EventResult {
+        let Some(focused) = self.focused.as_ref() else {
+            return EventResult::ignored();
+        };
+        let Some(target) = self.resolve_owner(root, focused.id) else {
+            return EventResult::ignored();
+        };
+        if !target
+            .focus_node()
+            .is_some_and(|node| node.ptr_eq(&focused.node))
+        {
+            return EventResult::ignored();
+        }
+        target.on_event(event).without_capture_request()
+    }
+
+    fn resolve_owner<'a>(
+        &self,
+        root: &'a dyn Element,
+        owner: ElementId,
+    ) -> Option<&'a dyn Element> {
+        let path = self.paths.get(&owner)?;
+        let target = resolve_element_path(root, &path.0)?;
+        (target.element_id() == Some(owner)).then_some(target)
     }
 
     fn dispatch_captured(
@@ -823,6 +1120,30 @@ impl EventDispatcher {
 struct RoutedEventResult {
     result: EventResult,
     capture_owner: Option<ElementId>,
+    focus_owner: Option<FocusCandidate>,
+}
+
+#[derive(Clone)]
+struct FocusCandidate {
+    id: ElementId,
+    node: FocusNode,
+    autofocus: bool,
+}
+
+fn collect_focus_candidates(
+    element: &dyn Element,
+    candidates: &mut SmallVec<[FocusCandidate; 16]>,
+) {
+    if let (Some(id), Some(node)) = (element.element_id(), element.focus_node()) {
+        candidates.push(FocusCandidate {
+            id,
+            node: node.clone(),
+            autofocus: element.autofocus(),
+        });
+    }
+    for child in structural_children(element) {
+        collect_focus_candidates(child, candidates);
+    }
 }
 
 fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
@@ -878,6 +1199,7 @@ fn dispatch_routed_event_inner<'a>(
 ) -> RoutedEventResult {
     let mut result = EventResult::ignored();
     let mut capture_owner = None;
+    let mut focus_owner = None;
     let start = children.len();
     root.hit_test_children(&mut |child| children.push(child));
 
@@ -887,6 +1209,9 @@ fn dispatch_routed_event_inner<'a>(
             .expect("routed event scratch contains an element beyond its entry length");
         let child_outcome = dispatch_routed_event_inner(child, pos, event, children);
         result = result.merge(child_outcome.result);
+        if focus_owner.is_none() {
+            focus_owner = child_outcome.focus_owner;
+        }
         if capture_owner.is_none() {
             capture_owner = child_outcome.capture_owner.or_else(|| {
                 (!matches!(child_outcome.result.capture_request(), CaptureRequest::None))
@@ -899,6 +1224,7 @@ fn dispatch_routed_event_inner<'a>(
             return RoutedEventResult {
                 result,
                 capture_owner,
+                focus_owner,
             };
         }
     }
@@ -910,6 +1236,15 @@ fn dispatch_routed_event_inner<'a>(
     });
     if inside {
         let own_result = root.on_event(event);
+        if focus_owner.is_none()
+            && let (Some(id), Some(node)) = (root.element_id(), root.focus_node())
+        {
+            focus_owner = Some(FocusCandidate {
+                id,
+                node: node.clone(),
+                autofocus: root.autofocus(),
+            });
+        }
         if capture_owner.is_none() && !matches!(own_result.capture_request(), CaptureRequest::None)
         {
             capture_owner = root.element_id();
@@ -920,6 +1255,7 @@ fn dispatch_routed_event_inner<'a>(
     RoutedEventResult {
         result,
         capture_owner,
+        focus_owner,
     }
 }
 
@@ -1038,7 +1374,7 @@ fn dispatch_focused_event_inner<'a>(
 #[cfg(test)]
 mod tests {
     use std::any::Any;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     use aimer_events::element::{KeyAction, Modifiers, NamedKey};
@@ -1046,7 +1382,7 @@ mod tests {
     use aimer_rubick::INLINE_CAPACITY;
 
     use super::*;
-    use crate::Key;
+    use crate::{FocusNode, Key};
 
     struct DowncastableElement;
 
@@ -1594,19 +1930,13 @@ mod tests {
 
     #[test]
     fn focus_directed_text_reaches_elements_the_pointer_is_not_over() {
+        let node = FocusNode::new();
         let events = Rc::new(Cell::new(0));
-        let leaf = routed_leaf(
-            (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
-            events.clone(),
-            false,
-            false,
-        );
-        let root = RoutedElement {
-            children: vec![leaf],
-            bounds: Some((Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 })),
-            events: Rc::new(Cell::new(0)),
-            capture_on_down: false,
-            release_on_move: false,
+        let root = FocusKeyElement {
+            node: node.clone(),
+            bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+            key_events: events.clone(),
+            consume_keys: Rc::new(Cell::new(true)),
         }
         .boxed();
         let outside = Vec2d {
@@ -1614,7 +1944,10 @@ mod tests {
             y: f32::MIN,
         };
 
-        let result = EventDispatcher::new().dispatch(
+        let mut dispatcher = EventDispatcher::new();
+        node.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), outside, &ElementEvent::Cancel);
+        let result = dispatcher.dispatch(
             root.as_ref(),
             outside,
             &ElementEvent::TextInput {
@@ -1662,31 +1995,31 @@ mod tests {
 
     #[test]
     fn focus_directed_delivery_stops_at_the_first_consumer() {
+        let first_node = FocusNode::new();
         let first_events = Rc::new(Cell::new(0));
         let second_events = Rc::new(Cell::new(0));
-        let root = RoutedElement {
-            children: vec![
-                routed_leaf(
-                    (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
-                    first_events.clone(),
-                    false,
-                    false,
-                ),
-                routed_leaf(
-                    (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
-                    second_events.clone(),
-                    false,
-                    false,
-                ),
-            ],
-            bounds: None,
-            events: Rc::new(Cell::new(0)),
-            capture_on_down: false,
-            release_on_move: false,
-        }
+        let root = IdentityBranch(vec![
+            FocusKeyElement {
+                node: first_node.clone(),
+                bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+                key_events: first_events.clone(),
+                consume_keys: Rc::new(Cell::new(true)),
+            }
+            .boxed(),
+            FocusKeyElement {
+                node: FocusNode::new(),
+                bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+                key_events: second_events.clone(),
+                consume_keys: Rc::new(Cell::new(true)),
+            }
+            .boxed(),
+        ])
         .boxed();
 
-        let _ = EventDispatcher::new().dispatch(
+        let mut dispatcher = EventDispatcher::new();
+        first_node.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+        let _ = dispatcher.dispatch(
             root.as_ref(),
             Vec2d { x: 5.0, y: 5.0 },
             &ElementEvent::ImePreedit {
@@ -1695,7 +2028,8 @@ mod tests {
             },
         );
 
-        assert_eq!(first_events.get() + second_events.get(), 1);
+        assert_eq!(first_events.get(), 1);
+        assert_eq!(second_events.get(), 0);
     }
 
     #[test]
@@ -2088,16 +2422,13 @@ mod tests {
             .insert(owner, ElementPath(vec![usize::MAX].into_boxed_slice()));
         events.set(0);
 
-        let result = dispatcher.dispatch(
-            target.as_ref(),
+        let move_event = ElementEvent::PointerMove(PointerInfo::new(
             Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerMove(PointerInfo::new(
-                Vec2d { x: 5.0, y: 5.0 },
-                pointer.source,
-                pointer.id,
-                PointerButton::Primary,
-            )),
-        );
+            pointer.source,
+            pointer.id,
+            PointerButton::Primary,
+        ));
+        let result = dispatcher.dispatch_captured(target.as_ref(), pointer, &move_event);
 
         assert_eq!(result, EventResult::ignored());
         assert_eq!(dispatcher.captured_owner(pointer), None);
@@ -2335,5 +2666,320 @@ mod tests {
         assert!(broadcast_event_inner(&element, &event, &mut children).is_consumed());
         assert!(children.is_empty());
         assert!(!children.spilled());
+    }
+
+    struct FocusTestElement {
+        node: FocusNode,
+        lifecycle: Rc<RefCell<Vec<&'static str>>>,
+        autofocus: bool,
+    }
+
+    impl VisitorElement for FocusTestElement {
+        fn debug_name(&self) -> &'static str {
+            "FocusTestElement"
+        }
+    }
+
+    impl EventElement for FocusTestElement {
+        fn focus_node(&self) -> Option<&FocusNode> {
+            Some(&self.node)
+        }
+
+        fn autofocus(&self) -> bool {
+            self.autofocus
+        }
+
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            match event {
+                ElementEvent::FocusGained => self.lifecycle.borrow_mut().push("focus"),
+                ElementEvent::FocusLost => self.lifecycle.borrow_mut().push("blur"),
+                _ => {}
+            }
+            EventResult::ignored()
+        }
+    }
+
+    impl LayoutElement for FocusTestElement {}
+    impl Drawable for FocusTestElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for FocusTestElement {}
+
+    #[test]
+    fn imperative_focus_is_exclusive_and_emits_each_lifecycle_event_once() {
+        let first_node = FocusNode::new();
+        let second_node = FocusNode::new();
+        let first_lifecycle = Rc::new(RefCell::new(Vec::new()));
+        let second_lifecycle = Rc::new(RefCell::new(Vec::new()));
+        let root = IdentityBranch(vec![
+            FocusTestElement {
+                node: first_node.clone(),
+                lifecycle: first_lifecycle.clone(),
+                autofocus: false,
+            }
+            .boxed(),
+            FocusTestElement {
+                node: second_node.clone(),
+                lifecycle: second_lifecycle.clone(),
+                autofocus: false,
+            }
+            .boxed(),
+        ])
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+
+        first_node.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+        second_node.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+
+        assert!(!first_node.has_focus());
+        assert!(second_node.has_focus());
+        assert_eq!(&*first_lifecycle.borrow(), &["focus", "blur"]);
+        assert_eq!(&*second_lifecycle.borrow(), &["focus"]);
+    }
+
+    #[test]
+    fn removing_the_focused_element_clears_focus_and_emits_one_blur() {
+        let node = FocusNode::new();
+        let lifecycle = Rc::new(RefCell::new(Vec::new()));
+        let old = FocusTestElement {
+            node: node.clone(),
+            lifecycle: lifecycle.clone(),
+            autofocus: false,
+        }
+        .boxed();
+        let replacement = ReplacementLeaf.boxed();
+        let mut dispatcher = EventDispatcher::new();
+        node.request_focus();
+        let _ = dispatcher.dispatch(old.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+
+        reconcile_generated_tree(old.as_ref(), replacement.as_ref());
+
+        assert!(!node.has_focus());
+        assert_eq!(&*lifecycle.borrow(), &["focus", "blur"]);
+    }
+
+    #[test]
+    fn first_autofocus_node_in_tree_order_wins_conflicts() {
+        let first_node = FocusNode::new();
+        let second_node = FocusNode::new();
+        let first_lifecycle = Rc::new(RefCell::new(Vec::new()));
+        let second_lifecycle = Rc::new(RefCell::new(Vec::new()));
+        let root = IdentityBranch(vec![
+            FocusTestElement {
+                node: first_node.clone(),
+                lifecycle: first_lifecycle.clone(),
+                autofocus: true,
+            }
+            .boxed(),
+            FocusTestElement {
+                node: second_node.clone(),
+                lifecycle: second_lifecycle.clone(),
+                autofocus: true,
+            }
+            .boxed(),
+        ])
+        .boxed();
+
+        let _ = EventDispatcher::new().dispatch(
+            root.as_ref(),
+            Vec2d::default(),
+            &ElementEvent::Cancel,
+        );
+
+        assert!(first_node.has_focus());
+        assert!(!second_node.has_focus());
+        assert_eq!(&*first_lifecycle.borrow(), &["focus"]);
+        assert!(second_lifecycle.borrow().is_empty());
+    }
+
+    #[test]
+    fn pointer_down_outside_focusable_elements_blurs_the_owner_once() {
+        let node = FocusNode::new();
+        let lifecycle = Rc::new(RefCell::new(Vec::new()));
+        let outside_events = Rc::new(Cell::new(0));
+        let root = IdentityBranch(vec![
+            FocusTestElement {
+                node: node.clone(),
+                lifecycle: lifecycle.clone(),
+                autofocus: false,
+            }
+            .boxed(),
+            routed_leaf(
+                (
+                    Vec2d { x: 20.0, y: 20.0 },
+                    Vec2d { x: 30.0, y: 30.0 },
+                ),
+                outside_events,
+                false,
+                false,
+            ),
+        ])
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        node.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            Vec2d { x: 25.0, y: 25.0 },
+            &ElementEvent::PointerDown(PointerInfo::mouse(
+                Vec2d { x: 25.0, y: 25.0 },
+                PointerButton::Primary,
+            )),
+        );
+
+        assert!(!node.has_focus());
+        assert_eq!(&*lifecycle.borrow(), &["focus", "blur"]);
+    }
+
+    #[test]
+    fn tab_and_shift_tab_traverse_focusable_elements_in_structural_order() {
+        let first_node = FocusNode::new();
+        let second_node = FocusNode::new();
+        let first_lifecycle = Rc::new(RefCell::new(Vec::new()));
+        let second_lifecycle = Rc::new(RefCell::new(Vec::new()));
+        let root = IdentityBranch(vec![
+            FocusTestElement {
+                node: first_node.clone(),
+                lifecycle: first_lifecycle,
+                autofocus: false,
+            }
+            .boxed(),
+            FocusTestElement {
+                node: second_node.clone(),
+                lifecycle: second_lifecycle,
+                autofocus: false,
+            }
+            .boxed(),
+        ])
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        first_node.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+
+        let forward = dispatcher.dispatch(
+            root.as_ref(),
+            Vec2d::default(),
+            &ElementEvent::KeyInput {
+                key: NamedKey::Tab,
+                action: KeyAction::Pressed,
+                modifiers: Modifiers::default(),
+            },
+        );
+        let backward = dispatcher.dispatch(
+            root.as_ref(),
+            Vec2d::default(),
+            &ElementEvent::KeyInput {
+                key: NamedKey::Tab,
+                action: KeyAction::Pressed,
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Modifiers::default()
+                },
+            },
+        );
+
+        assert!(forward.is_consumed());
+        assert!(backward.is_consumed());
+        assert!(first_node.has_focus());
+        assert!(!second_node.has_focus());
+    }
+
+    struct FocusKeyElement {
+        node: FocusNode,
+        bounds: (Vec2d, Vec2d),
+        key_events: Rc<Cell<usize>>,
+        consume_keys: Rc<Cell<bool>>,
+    }
+
+    impl VisitorElement for FocusKeyElement {
+        fn debug_name(&self) -> &'static str {
+            "FocusKeyElement"
+        }
+    }
+
+    impl EventElement for FocusKeyElement {
+        fn focus_node(&self) -> Option<&FocusNode> {
+            Some(&self.node)
+        }
+
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            if matches!(
+                event,
+                ElementEvent::KeyInput { .. }
+                    | ElementEvent::CharInput { .. }
+                    | ElementEvent::TextInput { .. }
+                    | ElementEvent::ImePreedit { .. }
+            ) {
+                self.key_events.set(self.key_events.get() + 1);
+                return self.consume_keys.get().into();
+            }
+            EventResult::ignored()
+        }
+    }
+
+    impl LayoutElement for FocusKeyElement {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(self.bounds)
+        }
+    }
+    impl Drawable for FocusKeyElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for FocusKeyElement {}
+
+    #[test]
+    fn named_keys_target_focus_first_then_fall_back_when_ignored() {
+        let first_node = FocusNode::new();
+        let first_events = Rc::new(Cell::new(0));
+        let second_events = Rc::new(Cell::new(0));
+        let consume_first = Rc::new(Cell::new(true));
+        let root = IdentityBranch(vec![
+            FocusKeyElement {
+                node: first_node.clone(),
+                bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+                key_events: first_events.clone(),
+                consume_keys: consume_first.clone(),
+            }
+            .boxed(),
+            FocusKeyElement {
+                node: FocusNode::new(),
+                bounds: (
+                    Vec2d { x: 20.0, y: 20.0 },
+                    Vec2d { x: 30.0, y: 30.0 },
+                ),
+                key_events: second_events.clone(),
+                consume_keys: Rc::new(Cell::new(true)),
+            }
+            .boxed(),
+        ])
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        first_node.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+        let arrow = ElementEvent::KeyInput {
+            key: NamedKey::ArrowLeft,
+            action: KeyAction::Pressed,
+            modifiers: Modifiers::default(),
+        };
+
+        let consumed_by_focus = dispatcher.dispatch(
+            root.as_ref(),
+            Vec2d { x: 25.0, y: 25.0 },
+            &arrow,
+        );
+        consume_first.set(false);
+        let consumed_by_fallback = dispatcher.dispatch(
+            root.as_ref(),
+            Vec2d { x: 25.0, y: 25.0 },
+            &arrow,
+        );
+
+        assert!(consumed_by_focus.is_consumed());
+        assert!(consumed_by_fallback.is_consumed());
+        assert_eq!(first_events.get(), 2);
+        assert_eq!(second_events.get(), 1);
     }
 }

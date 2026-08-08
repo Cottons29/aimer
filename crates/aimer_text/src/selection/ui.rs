@@ -14,14 +14,14 @@
 //! **The callout is not painted by the region.** It floats clear of the
 //! selection, which regularly puts it outside the text — and every ancestor
 //! that clips, a `Scrollable` above all, would cut it off there. It is
-//! therefore drawn by [`aimer_ctxmenu`], which paints it through an overlay
-//! layer on the modal host: above every widget and every modal, in no one's
-//! clip. The knobs stay with the text, because they mark glyphs and are
-//! meaningless where the glyphs are not drawn.
+//! therefore an [`aimer_ctxmenu::ContextMenu`], presented through the modal
+//! host: placed above every widget, dismissed by an outside press or `Escape`
+//! without this module routing anything. The knobs stay with the text, because
+//! they mark glyphs and are meaningless where the glyphs are not drawn.
 //!
 //! **The shape of the callout is the pointer's choice, not the platform's.** A
 //! finger gets the pill floating above the selection; a right-click gets the
-//! desktop list opening at the click. That is [`ContextMenuStyle::for_source`]
+//! desktop list opening at the click. That is [`ContextMenuShape::for_source`]
 //! deciding, so a phone browser and a desktop browser each behave the way their
 //! user expects.
 //!
@@ -29,17 +29,16 @@
 //! sessions, canvases or events; the menu lives in `aimer_ctxmenu`; what is
 //! left here is the state machine tying the two to a selection.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use aimer_attribute::{Bounds, ResolvedSize, Vec2d};
-use aimer_ctxmenu::{
-    ContextMenu, ContextMenuAnchor, ContextMenuItem, ContextMenuRequest, ContextMenuStyle,
-};
+use aimer_ctxmenu::{ContextMenu, ContextMenuItem, ContextMenuShape};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
-use aimer_widget::base::{BuildContext, Color, WindowHandle};
-use aimer_widget::{EventResult, PointerKey};
+use aimer_modal::{AnchorHandle, ModalHandle};
+use aimer_widget::base::{BuildContext, Color};
+use aimer_widget::{EventResult, PointerKey, claim_pointer, release_pointer};
 
 use crate::selection::handles::{HANDLE_RADIUS, HandleCircle, HandleSide, handle_at};
 use crate::selection::selectable::{Selectable, TextGeometry};
@@ -82,8 +81,13 @@ const MENU_ACTIONS: [MenuAction; 2] = [MenuAction::Copy, MenuAction::SelectAll];
 /// selection can belong to two different widgets — neither of which is entitled
 /// to own the furniture of the whole selection.
 pub(crate) struct SelectionUi {
-    /// The callout itself, closed until a gesture earns it.
-    menu: Rc<ContextMenu>,
+    /// The open callout, or `None` while none is showing.
+    open: RefCell<Option<ModalHandle>>,
+    /// The shape the open callout was opened in.
+    shape: Cell<Option<ContextMenuShape>>,
+    /// The rectangle the callout is pinned to, rewritten every frame while the
+    /// pill is up so it follows a selection being adjusted.
+    anchor: AnchorHandle,
     /// The knob a finger is dragging, and the pointer dragging it.
     dragging: Cell<Option<(HandleSide, PointerKey)>>,
     /// Whether the current selection was made by a finger, which is what
@@ -98,37 +102,32 @@ impl SelectionUi {
     /// Creates the state of a selection with no furniture yet, belonging to the
     /// session being constructed.
     #[inline]
-    pub fn new(window: WindowHandle, session: Weak<SelectionSession>) -> Self {
+    pub fn new(session: Weak<SelectionSession>) -> Self {
         Self {
-            menu: ContextMenu::new(window),
+            open: RefCell::new(None),
+            shape: Cell::new(None),
+            anchor: AnchorHandle::new(),
             dragging: Cell::new(None),
             touch: Cell::new(false),
             session,
         }
     }
 
-    /// The callout, for the elements that must offer it their events first.
-    #[inline]
-    pub fn menu(&self) -> &Rc<ContextMenu> {
-        &self.menu
-    }
-
     /// Offers the pill above the selection, following it as it changes.
     ///
-    /// This is the touch shape, so the anchor is *tracked*: a knob dragged to a
-    /// new offset moves the selection, and the pill has to follow it rather
-    /// than stay where the gesture happened to end.
+    /// This is the touch shape, so the anchor keeps being rewritten: a knob
+    /// dragged to a new offset moves the selection, and the pill has to follow
+    /// it rather than stay where the gesture happened to end — see
+    /// [`track_menu`].
     pub fn show_menu(&self) {
-        let anchor = self.session.clone();
-        self.menu.show(
-            self.request(ContextMenuStyle::Pill)
-                .tracking(move || {
-                    anchor
-                        .upgrade()
-                        .and_then(|session| session.menu_anchor())
-                        .map(ContextMenuAnchor::Rect)
-                }),
-        );
+        let Some(anchor) = self
+            .session
+            .upgrade()
+            .and_then(|session| session.menu_anchor())
+        else {
+            return;
+        };
+        self.open(ContextMenuShape::Pill, anchor);
     }
 
     /// Opens the desktop list with its corner at `pos`, where a right-click
@@ -138,21 +137,26 @@ impl SelectionUi {
     /// the selection under it changes, which is what makes `Select All` from it
     /// feel like a menu rather than a jumping target.
     pub fn show_menu_at(&self, pos: Vec2d) {
-        self.menu
-            .show(self.request(ContextMenuStyle::List).at(ContextMenuAnchor::Point(pos)));
+        self.open(ContextMenuShape::List, Bounds::new(pos.x, pos.y, 0.0, 0.0));
     }
 
-    /// The rows and the verb each of them runs, in either shape.
-    fn request(&self, style: ContextMenuStyle) -> ContextMenuRequest {
+    /// Presents the callout in `shape`, pinned to `anchor`.
+    fn open(&self, shape: ContextMenuShape, anchor: Bounds) {
+        self.hide_menu();
+        self.anchor.set_bounds(anchor);
         let session = self.session.clone();
-        ContextMenuRequest::new()
-            .style(style)
+        let handle = ContextMenu::new()
+            .shape(shape)
+            .anchor(self.anchor.clone())
             .items(
                 MENU_ACTIONS
                     .iter()
                     .map(|action| ContextMenuItem::new(action.label()))
                     .collect(),
             )
+            // The verb decides what becomes of the callout: `Copy` finishes the
+            // job and closes it, `Select All` only reshapes what it acts on.
+            .dismiss_on_select(false)
             .on_select(move |index| {
                 if let Some(session) = session.upgrade()
                     && let Some(action) = MENU_ACTIONS.get(index).copied()
@@ -160,13 +164,59 @@ impl SelectionUi {
                     session.perform(action);
                 }
             })
+            .show();
+        *self.open.borrow_mut() = Some(handle);
+        self.shape.set(Some(shape));
     }
 
-    /// Takes the callout away, and with it the painter and the rectangle
-    /// presses are tested against.
-    #[inline]
+    /// Takes the callout away.
+    ///
+    /// Repeated calls are harmless, which is what lets every dismissal path —
+    /// a new gesture, a cleared selection, a cancelled drag — call it without
+    /// asking first.
     pub fn hide_menu(&self) {
-        self.menu.hide();
+        if let Some(handle) = self.open.borrow_mut().take() {
+            handle.dismiss();
+        }
+        self.shape.set(None);
+    }
+
+    /// Whether a callout is showing.
+    ///
+    /// Only tests ask: everything else acts on the callout through
+    /// [`Self::show_menu`] and [`Self::hide_menu`], which are idempotent.
+    #[cfg(test)]
+    #[inline]
+    pub fn is_menu_open(&self) -> bool {
+        self.open.borrow().is_some()
+    }
+
+    /// Whether a callout is still presented, as the modal host sees it.
+    ///
+    /// Unlike [`Self::is_menu_open`] this asks the host rather than trusting
+    /// the handle: the barrier and `Escape` close a callout without telling its
+    /// owner, and a press being answered as a dismissal already counts as
+    /// closed. That distinction is what lets a press *on* the callout keep the
+    /// selection while the press that dismisses it drops the selection too.
+    #[inline]
+    pub fn is_menu_showing(&self) -> bool {
+        self.open
+            .borrow()
+            .as_ref()
+            .is_some_and(ModalHandle::is_showing)
+    }
+
+    /// The shape of the open callout, if one is showing.
+    #[inline]
+    pub fn menu_shape(&self) -> Option<ContextMenuShape> {
+        self.shape.get()
+    }
+
+    /// The rectangle the open callout is pinned to.
+    #[cfg(test)]
+    #[inline]
+    pub fn menu_anchor_bounds(&self) -> Option<Bounds> {
+        self.anchor.bounds()
     }
 
     /// Records whether the current selection came from a finger.
@@ -243,11 +293,9 @@ impl SelectionSession {
 /// Returns [`Some`] when the knobs or the callout took the event, in which case
 /// the caller must return that result unchanged and do nothing else.
 pub(crate) fn intercept(session: &Rc<SelectionSession>, event: &ElementEvent) -> Option<EventResult> {
-    // The callout is on top of everything, including the knobs, so it is asked
-    // first. A press that missed it comes back as `None`, having dismissed it.
-    if let Some(result) = session.ui.menu().handle_event(event) {
-        return Some(result);
-    }
+    // The callout itself is not consulted here: it is a modal, so the host
+    // offers it every event before the tree and dismisses it on an outside
+    // press. What is left is the knobs, which live in the text's own layer.
     match event {
         ElementEvent::PointerDown(info) => {
             let pointer = PointerKey::new(info.source, info.id);
@@ -255,6 +303,9 @@ pub(crate) fn intercept(session: &Rc<SelectionSession>, event: &ElementEvent) ->
             let side = handle_at(start, end, info.pos.x, info.pos.y)?;
             session.ui.dragging.set(Some((side, pointer)));
             session.ui.hide_menu();
+            // Adjusting a selection is a drag of its own, so the knob takes the
+            // pointer for itself and an enclosing scrollable leaves it alone.
+            claim_pointer(pointer);
             Some(EventResult::consumed().with_pointer_capture(pointer))
         }
         ElementEvent::PointerMove(info) => {
@@ -273,6 +324,7 @@ pub(crate) fn intercept(session: &Rc<SelectionSession>, event: &ElementEvent) ->
                 return None;
             }
             session.ui.dragging.set(None);
+            release_pointer(pointer);
             if session.has_selection() {
                 session.ui.show_menu();
             }
@@ -326,14 +378,14 @@ pub(crate) fn open_context_menu(
         enter_hold(session, slot, offset, pointer);
         session.end(pointer);
     }
-    match ContextMenuStyle::for_source(pointer.source) {
-        ContextMenuStyle::List => {
+    match ContextMenuShape::for_source(pointer.source) {
+        ContextMenuShape::List => {
             // A right-click is not a finger: it earns the desktop list at the
             // click, and no knobs.
             session.ui.set_touch(false);
             session.ui.show_menu_at(pos);
         }
-        ContextMenuStyle::Pill => {
+        ContextMenuShape::Pill => {
             session.ui.set_touch(true);
             session.ui.show_menu();
         }
@@ -360,6 +412,22 @@ fn placer(ctx: &BuildContext, scale: f32) -> impl Fn(Bounds) -> (Vec2d, Resolved
                 height: bounds.height * scale,
             },
         )
+    }
+}
+
+/// Keeps an open pill over the selection it belongs to.
+///
+/// Called once per frame, from the same place as [`paint_handles`]: a knob drag
+/// moves the selection under the callout, and a desktop list — which is pinned
+/// to the click, not to the text — must *not* follow it. A callout left with
+/// nothing selected is taken down.
+pub(crate) fn track_menu(session: &Rc<SelectionSession>) {
+    if session.ui.menu_shape() != Some(ContextMenuShape::Pill) {
+        return;
+    }
+    match session.menu_anchor() {
+        Some(anchor) => session.ui.anchor.set_bounds(anchor),
+        None => session.ui.hide_menu(),
     }
 }
 
@@ -398,8 +466,7 @@ mod tests {
     use aimer_widget::PointerKey;
     use aimer_widget::base::{Color, WindowHandle};
 
-    use aimer_ctxmenu::ContextMenuLayout;
-    use aimer_modal::OverlayLayer;
+    use aimer_ctxmenu::ContextMenuShape;
 
     use super::*;
     use crate::selection::selectable::{SelectionCoordinator, TextGeometry};
@@ -476,13 +543,6 @@ mod tests {
             0,
             PointerButton::Primary,
         ))
-    }
-
-    /// Places the open callout the way painting would, with label widths a
-    /// canvas would have measured.
-    fn place(session: &Rc<SelectionSession>) -> ContextMenuLayout {
-        assert!(session.ui.menu().place(&[40.0, 70.0], 400.0, 800.0));
-        session.ui.menu().layout().expect("a placed callout")
     }
 
     #[test]
@@ -596,72 +656,39 @@ mod tests {
         select(&session, &slot, 2..5);
         let (_, end) = session.handle_circles().expect("knobs");
         intercept(&session, &press(end.center_x, end.center_y, PointerSource::Touch));
-        assert!(!session.ui.menu().is_visible(), "grabbing hides it");
+        assert!(!session.ui.is_menu_open(), "grabbing hides it");
 
         intercept(&session, &moved(85.0, 108.0, PointerSource::Touch));
         intercept(&session, &release(85.0, 108.0, PointerSource::Touch));
 
-        assert!(session.ui.menu().is_visible());
+        assert!(session.ui.is_menu_open());
     }
 
     #[test]
-    fn tapping_copy_puts_the_selection_on_the_clipboard() {
+    fn copying_from_the_callout_dismisses_it() {
         let (session, slot, _geometry) = session();
         select(&session, &slot, 2..5);
         session.ui.show_menu();
-        let item = place(&session).items[0];
 
-        let (x, y) = (item.x + 4.0, item.y + 4.0);
-        assert!(intercept(&session, &press(x, y, PointerSource::Touch)).is_some());
-        assert!(intercept(&session, &release(x, y, PointerSource::Touch)).is_some());
+        session.perform(MenuAction::Copy);
 
-        assert!(!session.ui.menu().is_visible(), "copying dismisses the callout");
+        assert!(!session.ui.is_menu_open());
     }
 
     #[test]
-    fn tapping_select_all_extends_the_selection_and_keeps_the_callout() {
+    fn select_all_from_the_callout_extends_the_selection_and_keeps_it() {
         let (session, slot, _geometry) = session();
         select(&session, &slot, 2..5);
         session.ui.show_menu();
-        let item = place(&session).items[1];
 
-        let (x, y) = (item.x + 4.0, item.y + 4.0);
-        intercept(&session, &press(x, y, PointerSource::Touch));
-        intercept(&session, &release(x, y, PointerSource::Touch));
+        session.perform(MenuAction::SelectAll);
 
         assert_eq!(slot.selected_range(), Some(0..10));
-        assert!(session.ui.menu().is_visible());
+        assert!(session.ui.is_menu_open());
         assert!(
             session.handle_circles().is_some(),
             "select-all from the callout keeps the knobs a finger earned"
         );
-    }
-
-    #[test]
-    fn a_release_that_slid_off_the_item_runs_nothing() {
-        let (session, slot, _geometry) = session();
-        select(&session, &slot, 2..5);
-        session.ui.show_menu();
-        let item = place(&session).items[1];
-
-        intercept(&session, &press(item.x + 4.0, item.y + 4.0, PointerSource::Touch));
-        intercept(&session, &release(5.0, 500.0, PointerSource::Touch));
-
-        assert_eq!(slot.selected_range(), Some(2..5), "select-all did not run");
-    }
-
-    #[test]
-    fn a_press_beside_the_callout_dismisses_it_and_falls_through() {
-        let (session, slot, _geometry) = session();
-        select(&session, &slot, 2..5);
-        session.ui.show_menu();
-        place(&session);
-
-        assert!(
-            intercept(&session, &press(300.0, 700.0, PointerSource::Touch)).is_none(),
-            "the press still means what it meant"
-        );
-        assert!(!session.ui.menu().is_visible());
     }
 
     #[test]
@@ -677,11 +704,10 @@ mod tests {
             pointer
         ));
 
-        assert_eq!(session.ui.menu().style(), ContextMenuStyle::List);
-        let layout = place(&session);
+        assert_eq!(session.ui.menu_shape(), Some(ContextMenuShape::List));
         assert_eq!(
-            (layout.bounds.x, layout.bounds.y),
-            (35.0, 108.0),
+            session.ui.menu_anchor_bounds(),
+            Some(Bounds::new(35.0, 108.0, 0.0, 0.0)),
             "its corner sits where the click landed"
         );
         assert!(
@@ -691,18 +717,14 @@ mod tests {
     }
 
     #[test]
-    fn a_finger_gesture_opens_the_pill_above_the_selection() {
+    fn a_finger_gesture_opens_the_pill_over_the_start_of_the_selection() {
         let (session, slot, _geometry) = session();
         select(&session, &slot, 2..5);
 
         offer_menu_after_gesture(&session, PointerSource::Touch);
 
-        assert_eq!(session.ui.menu().style(), ContextMenuStyle::Pill);
-        let layout = place(&session);
-        assert!(
-            layout.bounds.y + layout.bounds.height < 100.0,
-            "floating clear of the line it acts on"
-        );
+        assert_eq!(session.ui.menu_shape(), Some(ContextMenuShape::Pill));
+        assert_eq!(session.ui.menu_anchor_bounds(), session.menu_anchor());
     }
 
     #[test]
@@ -713,7 +735,7 @@ mod tests {
 
         offer_menu_after_gesture(&session, PointerSource::Mouse);
 
-        assert!(!session.ui.menu().is_visible());
+        assert!(!session.ui.is_menu_open());
     }
 
     #[test]
@@ -723,7 +745,7 @@ mod tests {
 
         offer_menu_after_gesture(&session, PointerSource::Touch);
 
-        assert!(!session.ui.menu().is_visible());
+        assert!(!session.ui.is_menu_open());
     }
 
     #[test]
@@ -734,52 +756,64 @@ mod tests {
 
         session.clear();
 
-        assert!(!session.ui.menu().is_visible());
+        assert!(!session.ui.is_menu_open());
         assert!(session.handle_circles().is_none());
     }
 
     #[test]
-    fn the_callout_paints_through_an_overlay_layer_rather_than_the_text_it_belongs_to() {
+    fn an_open_pill_follows_the_selection_it_belongs_to() {
         let (session, slot, _geometry) = session();
         select(&session, &slot, 2..5);
-        assert!(
-            !OverlayLayer::is_installed(),
-            "a selection alone installs nothing"
-        );
-
         session.ui.show_menu();
-        assert!(
-            OverlayLayer::is_installed(),
-            "the callout paints above every clip"
-        );
+        assert_eq!(session.ui.menu_anchor_bounds().map(|anchor| anchor.x), Some(20.0));
 
-        session.ui.hide_menu();
-        assert!(!OverlayLayer::is_installed(), "and takes itself down again");
+        // The callout stays up while the selection under it grows, which is
+        // exactly what `Select All` from it does.
+        session.perform(MenuAction::SelectAll);
+        track_menu(&session);
+
+        assert_eq!(
+            session.ui.menu_anchor_bounds(),
+            session.menu_anchor(),
+            "the pill moves with the selection rather than staying behind"
+        );
+        assert_eq!(session.ui.menu_anchor_bounds().map(|anchor| anchor.x), Some(0.0));
+        assert_eq!(slot.selected_range(), Some(0..10));
     }
 
     #[test]
-    fn clearing_the_selection_takes_the_overlay_down_with_the_callout() {
-        let (session, slot, _geometry) = session();
+    fn a_desktop_list_stays_where_it_was_opened() {
+        let (session, slot, geometry) = session();
         select(&session, &slot, 2..5);
-        session.ui.show_menu();
+        open_context_menu(
+            &session,
+            &slot,
+            &geometry,
+            Vec2d { x: 35.0, y: 108.0 },
+            PointerKey::new(PointerSource::Mouse, 0),
+        );
 
-        session.clear();
+        select(&session, &slot, 6..9);
+        track_menu(&session);
 
-        assert!(!OverlayLayer::is_installed());
+        assert_eq!(
+            session.ui.menu_anchor_bounds(),
+            Some(Bounds::new(35.0, 108.0, 0.0, 0.0)),
+            "a menu that jumped about would make its rows a moving target"
+        );
     }
 
     #[test]
-    fn a_dropped_session_leaves_no_painter_behind() {
-        let (session, slot, _geometry) = session();
+    fn a_callout_with_nothing_left_to_hang_off_takes_itself_down() {
+        let (session, slot, geometry) = session();
         select(&session, &slot, 2..5);
         session.ui.show_menu();
 
-        drop(slot);
-        drop(session);
+        // The participant goes away — its subtree was removed — so there is
+        // neither a caret nor a box for the pill to sit over.
+        drop(geometry);
+        track_menu(&session);
 
-        assert!(
-            !OverlayLayer::is_installed(),
-            "a region that goes away takes its callout with it"
-        );
+        assert!(!session.ui.is_menu_open());
     }
 }

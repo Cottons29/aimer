@@ -9,12 +9,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aimer::quiver::aimer_app::HeadlessOptions;
-use aimer::quiver::winit::dpi::{PhysicalPosition, PhysicalSize};
+use aimer::quiver::winit::dpi::PhysicalPosition;
 use aimer::quiver::winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
 use aimer::{AimerApp, AnyWidget, Container, Row, SizedBox, Stack, Positioned, Widget};
 use aimer_dnd::{DragTarget, DragTargetState, Draggable};
-use aimer_modal::{Anchor, AnchorHandle};
 
 /// The value carried by a drag in these tests.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,14 +38,6 @@ fn card(id: CardId) -> AnyWidget {
         .boxed()
 }
 
-/// A draggable 100x100 card whose feedback reports where it was painted.
-fn tracked_card(id: CardId, handle: AnchorHandle) -> AnyWidget {
-    Draggable::new()
-        .data(id)
-        .feedback(move || Anchor::new().handle(handle.clone()).child(tile(100)))
-        .child(tile(100))
-        .boxed()
-}
 
 /// A 100x100 target that records everything it accepts.
 fn column(accepted: Accepted) -> AnyWidget {

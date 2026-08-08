@@ -345,6 +345,32 @@ impl<'a> BuildContext<'a> {
         crate::platform_brightness()
     }
 
+    /// Reads the region the system reserves along the window edges and rebuilds
+    /// the widget currently building whenever it changes.
+    ///
+    /// The status bar, the notch and the home indicator sit *over* the
+    /// application's surface, and a rotation moves them; a widget that keeps
+    /// something interactive out of that region has to be told when the region
+    /// moves. Reading [`crate::safe_area_insets`] directly registers nothing.
+    ///
+    /// Outside a build there is nothing to register and the insets are simply
+    /// returned.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn build(&self, ctx: &BuildContext) -> impl Widget {
+    ///     let insets = ctx.watch_safe_area_insets();
+    ///     // ... this widget is rebuilt when the status bar moves
+    /// }
+    /// ```
+    pub fn watch_safe_area_insets(&self) -> crate::SafeAreaInsets {
+        if let Some(consumer) = self.current_build_consumer() {
+            crate::safe_area::subscribe(&consumer);
+        }
+        crate::safe_area_insets()
+    }
+
     /// Answers one question about the window and rebuilds the widget currently
     /// building only when that answer changes.
     ///

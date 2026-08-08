@@ -67,6 +67,7 @@ fn region_texts(texts: &[&str]) -> (Rc<SelectionSession>, Vec<RawRichText>) {
                 hovered_link: RefCell::new(None),
                 hover_cursor: HoverCursor::new(),
                 touch_hold: TouchHoldGate::new(),
+                focus_node: aimer_widget::FocusNode::new(),
             };
             paint_character_grid(&geometry, &plain, top);
             element
@@ -426,6 +427,74 @@ fn a_plain_text_also_waits_for_the_hold_before_selecting() {
     assert_eq!(session.selected_text(), "first");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_stationary_touch_hold_selects_without_another_pointer_event() {
+    use std::cell::Cell;
+
+    use aimer_attribute::ResolvedSize;
+    use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_widget::Drawable;
+    use aimer_widget::base::BuildContext;
+
+    let redraws = Rc::new(Cell::new(0));
+    let counted = Rc::clone(&redraws);
+    let previous = aimer_events::window::set_thread_redraw_requester(move || {
+        counted.set(counted.get() + 1);
+    });
+    let inner = InnerCanvas::new();
+    let canvas = Canvas::new(&inner);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let window = WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 200), 1.0);
+    let context = BuildContext::new(
+        canvas,
+        ResolvedSize {
+            width: 200.0,
+            height: 100.0,
+        },
+        1.0,
+        Vec2d::default(),
+        Vec2d::default(),
+        window.clone(),
+        runtime.handle().clone(),
+    );
+    let session = SelectionSession::new(
+        window.clone(),
+        Rc::new(SelectionCoordinator::default()),
+        DEFAULT_SELECTION_COLOR,
+    );
+    let plain = "first second";
+    let text = RawSelectableText::painted(
+        &session,
+        &window,
+        Rc::from(plain),
+        character_regions(plain, 0.0),
+        character_bounds(plain, 0.0),
+    );
+
+    let _ = text.on_event(&ElementEvent::PointerDown(touch_at(25.0, 10.0, 0)));
+    text.draw(&context);
+    assert_eq!(session.selected_text(), "");
+    text.touch_hold.backdate(TOUCH_SELECTION_HOLD);
+
+    text.draw(&context);
+
+    assert_eq!(session.selected_text(), "first");
+    let _ = text.on_event(&ElementEvent::PointerUp(touch_at(25.0, 10.0, 0)));
+    assert_eq!(
+        session.selected_text(),
+        "first",
+        "lifting a stationary hold must preserve the selected word"
+    );
+    assert!(
+        redraws.get() >= 2,
+        "the press and each waiting frame must keep the hold timer advancing"
+    );
+    aimer_events::window::restore_thread_redraw_requester(previous);
+}
+
 #[test]
 fn dragging_a_knob_that_sits_over_the_glyphs_adjusts_the_selection_instead_of_restarting_it() {
     let (session, texts) = region_texts(&["first", "second"]);
@@ -460,7 +529,7 @@ fn a_right_click_selects_the_word_under_it_and_offers_the_callout() {
 
     assert!(taken.is_consumed());
     assert_eq!(session.selected_text(), "second");
-    assert!(session.ui.menu().is_visible());
+    assert!(session.ui.is_menu_open());
     assert!(
         session.handle_circles().is_none(),
         "a right-click earns the callout but not the knobs"
@@ -482,5 +551,5 @@ fn a_right_click_on_an_existing_selection_keeps_it() {
     )));
 
     assert_eq!(session.selected_text(), "first\nsecond");
-    assert!(session.ui.menu().is_visible());
+    assert!(session.ui.is_menu_open());
 }

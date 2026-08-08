@@ -169,7 +169,8 @@ mod tests {
         tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 1024];
-            stream.read(&mut request).await.unwrap();
+            let read = stream.read(&mut request).await.unwrap();
+            assert!(read > 0, "the mock server received an empty request");
             stream.write_all(response.as_bytes()).await.unwrap();
         });
         format!("http://{address}")

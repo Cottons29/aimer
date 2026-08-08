@@ -9,7 +9,7 @@ use aimer_widget::{
     VisitorElement, detect_overflow, paint_overflow_indicator,
 };
 
-use super::grid::{GridAlignment, GridOverflow};
+use super::implementation::{GridAlignment, GridOverflow};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GridTrack {
@@ -774,8 +774,10 @@ mod tests {
         apply_auto_minimum, resolve_placements, resolve_tracks,
     };
 
+    type RecordedVisibleRect = Rc<RefCell<Option<(f32, f32, f32, f32)>>>;
+
     struct VisibleRectRecorder {
-        visible_rect: Rc<RefCell<Option<(f32, f32, f32, f32)>>>,
+        visible_rect: RecordedVisibleRect,
     }
 
     struct WorkRecorder {

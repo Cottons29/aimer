@@ -1,8 +1,27 @@
 # Why I Am Creating Aimer
 
-People keep asking me the same question: why write a whole GUI framework when the world already has plenty of them? It
-is a fair question. Writing a framework is slow, unglamorous work, and most of it happens far below the part anyone
-actually sees. So let me answer it properly: not with a feature list, but with the reasons that made me start.
+People keep asking me the same question: why write a whole GUI framework when the world already has plenty of them? Why
+not using Leptos, Why not using Flutter? It is a fair question. Writing a framework is slow, unglamorous work, and most
+of it happens far below the part anyone actually sees. So let me answer it properly: not with a feature list, but with
+the reasons that made me start.
+
+### What I Tried First
+
+I did not start from zero out of enthusiasm. I went shopping first.
+
+- **Flutter**: the widget model is genuinely good, and honestly it is what Aimer's tree is inspired by. What I did not
+  want was the runtime, the second language, and the FFI seam described above.
+- **egui / iced**: Rust-native, which was the right instinct, but the architectures did not match how I think about UI.
+  I wanted a persistent, composable tree I could reason about, not a redraw loop or an Elm-shaped message pipeline for
+  every interaction.
+- **Tauri and Electron**: whether shipping a browser engine or wrapping the OS's native webview, it's still a lot of
+  machinery to bring in before writing the first line of app code. And I'd still be writing UI in a different language
+  than my logic.
+- **Qt / GTK bindings**: mature, battle-tested toolkits, and I respect them. But the code stops feeling like Rust. You
+  get build setup, FFI, lifetimes bolted onto an object model that predates the borrow checker by decades.
+
+Each of them solves a real problem well. None of them solved *my* problem, which was: one language, one codebase, one
+model, on every platform, with performance I control.
 
 ### One Model, Both Sides
 
@@ -45,23 +64,7 @@ At some point I stopped treating that as a problem to fix and started treating i
 boundary. If the UI is Rust too, there is nothing to marshal, nothing to keep alive across a bridge, nothing to guess
 about.
 
-### What I Tried First
 
-I did not start from zero out of enthusiasm. I went shopping first.
-
-- **Flutter**: the widget model is genuinely good, and honestly it is what Aimer's tree is inspired by. What I
-  did not want was the runtime, the second language, and the FFI seam described above.
-- **egui / iced**: Rust-native, which was the right instinct, but the architectures did not match how I think about UI.
-  I wanted a persistent, composable tree I could reason about, not a redraw loop or an Elm-shaped message pipeline for
-  every interaction.
-- **Tauri and Electron**: whether shipping a browser engine or wrapping the OS's native webview, it's still a lot of
-  machinery to bring in before writing the first line of app code. And I'd still be writing UI in a different language
-  than my logic.
-- **Qt / GTK bindings**: mature, battle-tested toolkits, and I respect them. But the code stops feeling like Rust. You
-  get build setup, FFI, lifetimes bolted onto an object model that predates the borrow checker by decades.
-
-Each of them solves a real problem well. None of them solved *my* problem, which was: one language, one codebase, one
-model, on every platform, with performance I control.
 
 ### Performance Is Not A Later Problem
 
@@ -135,11 +138,11 @@ So Aimer moved to the builder pattern:
 
 ```rust
 Container::new()
-  .child(
-    Text::new("Hello World!")
-      .text_align(TextAlign::MidCenter)
-      .text_style(TextStyle::new().color(Color::BLACK)
-    ),
+.child(
+Text::new("Hello World!")
+.text_align(TextAlign::MidCenter)
+.text_style(TextStyle::new().color(Color::BLACK)
+),
 )
 ```
 

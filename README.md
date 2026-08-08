@@ -5,7 +5,7 @@ interfaces from a single codebase using a declarative, composable widget tree.
 
 ```rust
 #[aimer::main]
-pub fn start_app() {
+fn main() {
   AimerApp::start(
     Container::new()
       .child(
@@ -99,7 +99,7 @@ cd my_aimer && Aimer run
 - [x] Basic controls
     - [x] `Button` with press handler and hover/style variants
     - [x] `GestureDetector`
-    - [x] `InputField` (text field) `⚠️ Unstable`
+    - [x] `TextField` / `TextArea`
     - [ ] `Checkbox`
     - [ ] `Switch` / `Toggle`
     - [ ] `Slider`
@@ -122,8 +122,8 @@ cd my_aimer && Aimer run
     - [x] iOS (Cupid)
     - [x] Android (Cupid) 
     - [x] Web / WASM (Cupid)
-    - [x] Windows (Cupid) `Binary Crate`
-    - [x] Linux (Cupid) `Binary Crate`
+    - [x] Windows (Cupid) 
+    - [x] Linux (Cupid)
 
 - [ ] Gesture system
     - [x] Tap, double-tap
@@ -148,6 +148,14 @@ cd my_aimer && Aimer run
     - [x] Theme data (colors, typography, spacing)
     - [x] Dark / light mode switching
     - [x] Custom theme support
+- [ ] Accessibility
+  - [ ] **Semantic structure** 
+  - [ ] **Keyboard / focus navigability**
+  - [ ] **Contrast & non-color cues** 
+  - [ ] **Text scaling**
+  - [ ] **Dynamic content announcements**
+  - [ ] **Respect system preferences** 
+  - [ ] **Touch target sizing**
 
 > ⚠️ Unstable — feature is implemented but may have breaking changes or incomplete edge cases.
 >

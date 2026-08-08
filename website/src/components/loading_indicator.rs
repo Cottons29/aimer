@@ -1,10 +1,9 @@
 use std::time::Duration;
 
 use aimer::animation::{AnimatedBuilder, AnimationController, Curve, RotationTransition};
-use aimer::console::info;
 use aimer::style::{FontWeight, TextAlign, TextStyle};
 use aimer::{
-    AimerApp, AnyWidget, BoxAlignment, Color, Column, Container, Dimension, Opacity, SizedBox, Svg,
+    AnyWidget, BoxAlignment, Color, Column, Container, Dimension, Opacity, SizedBox, Svg,
     SvgDocument, SvgError, Text, Widget,
 };
 

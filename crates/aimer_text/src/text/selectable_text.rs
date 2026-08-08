@@ -121,6 +121,9 @@ impl LayoutElement for RawSelectableText {
 
 impl Drawable for RawSelectableText {
     fn draw(&self, ctx: &BuildContext) {
+        if let Some((pointer, offset)) = self.touch_hold.poll_stationary(AnimInstant::now()) {
+            enter_hold(&self.session(), &self.slot(), offset, pointer);
+        }
         let slot = self.slot();
         let geometry_state = self.geometry();
         slot.stamp();
@@ -260,6 +263,12 @@ impl EventElement for RawSelectableText {
             }
             ElementEvent::PointerUp(info) => {
                 let pointer = PointerKey::new(info.source, info.id);
+                if self.touch_hold.release_was_stationary(pointer, info.pos) {
+                    let session = self.session();
+                    session.end(pointer);
+                    ui::offer_menu_after_gesture(&session, info.source);
+                    return EventResult::consumed();
+                }
                 if let TouchHold::Entered(offset) =
                     self.touch_hold.poll(pointer, info.pos, AnimInstant::now())
                 {

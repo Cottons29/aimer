@@ -40,12 +40,37 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
         AimerNativePlatformEvent::InsertText(text) => {
             // Injected text is inserted as one edit, exactly like a committed
             // IME phrase, instead of one event per `char`.
+            //
+            // It *is* the commit on mobile, so it closes any composition the
+            // keyboard had open; otherwise the next keystroke would still be
+            // suppressed as belonging to a composition that is already gone.
+            app.ime_composing = false;
             WindowEventHandler::dispatch_text(
                 &text,
                 &KeyAction::Pressed,
                 &Modifiers::default(),
                 app,
             );
+        }
+        AimerNativePlatformEvent::SetPreedit { text, cursor } => {
+            // The mobile equivalent of `Ime::Preedit`: while the composition is
+            // open the raw keystrokes behind it stay suppressed, and an empty
+            // string closes it.
+            app.ime_composing = !text.is_empty();
+            WindowEventHandler::dispatch_ime_preedit(text, cursor, app);
+        }
+        AimerNativePlatformEvent::TextEditingDelta(delta) => {
+            if app.widget_root.is_some() {
+                let result = app.dispatch_element_event(
+                    app.cursor_pos,
+                    &ElementEvent::TextEditingDelta(delta),
+                );
+                if let Some(window) = &app.window
+                    && (result.is_consumed() || result.needs_redraw())
+                {
+                    window.request_redraw();
+                }
+            }
         }
         AimerNativePlatformEvent::MenuShortcut(shortcut) => {
             // The menu bar already consumed the key press, so this *is* the

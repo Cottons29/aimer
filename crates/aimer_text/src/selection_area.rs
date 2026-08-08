@@ -4,7 +4,7 @@ use aimer_attribute::{ResolvedSize, Size, Vec2d};
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
+    AnyElement, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement, PointerKey,
     Rebuildable, RequiredChild, VisitorElement, Widget,
 };
 
@@ -121,7 +121,7 @@ impl<W: Widget + 'static> Widget for SelectionArea<W> {
         let child = ctx.with_state(SelectionScope(Rc::clone(&session)), |ctx| {
             self.child.to_element(ctx)
         });
-        SelectionAreaElement { session, child }.boxed()
+        SelectionAreaElement::new(session, child).boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -136,10 +136,24 @@ impl<W: Widget + 'static> Widget for SelectionArea<W> {
 /// whether it landed on the region's own background or outside it entirely.
 pub struct SelectionAreaElement {
     pub(crate) session: Rc<SelectionSession>,
+    /// The region's keyboard focus, which the session drives: it is asked for
+    /// when a selection starts and given up when the selection is dropped.
+    focus_node: FocusNode,
     pub(crate) child: AnyElement,
 }
 
 impl SelectionAreaElement {
+    /// Builds the region and hands its focus to `session`.
+    fn new(session: Rc<SelectionSession>, child: AnyElement) -> Self {
+        let focus_node = FocusNode::new();
+        session.attach_focus_node(&focus_node);
+        Self {
+            session,
+            focus_node,
+            child,
+        }
+    }
+
     fn scoped<R>(&self, ctx: &BuildContext, callback: impl FnOnce(&BuildContext) -> R) -> R {
         ctx.with_state(SelectionScope(Rc::clone(&self.session)), callback)
     }
@@ -163,6 +177,7 @@ impl Drawable for SelectionAreaElement {
         // here rather than by whichever text happens to own an endpoint. The
         // callout is not: it paints through the modal host's overlay, where no
         // ancestor of this region can clip it.
+        ui::track_menu(&self.session);
         ui::paint_handles(ctx, &self.session);
     }
 }
@@ -210,6 +225,20 @@ impl LayoutElement for SelectionAreaElement {
 }
 
 impl EventElement for SelectionAreaElement {
+    /// The region is focusable exactly while it holds the selection.
+    ///
+    /// The keyboard belongs to the selection, so there is nothing to focus
+    /// without one, and a region nothing was ever selected in stays out of the
+    /// tab order. Holding the focus is also how the region hears about the
+    /// presses it is never offered: routing hit-tests, so a press outside its
+    /// bounds reaches whatever is under it and nothing else — but it moves the
+    /// focus all the same, and
+    /// [`SelectionSession::blur`](crate::selection::session::SelectionSession::blur)
+    /// answers that.
+    fn focus_node(&self) -> Option<&FocusNode> {
+        self.session.is_focused().then_some(&self.focus_node)
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         // The knobs and the callout sit above everything the region drew, so
         // they are offered the event before it can mean anything else.
@@ -218,14 +247,20 @@ impl EventElement for SelectionAreaElement {
         }
         match event {
             // A press that reaches the region drops the selection: a text of
-            // this region consumes its own press, and the tree only broadcasts
-            // the presses nobody took — so anything arriving here landed
-            // somewhere that is not selectable, inside the region or outside it.
+            // this region consumes its own press, so anything arriving here
+            // landed on the region's background. A press further away never
+            // arrives at all — that one is answered as a lost focus.
             ElementEvent::PointerDown(info) => {
                 let pointer = PointerKey::new(info.source, info.id);
                 if self.session.active_pointer() != Some(pointer) {
                     self.session.clear();
                 }
+                false
+            }
+            // Something else took the keyboard, which is what a press anywhere
+            // outside the region amounts to.
+            ElementEvent::FocusLost => {
+                self.session.blur();
                 false
             }
             ElementEvent::Cancel => {
@@ -290,6 +325,7 @@ mod tests {
 
     use aimer_attribute::Bounds;
     use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
+    use aimer_widget::EventDispatcher;
     use aimer_widget::base::WindowHandle;
 
     use super::*;
@@ -352,13 +388,13 @@ mod tests {
         geometry.bounds.save(1.0, 0.0, 0.0, 10.0, 20.0);
         slot.stamp();
         session.begin_frame();
-        let element = SelectionAreaElement {
+        let element = SelectionAreaElement::new(
             session,
-            child: StubChild {
+            StubChild {
                 bounds: Bounds::new(0.0, 0.0, 100.0, 100.0),
             }
             .boxed(),
-        };
+        );
         (element, slot, geometry)
     }
 
@@ -391,6 +427,145 @@ mod tests {
         let _ = region.on_event(&press_at(60.0, 60.0));
 
         assert_eq!(slot.selected_range(), None);
+    }
+
+    /// A page with the region on it and something else beside it, dispatched
+    /// through the real router.
+    struct Page {
+        children: Vec<AnyElement>,
+    }
+
+    impl VisitorElement for Page {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for child in &self.children {
+                visitor(child.as_ref());
+            }
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "Page"
+        }
+    }
+
+    impl EventElement for Page {}
+    impl Drawable for Page {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for Page {}
+    impl LayoutElement for Page {}
+
+    /// The region of [`region`] on a page, with a plain element far away from
+    /// it standing for everything a press could land on instead.
+    fn page_with_region() -> (AnyElement, Rc<SelectionSession>, Rc<SelectionSlot>) {
+        let (region, slot, _geometry) = region();
+        let session = Rc::clone(&region.session);
+        let page = Page {
+            children: vec![
+                region.boxed(),
+                StubChild {
+                    bounds: Bounds::new(400.0, 400.0, 100.0, 100.0),
+                }
+                .boxed(),
+            ],
+        }
+        .boxed();
+        (page, session, slot)
+    }
+
+    /// The press that ought to drop a selection is the one the region never
+    /// hears about: routing hit-tests, so an element is only offered a press
+    /// that landed inside its own bounds. The region therefore has to notice
+    /// the *focus* it loses rather than wait for an event that never comes.
+    #[test]
+    fn a_press_elsewhere_on_the_page_clears_the_selection() {
+        let (page, session, slot) = page_with_region();
+        session.select_all();
+        assert_eq!(slot.selected_range(), Some(0..1));
+
+        let mut dispatcher = EventDispatcher::new();
+        let _ = dispatcher.dispatch(
+            page.as_ref(),
+            Vec2d { x: 450.0, y: 450.0 },
+            &press_at(450.0, 450.0),
+        );
+
+        assert_eq!(
+            slot.selected_range(),
+            None,
+            "the press landed outside the region, which is no longer the target of the selection"
+        );
+        assert!(!session.is_focused());
+    }
+
+    /// The keyboard follows the selection, so a region that has been clicked
+    /// away from must not answer `Ctrl`/`Cmd` + `A` any more.
+    #[test]
+    fn a_press_elsewhere_on_the_page_takes_the_keyboard_away_from_the_region() {
+        let (page, session, slot) = page_with_region();
+        session.select_all();
+
+        let mut dispatcher = EventDispatcher::new();
+        let _ = dispatcher.dispatch(
+            page.as_ref(),
+            Vec2d { x: 450.0, y: 450.0 },
+            &press_at(450.0, 450.0),
+        );
+        let _ = dispatcher.dispatch(
+            page.as_ref(),
+            Vec2d { x: 450.0, y: 450.0 },
+            &ElementEvent::KeyInput {
+                key: NamedKey::Other("a".to_owned()),
+                action: KeyAction::Pressed,
+                modifiers: aimer_events::element::Modifiers {
+                    ctrl: true,
+                    ..Default::default()
+                },
+            },
+        );
+
+        assert_eq!(slot.selected_range(), None);
+    }
+
+    /// The callout is a modal: it takes every press while it is up, including
+    /// the one on `Copy`, and the tree below therefore loses focus. Dropping
+    /// the selection then would leave `Copy` nothing to copy.
+    #[test]
+    fn losing_focus_to_the_open_callout_keeps_the_selection() {
+        let (region, slot, _geometry) = region();
+        region.session.select_all();
+        region.session.ui.show_menu();
+        assert!(region.session.ui.is_menu_open());
+
+        let _ = region.on_event(&ElementEvent::FocusLost);
+
+        assert_eq!(slot.selected_range(), Some(0..1));
+        assert!(
+            region.session.is_focused(),
+            "the region asks for the focus back, so the press after the callout still clears it"
+        );
+    }
+
+    #[test]
+    fn losing_focus_with_no_callout_showing_clears_the_selection() {
+        let (region, slot, _geometry) = region();
+        region.session.select_all();
+
+        let _ = region.on_event(&ElementEvent::FocusLost);
+
+        assert_eq!(slot.selected_range(), None);
+    }
+
+    /// Nothing is selected, so nothing is holding the keyboard: the region is
+    /// not a stop on the way round the focusable widgets.
+    #[test]
+    fn a_region_that_holds_no_selection_is_not_focusable() {
+        let (region, _slot, _geometry) = region();
+
+        assert!(region.focus_node().is_none());
+
+        region.session.select_all();
+
+        assert!(region.focus_node().is_some());
     }
 
     #[test]

@@ -5,6 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use aimer_attribute::size::ResolvedSize;
 use aimer_cupid::AntiAlias;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use aimer_events::text_editing::NativeTextRange;
+use aimer_events::text_editing::TextEditingDelta;
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_inspector::InspectorAppHandle;
 use aimer_modal::ModalHost;
@@ -32,6 +35,23 @@ static APP_STARTED: AtomicBool = AtomicBool::new(false);
 pub enum AimerNativePlatformEvent {
     ForceBackspace,
     InsertText(String),
+    /// Provisional text a soft keyboard is still composing.
+    ///
+    /// A multistage input method — Chinese Pinyin, Japanese Kana, Korean
+    /// Hangul — shows the user what it has so far before any candidate is
+    /// chosen. On desktop that arrives as `WindowEvent::Ime(Ime::Preedit)`;
+    /// neither iOS nor Android reports it as a window event, so their keyboard
+    /// shims report it here instead and it is dispatched down the very same
+    /// path.
+    ///
+    /// `cursor` is the byte range of the active segment inside `text`, and an
+    /// empty `text` ends the composition — the same contract winit's
+    /// [`Ime::Preedit`](winit::event::Ime::Preedit) carries.
+    SetPreedit {
+        text: String,
+        cursor: Option<(usize, usize)>,
+    },
+    TextEditingDelta(TextEditingDelta),
     FrameReady,
     /// An editing shortcut the macOS menu bar claimed before the window could
     /// see it, handed back to the widget tree. See [`crate::menu`].
@@ -115,6 +135,58 @@ fn dereference_ptr<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
     unsafe { std::slice::from_raw_parts(ptr, len) }
 }
 
+/// Where the caret sits inside composing text reported by a soft keyboard.
+///
+/// Neither UIKit's marked text nor Android's composing span tells us which part
+/// of the composition the input method considers active, so the caret is placed
+/// at its end — the position the user is typing at, and where every soft
+/// keyboard draws it. An empty composition has no caret at all, which is what
+/// ends it.
+#[cfg_attr(
+    not(any(target_os = "ios", target_os = "android", test)),
+    allow(dead_code)
+)]
+fn preedit_cursor(text: &str) -> Option<(usize, usize)> {
+    if text.is_empty() {
+        None
+    } else {
+        Some((text.len(), text.len()))
+    }
+}
+
+/// Reports the text the iOS input method is still composing.
+///
+/// UIKit calls this "marked text": while a multistage keyboard — Pinyin, Kana,
+/// Hangul — assembles a word, the provisional characters live in the hidden
+/// text view's `markedTextRange` and are never committed. The Swift shim
+/// forwards them here on every change, and a commit arrives separately through
+/// [`trigger_rust_insert_text`]. Passing an empty string ends the composition.
+///
+/// # Safety
+///
+/// `ptr` must point at `len` initialized bytes that stay valid for the duration
+/// of the call, exactly as [`trigger_rust_insert_text`] requires. A null
+/// pointer is treated as an empty composition.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn trigger_rust_set_marked_text(ptr: *const u8, len: usize) {
+    let text = if ptr.is_null() || len == 0 {
+        String::new()
+    } else {
+        String::from_utf8_lossy(dereference_ptr(ptr, len)).to_string()
+    };
+
+    let Some(proxy) = EVENT_PROXY.get() else {
+        aimer_utils::debug!("trigger_rust_set_marked_text: EVENT_PROXY not initialized yet");
+        return;
+    };
+
+    let cursor = preedit_cursor(&text);
+    if let Err(e) = proxy.send_event(AimerNativePlatformEvent::SetPreedit { text, cursor }) {
+        aimer_utils::error!("trigger_rust_set_marked_text: failed to send event: {:?}", e);
+    }
+}
+
 #[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
 pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
@@ -136,6 +208,50 @@ pub extern "C" fn trigger_rust_insert_text(ptr: *const u8, len: usize) {
     if let Err(e) = proxy.send_event(AimerNativePlatformEvent::InsertText(text)) {
         aimer_utils::error!("trigger_rust_insert_text: failed to send event: {:?}", e);
     }
+}
+
+/// Reports one revisioned edit from the mirrored iOS text view.
+///
+/// # Safety
+///
+/// `text_ptr` must address `text_len` initialized UTF-8 bytes for the duration
+/// of this call. A null pointer is accepted only when `text_len` is zero.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn trigger_rust_text_editing_delta(
+    session_id: u64,
+    revision: u64,
+    replace_start: usize,
+    replace_end: usize,
+    text_ptr: *const u8,
+    text_len: usize,
+    selection_start: usize,
+    selection_end: usize,
+    composing_start: isize,
+    composing_end: isize,
+) {
+    if text_ptr.is_null() && text_len != 0 {
+        return;
+    }
+    let replacement_text = if text_len == 0 {
+        String::new()
+    } else {
+        String::from_utf8_lossy(dereference_ptr(text_ptr, text_len)).into_owned()
+    };
+    let composing = (composing_start >= 0 && composing_end >= 0).then(|| {
+        NativeTextRange::new(composing_start as usize, composing_end as usize)
+    });
+    let Some(proxy) = EVENT_PROXY.get() else {
+        return;
+    };
+    let _ = proxy.send_event(AimerNativePlatformEvent::TextEditingDelta(TextEditingDelta {
+        session_id,
+        revision,
+        replacement: NativeTextRange::new(replace_start, replace_end),
+        replacement_text,
+        selection: NativeTextRange::new(selection_start, selection_end),
+        composing,
+    }));
 }
 
 // Android software-keyboard forwarding into Rust.
@@ -167,6 +283,89 @@ pub extern "system" fn Java_com_aimer_AimerActivity_nativeInsertText<'caller>(
 
         if let Err(e) = proxy.send_event(AimerNativePlatformEvent::InsertText(text)) {
             aimer_utils::error!("nativeInsertText: failed to send event: {:?}", e);
+        }
+        Ok(())
+    })
+    .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_aimer_AimerActivity_nativeTextEditingDelta<'caller>(
+    mut env: jni::EnvUnowned<'caller>,
+    _class: jni::objects::JClass<'caller>,
+    session_id: i64,
+    revision: i64,
+    replace_start: i32,
+    replace_end: i32,
+    text: jni::objects::JString<'caller>,
+    selection_start: i32,
+    selection_end: i32,
+    composing_start: i32,
+    composing_end: i32,
+) {
+    env.with_env(|env| -> Result<(), jni::errors::Error> {
+        if session_id < 0
+            || revision < 0
+            || replace_start < 0
+            || replace_end < 0
+            || selection_start < 0
+            || selection_end < 0
+        {
+            return Ok(());
+        }
+        let replacement_text = String::from(text.mutf8_chars(env)?);
+        let composing = (composing_start >= 0 && composing_end >= 0).then(|| {
+            NativeTextRange::new(composing_start as usize, composing_end as usize)
+        });
+        if let Some(proxy) = EVENT_PROXY.get() {
+            let _ = proxy.send_event(AimerNativePlatformEvent::TextEditingDelta(
+                TextEditingDelta {
+                    session_id: session_id as u64,
+                    revision: revision as u64,
+                    replacement: NativeTextRange::new(
+                        replace_start as usize,
+                        replace_end as usize,
+                    ),
+                    replacement_text,
+                    selection: NativeTextRange::new(
+                        selection_start as usize,
+                        selection_end as usize,
+                    ),
+                    composing,
+                },
+            ));
+        }
+        Ok(())
+    })
+    .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
+}
+
+/// Reports the text the Android input method is still composing.
+///
+/// The hidden `EditText` the activity owns marks its composing region with
+/// `Spanned::SPAN_COMPOSING`; the Kotlin side reads that span out on every
+/// change and passes it here, so the focused field paints the provisional text
+/// instead of showing nothing until a candidate is chosen. An empty string
+/// ends the composition.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_aimer_AimerActivity_nativeSetComposingText<'caller>(
+    mut env: jni::EnvUnowned<'caller>,
+    _class: jni::objects::JClass<'caller>,
+    text: jni::objects::JString<'caller>,
+) {
+    env.with_env(|env| -> Result<(), jni::errors::Error> {
+        let text = String::from(text.mutf8_chars(env)?);
+
+        let Some(proxy) = EVENT_PROXY.get() else {
+            aimer_utils::debug!("nativeSetComposingText: EVENT_PROXY not initialized yet");
+            return Ok(());
+        };
+
+        let cursor = preedit_cursor(&text);
+        if let Err(e) = proxy.send_event(AimerNativePlatformEvent::SetPreedit { text, cursor }) {
+            aimer_utils::error!("nativeSetComposingText: failed to send event: {:?}", e);
         }
         Ok(())
     })
@@ -434,6 +633,15 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         crate::handler::user_events::handle_user_event(&mut self.app, event);
     }
 
+    /// Returns whether an input method currently holds an open composition.
+    ///
+    /// While it does, raw keystrokes are suppressed: the characters the user
+    /// pressed belong to the composition, not to the field, and arrive only
+    /// once a candidate is committed.
+    pub fn is_composing(&self) -> bool {
+        self.app.ime_composing
+    }
+
     pub fn physical_size(&self) -> PhysicalSize<u32> {
         self.size
     }
@@ -643,9 +851,11 @@ fn start_event_loop(
         // without an explicit reference, the linker may garbage-collect them out of
         // the final `cdylib`, which would make the soft-keyboard text bridge fail
         // with `UnsatisfiedLinkError`.
-        let _keep_jni: [*const (); 2] = [
+        let _keep_jni: [*const (); 4] = [
             Java_com_aimer_AimerActivity_nativeInsertText as *const (),
+            Java_com_aimer_AimerActivity_nativeSetComposingText as *const (),
             Java_com_aimer_AimerActivity_nativeBackspace as *const (),
+            Java_com_aimer_AimerActivity_nativeTextEditingDelta as *const (),
         ];
         std::hint::black_box(_keep_jni);
 
@@ -752,7 +962,8 @@ mod tests {
     use aimer_events::element::{ElementEvent, ScrollDeltaKind};
     use aimer_widget::base::BuildContext;
     use aimer_widget::{
-        AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
+        AnyElement, Drawable, Element, EventElement, FocusNode, LayoutElement, Rebuildable,
+        VisitorElement,
     };
     use winit::dpi::{PhysicalPosition, PhysicalSize};
     use winit::event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent};
@@ -834,6 +1045,130 @@ mod tests {
             }
             aimer_widget::EventResult::ignored()
         }
+    }
+
+    /// Records the composition the platform reported, the way a text field
+    /// paints it.
+    type RecordedPreedits = Arc<Mutex<Vec<(String, Option<(usize, usize)>)>>>;
+
+    struct PreeditWidget {
+        preedits: RecordedPreedits,
+    }
+
+    impl Widget for PreeditWidget {
+        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            PreeditElement {
+                preedits: self.preedits.clone(),
+                focus_node: FocusNode::new(),
+            }
+            .boxed()
+        }
+    }
+
+    struct PreeditElement {
+        preedits: RecordedPreedits,
+        focus_node: FocusNode,
+    }
+
+    impl Drawable for PreeditElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl LayoutElement for PreeditElement {}
+    impl Rebuildable for PreeditElement {}
+    impl VisitorElement for PreeditElement {
+        fn debug_name(&self) -> &'static str {
+            "PreeditElement"
+        }
+    }
+    impl EventElement for PreeditElement {
+        fn focus_node(&self) -> Option<&FocusNode> {
+            Some(&self.focus_node)
+        }
+
+        fn autofocus(&self) -> bool {
+            true
+        }
+        fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
+            if let ElementEvent::ImePreedit { text, cursor } = event {
+                self.preedits
+                    .lock()
+                    .unwrap()
+                    .push((text.clone(), *cursor));
+                return aimer_widget::EventResult::consumed();
+            }
+            aimer_widget::EventResult::ignored()
+        }
+    }
+
+    #[test]
+    fn a_composition_puts_the_caret_at_its_end() {
+        assert_eq!(preedit_cursor("nihao"), Some((5, 5)));
+        // Byte offsets, not characters: the field slices the string with them.
+        assert_eq!(preedit_cursor("\u{4f60}"), Some((3, 3)));
+        assert_eq!(preedit_cursor(""), None);
+    }
+
+    /// A soft keyboard composing Chinese pinyin reports its provisional text
+    /// through the platform event path, which no window event ever carries on
+    /// iOS or Android.
+    #[test]
+    fn a_platform_preedit_reaches_the_widget_tree() {
+        let preedits = Arc::new(Mutex::new(Vec::new()));
+        let mut app = AimerApp::start_headless(PreeditWidget {
+            preedits: preedits.clone(),
+        });
+        app.render_frame();
+
+        app.send_user_event(AimerNativePlatformEvent::SetPreedit {
+            text: "nihao".to_owned(),
+            cursor: Some((5, 5)),
+        });
+
+        assert_eq!(
+            preedits.lock().unwrap().as_slice(),
+            [("nihao".to_owned(), Some((5, 5)))]
+        );
+    }
+
+    /// While a composition is open the raw keystrokes behind it must stay
+    /// suppressed, exactly as they are for a desktop input method.
+    #[test]
+    fn a_platform_preedit_opens_and_closes_the_composition() {
+        let preedits = Arc::new(Mutex::new(Vec::new()));
+        let mut app = AimerApp::start_headless(PreeditWidget {
+            preedits: preedits.clone(),
+        });
+        app.render_frame();
+
+        app.send_user_event(AimerNativePlatformEvent::SetPreedit {
+            text: "ni".to_owned(),
+            cursor: None,
+        });
+        assert!(app.is_composing());
+
+        app.send_user_event(AimerNativePlatformEvent::SetPreedit {
+            text: String::new(),
+            cursor: None,
+        });
+        assert!(!app.is_composing());
+    }
+
+    /// Committing a candidate ends the composition, so a following keystroke is
+    /// not swallowed by a composition that is no longer there.
+    #[test]
+    fn committed_text_ends_the_composition() {
+        let mut app = AimerApp::start_headless(PreeditWidget {
+            preedits: Arc::new(Mutex::new(Vec::new())),
+        });
+        app.render_frame();
+        app.send_user_event(AimerNativePlatformEvent::SetPreedit {
+            text: "ni".to_owned(),
+            cursor: None,
+        });
+
+        app.send_user_event(AimerNativePlatformEvent::InsertText("你".to_owned()));
+
+        assert!(!app.is_composing());
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::components::animation_button::{AnimatedPlatformButtonList, PLATFORMS};
 use crate::utils::{app_padding, is_mobile, mobile_title};
 use aimer::animation::{AnimatedSwitcher, Curve};
-use aimer::native::haptic::{HapticPattern, Haptics, ImpactStyle};
+use aimer::native::haptic::{HapticPattern, Haptics};
 use aimer::style::{FontWeight, TextDecoration, TextStyle, Theme, ThemeData};
 use aimer::*;
 

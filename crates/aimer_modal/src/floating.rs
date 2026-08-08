@@ -7,6 +7,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_container::{Container, ZeroSizedBox};
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_macro::Rebuildable;
+use aimer_widget::SafeAreaInsets;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement,
@@ -66,6 +67,8 @@ pub struct Floating<W = RequiredChild> {
     animation: Option<ModalAnimation>,
     barrier_dismissible: bool,
     escape_dismissible: bool,
+    viewport_margin: f32,
+    respect_safe_area: bool,
 }
 
 impl Default for Floating {
@@ -87,6 +90,8 @@ impl Floating {
             animation: None,
             barrier_dismissible: true,
             escape_dismissible: true,
+            viewport_margin: 0.0,
+            respect_safe_area: true,
         }
     }
 
@@ -167,6 +172,36 @@ impl Floating {
         self
     }
 
+    /// Sets a margin the panel keeps from every edge of the viewport.
+    ///
+    /// It is folded into the region the system already reserves, so it only
+    /// applies where the system asks for less: a panel is held off the bare
+    /// window edge without being pushed twice away from a status bar.
+    ///
+    /// In logical pixels, like [`Floating::gap`].
+    #[inline]
+    pub fn viewport_margin(mut self, margin: f32) -> Self {
+        self.viewport_margin = if margin.is_finite() && margin > 0.0 {
+            margin
+        } else {
+            0.0
+        };
+        self
+    }
+
+    /// Controls whether the panel stays out of the region the system draws
+    /// over.
+    ///
+    /// On by default, and it is what keeps a panel out of the status bar, the
+    /// notch and the home indicator — where a press never reaches the
+    /// application at all. Turn it off only for content that is *meant* to run
+    /// under them, such as a full-bleed backdrop.
+    #[inline]
+    pub fn respect_safe_area(mut self, respect: bool) -> Self {
+        self.respect_safe_area = respect;
+        self
+    }
+
     /// Attaches the required panel content and completes this builder.
     #[inline]
     pub fn child<W: Widget>(self, child: W) -> Floating<W> {
@@ -178,6 +213,8 @@ impl Floating {
             animation: self.animation,
             barrier_dismissible: self.barrier_dismissible,
             escape_dismissible: self.escape_dismissible,
+            viewport_margin: self.viewport_margin,
+            respect_safe_area: self.respect_safe_area,
         }
     }
 
@@ -220,6 +257,8 @@ impl<W: Widget + 'static> Floating<W> {
             id,
             barrier_dismissible: self.barrier_dismissible,
             escape_dismissible: self.escape_dismissible,
+            viewport_margin: self.viewport_margin,
+            respect_safe_area: self.respect_safe_area,
             child_bounds: RefCell::new(None),
         }
         .boxed()
@@ -274,6 +313,8 @@ struct RawFloating {
     id: Option<ModalId>,
     barrier_dismissible: bool,
     escape_dismissible: bool,
+    viewport_margin: f32,
+    respect_safe_area: bool,
     child_bounds: RefCell<Option<(Vec2d, Vec2d)>>,
 }
 
@@ -291,6 +332,54 @@ impl RawFloating {
             .map(|bounds| bounds * scale)
             .unwrap_or_else(|| Bounds::new(ctx.parent_pos.x, ctx.parent_pos.y, 0.0, 0.0))
     }
+
+    /// Returns this frame's placement request, in the painted coordinate space.
+    ///
+    /// A spec is written in logical pixels — a gap of `8.0` is eight pixels on
+    /// every screen — while the anchor, the panel and the viewport handed to
+    /// the resolver are all scaled, so the distances are converted here rather
+    /// than left to shrink on a dense display.
+    ///
+    /// The region the system reserves is read per frame rather than captured at
+    /// build time, because a rotation moves it without rebuilding anything.
+    fn frame_placement(&self, ctx: &BuildContext) -> PlacementSpec {
+        let scale = if ctx.scale > 0.0 { ctx.scale } else { 1.0 };
+        let system = if self.respect_safe_area {
+            aimer_widget::safe_area_insets()
+        } else {
+            SafeAreaInsets::ZERO
+        };
+        let reserved = reserved_edges(
+            system,
+            self.viewport_margin,
+            self.placement.safe_area_value(),
+        )
+        .scaled(scale);
+        let offset = self.placement.offset_value();
+        self.placement
+            .gap(self.placement.gap_value() * scale)
+            .offset(Vec2d {
+                x: offset.x * scale,
+                y: offset.y * scale,
+            })
+            .safe_area(reserved)
+    }
+}
+
+/// Merges the three reservations a panel has to respect — the system's, the
+/// panel's own margin and whatever its spec already asked for — by keeping the
+/// largest of each edge.
+///
+/// Adding them would push a panel twice away from a status bar that already
+/// leaves room for the margin.
+fn reserved_edges(
+    system: SafeAreaInsets,
+    margin: f32,
+    requested: SafeAreaInsets,
+) -> SafeAreaInsets {
+    system
+        .max(SafeAreaInsets::all(margin))
+        .max(requested)
 }
 
 impl Drawable for RawFloating {
@@ -308,7 +397,7 @@ impl Drawable for RawFloating {
 
         let child_size = self.child.computed_size(ctx);
         let placement = resolve_placement(
-            self.placement,
+            self.frame_placement(ctx),
             self.anchor_bounds(ctx),
             child_size,
             ctx.parent_size,
@@ -445,6 +534,52 @@ mod tests {
             Color::BLACK.with_opacity(40)
         );
         assert_eq!(floating.animation_config(), Some(animation));
+    }
+
+    #[test]
+    fn a_margin_only_applies_where_the_system_reserves_less() {
+        let reserved = reserved_edges(
+            SafeAreaInsets::new(0.0, 59.0, 0.0, 34.0),
+            8.0,
+            SafeAreaInsets::ZERO,
+        );
+
+        assert_eq!(reserved.top, 59.0);
+        assert_eq!(reserved.bottom, 34.0);
+        assert_eq!(reserved.left, 8.0);
+        assert_eq!(reserved.right, 8.0);
+    }
+
+    #[test]
+    fn a_spec_that_reserves_more_than_the_system_keeps_its_own_edge() {
+        let reserved = reserved_edges(
+            SafeAreaInsets::new(0.0, 20.0, 0.0, 0.0),
+            0.0,
+            SafeAreaInsets::new(0.0, 100.0, 0.0, 0.0),
+        );
+
+        assert_eq!(reserved.top, 100.0);
+    }
+
+    #[test]
+    fn a_panel_that_ignores_the_safe_area_still_keeps_its_margin() {
+        let panel = Floating::new()
+            .respect_safe_area(false)
+            .viewport_margin(12.0)
+            .child(ZeroSizedBox);
+
+        assert!(!panel.respect_safe_area);
+        assert_eq!(
+            reserved_edges(SafeAreaInsets::ZERO, panel.viewport_margin, SafeAreaInsets::ZERO).top,
+            12.0
+        );
+    }
+
+    #[test]
+    fn a_nonsense_margin_reserves_nothing() {
+        let panel = Floating::new().viewport_margin(f32::NAN).child(ZeroSizedBox);
+
+        assert_eq!(panel.viewport_margin, 0.0);
     }
 
     #[test]

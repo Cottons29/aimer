@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 #[macro_use]
 pub mod home;
 #[macro_use]

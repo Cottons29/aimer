@@ -5,6 +5,7 @@ edition = "2024"
 
 
 [lib]
+path = "src/main.rs"
 crate-type = ["cdylib", "staticlib"]
 [dependencies]
 aimer = { path = "..", features = ["markdown", "svg", "provider"] }

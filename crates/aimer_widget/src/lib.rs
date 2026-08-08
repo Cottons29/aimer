@@ -1,10 +1,13 @@
 mod async_builder;
 pub mod components;
+pub mod focus;
 pub mod key;
 pub mod layout_cache;
 pub mod page_storage;
 pub mod platform_brightness;
+pub mod pointer_claim;
 pub mod reconcile;
+pub mod safe_area;
 mod widget;
 pub mod window_metrics;
 
@@ -97,6 +100,7 @@ pub use crate::components::element::{
 pub use crate::components::event_element::{
     CaptureRequest, EventElement, EventResult, FollowUp, PointerKey,
 };
+pub use crate::focus::FocusNode;
 pub use crate::components::layout_element::LayoutElement;
 pub use crate::components::rebuildable::Rebuildable;
 pub use crate::components::visitor_element::VisitorElement;
@@ -119,6 +123,11 @@ pub use crate::components::element::{broadcast_event, dispatch_event, dispatch_f
 pub use crate::key::Key;
 pub use crate::layout_cache::LayoutCache;
 pub use crate::platform_brightness::{Brightness, platform_brightness, set_platform_brightness};
+pub use crate::pointer_claim::{
+    claim_pointer, claimed_pointer_count, is_pointer_claimed, release_all_pointers,
+    release_pointer,
+};
+pub use crate::safe_area::{SafeAreaInsets, safe_area_insets, set_safe_area_insets};
 pub use crate::widget::Widget;
 pub use crate::widget::stateful::{State, StateUpdater, StatefulElement, StatefulWidget};
 pub use crate::widget::stateless::{NamedWidget, StatelessElement, StatelessWidget};

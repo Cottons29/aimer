@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use aimer::animation::Curve;
 use aimer::router::Outlet;
-use aimer::style::{AnimatedTheme, Theme, ThemeData, ThemeMode};
+use aimer::style::{AnimatedTheme, Theme, ThemeData};
 use aimer::{BuildContext, Widget, widget, *};
 
 use crate::components::header::HeaderSection;
@@ -14,7 +14,6 @@ use crate::components::header::HeaderSection;
 /// The shell frame stays mounted while the router only swaps the `Outlet`'s
 /// child, so navigating between `Home`, `Docs` and `Learn` never rebuilds the
 /// header from scratch conceptually — it is the content area that changes.
-
 pub(crate) const DARK_THEME_ICON: &[u8] = include_bytes!("../../assets/dark-svgrepo-com.svg");
 pub(crate) const LIGHT_THEME_ICON: &[u8] = include_bytes!("../../assets/light-svgrepo-com.svg");
 

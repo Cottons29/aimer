@@ -75,105 +75,76 @@ Aimer provides a built-in color system via `Colors`.
 - **Named Palettes:** Access colors directly, e.g., `Colors::Blue`, `Colors::Gray`.
 - **Opacity Indexing:** Access specific opacity level like `Colors::Blue[100]`.
 
-## Input Controls (Experimental)
+## Input Controls
 
-### TextField Widget `⛔️ Very Unstable`
+`TextField` and `TextArea` share `TextEditingController`, Unicode-safe selection,
+undo/redo, IME composition, clipboard behavior, and `FocusNode` ownership on
+desktop, web, iOS, and Android.
 
-The `TextField` struct provides a text input field with customizable styling, input types, and event callbacks. It supports Desktop, iOS, Android, and WASM platforms.
+### TextField
 
-**Struct Fields:**
-```rust
-pub struct TextField {
-    pub controller: TextFieldController,
-    pub input_type: InputType,        // Text, Number, Obscure
-    pub prompt: String,
-    pub hint: String,
-    pub text_style: TextStyle,
-    pub hint_style: TextStyle,
-    pub prompt_style: TextStyle,
-    pub text_align: TextAlign,
-    pub auto_focus: bool,
-    pub max_lines: Option<usize>,
-    pub min_lines: Option<usize>,
-    pub max_length: Option<usize>,
-    pub enable: bool,
-    pub expand: ExpandDirection,
-    pub decoration: BoxDecoration,
-    pub hover_decoration: Option<BoxDecoration>,
-    pub focus_decoration: Option<BoxDecoration>,
-    pub disabled_decoration: Option<BoxDecoration>,
-    pub cursor_color: Colors,
-    pub on_changed: TextFieldCallback,
-    pub on_submitted: TextFieldCallback,
-}
-```
-
-**Basic Usage:**
+`TextField` is strictly single-line. Return invokes `on_submitted`; pasted and
+committed line separators become spaces. `InputType::Number` selects a numeric
+software keyboard but does not validate the value. `InputType::Obscure` masks
+text and prevents copying or cutting it.
 
 ```rust
-TextField!(
-    controller: my_controller.clone(),
-    hint: "Enter your name",
-    input_type: InputType::Text,
-)
+use aimer::{FocusNode, InputType, TextEditingController, TextField};
+
+let controller = TextEditingController::with_text("Aimer");
+let focus = FocusNode::new();
+let field = TextField::new()
+    .controller(controller.clone())
+    .focus_node(focus.clone())
+    .input_type(InputType::Text)
+    .hint("Your name")
+    .max_length(Some(80))
+    .on_changed(|text| println!("Changed: {text}"))
+    .on_submitted(|text| println!("Submitted: {text}"));
+
+focus.request_focus();
+controller.set_text("Updated programmatically");
 ```
 
-**Event Callbacks:**
+### TextArea
 
-The `on_changed` callback fires whenever the text content changes (character insertion, deletion). The `on_submitted` callback fires when the user presses Enter.
+`TextArea` accepts hard newlines, wraps long visual lines, and scrolls
+vertically. It starts at three lines and grows with its content unless
+`max_lines` or `expand(true)` constrains that behavior.
 
-Synchronous closures:
 ```rust
-TextField!(
-    controller: my_controller.clone(),
-    on_changed: {
-        move |item| {
-            println!("Input changed: {}", item);
-        }
-    },
-    on_submitted: {
-        move |text| {
-            println!("Submitted: {}", text);
-        }
-    },
-)
+use aimer::{TextArea, TextEditingController};
+
+let controller = TextEditingController::new();
+let area = TextArea::new()
+    .controller(controller)
+    .hint("Write a message")
+    .min_lines(4)
+    .max_lines(Some(10));
 ```
 
-Async closures (auto-wrapped via the macro):
-```rust
-TextField!(
-    controller: my_controller.clone(),
-    on_changed: async move |item| {
-        println!("Input changed: {}", item);
-    },
-)
+`TextEditingValue` stores text, selection, and the active composing range as an
+immutable snapshot. `TextSelection` and `TextRange` use UTF-8 byte offsets that
+are normalized to extended-grapheme boundaries. Use `value()`, `set_value()`,
+`set_text()`, `clear()`, `undo()`, and `redo()` for programmatic editing.
+
+### Migration from the unstable input field
+
+- Replace `TextFieldController` with `TextEditingController`.
+- Replace `with_initial(text)` with `with_text(text)`.
+- Read text through `controller.value().text()` rather than a borrowed
+  `controller.text()`.
+- Move `min_lines`, `max_lines`, and expansion configuration from `TextField`
+  to `TextArea`; `TextField` can no longer hold multiline text.
+- Existing mobile projects must refresh their native text bridge:
+
+```text
+aimer migrate ios
+aimer migrate android
 ```
 
-For async closures that need to capture state from surrounding scope, use the `AsyncTextFieldCallback` wrapper:
-```rust
-TextField!(
-    controller: my_controller.clone(),
-    on_changed: {
-        let is_cooldown = self.is_cooldown;
-        AsyncTextFieldCallback(move |item: String| async move {
-            if !is_cooldown {
-                println!("Input changed: {}", item);
-            }
-        })
-    },
-)
-```
-
-**Attributes:**
-- `controller`: A `TextFieldController` for reading/writing the text value programmatically.
-- `input_type`: The type of input (`Text`, `Number`, `Obscure`).
-- `hint`: Placeholder text shown when the field is empty.
-- `prompt`: Text displayed before the input area.
-- `auto_focus`: Whether the field is focused on mount.
-- `enable`: Whether the field accepts input (default: `true`).
-- `decoration` / `hover_decoration` / `focus_decoration` / `disabled_decoration`: Visual decoration variants.
-- `on_changed`: Callback invoked with the current text on every change.
-- `on_submitted`: Callback invoked with the current text when Enter is pressed.
+Runnable versions are available in `examples/text_field.rs` and
+`examples/text_area.rs`.
 
 ### GestureDetector Widget `⚠️ Unstable`
 

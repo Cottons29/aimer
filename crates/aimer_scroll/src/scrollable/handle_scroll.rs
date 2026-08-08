@@ -4,7 +4,10 @@ use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_events::pointer::PointerSource;
 use aimer_utils::AnimInstant;
 use aimer_widget::base::BuildContext;
-use aimer_widget::{Element, EventElement, EventResult, LayoutElement, PointerKey, VisitorElement};
+use aimer_widget::{
+    Element, EventElement, EventResult, LayoutElement, PointerKey, VisitorElement,
+    is_pointer_claimed,
+};
 
 use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
@@ -51,6 +54,25 @@ fn pending_content_drag_wins(
             dx.abs() > threshold && dx.abs() > dy.abs() * DRAG_AXIS_DOMINANCE_RATIO
         }
     }
+}
+
+/// Whether the gesture of `pointer` is still free to become a scroll.
+///
+/// A press inside a scroll view is ambiguous — it could be a tap, or the start
+/// of a scroll — so the view arms a pending drag and takes the gesture from
+/// whoever was under the finger as soon as it travels far enough. That is right
+/// for a button and wrong for a descendant that is already dragging something of
+/// its own: dragging across text to select it, or moving a selection knob. Such
+/// a descendant [claims](aimer_widget::pointer_claim) the pointer, and a claimed
+/// pointer is not available here, which is what lets text inside a scroll view
+/// be selected at all.
+///
+/// A pointer capture is deliberately *not* consulted: every gesture recognizer
+/// captures on press, so refusing to scroll over anything that captured would
+/// make a scroll view full of buttons unscrollable.
+#[inline]
+fn content_drag_allowed(pointer: PointerKey) -> bool {
+    !is_pointer_claimed(pointer)
 }
 
 fn pointer_drag_delta(
@@ -152,6 +174,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         let pending_content_drag_won = match event {
             ElementEvent::PointerMove(pointer)
                 if mode_before == DragMode::Pending
+                    && content_drag_allowed(PointerKey::new(pointer.source, pointer.id))
                     && self
                         .ctrl
                         .active_touch_id
@@ -408,6 +431,20 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 // A fresh touch/click stops the in-flight release fling.
                 self.ctrl.cancel_fling();
                 self.ctrl.momentum_start_time.set(None);
+
+                if mode == DragMode::Pending
+                    && !content_drag_allowed(PointerKey::new(pointer.source, pointer.id))
+                {
+                    // A descendant is already dragging with this pointer — text
+                    // being selected, a selection knob being moved. Arming a
+                    // pending drag would end that gesture the moment the finger
+                    // passed the threshold, so the press is left entirely to the
+                    // child and this scrollable forgets the pointer.
+                    self.ctrl.drag_mode.set(DragMode::None);
+                    self.ctrl.last_pointer_pos.set(None);
+                    self.ctrl.active_touch_id.set(None);
+                    return child_result;
+                }
 
                 self.ctrl.drag_mode.set(mode);
                 self.ctrl.last_pointer_pos.set(Some(*p));
@@ -692,10 +729,12 @@ impl<E: Element> LayoutElement for RawScrollableContainer<E> {
 mod tests {
     use aimer_attribute::Vec2d;
     use aimer_events::element::{ElementEvent, ScrollDeltaKind, TouchPhase};
+    use aimer_events::pointer::PointerSource;
+    use aimer_widget::PointerKey;
 
     use super::{
-        child_dispatch_position, child_route_allowed, drag_start_threshold, owns_pointer,
-        pending_content_drag_wins, pointer_drag_delta,
+        child_dispatch_position, child_route_allowed, content_drag_allowed, drag_start_threshold,
+        owns_pointer, pending_content_drag_wins, pointer_drag_delta,
     };
     use crate::ScrollAxis;
 
@@ -810,5 +849,28 @@ mod tests {
     #[test]
     fn child_inside_viewport_uses_normal_hit_testing() {
         assert!(child_route_allowed(true, false, false));
+    }
+
+    #[test]
+    fn a_pointer_claimed_by_a_descendant_cannot_become_a_scroll() {
+        let pointer = PointerKey::new(PointerSource::Touch, 7);
+        assert!(content_drag_allowed(pointer));
+
+        aimer_widget::claim_pointer(pointer);
+
+        assert!(
+            !content_drag_allowed(pointer),
+            "a text being selected owns this gesture; stealing it would end the selection"
+        );
+        assert!(
+            content_drag_allowed(PointerKey::new(PointerSource::Touch, 8)),
+            "another finger is unaffected"
+        );
+
+        aimer_widget::release_pointer(pointer);
+        assert!(
+            content_drag_allowed(pointer),
+            "the gesture is over, so the next drag of that pointer scrolls again"
+        );
     }
 }

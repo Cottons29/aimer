@@ -71,3 +71,41 @@ pub fn hide_keyboard() {
         );
     });
 }
+
+#[cfg(target_os = "android")]
+pub fn sync_text_state(
+    session_id: u64,
+    revision: u64,
+    text: &str,
+    selection: (usize, usize),
+    composing: Option<(usize, usize)>,
+    secure: bool,
+    input_kind: i32,
+) {
+    use jni::objects::JValue;
+
+    with_activity(|env, activity| {
+        let Ok(text) = env.new_string(text) else {
+            return;
+        };
+        let (composing_start, composing_end) = composing
+            .map(|(start, end)| (start as i32, end as i32))
+            .unwrap_or((-1, -1));
+        let _ = env.call_method(
+            activity,
+            jni::jni_str!("syncTextState"),
+            jni::jni_sig!("(JJLjava/lang/String;IIIIZI)V"),
+            &[
+                JValue::Long(session_id as i64),
+                JValue::Long(revision as i64),
+                JValue::Object(&text),
+                JValue::Int(selection.0 as i32),
+                JValue::Int(selection.1 as i32),
+                JValue::Int(composing_start),
+                JValue::Int(composing_end),
+                JValue::Bool(secure),
+                JValue::Int(input_kind),
+            ],
+        );
+    });
+}

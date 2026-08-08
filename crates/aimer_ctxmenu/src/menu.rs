@@ -1,576 +1,454 @@
-//! The controller: what is open, where it is, and what a press on it did.
+//! The menu itself: an ordinary widget, presented through the modal host.
 
-use std::cell::{Cell, RefCell};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
-use aimer_events::element::ElementEvent;
-use aimer_modal::{OverlayLayer, OverlayLayerHandle};
-use aimer_widget::PointerKey;
-use aimer_widget::base::{BuildContext, WindowHandle};
-use aimer_widget::EventResult;
+use aimer_attribute::{Bounds, Vec2d};
+use aimer_modal::{AnchorHandle, Floating, ModalAnimation, ModalHandle};
+use aimer_widget::base::{BuildContext, Color};
+use aimer_widget::{AnyElement, AnyWidget, Widget};
 
+use crate::dismiss::ContextMenuDismiss;
 use crate::item::ContextMenuItem;
-use crate::layout::{ContextMenuAnchor, ContextMenuLayout, ContextMenuStyle};
+use crate::panel::RawContextMenuPanel;
+use crate::rows::ContextMenuRows;
+use crate::shape::ContextMenuShape;
+use crate::style::ContextMenuStyle;
 
-/// Where an open menu keeps finding its anchor.
+/// A context menu: a styled panel of verbs, pinned to what it acts on.
 ///
-/// A menu opened at a right-click stays where the click was, so its anchor is a
-/// [`Fixed`] point. A menu offered above something that moves — a selection
-/// being adjusted by a dragged handle — has to be re-placed every frame, so its
-/// anchor is [`Tracked`]: a closure the painter asks each time, which also says
-/// when the thing is gone and the menu should retire.
+/// `ContextMenu` is a normal widget. Presenting it with
+/// [`show`](ContextMenu::show) hands it to [`aimer_modal::Floating`], which
+/// places it against its anchor above every clipping ancestor, closes it on a
+/// press outside or on `Escape`, and keeps it following an anchor that moves.
+/// Nothing about it is special-cased for text: any widget that wants to offer
+/// verbs about the thing under the pointer can open one.
 ///
-/// [`Fixed`]: ContextMenuAnchorSource::Fixed
-/// [`Tracked`]: ContextMenuAnchorSource::Tracked
-#[derive(Clone)]
-pub enum ContextMenuAnchorSource {
-    /// An anchor decided once, when the menu opened.
-    Fixed(ContextMenuAnchor),
-    /// An anchor asked for again on every frame; `None` retires the menu.
-    Tracked(Rc<dyn Fn() -> Option<ContextMenuAnchor>>),
-}
-
-impl ContextMenuAnchorSource {
-    /// The anchor as it stands now.
-    #[inline]
-    pub fn resolve(&self) -> Option<ContextMenuAnchor> {
-        match self {
-            Self::Fixed(anchor) => Some(*anchor),
-            Self::Tracked(source) => source(),
-        }
-    }
-}
-
-/// Everything needed to open a menu, in one value.
+/// Its content is its [`items`](ContextMenu::items) unless it is given a
+/// [`child`](ContextMenu::child), which replaces them — the style's panel and
+/// padding are drawn around either. Two shapes, chosen by the pointer that
+/// asked (see [`ContextMenuShape`]), and every colour, radius, row height and
+/// font in [`ContextMenuStyle`].
 ///
 /// # Examples
 ///
-/// ```
+/// The usual case: a few verbs, in the shape the pointer expects.
+///
+/// ```no_run
 /// use aimer_attribute::Vec2d;
-/// use aimer_ctxmenu::{ContextMenuAnchor, ContextMenuItem, ContextMenuRequest, ContextMenuStyle};
+/// use aimer_ctxmenu::{ContextMenu, ContextMenuItem};
+/// use aimer_events::pointer::PointerSource;
 ///
-/// let request = ContextMenuRequest::new()
-///     .style(ContextMenuStyle::List)
-///     .at(ContextMenuAnchor::Point(Vec2d { x: 12.0, y: 30.0 }))
-///     .items(vec![ContextMenuItem::new("Copy")])
-///     .on_select(|index| assert_eq!(index, 0));
+/// # fn demo(source: PointerSource, at: Vec2d) {
+/// let handle = ContextMenu::for_source(source)
+///     .at(at)
+///     .items(vec![
+///         ContextMenuItem::new("Copy").on_select(|| println!("copied")),
+///         ContextMenuItem::new("Select All").on_select(|| println!("all")),
+///     ])
+///     .show();
 ///
-/// assert_eq!(request.style_value(), ContextMenuStyle::List);
+/// handle.dismiss();
+/// # }
 /// ```
-#[derive(Clone)]
-pub struct ContextMenuRequest {
+///
+/// Anything else, by giving it a child instead of items:
+///
+/// ```no_run
+/// use aimer_container::SizedBox;
+/// use aimer_ctxmenu::{ContextMenu, ContextMenuShape, ContextMenuStyle};
+/// use aimer_style::BoxDecoration;
+/// use aimer_widget::base::Color;
+///
+/// let _handle = ContextMenu::new()
+///     .shape(ContextMenuShape::List)
+///     .style(
+///         ContextMenuStyle::list().panel(
+///             BoxDecoration::new()
+///                 .background_color(Color::Rgba(24, 24, 27, 250))
+///                 .border_radius(12.0),
+///         ),
+///     )
+///     .child(SizedBox::new().width(220).height(120))
+///     .show();
+/// ```
+pub struct ContextMenu {
+    shape: ContextMenuShape,
     style: ContextMenuStyle,
-    anchor: ContextMenuAnchorSource,
+    anchor: AnchorHandle,
     items: Vec<ContextMenuItem>,
-    on_select: Rc<dyn Fn(usize)>,
+    on_select: Option<Rc<dyn Fn(usize)>>,
+    dismiss: ContextMenuDismiss,
+    dismiss_on_select: bool,
+    barrier_color: Color,
+    animation: Option<ModalAnimation>,
+    /// Custom content, or `None` to build rows from the items.
+    child: Option<AnyWidget>,
 }
 
-impl Default for ContextMenuRequest {
+impl Default for ContextMenu {
     #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ContextMenuRequest {
-    /// An empty pill anchored at the origin, doing nothing when chosen.
+impl ContextMenu {
+    /// Creates an empty menu in the default shape, anchored nowhere yet.
     #[inline]
     pub fn new() -> Self {
         Self {
-            style: ContextMenuStyle::Pill,
-            anchor: ContextMenuAnchorSource::Fixed(ContextMenuAnchor::Point(Default::default())),
+            shape: ContextMenuShape::default(),
+            style: ContextMenuStyle::default(),
+            anchor: AnchorHandle::new(),
             items: Vec::new(),
-            on_select: Rc::new(|_| {}),
+            on_select: None,
+            dismiss: ContextMenuDismiss::new(),
+            dismiss_on_select: true,
+            barrier_color: Color::Transparent,
+            animation: None,
+            child: None,
         }
     }
 
-    /// Sets the shape the menu is drawn in.
+    /// Creates a menu in the shape the pointer that asked for it expects.
+    #[inline]
+    pub fn for_source(source: aimer_events::pointer::PointerSource) -> Self {
+        Self::new().shape(ContextMenuShape::for_source(source))
+    }
+
+    /// Sets the shape, and with it the default look of that shape.
+    ///
+    /// Call [`ContextMenu::style`] *after* this to keep a custom look.
+    #[inline]
+    pub fn shape(mut self, shape: ContextMenuShape) -> Self {
+        self.shape = shape;
+        self.style = ContextMenuStyle::for_shape(shape);
+        self
+    }
+
+    /// Sets the look of the menu.
     #[inline]
     pub fn style(mut self, style: ContextMenuStyle) -> Self {
         self.style = style;
         self
     }
 
-    /// Pins the menu to an anchor decided now.
+    /// Pins the menu to a point — where a right-click landed.
     #[inline]
-    pub fn at(mut self, anchor: ContextMenuAnchor) -> Self {
-        self.anchor = ContextMenuAnchorSource::Fixed(anchor);
+    pub fn at(self, at: Vec2d) -> Self {
+        self.around(Bounds::new(at.x, at.y, 0.0, 0.0))
+    }
+
+    /// Pins the menu clear of a rectangle — a selection, a chip, a row.
+    #[inline]
+    pub fn around(self, bounds: Bounds) -> Self {
+        let anchor = AnchorHandle::new();
+        anchor.set_bounds(bounds);
+        self.anchor(anchor)
+    }
+
+    /// Pins the menu to a rectangle that keeps moving.
+    ///
+    /// The panel is re-placed on every frame, so a menu anchored to a selection
+    /// being adjusted, or to a row inside a `Scrollable`, follows it.
+    #[inline]
+    pub fn anchor(mut self, anchor: AnchorHandle) -> Self {
+        self.anchor = anchor;
         self
     }
 
-    /// Places the menu against an anchor asked for on every frame.
-    #[inline]
-    pub fn tracking(mut self, anchor: impl Fn() -> Option<ContextMenuAnchor> + 'static) -> Self {
-        self.anchor = ContextMenuAnchorSource::Tracked(Rc::new(anchor));
-        self
-    }
-
-    /// Sets the rows, in the order they are drawn.
+    /// Sets the verbs, in the order they are drawn.
     #[inline]
     pub fn items(mut self, items: Vec<ContextMenuItem>) -> Self {
         self.items = items;
         self
     }
 
-    /// Sets what happens when a row is chosen, by its index.
+    /// Appends one verb.
     #[inline]
-    pub fn on_select(mut self, on_select: impl Fn(usize) + 'static) -> Self {
-        self.on_select = Rc::new(on_select);
+    pub fn item(mut self, item: ContextMenuItem) -> Self {
+        self.items.push(item);
         self
     }
 
-    /// The shape the menu will be drawn in.
-    #[inline]
-    pub const fn style_value(&self) -> ContextMenuStyle {
-        self.style
-    }
-}
-
-/// An openable context menu, owned by whatever offers it.
-///
-/// One instance is one *place* a menu can appear — a text selection, a list row
-/// — reopened as often as the user asks. Opening installs an overlay painter on
-/// the modal host, which is what keeps the panel clear of every clipping
-/// ancestor a `Scrollable` puts in its way, and closing takes it down again.
-///
-/// The menu does not route events itself: whoever owns it must offer every
-/// pointer event to [`ContextMenu::handle_event`] *before* handling it, because
-/// the panel is drawn on top of whatever it belongs to.
-///
-/// # Examples
-///
-/// ```no_run
-/// use std::rc::Rc;
-///
-/// use aimer_attribute::Vec2d;
-/// use aimer_ctxmenu::{
-///     ContextMenu, ContextMenuAnchor, ContextMenuItem, ContextMenuRequest, ContextMenuStyle,
-/// };
-/// use aimer_widget::base::WindowHandle;
-///
-/// # fn demo(window: WindowHandle) {
-/// let menu = ContextMenu::new(window);
-/// menu.show(
-///     ContextMenuRequest::new()
-///         .style(ContextMenuStyle::List)
-///         .at(ContextMenuAnchor::Point(Vec2d { x: 20.0, y: 40.0 }))
-///         .items(vec![ContextMenuItem::new("Copy")])
-///         .on_select(|index| println!("chose {index}")),
-/// );
-/// assert!(menu.is_visible());
-/// # }
-/// ```
-pub struct ContextMenu {
-    pub(crate) window: WindowHandle,
-    pub(crate) items: RefCell<Vec<ContextMenuItem>>,
-    pub(crate) style: Cell<ContextMenuStyle>,
-    pub(crate) anchor: RefCell<ContextMenuAnchorSource>,
-    pub(crate) on_select: RefCell<Rc<dyn Fn(usize)>>,
-    pub(crate) visible: Cell<bool>,
-    pub(crate) layout: RefCell<Option<ContextMenuLayout>>,
-    pub(crate) pressed: Cell<Option<usize>>,
-    pub(crate) hovered: Cell<Option<usize>>,
-    overlay: Cell<Option<OverlayLayerHandle>>,
-}
-
-impl Drop for ContextMenu {
-    fn drop(&mut self) {
-        if let Some(overlay) = self.overlay.take() {
-            overlay.remove();
-        }
-    }
-}
-
-impl ContextMenu {
-    /// Creates a closed menu painting into `window`.
-    pub fn new(window: WindowHandle) -> Rc<Self> {
-        Rc::new(Self {
-            window,
-            items: RefCell::new(Vec::new()),
-            style: Cell::new(ContextMenuStyle::Pill),
-            anchor: RefCell::new(ContextMenuAnchorSource::Fixed(ContextMenuAnchor::Point(
-                Default::default(),
-            ))),
-            on_select: RefCell::new(Rc::new(|_| {})),
-            visible: Cell::new(false),
-            layout: RefCell::new(None),
-            pressed: Cell::new(None),
-            hovered: Cell::new(None),
-            overlay: Cell::new(None),
-        })
-    }
-
-    /// Opens the menu, replacing whatever it was showing before.
-    pub fn show(self: &Rc<Self>, request: ContextMenuRequest) {
-        self.style.set(request.style);
-        *self.anchor.borrow_mut() = request.anchor;
-        *self.items.borrow_mut() = request.items;
-        *self.on_select.borrow_mut() = request.on_select;
-        self.pressed.set(None);
-        self.hovered.set(None);
-        *self.layout.borrow_mut() = None;
-        self.visible.set(true);
-        self.install_overlay();
-        self.window.request_redraw();
-    }
-
-    /// Closes the menu and takes its painter down.
+    /// Sets what happens when a verb is chosen, by its index.
     ///
-    /// Repeated calls are harmless, which is what lets every dismissal path —
-    /// a press elsewhere, a cancelled gesture, the thing the menu belonged to
-    /// going away — call it without asking first.
-    pub fn hide(&self) {
-        let was_visible = self.visible.replace(false);
-        self.pressed.set(None);
-        self.hovered.set(None);
-        *self.layout.borrow_mut() = None;
-        if let Some(overlay) = self.overlay.take() {
-            overlay.remove();
-        }
-        if was_visible {
-            self.window.request_redraw();
-        }
-    }
-
-    /// Whether the menu is open.
+    /// This runs *after* the chosen item's own action, so a menu may use either
+    /// or both.
     #[inline]
-    pub fn is_visible(&self) -> bool {
-        self.visible.get()
+    pub fn on_select(mut self, on_select: impl Fn(usize) + 'static) -> Self {
+        self.on_select = Some(Rc::new(on_select));
+        self
     }
 
-    /// The shape the open menu is drawn in.
-    #[inline]
-    pub fn style(&self) -> ContextMenuStyle {
-        self.style.get()
-    }
-
-    /// Where the panel and its rows were last placed.
-    #[inline]
-    pub fn layout(&self) -> Option<ContextMenuLayout> {
-        self.layout.borrow().clone()
-    }
-
-    /// The window the menu paints into.
-    #[inline]
-    pub fn window(&self) -> &WindowHandle {
-        &self.window
-    }
-
-    /// Places the menu from pre-measured label widths, reporting whether it
-    /// stays open.
+    /// Controls whether choosing a verb closes the menu.
     ///
-    /// Painting calls this once it has measured the labels. It is public
-    /// because placement is the whole of a menu's behaviour that a headless
-    /// test can reach: there is no canvas to measure with, but the widths a
-    /// canvas would return are just numbers.
-    pub fn place(&self, item_widths: &[f32], viewport_width: f32, viewport_height: f32) -> bool {
-        if !self.visible.get() {
-            return false;
+    /// Closing is the default, and is what `Copy` wants. A verb that only
+    /// *reshapes* what the menu acts on — `Select All` — reads better with the
+    /// menu left standing.
+    #[inline]
+    pub fn dismiss_on_select(mut self, dismiss_on_select: bool) -> Self {
+        self.dismiss_on_select = dismiss_on_select;
+        self
+    }
+
+    /// Sets the colour washed over the rest of the window while the menu is
+    /// open.
+    ///
+    /// Transparent by default: a context menu is about something the user can
+    /// still see.
+    #[inline]
+    pub fn barrier_color(mut self, barrier_color: Color) -> Self {
+        self.barrier_color = barrier_color;
+        self
+    }
+
+    /// Gives the menu an enter and exit transition.
+    #[inline]
+    pub fn animation(mut self, animation: ModalAnimation) -> Self {
+        self.animation = Some(animation);
+        self
+    }
+
+    /// Replaces the rows with content of one's own.
+    ///
+    /// The style's panel and padding are still drawn around it, and the content
+    /// closes the menu through [`ContextMenu::dismiss_handle`].
+    #[inline]
+    pub fn child<W: Widget + 'static>(mut self, child: W) -> Self {
+        self.child = Some(child.boxed());
+        self
+    }
+
+    /// The handle that closes this menu once it is open.
+    ///
+    /// Custom content needs it: a button inside a menu can capture the handle
+    /// while the menu is still being described and close the menu from its own
+    /// callback.
+    #[inline]
+    pub fn dismiss_handle(&self) -> ContextMenuDismiss {
+        self.dismiss.clone()
+    }
+
+    /// The shape the menu is drawn in.
+    #[inline]
+    pub const fn shape_value(&self) -> ContextMenuShape {
+        self.shape
+    }
+
+    /// The look of the menu.
+    #[inline]
+    pub fn style_value(&self) -> ContextMenuStyle {
+        self.style.clone()
+    }
+
+    /// The rectangle the menu is pinned to.
+    #[inline]
+    pub fn anchor_value(&self) -> AnchorHandle {
+        self.anchor.clone()
+    }
+
+    /// How many verbs the menu offers.
+    #[inline]
+    pub fn item_count(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Whether the menu was given content of its own instead of rows.
+    #[inline]
+    pub fn has_child(&self) -> bool {
+        self.child.is_some()
+    }
+
+    /// Opens the menu above the whole application and returns its handle.
+    ///
+    /// The panel is placed against the anchor by [`aimer_modal::Floating`], so
+    /// it is never clipped by an ancestor, and it closes on a press outside it
+    /// or on `Escape` without the caller routing a single event.
+    pub fn show(self) -> ModalHandle {
+        let dismiss = self.dismiss.clone();
+        let anchor = self.anchor.clone();
+        let placement = self.shape.placement(self.style.gap);
+        let barrier_color = self.barrier_color;
+        let animation = self.animation;
+
+        let mut floating = Floating::new()
+            .anchor(anchor)
+            .placement(placement)
+            .viewport_margin(self.style.screen_margin)
+            .barrier_color(barrier_color);
+        if let Some(animation) = animation {
+            floating = floating.animation(animation);
         }
-        let Some(anchor) = self.anchor.borrow().resolve() else {
-            // The thing the menu hung off is gone; so is the menu.
-            self.visible.set(false);
-            self.pressed.set(None);
-            *self.layout.borrow_mut() = None;
-            return false;
+        let handle = floating.child(self).show();
+        dismiss.claim(handle.clone());
+        handle
+    }
+
+    /// The rows the items produce, in this menu's shape and look.
+    fn rows(&self) -> ContextMenuRows {
+        let mut rows = ContextMenuRows::new()
+            .shape(self.shape)
+            .style(self.style.clone())
+            .items(self.items.clone())
+            .dismiss_with(self.dismiss.clone())
+            .dismiss_on_select(self.dismiss_on_select);
+        if let Some(on_select) = &self.on_select {
+            let on_select = Rc::clone(on_select);
+            rows = rows.on_select(move |index| on_select(index));
+        }
+        rows
+    }
+}
+
+impl Widget for ContextMenu {
+    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        let content = match &self.child {
+            Some(child) => child.to_element(ctx),
+            None => self.rows().to_element(ctx),
         };
-        *self.layout.borrow_mut() = Some(ContextMenuLayout::place(
-            self.style.get(),
-            anchor,
-            viewport_width,
-            viewport_height,
-            item_widths,
-        ));
-        true
+        RawContextMenuPanel::element(content, self.style.clone())
     }
 
-    /// The size of the window in logical pixels, which is what the panel is
-    /// kept inside of.
-    pub(crate) fn viewport(&self) -> (f32, f32) {
-        let physical = self.window.inner_size();
-        let scale = self.window.scale_factor() as f32;
-        let scale = if scale > 0.0 { scale } else { 1.0 };
-        (
-            physical.width as f32 / scale,
-            physical.height as f32 / scale,
-        )
-    }
-
-    /// Offers a pointer event to the open menu before anything underneath sees
-    /// it.
-    ///
-    /// Returns [`Some`] when the menu took the event, in which case the caller
-    /// must return that result unchanged and do nothing else. A press that
-    /// missed the panel closes the menu and is handed back as [`None`], so it
-    /// goes on to mean whatever it would have meant without the menu open —
-    /// the behaviour every platform's menus have.
-    pub fn handle_event(self: &Rc<Self>, event: &ElementEvent) -> Option<EventResult> {
-        if !self.visible.get() {
-            return None;
-        }
-        match event {
-            ElementEvent::PointerDown(info) => {
-                let layout = self.layout()?;
-                if !layout.contains(info.pos.x, info.pos.y) {
-                    self.hide();
-                    return None;
-                }
-                let pointer = PointerKey::new(info.source, info.id);
-                self.pressed.set(self.enabled_at(&layout, info.pos.x, info.pos.y));
-                self.window.request_redraw();
-                Some(EventResult::consumed().with_pointer_capture(pointer))
-            }
-            ElementEvent::PointerMove(info) => {
-                let layout = self.layout()?;
-                let over = self.enabled_at(&layout, info.pos.x, info.pos.y);
-                if self.hovered.replace(over) != over {
-                    self.window.request_redraw();
-                }
-                // A finger sliding off the row it pressed must un-arm it, the
-                // way every button does.
-                if self.pressed.get().is_some() {
-                    return Some(EventResult::consumed());
-                }
-                layout
-                    .contains(info.pos.x, info.pos.y)
-                    .then(EventResult::consumed)
-            }
-            ElementEvent::PointerUp(info) => {
-                let layout = self.layout()?;
-                let pressed = self.pressed.take();
-                let inside = layout.contains(info.pos.x, info.pos.y);
-                if !inside && pressed.is_none() {
-                    return None;
-                }
-                let chosen = pressed
-                    .filter(|index| self.enabled_at(&layout, info.pos.x, info.pos.y) == Some(*index));
-                self.window.request_redraw();
-                if let Some(index) = chosen {
-                    // The callback decides what becomes of the menu: a verb
-                    // that finishes the job closes it, one that reshapes what
-                    // the menu acts on leaves it up.
-                    let on_select = Rc::clone(&self.on_select.borrow());
-                    on_select(index);
-                }
-                Some(EventResult::consumed())
-            }
-            ElementEvent::Cancel => {
-                self.pressed.set(None);
-                self.hovered.set(None);
-                None
-            }
-            _ => None,
-        }
-    }
-
-    /// The index of the *choosable* row under a position.
-    fn enabled_at(&self, layout: &ContextMenuLayout, x: f32, y: f32) -> Option<usize> {
-        let index = layout.action_at(x, y)?;
-        self.items
-            .borrow()
-            .get(index)
-            .filter(|item| item.is_enabled())
-            .map(|_| index)
-    }
-
-    /// Installs the painter that draws the panel above every clip, once.
-    fn install_overlay(self: &Rc<Self>) {
-        if self.overlay.get().is_some() {
-            return;
-        }
-        let menu: Weak<Self> = Rc::downgrade(self);
-        let handle = OverlayLayer::install(Rc::new(move |ctx: &BuildContext| {
-            let Some(menu) = menu.upgrade() else {
-                return false;
-            };
-            if !menu.is_visible() || !crate::paint::paint(&menu, ctx) {
-                menu.overlay.set(None);
-                menu.visible.set(false);
-                return false;
-            }
-            true
-        }));
-        self.overlay.set(Some(handle));
+    fn debug_name(&self) -> &'static str {
+        "ContextMenu"
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use aimer_attribute::{Bounds, Vec2d};
-    use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
+    use aimer_container::ZeroSizedBox;
+    use aimer_events::pointer::PointerSource;
+    use aimer_modal::{FloatingAlign, FloatingSide};
 
     use super::*;
 
-    fn window() -> WindowHandle {
-        WindowHandle::headless(winit::dpi::PhysicalSize::new(400, 800), 1.0)
-    }
-
-    fn menu(items: Vec<ContextMenuItem>, chosen: Rc<Cell<Option<usize>>>) -> Rc<ContextMenu> {
-        let menu = ContextMenu::new(window());
-        menu.show(
-            ContextMenuRequest::new()
-                .style(ContextMenuStyle::List)
-                .at(ContextMenuAnchor::Point(Vec2d { x: 40.0, y: 60.0 }))
-                .items(items)
-                .on_select(move |index| chosen.set(Some(index))),
+    #[test]
+    fn a_touch_menu_is_a_pill_and_a_mouse_menu_is_a_list() {
+        assert_eq!(
+            ContextMenu::for_source(PointerSource::Touch).shape_value(),
+            ContextMenuShape::Pill
         );
-        menu.place(&[40.0, 70.0], 400.0, 800.0);
-        menu
-    }
-
-    fn two_items() -> Vec<ContextMenuItem> {
-        vec![
-            ContextMenuItem::new("Copy"),
-            ContextMenuItem::new("Select All"),
-        ]
-    }
-
-    fn press(x: f32, y: f32) -> ElementEvent {
-        ElementEvent::PointerDown(PointerInfo::new(
-            Vec2d { x, y },
-            PointerSource::Mouse,
-            0,
-            PointerButton::Primary,
-        ))
-    }
-
-    fn release(x: f32, y: f32) -> ElementEvent {
-        ElementEvent::PointerUp(PointerInfo::new(
-            Vec2d { x, y },
-            PointerSource::Mouse,
-            0,
-            PointerButton::Primary,
-        ))
-    }
-
-    fn centre(item: Bounds) -> (f32, f32) {
-        (item.x + item.width * 0.5, item.y + item.height * 0.5)
-    }
-
-    #[test]
-    fn choosing_a_row_reports_its_index() {
-        let chosen = Rc::new(Cell::new(None));
-        let menu = menu(two_items(), Rc::clone(&chosen));
-        let (x, y) = centre(menu.layout().unwrap().items[1]);
-
-        assert!(menu.handle_event(&press(x, y)).is_some());
-        assert!(menu.handle_event(&release(x, y)).is_some());
-
-        assert_eq!(chosen.get(), Some(1));
-    }
-
-    #[test]
-    fn a_release_that_slid_off_the_row_chooses_nothing() {
-        let chosen = Rc::new(Cell::new(None));
-        let menu = menu(two_items(), Rc::clone(&chosen));
-        let (x, y) = centre(menu.layout().unwrap().items[0]);
-
-        menu.handle_event(&press(x, y));
-        menu.handle_event(&release(300.0, 700.0));
-
-        assert_eq!(chosen.get(), None);
-    }
-
-    #[test]
-    fn a_disabled_row_swallows_the_press_but_runs_nothing() {
-        let chosen = Rc::new(Cell::new(None));
-        let menu = menu(
-            vec![
-                ContextMenuItem::new("Copy").enabled(false),
-                ContextMenuItem::new("Select All"),
-            ],
-            Rc::clone(&chosen),
+        assert_eq!(
+            ContextMenu::for_source(PointerSource::Mouse).shape_value(),
+            ContextMenuShape::List
         );
-        let (x, y) = centre(menu.layout().unwrap().items[0]);
+    }
+
+    #[test]
+    fn choosing_a_shape_brings_that_shapes_look_with_it() {
+        let pill = ContextMenu::new().shape(ContextMenuShape::Pill);
+        let list = ContextMenu::new().shape(ContextMenuShape::List);
+
+        assert_eq!(
+            pill.style_value().row_height,
+            ContextMenuStyle::pill().row_height
+        );
+        assert_eq!(
+            list.style_value().row_height,
+            ContextMenuStyle::list().row_height
+        );
+    }
+
+    #[test]
+    fn a_custom_look_survives_being_given_a_child() {
+        let menu = ContextMenu::new()
+            .shape(ContextMenuShape::List)
+            .style(ContextMenuStyle::list().row_height(44.0))
+            .child(ZeroSizedBox);
+
+        assert!(menu.has_child());
+        assert_eq!(menu.style_value().row_height, 44.0);
+        assert_eq!(menu.shape_value(), ContextMenuShape::List);
+    }
+
+    #[test]
+    fn a_menu_shows_its_items_until_it_is_given_a_child() {
+        let items = ContextMenu::new().item(ContextMenuItem::new("Copy"));
+
+        assert_eq!(items.item_count(), 1);
+        assert!(!items.has_child(), "so the rows are the content");
+        assert!(items.child(ZeroSizedBox).has_child());
+    }
+
+    #[test]
+    fn a_point_anchor_is_the_click_itself() {
+        let menu = ContextMenu::new().at(Vec2d { x: 40.0, y: 60.0 });
+
+        assert_eq!(
+            menu.anchor_value().bounds(),
+            Some(Bounds::new(40.0, 60.0, 0.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn a_rectangle_anchor_is_kept_clear_of() {
+        let menu = ContextMenu::new().around(Bounds::new(10.0, 20.0, 100.0, 16.0));
+
+        assert_eq!(
+            menu.anchor_value().bounds(),
+            Some(Bounds::new(10.0, 20.0, 100.0, 16.0))
+        );
+    }
+
+    #[test]
+    fn a_tracked_anchor_is_followed_rather_than_copied() {
+        let anchor = AnchorHandle::new();
+        let menu = ContextMenu::new().anchor(anchor.clone());
+
+        anchor.set_bounds(Bounds::new(1.0, 2.0, 3.0, 4.0));
+
+        assert_eq!(
+            menu.anchor_value().bounds(),
+            Some(Bounds::new(1.0, 2.0, 3.0, 4.0)),
+            "the menu reads the handle, it does not snapshot it"
+        );
+    }
+
+    #[test]
+    fn the_shape_decides_where_the_panel_hangs() {
+        let pill = ContextMenu::new().shape(ContextMenuShape::Pill);
+        let placement = pill.shape_value().placement(pill.style_value().gap);
+
+        assert_eq!(placement.side_value(), FloatingSide::Top);
+        assert_eq!(placement.align_value(), FloatingAlign::Center);
+
+        let list = ContextMenu::new().shape(ContextMenuShape::List);
+        let placement = list.shape_value().placement(list.style_value().gap);
+
+        assert_eq!(placement.side_value(), FloatingSide::Bottom);
+        assert_eq!(placement.gap_value(), 0.0);
+    }
+
+    #[test]
+    fn showing_a_menu_claims_its_dismissal_handle() {
+        let menu = ContextMenu::new()
+            .at(Vec2d { x: 10.0, y: 10.0 })
+            .item(ContextMenuItem::new("Copy"));
+        let dismiss = menu.dismiss_handle();
+
+        assert!(!dismiss.is_claimed(), "nothing is open yet");
+
+        let handle = menu.show();
 
         assert!(
-            menu.handle_event(&press(x, y)).is_some(),
-            "the panel still takes the press"
+            dismiss.is_claimed(),
+            "so a row chosen inside the menu can close it"
         );
-        menu.handle_event(&release(x, y));
-
-        assert_eq!(chosen.get(), None);
-        assert!(menu.is_visible(), "and the menu stays up");
+        assert!(handle.dismiss());
+        assert!(!dismiss.dismiss(), "and it closes only once");
     }
 
     #[test]
-    fn a_press_outside_the_panel_closes_it_and_falls_through() {
-        let chosen = Rc::new(Cell::new(None));
-        let menu = menu(two_items(), Rc::clone(&chosen));
+    fn a_menu_with_custom_content_is_presented_the_same_way() {
+        let menu = ContextMenu::new()
+            .at(Vec2d { x: 10.0, y: 10.0 })
+            .child(ZeroSizedBox);
+        let dismiss = menu.dismiss_handle();
 
-        assert!(
-            menu.handle_event(&press(300.0, 700.0)).is_none(),
-            "the press still means what it meant"
-        );
-        assert!(!menu.is_visible());
-    }
+        let handle = menu.show();
 
-    #[test]
-    fn a_closed_menu_takes_no_events_at_all() {
-        let chosen = Rc::new(Cell::new(None));
-        let menu = menu(two_items(), Rc::clone(&chosen));
-        let (x, y) = centre(menu.layout().unwrap().items[0]);
-        menu.hide();
-
-        assert!(menu.handle_event(&press(x, y)).is_none());
-    }
-
-    #[test]
-    fn choosing_leaves_the_menu_open_for_the_callback_to_decide() {
-        let chosen = Rc::new(Cell::new(None));
-        let menu = menu(two_items(), Rc::clone(&chosen));
-        let (x, y) = centre(menu.layout().unwrap().items[0]);
-
-        menu.handle_event(&press(x, y));
-        menu.handle_event(&release(x, y));
-
-        assert!(
-            menu.is_visible(),
-            "a verb that finishes the job closes the menu itself"
-        );
-    }
-
-    #[test]
-    fn a_menu_paints_above_every_clip_while_it_is_open() {
-        let chosen = Rc::new(Cell::new(None));
-        let menu = menu(two_items(), Rc::clone(&chosen));
-        assert!(OverlayLayer::is_installed());
-
-        menu.hide();
-
-        assert!(!OverlayLayer::is_installed());
-    }
-
-    #[test]
-    fn a_dropped_menu_leaves_no_painter_behind() {
-        let chosen = Rc::new(Cell::new(None));
-        let menu = menu(two_items(), Rc::clone(&chosen));
-
-        drop(menu);
-
-        assert!(!OverlayLayer::is_installed());
-    }
-
-    #[test]
-    fn a_tracked_anchor_that_disappears_retires_the_menu() {
-        let alive = Rc::new(Cell::new(true));
-        let menu = ContextMenu::new(window());
-        let watched = Rc::clone(&alive);
-        menu.show(
-            ContextMenuRequest::new()
-                .tracking(move || {
-                    watched
-                        .get()
-                        .then(|| ContextMenuAnchor::Rect(Bounds::new(10.0, 20.0, 30.0, 16.0)))
-                })
-                .items(two_items()),
-        );
-
-        assert!(menu.place(&[40.0, 70.0], 400.0, 800.0));
-
-        alive.set(false);
-
-        assert!(!menu.place(&[40.0, 70.0], 400.0, 800.0));
-        assert!(!menu.is_visible());
+        assert!(dismiss.is_claimed());
+        assert!(handle.dismiss());
     }
 }

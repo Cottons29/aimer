@@ -210,6 +210,9 @@ final class KeyboardForwardingTextView: UITextView, UITextViewDelegate {
             end: composingEnd,
             utf16Length: snapshot.utf16.count
         )
+        #if DEBUG
+        print("[aimer:kbd] snapshot rev=\(revision) text=\(debugQuote(snapshot)) sel=\(selection) newSession=\(newSession)")
+        #endif
         if traitsChanged && isFirstResponder {
             reloadInputViews()
         }
@@ -233,18 +236,33 @@ final class KeyboardForwardingTextView: UITextView, UITextViewDelegate {
             return
         }
 
+        // What the keyboard announced in `shouldChangeTextIn` is not always
+        // what it performed: CJK keyboards route the actual edit through
+        // marked text after announcing something else, and an announced edit
+        // may never happen at all. An announced replacement is only trusted
+        // when replaying it over the mirrored text reproduces the text the
+        // view actually holds; anything else would report an edit the user
+        // never made — a stray newline, for one, reads as the Return key on
+        // the Rust side and submits the field mid-composition.
+        let actual = textView.text ?? ""
+        let announced = pendingReplacement
+        pendingReplacement = nil
         let replacement: (range: NSRange, text: String)
-        if let pendingReplacement {
-            replacement = pendingReplacement
-        } else if (textView.text ?? "") != mirroredText {
+        if let announced, replayed(announced, on: mirroredText) == actual {
+            replacement = announced
+        } else if actual != mirroredText {
+            #if DEBUG
+            if let announced {
+                print("[aimer:kbd] dropped announced edit \(debugQuote(announced.text)) at \(announced.range)")
+            }
+            #endif
             replacement = (
                 NSRange(location: 0, length: mirroredText.utf16.count),
-                textView.text ?? ""
+                actual
             )
         } else {
             replacement = (NSRange(location: normalizedSelection(in: textView).location, length: 0), "")
         }
-        self.pendingReplacement = nil
         reportDelta(replacing: replacement.range, with: replacement.text, from: textView)
     }
 
@@ -259,8 +277,12 @@ final class KeyboardForwardingTextView: UITextView, UITextViewDelegate {
             guard let self, let textView else { return }
             self.selectionReportScheduled = false
             guard !self.isApplyingRustSnapshot,
-                  self.sessionId == scheduledSession,
-                  self.pendingReplacement == nil else { return }
+                  self.sessionId == scheduledSession else { return }
+            // An edit announced before this closure ran but never performed
+            // would block every later selection report and be misattributed
+            // to the next edit; a full runloop turn without the matching
+            // `textViewDidChange` marks it as abandoned.
+            self.pendingReplacement = nil
             let selection = self.normalizedSelection(in: textView)
             self.reportDelta(
                 replacing: NSRange(location: selection.location, length: 0),
@@ -281,6 +303,10 @@ final class KeyboardForwardingTextView: UITextView, UITextViewDelegate {
         }
 
         let replacementRange = clampedRange(range, utf16Length: mirroredText.utf16.count)
+        #if DEBUG
+        let markedLabel = composing.map { "\($0)" } ?? "none"
+        print("[aimer:kbd] delta rev=\(revision) replace=\(replacementRange) text=\(debugQuote(replacement)) sel=\(selection) marked=\(markedLabel)")
+        #endif
         let composingStart = composing?.location ?? -1
         let composingEnd = composing.map { $0.location + $0.length } ?? -1
         let utf8 = replacement.utf8
@@ -321,6 +347,26 @@ final class KeyboardForwardingTextView: UITextView, UITextViewDelegate {
         lastReportedSelection = selection
         lastReportedComposing = composing
     }
+
+    /// Replays `replacement` against `text`, or returns `nil` when its range
+    /// does not lie inside it.
+    private func replayed(_ replacement: (range: NSRange, text: String), on text: String) -> String? {
+        guard replacement.range.location != NSNotFound,
+              replacement.range.location + replacement.range.length <= text.utf16.count else {
+            return nil
+        }
+        return (text as NSString).replacingCharacters(in: replacement.range, with: replacement.text)
+    }
+
+    #if DEBUG
+    /// Quotes `text` for one line of keyboard tracing.
+    private func debugQuote(_ text: String) -> String {
+        "\"" + text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r") + "\""
+    }
+    #endif
 
     private func normalizedSelection(in textView: UITextView) -> NSRange {
         clampedRange(textView.selectedRange, utf16Length: (textView.text ?? "").utf16.count)

@@ -1,3 +1,5 @@
+#![allow(clippy::main_recursion)]
+
 pub mod api;
 mod blog_store;
 mod components;
@@ -5,11 +7,9 @@ mod router;
 mod screen;
 mod utils;
 
-use std::env::args;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
-use aimer::console::{debug, info};
 use aimer::router::Navigator;
 use aimer::*;
 
@@ -20,8 +20,8 @@ pub static TEST_STATE_UPDATED: AtomicBool = AtomicBool::new(false);
 pub static CURRENT_INDEX: AtomicUsize = AtomicUsize::new(0);
 
 // this is the entry point of the app
-#[main]
-pub fn my_app() {
+#[aimer::main]
+fn main() {
     AimerApp::start(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
         route.boxed()
     }));

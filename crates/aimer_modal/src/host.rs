@@ -132,6 +132,55 @@ impl ModalHandle {
         enqueue(ModalCommand::Dismiss(self.id));
         true
     }
+
+    /// Whether this modal is still presented.
+    ///
+    /// A modal is not only closed by its owner: the barrier, `Escape` and
+    /// [`ModalController::dismiss_top`] all close it by id, leaving the handle
+    /// none the wiser. An owner that acts on "my panel is open" — keeping a
+    /// selection alive for it, say — must ask the registry rather than trust
+    /// its own last request.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn show() -> aimer_modal::ModalHandle { unimplemented!() }
+    /// let handle = show();
+    /// assert!(handle.is_showing());
+    ///
+    /// handle.dismiss();
+    /// assert!(!handle.is_showing());
+    /// ```
+    pub fn is_showing(&self) -> bool {
+        !self.dismissed.get() && is_presented(self.id)
+    }
+}
+
+/// Whether `id` is presented, or on its way to being presented.
+///
+/// A queued `Show` counts, because a modal asked for during a frame is only
+/// built by the next one; a queued `Dismiss` does not, so an owner learns of a
+/// closure in the same frame it happened rather than one later.
+fn is_presented(id: ModalId) -> bool {
+    let closing = COMMANDS.with_borrow(|commands| {
+        commands
+            .iter()
+            .any(|command| matches!(command, ModalCommand::Dismiss(dismissed) if *dismissed == id))
+    });
+    if closing {
+        return false;
+    }
+    let queued = COMMANDS.with_borrow(|commands| {
+        commands
+            .iter()
+            .any(|command| matches!(command, ModalCommand::Show { id: shown, .. } if *shown == id))
+    });
+    queued
+        || ENTRIES.with_borrow(|entries| {
+            entries
+                .iter()
+                .any(|entry| entry.id == id && !entry.timeline.borrow().is_closing())
+        })
 }
 
 /// Access to the application-wide modal overlay.
@@ -531,6 +580,14 @@ impl ModalTimeline {
     fn finished(&self) -> bool {
         matches!(self.phase, TimelinePhase::Finished)
     }
+
+    /// Whether the modal is on its way out, animating or already gone.
+    fn is_closing(&self) -> bool {
+        matches!(
+            self.phase,
+            TimelinePhase::Exiting { .. } | TimelinePhase::Finished
+        )
+    }
 }
 
 fn duration_progress(now: AnimInstant, start: AnimInstant, duration: std::time::Duration) -> f32 {
@@ -735,6 +792,34 @@ mod tests {
         assert_eq!(events.get(), 3);
         assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
         assert_eq!(entry.dispatcher.borrow().capture_count(), 0);
+    }
+
+    #[test]
+    fn a_handle_reports_its_modal_showing_until_it_is_dismissed() {
+        super::reset_registry_for_test();
+        let handle = super::show(None, Box::new(|_ctx, _id, _timeline| unreachable!()));
+
+        assert!(
+            handle.is_showing(),
+            "a modal is showing from the moment it is asked for"
+        );
+
+        assert!(handle.dismiss());
+        assert!(!handle.is_showing());
+    }
+
+    #[test]
+    fn a_handle_reports_a_modal_dismissed_by_someone_else() {
+        super::reset_registry_for_test();
+        let handle = super::show(None, Box::new(|_ctx, _id, _timeline| unreachable!()));
+
+        // What the barrier and `Escape` do: dismiss by id, without the handle.
+        super::dismiss(handle.id());
+
+        assert!(
+            !handle.is_showing(),
+            "the owner must learn its modal was closed for it"
+        );
     }
 
     #[test]

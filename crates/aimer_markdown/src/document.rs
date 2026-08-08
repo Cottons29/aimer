@@ -65,7 +65,7 @@ pub enum Inline {
     Emphasis(Vec<Inline>),
     Strong(Vec<Inline>),
     Delete(Vec<Inline>),
-    InlineCode(String),
+    Code(String),
     Link {
         url: String,
         title: Option<String>,
@@ -217,7 +217,7 @@ fn convert_inlines(nodes: &[Node]) -> Result<Vec<Inline>, MarkdownError> {
             }
             Node::Strong(strong) => result.push(Inline::Strong(convert_inlines(&strong.children)?)),
             Node::Delete(delete) => result.push(Inline::Delete(convert_inlines(&delete.children)?)),
-            Node::InlineCode(code) => result.push(Inline::InlineCode(code.value.clone())),
+            Node::InlineCode(code) => result.push(Inline::Code(code.value.clone())),
             Node::Link(link) => result.push(Inline::Link {
                 url: link.url.clone(),
                 title: link.title.clone(),
@@ -352,7 +352,7 @@ mod tests {
         inlines
             .iter()
             .map(|inline| match inline {
-                Inline::Text(value) | Inline::InlineCode(value) => value.clone(),
+                Inline::Text(value) | Inline::Code(value) => value.clone(),
                 Inline::SoftBreak | Inline::HardBreak => "\n".to_string(),
                 Inline::Emphasis(children)
                 | Inline::Strong(children)
@@ -456,7 +456,7 @@ mod tests {
             matches!(&document.blocks[0], Block::Blockquote(children) if matches!(children.get(1), Some(Block::Blockquote(_))))
         );
         assert!(
-            matches!(&document.blocks[1], Block::Paragraph(inlines) if matches!(inlines.as_slice(), [Inline::InlineCode(value)] if value == "inline"))
+            matches!(&document.blocks[1], Block::Paragraph(inlines) if matches!(inlines.as_slice(), [Inline::Code(value)] if value == "inline"))
         );
         assert!(
             matches!(&document.blocks[2], Block::Code { language: Some(language), meta: Some(meta), value } if language == "python" && meta == "title=demo" && value == "print('ok')")
@@ -493,7 +493,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(matches!(rows[1].cells[0].as_slice(), [Inline::Emphasis(_)]));
         assert!(matches!(rows[1].cells[1].as_slice(), [Inline::Strong(_)]));
-        assert!(matches!(rows[1].cells[2].as_slice(), [Inline::InlineCode(value)] if value == "c"));
+        assert!(matches!(rows[1].cells[2].as_slice(), [Inline::Code(value)] if value == "c"));
     }
 
     #[test]

@@ -5,11 +5,11 @@ edition = "2024"
 
 [lib]
 crate-type = ["cdylib", "staticlib"]
-
+path = "src/main.rs"
 [dependencies]
 
-aimer = {path = "..", features = ["markdown", "svg","provider"]}
-uuid = {version = "1.22.0", features = ["js", "v4"]}
+aimer = { path = "..", features = ["markdown", "svg", "provider"] }
+uuid = { version = "1.22.0", features = ["js", "v4"] }
 reqwest.workspace = true
 tokio.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]

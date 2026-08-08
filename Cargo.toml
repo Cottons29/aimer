@@ -38,6 +38,9 @@ aimer_dnd.workspace = true
 aimer_native.workspace = true
 aimer_ctxmenu.workspace = true
 
+[dev-dependencies]
+aimer_events.workspace = true
+
 [features]
 markdown = []
 provider = []
@@ -212,6 +215,9 @@ worker-macros = { version = "0.8.5", default-features = false }
 # without touching the debuggability of application code.
 [profile.dev.package.aimer_rubick]
 opt-level = 3
+
+[profile.dev]
+debug = 1
 
 [profile.release]
 opt-level = 3

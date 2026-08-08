@@ -4,6 +4,7 @@ use aimer_events::pointer::PointerSource;
 
 use crate::Element;
 use crate::components::element::VisitorElement;
+use crate::focus::FocusNode;
 
 /// Identifies one pointer independently of pointers from other input sources.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -230,6 +231,16 @@ impl From<bool> for EventResult {
 
 // Event capabilities
 pub trait EventElement: VisitorElement {
+    /// Returns the focus handle attached to this element, if it is focusable.
+    fn focus_node(&self) -> Option<&FocusNode> {
+        None
+    }
+
+    /// Returns whether this element should request focus on first attachment.
+    fn autofocus(&self) -> bool {
+        false
+    }
+
     /// Called when a pointer event hits this element.
     /// Return the independent effects produced while handling it.
     fn on_event(&self, _event: &ElementEvent) -> EventResult {

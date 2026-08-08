@@ -1,3 +1,5 @@
+#![allow(dead_code, clippy::main_recursion)]
+
 pub mod animated;
 mod animated_theme;
 mod async_builder;
@@ -20,6 +22,8 @@ mod stateful_2;
 mod svg_test;
 mod system_theme;
 mod test_animation;
+pub mod text_area_example;
+pub mod text_field_example;
 
 #[allow(unused_imports)]
 use aimer::style::*;
@@ -55,9 +59,9 @@ use crate::test_animation::TestFadingAnimation;
 
 // this is the entry point of the app
 #[main]
-pub fn my_app() {
+fn main() {
     // test_text();
-    stateful_2::start_my_list();
+    // stateful_2::start_my_list();
     // start_counter();
     // AimerApp::start(Container::new().child(Row::new().children([
     //     Expanded::new().child(TestFadingAnimation),
@@ -71,7 +75,7 @@ pub fn my_app() {
     // start_floating_example();
     // drag_and_drop::start_drag_and_drop_example();
     // file_drop_zone::start_file_drop_zone_example();
-    // start_markdown_example();
+    start_markdown_example();
     // start_panic_recovery_example();
     // test_scroll_and_row();
     // start_svg_test();
@@ -85,9 +89,9 @@ pub fn my_app() {
     // file_drop_zone::start_file_drop_zone_example()
     // drag_and_drop::start_drag_and_drop_example();
     // selectable_text::start_selectable_text_example();
+    // text_area_example::start_text_area_example();
+    // text_field_example::start_text_field_example();
 }
-
-
 
 #[allow(unused)]
 fn test_text() {
@@ -224,7 +228,7 @@ fn test_border_outline() {
                         .child(
                             TextField::new()
                                 .padding(LayoutSpacing::all(Spacing::Px(10)))
-                                .controller(TextFieldController::new())
+                                .controller(TextEditingController::new())
                                 .text_align(TextAlign::MidLeft)
                                 .input_type(InputType::Text)
                                 .prompt("Input any here....")
@@ -473,4 +477,26 @@ fn test_image() {
                     ),
             ),
     )
+}
+
+#[cfg(test)]
+mod text_editing_example_tests {
+    use aimer::Widget;
+
+    use crate::text_area_example::TextAreaExample;
+    use crate::text_field_example::TextFieldExample;
+
+    #[test]
+    fn text_field_example_is_constructible_as_a_widget() {
+        let example = TextFieldExample::new();
+
+        assert_eq!(Widget::debug_name(&example), "TextFieldExample");
+    }
+
+    #[test]
+    fn text_area_example_is_constructible_as_a_widget() {
+        let example = TextAreaExample::new();
+
+        assert_eq!(Widget::debug_name(&example), "TextAreaExample");
+    }
 }

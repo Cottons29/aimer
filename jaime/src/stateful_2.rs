@@ -26,7 +26,7 @@ pub struct ListItem {
 
 pub struct MyListState {
     list: Vec<ListItem>,
-    input_controller: TextFieldController,
+    input_controller: TextEditingController,
     is_cooldown: bool,
     updater: StateUpdater<Self>,
 }
@@ -43,7 +43,7 @@ impl StatefulWidget for MyList {
         MyListState {
             list: vec![],
             updater: StateUpdater::empty(),
-            input_controller: TextFieldController::new(),
+            input_controller: TextEditingController::new(),
             is_cooldown: false,
         }
     }
@@ -60,7 +60,7 @@ impl State<MyList> for MyListState {
     fn build(&self, _: &BuildContext) -> impl Widget {
         Container::new()
             .color(Colors::White.into())
-            .padding(LayoutSpacing { top: Spacing::Px(45), ..Default::default() })
+            .padding(LayoutSpacing { top: Spacing::Px(105), ..Default::default() })
             .child(
                 Column::new()
                     .children(vec![
@@ -83,13 +83,16 @@ impl State<MyList> for MyListState {
                                                         .font_size(20)
                                                         .color(Colors::Black))
                                             ).boxed(),
-                                        Container::new()
-                                            .width(Dimension::Px(250.0))
+
+                                        Expanded::new()
+
+                                            .box_child(Container::new()
                                             .padding(LayoutSpacing::all(Spacing::Px(10)))
                                             .child(
                                                 TextField::new()
                                                     .padding(LayoutSpacing::all(Spacing::Px(10)))
                                                     .text_align(TextAlign::MidLeft)
+                                                    .text_style(TextStyle::new().font_weight(FontWeight::Value(1200)))
                                                     .controller(self.input_controller.clone())
                                                     .input_type(InputType::Text)
                                                     .on_changed({
@@ -145,7 +148,9 @@ impl State<MyList> for MyListState {
                                                                 .color(Colors::Black)
                                                                 .stroke(2),
                                                         )))
-                                            ).boxed(),
+                                            ).boxed(),),
+
+
                                         Container::new()
                                             .padding(LayoutSpacing::all(Spacing::Px(10)))
                                             .width(Dimension::Px(100.0))
@@ -154,12 +159,14 @@ impl State<MyList> for MyListState {
                                                     .on_press({
                                                         let updater = self.updater.clone();
                                                          move || {
-                                                            println!("Button pressed with text: {}", updater.read_state().input_controller.text());
+                                                            println!("Button pressed with text: {}", updater.read_state().input_controller.value().text());
                                                             updater.set_state(|state| {
                                                                 let uuid = Uuid::new_v4().to_string();
+                                                                let text = state.input_controller.value().text().to_owned();
+                                                                state.input_controller.clear();
                                                                 state.list.push(ListItem {
                                                                     id: uuid,
-                                                                    text: state.input_controller.take(),
+                                                                    text,
                                                                 })
                                                             });
                                                         }

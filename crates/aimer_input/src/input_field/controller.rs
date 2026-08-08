@@ -1,7 +1,4 @@
-use std::cell::UnsafeCell;
-use std::sync::Arc;
-
-use unicode_segmentation::UnicodeSegmentation;
+use crate::TextEditingController;
 
 /// A controller for managing and interacting with a text field's content.
 ///
@@ -37,22 +34,21 @@ use unicode_segmentation::UnicodeSegmentation;
 /// let controller = TextFieldController::with_initial("Initial text");
 /// assert_eq!(controller.text(), "Initial text");
 /// ```
-pub struct TextFieldController {
-    text: Arc<UnsafeCell<String>>,
-    undo_stack: Arc<UnsafeCell<Vec<String>>>,
-    redo_stack: Arc<UnsafeCell<Vec<String>>>,
+pub(crate) struct TextFieldController {
+    inner: TextEditingController,
 }
-
-unsafe impl Send for TextFieldController {}
-unsafe impl Sync for TextFieldController {}
 
 impl Clone for TextFieldController {
     fn clone(&self) -> Self {
         Self {
-            text: self.text.clone(),
-            undo_stack: self.undo_stack.clone(),
-            redo_stack: self.redo_stack.clone(),
+            inner: self.inner.clone(),
         }
+    }
+}
+
+impl From<TextFieldController> for TextEditingController {
+    fn from(controller: TextFieldController) -> Self {
+        controller.inner
     }
 }
 
@@ -64,80 +60,43 @@ impl Default for TextFieldController {
 
 impl TextFieldController {
     /// Creates a new instance of the TextFieldController with empty text.
-    #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Self {
         Self {
-            text: Arc::new(UnsafeCell::new(String::new())),
-            undo_stack: Arc::new(UnsafeCell::new(Vec::new())),
-            redo_stack: Arc::new(UnsafeCell::new(Vec::new())),
+            inner: TextEditingController::new(),
         }
     }
 
     /// Creates a new instance with the given initial text.
-    #[allow(clippy::arc_with_non_send_sync)]
     pub fn with_initial(text: impl Into<String>) -> Self {
         Self {
-            text: Arc::new(UnsafeCell::new(text.into())),
-            undo_stack: Arc::new(UnsafeCell::new(Vec::new())),
-            redo_stack: Arc::new(UnsafeCell::new(Vec::new())),
+            inner: TextEditingController::with_text(text),
         }
     }
 
     /// Returns a shared reference to the text stored within the current
     /// instance.
-    pub fn text(&self) -> &str {
-        unsafe { &*self.text.get() }
+    pub fn text(&self) -> String {
+        self.inner.text()
     }
 
     /// Consumes the content of the `text` field, returning its value while also
     /// clearing it.
     pub fn take(&self) -> String {
-        self.save_undo();
-        let s = unsafe { self.text_mut() };
-        let t = s.clone();
-        s.clear();
-        t
-    }
-
-    /// Provides mutable access to the `text` field of the current object.
-    ///
-    /// # Safety
-    /// The rendering pipeline is single-threaded, so concurrent access does not
-    /// occur.
-    #[allow(clippy::mut_from_ref)]
-    pub unsafe fn text_mut(&self) -> &mut String {
-        unsafe { &mut *self.text.get() }
+        self.inner.take()
     }
 
     /// Sets the text content of the object.
     pub fn set_text(&self, text: String) {
-        self.save_undo();
-        unsafe {
-            *self.text_mut() = text;
-        }
+        self.inner.set_text(text);
     }
 
-    /// Resolves a grapheme offset into a byte offset inside `text`.
-    ///
-    /// Offsets past the last cluster clamp to the end of the text, so "one past
-    /// the last grapheme" names the insertion point at the end. The result is
-    /// always a `char` boundary, which is what makes the slicing below sound.
-    fn byte_offset(text: &str, grapheme_offset: usize) -> usize {
-        text.grapheme_indices(true)
-            .nth(grapheme_offset)
-            .map(|(byte, _)| byte)
-            .unwrap_or(text.len())
-    }
 
     /// Inserts a single character at the given grapheme offset.
     ///
     /// # Safety
     /// Be careful about the index out of bounds or invalid utf-8 char.
     pub unsafe fn insert_char(&self, ch: impl Into<char>, offset: usize) {
-        self.save_undo();
-        let s = unsafe { self.text_mut() };
-        let byte_offset = Self::byte_offset(s, offset);
-        s.insert(byte_offset, ch.into());
+        unsafe { self.inner.insert_char(ch, offset) };
     }
 
     /// Deletes the grapheme cluster at `offset` and returns the removed text.
@@ -156,15 +115,12 @@ impl TextFieldController {
     /// assert_eq!(controller.text(), "ab");
     /// ```
     pub fn delete_grapheme(&self, offset: usize) -> String {
-        self.delete_range(offset, offset + 1)
+        self.inner.delete_grapheme(offset)
     }
 
     /// Clears the internal text buffer.
     pub fn clear(&self) {
-        self.save_undo();
-        unsafe {
-            self.text_mut().clear();
-        }
+        self.inner.clear();
     }
 
     /// Returns the number of grapheme clusters in the text.
@@ -172,87 +128,40 @@ impl TextFieldController {
     /// This is the length of the text in the same unit its offsets use, so it
     /// doubles as the last valid cursor position.
     pub fn grapheme_count(&self) -> usize {
-        self.text().graphemes(true).count()
+        self.inner.grapheme_count()
     }
 
     /// Returns the substring between two grapheme offsets.
     ///
     /// An inverted range yields an empty string rather than panicking.
     pub fn get_range(&self, start: usize, end: usize) -> String {
-        let text = self.text();
-        let byte_start = Self::byte_offset(text, start);
-        let byte_end = Self::byte_offset(text, start.max(end));
-        text[byte_start..byte_end].to_owned()
+        self.inner.get_range(start, end)
     }
 
     /// Deletes the grapheme clusters in the range `[start, end)` and returns
     /// the removed text.
     pub fn delete_range(&self, start: usize, end: usize) -> String {
-        self.save_undo();
-        let s = unsafe { self.text_mut() };
-        let byte_start = Self::byte_offset(s, start);
-        let byte_end = Self::byte_offset(s, start.max(end));
-        s.drain(byte_start..byte_end).collect()
+        self.inner.delete_range(start, end)
     }
 
     /// Inserts a string at the given grapheme offset.
     pub fn insert_str(&self, text: &str, offset: usize) {
-        self.save_undo();
-        let s = unsafe { self.text_mut() };
-        let byte_offset = Self::byte_offset(s, offset);
-        s.insert_str(byte_offset, text);
+        self.inner.insert_str(text, offset);
     }
 
     // ── Undo / Redo ──────────────────────────────────────────────────
 
-    /// Maximum number of undo snapshots retained.
-    const MAX_UNDO_DEPTH: usize = 200;
-
-    /// Snapshot the current text onto the undo stack and clear the redo stack.
-    /// Called automatically before every mutation.
-    fn save_undo(&self) {
-        let current = self.text().to_owned();
-        let undo = unsafe { &mut *self.undo_stack.get() };
-        // Avoid pushing duplicate snapshots back-to-back
-        if undo.last() != Some(&current) {
-            undo.push(current);
-            // Cap undo stack size
-            if undo.len() > Self::MAX_UNDO_DEPTH {
-                undo.remove(0);
-            }
-        }
-        // Any new mutation invalidates the redo history
-        unsafe { &mut *self.redo_stack.get() }.clear();
-    }
 
     /// Revert to the previous text state. Returns `true` if an undo was
     /// performed.
     pub fn undo(&self) -> bool {
-        let undo = unsafe { &mut *self.undo_stack.get() };
-        if let Some(prev) = undo.pop() {
-            let current = self.text().to_owned();
-            let redo = unsafe { &mut *self.redo_stack.get() };
-            redo.push(current);
-            unsafe { *self.text_mut() = prev };
-            true
-        } else {
-            false
-        }
+        self.inner.undo()
     }
 
     /// Re-apply a previously undone text state. Returns `true` if a redo was
     /// performed.
     pub fn redo(&self) -> bool {
-        let redo = unsafe { &mut *self.redo_stack.get() };
-        if let Some(next) = redo.pop() {
-            let current = self.text().to_owned();
-            let undo = unsafe { &mut *self.undo_stack.get() };
-            undo.push(current);
-            unsafe { *self.text_mut() = next };
-            true
-        } else {
-            false
-        }
+        self.inner.redo()
     }
 }
 

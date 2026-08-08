@@ -73,6 +73,7 @@ pub use crate::scrollable::scroll_bar::*;
 pub struct Scrollable<W = RequiredChild> {
     pub child: Rc<W>,
     pub scroll_behavior: ScrollBehavior,
+    pub key_scroll_strength: f32,
     pub axis: ScrollAxis,
     pub vertical_scroll_bar: Option<ScrollBar>,
     pub horizontal_scroll_bar: Option<ScrollBar>,
@@ -115,6 +116,7 @@ impl Scrollable {
             vertical_scroll_bar: Some(ScrollBar::default()),
             horizontal_scroll_bar: Some(ScrollBar::default()),
             key: key!(),
+            key_scroll_strength: 50f32,
             controller: None,
             web_overscroll: OverscrollSources::WEB_DEFAULT,
         }
@@ -136,6 +138,7 @@ impl Scrollable {
             horizontal_scroll_bar: Some(ScrollBar::default()),
             key: Key::unique(),
             controller: None,
+            key_scroll_strength: 50f32,
             web_overscroll: OverscrollSources::WEB_DEFAULT,
         }
     }
@@ -249,6 +252,7 @@ impl Scrollable {
     #[inline]
     pub fn child<W: Widget>(self, child: W) -> Scrollable<W> {
         Scrollable {
+            key_scroll_strength: self.key_scroll_strength,
             child: Rc::new(child),
             scroll_behavior: self.scroll_behavior,
             axis: self.axis,
@@ -280,6 +284,7 @@ impl Scrollable {
 pub struct ScrollableState<W: Widget + 'static> {
     child: Rc<W>,
     scroll_behavior: ScrollBehavior,
+    key_scroll_strength: f32,
     axis: ScrollAxis,
     vertical_scroll_bar: Option<ScrollBar>,
     horizontal_scroll_bar: Option<ScrollBar>,
@@ -295,11 +300,12 @@ impl<W: Widget + 'static> StatefulWidget for Scrollable<W> {
 
     fn create_state(&self) -> Self::State {
         ScrollableState {
+            key_scroll_strength: self.key_scroll_strength,
             child: self.child.clone(),
             scroll_behavior: self.scroll_behavior,
             axis: self.axis,
-            vertical_scroll_bar: self.vertical_scroll_bar.clone(),
-            horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
+            vertical_scroll_bar: self.vertical_scroll_bar,
+            horizontal_scroll_bar: self.horizontal_scroll_bar,
             key: self.key.clone(),
             controller: self.controller.clone(),
             web_overscroll: self.web_overscroll,
@@ -336,8 +342,8 @@ impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
         self.child = new.child.clone();
         self.scroll_behavior = new.scroll_behavior;
         self.axis = new.axis;
-        self.vertical_scroll_bar = new.vertical_scroll_bar.clone();
-        self.horizontal_scroll_bar = new.horizontal_scroll_bar.clone();
+        self.vertical_scroll_bar = new.vertical_scroll_bar;
+        self.horizontal_scroll_bar = new.horizontal_scroll_bar;
         self.key = new.key.clone();
         self.web_overscroll = new.web_overscroll;
 
@@ -357,8 +363,8 @@ impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
         ScrollableFrame {
             child: self.child.clone(),
             ctrl,
-            vertical_scroll_bar: self.vertical_scroll_bar.clone(),
-            horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
+            vertical_scroll_bar: self.vertical_scroll_bar,
+            horizontal_scroll_bar: self.horizontal_scroll_bar,
         }
     }
 }
@@ -431,7 +437,8 @@ impl<W: Widget + 'static> ScrollableState<W> {
         let overscroll_sources =
             resolved_overscroll_sources(self.web_overscroll, cfg!(target_arch = "wasm32"));
 
-        let state = Rc::new(ScrollState {
+        Rc::new(ScrollState {
+            key_scroll_strength: self.key_scroll_strength,
             speed_multiplier: ctx.scale,
             scroll_offset: Cell::new(initial_offset),
             storage_key: self.key.clone(),
@@ -487,9 +494,7 @@ impl<W: Widget + 'static> ScrollableState<W> {
             web_overscroll_decay: web_overscroll::WebOverscrollDecay::new(),
             #[cfg(target_arch = "wasm32")]
             web_recovery_end: web_recovery_end::WebRecoveryEnd::new(),
-        });
-
-        state
+        })
     }
 }
 
@@ -559,8 +564,8 @@ impl<W: Widget + 'static> Widget for ScrollableFrame<W> {
         RawScrollableContainer {
             child,
             ctrl: self.ctrl.clone(),
-            vertical_scroll_bar: self.vertical_scroll_bar.clone(),
-            horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
+            vertical_scroll_bar: self.vertical_scroll_bar,
+            horizontal_scroll_bar: self.horizontal_scroll_bar,
             bounds: CacheBounds::with_vec2d(child_ctx.parent_pos),
             event_dispatcher: RefCell::new(aimer_widget::EventDispatcher::new()),
         }

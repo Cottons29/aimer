@@ -1,5 +1,6 @@
-mod grid;
+#[path = "grid/grid.rs"]
+mod implementation;
 pub(crate) mod raw_grid;
 
-pub use grid::{Grid, GridAlignment, GridItem, GridOverflow};
+pub use implementation::{Grid, GridAlignment, GridItem, GridOverflow};
 pub use raw_grid::{GridError, GridPlacement, GridTrack};

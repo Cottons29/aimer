@@ -75,6 +75,7 @@ pub struct ScrollState {
     pub(crate) cached_viewport: Cell<(f32, f32)>,
     pub(crate) cached_v_track_width: Cell<f32>,
     pub(crate) cached_h_track_width: Cell<f32>,
+    pub(crate) key_scroll_strength: f32,
     /// Furthest signed per-axis distance the content was stretched past an
     /// edge during the current overscroll episode, in the same convention as
     /// [`scroll_offset`](Self::scroll_offset).
@@ -1530,6 +1531,7 @@ impl ScrollState {
         use aimer_macro::key;
 
         Self {
+            key_scroll_strength: 50f32,
             scroll_behavior: ScrollBehavior::default(),
             overscroll_sources: OverscrollSources::ALL,
             overscroll_source: Cell::new(OverscrollSource::Wheel),

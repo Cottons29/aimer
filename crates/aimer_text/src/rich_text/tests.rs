@@ -8,7 +8,7 @@ use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
 use aimer_style::{TextAlign, TextOverflow, TextStyle};
 use aimer_widget::base::{Color, WindowHandle};
-use aimer_widget::{EventElement, PointerKey};
+use aimer_widget::{EventElement, FocusNode, PointerKey};
 
 use super::{
     DEFAULT_SELECTION_COLOR, LinkCallback, LinkRegion, RawRichText, SelectionBinding,
@@ -89,13 +89,24 @@ fn raw_text_with(
         hovered_link: RefCell::new(None),
         hover_cursor: crate::selection::cursor::HoverCursor::new(),
         touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+        focus_node: FocusNode::new(),
     };
     let geometry = text.geometry();
     *geometry.regions.borrow_mut() = regions;
     geometry
         .bounds
         .save(1.0, bounds.x, bounds.y, bounds.width, bounds.height);
-    text
+    text.attached()
+}
+
+/// A primary mouse press at an absolute logical position.
+fn mouse_press(x: f32, y: f32) -> PointerInfo {
+    PointerInfo::new(
+        Vec2d { x, y },
+        PointerSource::Mouse,
+        0,
+        PointerButton::Primary,
+    )
 }
 
 /// The range of the element's own text that is selected.
@@ -404,6 +415,7 @@ fn selection_highlight_starts_at_the_text_line_top() {
         hovered_link: RefCell::new(None),
         hover_cursor: crate::selection::cursor::HoverCursor::new(),
         touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+        focus_node: FocusNode::new(),
     };
     text.session().select_all();
     let layout = text.paragraph.prepare(&context);
@@ -476,6 +488,7 @@ fn selection_highlight_connects_across_adjacent_spans() {
         hovered_link: RefCell::new(None),
         hover_cursor: crate::selection::cursor::HoverCursor::new(),
         touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+        focus_node: FocusNode::new(),
     };
     text.session().select_all();
 
@@ -542,6 +555,7 @@ fn selection_highlights_touch_between_wrapped_lines() {
         hovered_link: RefCell::new(None),
         hover_cursor: crate::selection::cursor::HoverCursor::new(),
         touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+        focus_node: FocusNode::new(),
     };
     text.session().select_all();
 
@@ -615,6 +629,7 @@ fn explicit_newlines_have_stable_hit_targets_and_connected_highlights() {
         hovered_link: RefCell::new(None),
         hover_cursor: crate::selection::cursor::HoverCursor::new(),
         touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+        focus_node: FocusNode::new(),
     };
     text.session().select_all();
 
@@ -723,6 +738,7 @@ fn italic_span_enables_synthetic_italic_for_its_draw() {
         hovered_link: RefCell::new(None),
         hover_cursor: crate::selection::cursor::HoverCursor::new(),
         touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+        focus_node: FocusNode::new(),
     };
 
     text.draw(&context);
@@ -794,6 +810,7 @@ fn backgrounds_draw_before_text_without_changing_size_or_link_regions() {
         hovered_link: RefCell::new(None),
         hover_cursor: crate::selection::cursor::HoverCursor::new(),
         touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+        focus_node: FocusNode::new(),
     };
     let plain = RawRichText {
         paragraph: Paragraph::new(vec![ResolvedTextSpan {
@@ -818,6 +835,7 @@ fn backgrounds_draw_before_text_without_changing_size_or_link_regions() {
         hovered_link: RefCell::new(None),
         hover_cursor: crate::selection::cursor::HoverCursor::new(),
         touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+        focus_node: FocusNode::new(),
     };
 
     assert_eq!(
@@ -915,6 +933,7 @@ fn wrapping_uses_parent_width_when_constraint_is_unbounded() {
         hovered_link: RefCell::new(None),
         hover_cursor: crate::selection::cursor::HoverCursor::new(),
         touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+        focus_node: FocusNode::new(),
     };
 
     assert_eq!(rich_text.paragraph.available_width(&context), 20.0);
@@ -927,6 +946,66 @@ fn wrapping_uses_parent_width_when_constraint_is_unbounded() {
     let resized_layout = rich_text.paragraph.prepare(&context);
     assert_eq!(resized_layout.size.width, 40.0);
     assert!(!Rc::ptr_eq(&first_layout, &resized_layout));
+}
+
+/// A text that owns its session owns the keyboard that goes with it, which is
+/// what tells it about a press it never sees — one that landed on another
+/// widget entirely.
+#[test]
+fn a_standalone_selectable_text_holds_the_focus_while_it_holds_a_selection() {
+    let text = selectable_raw_text(LinkCallback::default());
+
+    assert!(text.focus_node().is_none(), "nothing is selected yet");
+
+    let _ = text.on_event(&ElementEvent::PointerDown(mouse_press(2.0, 5.0)));
+    let _ = text.on_event(&ElementEvent::PointerMove(mouse_press(18.0, 5.0)));
+
+    assert!(selected(&text).is_some());
+    assert!(text.focus_node().is_some());
+}
+
+#[test]
+fn a_standalone_selectable_text_drops_its_selection_when_it_loses_the_focus() {
+    let text = selectable_raw_text(LinkCallback::default());
+    let _ = text.on_event(&ElementEvent::PointerDown(mouse_press(2.0, 5.0)));
+    let _ = text.on_event(&ElementEvent::PointerMove(mouse_press(18.0, 5.0)));
+    assert!(selected(&text).is_some());
+
+    let _ = text.on_event(&ElementEvent::FocusLost);
+
+    assert_eq!(selected(&text), None);
+    assert!(text.focus_node().is_none());
+}
+
+/// Inside a region the selection, and therefore the keyboard, belongs to the
+/// region: a participant that took the focus for itself would keep the region
+/// from ever getting it.
+#[test]
+fn a_participant_of_a_region_leaves_the_focus_to_the_region() {
+    let window = WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0);
+    let session = SelectionSession::new(
+        window.clone(),
+        Rc::new(SelectionCoordinator::default()),
+        DEFAULT_SELECTION_COLOR,
+    );
+    let text = selectable_raw_text(LinkCallback::default());
+    let plain = text.plain_text.clone();
+    let geometry = text.geometry();
+    let slot = session.register(Rc::clone(&plain), Rc::downgrade(&geometry) as _);
+    slot.stamp();
+    session.begin_frame();
+    *text.binding.borrow_mut() = SelectionBinding {
+        geometry,
+        session,
+        slot,
+        owns_session: false,
+    };
+
+    let _ = text.on_event(&ElementEvent::PointerDown(mouse_press(2.0, 5.0)));
+    let _ = text.on_event(&ElementEvent::PointerMove(mouse_press(18.0, 5.0)));
+
+    assert!(selected(&text).is_some());
+    assert!(text.focus_node().is_none());
 }
 
 mod region;

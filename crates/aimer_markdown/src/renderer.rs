@@ -12,7 +12,7 @@ use aimer_style::{
     TextAlign, TextDecoration, TextDecorationLine, TextStyle,
 };
 use aimer_svg::{Svg, SvgDocument, SvgStyle};
-use aimer_text::{RichText, SpanStyle, Text, TextSpan};
+use aimer_text::{RichText, SelectionArea, SpanStyle, Text, TextSpan};
 use aimer_widget::{AnyWidget, Widget};
 
 pub(crate) use crate::markdown_theme::MarkdownTheme;
@@ -163,7 +163,7 @@ fn inline_span(inline: &Inline, theme: &MarkdownTheme) -> TextSpan {
                     .text_decoration(TextDecoration::new().line(TextDecorationLine::LINE_THROUGH)),
             )
             .children(children.iter().map(|inline| inline_span(inline, theme))),
-        Inline::InlineCode(code) => TextSpan::new(code.clone()).style(theme.inline_code),
+        Inline::Code(code) => TextSpan::new(code.clone()).style(theme.inline_code),
         Inline::Link { url, content, .. } => TextSpan::new("")
             .style(theme.link)
             .children(content.iter().map(|inline| inline_span(inline, theme)))
@@ -376,29 +376,27 @@ fn render_block(
                         .background_color(theme.code_background)
                         .border_radius(8),
                 )
-                .child(
+                .box_child(
                     Column::new()
                         .horizontal_alignment(BoxAlignment::Start)
-                        .children(vec![
+                        .children([
                             build_code_header(value, language.as_deref(), theme),
                             Container::new()
                                 .padding(LayoutSpacing::new().left(16).right(16).bottom(16))
-                                .child(
+                                .box_child(
                                     Scrollable::new()
                                         .axis(ScrollAxis::Horizontal)
                                         .vertical_scroll_bar(None)
                                         .horizontal_scroll_bar(None)
                                         .child(
-                                            Container::new().width(1000).child(
+                                            SelectionArea::new().child(
                                                 RichText::new(TextSpan::root(spans))
-                                                    .text_style(theme.code_block), // .selectable(),
+                                                    .text_style(theme.code_block),
                                             ),
                                         ),
-                                )
-                                .boxed(),
+                                ),
                         ]),
                 )
-                .boxed()
         }
         Block::ThematicBreak => SizedBox::new().height(1.0).color(theme.rule_color).boxed(),
         Block::Table { alignments, rows } => render_table(alignments, rows, theme, link_handler),
@@ -834,7 +832,7 @@ mod tests {
             Inline::Text(" ".into()),
             Inline::Delete(vec![Inline::Text("gone".into())]),
             Inline::SoftBreak,
-            Inline::InlineCode("code".into()),
+            Inline::Code("code".into()),
             Inline::Link {
                 url: "https://example.com".into(),
                 title: None,

@@ -5,6 +5,7 @@ use aimer_attribute::position::Vec2d;
 pub use winit::event::TouchPhase;
 
 use crate::pointer::{PointerInfo, PointerSource};
+use crate::text_editing::TextEditingDelta;
 
 /// Key actions for keyboard events.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +56,10 @@ pub enum ScrollDeltaKind {
 /// Pointer and keyboard event types for dispatch.
 #[derive(Clone, Debug)]
 pub enum ElementEvent {
+    /// The element became the authoritative keyboard and input-method target.
+    FocusGained,
+    /// The element stopped being the authoritative keyboard and input-method target.
+    FocusLost,
     /// A button went down, or a finger touched the surface.
     ///
     /// [`PointerInfo`] carries the position, the device, the pointer id and the
@@ -110,6 +115,8 @@ pub enum ElementEvent {
         text: String,
         cursor: Option<(usize, usize)>,
     },
+    /// A revisioned mutation from the active mirrored native editor.
+    TextEditingDelta(TextEditingDelta),
     /// A file dragged in from the operating system is hovering over the window.
     ///
     /// One event per file: a five-file drag reports five hovers, with no marker
@@ -263,6 +270,7 @@ impl ElementEvent {
             ElementEvent::CharInput { .. }
                 | ElementEvent::TextInput { .. }
                 | ElementEvent::ImePreedit { .. }
+                | ElementEvent::TextEditingDelta(_)
         )
     }
 }

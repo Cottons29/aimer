@@ -41,11 +41,11 @@ impl ScrollClassifier {
     pub fn classify(&mut self, delta: PhysicalPosition<f64>) -> ScrollSource {
         let now = Instant::now();
 
-        if let Some(last) = self.history.back() {
-            if now.duration_since(last.at).as_secs_f64() * 1000.0 > self.reset_gap_ms {
-                self.history.clear();
-                self.current = ScrollSource::Unknown;
-            }
+        if let Some(last) = self.history.back()
+            && now.duration_since(last.at).as_secs_f64() * 1000.0 > self.reset_gap_ms
+        {
+            self.history.clear();
+            self.current = ScrollSource::Unknown;
         }
 
         self.history.push_back(EventSample { delta, at: now });
@@ -113,6 +113,12 @@ impl ScrollClassifier {
         } else {
             ScrollSource::Unknown
         }
+    }
+}
+
+impl Default for ScrollClassifier {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -585,6 +591,12 @@ impl DualScroller {
         self.contact.reset();
         self.pending_unknown.clear();
         self.pending_phase = None;
+    }
+}
+
+impl Default for DualScroller {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

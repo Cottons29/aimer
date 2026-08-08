@@ -5,8 +5,12 @@ pub mod android_screen;
 #[cfg(target_os = "ios")]
 pub mod ios_appearance;
 #[cfg(target_os = "ios")]
+pub mod ios_safe_area;
+#[cfg(target_os = "ios")]
 pub mod ios_screen;
 #[cfg(target_os = "macos")]
 pub mod macos_drag;
 #[cfg(target_os = "macos")]
 pub mod macos_surface;
+#[cfg(target_arch = "wasm32")]
+pub mod web_safe_area;

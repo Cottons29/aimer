@@ -127,6 +127,7 @@ impl WindowEventHandler {
                     aimer_widget::notify_window_metrics_changed();
                 }
                 Self::refresh_system_appearance(app);
+                Self::refresh_safe_area(app);
                 if let Some(window) = &app.window {
                     window.request_redraw();
                 }
@@ -239,6 +240,29 @@ impl WindowEventHandler {
         #[cfg(target_os = "android")]
         if let Some(window) = app.native_window() {
             crate::system_appearance::announce(window);
+        }
+    }
+
+    /// Re-reads the region the platform reserves in the window after its
+    /// geometry moved.
+    ///
+    /// A rotation moves the notch and the home indicator to other edges, and
+    /// reaches the application as a resize and a scale-factor change rather than
+    /// as anything that mentions the safe area. This is the whole of the cost:
+    /// one query per event that could have changed the answer, and none per
+    /// frame. A reservation that did not actually move asks for no frame — see
+    /// [`aimer_widget::set_safe_area_insets`].
+    ///
+    /// On the platforms that reserve nothing this compiles to an empty body:
+    /// there is no query, and not even a look at the window.
+    #[cfg_attr(
+        not(any(target_os = "ios", target_arch = "wasm32")),
+        allow(unused_variables)
+    )]
+    fn refresh_safe_area<W: Widget + 'static>(app: &AimerApplicationHandler<W>) {
+        #[cfg(any(target_os = "ios", target_arch = "wasm32"))]
+        if let Some(window) = app.native_window() {
+            crate::system_safe_area::announce(window);
         }
     }
 
@@ -621,7 +645,7 @@ impl WindowEventHandler {
     ///
     /// An empty `text` ends the composition. The redraw is driven by the
     /// dispatch result, so a preedit no field consumed does not repaint.
-    fn dispatch_ime_preedit<W: Widget + 'static>(
+    pub(crate) fn dispatch_ime_preedit<W: Widget + 'static>(
         text: String,
         cursor: Option<(usize, usize)>,
         app: &mut AimerApplicationHandler<W>,
@@ -829,6 +853,10 @@ impl WindowEventHandler {
         // handled — a breakpoint, a media query — sees the new one. A headless
         // window only knows what it is told, and is told here.
         app.sync_headless_metrics(Some(size));
+
+        // A window that changed shape may have changed the region the system
+        // reserves in it: on a phone, this event is the rotation.
+        Self::refresh_safe_area(app);
 
         if let Some(root) = &app.widget_root {
             root.invalidate_layout();

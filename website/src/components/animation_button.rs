@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use aimer::animation::{Animatable, Curve, ImplicitAnimatedBuilder, Rgba};
 use aimer::callback::Callback;
-use aimer::console::debug;
 use aimer::style::{
     BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextAlign, TextStyle, Theme, ThemeData,
 };

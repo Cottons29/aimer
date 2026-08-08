@@ -18,7 +18,7 @@ use crate::components::same_looking::SameLookingSection;
 use crate::router::AppRouter;
 use crate::utils::{app_padding, is_mobile, mobile_title, resp_position};
 #[cfg(test)]
-use crate::{CURRENT_INDEX, TEST_STATE_UPDATED};
+use crate::TEST_STATE_UPDATED;
 
 pub static SHOW_ICON: AtomicBool = AtomicBool::new(true);
 

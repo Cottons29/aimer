@@ -21,6 +21,8 @@ pub mod menu;
 pub mod frame_stats;
 /// Where the platform's light / dark appearance comes from.
 mod system_appearance;
+/// Where the region the platform reserves in the window comes from.
+mod system_safe_area;
 /// Off-thread rasterization. Native only: the browser has no thread the WebGPU
 /// objects could move to, so the web backend presents inline.
 #[cfg(not(target_arch = "wasm32"))]

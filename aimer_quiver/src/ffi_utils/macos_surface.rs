@@ -62,7 +62,7 @@ pub fn enable_transactional_surface_presentation(window: &Window) -> bool {
             None => return false,
         };
         let _: () = msg_send![layer, setPresentsWithTransaction: YES];
-        return true;
+        true
     }
 }
 

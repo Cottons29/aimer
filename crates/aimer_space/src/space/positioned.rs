@@ -439,13 +439,13 @@ mod tests {
     // scrollable's viewport shows y 200..800 of the stack.
     #[test]
     fn positioned_offset_keeps_title_visible() {
-        let stack_visible = Some((0.0, 200.0, 1000.0, 600.0));
+        let stack_visible = (0.0, 200.0, 1000.0, 600.0);
 
         // Before the fix: visible_rect forwarded unchanged. In block-local space
         // the title (0..30) is treated as far above the viewport and culled,
         // while the taller body straddles the line and survives — exactly the
         // "title clipped, body left" symptom.
-        let unshifted = stack_visible.unwrap();
+        let unshifted = stack_visible;
         assert!(
             !visible(0.0, 30.0, unshifted),
             "buggy path should cull the title"
@@ -455,7 +455,8 @@ mod tests {
         // After the fix: shift by the 110px top offset. The title's real position
         // is stack y 110..140, still above the viewport (200), so culling it is
         // now *correct*; both title and body are judged in the same, correct space.
-        let shifted = shift_visible_rect(stack_visible, 0.0, 110.0, &Transform::None).unwrap();
+        let shifted = shift_visible_rect(Some(stack_visible), 0.0, 110.0, &Transform::None)
+            .unwrap();
         assert_eq!(shifted, (0.0, 90.0, 1000.0, 600.0));
 
         // A block near the top of the stack (offset 10px) whose title IS on screen

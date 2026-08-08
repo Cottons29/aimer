@@ -4,8 +4,8 @@ use std::rc::{Rc, Weak};
 
 use aimer_attribute::Bounds;
 use aimer_events::pointer::PointerSource;
-use aimer_widget::PointerKey;
 use aimer_widget::base::{Color, WindowHandle};
+use aimer_widget::{FocusNode, PointerKey, claim_pointer, release_pointer};
 
 use crate::selection::handles::HandleSide;
 use crate::selection::selectable::{Selectable, SelectionCoordinator};
@@ -125,6 +125,16 @@ pub(crate) struct SelectionSession {
     state: RefCell<SelectionState>,
     next_stamp: Cell<u64>,
     focused: Cell<bool>,
+    /// The keyboard focus of the element that owns this session — the region,
+    /// or a standalone text.
+    ///
+    /// The selection lives exactly as long as this node holds the focus: that
+    /// is what makes a press anywhere else drop it, including presses the owner
+    /// is never offered because they landed outside its bounds. The node is
+    /// *attached* rather than created here, because the element has to hand the
+    /// very same node to the framework, and a session outlives the elements
+    /// that come and go around it across rebuilds.
+    focus_node: RefCell<FocusNode>,
     window: WindowHandle,
     coordinator: Rc<SelectionCoordinator>,
     selection_color: Color,
@@ -146,7 +156,8 @@ impl SelectionSession {
             state: RefCell::new(SelectionState::default()),
             next_stamp: Cell::new(0),
             focused: Cell::new(false),
-            ui: SelectionUi::new(window.clone(), session.clone()),
+            focus_node: RefCell::new(FocusNode::new()),
+            ui: SelectionUi::new(session.clone()),
             window,
             coordinator,
             selection_color,
@@ -169,6 +180,17 @@ impl SelectionSession {
     #[inline]
     pub fn is_focused(&self) -> bool {
         self.focused.get()
+    }
+
+    /// Makes `node` the keyboard focus of this session.
+    ///
+    /// The owning element calls this with the node it exposes to the framework,
+    /// so that [`Self::focus`] asks for the focus *of that element*. A rebuilt
+    /// element attaches its own node the same way, which is what keeps a
+    /// selection responsive to outside presses across a rebuild.
+    #[inline]
+    pub fn attach_focus_node(&self, node: &FocusNode) {
+        self.focus_node.replace(node.clone());
     }
 
     /// Registers a participant with its text handle and its geometry provider.
@@ -207,10 +229,38 @@ impl SelectionSession {
         self.coordinator.claim(self);
     }
 
-    /// Marks the session as the keyboard target for select-all and copy.
+    /// Makes the session the keyboard target for select-all and copy.
+    ///
+    /// The flag is set at once — the shortcuts must work from the very press
+    /// that started the selection — while the node only *asks* for the focus,
+    /// which the framework grants when it next synchronizes the tree. Taking
+    /// the tree's focus is what arranges for [`Self::blur`] to be called when
+    /// the user presses anywhere else.
     #[inline]
     pub fn focus(&self) {
         self.focused.set(true);
+        self.focus_node.borrow().request_focus();
+    }
+
+    /// Answers the loss of the keyboard focus, which is how the session learns
+    /// of a press it was never offered.
+    ///
+    /// A press outside the region is delivered to whatever is under it and to
+    /// nothing else, so the selection cannot be dropped by watching for one.
+    /// Losing the focus to that press is the notification, and dropping the
+    /// selection is the answer — with one exception. The callout is a modal: it
+    /// takes *every* press while it is up, including the press on `Copy`, and
+    /// the tree below it loses the focus either way. Clearing then would leave
+    /// `Copy` nothing to copy, so the selection stays and the focus is asked
+    /// for again — and the press that dismisses the callout, which is already
+    /// on its way out by the time this runs, clears the selection as any other
+    /// outside press does.
+    pub fn blur(&self) {
+        if self.ui.is_menu_showing() {
+            self.focus_node.borrow().request_focus();
+            return;
+        }
+        self.clear();
     }
 
     /// Reports whether anything is selected at all.
@@ -324,9 +374,15 @@ impl SelectionSession {
     }
 
     /// Starts a gesture, collapsing the selection at `point`.
+    ///
+    /// The pointer is claimed for as long as the gesture lasts — see
+    /// [`aimer_widget::pointer_claim`] — so an enclosing scrollable reads the
+    /// drag that follows as the selection it is instead of stealing it for a
+    /// scroll.
     pub fn begin(self: &Rc<Self>, point: SelectionPoint, pointer: PointerKey) {
         self.ui.hide_menu();
         self.ui.set_touch(pointer.source == PointerSource::Touch);
+        claim_pointer(pointer);
         self.claim();
         self.focus();
         self.state.borrow_mut().begin(point, pointer);
@@ -348,6 +404,7 @@ impl SelectionSession {
     ) {
         self.ui.hide_menu();
         self.ui.set_touch(pointer.source == PointerSource::Touch);
+        claim_pointer(pointer);
         self.claim();
         self.focus();
         {
@@ -381,7 +438,11 @@ impl SelectionSession {
     }
 
     /// Ends the gesture owned by `pointer`.
+    ///
+    /// The claim taken when the gesture began is given back here, so the very
+    /// next drag of that pointer is a scroll again.
     pub fn end(&self, pointer: PointerKey) -> bool {
+        release_pointer(pointer);
         self.state.borrow_mut().end(pointer)
     }
 
@@ -397,16 +458,30 @@ impl SelectionSession {
 
     /// Restores the selection from before the current gesture.
     pub fn cancel(&self) {
+        self.release_gesture_claim();
         self.state.borrow_mut().cancel();
         self.window.request_redraw();
     }
 
+    /// Gives back the claim of whichever pointer is still dragging, if any.
+    ///
+    /// Losing the gesture — to a cancellation, or to a press that dropped the
+    /// selection — must also lose the claim, or the pointer would stay spoken
+    /// for after the selection it spoke for is gone.
+    fn release_gesture_claim(&self) {
+        if let Some(pointer) = self.state.borrow().active_pointer() {
+            release_pointer(pointer);
+        }
+    }
+
     /// Drops the selection and the keyboard focus.
     pub fn clear(&self) {
+        self.release_gesture_claim();
         self.ui.hide_menu();
         self.ui.forget_gesture();
         self.state.borrow_mut().clear();
         self.focused.set(false);
+        self.focus_node.borrow().unfocus();
         self.window.request_redraw();
     }
 
