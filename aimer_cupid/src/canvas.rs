@@ -476,6 +476,9 @@ impl CupidCanvas {
         }
 
         let mut rasterizer = self.rasterizer.borrow_mut();
+        // Measuring character by character would let an ideograph pick a face the
+        // shaping pass rejects, so the run is announced first here too.
+        rasterizer.begin_script_run(text);
         let weight = FontWeight::Value(u32::from(font_weight));
         let (ascent, descent, line_gap) =
             rasterizer.line_metrics_for_family(font_size, font_family, weight, font_style);
@@ -534,6 +537,7 @@ impl CupidCanvas {
 
         width = width.max(current_width);
         line_widths.push(current_width);
+        rasterizer.end_script_run();
 
         // Subtract one line_gap: it only appears *between* lines, not after
         // the last one.  This matches the corrected layout_paragraph height.

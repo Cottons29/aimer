@@ -24,11 +24,20 @@
 //! the very face Cupid shaped with — and the collection index is used only
 //! when the file exposes no name to match on.
 //!
+//! # Weight
+//!
+//! Apple's variable system faces default to a heavier instance than the one
+//! their own cascade pairs with regular text, so a variable face is pinned
+//! before drawing — to the weight the caller's glyph key asks for, which the
+//! fallback pipeline derives from the run's style and from the faces standing
+//! beside the glyph. [`NORMAL_TEXT_WEIGHT`] is the neutral request.
+//!
 //! # Cost
 //!
 //! Building a `CTFont` parses the file, so fonts are cached per
-//! `(file, face, size)`. The cache is thread local, which keeps it lock free
-//! and matches how text preparation runs: each worker owns its rasterizer.
+//! `(file, face, size, weight)`. The cache is thread local, which keeps it
+//! lock free and matches how text preparation runs: each worker owns its
+//! rasterizer.
 //! Everything downstream — the atlas, the bitmap cache, the metrics store —
 //! is unaware that the pixels came from the platform.
 
@@ -36,13 +45,15 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use objc2_core_foundation::{CFRetained, CFString, CFURL, CGPoint, CGRect};
+use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained, CFString, CFURL, CGPoint, CGRect};
 use objc2_core_graphics::{
-    CGBitmapContextCreate, CGColorSpace, CGContext, CGGlyph, CGImageAlphaInfo,
+    CGBitmapContextCreate, CGBitmapContextGetBytesPerRow, CGColorSpace, CGContext, CGGlyph,
+    CGImageAlphaInfo,
 };
 use objc2_core_text::{
     CTFont, CTFontDescriptor, CTFontManagerCreateFontDescriptorsFromURL, CTFontOrientation,
-    kCTFontNameAttribute,
+    kCTFontNameAttribute, kCTFontVariationAxisDefaultValueKey, kCTFontVariationAxisIdentifierKey,
+    kCTFontVariationAxisMaximumValueKey, kCTFontVariationAxisMinimumValueKey,
 };
 use skrifa::MetadataProvider;
 use skrifa::string::StringId;
@@ -63,6 +74,22 @@ const PROBE_FONT_SIZE: f32 = 32.0;
 /// multi-gigabyte allocation.
 const MAX_GLYPH_EXTENT: u32 = 2048;
 
+/// The `wght` variation axis tag, `u32::from_be_bytes(*b"wght")`.
+const WEIGHT_AXIS_TAG: i64 = u32::from_be_bytes(*b"wght") as i64;
+
+/// Weight platform-drawn glyphs default to, on the OpenType `wght` scale.
+///
+/// Cupid addresses a glyph by `(font, glyph id, size, weight)`, and the weight
+/// of the key travels into [`rasterize_glyph`], so a variable face is pinned
+/// per request rather than to one constant. This value is the neutral
+/// request, used by callers holding no weight of their own — the drawability
+/// probe below, and plain text whose run demands nothing else. It matches the
+/// pairing Apple uses for regular UI text: the cascade answers
+/// `.PingFangUITextSC-Regular` with `wght` pinned to `400`, while the *default
+/// instance* of the same variable file sits at `501` — the visibly heavier
+/// stroke an unpinned font renders with.
+const NORMAL_TEXT_WEIGHT: u16 = 400;
+
 /// One pixel of slack around the reported bounding box.
 ///
 /// Antialiased coverage reaches marginally beyond the design bounds, and
@@ -71,18 +98,20 @@ const MAX_GLYPH_EXTENT: u32 = 2048;
 /// and shifts the glyph's offsets consistently, so positioning is unaffected.
 const BOUNDS_PADDING: f32 = 1.0;
 
-/// Identity of a platform font: the file, the face inside it, and the point
-/// size in tenths — the same quantization [`GlyphKey`] uses, so a cache entry
-/// corresponds to exactly one rasterization size.
+/// Identity of a platform font: the file, the face inside it, the point size
+/// in tenths — the same quantization [`GlyphKey`] uses — and the `wght` the
+/// face is pinned to, so a cache entry corresponds to exactly one
+/// rasterization size and weight.
 ///
 /// [`GlyphKey`]: crate::text_pipeline::glyph_rasterizer::GlyphKey
-type FontKey = (PathBuf, u32, u32);
+type FontKey = (PathBuf, u32, u32, u16);
 
 /// Fonts built so far, including the files the platform refused (`None`).
 type FontCache = HashMap<FontKey, Option<CFRetained<CTFont>>>;
 
 thread_local! {
-    /// Fonts already built by this thread, keyed by file, face and size.
+    /// Fonts already built by this thread, keyed by file, face, size and
+    /// weight.
     static FONT_CACHE: RefCell<FontCache> = RefCell::new(HashMap::new());
 }
 
@@ -95,7 +124,9 @@ thread_local! {
 ///
 /// [`system_fallback`]: crate::text_pipeline::system_fallback
 pub(crate) fn draws_glyph(path: &Path, collection_index: u32, glyph_id: u16) -> bool {
-    with_font(path, collection_index, PROBE_FONT_SIZE, |font| {
+    // Emptiness does not depend on the weight a glyph is drawn at, so the
+    // probe always asks for the neutral one and shares its font.
+    with_font(path, collection_index, PROBE_FONT_SIZE, NORMAL_TEXT_WEIGHT, |font| {
         let bounds = glyph_bounds(font, glyph_id)?;
         (bounds.size.width > 0.0 && bounds.size.height > 0.0).then_some(())
     })
@@ -103,6 +134,12 @@ pub(crate) fn draws_glyph(path: &Path, collection_index: u32, glyph_id: u16) -> 
 }
 
 /// Draws `glyph_id` of the given face at `font_size` and returns its pixels.
+///
+/// `weight` is the OpenType `wght` the glyph must be drawn at; a variable
+/// face is pinned to it — clamped into its axis range — while a static face
+/// renders its one design regardless. The fallback pipeline derives it from
+/// the run being drawn, so a platform glyph matches the stroke of the faces
+/// Cupid rasterizes beside it.
 ///
 /// The bitmap is 8-bit coverage for outline faces and non-premultiplied RGBA8
 /// for color faces, which is exactly what [`GlyphAtlas`] and its color sibling
@@ -119,10 +156,11 @@ pub(crate) fn rasterize_glyph(
     collection_index: u32,
     glyph_id: u16,
     font_size: f32,
+    weight: u16,
     is_color: bool,
     advance_width: f32,
 ) -> Option<RasterizedGlyph> {
-    with_font(path, collection_index, font_size, |font| {
+    with_font(path, collection_index, font_size, weight, |font| {
         let bounds = glyph_bounds(font, glyph_id)?;
         let (left, bottom, width, height) = pixel_box(bounds)?;
 
@@ -186,6 +224,65 @@ fn pixel_box(bounds: CGRect) -> Option<(f32, f32, u32, u32)> {
     Some((left, bottom, width as u32, height as u32))
 }
 
+/// Bytes a bitmap row is padded to before it is handed to Core Graphics.
+///
+/// A bitmap context is free to lay its rows out on an alignment of its own
+/// choosing, and it is documented to perform best on a multiple of 16 bytes.
+/// Requesting a row exactly as wide as the glyph therefore invites the
+/// framework to pad behind Cupid's back, and a row read back at the wrong
+/// stride is skewed by a pixel more on every line — which reads as a thinner,
+/// blurrier glyph rather than as a broken one, and strikes only the glyphs
+/// whose width happens to be unaligned. Padding up front removes the question.
+const ROW_ALIGNMENT: usize = 16;
+
+/// Returns the padded stride, in bytes, of a row of `width` pixels of
+/// `bytes_per_pixel`.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(row_stride(38, 1), 48);
+/// assert_eq!(row_stride(36, 1), 48);
+/// assert_eq!(row_stride(16, 1), 16);
+/// ```
+#[inline]
+fn row_stride(width: u32, bytes_per_pixel: usize) -> usize {
+    let row = width as usize * bytes_per_pixel;
+    row.div_ceil(ROW_ALIGNMENT) * ROW_ALIGNMENT
+}
+
+/// Returns the stride to read a rendered buffer back at.
+///
+/// `reported` is what the bitmap context says it used, which is the only
+/// authority on the matter; `requested` is the fallback for the case where the
+/// answer cannot be trusted — it must address whole rows and must not run past
+/// the buffer that was handed over.
+#[inline]
+fn readback_stride(
+    reported: usize,
+    requested: usize,
+    row_bytes: usize,
+    height: u32,
+    buffer: usize,
+) -> usize {
+    let fits = reported >= row_bytes && reported.saturating_mul(height as usize) <= buffer;
+    if fits { reported } else { requested }
+}
+
+/// Copies `height` rows of `row_bytes` out of a buffer laid out at `stride`.
+///
+/// The stride is the one the bitmap context reports, not the one that was
+/// asked for: reading the padding as if it were pixels shifts every row after
+/// the first.
+fn pack_rows(padded: &[u8], stride: usize, row_bytes: usize, height: u32) -> Vec<u8> {
+    let mut packed = Vec::with_capacity(row_bytes * height as usize);
+    for row in 0..height as usize {
+        let start = row * stride;
+        packed.extend_from_slice(&padded[start..start + row_bytes]);
+    }
+    packed
+}
+
 /// Renders `glyph_id` into an 8-bit coverage mask.
 fn draw_coverage(
     font: &CTFont,
@@ -195,17 +292,18 @@ fn draw_coverage(
     width: u32,
     height: u32,
 ) -> Option<Vec<u8>> {
-    let mut bitmap = vec![0u8; (width * height) as usize];
-    // SAFETY: the buffer holds `width * height` bytes, which is what the
+    let stride = row_stride(width, 1);
+    let mut padded = vec![0u8; stride * height as usize];
+    // SAFETY: the buffer holds `stride * height` bytes, which is what the
     // 8-bit, one-component-per-pixel layout described here addresses. The
-    // context is dropped before `bitmap` is moved out.
+    // context is dropped before the buffer is read back.
     let context = unsafe {
         CGBitmapContextCreate(
-            bitmap.as_mut_ptr().cast(),
+            padded.as_mut_ptr().cast(),
             width as usize,
             height as usize,
             8,
-            width as usize,
+            stride,
             None,
             CGImageAlphaInfo::Only.0,
         )
@@ -216,9 +314,16 @@ fn draw_coverage(
     // fully opaque for the glyph to leave anything behind.
     CGContext::set_gray_fill_color(Some(&context), 1.0, 1.0);
     draw(&context, font, glyph_id, left, bottom);
+    let stride = readback_stride(
+        CGBitmapContextGetBytesPerRow(Some(&context)),
+        stride,
+        width as usize,
+        height,
+        padded.len(),
+    );
     drop(context);
 
-    Some(bitmap)
+    Some(pack_rows(&padded, stride, width as usize, height))
 }
 
 /// Renders `glyph_id` into non-premultiplied RGBA8 color artwork.
@@ -230,18 +335,19 @@ fn draw_color(
     width: u32,
     height: u32,
 ) -> Option<Vec<u8>> {
-    let mut bitmap = vec![0u8; (width * height * 4) as usize];
+    let stride = row_stride(width, 4);
+    let mut padded = vec![0u8; stride * height as usize];
     let color_space = CGColorSpace::new_device_rgb()?;
-    // SAFETY: the buffer holds `width * height * 4` bytes, matching the 8 bits
+    // SAFETY: the buffer holds `stride * height` bytes, matching the 8 bits
     // per component, four components per pixel layout described here. The
-    // context is dropped before `bitmap` is moved out.
+    // context is dropped before the buffer is read back.
     let context = unsafe {
         CGBitmapContextCreate(
-            bitmap.as_mut_ptr().cast(),
+            padded.as_mut_ptr().cast(),
             width as usize,
             height as usize,
             8,
-            (width * 4) as usize,
+            stride,
             Some(&color_space),
             CGImageAlphaInfo::PremultipliedLast.0,
         )
@@ -249,8 +355,16 @@ fn draw_color(
 
     prepare(&context);
     draw(&context, font, glyph_id, left, bottom);
+    let stride = readback_stride(
+        CGBitmapContextGetBytesPerRow(Some(&context)),
+        stride,
+        width as usize * 4,
+        height,
+        padded.len(),
+    );
     drop(context);
 
+    let mut bitmap = pack_rows(&padded, stride, width as usize * 4, height);
     un_premultiply(&mut bitmap);
     Some(bitmap)
 }
@@ -313,37 +427,80 @@ fn un_premultiply(bitmap: &mut [u8]) {
     }
 }
 
-/// Runs `f` with the platform font for `(path, collection_index, font_size)`.
+/// Runs `f` with the platform font for `(path, collection_index, font_size,
+/// weight)`.
 ///
-/// The font is built at most once per thread per size; a file the platform
-/// refuses is remembered as unusable so it is not reopened on every glyph.
+/// The font is built at most once per thread per size and weight; a file the
+/// platform refuses is remembered as unusable so it is not reopened on every
+/// glyph.
 fn with_font<T>(
     path: &Path,
     collection_index: u32,
     font_size: f32,
+    weight: u16,
     f: impl FnOnce(&CTFont) -> Option<T>,
 ) -> Option<T> {
     if font_size <= 0.0 {
         return None;
     }
-    let key = (path.to_path_buf(), collection_index, (font_size * 10.0) as u32);
+    let key = (path.to_path_buf(), collection_index, (font_size * 10.0) as u32, weight);
     FONT_CACHE.with_borrow_mut(|cache| {
         let font = cache
             .entry(key)
-            .or_insert_with(|| create_font(path, collection_index, font_size));
+            .or_insert_with(|| create_font(path, collection_index, font_size, weight));
         f(font.as_deref()?)
     })
 }
 
-/// Builds the platform font for one face of a font file.
+/// Builds the platform font for one face of a font file, pinned to `weight`.
+///
+/// A variable face is pinned to the requested weight rather than left at the
+/// file's default instance — see [`pin_to_weight`].
 fn create_font(
     path: &Path,
     collection_index: u32,
     font_size: f32,
+    weight: u16,
 ) -> Option<CFRetained<CTFont>> {
     let descriptor = face_descriptor(path, collection_index)?;
     // SAFETY: a null matrix requests the identity transform.
-    Some(unsafe { CTFont::with_font_descriptor(&descriptor, font_size as f64, std::ptr::null()) })
+    let font =
+        unsafe { CTFont::with_font_descriptor(&descriptor, font_size as f64, std::ptr::null()) };
+    Some(pin_to_weight(&descriptor, font, font_size, weight))
+}
+
+/// Returns `font` re-created at `weight` when it is variable.
+///
+/// A descriptor resolved from a font file alone renders the file's *default
+/// instance*, and Apple's variable system faces default to a heavier one than
+/// the weight their cascade pairs with regular text: `.PingFangUITextSC`
+/// defaults to `wght` `501` while the cascade serves it pinned to `400`. Left
+/// unpinned, every ideograph the platform draws lands visibly bolder than the
+/// text Cupid rasterizes around it.
+///
+/// A static face, or one whose default already is the target, is returned
+/// unchanged. The target is clamped into the axis range, so a face that
+/// cannot express the requested weight comes back as close to it as it can
+/// get.
+fn pin_to_weight(
+    descriptor: &CTFontDescriptor,
+    font: CFRetained<CTFont>,
+    font_size: f32,
+    weight: u16,
+) -> CFRetained<CTFont> {
+    let Some((minimum, default, maximum)) = weight_axis_range(&font) else {
+        return font;
+    };
+    let target = f64::from(weight).clamp(minimum, maximum);
+    if default == target {
+        return font;
+    }
+    let axis = CFNumber::new_i64(WEIGHT_AXIS_TAG);
+    // SAFETY: the identifier is the `wght` axis tag as a CFNumber, which is
+    // the form `CTFontDescriptorCreateCopyWithVariation` documents.
+    let pinned = unsafe { descriptor.copy_with_variation(&axis, target) };
+    // SAFETY: a null matrix requests the identity transform.
+    unsafe { CTFont::with_font_descriptor(&pinned, font_size as f64, std::ptr::null()) }
 }
 
 /// Returns the descriptor of the face Cupid shaped with.
@@ -369,6 +526,32 @@ fn face_descriptor(path: &Path, collection_index: u32) -> Option<CFRetained<CTFo
     }
 
     descriptors.get(collection_index as usize)
+}
+
+/// Returns the `wght` axis of `font` as `(minimum, default, maximum)`.
+///
+/// `None` means the face is static — there is no weight to pin.
+fn weight_axis_range(font: &CTFont) -> Option<(f64, f64, f64)> {
+    // SAFETY: the function returns an array of axis dictionaries or null.
+    let axes = unsafe { font.variation_axes() }?;
+    // SAFETY: every entry is an axis dictionary, and the only keys read below
+    // are the numeric ones — identifier and range — whose values Core Text
+    // documents as `CFNumberRef`.
+    let axes = unsafe { axes.cast_unchecked::<CFDictionary<CFString, CFNumber>>() };
+    axes.iter().find_map(|axis| {
+        let value = |key: &CFString| axis.get(key)?.as_f64();
+        // SAFETY: the keys are Core Text constant strings.
+        unsafe {
+            if value(kCTFontVariationAxisIdentifierKey)? as i64 != WEIGHT_AXIS_TAG {
+                return None;
+            }
+            Some((
+                value(kCTFontVariationAxisMinimumValueKey)?,
+                value(kCTFontVariationAxisDefaultValueKey)?,
+                value(kCTFontVariationAxisMaximumValueKey)?,
+            ))
+        }
+    })
 }
 
 /// Returns the PostScript name a descriptor advertises.
@@ -410,6 +593,161 @@ mod tests {
             })
     }
 
+    // A glyph whose row is not a whole number of alignment units is the case
+    // the padding exists for: 吗 is 36 pixels wide and 你 is 38, and only the
+    // second one would ever have been laid out at a stride of its own.
+    #[test]
+    fn a_row_is_padded_to_the_alignment() {
+        assert_eq!(row_stride(36, 1), 48);
+        assert_eq!(row_stride(38, 1), 48);
+        assert_eq!(row_stride(16, 1), 16);
+        assert_eq!(row_stride(1, 1), ROW_ALIGNMENT);
+        assert_eq!(row_stride(8, 4), 32);
+    }
+
+    #[test]
+    fn a_padded_row_always_holds_its_pixels() {
+        for width in 1..=64u32 {
+            for bytes_per_pixel in [1usize, 4] {
+                let stride = row_stride(width, bytes_per_pixel);
+                assert!(stride >= width as usize * bytes_per_pixel);
+                assert_eq!(stride % ROW_ALIGNMENT, 0);
+            }
+        }
+    }
+
+    // Reading a padded buffer at the pixel width instead of the stride shifts
+    // every row after the first, which is the skew that thins a glyph.
+    #[test]
+    fn rows_are_copied_out_from_their_stride() {
+        let padded = vec![
+            1, 2, 3, 0, 0, // row 0: three pixels then padding
+            4, 5, 6, 0, 0, // row 1
+        ];
+
+        assert_eq!(pack_rows(&padded, 5, 3, 2), vec![1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn a_tight_buffer_is_copied_unchanged() {
+        let tight = vec![1, 2, 3, 4, 5, 6];
+
+        assert_eq!(pack_rows(&tight, 3, 3, 2), tight);
+    }
+
+    // The context's own answer wins, because it is the only party that knows
+    // how it laid the rows out.
+    #[test]
+    fn the_reported_stride_is_used_when_it_fits() {
+        assert_eq!(readback_stride(48, 48, 38, 10, 48 * 10), 48);
+        assert_eq!(readback_stride(64, 48, 38, 10, 64 * 10), 64);
+    }
+
+    // ...but never one that cannot hold a row, or that would read past the
+    // buffer the context was given — a stride the buffer cannot back is a
+    // report Cupid must not act on.
+    #[test]
+    fn an_impossible_reported_stride_falls_back() {
+        assert_eq!(readback_stride(16, 48, 38, 10, 48 * 10), 48);
+        assert_eq!(readback_stride(0, 48, 38, 10, 48 * 10), 48);
+        assert_eq!(readback_stride(64, 48, 38, 10, 48 * 10), 48);
+        assert_eq!(readback_stride(usize::MAX, 48, 38, 10, 48 * 10), 48);
+    }
+
+    /// Total coverage `font` deposits for `glyph_id`, in fully-lit pixels.
+    fn ink(font: &CTFont, glyph_id: u16) -> f64 {
+        let bounds = glyph_bounds(font, glyph_id).expect("the glyph is not blank");
+        let (left, bottom, width, height) = pixel_box(bounds).expect("the glyph fits a bitmap");
+        let bitmap =
+            draw_coverage(font, glyph_id, left, bottom, width, height).expect("the glyph draws");
+        bitmap.iter().map(|coverage| *coverage as f64).sum::<f64>() / 255.0
+    }
+
+    // The regression behind the "PingFang looks bolder" reports: the variable
+    // system faces default to a heavier instance than the weight Apple pairs
+    // with regular UI text (`.PingFangUITextSC-Default` answers `wght` 501,
+    // the cascade pins 400), and a font rebuilt from the file alone renders
+    // that heavy default. The production path must come out lighter than the
+    // file's default instance.
+    #[test]
+    fn a_variable_face_is_drawn_at_the_normal_text_weight() {
+        let (path, index, glyph_id) =
+            simplified_chinese_face().expect("Apple platforms always carry a Chinese face");
+        let descriptor = face_descriptor(&path, index).expect("the face has a descriptor");
+        // SAFETY: a null matrix requests the identity transform.
+        let unpinned =
+            unsafe { CTFont::with_font_descriptor(&descriptor, 64.0, std::ptr::null()) };
+        let Some((minimum, default, _)) = weight_axis_range(&unpinned) else {
+            return; // A static face has no heavier default to pin down.
+        };
+        if default <= f64::from(NORMAL_TEXT_WEIGHT).max(minimum) {
+            return; // The default instance is not the heavy one.
+        }
+
+        let default_ink = ink(&unpinned, glyph_id);
+        let glyph = rasterize_glyph(&path, index, glyph_id, 64.0, NORMAL_TEXT_WEIGHT, false, 64.0)
+            .expect("the platform must draw the face");
+        let pinned_ink =
+            glyph.bitmap.iter().map(|coverage| *coverage as f64).sum::<f64>() / 255.0;
+
+        assert!(
+            pinned_ink < default_ink * 0.95,
+            "a glyph drawn for regular text must be lighter than the file's \
+             default instance: pinned {pinned_ink:.1} vs default {default_ink:.1}"
+        );
+    }
+
+    // The weight of the glyph key must reach the platform: a run standing
+    // beside a light kana face asks for a lighter instance, a bold style for
+    // a heavier one, and each must deposit measurably different coverage.
+    #[test]
+    fn the_requested_weight_scales_the_ink_a_variable_face_deposits() {
+        let (path, index, glyph_id) =
+            simplified_chinese_face().expect("Apple platforms always carry a Chinese face");
+        let font = create_font(&path, index, 64.0, NORMAL_TEXT_WEIGHT)
+            .expect("the platform builds the face");
+        let Some((minimum, _, maximum)) = weight_axis_range(&font) else {
+            return; // A static face renders one design for every request.
+        };
+        if minimum > 300.0 || maximum < 600.0 {
+            return; // The axis cannot express the weights being compared.
+        }
+
+        let coverage = |weight: u16| {
+            let glyph = rasterize_glyph(&path, index, glyph_id, 64.0, weight, false, 64.0)
+                .expect("the platform must draw the face");
+            glyph.bitmap.iter().map(|coverage| *coverage as f64).sum::<f64>() / 255.0
+        };
+
+        let light = coverage(300);
+        let normal = coverage(NORMAL_TEXT_WEIGHT);
+        let heavy = coverage(600);
+
+        assert!(
+            light < normal * 0.97 && normal < heavy * 0.97,
+            "weights must draw distinguishable strokes: \
+             300 → {light:.1}, 400 → {normal:.1}, 600 → {heavy:.1}"
+        );
+    }
+
+    // The axis reader answers with the file's own numbers, which the pinning
+    // decision rests on.
+    #[test]
+    fn the_weight_axis_reports_a_range_that_holds_the_normal_weight() {
+        let (path, index, _) =
+            simplified_chinese_face().expect("Apple platforms always carry a Chinese face");
+        let font = create_font(&path, index, 32.0, NORMAL_TEXT_WEIGHT)
+            .expect("the platform builds the face");
+        let Some((minimum, default, maximum)) = weight_axis_range(&font) else {
+            return; // A static face exposes no axes.
+        };
+        assert!(minimum <= default && default <= maximum);
+        assert!(
+            minimum <= f64::from(NORMAL_TEXT_WEIGHT) && f64::from(NORMAL_TEXT_WEIGHT) <= maximum,
+            "the weight axis {minimum}..{maximum} cannot express normal text"
+        );
+    }
+
     #[test]
     fn draws_a_glyph_whose_outlines_only_the_platform_can_read() {
         let (path, index, glyph_id) =
@@ -420,7 +758,7 @@ mod tests {
             "{path:?}#{index} glyph {glyph_id} reported as undrawable"
         );
 
-        let glyph = rasterize_glyph(&path, index, glyph_id, 32.0, false, 32.0)
+        let glyph = rasterize_glyph(&path, index, glyph_id, 32.0, NORMAL_TEXT_WEIGHT, false, 32.0)
             .expect("the platform must draw a face it reports as drawable");
         assert!(!glyph.is_color);
         assert_eq!(glyph.bitmap.len(), (glyph.width * glyph.height) as usize);
@@ -442,7 +780,7 @@ mod tests {
         let face = font_ref(data.as_ref(), 0).expect("the emoji file holds a face");
         let glyph_id = face.charmap().map('😀').expect("the face maps the emoji").to_u32() as u16;
 
-        let glyph = rasterize_glyph(&path, 0, glyph_id, 32.0, true, 32.0)
+        let glyph = rasterize_glyph(&path, 0, glyph_id, 32.0, NORMAL_TEXT_WEIGHT, true, 32.0)
             .expect("the platform must draw color emoji");
 
         assert!(glyph.is_color);
@@ -468,8 +806,10 @@ mod tests {
         let (path, index, glyph_id) =
             simplified_chinese_face().expect("Apple platforms always carry a Chinese face");
 
-        let small = rasterize_glyph(&path, index, glyph_id, 16.0, false, 16.0).expect("drawn");
-        let large = rasterize_glyph(&path, index, glyph_id, 64.0, false, 64.0).expect("drawn");
+        let small = rasterize_glyph(&path, index, glyph_id, 16.0, NORMAL_TEXT_WEIGHT, false, 16.0)
+            .expect("drawn");
+        let large = rasterize_glyph(&path, index, glyph_id, 64.0, NORMAL_TEXT_WEIGHT, false, 64.0)
+            .expect("drawn");
 
         assert!(
             large.width > small.width && large.height > small.height,
@@ -486,7 +826,8 @@ mod tests {
         let (path, index, glyph_id) =
             simplified_chinese_face().expect("Apple platforms always carry a Chinese face");
 
-        let glyph = rasterize_glyph(&path, index, glyph_id, 24.0, false, 17.5).expect("drawn");
+        let glyph = rasterize_glyph(&path, index, glyph_id, 24.0, NORMAL_TEXT_WEIGHT, false, 17.5)
+            .expect("drawn");
 
         assert_eq!(glyph.advance_width, 17.5);
     }
@@ -497,7 +838,7 @@ mod tests {
         std::fs::write(&path, b"not a font").expect("the temporary file is writable");
 
         assert!(!draws_glyph(&path, 0, 1));
-        assert!(rasterize_glyph(&path, 0, 1, 16.0, false, 8.0).is_none());
+        assert!(rasterize_glyph(&path, 0, 1, 16.0, NORMAL_TEXT_WEIGHT, false, 8.0).is_none());
 
         std::fs::remove_file(&path).ok();
     }
@@ -507,7 +848,9 @@ mod tests {
         let (path, index, glyph_id) =
             simplified_chinese_face().expect("Apple platforms always carry a Chinese face");
 
-        assert!(rasterize_glyph(&path, index, glyph_id, 0.0, false, 8.0).is_none());
+        assert!(
+            rasterize_glyph(&path, index, glyph_id, 0.0, NORMAL_TEXT_WEIGHT, false, 8.0).is_none()
+        );
     }
 
     #[test]

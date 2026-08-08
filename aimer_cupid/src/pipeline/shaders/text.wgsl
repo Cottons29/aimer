@@ -8,6 +8,9 @@ struct VertexOutput {
     @location(2) pixel_pos: vec2<f32>,
     @location(3) clip_rect: vec4<f32>,
     @location(4) clip_border_radius: vec4<f32>,
+    // Exponent applied to the atlas coverage before blending; see
+    // `coverage_exponent` in `text_pipeline.rs`.
+    @location(5) coverage_exponent: f32,
 };
 
 struct FragmentInput {
@@ -16,6 +19,7 @@ struct FragmentInput {
     @location(2) pixel_pos: vec2<f32>,
     @location(3) clip_rect: vec4<f32>,
     @location(4) clip_border_radius: vec4<f32>,
+    @location(5) coverage_exponent: f32,
 };
 
 struct Viewport {
@@ -46,6 +50,7 @@ fn vs_main(
     @location(4) clip_rect: vec4<f32>,
     @location(5) clip_radius: vec4<f32>,
     @location(6) inst_skew: f32,
+    @location(7) inst_coverage_exponent: f32,
 ) -> VertexOutput {
     // Triangle list for a quad: vertices 0-5 map to corners.
     // 0(0,0) 1(1,0) 2(0,1) | 3(0,1) 4(1,0) 5(1,1)
@@ -76,6 +81,7 @@ fn vs_main(
     out.pixel_pos = pixel_pos;
     out.clip_rect = clip_rect;
     out.clip_border_radius = clip_radius;
+    out.coverage_exponent = inst_coverage_exponent;
     return out;
 }
 
@@ -153,15 +159,28 @@ fn linear_to_srgb(c: f32) -> f32 {
 
 @fragment
 fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
-    let alpha = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0).r;
+    let coverage = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0).r;
     let ca = clip_alpha(in.pixel_pos, in.clip_rect, in.clip_border_radius);
-    let a = in.color.a * alpha * ca;
-    
+
     // On Android (surface_is_srgb >= 1.5), skip sRGB conversion entirely.
     var result: vec4<f32>;
     if viewport.surface_is_srgb >= 1.5 {
+        let a = in.color.a * coverage * ca;
         result = vec4<f32>(in.color.rgb * a, a);
     } else {
+        // The target is sRGB, so the hardware blends this fragment in linear
+        // light. Coverage is a geometric fraction, not a light ratio: blended
+        // linearly it makes antialiased edges lighter than the rasterizer
+        // meant, which robs small text of stroke weight. The exponent restores
+        // it — see `coverage_exponent` in `text_pipeline.rs`. The non-sRGB path
+        // below already blends in sRGB space and must stay untouched.
+        let corrected = select(
+            pow(coverage, in.coverage_exponent),
+            coverage,
+            viewport.surface_is_srgb < 0.5,
+        );
+        let a = in.color.a * corrected * ca;
+
         let r_lin = srgb_to_linear(in.color.r);
         let g_lin = srgb_to_linear(in.color.g);
         let b_lin = srgb_to_linear(in.color.b);

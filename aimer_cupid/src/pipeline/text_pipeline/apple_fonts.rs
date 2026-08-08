@@ -4,16 +4,21 @@
 //! directory that can be enumerated cheaply. Walking every installed face —
 //! which is what generic font databases do — costs hundreds of milliseconds at
 //! startup and keeps large CJK and emoji faces resident in memory, so Cupid
-//! instead asks Core Text three narrow questions:
+//! instead asks Core Text four narrow questions:
 //!
 //! * [`system_font_path`] — "where does the family called *X* live?"
 //! * [`fallback_font_path_for_probes`] — "which face would you use to draw
 //!   these codepoints?"
 //! * [`font_paths_for_codepoint`] — "which faces *could* draw this character?"
+//! * [`language_fallback_sources`] — "which face would each UI language's
+//!   cascade use to draw these codepoints?"
 //!
-//! All answer with file system paths. The caller memory-maps those files, which
-//! keeps the bytes out of the heap and lets the kernel evict them under
-//! pressure.
+//! Most answers are file system paths. The caller memory-maps those files,
+//! which keeps the bytes out of the heap and lets the kernel evict them under
+//! pressure. A face that no readable file backs is instead reassembled from
+//! the tables Core Graphics exposes for it — `CTFontCopyGraphicsFont` followed
+//! by `CGFontCopyTableTags`/`CGFontCopyTableForTag` — so Cupid can still
+//! rasterize it without the platform's off-screen layer.
 //!
 //! Core Text's preferred answer is not always usable by a third-party
 //! rasterizer: on recent macOS builds the system UI cascade resolves CJK to
@@ -31,9 +36,13 @@
 
 use std::path::PathBuf;
 
-use objc2_core_foundation::{CFCharacterSet, CFDictionary, CFRange, CFString, CFURL};
+use objc2_core_foundation::{
+    CFCharacterSet, CFData, CFDictionary, CFLocale, CFRange, CFRetained, CFString, CFURL,
+};
+use objc2_core_graphics::CGFont;
 use objc2_core_text::{
-    CTFont, CTFontDescriptor, kCTFontCharacterSetAttribute, kCTFontURLAttribute,
+    CTFont, CTFontDescriptor, CTFontUIFontType, kCTFontCharacterSetAttribute,
+    kCTFontURLAttribute,
 };
 
 /// Point size used for the transient `CTFont` instances created here.
@@ -55,6 +64,24 @@ const SYSTEM_UI_FONT_NAME: &str = ".AppleSystemUIFont";
 /// carried by dozens of installed faces. The first usable one wins, so the tail
 /// of that list is never reached in practice and only costs memory.
 const MAX_CANDIDATE_FACES: usize = 16;
+
+/// UI languages whose cascades back up the device's own preferred languages.
+///
+/// A CJK codepoint must resolve even on a device configured for none of these,
+/// so their cascades are consulted after the preferred languages. `ja` comes
+/// first deliberately: the Japanese cascade pairs the UI font with faces this
+/// crate decodes itself for every branch of unified Han (Hiragino Sans for the
+/// shared ideographs, Hiragino Sans GB for the simplified-only ones), and a
+/// kanji standing alone must stay on the face its kana neighbours use rather
+/// than jump to a Korean or Chinese one.
+const CJK_UI_LANGUAGES: [&str; 4] = ["ja", "zh-Hans", "zh-Hant", "ko"];
+
+/// Most device-preferred languages consulted before [`CJK_UI_LANGUAGES`].
+///
+/// The preference list a user builds over years can be long; past the first
+/// few entries it stops describing the text on screen and only multiplies
+/// cascade queries.
+const MAX_PREFERRED_LANGUAGES: usize = 4;
 
 /// Returns the file the given font was loaded from, if it is backed by one.
 ///
@@ -199,6 +226,255 @@ fn matching_font_paths_for_codepoint(codepoint: char) -> Vec<PathBuf> {
         .collect()
 }
 
+/// A fallback face offered by the platform, with the bytes to draw it from.
+///
+/// Most faces live in font files the caller can memory-map. A face without a
+/// usable file — one registered from memory, or served from an asset store
+/// behind a non-`file://` URL — is carried as the sfnt reassembled from its
+/// Core Graphics tables instead, identified by its PostScript name.
+pub(crate) enum SystemFaceSource {
+    /// A face backed by an on-disk font file.
+    File(PathBuf),
+    /// A face reassembled from the tables Core Graphics exposes for it.
+    Data {
+        postscript_name: String,
+        bytes: Vec<u8>,
+    },
+}
+
+/// Returns the faces each UI language's cascade uses to draw `required`.
+///
+/// `CTFontCreateForString` alone answers with the face the *device's language*
+/// prefers, which for CJK is a private file this crate cannot decode. Asked
+/// through `CTFontCreateUIFontForLanguage` instead, every language names the
+/// concrete face Apple pairs with its UI font — stroke weight included — and
+/// several of those are faces Cupid rasterizes itself: on a Japanese cascade,
+/// simplified-only Han resolves to Hiragino Sans GB, whose weight matches the
+/// Hiragino face drawing the kana beside it.
+///
+/// Each language is asked about `required` as a whole and about every
+/// character alone: the whole-string answer covers only the longest prefix the
+/// first matching face can draw, so the face serving the characters *behind*
+/// that prefix — the simplified-only tail of a Japanese line — appears only in
+/// the per-character answers.
+///
+/// The device's preferred languages are consulted first so the answer blends
+/// with the rest of the interface, then [`CJK_UI_LANGUAGES`] as a backstop.
+/// Sources are deduplicated and capped at [`MAX_CANDIDATE_FACES`]; callers
+/// must still validate coverage, because Core Text hands back the queried font
+/// itself when nothing matches.
+pub(crate) fn language_fallback_sources(required: &[char]) -> Vec<SystemFaceSource> {
+    let mut sources: Vec<SystemFaceSource> = Vec::new();
+    let full: String = required.iter().collect();
+    if full.is_empty() {
+        return sources;
+    }
+
+    let mut samples: Vec<String> = vec![full];
+    if required.len() > 1 {
+        samples.extend(required.iter().map(|codepoint| codepoint.to_string()));
+    }
+
+    for language in ui_cascade_languages() {
+        let language = CFString::from_str(&language);
+        // SAFETY: the constant designates the system UI font and the language
+        // is a valid BCP-47 tag string.
+        let Some(base) = (unsafe {
+            CTFont::new_ui_font_for_language(
+                CTFontUIFontType::System,
+                LOOKUP_FONT_SIZE,
+                Some(&language),
+            )
+        }) else {
+            continue;
+        };
+        for sample in &samples {
+            if sources.len() >= MAX_CANDIDATE_FACES {
+                return sources;
+            }
+            let string = CFString::from_str(sample);
+            // `CFRange` counts UTF-16 code units, so astral-plane characters
+            // contribute two units each.
+            let length = sample.encode_utf16().count() as isize;
+            // SAFETY: the range spans exactly the UTF-16 content of `string`.
+            let resolved = unsafe {
+                base.for_string_with_language(
+                    &string,
+                    CFRange {
+                        location: 0,
+                        length,
+                    },
+                    Some(&language),
+                )
+            };
+            push_source(&mut sources, &resolved);
+        }
+    }
+
+    sources
+}
+
+/// The languages whose UI cascades [`language_fallback_sources`] consults.
+fn ui_cascade_languages() -> Vec<String> {
+    let mut languages: Vec<String> = Vec::new();
+    if let Some(preferred) = CFLocale::preferred_languages() {
+        // SAFETY: `CFLocaleCopyPreferredLanguages` is documented to return an
+        // array of `CFString` language identifiers.
+        let preferred = unsafe { preferred.cast_unchecked::<CFString>() };
+        languages.extend(
+            preferred
+                .iter()
+                .take(MAX_PREFERRED_LANGUAGES)
+                .map(|language| language.to_string()),
+        );
+    }
+    for language in CJK_UI_LANGUAGES {
+        if !languages.iter().any(|existing| existing == language) {
+            languages.push(language.to_string());
+        }
+    }
+    languages
+}
+
+/// Appends `font` to `sources` unless an equivalent entry is already present.
+///
+/// File-backed faces are deduplicated by path, memory-backed ones by
+/// PostScript name. Table extraction copies every table of the font, so it is
+/// attempted only for fonts no readable file backs and only after the name
+/// check has ruled out a duplicate.
+fn push_source(sources: &mut Vec<SystemFaceSource>, font: &CTFont) {
+    if let Some(path) = font_file_path(font) {
+        let seen = sources
+            .iter()
+            .any(|source| matches!(source, SystemFaceSource::File(existing) if *existing == path));
+        if !seen {
+            sources.push(SystemFaceSource::File(path));
+        }
+        return;
+    }
+
+    // SAFETY: `font` is a valid, retained font reference.
+    let postscript_name = unsafe { font.post_script_name() }.to_string();
+    let seen = sources.iter().any(|source| {
+        matches!(source, SystemFaceSource::Data { postscript_name: existing, .. } if *existing == postscript_name)
+    });
+    if seen {
+        return;
+    }
+    if let Some(bytes) = font_table_data(font) {
+        sources.push(SystemFaceSource::Data {
+            postscript_name,
+            bytes,
+        });
+    }
+}
+
+/// Reassembles an sfnt byte stream from the font's Core Graphics tables.
+///
+/// `CTFontCopyGraphicsFont` bridges the font to a `CGFont`, whose
+/// `CGFontCopyTableTags`/`CGFontCopyTableForTag` expose every table of the
+/// underlying face — including the single face of a `.ttc` collection member,
+/// which is why the result always parses at collection index `0`.
+///
+/// Returns `None` when the font exposes no tables at all.
+fn font_table_data(font: &CTFont) -> Option<Vec<u8>> {
+    // SAFETY: a null attribute-descriptor out-parameter is documented as "the
+    // caller does not want the descriptor back".
+    let graphics = unsafe { font.graphics_font(std::ptr::null_mut()) };
+    let tags = CGFont::table_tags(Some(&graphics))?;
+    let count = tags.count();
+    let mut tables: Vec<(u32, CFRetained<CFData>)> = Vec::with_capacity(count as usize);
+    for index in 0..count {
+        // SAFETY: `index` is in bounds; the array carries table tags stored as
+        // pointer-sized integers, not object references.
+        let tag = unsafe { tags.value_at_index(index) } as usize as u32;
+        if let Some(data) = CGFont::table_for_tag(Some(&graphics), tag) {
+            tables.push((tag, data));
+        }
+    }
+    sfnt_from_tables(&tables)
+}
+
+/// Serializes `tables` into a standalone sfnt font file image.
+///
+/// The directory is emitted in ascending tag order with spec-conforming
+/// binary-search fields and per-table checksums. `head.checkSumAdjustment` is
+/// left as extracted — no consumer of the result verifies whole-file sums.
+fn sfnt_from_tables(tables: &[(u32, CFRetained<CFData>)]) -> Option<Vec<u8>> {
+    const HEADER_LEN: usize = 12;
+    const ENTRY_LEN: usize = 16;
+
+    let count = u16::try_from(tables.len()).ok()?;
+    if count == 0 {
+        return None;
+    }
+
+    // CFF-flavoured fonts require the `OTTO` signature; everything else uses
+    // the TrueType version tag.
+    let cff_tag = u32::from_be_bytes(*b"CFF ");
+    let version: u32 = if tables.iter().any(|(tag, _)| *tag == cff_tag) {
+        0x4F54_544F
+    } else {
+        0x0001_0000
+    };
+
+    let mut entry_selector: u16 = 0;
+    while (2usize << entry_selector) <= tables.len() {
+        entry_selector += 1;
+    }
+    let search_range = (1u16 << entry_selector) * ENTRY_LEN as u16;
+    let range_shift = count * ENTRY_LEN as u16 - search_range;
+
+    let mut order: Vec<usize> = (0..tables.len()).collect();
+    order.sort_by_key(|&index| tables[index].0);
+
+    let mut offset = HEADER_LEN + ENTRY_LEN * tables.len();
+    let mut directory = Vec::with_capacity(ENTRY_LEN * tables.len());
+    let mut body: Vec<u8> = Vec::new();
+    for &index in &order {
+        let (tag, data) = &tables[index];
+        let length = data.length() as usize;
+        // SAFETY: the pointer covers `length` bytes owned by the retained
+        // `CFData`, which outlives this copy.
+        let bytes = unsafe { std::slice::from_raw_parts(data.byte_ptr(), length) };
+        directory.extend_from_slice(&tag.to_be_bytes());
+        directory.extend_from_slice(&table_checksum(bytes).to_be_bytes());
+        directory.extend_from_slice(&u32::try_from(offset).ok()?.to_be_bytes());
+        directory.extend_from_slice(&u32::try_from(length).ok()?.to_be_bytes());
+        body.extend_from_slice(bytes);
+        let padding = length.wrapping_neg() & 3;
+        body.extend_from_slice(&[0u8; 3][..padding]);
+        offset += length + padding;
+    }
+
+    let mut font = Vec::with_capacity(HEADER_LEN + directory.len() + body.len());
+    font.extend_from_slice(&version.to_be_bytes());
+    font.extend_from_slice(&count.to_be_bytes());
+    font.extend_from_slice(&search_range.to_be_bytes());
+    font.extend_from_slice(&entry_selector.to_be_bytes());
+    font.extend_from_slice(&range_shift.to_be_bytes());
+    font.extend_from_slice(&directory);
+    font.extend_from_slice(&body);
+    Some(font)
+}
+
+/// The sfnt checksum of a table: the big-endian `u32` sum over its bytes,
+/// zero-padded to a word boundary.
+fn table_checksum(bytes: &[u8]) -> u32 {
+    let mut sum = 0u32;
+    let mut words = bytes.chunks_exact(4);
+    for word in &mut words {
+        sum = sum.wrapping_add(u32::from_be_bytes([word[0], word[1], word[2], word[3]]));
+    }
+    let remainder = words.remainder();
+    if remainder.is_empty() {
+        return sum;
+    }
+    let mut last = [0u8; 4];
+    last[..remainder.len()].copy_from_slice(remainder);
+    sum.wrapping_add(u32::from_be_bytes(last))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +567,87 @@ mod tests {
     #[test]
     fn fallback_font_path_for_probes_rejects_empty_probes() {
         assert!(fallback_font_path_for_probes(&[]).is_none());
+    }
+
+    /// Reports whether any face of `data` has readable glyph data for all of
+    /// `required` — the acceptance rule the fallback resolver applies.
+    fn any_face_decodes_all(data: &[u8], required: &[char]) -> bool {
+        use skrifa::MetadataProvider;
+        use skrifa::instance::{LocationRef, Size};
+
+        let face_count = match skrifa::raw::FileRef::new(data) {
+            Ok(skrifa::raw::FileRef::Collection(collection)) => collection.len(),
+            Ok(skrifa::raw::FileRef::Font(_)) => 1,
+            Err(_) => 0,
+        };
+        (0..face_count).any(|index| {
+            skrifa::FontRef::from_index(data, index).is_ok_and(|face| {
+                let metrics = face.glyph_metrics(Size::unscaled(), LocationRef::default());
+                required.iter().all(|codepoint| {
+                    face.charmap()
+                        .map(*codepoint)
+                        .and_then(|glyph_id| metrics.bounds(glyph_id))
+                        .is_some()
+                })
+            })
+        })
+    }
+
+    // The property the mixed-weight fix rests on: some UI language's cascade
+    // must offer a simplified-Han face whose outlines this crate reads itself,
+    // so Han never has to fall onto the platform's off-screen rasterizer.
+    #[test]
+    fn language_fallback_sources_offer_a_decodable_simplified_han_face() {
+        let required = ['吗', '顶', '这'];
+        let sources = language_fallback_sources(&required);
+        assert!(!sources.is_empty(), "no cascade proposed any face");
+        assert!(
+            sources.iter().any(|source| match source {
+                SystemFaceSource::File(path) =>
+                    std::fs::read(path).is_ok_and(|data| any_face_decodes_all(&data, &required)),
+                SystemFaceSource::Data { bytes, .. } => any_face_decodes_all(bytes, &required),
+            }),
+            "every language cascade answered with faces cupid cannot decode"
+        );
+    }
+
+    #[test]
+    fn language_fallback_sources_reject_an_empty_requirement() {
+        assert!(language_fallback_sources(&[]).is_empty());
+    }
+
+    // The extraction path for faces without a readable file behind them:
+    // tables copied out of Core Graphics must reassemble into an sfnt this
+    // crate parses and decodes glyphs from.
+    #[test]
+    fn font_table_data_reassembles_a_decodable_font() {
+        use skrifa::MetadataProvider;
+        use skrifa::instance::{LocationRef, Size};
+
+        let name = CFString::from_str("Helvetica");
+        // SAFETY: a null matrix requests the identity transform.
+        let font = unsafe { CTFont::with_name(&name, LOOKUP_FONT_SIZE, std::ptr::null()) };
+        let data = font_table_data(&font).expect("system fonts expose their tables");
+        let face = skrifa::FontRef::new(&data).expect("the reassembled sfnt must parse");
+        let glyph_id = face
+            .charmap()
+            .map('A')
+            .expect("helvetica maps basic latin");
+        assert!(
+            face.glyph_metrics(Size::unscaled(), LocationRef::default())
+                .bounds(glyph_id)
+                .is_some(),
+            "the reassembled glyph data must decode"
+        );
+    }
+
+    #[test]
+    fn table_checksum_pads_the_trailing_word_with_zeroes() {
+        assert_eq!(table_checksum(&[]), 0);
+        assert_eq!(table_checksum(&[0x01]), 0x0100_0000);
+        assert_eq!(
+            table_checksum(&[0x00, 0x00, 0x00, 0x01, 0x02]),
+            0x0200_0001
+        );
     }
 }

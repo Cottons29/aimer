@@ -798,6 +798,10 @@ pub fn shape_text_styled(
     font_weight: FontWeight,
     font_style: FontStyle,
 ) -> ShapedText {
+    // Which face an ideograph belongs to depends on the characters beside it, so
+    // the whole paragraph is announced before a single one is resolved.
+    rasterizer.begin_script_run(text);
+
     let (ascent, _descent, line_gap) = time_cost!("text_layout::LayoutText - line_metrics", {
         rasterizer.line_metrics_for_family(font_size, font_family, font_weight, font_style)
     });
@@ -868,6 +872,7 @@ pub fn shape_text_styled(
                 &text[cluster_start..run_end],
                 font_size,
                 font_id,
+                font_weight,
             );
             let cluster_output_start = clusters.len();
 
@@ -896,6 +901,8 @@ pub fn shape_text_styled(
 
         clusters
     });
+
+    rasterizer.end_script_run();
 
     ShapedText {
         font_size,

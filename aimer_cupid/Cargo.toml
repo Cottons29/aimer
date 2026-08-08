@@ -49,7 +49,10 @@ objc2-core-foundation = { workspace = true, features = [
     "std",
     "CFArray",
     "CFCharacterSet",
+    "CFData",
     "CFDictionary",
+    "CFLocale",
+    "CFNumber",
     "CFString",
     "CFURL",
 ] }

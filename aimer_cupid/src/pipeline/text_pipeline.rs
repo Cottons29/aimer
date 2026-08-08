@@ -44,8 +44,83 @@ struct GlyphInstance {
     /// 0 = upright. The glyph shaders slant the quad by this, pinned at its
     /// bottom edge, so the advance/layout is unchanged.
     skew: f32,
+    /// Exponent the glyph shader raises the atlas coverage to before blending.
+    /// See [`coverage_exponent`]; `1.0` leaves the coverage untouched.
+    coverage_exponent: f32,
     /// Padding to keep the struct 8-byte aligned for `Pod`/vertex upload.
-    _pad: [f32; 3],
+    _pad: [f32; 2],
+}
+
+/// Gamma of the blend space text is composited in.
+///
+/// sRGB's transfer function is a 2.4 power with a linear toe; 2.2 is its
+/// standard single-exponent approximation and the value every text stack that
+/// corrects for this uses.
+const TEXT_BLEND_GAMMA: f32 = 2.2;
+
+/// Returns the exponent a glyph's coverage must be raised to before it is
+/// blended in linear light.
+///
+/// A rasterizer's coverage is a *geometric* quantity: half a pixel covered by
+/// black means "paint half way to black", which is a statement about the
+/// picture, not about photons. Blending it on an sRGB target performs the mix
+/// in linear light instead, and half way in linear light is far lighter than
+/// half way in sRGB — so an antialiased edge loses weight, and a stroke looks
+/// thinner the more of it falls on partially covered pixels.
+///
+/// Raising the coverage to `gamma^(2*luminance - 1)` puts the weight back:
+/// dark text (luminance `0`) gets `1/2.2`, which strengthens partial coverage;
+/// light text on a dark background gets `2.2`, which weakens it by the same
+/// amount in the other direction; mid-luminance text — the one case linear
+/// blending already renders correctly — gets exactly `1.0` and is untouched.
+///
+/// The background is not known here, so the text's own luminance stands in for
+/// "which way the blend runs", which is the assumption every fixed-curve text
+/// gamma uses and is right whenever text contrasts with what it sits on.
+#[inline]
+fn coverage_exponent(color: [f32; 4]) -> f32 {
+    let channel = |value: f32| if value.is_finite() { value.clamp(0.0, 1.0) } else { 0.0 };
+    let luminance =
+        0.2126 * channel(color[0]) + 0.7152 * channel(color[1]) + 0.0722 * channel(color[2]);
+
+    TEXT_BLEND_GAMMA.powf(2.0 * luminance - 1.0)
+}
+
+/// Returns the on-screen size of a glyph quad drawn from an atlas region of
+/// `region_size` texels.
+///
+/// A glyph is a bitmap, not a shape. It reaches the screen unaltered only when
+/// its quad is exactly as large as the region behind it, so that one quad pixel
+/// maps to one texel and the linear sampler lands on texel centres. Any other
+/// size resamples the whole glyph — every stroke is blended across two texels,
+/// which reads as a loss of stroke weight rather than as a change of size,
+/// because the ink the stroke carries is spread over more pixels than the
+/// rasterizer put it on.
+///
+/// The region is therefore the only admissible source for the size. The
+/// layout's own measurement of the glyph is not: it comes from a different
+/// pass, and the two can disagree by a pixel.
+#[inline]
+fn glyph_quad_size(region_size: (u32, u32)) -> [f32; 2] {
+    [region_size.0 as f32, region_size.1 as f32]
+}
+
+/// Snaps a glyph quad's top-left corner onto the device pixel grid.
+///
+/// Glyphs are rasterized at a single phase — [`GlyphKey`]'s `subpixel_x` and
+/// `subpixel_y` are always `0` — so the bitmap in the atlas is drawn as if its
+/// origin were a whole pixel. The quad's size already equals the bitmap's, so
+/// placing that quad on a whole pixel makes every texel land on exactly one
+/// pixel; placing it anywhere else makes the linear atlas sampler blend each
+/// texel across two, which costs contrast and stroke weight.
+///
+/// Layout positions are fractional (advances, glyph bearings and a centred
+/// line's alignment offset all are), so without this a piece of text renders
+/// differently depending on where it happens to sit — most visibly for a label
+/// centred in a box too narrow for it, which lands on a half pixel.
+#[inline]
+fn snap_to_pixel_grid(position: [f32; 2]) -> [f32; 2] {
+    [position[0].round(), position[1].round()]
 }
 
 fn glyph_intersects_clip(position: [f32; 2], size: [f32; 2], clip: [f32; 4]) -> bool {
@@ -77,7 +152,7 @@ fn normalize_pixel_uv_rect(pixel_rect: [f32; 4], atlas_width: u32, atlas_height:
 }
 
 impl GlyphInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x4,
@@ -85,6 +160,7 @@ impl GlyphInstance {
         4 => Float32x4,
         5 => Float32x4,
         6 => Float32,
+        7 => Float32,
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
@@ -1254,10 +1330,7 @@ impl TextPipelineV2 {
                         // so this goes through the shared metrics cache and never
                         // rasterizes a glyph that is already in the atlas.
 
-                        let (is_color, rg_width, rg_height) = {
-                            let rg = self.rasterizer.metrics_for_key(key, pg.font_size);
-                            (rg.is_color, rg.width, rg.height)
-                        };
+                        let is_color = self.rasterizer.metrics_for_key(key, pg.font_size).is_color;
 
                         // Step 2: route the bitmap into the appropriate atlas, then
                         // build a `GlyphInstance` and push it to the matching list.
@@ -1292,20 +1365,29 @@ impl TextPipelineV2 {
                             (region, false)
                         };
 
-                        // For color emoji we render at the rasterized size (which is
-                        // already at `font_size` resolution thanks to the resampler
-                        // in `rasterize_color_glyph`). For alpha glyphs we keep the
-                        // historical `pg.width / pg.height` (which equals `rg_width /
-                        // rg_height` when the layout came from the same rasterizer).
-                        let size = if is_color {
-                            [rg_width as f32, rg_height as f32]
-                        } else {
-                            [pg.width as f32, pg.height as f32]
-                        };
-                        let position = [
+                        // The quad is the bitmap, so it is sized by the atlas
+                        // region it samples and never by the layout's own
+                        // measurement of the glyph. The two are produced by
+                        // different passes and can disagree by a pixel — one
+                        // rasterized the glyph at a marginally different size,
+                        // or read its metrics from the shared cache filled by
+                        // the other — and a quad that disagrees rescales the
+                        // whole glyph through the linear sampler, spreading
+                        // every stroke over more pixels than it was drawn on.
+                        // That reads as lost stroke weight, not as a size
+                        // change, and it strikes only the glyphs whose numbers
+                        // happen to differ, so one character in a word comes
+                        // out thinner than its neighbours.
+                        let size = glyph_quad_size((region.width, region.height));
+                        // Pinned to the pixel grid: the atlas bitmap was
+                        // rasterized for a whole-pixel origin, so anything else
+                        // is resampled by the linear sampler and comes out
+                        // lighter and softer than the same text drawn a
+                        // fraction of a pixel away.
+                        let position = snap_to_pixel_grid([
                             pg.x + cursor_x + line_offsets[pg.line_index],
                             pg.y + cursor_y,
-                        ];
+                        ]);
                         if !glyph_intersects_clip(position, size, req.clip_rect) {
                             continue;
                         }
@@ -1328,7 +1410,8 @@ impl TextPipelineV2 {
                             clip_rect: req.clip_rect,
                             clip_border_radius: req.clip_border_radius,
                             skew,
-                            _pad: [0.0; 3],
+                            coverage_exponent: coverage_exponent(color),
+                            _pad: [0.0; 2],
                         };
 
                         if target_color_list {
@@ -1552,10 +1635,29 @@ impl TextPipelineV2 {
 #[cfg(test)]
 mod tests {
     use super::{
-        LayoutCacheKey, ShapingCacheKey, TextDecorationDraw, glyph_intersects_clip,
-        normalize_pixel_uv_rect,
+        LayoutCacheKey, ShapingCacheKey, TextDecorationDraw, coverage_exponent,
+        glyph_intersects_clip, glyph_quad_size, normalize_pixel_uv_rect, snap_to_pixel_grid,
     };
     use crate::font::{FontFamily, FontStyle, FontWeight};
+
+    /// How many atlas texels one pixel of `quad_size` spans.
+    ///
+    /// The pipeline keeps this at exactly `[1.0, 1.0]`; anything else means the
+    /// sampler is rescaling the glyph.
+    fn texel_scale(quad_size: [f32; 2], region_size: (u32, u32)) -> [f32; 2] {
+        let axis = |quad: f32, region: u32| {
+            if region == 0 {
+                0.0
+            } else {
+                region as f32 / quad
+            }
+        };
+
+        [
+            axis(quad_size[0], region_size.0),
+            axis(quad_size[1], region_size.1),
+        ]
+    }
 
     #[test]
     fn text_cache_keys_isolate_font_families_and_variants() {
@@ -1638,6 +1740,169 @@ mod tests {
         assert_eq!(
             normalize_pixel_uv_rect(pixel_rect, 512, 256),
             [0.125, 0.125, 0.1875, 0.25]
+        );
+    }
+
+    // A glyph's coverage is written as an alpha the GPU blends in *linear*
+    // light on an sRGB target. Blending there is not what the rasterizer meant:
+    // half coverage of black over a light background comes out far lighter than
+    // half way to black, so a stroke's apparent weight depends on how much of it
+    // sits on partially covered pixels. The exponent below is what puts the
+    // weight back.
+    #[test]
+    fn dark_text_has_its_partial_coverage_strengthened() {
+        let exponent = coverage_exponent([0.0, 0.0, 0.0, 1.0]);
+
+        assert!(exponent < 1.0, "dark text must gain coverage: {exponent}");
+        assert!((0.5_f32.powf(exponent) - 0.729).abs() < 0.01);
+    }
+
+    #[test]
+    fn light_text_has_its_partial_coverage_weakened() {
+        let exponent = coverage_exponent([1.0, 1.0, 1.0, 1.0]);
+
+        assert!(exponent > 1.0, "light text must lose coverage: {exponent}");
+        assert!((0.5_f32.powf(exponent) - 0.217).abs() < 0.01);
+    }
+
+    // Mid-luminance text is the one case linear blending already gets right,
+    // and the correction must not disturb it — otherwise every mid-tone label
+    // in the framework changes weight for nothing.
+    #[test]
+    fn mid_luminance_text_is_left_alone() {
+        let exponent = coverage_exponent([0.5, 0.5, 0.5, 1.0]);
+
+        assert!((exponent - 1.0).abs() < 0.05, "{exponent}");
+    }
+
+    // Luminance, not the plain channel average: pure blue is dark, pure green
+    // is light, and they must be corrected in opposite directions.
+    #[test]
+    fn the_exponent_follows_perceived_luminance() {
+        assert!(coverage_exponent([0.0, 0.0, 1.0, 1.0]) < 1.0);
+        assert!(coverage_exponent([0.0, 1.0, 0.0, 1.0]) > 1.0);
+    }
+
+    #[test]
+    fn colors_outside_the_unit_range_are_still_answered() {
+        for color in [
+            [-1.0, -1.0, -1.0, 1.0],
+            [2.0, 2.0, 2.0, 1.0],
+            [f32::NAN, 0.0, 0.0, 1.0],
+        ] {
+            let exponent = coverage_exponent(color);
+            assert!(
+                exponent.is_finite() && exponent > 0.0,
+                "{color:?} produced {exponent}"
+            );
+        }
+    }
+
+    // The defect in one number: black text at half coverage over a light grey
+    // background. Gamma-space compositing — what the rasterizer's coverage
+    // means, and what a native text stack produces — lands at half the
+    // background's sRGB value; blending the raw coverage in linear light lands
+    // far lighter. The correction has to close most of that gap.
+    #[test]
+    fn corrected_coverage_lands_near_gamma_space_compositing() {
+        let background = 0.647_f32;
+        let target = background * 0.5;
+
+        let composite = |alpha: f32| {
+            let background_linear = srgb_to_linear(background);
+            linear_to_srgb(background_linear * (1.0 - alpha))
+        };
+
+        let raw = composite(0.5);
+        let corrected = composite(0.5_f32.powf(coverage_exponent([0.0, 0.0, 0.0, 1.0])));
+
+        assert!(raw > target + 0.1, "the defect must be visible: {raw}");
+        assert!(
+            (corrected - target).abs() < (raw - target).abs() * 0.5,
+            "correction left {corrected}, target {target}, was {raw}"
+        );
+    }
+
+    fn srgb_to_linear(channel: f32) -> f32 {
+        if channel <= 0.04045 {
+            channel / 12.92
+        } else {
+            ((channel + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    fn linear_to_srgb(channel: f32) -> f32 {
+        if channel <= 0.0031308 {
+            channel * 12.92
+        } else {
+            1.055 * channel.powf(1.0 / 2.4) - 0.055
+        }
+    }
+
+    // A glyph's quad is sized by the pipeline, but the pixels inside it come
+    // from the atlas region its UVs address. The two are produced by different
+    // passes — layout measures the glyph, the atlas stores whatever bitmap was
+    // rasterized for its key — so nothing but this invariant keeps them equal,
+    // and a single pixel of disagreement resamples the whole glyph.
+    #[test]
+    fn a_glyph_quad_samples_one_texel_per_pixel() {
+        for region in [(38, 38), (1, 1), (12, 27)] {
+            assert_eq!(texel_scale(glyph_quad_size(region), region), [1.0, 1.0]);
+        }
+    }
+
+    // The defect this invariant exists for: the layout measured the glyph one
+    // pixel smaller than the bitmap the atlas holds. Sizing the quad by that
+    // measurement rescales every stroke through the sampler.
+    #[test]
+    fn a_quad_disagreeing_with_its_region_resamples_the_glyph() {
+        let scale = texel_scale([38.0, 38.0], (39, 39));
+
+        assert!(scale[0] != 1.0 && scale[1] != 1.0, "{scale:?}");
+    }
+
+    // An empty region has nothing to sample; the scale must stay finite rather
+    // than divide its way to infinity.
+    #[test]
+    fn an_empty_region_has_no_scale() {
+        assert_eq!(texel_scale(glyph_quad_size((0, 0)), (0, 0)), [0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_glyph_quad_is_placed_on_a_whole_pixel() {
+        assert_eq!(snap_to_pixel_grid([10.4, 20.6]), [10.0, 21.0]);
+        assert_eq!(snap_to_pixel_grid([-3.4, -0.2]), [-3.0, -0.0]);
+        assert_eq!(snap_to_pixel_grid([7.0, 9.0]), [7.0, 9.0]);
+    }
+
+    // The defect this guards: the same label rendered twice, once at an integer
+    // origin and once shifted by half a pixel — as a line centred in a box too
+    // narrow for it is — must produce the same quads, or the linear atlas
+    // sampler blurs one of them and its strokes lose weight.
+    #[test]
+    fn the_same_text_lands_on_the_same_pixels_wherever_its_line_starts() {
+        let glyph_offsets = [0.0_f32, 6.34, 12.68, 19.02];
+        let crisp: Vec<[f32; 2]> = glyph_offsets
+            .iter()
+            .map(|offset| snap_to_pixel_grid([40.0 + offset, 12.0]))
+            .collect();
+        let shifted: Vec<[f32; 2]> = glyph_offsets
+            .iter()
+            .map(|offset| snap_to_pixel_grid([40.5 + offset, 12.0]))
+            .collect();
+
+        for position in crisp.iter().chain(&shifted) {
+            assert_eq!(position[0], position[0].round());
+            assert_eq!(position[1], position[1].round());
+        }
+        let phases: Vec<f32> = shifted
+            .iter()
+            .zip(&crisp)
+            .map(|(shifted, crisp)| shifted[0] - crisp[0])
+            .collect();
+        assert!(
+            phases.iter().all(|phase| phase.abs() <= 1.0),
+            "snapping moved a glyph by more than a pixel: {phases:?}"
         );
     }
 

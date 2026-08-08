@@ -21,7 +21,8 @@ use crate::text_pipeline::font_resolver::{
 use crate::text_pipeline::glyph_metrics::{self, GlyphMetrics};
 use crate::text_pipeline::glyph_outline::rasterize_outline_glyph;
 use crate::text_pipeline::system_fallback::{
-    SYSTEM_FALLBACK_ID_BASE, fallback_by_id, fallback_for_codepoint,
+    SYSTEM_FALLBACK_ID_BASE, ScriptRequirement, fallback_by_id, fallback_for_codepoint,
+    script_probes,
 };
 
 /// Embedded primary font (Roboto) — covers Latin and common scripts.
@@ -56,6 +57,15 @@ pub struct RasterizedGlyph {
     pub is_color: bool,
 }
 
+/// OpenType weight a glyph key carries when nothing demands another one.
+///
+/// Faces Cupid rasterizes itself draw their single design regardless of the
+/// requested weight — the weight already chose the face — so their keys stay
+/// on this value and one bitmap serves every style. Only glyphs of faces the
+/// *platform* draws carry a different weight, because those faces are
+/// variable and honor it — see [`GlyphRasterizer::platform_glyph_weight`].
+pub(crate) const NORMAL_GLYPH_WEIGHT: u16 = 400;
+
 /// Key for caching rasterized-shaped glyphs.
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub struct GlyphKey {
@@ -64,16 +74,24 @@ pub struct GlyphKey {
     pub size_tenths: u32,
     pub subpixel_x: u8,
     pub subpixel_y: u8,
+    /// OpenType `wght` the glyph is rasterized at.
+    ///
+    /// [`NORMAL_GLYPH_WEIGHT`] for every face Cupid decodes itself; the run's
+    /// effective weight for glyphs the platform draws, so one variable face
+    /// can stand beside light and bold text alike without every entry —
+    /// cache, metrics, atlas — collapsing onto a single stroke.
+    pub weight: u16,
 }
 
 impl Hash for GlyphKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         let font_and_size = u64::from(self.font_id) | (u64::from(self.size_tenths) << 32);
-        let glyph_and_subpixel = u64::from(self.glyph_id)
+        let glyph_subpixel_and_weight = u64::from(self.glyph_id)
             | (u64::from(self.subpixel_x) << 16)
-            | (u64::from(self.subpixel_y) << 24);
+            | (u64::from(self.subpixel_y) << 24)
+            | (u64::from(self.weight) << 32);
         let compact = font_and_size
-            ^ glyph_and_subpixel
+            ^ glyph_subpixel_and_weight
                 .wrapping_mul(0x9e37_79b1_85eb_ca87)
                 .rotate_left(17);
         state.write_u64(compact);
@@ -89,6 +107,7 @@ pub struct ShapedRunGlyph {
 }
 
 impl GlyphKey {
+    #[inline]
     pub fn new(font_id: FontId, glyph_id: u16, font_size: f32) -> Self {
         Self {
             font_id,
@@ -96,7 +115,15 @@ impl GlyphKey {
             size_tenths: (font_size * 10.0) as u32,
             subpixel_x: 0,
             subpixel_y: 0,
+            weight: NORMAL_GLYPH_WEIGHT,
         }
+    }
+
+    /// Returns this key addressed at `weight` on the OpenType `wght` scale.
+    #[inline]
+    pub fn weighted(mut self, weight: u16) -> Self {
+        self.weight = weight;
+        self
     }
 }
 
@@ -229,13 +256,16 @@ fn rasterize_color_glyph(
 /// face — which no third-party rasterizer can read. The platform can, and the
 /// bitmap it produces is indistinguishable from a decoded one downstream.
 ///
-/// The advance is passed through rather than re-queried so a glyph keeps the
-/// `hmtx` advance shaping and layout already used for it.
+/// `weight` is the OpenType `wght` from the glyph key; the platform pins a
+/// variable face to it so the stroke matches the text standing beside the
+/// glyph. The advance is passed through rather than re-queried so a glyph
+/// keeps the `hmtx` advance shaping and layout already used for it.
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 fn rasterize_platform_glyph(
     record: &FontRecord,
     glyph_id: u16,
     font_size: f32,
+    weight: u16,
     advance_width: f32,
 ) -> Option<RasterizedGlyph> {
     crate::text_pipeline::core_text_raster::rasterize_glyph(
@@ -243,6 +273,7 @@ fn rasterize_platform_glyph(
         record.collection_index,
         glyph_id,
         font_size,
+        weight,
         record.is_color,
         advance_width,
     )
@@ -254,9 +285,64 @@ fn rasterize_platform_glyph(
     _record: &FontRecord,
     _glyph_id: u16,
     _font_size: f32,
+    _weight: u16,
     _advance_width: f32,
 ) -> Option<RasterizedGlyph> {
     None
+}
+
+/// The kana that names the default companion face for runs carrying none.
+///
+/// A Han-only run has no kana of its own to pair with, yet drawing it at a
+/// different weight than a mixed run would means the whole line changes
+/// stroke the moment a kana is typed beside it. Resolving the face this
+/// probe *would* use gives kana-less runs the same baseline up front — see
+/// [`GlyphRasterizer::default_companion_weight`].
+const COMPANION_WEIGHT_PROBE: char = 'あ';
+
+/// Reports whether `codepoint` is kana — hiragana or katakana, including the
+/// phonetic extensions and halfwidth forms.
+///
+/// Kana is what marks a run as Japanese: it identifies the face whose stroke
+/// weight the run's platform-drawn ideographs must match — see
+/// [`GlyphRasterizer::platform_glyph_weight`].
+#[inline]
+fn is_kana(codepoint: char) -> bool {
+    matches!(
+        codepoint as u32,
+        0x3041..=0x309F | 0x30A0..=0x30FF | 0x31F0..=0x31FF | 0xFF66..=0xFF9F
+    )
+}
+
+/// Reports whether `record`'s glyph data is readable only by the platform.
+///
+/// A face qualifies when it carries neither outline tables Cupid decodes —
+/// `glyf`, `CFF `, `CFF2` — nor color strikes: everything needed for shaping
+/// is present, but the pixels live in a private format such as Apple's
+/// `hvgl`. The check reads only the table directory, so it costs no parsing
+/// beyond the header.
+fn record_outlines_unreadable(record: &FontRecord) -> bool {
+    use skrifa::raw::TableProvider;
+
+    if record.is_color {
+        return false;
+    }
+    let Some(data) = record.data() else {
+        return false;
+    };
+    let Some(face) = font_ref(data.as_ref(), record.collection_index) else {
+        return false;
+    };
+    face.glyf().is_err() && face.cff().is_err() && face.cff2().is_err()
+}
+
+/// The `OS/2` weight class `record`'s face was designed at.
+fn record_design_weight(record: &FontRecord) -> Option<u16> {
+    use skrifa::raw::TableProvider;
+
+    let data = record.data()?;
+    let face = font_ref(data.as_ref(), record.collection_index)?;
+    Some(face.os2().ok()?.us_weight_class())
 }
 
 #[inline]
@@ -337,6 +423,34 @@ pub struct GlyphRasterizer {
     retained_bitmap_bytes: usize,
     advance_cache: HashMap<GlyphKey, f32>,
     glyph_index_cache: HashMap<(FontId, char), Option<u16>>,
+    /// Whether a face covers the script demanded of it, keyed by the face and
+    /// the requirement's fingerprint — see [`ScriptRequirement`]. A Han
+    /// character otherwise re-tests every face in the chain on every lookup.
+    script_coverage_cache: HashMap<(FontId, u64), bool>,
+    /// What the text currently being shaped or measured demands of a face.
+    ///
+    /// Set by [`Self::begin_script_run`] for the passes that hold the whole
+    /// string, so a kanji is judged against its own line rather than against a
+    /// fixed sample of another language's script.
+    script_run: ScriptRequirement,
+    /// First kana of the announced run, when it has one.
+    ///
+    /// The kana names the face whose stroke weight the run's platform-drawn
+    /// ideographs must match — see [`Self::platform_glyph_weight`].
+    run_companion: Option<char>,
+    /// The design weight of the face [`COMPANION_WEIGHT_PROBE`] resolves to,
+    /// memoized after the first kana-less run asks for it.
+    ///
+    /// This is the companion baseline of runs carrying no kana of their own
+    /// — see [`Self::default_companion_weight`].
+    default_companion_weight: Option<Option<u16>>,
+    /// Whether a face's glyph data is readable only by the platform, per face.
+    ///
+    /// Feeds [`Self::platform_glyph_weight`]; the answer costs a table-directory
+    /// probe, so it is remembered rather than re-derived per glyph.
+    platform_only_cache: HashMap<FontId, bool>,
+    /// A face's design weight — its `OS/2` weight class — per face.
+    design_weight_cache: HashMap<FontId, Option<u16>>,
     unsupported_codepoints: HashSet<char>,
     /// Cached font bytes per font_id to avoid re-reading from disk or
     /// re-cloning Arc<[u8]> on every `shape_cluster` call.
@@ -409,6 +523,12 @@ impl GlyphRasterizer {
             retained_bitmap_bytes: 0,
             advance_cache: HashMap::default(),
             glyph_index_cache: HashMap::default(),
+            script_coverage_cache: HashMap::default(),
+            script_run: ScriptRequirement::EMPTY,
+            run_companion: None,
+            default_companion_weight: None,
+            platform_only_cache: HashMap::default(),
+            design_weight_cache: HashMap::default(),
             unsupported_codepoints: HashSet::default(),
             font_bytes_cache: HashMap::default(),
             shaper_data_cache: HashMap::default(),
@@ -434,6 +554,12 @@ impl GlyphRasterizer {
             retained_bitmap_bytes: 0,
             advance_cache: HashMap::default(),
             glyph_index_cache: HashMap::default(),
+            script_coverage_cache: HashMap::default(),
+            script_run: ScriptRequirement::EMPTY,
+            run_companion: None,
+            default_companion_weight: None,
+            platform_only_cache: HashMap::default(),
+            design_weight_cache: HashMap::default(),
             unsupported_codepoints: HashSet::default(),
             font_bytes_cache: HashMap::default(),
             shaper_data_cache: HashMap::default(),
@@ -493,6 +619,12 @@ impl GlyphRasterizer {
             retained_bitmap_bytes: 0,
             advance_cache: HashMap::default(),
             glyph_index_cache: HashMap::default(),
+            script_coverage_cache: HashMap::default(),
+            script_run: ScriptRequirement::EMPTY,
+            run_companion: None,
+            default_companion_weight: None,
+            platform_only_cache: HashMap::default(),
+            design_weight_cache: HashMap::default(),
             unsupported_codepoints: HashSet::default(),
             font_bytes_cache: HashMap::default(),
             shaper_data_cache: HashMap::default(),
@@ -562,7 +694,7 @@ impl GlyphRasterizer {
             return GlyphKey::new(font_id, glyph_id, font_size);
         }
 
-        self.glyph_key_for_codepoint(codepoint, font_size)
+        self.glyph_key_for_codepoint_at_weight(codepoint, font_size, weight)
     }
 
     pub fn advance_width_for_family(
@@ -593,11 +725,17 @@ impl GlyphRasterizer {
         weight: FontWeight,
         style: FontStyle,
     ) -> f32 {
-        text.chars()
+        // Measuring must choose the same faces the shaping pass will, or the
+        // width reported for a mixed CJK line belongs to a font nothing draws.
+        self.begin_script_run(text);
+        let width = text
+            .chars()
             .map(|codepoint| {
                 self.advance_width_for_family(codepoint, font_size, family, weight, style)
             })
-            .sum()
+            .sum();
+        self.end_script_run();
+        width
     }
 
     fn family_record(
@@ -633,6 +771,9 @@ impl GlyphRasterizer {
         self.cache.clear();
         self.advance_cache.clear();
         self.glyph_index_cache.clear();
+        self.script_coverage_cache.clear();
+        self.platform_only_cache.clear();
+        self.design_weight_cache.clear();
         glyph_metrics::forget_font(font_id);
         self.font_bytes_cache.remove(&font_id);
         self.shaper_data_cache.remove(&font_id);
@@ -659,6 +800,22 @@ impl GlyphRasterizer {
     }
 
     pub fn glyph_key_for_codepoint(&mut self, codepoint: char, font_size: f32) -> GlyphKey {
+        self.glyph_key_for_codepoint_at_weight(codepoint, font_size, FontWeight::Normal)
+    }
+
+    /// The key for `codepoint` when the text around it asks for `weight`.
+    ///
+    /// The style's weight already chose among the registered faces before the
+    /// fallback chain is consulted, so for faces Cupid decodes itself the key
+    /// stays on [`NORMAL_GLYPH_WEIGHT`]; a face only the platform draws is
+    /// addressed at the run's effective weight instead — see
+    /// [`Self::platform_glyph_weight`].
+    fn glyph_key_for_codepoint_at_weight(
+        &mut self,
+        codepoint: char,
+        font_size: f32,
+        weight: FontWeight,
+    ) -> GlyphKey {
         if self
             .glyph_index_for_font(self.primary.id, codepoint)
             .is_none()
@@ -671,7 +828,8 @@ impl GlyphRasterizer {
         if !supported {
             self.unsupported_codepoints.insert(codepoint);
         }
-        GlyphKey::new(font_id, glyph_id, font_size)
+        let glyph_weight = self.platform_glyph_weight(font_id, weight);
+        GlyphKey::new(font_id, glyph_id, font_size).weighted(glyph_weight)
     }
 
     pub fn font_id_for_codepoint(&mut self, codepoint: char) -> FontId {
@@ -692,27 +850,215 @@ impl GlyphRasterizer {
 
     fn font_and_glyph_for_codepoint(&mut self, codepoint: char) -> (FontId, u16, bool) {
         if let Some(glyph_id) = self.glyph_index_for_font(self.primary.id, codepoint) {
-            (self.primary.id, glyph_id, true)
+            return (self.primary.id, glyph_id, true);
+        }
+
+        // Han is unified, so a Japanese face carries the characters Japanese
+        // shares with Chinese and none of the rest. Loaded first for the kana
+        // it was chosen for, it sits at the head of the chain and would claim
+        // exactly that half, leaving the simplified-only characters beside it
+        // to another face — one word drawn in two typefaces. A face is
+        // therefore accepted only when it covers every character of the script
+        // standing beside this one.
+        let requirement = self.requirement_for(codepoint);
+        if let Some(found) = self.chain_glyph_for_codepoint(codepoint, requirement) {
+            return (found.0, found.1, true);
+        }
+        if let Some((font_id, glyph_id)) = self.resolve_system_fallback(codepoint, requirement) {
+            return (font_id, glyph_id, true);
+        }
+        // No installed face covers the script whole — a system carrying only a
+        // partial one. Drawing the character in a narrow face still beats a
+        // blank box.
+        if !requirement.is_empty()
+            && let Some(found) = self.chain_glyph_for_codepoint(codepoint, ScriptRequirement::EMPTY)
+        {
+            return (found.0, found.1, true);
+        }
+        (self.primary.id, 0, false)
+    }
+
+    /// Announces the text about to be shaped or measured.
+    ///
+    /// Face selection is per codepoint, but the *right* face for an ideograph
+    /// depends on the characters around it: `時` in `あの時は` belongs to a
+    /// Japanese word and must keep the face its kana use, while `好` in `你好吗`
+    /// must come from the same Chinese face as its neighbours. Passes holding
+    /// the whole string say so here, and every lookup until
+    /// [`Self::end_script_run`] is judged against it.
+    pub fn begin_script_run(&mut self, text: &str) {
+        self.script_run = ScriptRequirement::from_run(text);
+        self.run_companion = text.chars().find(|codepoint| is_kana(*codepoint));
+    }
+
+    /// Forgets the run announced by [`Self::begin_script_run`].
+    ///
+    /// Lookups fall back to the script's fixed samples, which is all a caller
+    /// holding a single character can be judged against.
+    pub fn end_script_run(&mut self) {
+        self.script_run = ScriptRequirement::EMPTY;
+        self.run_companion = None;
+    }
+
+    /// The OpenType weight glyphs of `font_id` are addressed and drawn at when
+    /// the text around them asks for `requested`.
+    ///
+    /// Faces whose glyph data Cupid decodes itself always answer
+    /// [`NORMAL_GLYPH_WEIGHT`]: they render their single design regardless,
+    /// and keeping their keys on one value means one bitmap serves every
+    /// style. A face only the platform can draw is variable — that is why no
+    /// third-party rasterizer reads it — and must be told which instance to
+    /// render:
+    ///
+    /// * the baseline is the run's *companion weight* — the design weight of
+    ///   the face drawing the run's kana. Apple pairs its Japanese UI faces at
+    ///   `W3` (`300` on the `wght` scale) with regular text, so an ideograph
+    ///   pinned to the default `400` stands visibly bolder than the かな beside
+    ///   it — the "PingFang is still bolder" defect on iOS, where no readable
+    ///   Chinese face exists and the platform draws all of Han;
+    /// * the style's distance from normal is carried on top, so bold text
+    ///   gets a bold instance: a bold run beside `W3` kana asks for
+    ///   `300 + (700 - 400) = 600`, which is exactly the `W6`/`Semibold`
+    ///   pairing Apple ships.
+    ///
+    /// Runs without kana take the same baseline from the face kana *would*
+    /// resolve to — see [`Self::default_companion_weight`] — so an ideograph
+    /// keeps one stroke whether kana stand beside it yet or not, instead of
+    /// snapping from bold to thin the moment one is typed.
+    fn platform_glyph_weight(&mut self, font_id: FontId, requested: FontWeight) -> u16 {
+        if !self.face_needs_platform_raster(font_id) {
+            return NORMAL_GLYPH_WEIGHT;
+        }
+        let baseline = self
+            .run_companion_weight()
+            .or_else(|| self.default_companion_weight())
+            .unwrap_or(NORMAL_GLYPH_WEIGHT);
+        let offset = i32::from(requested.numeric()) - i32::from(NORMAL_GLYPH_WEIGHT);
+        (i32::from(baseline) + offset).clamp(1, 1000) as u16
+    }
+
+    /// Reports whether only the platform can rasterize `font_id`'s glyphs.
+    ///
+    /// True for faces carrying neither readable outlines (`glyf`, `CFF `,
+    /// `CFF2`) nor color strikes — Apple's private `hvgl` faces. The answer is
+    /// a property of the face, so it is cached per font id.
+    fn face_needs_platform_raster(&mut self, font_id: FontId) -> bool {
+        if let Some(known) = self.platform_only_cache.get(&font_id) {
+            return *known;
+        }
+        let needs = self
+            .font_record_by_id(font_id)
+            .cloned()
+            .is_some_and(|record| record_outlines_unreadable(&record));
+        self.platform_only_cache.insert(font_id, needs);
+        needs
+    }
+
+    /// The design weight of the face drawing the announced run's kana.
+    ///
+    /// `None` when the run has no kana, or when the kana's face hides its
+    /// `OS/2` table.
+    fn run_companion_weight(&mut self) -> Option<u16> {
+        let companion = self.run_companion?;
+        let font_id = self.font_id_for_codepoint(companion);
+        self.face_design_weight(font_id)
+    }
+
+    /// The design weight of the face kana resolve to on this system.
+    ///
+    /// This is the companion baseline of runs carrying no kana of their own:
+    /// an ideograph typed alone must land on the weight it will keep once
+    /// kana appear beside it, or the line visibly changes stroke mid-typing.
+    /// The probe is judged as kana text rather than against the announced
+    /// run, whose requirement would send it to a face chosen for another
+    /// script. The answer is a property of the installed font set, so it is
+    /// resolved once per rasterizer; `None` when no face covers kana or the
+    /// covering face hides its `OS/2` table.
+    fn default_companion_weight(&mut self) -> Option<u16> {
+        if let Some(known) = self.default_companion_weight {
+            return known;
+        }
+        let run = std::mem::replace(&mut self.script_run, ScriptRequirement::EMPTY);
+        let font_id = self.font_id_for_codepoint(COMPANION_WEIGHT_PROBE);
+        self.script_run = run;
+        let weight = self.face_design_weight(font_id);
+        self.default_companion_weight = Some(weight);
+        weight
+    }
+
+    /// The `OS/2` weight class `font_id` was designed at, cached per face.
+    fn face_design_weight(&mut self, font_id: FontId) -> Option<u16> {
+        if let Some(known) = self.design_weight_cache.get(&font_id) {
+            return *known;
+        }
+        let weight = self
+            .font_record_by_id(font_id)
+            .cloned()
+            .and_then(|record| record_design_weight(&record));
+        self.design_weight_cache.insert(font_id, weight);
+        weight
+    }
+
+    /// What a face must cover to be accepted for `codepoint`.
+    fn requirement_for(&self, codepoint: char) -> ScriptRequirement {
+        if script_probes(codepoint).is_empty() {
+            ScriptRequirement::EMPTY
+        } else if self.script_run.is_empty() {
+            ScriptRequirement::probes(codepoint)
         } else {
-            let fallback_count = self.fallbacks.as_ref().map_or(0, Vec::len);
-            for index in 0..fallback_count {
-                let Some(font_id) = self
-                    .fallbacks
-                    .as_ref()
-                    .and_then(|fallbacks| fallbacks.get(index))
-                    .map(|record| record.id)
-                else {
-                    break;
-                };
-                if let Some(glyph_id) = self.glyph_index_for_font(font_id, codepoint) {
-                    return (font_id, glyph_id, true);
-                }
-            }
-            match self.resolve_system_fallback(codepoint) {
-                Some((font_id, glyph_id)) => (font_id, glyph_id, true),
-                None => (self.primary.id, 0, false),
+            self.script_run
+        }
+    }
+
+    /// Finds `codepoint` in the faces already adopted by this rasterizer.
+    ///
+    /// Faces are tried in adoption order, and one is accepted only when it also
+    /// draws every character of `requirement`, which is what keeps a face
+    /// covering half of a unified script from claiming it. An empty requirement
+    /// accepts the first face mapping the codepoint.
+    fn chain_glyph_for_codepoint(
+        &mut self,
+        codepoint: char,
+        requirement: ScriptRequirement,
+    ) -> Option<(FontId, u16)> {
+        let fallback_count = self.fallbacks.as_ref().map_or(0, Vec::len);
+        for index in 0..fallback_count {
+            let Some(font_id) = self
+                .fallbacks
+                .as_ref()
+                .and_then(|fallbacks| fallbacks.get(index))
+                .map(|record| record.id)
+            else {
+                break;
+            };
+            let Some(glyph_id) = self.glyph_index_for_font(font_id, codepoint) else {
+                continue;
+            };
+            if self.font_covers_script(font_id, requirement) {
+                return Some((font_id, glyph_id));
             }
         }
+        None
+    }
+
+    /// Reports whether `font_id` draws every character `requirement` demands.
+    ///
+    /// The answer is cached per face and requirement, so a paragraph of Han
+    /// costs one coverage pass per face rather than one per character.
+    fn font_covers_script(&mut self, font_id: FontId, requirement: ScriptRequirement) -> bool {
+        if requirement.is_empty() {
+            return true;
+        }
+        let cache_key = (font_id, requirement.fingerprint());
+        if let Some(covered) = self.script_coverage_cache.get(&cache_key) {
+            return *covered;
+        }
+        let covered = requirement.as_slice().iter().all(|probe| {
+            self.glyph_index_for_font(font_id, *probe)
+                .is_some_and(|glyph_id| glyph_id != 0)
+        });
+        self.script_coverage_cache.insert(cache_key, covered);
+        covered
     }
 
     /// Asks the platform for a face covering `codepoint` and adopts it.
@@ -721,11 +1067,15 @@ impl GlyphRasterizer {
     /// cost off the common path: the answer is cached process wide, so a
     /// codepoint is queried once per process no matter how many rasterizers
     /// encounter it.
-    fn resolve_system_fallback(&mut self, codepoint: char) -> Option<(FontId, u16)> {
+    fn resolve_system_fallback(
+        &mut self,
+        codepoint: char,
+        requirement: ScriptRequirement,
+    ) -> Option<(FontId, u16)> {
         if !self.enable_fallbacks || self.unsupported_codepoints.contains(&codepoint) {
             return None;
         }
-        let record = fallback_for_codepoint(codepoint)?;
+        let record = fallback_for_codepoint(codepoint, requirement)?;
         let font_id = record.id;
         self.adopt_fallback(record);
         let glyph_id = self.glyph_index_for_font(font_id, codepoint)?;
@@ -849,6 +1199,7 @@ impl GlyphRasterizer {
                                     &record_snapshot,
                                     key.glyph_id,
                                     font_size,
+                                    key.weight,
                                     fallback_advance,
                                 )
                             })
@@ -882,6 +1233,7 @@ impl GlyphRasterizer {
                                     &record_snapshot,
                                     key.glyph_id,
                                     font_size,
+                                    key.weight,
                                     fallback_advance,
                                 )
                             })
@@ -1020,6 +1372,9 @@ impl GlyphRasterizer {
     }
 
     pub fn preload_text(&mut self, text: &str, font_size: f32) -> Vec<(GlyphKey, RasterizedGlyph)> {
+        // A glyph preloaded under a different face than the one shaping picks is
+        // a wasted rasterization, so the warm-up sees the run too.
+        self.begin_script_run(text);
         let mut glyphs = Vec::new();
         for c in text.chars() {
             if c.is_control() {
@@ -1030,6 +1385,7 @@ impl GlyphRasterizer {
             let glyph = self.rasterize_bitmap_key(key, font_size).clone();
             glyphs.push((key, glyph));
         }
+        self.end_script_run();
         glyphs
     }
 
@@ -1176,7 +1532,7 @@ impl GlyphRasterizer {
         else {
             return Vec::new();
         };
-        self.shape_run_with_font_id(text, font_size, font_id)
+        self.shape_run_with_font_id(text, font_size, font_id, weight)
     }
 
     pub fn shape_run_with_font_id(
@@ -1184,11 +1540,15 @@ impl GlyphRasterizer {
         text: &str,
         font_size: f32,
         font_id: FontId,
+        weight: FontWeight,
     ) -> Vec<ShapedRunGlyph> {
         if text.is_empty() {
             return Vec::new();
         }
         self.ensure_system_fallback_loaded(font_id);
+        // One face shapes the whole run, so its glyphs share one weight; see
+        // [`Self::platform_glyph_weight`].
+        let glyph_weight = self.platform_glyph_weight(font_id, weight);
 
         // Retrieve cached font bytes for this font_id, populating the cache on
         // first access.  This avoids a file read (or Arc<[u8]> clone followed by
@@ -1270,7 +1630,7 @@ impl GlyphRasterizer {
             .map(|(info, pos)| {
                 let glyph_id = info.glyph_id as u16;
                 ShapedRunGlyph {
-                    glyph_key: GlyphKey::new(font_id, glyph_id, font_size),
+                    glyph_key: GlyphKey::new(font_id, glyph_id, font_size).weighted(glyph_weight),
                     advance: pos.x_advance as f32 * scale,
                     x_offset: pos.x_offset as f32 * scale,
                     y_offset: pos.y_offset as f32 * scale,
@@ -1335,6 +1695,7 @@ mod tests {
             size_tenths: 160,
             subpixel_x: 1,
             subpixel_y: 2,
+            weight: 400,
         };
         let expected = compact_glyph_key_hash(key);
         for distinct_key in [
@@ -1353,6 +1714,10 @@ mod tests {
             },
             GlyphKey {
                 subpixel_y: 3,
+                ..key
+            },
+            GlyphKey {
+                weight: 300,
                 ..key
             },
         ] {
@@ -1388,6 +1753,305 @@ mod tests {
                 "{codepoint:?} rasterized to an empty bitmap"
             );
         }
+    }
+
+    /// A face carrying the Japanese half of Han and nothing of the rest.
+    ///
+    /// Apple systems always ship one, because Japanese faces have no reason to
+    /// draw simplified-only characters. Which face the platform *offers* for a
+    /// given character depends on the device's language, so the rule this face
+    /// exists to test is asserted by adopting it directly rather than by
+    /// hoping the cascade proposes it.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    fn japanese_only_han_face(next_id: FontId) -> FontRecord {
+        use crate::text_pipeline::apple_fonts::font_paths_for_codepoint;
+
+        let draws = |record: &FontRecord, codepoint: char| {
+            record
+                .data()
+                .and_then(|data| {
+                    let face = font_ref(data.as_ref(), record.collection_index)?;
+                    face.charmap().map(codepoint)
+                })
+                .is_some_and(|glyph_id| glyph_id.to_u32() != 0)
+        };
+
+        font_paths_for_codepoint('好')
+            .into_iter()
+            .flat_map(|path| {
+                (0..8).map(move |collection_index| FontRecord {
+                    id: next_id,
+                    bytes: None,
+                    collection_index,
+                    path: Some(Arc::new(path.clone())),
+                    is_color: false,
+                })
+            })
+            .find(|record| draws(record, '好') && !draws(record, '吗'))
+            .expect("apple systems ship a japanese face carrying 好 but not 吗")
+    }
+
+    // Han is unified: `時` and `好` are the same codepoints in Japanese and in
+    // Chinese, so a Japanese face carries them while carrying none of the
+    // simplified-only characters beside them. Loaded first for the kana of
+    // `あの時は`, that face would claim the Han it happens to cover and leave
+    // `你吗` to another one — one line drawn in two typefaces.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn han_keeps_one_face_when_a_japanese_face_was_loaded_first() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let japanese = japanese_only_han_face(rasterizer.next_fallback_font_id());
+        let japanese_id = japanese.id;
+        rasterizer.adopt_fallback(japanese);
+
+        let faces: Vec<(char, FontId)> = "時你好吗"
+            .chars()
+            .map(|codepoint| (codepoint, rasterizer.font_id_for_codepoint(codepoint)))
+            .collect();
+
+        assert!(
+            faces.iter().all(|(_, font_id)| *font_id != japanese_id),
+            "a face covering only half of han was chosen for it: {faces:?}"
+        );
+        let (_, first) = faces[0];
+        assert!(
+            faces.iter().all(|(_, font_id)| *font_id == first),
+            "han split across faces: {faces:?}"
+        );
+    }
+
+    // The rule cuts both ways. A kanji standing among kana belongs to a
+    // Japanese word, so taking it away from the kana's face is the same defect
+    // seen from the other side: `時` drawn in a Chinese face reads bolder than
+    // the `あの` and `は` around it. Told which text it is resolving, the
+    // rasterizer keeps the word in one face.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_kanji_among_kana_keeps_the_face_its_kana_use() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let japanese = japanese_only_han_face(rasterizer.next_fallback_font_id());
+        let japanese_id = japanese.id;
+        rasterizer.adopt_fallback(japanese);
+
+        rasterizer.begin_script_run("あの時は");
+        let faces: Vec<(char, FontId)> = "あの時は"
+            .chars()
+            .map(|codepoint| (codepoint, rasterizer.font_id_for_codepoint(codepoint)))
+            .collect();
+        rasterizer.end_script_run();
+
+        assert!(
+            faces.iter().all(|(_, font_id)| *font_id == japanese_id),
+            "a japanese word was split between a kana face and another: {faces:?}"
+        );
+    }
+
+    // And a Chinese word must still elect the face covering all of it, even
+    // though a Japanese face sits at the head of the chain drawing part of it.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_chinese_run_rejects_a_face_covering_only_half_of_it() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let japanese = japanese_only_han_face(rasterizer.next_fallback_font_id());
+        let japanese_id = japanese.id;
+        rasterizer.adopt_fallback(japanese);
+
+        rasterizer.begin_script_run("你好吗");
+        let faces: Vec<(char, FontId)> = "你好吗"
+            .chars()
+            .map(|codepoint| (codepoint, rasterizer.font_id_for_codepoint(codepoint)))
+            .collect();
+        rasterizer.end_script_run();
+
+        assert!(
+            faces.iter().all(|(_, font_id)| *font_id != japanese_id),
+            "a face covering only half of the word was chosen for it: {faces:?}"
+        );
+        let (_, first) = faces[0];
+        assert!(
+            faces.iter().all(|(_, font_id)| *font_id == first),
+            "one chinese word split across faces: {faces:?}"
+        );
+    }
+
+    // Preferring a script-wide face may not cost coverage: every character of
+    // a mixed line must still resolve to a real glyph, whichever face was
+    // loaded first.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_mixed_japanese_and_chinese_line_draws_every_character() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let japanese = japanese_only_han_face(rasterizer.next_fallback_font_id());
+        rasterizer.adopt_fallback(japanese);
+
+        for codepoint in "あの時は你好吗".chars() {
+            let key = rasterizer.glyph_key_for_codepoint(codepoint, 20.0);
+            assert_ne!(
+                key.glyph_id, 0,
+                "{codepoint:?} resolved to .notdef instead of a real glyph"
+            );
+        }
+    }
+
+    /// A face whose glyphs only the platform can draw — Apple's `hvgl` file.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    fn platform_only_chinese_face(next_id: FontId) -> FontRecord {
+        use crate::text_pipeline::apple_fonts::font_paths_for_codepoint;
+
+        font_paths_for_codepoint('吗')
+            .into_iter()
+            .flat_map(|path| {
+                (0..32).map(move |collection_index| FontRecord {
+                    id: next_id,
+                    bytes: None,
+                    collection_index,
+                    path: Some(Arc::new(path.clone())),
+                    is_color: false,
+                })
+            })
+            .find(|record| {
+                matches!(record.glyph_index('吗'), Some(glyph_id) if glyph_id != 0)
+                    && record_outlines_unreadable(record)
+            })
+            .expect("apple systems ship a chinese face only the platform can draw")
+    }
+
+    /// A kana face Cupid decodes itself, together with its design weight.
+    ///
+    /// The face must not cover simplified-only Han, so the Han of a mixed run
+    /// falls through to the platform-only face beside it.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    fn decodable_kana_face(next_id: FontId) -> (FontRecord, u16) {
+        use crate::text_pipeline::apple_fonts::font_paths_for_codepoint;
+
+        font_paths_for_codepoint('に')
+            .into_iter()
+            .flat_map(|path| {
+                (0..8).map(move |collection_index| FontRecord {
+                    id: next_id,
+                    bytes: None,
+                    collection_index,
+                    path: Some(Arc::new(path.clone())),
+                    is_color: false,
+                })
+            })
+            .find_map(|record| {
+                let maps_kana = matches!(record.glyph_index('に'), Some(glyph_id) if glyph_id != 0);
+                let maps_simplified =
+                    matches!(record.glyph_index('吗'), Some(glyph_id) if glyph_id != 0);
+                if !maps_kana || maps_simplified || record_outlines_unreadable(&record) {
+                    return None;
+                }
+                let weight = record_design_weight(&record)?;
+                Some((record, weight))
+            })
+            .expect("apple systems ship a decodable japanese face")
+    }
+
+    // The "PingFang is still bolder" defect on iOS: no readable face covers
+    // simplified Han there, so the platform draws it, and pinned to the flat
+    // default of 400 it stands beside kana whose face is designed at W3
+    // (300). The key must carry the kana face's weight so the platform draws
+    // the same stroke the reader sees around it.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_platform_drawn_ideograph_matches_the_weight_of_the_kana_beside_it() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let (kana, kana_weight) = decodable_kana_face(rasterizer.next_fallback_font_id());
+        rasterizer.adopt_fallback(kana);
+        let platform = platform_only_chinese_face(rasterizer.next_fallback_font_id());
+        let platform_id = platform.id;
+        rasterizer.adopt_fallback(platform);
+
+        rasterizer.begin_script_run("には你好吗");
+        let key = rasterizer.glyph_key_for_codepoint('吗', 20.0);
+        rasterizer.end_script_run();
+
+        assert_eq!(
+            key.font_id, platform_id,
+            "the simplified-only character must fall to the platform face"
+        );
+        assert_eq!(
+            key.weight, kana_weight,
+            "a platform-drawn ideograph must match its kana companions"
+        );
+    }
+
+    // A run without kana has no companion of its own, but it must not fall
+    // back to a *different* weight than the one kana would bring: a Chinese
+    // line typed alone would render bolder, then snap thinner the moment a
+    // kana lands beside it. The baseline therefore comes from the face kana
+    // *would* resolve to, so the ideographs hold one stroke throughout.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_han_only_run_is_drawn_at_the_weight_kana_would_pair_with() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let (kana, kana_weight) = decodable_kana_face(rasterizer.next_fallback_font_id());
+        rasterizer.adopt_fallback(kana);
+        let platform = platform_only_chinese_face(rasterizer.next_fallback_font_id());
+        let platform_id = platform.id;
+        rasterizer.adopt_fallback(platform);
+
+        rasterizer.begin_script_run("你好吗");
+        let han_only = rasterizer.glyph_key_for_codepoint('吗', 20.0);
+        rasterizer.end_script_run();
+
+        rasterizer.begin_script_run("には你好吗");
+        let beside_kana = rasterizer.glyph_key_for_codepoint('吗', 20.0);
+        rasterizer.end_script_run();
+
+        assert_eq!(han_only.font_id, platform_id);
+        assert_eq!(
+            han_only.weight, kana_weight,
+            "a han-only run must already sit on the companion weight"
+        );
+        assert_eq!(
+            han_only.weight, beside_kana.weight,
+            "typing kana beside the han must not change its weight"
+        );
+    }
+
+    // Weight-aware fallback: a bold style must reach the platform face as a
+    // bold instance, carried as the style's distance from normal on top of
+    // the companion baseline — W3 kana beside bold text ask for 600, Apple's
+    // own W6/Semibold pairing.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_bold_run_addresses_the_platform_face_at_a_bold_instance() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let (kana, kana_weight) = decodable_kana_face(rasterizer.next_fallback_font_id());
+        rasterizer.adopt_fallback(kana);
+        let platform = platform_only_chinese_face(rasterizer.next_fallback_font_id());
+        rasterizer.adopt_fallback(platform);
+
+        rasterizer.begin_script_run("には你好吗");
+        let key = rasterizer.glyph_key_for_family_codepoint(
+            '吗',
+            20.0,
+            FontFamily::SANS_SERIF,
+            FontWeight::Bold,
+            FontStyle::Normal,
+        );
+        rasterizer.end_script_run();
+
+        let expected = kana_weight + (FontWeight::Bold.numeric() - FontWeight::Normal.numeric());
+        assert_eq!(key.weight, expected);
+    }
+
+    // Faces Cupid rasterizes itself render one design regardless of the
+    // requested weight — the weight already chose the face — so their keys
+    // stay on the single neutral value and one bitmap serves every style.
+    #[test]
+    fn a_decodable_face_is_always_keyed_at_the_normal_weight() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let key = rasterizer.glyph_key_for_family_codepoint(
+            'A',
+            20.0,
+            FontFamily::SANS_SERIF,
+            FontWeight::Bold,
+            FontStyle::Normal,
+        );
+        assert_eq!(key.weight, NORMAL_GLYPH_WEIGHT);
     }
 
     #[test]

@@ -113,6 +113,7 @@ mod tests {
             size_tenths: 180,
             subpixel_x: 0,
             subpixel_y: 0,
+            weight: 400,
         };
 
         assert_eq!(cached(key), None);
@@ -129,6 +130,7 @@ mod tests {
             size_tenths: 180,
             subpixel_x: 0,
             subpixel_y: 0,
+            weight: 400,
         };
         let other = GlyphKey {
             size_tenths: 240,
@@ -150,6 +152,7 @@ mod tests {
             size_tenths: 180,
             subpixel_x: 0,
             subpixel_y: 0,
+            weight: 400,
         };
         let other = GlyphKey {
             font_id: 0xdead_0004,
