@@ -960,26 +960,40 @@ mod tests {
     #[test]
     fn desktop_exe_path_keeps_the_package_name_verbatim() {
         // Cargo names the default binary after the package, dashes included.
-        let path = desktop_exe_path("my-cool-app", false);
-        let expected = std::env::current_dir().unwrap().join(format!("target/debug/my-cool-app{}", std::env::consts::EXE_SUFFIX));
+        let proj_root = get_project_root(true).unwrap_or_default();
         assert_eq!(
-            path,expected
-
+            desktop_exe_path("my-cool-app", false),
+            proj_root.join(format!(
+                "target/debug/my-cool-app{}",
+                std::env::consts::EXE_SUFFIX
+            ))
         );
-        assert!(desktop_exe_path("my-cool-app", true).starts_with("target/release/"));
+        assert_eq!(
+            desktop_exe_path("my-cool-app", true),
+            proj_root.join(format!(
+                "target/release/my-cool-app{}",
+                std::env::consts::EXE_SUFFIX
+            ))
+        );
     }
 
-    /// A project tree with a compiled binary and the Linux scaffold in place.
+    /// A project tree whose compiled binary sits where [`desktop_exe_path`]
+    /// resolves it.
+    ///
+    /// [`desktop_exe_path`] anchors the executable at the workspace root (via
+    /// `cargo locate-project`), so the fake binary is staged into the real
+    /// `target/` rather than under the per-test temp dir, which only holds the
+    /// bundle layout [`package_desktop_in`] lays out.
     fn desktop_project(pkg_name: &str) -> tempfile::TempDir {
-        let root = tempfile::tempdir().expect("temp project");
-        let target_dir = root.path().join("target/debug");
-        std::fs::create_dir_all(&target_dir).unwrap();
-        std::fs::write(
-            target_dir.join(desktop_exe_name(pkg_name)),
-            b"#!/bin/sh\ntrue\n",
-        )
-        .unwrap();
-        root
+        // Several tests stage the same binary name, so write it under a lock —
+        // a parallel test must never read a half-written file.
+        static STAGE_EXECUTABLE: Mutex<()> = Mutex::new(());
+        let _guard = STAGE_EXECUTABLE.lock().unwrap();
+
+        let exe = PathBuf::from(desktop_exe_path(pkg_name, false));
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"#!/bin/sh\ntrue\n").unwrap();
+        tempfile::tempdir().expect("temp project")
     }
 
     /// Write the Linux scaffold `create::linux` generates for `pkg_name`.
@@ -1085,8 +1099,16 @@ mod tests {
         let project = tempfile::tempdir().unwrap();
         let reporter = SpyReporter::new();
 
-        let err = package_desktop_in(project.path(), Targets::Linux, "my_app", false, &reporter)
-            .expect_err("no compiled binary");
+        // This name is never staged by `desktop_project`, so the resolved
+        // executable is guaranteed absent.
+        let err = package_desktop_in(
+            project.path(),
+            Targets::Linux,
+            "my_app_missing",
+            false,
+            &reporter,
+        )
+        .expect_err("no compiled binary");
 
         assert!(err.to_string().contains("copying executable"), "{err}");
     }

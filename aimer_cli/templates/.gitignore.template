@@ -20,4 +20,7 @@ builds/web/package-lock.json
 target
 Cargo.lock
 
+# windows
+builds/windows/bundle
+
 # add another ignore here -_-

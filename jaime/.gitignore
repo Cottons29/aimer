@@ -16,6 +16,9 @@ builds/web/dist/
 builds/web/pkg/
 builds/web/assets/
 
+# windows
+builds/windows/bundle
+
 # cargo target
 target
 Cargo.lock
