@@ -4,7 +4,7 @@
 # point two levels up — otherwise Trunk tries to watch `builds/web/src`, which
 # does not exist, and aborts with "error taking the canonical path to the watch
 # path".
-watch = ["../../src", "../../src/lib.rs"]
+watch = ["../../src"]
 
 [serve]
 address = "0.0.0.0"

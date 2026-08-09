@@ -60,7 +60,7 @@ use crate::test_animation::TestFadingAnimation;
 // this is the entry point of the app
 #[main]
 fn main() {
-    test_text();
+    // test_text();
     // stateful_2::start_my_list();
     // start_counter();
     // AimerApp::start(Container::new().child(Row::new().children([
@@ -88,7 +88,7 @@ fn main() {
     // floating::start_floating_example();
     // file_drop_zone::start_file_drop_zone_example()
     // drag_and_drop::start_drag_and_drop_example();
-    // selectable_text::start_selectable_text_example();
+    selectable_text::start_selectable_text_example();
     // text_area_example::start_text_area_example();
     // text_field_example::start_text_field_example();
 }
@@ -500,3 +500,4 @@ mod text_editing_example_tests {
         assert_eq!(Widget::debug_name(&example), "TextAreaExample");
     }
 }
+   

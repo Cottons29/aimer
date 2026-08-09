@@ -9,6 +9,7 @@ pub fn start_text_area_example() {
 }
 
 /// Demonstrates wrapped multiline input with bounded vertical growth.
+#[derive(Clone, StatelessWidget)]
 pub struct TextAreaExample {
     controller: TextEditingController,
 }
@@ -32,8 +33,10 @@ impl Default for TextAreaExample {
     }
 }
 
-impl Widget for TextAreaExample {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+impl StatelessWidget for TextAreaExample {
+    fn build(&self, _: &BuildContext) -> impl Widget {
+        let text_style = TextStyle::new().font_size(16).color(Colors::Black);
+
         Container::new()
             .color(Colors::White.into())
             .padding(LayoutSpacing::all(Spacing::Px(32)))
@@ -48,22 +51,21 @@ impl Widget for TextAreaExample {
                         )
                         .boxed(),
                     Text::new("Multiline input with soft wrapping and vertical scrolling.")
-                        .text_style(TextStyle::new().font_size(16).color(Colors::Gray))
+                        .text_style(text_style.color(Colors::Gray))
                         .boxed(),
                     TextArea::new()
                         .controller(self.controller.clone())
                         .hint("Write a longer message")
+                        .hint_style(text_style.color(Color::GRAY.with_alpha(0.5)))
+                        .text_style(text_style.color(Colors::Black))
                         .min_lines(1)
                         .max_lines(Some(10))
                         .padding(LayoutSpacing::all(Spacing::Px(12)))
-                        .on_changed(|text: String| println!("TextArea contains {} bytes", text.len()))
+                        .on_changed(|text: String| {
+                            println!("TextArea contains {} bytes", text.len())
+                        })
                         .boxed(),
                 ]),
             )
-            .to_element(ctx)
-    }
-
-    fn debug_name(&self) -> &'static str {
-        "TextAreaExample"
     }
 }

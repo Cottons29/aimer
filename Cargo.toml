@@ -50,6 +50,9 @@ svg = []
 raster-thread = ["aimer_quiver/raster-thread"]
 # Collect the per-frame build / encode / present breakdown.
 frame-stats = ["aimer_quiver/frame-stats"]
+# Highlight fenced code blocks with the tree-sitter backed `arborium` instead
+# of the lightweight `synoptic` default. Better highlighting, heavier build.
+markdown-arborium = ["aimer_markdown/arborium"]
 
 [workspace]
 resolver = "3"
@@ -172,6 +175,7 @@ lyon = "1.0.19"
 usvg = { version = "0.47.0", default-features = false }
 naga = { version = "30.0.0", features = ["wgsl-in"] }
 arborium = "2.18.0"
+synoptic = "2.2.9"
 muda = "0.19.3"
 objc2-ui-kit = "0.3.2"
 objc2 = "0.6.4"
