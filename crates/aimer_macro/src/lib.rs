@@ -134,6 +134,14 @@ impl TryFrom<&str> for AttributeKind {
 /// }
 /// ```
 ///
+/// # Derive alternatives
+/// The first three kinds also exist as derives —
+/// [`StatelessWidget`](macro@StatelessWidget),
+/// [`StatefulWidget`](macro@StatefulWidget) and [`Router`](macro@Router) —
+/// which generate identical code. A derive is expanded *beside* the item, so
+/// the definition the compiler sees is the one you wrote; this attribute
+/// replaces it.
+///
 /// # Panics
 /// Panics at compile time if no argument is provided.
 #[proc_macro_attribute]
@@ -186,6 +194,131 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(widget_code)
+}
+
+/// Derives `Widget` for a stateless widget struct.
+///
+/// The derive form of [`#[widget(Stateless)]`](macro@widget): it generates the
+/// exact same `Widget` impl, but is written *beside* your struct instead of
+/// replacing it, so the definition the compiler sees is the one you wrote.
+///
+/// The generated `to_element` clones the widget and keeps the copy in a
+/// [`StatelessElement`], so that the element can re-run `build()` when it is
+/// marked dirty — on a resize, for instance. Your struct must therefore
+/// implement both `Clone` and `StatelessWidget`.
+///
+/// A field named `key` (of type `Option<Key>`) is picked up automatically and
+/// forwarded to the element, giving the widget a stable identity across
+/// rebuilds.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use aimer::*;
+///
+/// #[derive(Clone, StatelessWidget)]
+/// pub struct Greeting {
+///     pub name: String,
+/// }
+///
+/// impl StatelessWidget for Greeting {
+///     fn build(&self, _: &BuildContext) -> AnyWidget {
+///         Text::new(format!("Hello, {}", self.name)).boxed()
+///     }
+/// }
+/// ```
+///
+/// [`StatelessElement`]: https://docs.rs/aimer_widget
+#[proc_macro_derive(StatelessWidget)]
+pub fn stateless_widget_derive(input: TokenStream) -> TokenStream {
+    TokenStream::from(StatelessWidgetCodegen::derive(input.into()))
+}
+
+/// Derives `Widget` for a stateful widget struct.
+///
+/// The derive form of [`#[widget(Stateful)]`](macro@widget): it generates the
+/// exact same `Widget` impl, but is written *beside* your struct instead of
+/// replacing it, so the definition the compiler sees is the one you wrote.
+///
+/// The generated `to_element` hands the widget to a `StatefulElement`, which
+/// owns the `State` your `StatefulWidget` impl creates and keeps it alive
+/// across rebuilds. Your struct must implement `StatefulWidget`.
+///
+/// A field named `key` (of type `Option<Key>`) is picked up automatically and
+/// forwarded to the element, giving the state a stable identity across
+/// rebuilds.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use aimer::*;
+///
+/// #[derive(StatefulWidget)]
+/// pub struct Counter {
+///     pub initial_count: i32,
+/// }
+///
+/// impl StatefulWidget for Counter {
+///     type State = CounterState;
+///
+///     fn create_state(&self) -> CounterState {
+///         CounterState { count: self.initial_count }
+///     }
+/// }
+/// ```
+#[proc_macro_derive(StatefulWidget)]
+pub fn stateful_widget_derive(input: TokenStream) -> TokenStream {
+    TokenStream::from(StatefulWidgetCodegen::derive(input.into()))
+}
+
+/// Derives `Route` and `Widget` for a route enum.
+///
+/// The derive form of [`#[widget(Router)]`](macro@widget): it generates the
+/// exact same `Route` parsing/formatting table and `Widget` dispatch, but is
+/// written *beside* your enum instead of replacing it. You supply the
+/// `Router::build` impl that turns a route into a widget.
+///
+/// # Helper attributes
+///
+/// | Attribute | On | Meaning |
+/// |-----------|----|---------|
+/// | `#[route("/path/{field}", name = "...")]` | variant | One path template. `{field}` binds a named field, `{}` a tuple field, and anything after `?` is read from the query string. An optional `name` makes the route addressable by [`Route::resolve_named`]. |
+/// | `#[routes("/a", "/b")]` | variant | Several templates parsing to the same variant. The first one is what `format()` produces. |
+/// | `#[shell("/prefix", name = "...")]` | variant | A nested route: the variant's single unnamed field is a child route enum, and the remainder of the path is parsed by it. |
+/// | `#[redirect(guard = "path::to::fn")]` or `#[redirect(to = "/other")]` | variant | Overrides [`Route::redirect`] for this variant. |
+///
+/// A variant with no `#[route]`/`#[routes]` falls back to `/` plus its
+/// lowercased name.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use aimer::*;
+/// use aimer::router::Router;
+///
+/// #[derive(Clone, Debug, PartialEq, Router)]
+/// pub enum AppRoute {
+///     #[route("/")]
+///     Home,
+///     #[route("/profile/{name}", name = "profile")]
+///     Profile { name: String },
+/// }
+///
+/// impl Router for AppRoute {
+///     fn build(&self, _: &BuildContext) -> AnyWidget {
+///         match self {
+///             AppRoute::Home => HomeScreen {}.boxed(),
+///             AppRoute::Profile { name } => ProfileScreen::new(name).boxed(),
+///         }
+///     }
+/// }
+/// ```
+///
+/// [`Route::resolve_named`]: https://docs.rs/aimer_router
+/// [`Route::redirect`]: https://docs.rs/aimer_router
+#[proc_macro_derive(Router, attributes(route, routes, shell, redirect))]
+pub fn router_derive(input: TokenStream) -> TokenStream {
+    TokenStream::from(RouterCodegen::derive(input.into()))
 }
 
 #[proc_macro_derive(VisitorElement)]

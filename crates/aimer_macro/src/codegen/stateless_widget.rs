@@ -2,12 +2,43 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{ItemStruct, parse2};
 
+/// Emits the struct together with the `Widget` impl that drives it through
+/// [`StatelessWidget::build`], for the `#[widget(Stateless)]` attribute form.
+///
+/// The attribute *replaces* the item it is written on, so the item has to be
+/// emitted again here. A malformed input is returned unchanged so that the
+/// compiler reports the syntax error on the user's own tokens rather than on
+/// tokens this macro invented.
+///
+/// [`StatelessWidget::build`]: https://docs.rs/aimer_widget
 pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
     let item_struct = match parse2::<ItemStruct>(input.clone()) {
         Ok(s) => s,
         Err(_) => return input, // Should handle error properly but returning input is safe fallback
     };
+    let widget_impl = stateless_widget_impl(&item_struct);
 
+    quote! {
+        #item_struct
+        #widget_impl
+    }
+}
+
+/// Emits only the `Widget` impl, for the `#[derive(StatelessWidget)]` form.
+///
+/// A derive is expanded *beside* the item it is written on, which the compiler
+/// keeps: emitting the struct again would define it twice. There is likewise
+/// nothing to fall back to when the input is not a struct, so the error is
+/// reported instead of being swallowed.
+pub fn derive_stateless_widget(input: TokenStream) -> TokenStream {
+    match parse2::<ItemStruct>(input) {
+        Ok(item_struct) => stateless_widget_impl(&item_struct),
+        Err(err) => err.to_compile_error(),
+    }
+}
+
+/// The `Widget` impl both forms share.
+fn stateless_widget_impl(item_struct: &ItemStruct) -> TokenStream {
     let struct_name = &item_struct.ident;
     let (impl_generics, ty_generics, where_clause) = item_struct.generics.split_for_impl();
 
@@ -35,9 +66,7 @@ pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    let output = quote! {
-        #item_struct
-
+    quote! {
         impl #impl_generics aimer_widget::Widget for #struct_name #ty_generics #where_clause {
             #key_method
 
@@ -63,8 +92,7 @@ pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
                 #struct_name_str
             }
         }
-    };
-    output
+    }
 }
 
 #[cfg(test)]
@@ -85,5 +113,56 @@ mod tests {
         assert!(output.contains("aimer_widget :: Element :: boxed"));
         assert!(!output.contains("Box < dyn aimer_widget :: Element >"));
         assert!(!output.contains("Box :: new"));
+    }
+
+    #[test]
+    fn the_derive_leaves_the_struct_to_the_compiler() {
+        // A derive is expanded *beside* the item it is written on. Emitting the
+        // struct again — as the attribute form must — would define it twice.
+        let output = derive_stateless_widget(quote! {
+            #[derive(Clone, StatelessWidget)]
+            struct GeneratedWidget {
+                label: String,
+            }
+        })
+        .to_string();
+
+        assert!(!output.contains("struct GeneratedWidget"));
+        assert!(output.contains("impl aimer_widget :: Widget for GeneratedWidget"));
+    }
+
+    #[test]
+    fn the_derive_and_the_attribute_wire_the_widget_up_the_same_way() {
+        let item = quote! {
+            #[derive(Clone)]
+            struct GeneratedWidget {
+                key: Option<Key>,
+            }
+        };
+
+        let attribute = generate_stateless_widget_impl(item.clone()).to_string();
+        let derived = derive_stateless_widget(item).to_string();
+
+        let (_, attribute_impl) = attribute
+            .split_once("impl aimer_widget :: Widget")
+            .expect("the attribute form implements Widget");
+        let (_, derived_impl) = derived
+            .split_once("impl aimer_widget :: Widget")
+            .expect("the derive implements Widget");
+        assert_eq!(attribute_impl, derived_impl);
+    }
+
+    #[test]
+    fn the_derive_rejects_what_is_not_a_struct() {
+        // The attribute form can fall back to re-emitting its input; a derive
+        // has nothing to fall back to, so it must say what went wrong.
+        let output = derive_stateless_widget(quote! {
+            enum NotAWidget {
+                Nope,
+            }
+        })
+        .to_string();
+
+        assert!(output.contains("compile_error"));
     }
 }
