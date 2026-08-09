@@ -38,9 +38,9 @@ pub type ImageResolver = Rc<dyn Fn(&MarkdownImage) -> AnyWidget>;
 fn build_tick_box(ticked: bool) -> AnyWidget {
     match SvgDocument::from_svg(TICK_SVG_DATA) {
         Ok(doc) => Container::new()
-            // .margin(LayoutSpacing::new().top(4))
+            .margin(LayoutSpacing::new().top(2))
             .width(16)
-            .height(16)
+            .height(18)
             .child(Svg::new(doc).style(
                 "#tick",
                 SvgStyle::new().fill(if ticked {
@@ -389,9 +389,13 @@ fn render_block(
                                         .vertical_scroll_bar(None)
                                         .horizontal_scroll_bar(None)
                                         .child(
-                                            SelectionArea::new().child(
-                                                RichText::new(TextSpan::root(spans))
-                                                    .text_style(theme.code_block),
+                                            Container::new()
+                                                .width(1000)
+                                                .child(
+                                                SelectionArea::new().child(
+                                                    RichText::new(TextSpan::root(spans))
+                                                        .text_style(theme.code_block),
+                                                ),
                                             ),
                                         ),
                                 ),

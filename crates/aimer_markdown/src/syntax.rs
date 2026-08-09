@@ -1,11 +1,29 @@
+//! Syntax highlighting for fenced code blocks.
+//!
+//! Two backends produce the same [`CaptureSpan`]s:
+//!
+//! - `synoptic` (default) — a lightweight regex based highlighter.
+//! - `arborium` (`arborium` feature) — a tree-sitter based highlighter with a
+//!   deeper understanding of the code, at a much higher build cost.
+//!
+//! Enabling the `arborium` feature swaps the backend out; nothing else in the
+//! crate changes.
+
+#[cfg(feature = "arborium")]
+mod arborium;
 mod parser;
+#[cfg(not(feature = "arborium"))]
+mod synoptic;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use arborium::Highlighter;
 pub use parser::CaptureSpan;
 
+#[cfg(feature = "arborium")]
+use self::arborium::ArboriumBackend as Backend;
+#[cfg(not(feature = "arborium"))]
+use self::synoptic::SynopticBackend as Backend;
 use crate::cache::LruCache;
 
 const HIGHLIGHT_CACHE_CAPACITY: usize = 64;
@@ -17,22 +35,22 @@ thread_local! {
 
 struct HighlightCache {
     entries: HighlightEntries,
-    highlighter: Highlighter,
+    backend: Backend,
 }
 
 impl HighlightCache {
     fn new(capacity: usize) -> Self {
         Self {
             entries: LruCache::new(capacity),
-            highlighter: Highlighter::new(),
+            backend: Backend::new(),
         }
     }
 
     fn highlight(&mut self, code: &str, language: Option<&str>) -> Rc<[CaptureSpan]> {
-        let highlighter = &mut self.highlighter;
+        let backend = &mut self.backend;
         self.entries.get_or_insert_with(
             (Rc::from(code), language.map(Rc::from)),
-            |(code, language)| Rc::from(parse_highlights(highlighter, code, language.as_deref())),
+            |(code, language)| Rc::from(backend.highlight(code, language.as_deref())),
         )
     }
 }
@@ -43,28 +61,6 @@ pub fn highlight(code: &str, language: Option<&str>) -> Vec<CaptureSpan> {
 
 pub(crate) fn highlight_cached(code: &str, language: Option<&str>) -> Rc<[CaptureSpan]> {
     HIGHLIGHT_CACHE.with(|cache| cache.borrow_mut().highlight(code, language))
-}
-
-fn parse_highlights(
-    highlighter: &mut Highlighter,
-    code: &str,
-    language: Option<&str>,
-) -> Vec<CaptureSpan> {
-    let Some(language) = language.map(str::to_ascii_lowercase) else {
-        return Vec::new();
-    };
-    let language = match language.as_str() {
-        "py" => "python",
-        "rs" => "rust",
-        "js" => "javascript",
-        "ts" => "typescript",
-        language => language,
-    };
-
-    highlighter
-        .highlight_spans(language, code)
-        .map(|spans| spans.into_iter().map(CaptureSpan::from).collect())
-        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -84,14 +80,14 @@ mod tests {
     }
 
     #[test]
-    fn highlight_cache_reuses_highlighter_across_cache_misses() {
+    fn highlight_cache_reuses_the_backend_across_cache_misses() {
         let mut cache = HighlightCache::new(2);
-        let highlighter = &cache.highlighter as *const Highlighter;
+        let backend = &cache.backend as *const Backend;
 
         cache.highlight("fn first() {}", Some("rust"));
         cache.highlight("fn second() {}", Some("rust"));
 
-        assert_eq!(highlighter, &cache.highlighter as *const Highlighter);
+        assert_eq!(backend, &cache.backend as *const Backend);
     }
 
     #[test]
@@ -107,31 +103,10 @@ mod tests {
     }
 
     #[test]
-    fn highlights_rust_with_capture_spans() {
-        assert_eq!(
-            highlight("fn main(){}", Some("rust")),
-            vec![
-                CaptureSpan::Keyword { start: 0, end: 2 },
-                CaptureSpan::Function { start: 3, end: 7 },
-                CaptureSpan::Punctuation { start: 7, end: 8 },
-                CaptureSpan::Punctuation { start: 8, end: 9 },
-                CaptureSpan::Punctuation { start: 9, end: 10 },
-                CaptureSpan::Punctuation { start: 10, end: 11 },
-            ]
-        );
-    }
-
-    #[test]
-    fn supports_languages_and_aliases_provided_by_arborium() {
-        let toml = highlight("edition = \"2024\"", Some("toml"));
+    fn highlights_rust_keywords_whichever_backend_is_active() {
         assert!(
-            toml.iter()
-                .any(|span| matches!(span, CaptureSpan::String { .. }))
-        );
-        assert!(
-            highlight("def main(): pass", Some("py"))
-                .iter()
-                .any(|span| matches!(span, CaptureSpan::Keyword { start: 0, end: 3 }))
+            highlight("fn main(){}", Some("rust"))
+                .contains(&CaptureSpan::Keyword { start: 0, end: 2 })
         );
     }
 

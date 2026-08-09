@@ -1,17 +1,22 @@
 use aimer_color::prelude::Color;
+#[cfg(feature = "arborium")]
 use arborium::advanced::Span;
 
 /// A highlight capture category, paired with its byte span.
 ///
-/// This mirrors `arborium_highlight::Span`, but replaces the raw
-/// `capture: String` with a closed-ish enum of the semantic categories
-/// arborium's theme layer normalizes captures into (see `HIGHLIGHT_NAMES`
-/// / the HTML tag reference: <a-k>, <a-f>, etc.).
+/// This is the backend-independent currency of [`crate::syntax`]: both the
+/// default `synoptic` highlighter and the optional tree-sitter based
+/// `arborium` one are translated into these categories, so the renderer never
+/// has to know which one produced them.
 ///
-/// NOTE: `Other(String)` exists because `Span.capture` is a free-form
-/// `String` in the underlying crate — not every possible raw capture name
-/// tree-sitter grammars might emit is guaranteed to be covered above,
-/// so this variant preserves anything unrecognized instead of dropping it.
+/// The names follow the semantic categories tree-sitter grammars normalize
+/// captures into (see `HIGHLIGHT_NAMES` / the HTML tag reference: <a-k>,
+/// <a-f>, etc.), which `synoptic`'s simpler token names map onto cleanly.
+///
+/// NOTE: `Other(String)` exists because a capture name is a free-form string
+/// in both backends — not every name a grammar or a custom rule might emit is
+/// guaranteed to be covered above, so this variant preserves anything
+/// unrecognized instead of dropping it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureSpan {
     // --- Code ---
@@ -173,64 +178,86 @@ impl CaptureSpan {
         }
     }
 
-    /// Build a `CaptureSpan` from arborium_highlight's raw `Span`.
+    /// Build a `CaptureSpan` from a raw capture name and its byte range.
     ///
-    /// Matches on the dotted-prefix convention tree-sitter grammars use
-    /// (e.g. "keyword.function" still maps to Keyword), falling back to
-    /// `Other` for anything unrecognized.
-    pub fn from_raw(span: &Span) -> Self {
-        let start = span.start;
-        let end = span.end;
-        let base = span.capture.split('.').next().unwrap_or(&span.capture);
+    /// This is the single translation table shared by every highlighting
+    /// backend. It matches on the dotted-prefix convention tree-sitter
+    /// grammars use (e.g. `"keyword.function"` still maps to
+    /// [`CaptureSpan::Keyword`]) as well as on the flat token names
+    /// `synoptic`'s regex rules emit (e.g. `"digit"`, `"struct"`,
+    /// `"heading"`), falling back to [`CaptureSpan::Other`] for anything
+    /// unrecognized rather than dropping the span.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(
+    ///     CaptureSpan::from_capture("keyword.function", 0, 2),
+    ///     CaptureSpan::Keyword { start: 0, end: 2 }
+    /// );
+    /// ```
+    pub fn from_capture(capture: &str, start: u32, end: u32) -> Self {
+        let mut parts = capture.split('.');
+        let base = parts.next().unwrap_or(capture);
+        let other = || CaptureSpan::Other {
+            start,
+            end,
+            capture: capture.to_string(),
+        };
 
         match base {
-            "keyword" | "include" | "conditional" | "repeat" => CaptureSpan::Keyword { start, end },
+            "keyword" | "kw" | "include" | "conditional" | "repeat" => {
+                CaptureSpan::Keyword { start, end }
+            }
             "function" | "method" => CaptureSpan::Function { start, end },
             "string" | "character" => CaptureSpan::String { start, end },
             "comment" => CaptureSpan::Comment { start, end },
-            "type" => CaptureSpan::Type { start, end },
-            "variable" | "parameter" => CaptureSpan::Variable { start, end },
+            "type" | "struct" => CaptureSpan::Type { start, end },
+            "variable" | "parameter" | "reference" => CaptureSpan::Variable { start, end },
             "constant" | "boolean" => CaptureSpan::Constant { start, end },
-            "number" | "float" => CaptureSpan::Number { start, end },
+            "number" | "float" | "digit" => CaptureSpan::Number { start, end },
             "operator" => CaptureSpan::Operator { start, end },
             "punctuation" => CaptureSpan::Punctuation { start, end },
-            "property" | "field" => CaptureSpan::Property { start, end },
+            "property" | "field" | "key" => CaptureSpan::Property { start, end },
             "attribute" | "annotation" => CaptureSpan::Attribute { start, end },
             "tag" => CaptureSpan::Tag { start, end },
             "macro" => CaptureSpan::Macro { start, end },
             "label" => CaptureSpan::Label { start, end },
             "namespace" | "module" => CaptureSpan::Namespace { start, end },
             "constructor" => CaptureSpan::Constructor { start, end },
-            "markup" => match span.capture.split('.').nth(1) {
+            "heading" | "header" | "title" => CaptureSpan::Title { start, end },
+            "bold" | "strong" => CaptureSpan::Strong { start, end },
+            "italic" | "emphasis" => CaptureSpan::Emphasis { start, end },
+            "link" | "image" => CaptureSpan::Link { start, end },
+            "block" | "literal" => CaptureSpan::Literal { start, end },
+            "strikethrough" => CaptureSpan::Strikethrough { start, end },
+            "insertion" => CaptureSpan::DiffAdd { start, end },
+            "deletion" => CaptureSpan::DiffDelete { start, end },
+            "markup" => match parts.next() {
                 Some("heading" | "title") => CaptureSpan::Title { start, end },
                 Some("bold" | "strong") => CaptureSpan::Strong { start, end },
                 Some("italic" | "emphasis") => CaptureSpan::Emphasis { start, end },
                 Some("link") => CaptureSpan::Link { start, end },
                 Some("raw" | "literal") => CaptureSpan::Literal { start, end },
                 Some("strikethrough") => CaptureSpan::Strikethrough { start, end },
-                _ => CaptureSpan::Other {
-                    start,
-                    end,
-                    capture: span.capture.clone(),
-                },
+                _ => other(),
             },
-            "diff" => match span.capture.split('.').nth(1) {
+            "diff" => match parts.next() {
                 Some("plus" | "add") => CaptureSpan::DiffAdd { start, end },
                 Some("minus" | "delete") => CaptureSpan::DiffDelete { start, end },
-                _ => CaptureSpan::Other {
-                    start,
-                    end,
-                    capture: span.capture.clone(),
-                },
+                _ => other(),
             },
             "embedded" => CaptureSpan::Embedded { start, end },
             "error" => CaptureSpan::Error { start, end },
-            _ => CaptureSpan::Other {
-                start,
-                end,
-                capture: span.capture.clone(),
-            },
+            _ => other(),
         }
+    }
+
+    /// Build a `CaptureSpan` from arborium_highlight's raw `Span`.
+    #[cfg(feature = "arborium")]
+    #[inline]
+    pub fn from_raw(span: &Span) -> Self {
+        CaptureSpan::from_capture(&span.capture, span.start, span.end)
     }
 
     pub fn color(&self) -> Color {
@@ -276,7 +303,9 @@ impl CaptureSpan {
     }
 }
 
+#[cfg(feature = "arborium")]
 impl From<Span> for CaptureSpan {
+    #[inline]
     fn from(value: Span) -> Self {
         CaptureSpan::from_raw(&value)
     }
@@ -284,26 +313,59 @@ impl From<Span> for CaptureSpan {
 
 #[cfg(test)]
 mod tests {
-    use arborium::Highlighter;
-
     use super::*;
 
     #[test]
-    fn test_from_raw() {
-        let raw = "fn main(){}";
-        let span = Highlighter::new().highlight_spans("rust", raw).unwrap();
-        let capture: Vec<CaptureSpan> = span.into_iter().map(CaptureSpan::from).collect();
-
+    fn dotted_tree_sitter_captures_keep_their_base_category() {
         assert_eq!(
-            capture,
-            vec![
-                CaptureSpan::Keyword { start: 0, end: 2 },
-                CaptureSpan::Function { start: 3, end: 7 },
-                CaptureSpan::Punctuation { start: 7, end: 8 },
-                CaptureSpan::Punctuation { start: 8, end: 9 },
-                CaptureSpan::Punctuation { start: 9, end: 10 },
-                CaptureSpan::Punctuation { start: 10, end: 11 },
-            ]
+            CaptureSpan::from_capture("keyword.function", 0, 2),
+            CaptureSpan::Keyword { start: 0, end: 2 }
         );
+        assert_eq!(
+            CaptureSpan::from_capture("markup.heading.1", 0, 3),
+            CaptureSpan::Title { start: 0, end: 3 }
+        );
+        assert_eq!(
+            CaptureSpan::from_capture("diff.plus", 0, 1),
+            CaptureSpan::DiffAdd { start: 0, end: 1 }
+        );
+    }
+
+    #[test]
+    fn flat_synoptic_token_names_map_onto_the_same_categories() {
+        assert_eq!(
+            CaptureSpan::from_capture("digit", 0, 1),
+            CaptureSpan::Number { start: 0, end: 1 }
+        );
+        assert_eq!(
+            CaptureSpan::from_capture("struct", 0, 3),
+            CaptureSpan::Type { start: 0, end: 3 }
+        );
+        assert_eq!(
+            CaptureSpan::from_capture("boolean", 0, 4),
+            CaptureSpan::Constant { start: 0, end: 4 }
+        );
+        assert_eq!(
+            CaptureSpan::from_capture("insertion", 0, 4),
+            CaptureSpan::DiffAdd { start: 0, end: 4 }
+        );
+    }
+
+    #[test]
+    fn unknown_captures_are_preserved_rather_than_dropped() {
+        assert_eq!(
+            CaptureSpan::from_capture("tumbleweed", 1, 2),
+            CaptureSpan::Other {
+                start: 1,
+                end: 2,
+                capture: "tumbleweed".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn every_variant_reports_its_byte_range() {
+        assert_eq!(CaptureSpan::from_capture("keyword", 3, 9).range(), (3, 9));
+        assert_eq!(CaptureSpan::from_capture("nope", 3, 9).range(), (3, 9));
     }
 }

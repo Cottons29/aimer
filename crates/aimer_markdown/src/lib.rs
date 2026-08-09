@@ -6,8 +6,9 @@ mod syntax;
 
 // Arborium's debug Tree-sitter runtime references C's `stderr`, which is not
 // provided by the `wasm32-unknown-unknown` target. Its optional diagnostics
-// accept a null stream, so provide the missing WASM-side storage here.
-#[cfg(target_arch = "wasm32")]
+// accept a null stream, so provide the missing WASM-side storage here. The
+// default `synoptic` highlighter is pure Rust and needs none of this.
+#[cfg(all(target_arch = "wasm32", feature = "arborium"))]
 #[unsafe(no_mangle)]
 static mut stderr: usize = 0;
 

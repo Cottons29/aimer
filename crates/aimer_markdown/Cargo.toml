@@ -19,7 +19,20 @@ webbrowser.workspace = true
 aimer_svg.workspace = true
 aimer_input.workspace = true
 aimer_native.workspace = true
-arborium = { workspace = true, features = ["default", "lang-python", "lang-rust", "lang-toml"] }
+synoptic.workspace = true
+arborium = { workspace = true, features = [
+    "default",
+    "lang-python",
+    "lang-rust",
+    "lang-toml",
+], optional = true }
+
+[features]
+default = []
+# Opt into the tree-sitter backed `arborium` highlighter. It understands code
+# far better than the default regex based `synoptic` backend, at the cost of
+# pulling in a tree-sitter grammar per language and a much heavier build.
+arborium = ["dep:arborium"]
 
 [dev-dependencies]
 aimer_attribute.workspace = true
